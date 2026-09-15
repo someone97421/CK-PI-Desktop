@@ -283,3 +283,4 @@ Each ADR includes:
 | 0252 | Host turn-end event for plugins | Accepted (D422) |
 | 0253 | [Remove the subagent turn limit](0253-remove-subagent-turn-limit.md) | Accepted (supersedes the `maxTurns` clauses of 0062 / 0063 / 0119 / 0126 / 0166 / 0210) |
 | 0254 | [Continue native Pi sessions in their canonical JSONL](0254-native-pi-session-continuation.md) | Accepted (amends baseline D007; D421) |
+| 0257 | [Manual bidirectional sync with the system pi CLI configuration](0257-pi-config-manual-sync.md) | Proposed (D425 proposed) |
