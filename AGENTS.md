@@ -1,74 +1,112 @@
 # AGENTS.md
 
-Mandatory rules for AI coding agents working in PI-Desktop.
+AI 编码代理在本仓库工作时的强制规则。
 
-PI-Desktop is released software with real users. Treat every change as production maintenance, not prototype work.
+PI-Desktop 是已发布软件，拥有真实用户。把每次改动都当作生产环境维护，而不是原型开发。
 
-Optimize for:
+优先级排序：
 
-1. Correctness
-2. User data safety
-3. Security
-4. Backward compatibility
-5. Architectural integrity
-6. Testability
-7. Maintainability
-8. Delivery speed
+1. 正确性
+2. 用户数据安全
+3. 安全
+4. 向后兼容性
+5. 架构完整性
+6. 可测试性
+7. 可维护性
+8. 交付速度
 
-> Optimize for changing the system safely, not merely changing it quickly.
+> 目标是安全地改变系统，而不只是快速改变它。
 
 ---
 
-## 1. Read Before You Change
+## 0. Fork 策略（自用）
 
-Before implementation, read:
+**本节覆盖下方任何冲突规则。**
+
+本检出是 PI-Desktop 的私人 fork
+（`someone97421/CK-PI-Desktop`）。它仅供所有者自己使用，不是向原项目
+（`vastsa/PI-Desktop`）提交贡献的渠道。
+
+硬约束：
+
+* 永不向原仓库或任何其他上游仓库提交 pull request、issue 或 review。
+* 永不新增、配置、fetch 或 push `upstream` 远端。`origin` 是本 fork，
+  除非所有者另有指示，它保持为唯一远端。
+* 永不向本 fork 之外推送。
+* 所有改动都留在本 fork 的分支内。永不修改、reset、删除或推送当前任务
+  不拥有的分支、tag、worktree 或远端。
+* 不要从本 fork 发布 release、marketplace 或签名产物。
+
+对下方面向上游的规则的覆盖：
+
+* §4 分支/worktree 隔离：对单人 fork 不强制。除非所有者要求，不要创建
+  独立分支或 worktree。永不开发当前任务不拥有的分支，也永不在所有者未
+  要求时 push `main`。
+* §12 / §13 issue 与 PR 接洽：仅当所有者提供上游 issue 或 PR 作参考时
+  适用。没有向上游评论、关闭或落地的义务。
+* §15 / §19 / §20 集成、发布与 E2E 门禁：上游 PR/merge/release 流水线不
+  适用。远端交付指把分支推送到本 fork，且仅在所有者明确要求时。除非所有
+  者要求，不要声称或运行全量 E2E；任何跳过项一律记为 NOT RUN。
+* §18 提交语言：提交信息使用中文。代码、标识符、注释、规格与 ADR 仍用
+  英文。
+* §22 完成定义：分支/worktree、PR 门禁、集成后 E2E 三项由上述 fork 策略
+  满足。
+
+本文件其他所有内容仍然完全生效：正确性、用户数据安全、安全、架构边界、
+改动粒度、提交卫生，以及对未运行验证的如实上报。
+
+---
+
+## 1. 改动前先阅读
+
+实现之前，先阅读：
 
 * `docs/spec/00-baseline.md`
-* relevant documents under `docs/spec/`
-* relevant ADRs under `docs/adr/`
+* `docs/spec/` 下的相关文档
+* `docs/adr/` 下的相关 ADR
 
-For development and validation rules, follow:
+开发与验证规则，遵循：
 
 * `docs/spec/06-delivery/03-ai-development-workflow.md`
 * `docs/spec/06-delivery/04-e2e-test-plan.md`
 * `docs/spec/06-delivery/05-change-checklist.md`
 
-Use English for code, identifiers, comments, commits, specifications, ADRs, and repository documentation.
+代码、标识符、注释、规格、ADR 与仓库文档使用英文；提交信息使用中文。
 
-GitHub issue / PR discussion should normally use the language of the original author.
-
----
-
-## 2. Preserve Existing Behavior by Default
-
-Unless the task explicitly requires behavior to change:
-
-* do not remove existing functionality
-* do not change user-visible behavior
-* do not change default values
-* do not change persisted data semantics
-* do not change IPC / RPC contracts
-* do not change Plugin SDK contracts
-* do not weaken security or permissions
-* do not introduce breaking changes
-
-Refactoring must be behavior-preserving by default.
-
-If a breaking change is truly required, document:
-
-* what breaks
-* why it is necessary
-* affected surfaces
-* migration path
-* compatibility impact
-
-Never hide behavior changes inside a `refactor` commit.
+GitHub issue / PR 讨论通常使用原作者的语言。
 
 ---
 
-## 3. Respect the Architecture
+## 2. 默认保留既有行为
 
-The frozen process model is:
+除非任务明确要求改变行为：
+
+* 不移除既有功能
+* 不改变用户可见行为
+* 不改变默认值
+* 不改变持久化数据的语义
+* 不改变 IPC / RPC 契约
+* 不改变 Plugin SDK 契约
+* 不削弱安全或权限
+* 不引入破坏性变更
+
+重构默认必须是行为保持的。
+
+如果确实需要破坏性变更，记录：
+
+* 破坏了什么
+* 为什么必须
+* 受影响的界面
+* 迁移路径
+* 兼容性影响
+
+绝不在 `refactor` 提交里隐藏行为变更。
+
+---
+
+## 3. 尊重架构
+
+冻结的进程模型是：
 
 ```text
 Renderer
@@ -82,56 +120,56 @@ Rust Host Core / Node Agent Runtime
 pi-ai / pi-agent-core
 ```
 
-Ownership rules:
+所有权规则：
 
 ```text
-Renderer       = UI and interaction
-Electron Main  = thin orchestrator
-Rust Host Core = persistence and authoritative host/native state
-Agent Runtime  = agent execution
-Plugin SDK     = extension contract
-Shared         = cross-boundary contracts and schemas
+Renderer       = UI 与交互
+Electron Main  = 薄编排层
+Rust Host Core = 持久化与权威的宿主/原生状态
+Agent Runtime  = Agent 执行
+Plugin SDK     = 扩展契约
+Shared         = 跨边界契约与 schema
 ```
 
-Mandatory boundaries:
+强制边界：
 
-* Renderer must not access SQLite directly.
-* Renderer must not depend on Electron Main implementation internals.
-* SQLite remains owned exclusively by Rust host-core.
-* Agent execution must not move into the renderer.
-* Electron Main must remain a thin orchestrator.
-* Shared packages must not depend on desktop implementation code.
-* Plugin permissions and sandbox boundaries must not be bypassed.
+* Renderer 不得直接访问 SQLite。
+* Renderer 不得依赖 Electron Main 的实现内部。
+* SQLite 始终由 Rust host-core 独占拥有。
+* Agent 执行不得移入 renderer。
+* Electron Main 必须保持薄编排层。
+* Shared 包不得依赖桌面端实现代码。
+* 不得绕过插件权限与沙箱边界。
 
-Changing a frozen architecture, public interface, data ownership model, or security boundary requires an ADR.
+修改冻结的架构、公共接口、数据所有权模型或安全边界需要 ADR。
 
 ---
 
-## 4. Multi-Agent Isolation Is Mandatory
+## 4. 多代理隔离是强制的
 
-Assume multiple agents are working concurrently.
+假设有多个代理在并发工作。
 
-Every development request must use:
+每个开发请求都必须使用：
 
 ```text
-1 request
+1 个请求
 =
-1 branch
+1 个分支
 +
-1 dedicated worktree
+1 个专用 worktree
 ```
 
-Never:
+绝不：
 
-* develop directly on `main`
-* develop in the primary checkout
-* reuse another task's worktree
-* modify another agent's branch
-* delete another agent's branch or worktree
-* reset or discard unrelated work
-* include unrelated changes in your task
+* 直接在 `main` 上开发
+* 在主检出里开发
+* 复用其他任务的 worktree
+* 修改其他代理的分支
+* 删除其他代理的分支或 worktree
+* reset 或丢弃无关工作
+* 把无关改动塞进自己的任务
 
-Start from current `main`:
+从当前的 `main` 开始：
 
 ```bash
 git fetch origin main
@@ -144,42 +182,42 @@ git worktree add \
 cd <worktree-path>
 ```
 
-Before integration, refresh against the latest `main` and resolve conflicts inside your own worktree.
+集成之前，针对最新的 `main` 刷新，并只在自己的 worktree 内解决冲突。
 
 ---
 
-## 5. Keep Changes Small and Coherent
+## 5. 保持改动小而内聚
 
-Prefer:
+优先：
 
 ```text
-small diff
-clear responsibility
-one coherent purpose
-easy review
-easy rollback
+小的 diff
+清晰的职责
+单一内聚目的
+易于评审
+易于回滚
 ```
 
-Avoid:
+避免：
 
-* feature + unrelated refactor
-* drive-by cleanup
-* mass formatting
-* unrelated dependency upgrades
-* giant commits
-* big-bang rewrites
+* 功能 + 无关重构
+* 顺手清理
+* 大规模格式化
+* 无关的依赖升级
+* 巨型提交
+* 大爆炸式重写
 
-Use incremental, behavior-preserving extraction for large refactors.
+大型重构使用增量的、行为保持的抽取。
 
-Every intermediate stage should remain buildable and testable.
+每个中间阶段都应保持可构建、可测试。
 
 ---
 
-## 6. Architecture Ratchet
+## 6. 架构棘轮
 
-New work must not continuously increase architectural entropy.
+新工作不得持续增加架构熵。
 
-Known hotspots include:
+已知热点包括：
 
 ```text
 apps/desktop/electron/main/index.ts
@@ -192,144 +230,147 @@ crates/host-core/src/providers.rs
 crates/host-core/src/plans.rs
 ```
 
-Treat them as:
+把它们当作：
 
 ```text
 SHRINK OR STAY STABLE
 ```
 
-Do not use a historical God Module as the default place for new functionality.
+不要把历史遗留的上帝模块当作新功能的默认落点。
 
-Also do not solve one God Module by creating another.
+也不要通过制造另一个上帝模块来解决一个上帝模块。
 
-Split by real:
+按真实的：
 
-* domain
-* responsibility
-* ownership
-* lifecycle
+* 领域
+* 职责
+* 所有权
+* 生命周期
 
-not arbitrary line count.
+来拆分，而不是按任意行数。
 
-As a guideline:
+作为参考准则：
 
-* new TS / TSX modules should normally stay below ~500 LOC
-* reconsider responsibilities around ~800 LOC
-* new Rust modules should normally stay below ~700 LOC
-* reconsider responsibilities around ~1000 LOC
+* 新的 TS / TSX 模块通常保持在 ~500 行以内
+* 到 ~800 行时应重新审视职责
+* 新的 Rust 模块通常保持在 ~700 行以内
+* 到 ~1000 行时应重新审视职责
 
-Generated files, locales, changelogs, fixtures, and declarative data are exempt.
+生成文件、语言包、changelog、fixture 与声明式数据除外。
 
 ---
 
-## 7. State, UI, and Host Responsibilities
+## 7. 状态、UI 与宿主职责
 
-### Renderer stores
+### Renderer store
 
-Prefer:
+优先：
 
 ```text
-State               → Store
-Workflow            → Service
-Pure transformation → Reducer / helper
-External side effect→ Service / runtime
+状态                → Store
+工作流              → Service
+纯转换              → Reducer / helper
+外部副作用          → Service / runtime
 ```
 
-Do not keep pushing complex workflows into a central Zustand store.
+不要持续把复杂工作流塞进中心化的 Zustand store。
 
 ### React
 
-Components should primarily handle:
+组件主要处理：
 
-* rendering
-* interaction wiring
-* local UI state
+* 渲染
+* 交互接线
+* 局部 UI 状态
 
-Complex workflows should move into hooks, models, or services.
+复杂工作流应移入 hook、model 或 service。
 
 ### Rust host-core
 
-Keep persistence, schema, migration, repository, domain logic, and filesystem responsibilities separated when they represent distinct concerns.
+当持久化、schema、迁移、repository、领域逻辑与文件系统职责代表不同关注点
+时，保持它们相互分离。
 
-Do not create abstraction layers without a real responsibility boundary.
+不要创建没有真实职责边界的抽象层。
 
 ---
 
-## 8. Async and Lifecycle Safety
+## 8. 异步与生命周期安全
 
-For changes involving sessions, transcripts, agents, plans, plugins, MCP, IPC, filesystem, or background processes, consider:
+对于涉及会话、对话记录、agent、plan、plugin、MCP、IPC、文件系统或后台进程
+的改动，考虑：
 
-* stale async results
-* cancellation
-* duplicate execution
-* session/project changes during `await`
-* runtime restart
+* 过期的异步结果
+* 取消
+* 重复执行
+* `await` 期间发生会话/项目切换
+* runtime 重启
 * renderer reload
-* process disposal
-* race conditions
+* 进程销毁
+* 竞态条件
 
-Never assume state is unchanged across an `await`.
+绝不假设状态在 `await` 前后不变。
 
-Every long-lived resource must have an owner and cleanup path.
+每个长生命周期资源都必须有所有者与清理路径。
 
-Examples:
+例如：
 
-* event listeners
-* IPC listeners
-* timers
-* watchers
-* WebSockets
-* MCP connections
-* child processes
-* sidecars
-* plugin services
+* 事件监听器
+* IPC 监听器
+* 定时器
+* watcher
+* WebSocket
+* MCP 连接
+* 子进程
+* sidecar
+* 插件服务
 
-Check cleanup during relevant reload, disable, uninstall, close, restart, and shutdown paths.
-
----
-
-## 9. Compatibility and Persistence
-
-Database and persisted-state changes must preserve existing user data.
-
-Database changes require:
-
-* migration
-* schema version update
-* upgrade compatibility
-* relevant tests
-* relevant spec updates
-
-Never assume an empty database.
-
-Plugin SDK / DevKit and other extension contracts are backward-compatible by default.
-
-Do not casually change public plugin behavior.
+在相关的 reload、disable、卸载、关闭、重启与 shutdown 路径中检查清理。
 
 ---
 
-## 10. Security and Error Handling
+## 9. 兼容性与持久化
 
-Use least privilege for:
+数据库与持久化状态的改动必须保留既有用户数据。
 
-* filesystem
+数据库改动需要：
+
+* 迁移
+* schema 版本更新
+* 升级兼容性
+* 相关测试
+* 相关规格更新
+
+绝不假设数据库为空。
+
+Plugin SDK / DevKit 及其他扩展契约默认向后兼容。
+
+不要随意改变插件的公开行为。
+
+---
+
+## 10. 安全与错误处理
+
+对以下方面使用最小权限：
+
+* 文件系统
 * shell
-* network
-* browser
-* external URLs
-* plugins
+* 网络
+* 浏览器
+* 外部 URL
+* 插件
 * MCP
-* clipboard
-* credentials
-* secrets
+* 剪贴板
+* 凭据
+* 密钥
 
-Never fix functionality by weakening permission checks, sandbox boundaries, URL validation, filesystem restrictions, or credential isolation.
+绝不通过削弱权限检查、沙箱边界、URL 校验、文件系统限制或凭据隔离来修复
+功能。
 
-Do not silently swallow unexpected errors.
+不要静默吞掉意外错误。
 
-Do not bypass type or error systems merely to finish faster.
+不要仅仅为了更快完成而绕过类型或错误系统。
 
-Avoid unnecessary:
+避免不必要的：
 
 ```text
 any
@@ -338,82 +379,82 @@ as any
 @ts-nocheck
 ```
 
-and avoid using Rust `unwrap()` / `expect()` for normal external failure paths.
+并避免在正常的外部失败路径上使用 Rust 的 `unwrap()` / `expect()`。
 
 ---
 
-## 11. Specs Stay Synchronized
+## 11. 规格保持同步
 
-Observable behavior changes must update the relevant spec.
+可观察行为的变化必须更新相关规格。
 
-Changes affecting architecture, public interfaces, data ownership, security boundaries, or frozen decisions require an ADR.
+影响架构、公共接口、数据所有权、安全边界或冻结决策的改动需要 ADR。
 
-User-visible or protocol-visible behavior changes must update the corresponding E2E scenario documentation.
+用户可见或协议可见的行为变化必须更新对应的 E2E 场景文档。
 
-Pure behavior-preserving refactors normally do not require product-spec changes.
-
----
-
-## 12. GitHub Issue Intake
-
-A linked GitHub issue is an intake request, not proof that the reported problem exists.
-
-Before implementation:
-
-1. Fetch the issue.
-2. Read title, body, comments, labels, and state.
-3. Verify the claim against current code.
-4. For bugs, reproduce it or provide concrete evidence.
-5. For features, verify the requested behavior is actually missing.
-
-If the issue is invalid or already fixed, report the evidence and close it only when the conclusion is clear.
-
-If verification is inconclusive, report what was checked and leave it open.
-
-Do not implement first and investigate later.
+纯粹保持行为的重构通常不需要产品规格变更。
 
 ---
 
-## 13. GitHub Pull Request Intake
+## 12. GitHub Issue 接洽
 
-For a linked pull request, evaluate whether its **principle and direction** are sound before replacing anything.
+被链接的 GitHub issue 是一个接洽请求，不是"报告的问题确实存在"的证明。
 
-If the direction is sound:
+实现之前：
 
-* preserve the contributor's work
-* preserve authorship
-* do not ask them to restart for minor style/completeness issues
-* make only minimal landing fixes when necessary
+1. 拉取该 issue。
+2. 阅读标题、正文、评论、label 与状态。
+3. 对照当前代码核实其主张。
+4. 对 bug，复现它或给出具体证据。
+5. 对功能，核实所请求的行为确实缺失。
 
-Do not force-push a contributor's branch.
+如果 issue 无效或已被修复，给出证据，且仅在结论明确时关闭它。
 
-Do not merge a draft PR unless explicitly authorized or marked ready.
+如果核实未有定论，说明检查了什么，并保持它开启。
 
-The following are landing blockers:
-
-* build failure
-* typecheck failure
-* relevant test failure
-* merge conflict
-* data corruption risk
-* security violation
-* secret leakage
-* privilege/sandbox bypass
-* unresolved incompatible protocol change
-
-A sound idea does not override a failing landing gate.
-
-Relevant E2E is a post-integration validation step defined in §15. A failed
-or unavailable post-integration E2E blocks declaring the delivered change
-complete and must be recorded with its remaining risk.
+不要先实现、后调查。
 
 ---
 
-## 14. Testing Is Part of Implementation
+## 13. GitHub Pull Request 接洽
 
-A code change is not complete because the code was written.
+对被链接的 pull request，在替换任何东西之前，先评估其**原则与方向**是否
+成立。
 
-The normal lifecycle is:
+如果方向成立：
+
+* 保留贡献者的工作
+* 保留署名
+* 不要因次要的风格/完整性问题要求对方重做
+* 仅在必要时做最小的落地修复
+
+不要 force-push 贡献者的分支。
+
+除非明确授权或标记为 ready，不要合并 draft PR。
+
+以下是落地阻断项：
+
+* 构建失败
+* typecheck 失败
+* 相关测试失败
+* 合并冲突
+* 数据损坏风险
+* 安全违规
+* 密钥泄露
+* 权限/沙箱绕过
+* 未解决的、不兼容的协议变更
+
+一个成立的想法不能越过失败的落地门禁。
+
+相关 E2E 是 §15 定义的集成后验证步骤。失败的或无法执行的集成后 E2E 会阻断
+"交付变更已完成"的宣告，并且必须连同其剩余风险一并记录。
+
+---
+
+## 14. 测试是实现的一部分
+
+代码写完了不代表改动完成。
+
+正常的生命周期是：
 
 ```text
 implement
@@ -427,9 +468,9 @@ implement
 → relevant E2E on integrated main
 ```
 
-Run validation appropriate to the affected source tree.
+运行与被改动源码树相称的验证。
 
-Typical checks include:
+典型检查包括：
 
 ```bash
 pnpm build:js
@@ -442,40 +483,34 @@ cargo test -p host-core --locked
 cargo clippy -p host-core --all-targets
 ```
 
-Never report a skipped command as passing.
+永不要把跳过的命令报告为通过。
 
 ---
 
-## 15. E2E Runs After Main Integration
+## 15. E2E 在合入 main 之后运行
 
-Every **code-bearing change** must pass relevant E2E after its branch commits
-have been merged into `main`.
+每个**带代码的改动**都必须在其分支提交合入 `main` 之后通过相关 E2E。
 
-Run the suite from the latest integrated `main` checkout and commit. A task
-branch's pre-merge E2E result is exploratory only and does not satisfy this
-requirement. The same rule applies after local integration and after remote
-`main` integration.
+从最新集成的 `main` 检出与提交运行测试套件。任务分支在合入前的 E2E 结果仅供
+探索，不满足此要求。本地集成后与远端 `main` 集成后同样适用。
 
-Required validation is part of an authorized integration request and needs no
-separate E2E permission.
+所需验证是被授权的集成请求的一部分，不需要单独的 E2E 许可。
 
-Build, typecheck, unit tests, or manual inspection do not replace E2E.
+构建、typecheck、单元测试或人工检查都不能替代 E2E。
 
-Select suites according to the affected regression surface as defined in:
+根据受影响的回归面选择测试套件，定义见：
 
 `docs/spec/06-delivery/04-e2e-test-plan.md`
 
-The root `package.json` is the source of truth for available E2E commands.
+根 `package.json` 是可用的 E2E 命令的唯一真相源。
 
-If the current environment cannot run required E2E:
+如果当前环境无法运行所需 E2E：
 
-* complete the requested main integration only when its other landing gates
-  pass
-* record the missing post-integration E2E as **NOT RUN**
-* keep delivery/release status incomplete until the suite runs in a capable
-  trusted environment
+* 仅在该请求的其他落地门禁都通过时，才完成所请求的 main 集成
+* 把缺失的集成后 E2E 记为 **NOT RUN**
+* 在该套件于具备能力的可信环境中运行之前，保持交付/发布状态为未完成
 
-Record:
+记录：
 
 ```text
 E2E: NOT RUN
@@ -485,27 +520,27 @@ Alternative validation:
 Remaining risk:
 ```
 
-Required E2E must pass in CI or another capable trusted environment after the
-change is present on `main`.
+所需 E2E 必须在改动存在于 `main` 之后，于 CI 或其他具备能力的可信环境中
+通过。
 
-Never claim an E2E suite passed unless it actually ran successfully.
+除非 E2E 套件确实成功运行过，否则绝不声称它通过。
 
-If executable code changes after E2E passes, rerun the affected suite.
+如果 E2E 通过之后可执行代码又发生改动，重跑受影响的套件。
 
 ---
 
-## 16. Never Hide Test Failures
+## 16. 永不隐藏测试失败
 
-Do not make validation green by:
+不要通过以下方式让验证变绿：
 
-* deleting tests
-* skipping tests
-* commenting out assertions
-* weakening expectations without product justification
-* hiding errors
-* adding retries only to mask deterministic failures
+* 删除测试
+* 跳过测试
+* 注释掉断言
+* 在没有产品依据的情况下削弱期望
+* 隐藏错误
+* 仅为掩盖确定性失败而添加重试
 
-Classify failures first:
+先对失败分类：
 
 ```text
 product regression
@@ -515,17 +550,17 @@ infrastructure failure
 known flake
 ```
 
-Fix the underlying cause.
+修复根因。
 
-Bug fixes should normally add regression coverage.
+bug 修复通常应补充回归覆盖。
 
 ---
 
-## 17. Multi-Agent-Safe E2E IDs
+## 17. 多代理安全的 E2E ID
 
-Do not create new globally sequential E2E identifiers.
+不要创建新的全局顺序编号 E2E 标识符。
 
-Existing numeric IDs such as:
+既有的数字 ID，例如：
 
 ```text
 E2E-001
@@ -534,17 +569,17 @@ E2E-146a
 E2E-220
 ```
 
-are frozen legacy identifiers.
+是冻结的历史标识符。
 
-Do not renumber or recycle them.
+不要重新编号或回收它们。
 
-New scenarios must use:
+新场景必须使用：
 
 ```text
 E2E-<DOMAIN>-<semantic-slug>
 ```
 
-Examples:
+示例：
 
 ```text
 E2E-SESSION-switch-does-not-show-stale-transcript
@@ -554,27 +589,28 @@ E2E-MCP-reconnect-after-runtime-restart
 E2E-SUBAGENT-parent-cancel-stops-child
 ```
 
-Rules:
+规则：
 
-* use the narrowest stable domain
-* describe product behavior, not implementation details
-* search for equivalent scenarios before creating one
-* reuse/update an existing scenario when it covers the same contract
-* once merged into `main`, treat the identifier as stable
+* 使用最窄的稳定领域
+* 描述产品行为，而非实现细节
+* 创建之前先搜索是否存在等价场景
+* 当既有场景覆盖同一契约时，复用/更新它
+* 一旦合入 `main`，就把该标识符视为稳定
 
-Do not introduce other manually allocated global counters for multi-agent work unless an authoritative centralized allocator exists.
+除非存在权威的集中式分配器，否则不要为多代理工作引入其他手工分配的全局
+计数器。
 
 ---
 
-## 18. Commits and Diff Hygiene
+## 18. 提交与 diff 卫生
 
-Use Conventional Commits:
+使用 Conventional Commits：
 
 ```text
 type(scope): description
 ```
 
-Allowed types:
+允许的类型：
 
 ```text
 feat
@@ -588,80 +624,77 @@ build
 ci
 ```
 
-Use English.
+提交信息使用中文。
 
-Keep one logical concern per commit.
+`type` 与 `scope` 关键字保持英文；`description` 及正文用中文，例如
+`fix(sidebar): 修复项目组重命名后侧栏不刷新`。
 
-Before delivery, review the complete diff for:
+保持每个提交只包含一个逻辑关注点。
 
-* debug logging
-* temporary code
-* commented-out implementation
-* unrelated cleanup
-* accidental formatting
-* generated junk
-* secrets
-* credentials
-* local paths
-* local databases
-* disabled tests
-* test bypasses
+交付之前，通读完整 diff，检查：
+
+* 调试日志
+* 临时代码
+* 被注释掉的实现
+* 无关清理
+* 意外格式化
+* 生成的垃圾内容
+* 密钥
+* 凭据
+* 本地路径
+* 本地数据库
+* 被禁用的测试
+* 测试绕过
 
 ---
 
-## 19. Remote Publishing
+## 19. 远端发布
 
-Do not push merely because local development is complete unless remote delivery is part of the task or the user has authorized it.
+不要仅仅因为本地开发完成就推送，除非远端交付是任务的一部分，或用户已授权。
 
-When the user requests a commit, a push, or both, complete this task's
-integration into local `main` after the applicable gates pass. Do not stop at
-a task-branch commit or push, or ask again for merge permission. Explicit
-branch-only or draft-only instructions override that completion target.
+当用户请求提交、推送或两者时，在适用的门禁通过后，把本任务集成到本地
+`main`。不要停在任务分支的提交或推送，也不要就合并许可再次询问。明确的
+"仅分支"或"仅 draft"指示覆盖该完成目标。
 
-A commit-only or local-merge request does not authorize remote publishing.
-A push request requires the existing PR workflow: push the task branch, pass
-the required checks and reviews, merge into remote `main`, and synchronize
-local `main`. It does not authorize a direct push to `main` or a force-push.
-Report genuine validation, conflict, or access blockers; never bypass a merge
-gate to satisfy the delivery request.
+仅提交或仅本地合并的请求不授权远端发布。
+推送请求要求既有的 PR 流程：推送任务分支、通过所需检查与评审、合并到远端
+`main`、同步本地 `main`。它不授权直接推送 `main`，也不授权 force-push。
+如实上报验证、冲突或访问方面的阻断；绝不为了满足交付请求而绕过合并门禁。
 
-Before pushing, verify:
+推送之前，核实：
 
 * remote
 * branch
-* commit set
-* Git identity
+* commit 集合
+* Git 身份
 
-Never force-push unless explicitly authorized for that exact operation.
+除非针对该确切操作获得明确授权，否则绝不 force-push。
 
-A linked issue does not authorize unrelated publishing.
+被链接的 issue 不授权无关的发布。
 
-A linked PR authorizes actions necessary to review or land that PR within repository policy.
+被链接的 PR 授权为在仓库政策内评审或落地该 PR 所必需的操作。
 
 ---
 
-## 20. Integration and Cleanup
+## 20. 集成与清理
 
-Before integration:
+集成之前：
 
-1. refresh against current `main`
-2. resolve conflicts carefully
-3. run required validation
-4. review the final diff
-5. verify required PR checks; post-integration E2E is handled after `main`
-   contains the change
+1. 针对当前 `main` 刷新
+2. 谨慎解决冲突
+3. 运行所需验证
+4. 评审最终 diff
+5. 核实所需 PR 检查；集成后 E2E 在 `main` 包含该改动之后处理
 
-After merge:
+合并之后：
 
-1. verify expected commits are present in local `main`, and remote `main` for
-   remote delivery
-2. run the relevant E2E suites from the integrated `main` checkout for any
-   code-bearing change
-3. remove your request worktree
-4. delete your merged local branch
-5. prune stale worktree metadata
+1. 核实预期提交存在于本地 `main`；远端交付时也存在于远端 `main`
+2. 对任何带代码的改动，从集成后的 `main` 检出运行相关 E2E 套件
+3. 移除自己的请求 worktree
+4. 删除自己已合并的本地分支
+5. 清理陈旧的 worktree 元数据
 
-Example:
+示例：
 
 ```bash
 git worktree remove <worktree-path>
@@ -669,61 +702,58 @@ git branch -d <type>/<short-description>
 git worktree prune
 ```
 
-Delete only your own worktree and branch.
+只删除自己的 worktree 与分支。
 
-When the user also requests a launch, build and start from the integrated
-`main` checkout and its development environment.
-
----
-
-## 21. Specialized Workflows
-
-Do not duplicate detailed procedures in this file.
-
-Follow the existing repository specifications for:
-
-* Marketplace/update diagnosis
-* Stable release/version surfaces
-* Packaging/signing
-* E2E suite selection
-* Release qualification
-* Domain-specific acceptance criteria
-
-When one of those workflows applies, read the relevant spec before implementation.
+当用户同时要求启动时，从集成后的 `main` 检出及其开发环境构建并启动。
 
 ---
 
-## 22. Definition of Done
+## 21. 专项工作流
 
-A code task is Done only when all applicable conditions are true:
+不要在本文件中重复详细的流程。
 
-* [ ] Dedicated branch and worktree were used
-* [ ] Work started from current `main`
-* [ ] Relevant specs / ADRs were reviewed
-* [ ] Implementation is complete
-* [ ] Existing behavior and compatibility were reviewed
-* [ ] Architecture boundaries remain valid
-* [ ] No new God Module was introduced
-* [ ] Known hotspots did not grow unnecessarily
-* [ ] Relevant specs were synchronized
-* [ ] ADR was added when required
-* [ ] E2E documentation was updated when required
-* [ ] New E2E IDs use the multi-agent-safe semantic format
-* [ ] Relevant static / unit / integration checks pass
-* [ ] Relevant E2E passes after each code-bearing change is integrated into
-  `main`
-* [ ] E2E evidence applies to the executable commit currently on `main`
-* [ ] Complete diff was reviewed
-* [ ] No secrets, local data, or unrelated changes are included
-* [ ] Logical changes are committed
-* [ ] Required merge gates pass
-* [ ] Requested commit/push delivery reaches local `main`; authorized remote
-  delivery also reaches remote `main` through a PR, unless explicitly limited
-  to a branch or draft
-* [ ] Worktree and branch cleanup are complete after integration
-* [ ] Any requested launch uses the integrated `main` build/development environment
+针对以下事项，遵循既有的仓库规格：
 
-The following are **not** equivalent to Done:
+* Marketplace/更新诊断
+* 稳定版发布/版本面
+* 打包/签名
+* E2E 套件选择
+* 发布资格认定
+* 领域专属验收标准
+
+当其中某个工作流适用时，实现之前先阅读相关规格。
+
+---
+
+## 22. 完成定义
+
+仅当所有适用条件都为真时，一个代码任务才算完成：
+
+* [ ] 使用了专用分支与 worktree
+* [ ] 工作从当前的 `main` 开始
+* [ ] 已阅读相关规格 / ADR
+* [ ] 实现已完成
+* [ ] 已审视既有行为与兼容性
+* [ ] 架构边界仍然有效
+* [ ] 未引入新的上帝模块
+* [ ] 已知热点没有不必要地增长
+* [ ] 相关规格已同步
+* [ ] 在需要时已添加 ADR
+* [ ] 在需要时已更新 E2E 文档
+* [ ] 新的 E2E ID 使用多代理安全的语义格式
+* [ ] 相关静态 / 单元 / 集成检查通过
+* [ ] 每个带代码的改动合入 `main` 后，相关 E2E 通过
+* [ ] E2E 证据适用于当前位于 `main` 的可执行提交
+* [ ] 已评审完整 diff
+* [ ] 未包含密钥、本地数据或无关改动
+* [ ] 逻辑改动已提交
+* [ ] 所需合并门禁通过
+* [ ] 所请求的提交/推送交付到达本地 `main`；被授权的远端交付也通过 PR 到达
+  远端 `main`，除非明确限定为分支或 draft
+* [ ] 集成后已完成 worktree 与分支清理
+* [ ] 任何被请求的启动都使用集成后的 `main` 构建/开发环境
+
+以下**不**等同于完成：
 
 ```text
 code written
@@ -733,15 +763,15 @@ unit tests pass
 looks correct
 ```
 
-when required validation or merge gates remain unresolved.
+当所需验证或合并门禁仍未解决时。
 
 ---
 
-## 23. Final Handoff
+## 23. 最终交接
 
-Report only factual results.
+只报告事实性结果。
 
-Include, when applicable:
+在适用时包含：
 
 ```text
 What changed:
@@ -754,9 +784,9 @@ PR / merge status:
 Remaining risk:
 ```
 
-If something was not run, say so.
+如果有内容没有运行，就明说。
 
-Never claim:
+绝不声称：
 
 ```text
 passed
@@ -764,24 +794,24 @@ verified
 tested
 ```
 
-unless it actually was.
+除非它确实如此。
 
 ---
 
-## Final Principles
+## 最终原则
 
-> Preserve behavior unless change is intentional.
+> 除非有意改变，否则保留行为。
 
-> Respect process and ownership boundaries.
+> 尊重流程与所有权边界。
 
-> New features must not increase architectural entropy by default.
+> 新功能默认不得增加架构熵。
 
-> Multiple agents must never depend on shared manual counters.
+> 多个代理绝不能依赖共享的手工计数器。
 
-> E2E IDs are stable semantic contract references, not sequence numbers.
+> E2E ID 是稳定的语义契约引用，不是序列号。
 
-> A test that did not run did not pass.
+> 没有运行的测试就是没有通过。
 
-> A refactor should reduce coupling, not move it into a differently named file.
+> 重构应减少耦合，而不是把耦合搬进一个改名后的文件。
 
-> A feature that works today but makes tomorrow's change substantially harder is not fully finished.
+> 今天能跑、却让明天的改动显著变得更难的功能，不算真正完成。
