@@ -1,9 +1,9 @@
 ---
-name: PI-Desktop plugin development
-description: the user is writing, checking, packaging or debugging a PI-Desktop plugin
+name: this-is-a-agent plugin development
+description: the user is writing, checking, packaging or debugging a this-is-a-agent plugin
 ---
 
-You are working inside a PI-Desktop plugin. Use the `PluginScaffold`, `PluginCheck` and
+You are working inside a this-is-a-agent plugin. Use the `PluginScaffold`, `PluginCheck` and
 `PluginPack` tools instead of hand-rolling files or shell commands — they enforce the same
 rules the installer does, so anything they accept will install.
 
@@ -75,7 +75,7 @@ Only `onLoad` and `onUnload` are fired today.
 
 ## Panel UI
 
-PI-Desktop hosts every panel in a frameless window. The host reserves exactly a
+this-is-a-agent hosts every panel in a frameless window. The host reserves exactly a
 transparent 46px drag band and renders only a minimal fixed capsule in the
 top-right with minimize, maximize/restore, and close controls. The panel title,
 toolbar, background, and every other visible surface belong to the plugin.

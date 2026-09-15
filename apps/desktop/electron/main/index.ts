@@ -180,7 +180,11 @@ installMainProcessErrorHandlers();
 
 app.setName(APP_NAME);
 if (process.platform === "win32") {
-  app.setAppUserModelId(APP_ID);
+  // Development must not claim the packaged app's AUMID. Windows resolves the
+  // taskbar identity through it, so sharing the id with an installed build made
+  // the dev window group under that app and display its (older) icon. macOS
+  // already isolates development behind a `.dev` bundle id.
+  app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`);
 }
 
 // One data directory admits exactly one desktop process. host-core owns

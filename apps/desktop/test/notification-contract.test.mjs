@@ -94,7 +94,13 @@ test("sidebar terminal outcomes are notification-backed, not lifecycle-backed", 
 });
 
 test("task and interactive native notifications keep separate visibility rules", () => {
-  assert.match(mainSource, /app\.setAppUserModelId\(APP_ID\)/);
+  // Windows toast identity follows the AUMID, so development must not claim
+  // the packaged app's id: that would group the dev window under the installed
+  // build and reuse its (older) icon.
+  assert.match(
+    mainSource,
+    /app\.setAppUserModelId\(app\.isPackaged \? APP_ID : `\$\{APP_ID\}\.dev`\)/,
+  );
   assert.match(mainSource, /mainWindow\.isFocused\(\)/);
   assert.match(mainSource, /SystemNotification\.isSupported\(\)/);
   assert.match(mainSource, /new SystemNotification/);

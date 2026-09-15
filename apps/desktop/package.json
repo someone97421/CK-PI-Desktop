@@ -3,7 +3,7 @@
   "version": "0.14.8-native.1",
   "desktopName": "pi-desktop.desktop",
   "private": true,
-  "description": "PI-Desktop Electron application",
+  "description": "这是一个助手 — local-first AI coding agent desktop app",
   "homepage": "https://github.com/vastsa/PI-Desktop",
   "author": {
     "name": "vastsa",
@@ -72,7 +72,7 @@
   },
   "build": {
     "appId": "com.pi-desktop.app",
-    "productName": "PI-Desktop",
+    "productName": "this-is-a-agent",
     "directories": {
       "output": "release"
     },
@@ -128,7 +128,7 @@
       }
     ],
     "mac": {
-      "artifactName": "PI-Desktop-${version}-${arch}-mac.${ext}",
+      "artifactName": "this-is-a-agent-${version}-${arch}-mac.${ext}",
       "target": [
         {
           "target": "dmg"
@@ -159,7 +159,7 @@
       ]
     },
     "dmg": {
-      "artifactName": "PI-Desktop-${version}-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-${version}-${arch}.${ext}",
       "background": "build/dmg-background.png",
       "window": {
         "width": 720,
@@ -188,7 +188,7 @@
       ]
     },
     "win": {
-      "executableName": "PI-Desktop",
+      "executableName": "this-is-a-agent",
       "target": [
         {
           "target": "nsis",
@@ -218,11 +218,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "PI-Desktop",
-      "artifactName": "PI-Desktop-Setup-${version}.${ext}"
+      "shortcutName": "这是一个助手",
+      "artifactName": "this-is-a-agent-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "PI-Desktop-Portable-${version}.${ext}",
+      "artifactName": "this-is-a-agent-Portable-${version}.${ext}",
       "requestExecutionLevel": "user"
     },
     "deb": {

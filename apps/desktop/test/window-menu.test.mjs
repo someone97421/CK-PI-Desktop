@@ -301,7 +301,11 @@ test("Windows/Linux explicit minimize paths use the native taskbar", () => {
     },
   ]);
   assert.match(iconScriptSource, /tray-icon-mac\.png/);
-  assert.match(iconScriptSource, /ImageChops\.multiply/);
+  // The macOS tray asset must stay a transparent monochrome silhouette. The
+  // derivation reads the alpha channel, so it survives an artwork change
+  // instead of depending on one hardcoded crop of the old logo.
+  assert.match(iconScriptSource, /alpha = master\.getchannel\("A"\)/);
+  assert.match(iconScriptSource, /putalpha\(tray_alpha\)/);
 });
 
 test("Windows taskbar minimize keeps the taskbar entry", () => {

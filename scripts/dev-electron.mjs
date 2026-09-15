@@ -16,7 +16,10 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const APP_NAME = "PI-Desktop";
+// Bundle directories, the executable and CFBundleExecutable must stay ASCII;
+// only the display-name plist keys carry the Chinese product name.
+const APP_NAME = "this-is-a-agent";
+const DISPLAY_NAME = "这是一个助手";
 const DEV_BUNDLE_ID = "com.pi-desktop.app.dev";
 const BRANDING_SCHEMA = "v2";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,9 +92,9 @@ export function prepareMacDevelopmentBundle({
     copyFileSync(iconPath, join(resources, "icon.icns"));
 
     const plistPath = join(contents, "Info.plist");
-    setPlistString(plistPath, "CFBundleDisplayName", APP_NAME);
-    setPlistString(plistPath, "CFBundleName", APP_NAME);
-    setPlistString(plistPath, "CFBundleExecutable", APP_NAME);
+  setPlistString(plistPath, "CFBundleDisplayName", DISPLAY_NAME);
+  setPlistString(plistPath, "CFBundleName", DISPLAY_NAME);
+  setPlistString(plistPath, "CFBundleExecutable", APP_NAME);
     setPlistString(plistPath, "CFBundleIdentifier", DEV_BUNDLE_ID);
     setPlistString(plistPath, "CFBundleIconFile", "icon.icns");
 

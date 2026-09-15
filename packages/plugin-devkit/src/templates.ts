@@ -434,7 +434,7 @@ function panelHtml(vars: TemplateVars): string {
         if (window.pluginBridge?.invoke) {
           await window.pluginBridge.invoke("ui.showToast", { message: "${vars.name} panel bridge" });
         } else {
-          alert("pluginBridge is unavailable outside PI-Desktop");
+          alert("pluginBridge is unavailable outside 这是一个助手");
         }
       });
     </script>

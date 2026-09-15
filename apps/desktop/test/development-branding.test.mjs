@@ -47,13 +47,13 @@ test("Windows runtime registers the canonical native application identity", () =
   assert.match(mainIndexSource, /app\.setName\(APP_NAME\)/);
   assert.match(
     mainIndexSource,
-    /process\.platform === "win32"[\s\S]*app\.setAppUserModelId\(APP_ID\)/,
+    /process\.platform === "win32"[\s\S]*app\.setAppUserModelId\(\s*app\.isPackaged \? APP_ID : `\$\{APP_ID\}\.dev`\s*\)/,
   );
 });
 
-test("Windows packages pin PI-Desktop executable and shortcut names", () => {
-  assert.equal(packageJson.build.win.executableName, "PI-Desktop");
-  assert.equal(packageJson.build.nsis.shortcutName, "PI-Desktop");
+test("Windows packages pin the ASCII executable and the display shortcut name", () => {
+  assert.equal(packageJson.build.win.executableName, "this-is-a-agent");
+  assert.equal(packageJson.build.nsis.shortcutName, "这是一个助手");
 });
 
 test("Windows packages and windows use the canonical PI-Desktop icon", () => {
@@ -115,9 +115,12 @@ test("macOS development launches from a branded host bundle", () => {
   assert.match(devScriptSource, /process\.platform === "darwin"/);
   assert.match(devScriptSource, /PI_DESKTOP_DEV: "1"/);
   assert.match(devScriptSource, /ELECTRON_EXEC_PATH/);
-  assert.match(devScriptSource, /CFBundleDisplayName", APP_NAME/);
-  assert.match(devScriptSource, /CFBundleName", APP_NAME/);
+  assert.match(devScriptSource, /CFBundleDisplayName", DISPLAY_NAME/);
+  assert.match(devScriptSource, /CFBundleName", DISPLAY_NAME/);
   assert.match(devScriptSource, /CFBundleExecutable", APP_NAME/);
+  // Bundle directories and the executable stay ASCII; only plist display
+  // fields carry the Chinese product name.
+  assert.match(devScriptSource, /const APP_NAME = "this-is-a-agent"/);
   assert.match(devScriptSource, /CFBundleIconFile", "icon\.icns"/);
   assert.match(
     devScriptSource,
@@ -188,7 +191,7 @@ test(
         await readFile(join(brandedContents, "Resources", "icon.icns"), "utf8"),
         "canonical-icon",
       );
-      assert.match(plist, /<string>PI-Desktop<\/string>/);
+      assert.match(plist, /<string>这是一个助手<\/string>/);
       assert.match(plist, /<string>com\.pi-desktop\.app\.dev<\/string>/);
       assert.equal(prepareMacDevelopmentBundle(options), brandedExecutable);
     } finally {

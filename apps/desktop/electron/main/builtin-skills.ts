@@ -93,7 +93,7 @@ export function builtinSkills(input: BuiltinSkillInput): PluginSkillDef[] {
   return [
     {
       id: PLUGIN_DEV_SKILL_ID,
-      name: parsed.name ?? "PI-Desktop plugin development",
+      name: parsed.name ?? "this-is-a-agent plugin development",
       description: parsed.description,
     },
   ];
@@ -113,7 +113,7 @@ export function loadBuiltinSkillBody(
   if (!parsed.body) return null;
   return {
     id: PLUGIN_DEV_SKILL_ID,
-    name: parsed.name ?? "PI-Desktop plugin development",
+    name: parsed.name ?? "this-is-a-agent plugin development",
     body: parsed.body,
   };
 }

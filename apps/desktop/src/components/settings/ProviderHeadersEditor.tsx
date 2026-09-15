@@ -15,9 +15,9 @@ type HeaderPreset = {
 };
 
 const HEADER_PRESETS: HeaderPreset[] = [
-  { key: "User-Agent", value: `pi-desktop/${APP_VERSION}` },
-  { key: "X-Client-Name", value: "PI-Desktop" },
-  { key: "X-Title", value: "PI-Desktop" },
+  { key: "User-Agent", value: `this-is-a-agent/${APP_VERSION}` },
+  { key: "X-Client-Name", value: "this-is-a-agent" },
+  { key: "X-Title", value: "this-is-a-agent" },
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {

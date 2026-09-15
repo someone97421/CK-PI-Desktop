@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { isAbsolute, resolve, sep } from "node:path";
+import { APP_SLUG } from "@pi-desktop/shared";
 import type { PluginMcpServerContrib } from "@pi-desktop/plugin-sdk";
 
 /** MCP revision we advertise during the handshake. */
@@ -473,7 +474,7 @@ export class McpServerClient {
         {
           protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {},
-          clientInfo: { name: "PI-Desktop", version: "1" },
+          clientInfo: { name: APP_SLUG, version: "1" },
         },
         timeoutMs,
       );
