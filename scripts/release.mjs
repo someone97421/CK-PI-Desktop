@@ -10,7 +10,7 @@
  * change), and refuses when v<version> exists locally or on origin.
  *
  * BEFORE running this for a stable release, update every version-bearing
- * document (D164 + D260, docs/spec/06-delivery/06-release-runbook.md section 4.1):
+ * document (D164 + D260, docs/archive/spec/06-delivery/06-release-runbook.md section 4.1):
  *   - apps/desktop/resources/models.dev/api.json is refreshed from models.dev
  *     and committed with the release tag
  *   - packages/shared/src/changelog*.ts (one entry for <version> in every
@@ -125,7 +125,7 @@ function bumpPackageJson(relPath) {
 
 bumpPackageJson("package.json");
 // `docs` is a third workspace root (pnpm-workspace.yaml), not under apps/packages.
-bumpPackageJson("docs/package.json");
+bumpPackageJson("docs/archive/package.json");
 for (const group of ["apps", "packages"]) {
   for (const dir of readdirSync(path.join(root, group), { withFileTypes: true })) {
     if (dir.isDirectory()) bumpPackageJson(path.join(group, dir.name, "package.json"));

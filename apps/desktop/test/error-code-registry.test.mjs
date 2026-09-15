@@ -14,7 +14,7 @@ import { ErrorCodes } from "@pi-desktop/shared";
 const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const read = (relative) => readFileSync(join(root, relative), "utf8");
 
-const errorCodesDoc = read("docs/spec/03-runtime/08-error-codes.md");
+const errorCodesDoc = read("docs/archive/spec/03-runtime/08-error-codes.md");
 const documented = new Set(
   [...errorCodesDoc.matchAll(/`([A-Z][A-Z0-9_]{3,})`/g)].map((m) => m[1]),
 );

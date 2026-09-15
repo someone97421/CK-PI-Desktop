@@ -1,7 +1,7 @@
 # Example Plugins
 
 Sample plugins for development, specification, and integration tests. Start
-with the [zero-to-one plugin development guide](../../docs/plugin-development.md)
+with the [zero-to-one plugin development guide](../../docs/archive/plugin-development.md)
 before using these as API references.
 
 ## hello
@@ -20,11 +20,11 @@ Reference example covering:
 
 Related specs:
 
-- `docs/spec/07-plugins/01-plugin-system.md`
-- `docs/spec/07-plugins/02-plugin-manifest-schema.md`
-- `docs/spec/07-plugins/03-plugin-api.md`
-- `docs/spec/07-plugins/05-plugin-lifecycle.md`
-- `docs/spec/07-plugins/09-plugin-command-palette.md`
+- `docs/archive/spec/07-plugins/01-plugin-system.md`
+- `docs/archive/spec/07-plugins/02-plugin-manifest-schema.md`
+- `docs/archive/spec/07-plugins/03-plugin-api.md`
+- `docs/archive/spec/07-plugins/05-plugin-lifecycle.md`
+- `docs/archive/spec/07-plugins/09-plugin-command-palette.md`
 
 Panel chrome contract:
 

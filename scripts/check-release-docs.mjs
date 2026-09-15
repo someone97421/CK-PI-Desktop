@@ -7,7 +7,7 @@
  *   node scripts/check-release-docs.mjs             # check against package.json
  *   node scripts/check-release-docs.mjs <version>   # check against an explicit version
  *
- * Checks (D260, docs/spec/06-delivery/06-release-runbook.md section 4.1):
+ * Checks (D260, docs/archive/spec/06-delivery/06-release-runbook.md section 4.1):
  *   1. Workspace version surfaces agree: every workspace package.json,
  *      [workspace.package] in Cargo.toml, the host-core Cargo.lock entry, and
  *      APP_VERSION in packages/shared/src/protocol.ts.
@@ -47,7 +47,7 @@ const version = requested ?? JSON.parse(read("package.json")).version;
 const releaseLine = `${version.split(".").slice(0, 2).join(".")}.x`;
 
 // 1. Version surfaces.
-const packageFiles = ["package.json", "docs/package.json"];
+const packageFiles = ["package.json", "docs/archive/package.json"];
 for (const group of ["apps", "packages"]) {
   for (const dir of readdirSync(path.join(root, group), { withFileTypes: true })) {
     const relPath = path.join(group, dir.name, "package.json");
@@ -189,7 +189,7 @@ for (const relPath of ["README.md", "README.zh-CN.md"]) {
 if (failures.length > 0) {
   console.error(`Release documentation is not aligned with ${version}:`);
   for (const failure of failures) console.error(`  - ${failure}`);
-  console.error("\nSee docs/spec/06-delivery/06-release-runbook.md section 4.1.");
+  console.error("\nSee docs/archive/spec/06-delivery/06-release-runbook.md section 4.1.");
   process.exit(1);
 }
 console.log(`Release documentation is aligned with ${version} (${releaseLine} line).`);

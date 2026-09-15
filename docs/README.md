@@ -1,39 +1,22 @@
-# PI-Desktop Docs
+# PI-Desktop（个人 fork）文档
 
-`docs/` is a VitePress project. The published site starts at [`index.md`](index.md);
-the repository's English technical source of truth remains organized under
-`spec/` and `adr/`.
+本仓库是 `someone97421/CK-PI-Desktop`，个人自用魔改版，不向上游提交贡献。
+文档体系已精简为三个活跃文件 + 一个只读归档。
 
-## Local commands
+| 文档 | 用途 |
+|---|---|
+| [`../AGENTS.md`](../AGENTS.md) | AI 代理强制规则（含单人 fork 精简流程，见 §0） |
+| [`PROGRESS.md`](PROGRESS.md) | 进度表，序号从 `#0` 开始 |
+| [`DECISIONS.md`](DECISIONS.md) | fork 本地决策日志，编号 `F001` 起 |
+| [`archive/`](archive/) | 上游继承的整套文档（spec / ADR / project / zh-CN / 文档站点），只读参考 |
 
-```bash
-pnpm docs:dev
-pnpm docs:build
-pnpm docs:preview
-pnpm docs:check
-```
+## 约定
 
-## Layout notes
-
-- `spec/` and `adr/` are the English source of truth; `zh-CN/` mirrors
-  `spec/` and `guide/` path for path and is checked by `pnpm docs:check`.
-- `image/` holds pictures embedded by the repository READMEs. `public/` holds
-  assets served by the site itself (brand mark, screenshots).
-- `project/` keeps historical planning records; current status lives in the
-  changelog and GitHub Issues.
-
-## Entry points
-
-- [English documentation site](index.md)
-- [中文入口](zh-CN/index.md)
-- [Quick guide](guide/index.md)
-- [Specification index](spec/README.md)
-- [ADR index](adr/README.md)
-- [Plugin development](plugin-development.md)
-- [Visual verification](project/2026-08-13-docs-redesign-verification.md)
-
-The Chinese entry point mirrors the English reading paths and includes a
-path-for-path companion for every specification. Each translated page links to
-the canonical English source and preserves code, protocol fields, and
-identifiers. The generated sidebar keeps both locale trees complete as the
-specification set grows.
+- 涉及架构边界、公共接口、数据所有权、安全边界或可观察行为的改动，必须在
+  `DECISIONS.md` 记一条 `F###`。
+- 进度以 `PROGRESS.md` 为准。上游的 milestone / spec / ADR 编号不再作为本 fork
+  的进度来源。
+- 上游决策编号 `D###` 与 ADR 编号 `0###` 保留在 `archive/` 中，本 fork 不复用，
+  以免撞号。
+- 归档内容只作为背景参考。除非明确要求，不要按归档里的发布、打包、PR 流程
+  执行；以 `AGENTS.md` §0 的单人流程为准。

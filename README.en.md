@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/image/readme/logo.png" alt="PI-Desktop" width="108" />
+<img src="docs/archive/image/readme/logo.png" alt="PI-Desktop" width="108" />
 
 # PI-Desktop
 
@@ -22,13 +22,13 @@ Local-first · Model-agnostic · Extensible · macOS / Windows / Linux
 
 **[Download](https://github.com/vastsa/PI-Desktop/releases/latest)** ·
 [Documentation](https://pi-docs.aiuo.net/) ·
-[Screenshots](docs/guide/screenshots.md) ·
-[Build a Plugin](docs/plugin-development.md) ·
+[Screenshots](docs/archive/guide/screenshots.md) ·
+[Build a Plugin](docs/archive/plugin-development.md) ·
 [简体中文](README.md)
 
 <br />
 
-<img src="docs/image/readme/home.webp" alt="PI-Desktop desktop workspace" width="94%" />
+<img src="docs/archive/image/readme/home.webp" alt="PI-Desktop desktop workspace" width="94%" />
 
 <br />
 
@@ -128,14 +128,14 @@ Privileged tools still go through the permission layer in every mode.
 <tr>
 <td width="50%">
 
-<img src="docs/image/readme/chat_en.png" alt="PI-Desktop conversation" />
+<img src="docs/archive/image/readme/chat_en.png" alt="PI-Desktop conversation" />
 
 <p align="center"><sub>Long-running conversations with transcript navigation</sub></p>
 
 </td>
 <td width="50%">
 
-<img src="docs/image/readme/model_en.png" alt="PI-Desktop model selection" />
+<img src="docs/archive/image/readme/model_en.png" alt="PI-Desktop model selection" />
 
 <p align="center"><sub>Switch providers, models, and reasoning levels per session</sub></p>
 
@@ -144,14 +144,14 @@ Privileged tools still go through the permission layer in every mode.
 <tr>
 <td width="50%">
 
-<img src="docs/image/readme/plugins_en.png" alt="PI-Desktop plugin marketplace" />
+<img src="docs/archive/image/readme/plugins_en.png" alt="PI-Desktop plugin marketplace" />
 
 <p align="center"><sub>Extend the workspace through the plugin marketplace</sub></p>
 
 </td>
 <td width="50%">
 
-<img src="docs/image/readme/addmodel_en.png" alt="PI-Desktop model configuration" />
+<img src="docs/archive/image/readme/addmodel_en.png" alt="PI-Desktop model configuration" />
 
 <p align="center"><sub>Add a provider and connect a model</sub></p>
 
@@ -160,7 +160,7 @@ Privileged tools still go through the permission layer in every mode.
 </table>
 
 <p align="center">
-<a href="docs/guide/screenshots.md"><strong>Explore all screenshots →</strong></a>
+<a href="docs/archive/guide/screenshots.md"><strong>Explore all screenshots →</strong></a>
 </p>
 
 ---
@@ -220,14 +220,14 @@ Workers inherit the parent project's provider, model, thinking level, and permis
 <tr>
 <td width="50%">
 
-<img src="docs/image/readme/session-orchestrator-overview.png" alt="PI-Desktop Session Orchestrator coordinating worker sessions" />
+<img src="docs/archive/image/readme/session-orchestrator-overview.png" alt="PI-Desktop Session Orchestrator coordinating worker sessions" />
 
 <p align="center"><sub>Coordinate multiple durable worker sessions from one conversation</sub></p>
 
 </td>
 <td width="50%">
 
-<img src="docs/image/readme/session-orchestrator-worker.png" alt="PI-Desktop Session Orchestrator worker session" />
+<img src="docs/archive/image/readme/session-orchestrator-worker.png" alt="PI-Desktop Session Orchestrator worker session" />
 
 <p align="center"><sub>Open a worker session and inspect its progress independently</sub></p>
 
@@ -235,7 +235,7 @@ Workers inherit the parent project's provider, model, thinking level, and permis
 </tr>
 </table>
 
-**[Build your first plugin →](docs/plugin-development.md)**
+**[Build your first plugin →](docs/archive/plugin-development.md)**
 
 > [!NOTE]
 > Plugin processes are permission-gated and isolated from the renderer, but plugins are still user-trusted code rather than a complete operating-system sandbox. Only install plugins you trust.
@@ -434,7 +434,7 @@ The renderer has no Node integration.
 
 The **Rust Host Core** owns privileged workspace operations, permissions, persistence, and secrets. The **pi Agent Sidecar** owns model interaction and the agent loop. Electron coordinates the desktop lifecycle while keeping those responsibilities separated.
 
-**[Read the architecture specification →](docs/spec/02-architecture/01-architecture.md)**
+**[Read the architecture specification →](docs/archive/spec/02-architecture/01-architecture.md)**
 
 ---
 
@@ -464,7 +464,7 @@ Current priorities include:
 - stronger plugin sandboxing and publisher verification
 - broader UI-driven end-to-end coverage
 
-Follow development through the [project board](docs/project/BOARD.md) and [milestones](docs/spec/06-delivery/01-mvp-milestones.md).
+Follow development through the [project board](docs/archive/project/BOARD.md) and [milestones](docs/archive/spec/06-delivery/01-mvp-milestones.md).
 
 ---
 
@@ -519,12 +519,12 @@ pnpm docs:check
 Useful references:
 
 - [Documentation](https://pi-docs.aiuo.net/)
-- [Specification index](docs/spec/README.md)
-- [Architecture](docs/spec/02-architecture/01-architecture.md)
-- [Product scope](docs/spec/01-product/01-product-scope.md)
-- [Plugin development](docs/plugin-development.md)
-- [E2E test plan](docs/spec/06-delivery/04-e2e-test-plan.md)
-- [Release runbook](docs/spec/06-delivery/06-release-runbook.md)
+- [Specification index](docs/archive/spec/README.md)
+- [Architecture](docs/archive/spec/02-architecture/01-architecture.md)
+- [Product scope](docs/archive/spec/01-product/01-product-scope.md)
+- [Plugin development](docs/archive/plugin-development.md)
+- [E2E test plan](docs/archive/spec/06-delivery/04-e2e-test-plan.md)
+- [Release runbook](docs/archive/spec/06-delivery/06-release-runbook.md)
 - [Repository agent guide](AGENTS.md)
 
 ---
@@ -535,11 +535,11 @@ Issues, bug reports, feature proposals, documentation improvements, plugins, Ski
 
 For larger changes, opening an issue first makes it easier to align the implementation with the existing architecture and product contracts.
 
-When working in the repository, start with [AGENTS.md](AGENTS.md) and the [specification index](docs/spec/README.md).
+When working in the repository, start with [AGENTS.md](AGENTS.md) and the [specification index](docs/archive/spec/README.md).
 
 **[Report an issue](https://github.com/vastsa/PI-Desktop/issues/new/choose)** ·
 [View open issues](https://github.com/vastsa/PI-Desktop/issues) ·
-[Build a plugin](docs/plugin-development.md)
+[Build a plugin](docs/archive/plugin-development.md)
 
 ---
 

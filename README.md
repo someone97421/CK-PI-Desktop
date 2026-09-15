@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/image/readme/logo.png" alt="PI-Desktop" width="108" />
+<img src="docs/archive/image/readme/logo.png" alt="PI-Desktop" width="108" />
 
 # PI-Desktop
 
@@ -22,13 +22,13 @@
 
 **[立即下载](https://github.com/vastsa/PI-Desktop/releases/latest)** ·
 [使用文档](https://pi-docs.aiuo.net/) ·
-[界面预览](docs/guide/screenshots.md) ·
-[开发插件](docs/plugin-development.md) ·
+[界面预览](docs/archive/guide/screenshots.md) ·
+[开发插件](docs/archive/plugin-development.md) ·
 [English](README.en.md)
 
 <br />
 
-<img src="docs/image/readme/home.webp" alt="PI-Desktop 桌面工作台" width="94%" />
+<img src="docs/archive/image/readme/home.webp" alt="PI-Desktop 桌面工作台" width="94%" />
 
 <br />
 
@@ -153,14 +153,14 @@ Skills、MCP、Subagents、pi extensions、Plugins 都可以接。
 <tr>
 <td width="50%">
 
-<img src="docs/image/readme/chat_en.png" alt="PI-Desktop 会话" />
+<img src="docs/archive/image/readme/chat_en.png" alt="PI-Desktop 会话" />
 
 <p align="center"><sub>长会话、消息导航、持续工作流</sub></p>
 
 </td>
 <td width="50%">
 
-<img src="docs/image/readme/model_en.png" alt="PI-Desktop 模型切换" />
+<img src="docs/archive/image/readme/model_en.png" alt="PI-Desktop 模型切换" />
 
 <p align="center"><sub>每个会话都可以自由切换模型、Provider 与推理等级</sub></p>
 
@@ -169,14 +169,14 @@ Skills、MCP、Subagents、pi extensions、Plugins 都可以接。
 <tr>
 <td width="50%">
 
-<img src="docs/image/readme/plugins_en.png" alt="PI-Desktop 插件市场" />
+<img src="docs/archive/image/readme/plugins_en.png" alt="PI-Desktop 插件市场" />
 
 <p align="center"><sub>通过插件市场扩展整个桌面工作台</sub></p>
 
 </td>
 <td width="50%">
 
-<img src="docs/image/readme/addmodel_en.png" alt="PI-Desktop 模型配置" />
+<img src="docs/archive/image/readme/addmodel_en.png" alt="PI-Desktop 模型配置" />
 
 <p align="center"><sub>接入你自己的模型与 API</sub></p>
 
@@ -185,7 +185,7 @@ Skills、MCP、Subagents、pi extensions、Plugins 都可以接。
 </table>
 
 <p align="center">
-<a href="docs/guide/screenshots.md"><strong>查看更多界面截图 →</strong></a>
+<a href="docs/archive/guide/screenshots.md"><strong>查看更多界面截图 →</strong></a>
 </p>
 
 ---
@@ -264,14 +264,14 @@ Worker 会继承父会话的项目、Provider、模型、Thinking 等级和权�
 <tr>
 <td width="50%">
 
-<img src="docs/image/readme/session-orchestrator-overview.png" alt="PI-Desktop 对话编排插件协调多个 Worker 会话" />
+<img src="docs/archive/image/readme/session-orchestrator-overview.png" alt="PI-Desktop 对话编排插件协调多个 Worker 会话" />
 
 <p align="center"><sub>在一个会话中协调多个持久 Worker</sub></p>
 
 </td>
 <td width="50%">
 
-<img src="docs/image/readme/session-orchestrator-worker.png" alt="PI-Desktop 对话编排插件的 Worker 会话" />
+<img src="docs/archive/image/readme/session-orchestrator-worker.png" alt="PI-Desktop 对话编排插件的 Worker 会话" />
 
 <p align="center"><sub>打开 Worker 会话，独立查看执行进度</sub></p>
 
@@ -279,7 +279,7 @@ Worker 会继承父会话的项目、Provider、模型、Thinking 等级和权�
 </tr>
 </table>
 
-**[开发你的第一个 PI-Desktop 插件 →](docs/plugin-development.md)**
+**[开发你的第一个 PI-Desktop 插件 →](docs/archive/plugin-development.md)**
 
 > [!NOTE]
 > 插件进程拥有权限控制，并与 Renderer 隔离，但它仍属于用户主动信任的代码，而不是完整的操作系统级沙箱。请只安装你信任的插件。
@@ -557,7 +557,7 @@ Renderer 不启用 Node integration。
 
 Electron 负责桌面生命周期与不同组件之间的协调。
 
-**[阅读完整架构说明 →](docs/spec/02-architecture/01-architecture.md)**
+**[阅读完整架构说明 →](docs/archive/spec/02-architecture/01-architecture.md)**
 
 ---
 
@@ -624,8 +624,8 @@ PI-Desktop 目前仍处于 Early Preview，并在高频迭代。
 
 开发进度：
 
-[Project Board](docs/project/BOARD.md) ·
-[Milestones](docs/spec/06-delivery/01-mvp-milestones.md)
+[Project Board](docs/archive/project/BOARD.md) ·
+[Milestones](docs/archive/spec/06-delivery/01-mvp-milestones.md)
 
 ---
 
@@ -680,12 +680,12 @@ pnpm docs:check
 常用文档：
 
 - [使用文档](https://pi-docs.aiuo.net/)
-- [Specification Index](docs/spec/README.md)
-- [Architecture](docs/spec/02-architecture/01-architecture.md)
-- [Product Scope](docs/spec/01-product/01-product-scope.md)
-- [Plugin Development](docs/plugin-development.md)
-- [E2E Test Plan](docs/spec/06-delivery/04-e2e-test-plan.md)
-- [Release Runbook](docs/spec/06-delivery/06-release-runbook.md)
+- [Specification Index](docs/archive/spec/README.md)
+- [Architecture](docs/archive/spec/02-architecture/01-architecture.md)
+- [Product Scope](docs/archive/spec/01-product/01-product-scope.md)
+- [Plugin Development](docs/archive/plugin-development.md)
+- [E2E Test Plan](docs/archive/spec/06-delivery/04-e2e-test-plan.md)
+- [Release Runbook](docs/archive/spec/06-delivery/06-release-runbook.md)
 - [Repository Agent Guide](AGENTS.md)
 
 ---
@@ -709,11 +709,11 @@ pnpm docs:check
 
 如果准备直接改仓库，请先看：
 
-[AGENTS.md](AGENTS.md) 和 [Specification Index](docs/spec/README.md)。
+[AGENTS.md](AGENTS.md) 和 [Specification Index](docs/archive/spec/README.md)。
 
 **[提交 Issue](https://github.com/vastsa/PI-Desktop/issues/new/choose)** ·
 [查看 Open Issues](https://github.com/vastsa/PI-Desktop/issues) ·
-[开发插件](docs/plugin-development.md)
+[开发插件](docs/archive/plugin-development.md)
 
 ---
 

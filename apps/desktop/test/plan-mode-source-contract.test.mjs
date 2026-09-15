@@ -23,7 +23,7 @@ const [apiSource, appSource, composerSource, settingsSource, commandsSource, sto
     readTranscriptSource(),
     read("../src/components/PlanApprovalBar.tsx"),
     read("../src/components/ConversationTopbar.tsx"),
-    read("../../../docs/spec/04-ux/08-component-spec.md"),
+    read("../../../docs/archive/spec/04-ux/08-component-spec.md"),
     read("../../../packages/i18n/src/locales/en/index.ts"),
     read("../../../packages/i18n/src/locales/zh-CN/index.ts"),
     read("../src/lib/plan-mode-state.ts"),

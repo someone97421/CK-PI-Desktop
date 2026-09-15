@@ -7,8 +7,8 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const [registry, dispatch, specEn, specZh] = await Promise.all([
   read("../electron/main/builtin-commands.ts"),
   read("../src/lib/commands.ts"),
-  read("../../../docs/spec/04-ux/04-builtin-commands.md"),
-  read("../../../docs/zh-CN/spec/04-ux/04-builtin-commands.md"),
+  read("../../../docs/archive/spec/04-ux/04-builtin-commands.md"),
+  read("../../../docs/archive/zh-CN/spec/04-ux/04-builtin-commands.md"),
 ]);
 
 const coreIds = [

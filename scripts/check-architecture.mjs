@@ -114,7 +114,7 @@ function addedSourceFiles(base) {
 }
 
 function readAllowlist() {
-  const path = resolve(root, "docs/architecture/allowlist.json");
+  const path = resolve(root, "docs/archive/architecture/allowlist.json");
   if (!existsSync(path)) return { typescript: {}, rust: {} };
   const value = JSON.parse(readFileSync(path, "utf8"));
   return {
@@ -173,7 +173,7 @@ for (const entry of largeRust) {
   if (!allowlistReason(allowlist.rust, entry.path)) {
     failures.push(
       formatEntry(entry) +
-        " exceeds the Rust limit; add a documented entry to docs/architecture/allowlist.json",
+        " exceeds the Rust limit; add a documented entry to docs/archive/architecture/allowlist.json",
     );
   }
 }
@@ -194,7 +194,7 @@ for (const entry of largeNewTypeScript) {
       formatEntry(entry) +
         " is a new TypeScript source file over " +
         limits.newTypeScript.max +
-        " LOC; add a documented entry to docs/architecture/allowlist.json",
+        " LOC; add a documented entry to docs/archive/architecture/allowlist.json",
     );
   }
 }

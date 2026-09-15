@@ -1,7 +1,6 @@
 packages:
   - apps/*
   - packages/*
-  - docs
 # pnpm defaults to `lowest-direct`, which makes a plain `pnpm update` resolve
 # every range to its floor — silently downgrading dependencies instead of
 # refreshing them. Pin the intent: `pnpm update` means "newest within range".
