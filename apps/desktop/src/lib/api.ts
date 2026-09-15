@@ -119,6 +119,8 @@ import type {
   PiSyncApplyResult,
   PiSyncPreview,
   PiSyncStatus,
+  ProviderExportResult,
+  ProviderImportResult,
 } from "@pi-desktop/shared";
 export type {
   ModelConfigImportCandidate,
@@ -127,6 +129,8 @@ export type {
   PiSyncApplyResult,
   PiSyncPreview,
   PiSyncStatus,
+  ProviderExportResult,
+  ProviderImportResult,
 };
 
 export interface ImportCandidate {
@@ -486,6 +490,12 @@ export const api = {
   /** Vendor catalog plus every locally configured account for each vendor. */
   listOauthVendors: () =>
     invoke<{ vendors: OAuthVendor[] }>(IPC.invoke.providersOauthVendors),
+  /** Write every provider to a JSON file the user picks. */
+  exportProviderConfig: () =>
+    invoke<ProviderExportResult>(IPC.invoke.providersExportConfig),
+  /** Apply a previously exported JSON file; matching names update in place. */
+  importProviderConfig: () =>
+    invoke<ProviderImportResult>(IPC.invoke.providersImportConfig),
   /** Begin a login; progress arrives through `onOauthLogin`. */
   startOauthLogin: (vendorId: string) =>
     invoke<OAuthStartResult>(IPC.invoke.providersOauthStart, vendorId),

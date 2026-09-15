@@ -22,6 +22,8 @@ import {
   IconChevronDown,
   IconConfig,
   IconCopy,
+  IconDownload,
+  IconFolderOpen,
   IconPencil,
   IconPlug,
   IconPlus,
@@ -76,7 +78,57 @@ export function ModelConfigPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
+  // Export/import share one flag: both open a modal file dialog.
+  const [transferBusy, setTransferBusy] = useState<"export" | "import" | null>(null);
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus | null>(null);
+
+  /** Write every provider to a JSON file the user picks. */
+  const exportProviders = async () => {
+    if (transferBusy) return;
+    setTransferBusy("export");
+    try {
+      const result = await api.exportProviderConfig();
+      if (result.canceled) return;
+      if (!result.ok) throw new Error(result.error ?? "export failed");
+      showToast(
+        t("settings.exportProvidersDone", {
+          count: result.count,
+          keys: result.withCredentials,
+        }),
+        { variant: "success" },
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    } finally {
+      setTransferBusy(null);
+    }
+  };
+
+  /** Apply a previously exported file; matching names overwrite in place. */
+  const importProviders = async () => {
+    if (transferBusy) return;
+    setTransferBusy("import");
+    try {
+      const result = await api.importProviderConfig();
+      if (result.canceled) return;
+      await refreshProviders();
+      showToast(
+        t("settings.importProvidersDone", {
+          created: result.created,
+          updated: result.updated,
+          failed: result.failed,
+        }),
+        { variant: result.failed > 0 ? "error" : "success" },
+      );
+      if (result.errors.length > 0) {
+        showToast(result.errors.slice(0, 3).join("; "), { variant: "error" });
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    } finally {
+      setTransferBusy(null);
+    }
+  };
   // Two-step delete: the first click arms the row, the second removes it.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -397,12 +449,34 @@ export function ModelConfigPage() {
               <span className="provider-section-count">{aiProviders.length}</span>
             ) : null}
           </div>
-          <Button variant="primary" onClick={() => setSetupFor("")}>
-            <span className="model-config-btn-inner">
-              <IconPlus size={14} />
-              <span>{t("settings.addProvider")}</span>
-            </span>
-          </Button>
+          <div className="import-toolbar-actions">
+            <Button
+              variant="secondary"
+              disabled={transferBusy !== null}
+              onClick={() => void exportProviders()}
+            >
+              <span className="model-config-btn-inner">
+                <IconDownload size={14} />
+                <span>{t("settings.exportProviders")}</span>
+              </span>
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={transferBusy !== null}
+              onClick={() => void importProviders()}
+            >
+              <span className="model-config-btn-inner">
+                <IconFolderOpen size={14} />
+                <span>{t("settings.importProviders")}</span>
+              </span>
+            </Button>
+            <Button variant="primary" onClick={() => setSetupFor("")}>
+              <span className="model-config-btn-inner">
+                <IconPlus size={14} />
+                <span>{t("settings.addProvider")}</span>
+              </span>
+            </Button>
+          </div>
         </div>
 
         <div className="settings-panel model-provider-panel">

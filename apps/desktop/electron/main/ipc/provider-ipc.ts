@@ -1,6 +1,7 @@
 import { IPC, ErrorCodes, type ModelBinding, type OAuthRespondInput, type ThinkingLevel } from "@pi-desktop/shared";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
 import { discoverProviderModels } from "../model-discovery";
+import { exportProviderConfig, importProviderConfig } from "../provider-config-transfer";
 import { genericModelConfig, modelConfigWithBinding, mergeProviderHeaders } from "@pi-desktop/agent-runtime";
 import { modelConfigFromModelsDev, modelInfoFromModelsDev, type ModelsDevCatalog } from "../models-dev-catalog";
 import type { HostProcess } from "../host-process";
@@ -93,6 +94,14 @@ export function registerProviderIpc({
   handle(IPC.invoke.providersDelete, async (id: string) => {
     if (!host) throw new Error("host unavailable");
     return host.call("providers.delete", { id });
+  });
+  handle(IPC.invoke.providersExportConfig, async () => {
+    return exportProviderConfig({ getHost, logger });
+  });
+  handle(IPC.invoke.providersImportConfig, async () => {
+    const result = await importProviderConfig({ getHost, logger });
+    await modelsDevCatalog.ensureLoaded();
+    return result;
   });
   handle(IPC.invoke.providersTest, async (id: string) => {
     if (!host) throw new Error("host unavailable");

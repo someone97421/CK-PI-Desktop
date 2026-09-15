@@ -1,7 +1,10 @@
 export const PROTOCOL_VERSION = 11 as const;
 export const SCHEMA_VERSION = 16 as const;
 export const APP_ID = "com.pi-desktop.app";
-export const APP_NAME = "PI-Desktop";
+/** Display name for the UI, window title and OS surfaces. */
+export const APP_NAME = "这是一个助手";
+/** Filesystem- and protocol-safe name for paths, executables and peers. */
+export const APP_SLUG = "this-is-a-agent";
 export const APP_VERSION = "0.14.8-native.1";
 
 export const APP_MENU_COMMANDS = [
@@ -150,6 +153,8 @@ export const IPC = {
     providersTest: "pi-desktop/providers/testConnection",
     providersListModels: "pi-desktop/providers/listModels",
     providersRefreshModelCatalog: "pi-desktop/providers/refreshModelCatalog",
+    providersExportConfig: "pi-desktop/providers/exportConfig",
+    providersImportConfig: "pi-desktop/providers/importConfig",
     providersModelCatalogStatus: "pi-desktop/providers/modelCatalogStatus",
     providersOauthVendors: "pi-desktop/providers/oauth/vendors",
     providersOauthStart: "pi-desktop/providers/oauth/start",

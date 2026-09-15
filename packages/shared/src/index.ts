@@ -34,6 +34,7 @@ export * from "./skill-catalog.js";
 export * from "./skill-catalog-builtin.js";
 export * from "./model-config-import.js";
 export * from "./pi-config-sync.js";
+export * from "./provider-config-transfer.js";
 export * from "./theme.js";
 export * from "./thinking-levels.js";
 export * from "./command-shells.js";
