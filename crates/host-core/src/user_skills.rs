@@ -3,6 +3,7 @@ use crate::agent_capabilities::{
     capability_dir, capability_id, file_timestamp, normalize_project_path, parse_front_matter,
     path_stem_for_id, slugify, sorted_files, valid_capability_id, CapabilityLevel, CapabilityState,
 };
+use crate::skill_roots::SkillRoots;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -14,6 +15,8 @@ pub const MAX_SKILL_BYTES: usize = 128 * 1024;
 const MAX_NAME_CHARS: usize = 120;
 const MAX_DESCRIPTION_CHARS: usize = 400;
 const SKILL_KIND: &str = "skills";
+/// Documents read from a user-configured extra path; never written by host-core.
+const LINKED_SOURCE: &str = "linked";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +58,10 @@ pub struct UserSkillInput {
 
 pub struct UserSkillRegistry {
     state: CapabilityState,
+    roots: SkillRoots,
+    /// Test seam: replaces the resolved global skills directory so the suite
+    /// never reads the developer's real `~/.agents/skills`.
+    global_skills_dir: Option<PathBuf>,
 }
 
 fn clip(value: &str, max_chars: usize) -> String {
@@ -124,11 +131,63 @@ fn merge_active_records(
     result
 }
 
+/// Direct `*.md` documents plus the conventional `<skill>/SKILL.md` shape. The
+/// same rule applies to the managed directories and to an extra read-only path,
+/// so pointing at another agent's skills root picks up both layouts.
+fn collect_skill_paths(directory: &Path, out: &mut Vec<PathBuf>) {
+    out.extend(sorted_files(directory, "md"));
+    if let Ok(entries) = fs::read_dir(directory) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let skill_file = path.join("SKILL.md");
+                if skill_file.is_file() {
+                    out.push(skill_file);
+                }
+            }
+        }
+    }
+}
+
 impl UserSkillRegistry {
     pub fn new(data_dir: &Path) -> Self {
         Self {
             state: CapabilityState::new(data_dir, SKILL_KIND),
+            roots: SkillRoots::new(data_dir),
+            global_skills_dir: None,
         }
+    }
+
+    #[cfg(test)]
+    pub fn with_global_skills_dir(mut self, dir: PathBuf) -> Self {
+        self.global_skills_dir = Some(dir);
+        self
+    }
+
+    fn skills_directory(
+        &self,
+        level: CapabilityLevel,
+        project_path: Option<&str>,
+    ) -> Result<PathBuf> {
+        if level == CapabilityLevel::Global {
+            if let Some(dir) = &self.global_skills_dir {
+                return Ok(dir.clone());
+            }
+        }
+        capability_dir(level, project_path, "skills")
+    }
+
+    /// Extra directories whose skills are referenced read-only.
+    pub fn roots(&self) -> Vec<String> {
+        self.roots.list().to_vec()
+    }
+
+    pub fn add_root(&mut self, path: &str) -> Result<Vec<String>> {
+        self.roots.add(path)
+    }
+
+    pub fn remove_root(&mut self, path: &str) -> Result<Vec<String>> {
+        self.roots.remove(path)
     }
 
     fn scan_level(
@@ -137,23 +196,22 @@ impl UserSkillRegistry {
         project_path: Option<&str>,
         effective_project: Option<&str>,
     ) -> Result<Vec<UserSkillRecord>> {
-        let directory = capability_dir(level, project_path, "skills")?;
-        let mut paths = sorted_files(&directory, "md");
-        // Support the conventional `<skill>/SKILL.md` shape without making a
-        // directory import necessary. Direct markdown files remain the shape
-        // produced by the single-file importer.
-        if let Ok(entries) = fs::read_dir(&directory) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    let skill_file = path.join("SKILL.md");
-                    if skill_file.is_file() {
-                        paths.push(skill_file);
-                    }
-                }
+        let directory = self.skills_directory(level, project_path)?;
+        let mut local = Vec::new();
+        collect_skill_paths(&directory, &mut local);
+        local.sort();
+        let mut paths: Vec<(PathBuf, bool)> =
+            local.into_iter().map(|path| (path, false)).collect();
+        if level == CapabilityLevel::Global {
+            // Extra paths are global-only and read live, so edits made by the
+            // other agent show up on the next list without a re-import.
+            for root in self.roots.list() {
+                let mut linked = Vec::new();
+                collect_skill_paths(Path::new(root), &mut linked);
+                linked.sort();
+                paths.extend(linked.into_iter().map(|path| (path, true)));
             }
         }
-        paths.sort();
 
         let owner_project_path = if level == CapabilityLevel::Project {
             project_path.map(normalize_project_path)
@@ -162,7 +220,7 @@ impl UserSkillRegistry {
         };
         let mut records = Vec::new();
         let mut seen = HashSet::new();
-        for path in paths {
+        for (path, linked) in paths {
             let raw = match fs::read_to_string(&path) {
                 Ok(raw) if raw.len() <= MAX_SKILL_BYTES => raw,
                 _ => continue,
@@ -200,7 +258,7 @@ impl UserSkillRegistry {
                 description,
                 enabled,
                 scope,
-                source: "imported".into(),
+                source: if linked { LINKED_SOURCE } else { "imported" }.into(),
                 path: path.to_string_lossy().to_string(),
                 size_bytes: raw.len() as u64,
                 created_at: updated_at.clone(),
@@ -381,6 +439,9 @@ impl UserSkillRegistry {
         let Some(record) = record else {
             return Ok(None);
         };
+        if record.source == LINKED_SOURCE {
+            bail!("SKILL_READONLY: a skill from an extra path cannot be edited here");
+        }
         let raw = fs::read_to_string(&record.path)?;
         let (front, old_body) = parse_front_matter(&raw);
         let name = input
@@ -446,6 +507,9 @@ impl UserSkillRegistry {
         let Some(record) = self.find(id, level, project_path)? else {
             return Ok(false);
         };
+        if record.source == LINKED_SOURCE {
+            bail!("SKILL_READONLY: a skill from an extra path cannot be removed here");
+        }
         fs::remove_file(&record.path).ok();
         let level = record
             .level
@@ -684,5 +748,75 @@ mod tests {
             .unwrap();
         let ids: Vec<_> = listed.iter().map(|record| record.id.as_str()).collect();
         assert_eq!(ids, vec!["docx", "pdf"]);
+    }
+
+    #[test]
+    fn extra_roots_are_listed_and_read_only() {
+        let app = tempdir().unwrap();
+        let external = app.path().join("other-agent");
+        fs::create_dir_all(external.join("pdf-review")).unwrap();
+        fs::write(
+            external.join("pdf-review/SKILL.md"),
+            "---\nname: PDF Review\n---\n\nCheck the PDF.\n",
+        )
+        .unwrap();
+        fs::write(
+            external.join("standalone.md"),
+            "---\nname: Standalone\n---\n\nBody.\n",
+        )
+        .unwrap();
+
+        let mut registry = UserSkillRegistry::new(app.path())
+            .with_global_skills_dir(app.path().join("global/skills"));
+        registry.add_root(external.to_str().unwrap()).unwrap();
+
+        let listed = registry.list(CapabilityLevel::Global, None).unwrap();
+        let names: Vec<_> = listed.iter().map(|record| record.name.as_str()).collect();
+        // Both the `<skill>/SKILL.md` and the direct `*.md` shapes are picked up.
+        assert!(names.contains(&"PDF Review"));
+        assert!(names.contains(&"Standalone"));
+        assert!(listed.iter().all(|record| record.source == LINKED_SOURCE));
+        // Referenced skills are usable without an explicit enable step.
+        assert!(listed.iter().all(|record| record.enabled));
+
+        let id = listed[0].id.clone();
+        assert!(registry
+            .update(&id, input("Renamed", "global", None))
+            .is_err());
+        assert!(registry
+            .remove(&id, Some(CapabilityLevel::Global), None)
+            .is_err());
+        assert!(fs::read_to_string(external.join("pdf-review/SKILL.md")).is_ok());
+    }
+
+    #[test]
+    fn project_skills_shadow_a_linked_skill_with_the_same_name() {
+        let app = tempdir().unwrap();
+        let external = app.path().join("other-agent");
+        let project = app.path().join("project");
+        fs::create_dir_all(&external).unwrap();
+        fs::create_dir_all(project.join(".agents/skills")).unwrap();
+        fs::write(
+            external.join("review.md"),
+            "---\nname: Review\n---\n\nLinked\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join(".agents/skills/review.md"),
+            "---\nname: Review\n---\n\nProject\n",
+        )
+        .unwrap();
+
+        let mut registry = UserSkillRegistry::new(app.path())
+            .with_global_skills_dir(app.path().join("global/skills"));
+        registry.add_root(external.to_str().unwrap()).unwrap();
+        let active = registry.active_for(Some(project.to_str().unwrap())).unwrap();
+
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].source, "imported");
+        assert_eq!(
+            fs::read_to_string(&active[0].path).unwrap().trim(),
+            "---\nname: Review\n---\n\nProject"
+        );
     }
 }

@@ -154,6 +154,32 @@ export function registerSkillsIpc({
     },
   );
 
+  // --- Extra read-only skill paths ------------------------------------------
+
+  /**
+   * Skill directories outside `~/.agents/skills` that the user references.
+   * They are read live and never written, so another agent keeps ownership of
+   * the documents while their skills show up in the same catalog.
+   */
+  handle(IPC.invoke.skillRootsList, async () => {
+    if (!host) throw new Error("host unavailable");
+    return host.call<{ roots: string[] }>("skills.roots.list", {});
+  });
+
+  handle(IPC.invoke.skillRootsAdd, async (path: string) => {
+    if (!host) throw new Error("host unavailable");
+    const res = await host.call<{ roots: string[] }>("skills.roots.add", { path });
+    sendToRenderer(IPC.event.pluginChanged, { reason: "skill" });
+    return res;
+  });
+
+  handle(IPC.invoke.skillRootsRemove, async (path: string) => {
+    if (!host) throw new Error("host unavailable");
+    const res = await host.call<{ roots: string[] }>("skills.roots.remove", { path });
+    sendToRenderer(IPC.event.pluginChanged, { reason: "skill" });
+    return res;
+  });
+
   // --- Subagents the user owns ----------------------------------------------
 
   handle(IPC.invoke.subagentList, async () => {

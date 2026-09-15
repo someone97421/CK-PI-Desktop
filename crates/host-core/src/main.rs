@@ -20,6 +20,7 @@ mod secrets;
 mod session_collaboration;
 mod session_search;
 mod sessions;
+mod skill_roots;
 mod state;
 mod tool_budget;
 mod tools;

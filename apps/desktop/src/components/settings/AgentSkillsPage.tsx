@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   GLOBAL_SCOPE,
@@ -96,6 +96,68 @@ export function AgentSkillsPage() {
   const [view, setView] = useState<"skills" | "market">("skills");
   const [saving, setSaving] = useState(false);
   const { armed, setArmed } = useArmedDelete();
+  const [roots, setRoots] = useState<string[]>([]);
+  const [rootsOpen, setRootsOpen] = useState(false);
+  const [rootDraft, setRootDraft] = useState("");
+  const [rootBusy, setRootBusy] = useState(false);
+
+  const loadRoots = useCallback(async () => {
+    try {
+      const result = await api.listSkillRoots();
+      setRoots(result.roots ?? []);
+    } catch {
+      // An unreachable host is already surfaced by the skills load.
+      setRoots([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRoots();
+  }, [loadRoots]);
+
+  /** How many listed skills came from one extra path, for that row's badge. */
+  const skillsUnder = useCallback(
+    (root: string) => {
+      const prefix = `${root.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()}/`;
+      return globalSkills.filter((skill) =>
+        skill.path.replace(/\\/g, "/").toLowerCase().startsWith(prefix),
+      ).length;
+    },
+    [globalSkills],
+  );
+
+  const addRoot = async () => {
+    const path = rootDraft.trim();
+    if (!path || rootBusy) return;
+    setRootBusy(true);
+    try {
+      const result = await api.addSkillRoot(path);
+      setRoots(result.roots ?? []);
+      setRootDraft("");
+      setRootsOpen(false);
+      await load();
+      showToast(t("settings.skillRootAdded", { path }), { variant: "success" });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    } finally {
+      setRootBusy(false);
+    }
+  };
+
+  const removeRoot = async (path: string) => {
+    if (rootBusy) return;
+    setRootBusy(true);
+    try {
+      const result = await api.removeSkillRoot(path);
+      setRoots(result.roots ?? []);
+      await load();
+      showToast(t("settings.skillRootRemoved", { path }), { variant: "success" });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    } finally {
+      setRootBusy(false);
+    }
+  };
 
   const rowKey = (level: AgentCapabilityLevel, id: string) => `${level}:${id}`;
 
@@ -289,6 +351,9 @@ export function AgentSkillsPage() {
     const name = skill.name || skill.id;
     const busy = busyId === key;
     const isArmed = armed === key;
+    // A linked document belongs to the agent that owns its directory, so the
+    // menu never offers to delete it and the row never opens the editor.
+    const linked = skill.source === "linked";
     const items: CapabilityMenuItem[] = [
       {
         key: "reveal",
@@ -299,20 +364,24 @@ export function AgentSkillsPage() {
           void reveal(skill, level);
         },
       },
-      {
-        key: "remove",
-        label: isArmed ? t("settings.capabilityRemoveConfirm") : t("extensions.skills.remove"),
-        icon: <IconTrash size={14} />,
-        danger: true,
-        onSelect: () => {
-          if (isArmed) {
-            setMenuFor(null);
-            void remove(skill, level);
-          } else {
-            setArmed(key);
-          }
-        },
-      },
+      ...(linked
+        ? []
+        : [
+            {
+              key: "remove",
+              label: isArmed ? t("settings.capabilityRemoveConfirm") : t("extensions.skills.remove"),
+              icon: <IconTrash size={14} />,
+              danger: true,
+              onSelect: () => {
+                if (isArmed) {
+                  setMenuFor(null);
+                  void remove(skill, level);
+                } else {
+                  setArmed(key);
+                }
+              },
+            } satisfies CapabilityMenuItem,
+          ]),
     ];
     return (
       <CapabilityRow
@@ -328,7 +397,9 @@ export function AgentSkillsPage() {
                 ? t("settings.capabilityFilterGlobal")
                 : t("settings.capabilityFilterProject")}
             </span>
-            {skill.source === "imported" ? (
+            {linked ? (
+              <span className="agent-capability-badge">{t("settings.skillRootsBadge")}</span>
+            ) : skill.source === "imported" ? (
               <span className="agent-capability-badge">{t("settings.imported")}</span>
             ) : null}
           </>
@@ -336,16 +407,18 @@ export function AgentSkillsPage() {
         description={skill.description || t("settings.noCapabilityDescription")}
         actions={
           <>
-            <TooltipButton
-              type="button"
-              className="settings-icon-button"
-              ariaLabel={t("extensions.skills.rowActions", { name })}
-              tooltip={t("extensions.skills.edit")}
-              disabled={busy}
-              onClick={() => void openEdit(skill, level)}
-            >
-              <IconPencil size={15} />
-            </TooltipButton>
+            {linked ? null : (
+              <TooltipButton
+                type="button"
+                className="settings-icon-button"
+                ariaLabel={t("extensions.skills.rowActions", { name })}
+                tooltip={t("extensions.skills.edit")}
+                disabled={busy}
+                onClick={() => void openEdit(skill, level)}
+              >
+                <IconPencil size={15} />
+              </TooltipButton>
+            )}
             <CapabilityRowMenu
               label={t("extensions.skills.rowActions", { name })}
               items={items}
@@ -481,6 +554,90 @@ export function AgentSkillsPage() {
                   />
                 ) : (
                   visible.global.map((skill) => renderRow(skill, "global"))
+                )}
+                <CapabilityGroupHeader
+                  label={t("settings.skillRoots")}
+                  count={roots.length}
+                  action={
+                    <CapabilityButton
+                      title={t("settings.skillRootsAdd")}
+                      disabled={rootBusy}
+                      onClick={() => setRootsOpen((open) => !open)}
+                    >
+                      <IconPlus size={14} />
+                      {t("settings.skillRootsAdd")}
+                    </CapabilityButton>
+                  }
+                />
+                {rootsOpen ? (
+                  <CapabilityRow
+                    glyph={<IconPlus size={16} />}
+                    name={t("settings.skillRootsAdd")}
+                    description={t("settings.skillRootsHint")}
+                    meta={
+                      <div className="agent-capability-search-wrap">
+                        <IconFolderOpen size={13} aria-hidden="true" />
+                        <input
+                          className="agent-capability-search"
+                          type="text"
+                          value={rootDraft}
+                          spellCheck={false}
+                          placeholder={t("settings.skillRootsPlaceholder")}
+                          aria-label={t("settings.skillRootsPlaceholder")}
+                          onChange={(event) => setRootDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void addRoot();
+                            }
+                          }}
+                        />
+                      </div>
+                    }
+                    actions={
+                      <CapabilityButton
+                        variant="primary"
+                        busy={rootBusy}
+                        title={t("settings.skillRootsConfirm")}
+                        onClick={() => void addRoot()}
+                      >
+                        {t("settings.skillRootsConfirm")}
+                      </CapabilityButton>
+                    }
+                  />
+                ) : null}
+                {roots.length === 0 ? (
+                  <CapabilityEmpty
+                    message={t("settings.skillRootsEmpty")}
+                    hint={t("settings.skillRootsDesc")}
+                    icon={<IconFolderOpen size={18} />}
+                  />
+                ) : (
+                  roots.map((root) => (
+                    <CapabilityRow
+                      key={root}
+                      glyph={<IconFolderOpen size={16} />}
+                      name={root}
+                      badges={
+                        <span className="agent-capability-badge">
+                          {t("settings.skillRootsCount", { count: skillsUnder(root) })}
+                        </span>
+                      }
+                      description={t("settings.skillRootsRowDesc")}
+                      actions={
+                        <TooltipButton
+                          type="button"
+                          className="settings-icon-button"
+                          ariaLabel={t("settings.skillRootsRemove", { path: root })}
+                          tooltip={t("settings.skillRootsRemove", { path: root })}
+                          disabled={rootBusy}
+                          onClick={() => void removeRoot(root)}
+                        >
+                          <IconTrash size={15} />
+                        </TooltipButton>
+                      }
+                    />
+                  ))
                 )}
               </>
             ) : null}

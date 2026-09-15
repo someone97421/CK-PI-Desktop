@@ -329,7 +329,7 @@ export async function applyPiExport(
   const state = await readState(roots.dataDir);
   const { plan, reads } = await planExport(roots, state, input);
 
-  const written: string[] = [];
+  const written: PiSyncFileId[] = [];
   const targets: Array<[PiSyncFileId, string | null, number | undefined]> = [
     ["models", plan.models, undefined],
     ["auth", plan.auth, 0o600],

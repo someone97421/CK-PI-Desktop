@@ -100,8 +100,12 @@ export type UserSkillRecord = {
   description?: string;
   enabled: boolean;
   scope?: ActivationScope;
-  /** `created` writes a template; `imported` copies an existing document. */
-  source: "created" | "imported";
+  /**
+   * `created` writes a template; `imported` copies an existing document;
+   * `linked` is read live from a user-configured extra path and is never
+   * written by host-core.
+   */
+  source: "created" | "imported" | "linked";
   /** Absolute path of the document, for opening it in the editor. */
   path: string;
   /** Bytes of the document, so the list can flag one that grew past the cap. */

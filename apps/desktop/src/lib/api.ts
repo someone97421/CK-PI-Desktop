@@ -115,6 +115,7 @@ export type ImportSource = "claude-code" | "opencode" | "codex" | "pi";
 import type {
   ModelConfigImportCandidate,
   ModelConfigImportSource,
+  PiSyncAction,
   PiSyncApplyResult,
   PiSyncPreview,
   PiSyncStatus,
@@ -122,6 +123,7 @@ import type {
 export type {
   ModelConfigImportCandidate,
   ModelConfigImportSource,
+  PiSyncAction,
   PiSyncApplyResult,
   PiSyncPreview,
   PiSyncStatus,
@@ -762,6 +764,12 @@ export const api = {
    */
   revealUserSkill: (id: string, query?: Partial<AgentCapabilityQuery>) =>
     invoke(IPC.invoke.skillReveal, { id, ...query }),
+  /** Extra directories whose skills are referenced read-only. */
+  listSkillRoots: () => invoke<{ roots: string[] }>(IPC.invoke.skillRootsList),
+  addSkillRoot: (path: string) =>
+    invoke<{ roots: string[] }>(IPC.invoke.skillRootsAdd, path),
+  removeSkillRoot: (path: string) =>
+    invoke<{ roots: string[] }>(IPC.invoke.skillRootsRemove, path),
 
   // --- Subagents the user owns ----------------------------------------------
   listUserSubagents: (query?: Pick<AgentCapabilityQuery, "level">) =>

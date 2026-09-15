@@ -1098,6 +1098,10 @@ fn skill_err(err: impl ToString) -> JsonRpcError {
         capability_err(msg)
     } else if msg.contains("SKILL_INVALID") {
         rpc_err(1016, msg, "SKILL_INVALID")
+    } else if msg.contains("SKILL_ROOT_INVALID") {
+        rpc_err(1016, msg, "SKILL_ROOT_INVALID")
+    } else if msg.contains("SKILL_READONLY") {
+        rpc_err(1017, msg, "SKILL_READONLY")
     } else {
         rpc_err(1000, msg, "INTERNAL")
     }
@@ -4055,6 +4059,28 @@ async fn handle_request(
                 .set_enabled(&id, enabled, Some(level), project_path.as_deref())
                 .map_err(skill_err)?;
             Ok(json!({ "skill": skill }))
+        }
+        "skills.roots.list" => {
+            let st = state.lock().await;
+            Ok(json!({ "roots": st.user_skills.roots() }))
+        }
+        "skills.roots.add" => {
+            let path = params
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| rpc_err(1002, "path required", "INVALID_PARAMS"))?;
+            let mut st = state.lock().await;
+            let roots = st.user_skills.add_root(path).map_err(skill_err)?;
+            Ok(json!({ "roots": roots }))
+        }
+        "skills.roots.remove" => {
+            let path = params
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| rpc_err(1002, "path required", "INVALID_PARAMS"))?;
+            let mut st = state.lock().await;
+            let roots = st.user_skills.remove_root(path).map_err(skill_err)?;
+            Ok(json!({ "roots": roots }))
         }
         "skills.setScope" => {
             let id = require_id(&params)?;
