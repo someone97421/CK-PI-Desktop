@@ -41,7 +41,7 @@ const [
   readAppSource(),
   loadStyles(),
   read("../package.json"),
-  read("../../../.github/workflows/release.yml"),
+  read("../../../docs/archive/github/workflows/release.yml"),
   read("../../../packages/i18n/src/locales/en/index.ts"),
   read("../../../packages/i18n/src/locales/zh-CN/index.ts"),
   read("../../../packages/shared/src/changelog.ts"),

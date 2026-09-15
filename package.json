@@ -36,7 +36,6 @@
     "test:e2e:subagents": "node scripts/e2e-subagents.mjs",
     "test:e2e:subagent-models": "node scripts/e2e-subagent-models.mjs",
     "check:marketplace": "node scripts/check-marketplace-catalog.mjs",
-    "check:release-docs": "node scripts/check-release-docs.mjs",
     "lint": "pnpm lint:biome && pnpm -r --if-present lint",
     "host:dev": "cargo run -p host-core",
     "clean": "pnpm -r --if-present clean && cargo clean",
