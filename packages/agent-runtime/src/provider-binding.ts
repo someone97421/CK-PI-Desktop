@@ -161,6 +161,26 @@ export function apiBindingForProviderModel(provider: RuntimeProviderConfig): Api
 }
 
 /**
+ * pi-ai's Google adapters refuse any `fetch` that is not `globalThis.fetch`:
+ * `google-generative-ai.js` and `google-vertex.js` both throw "Custom fetch is
+ * not supported by the … adapter" before the request is built. Retry and
+ * per-provider-header wrappers therefore must not be attached for them, or
+ * every request fails deterministically.
+ *
+ * Custom headers still travel on `options.headers`, which the adapter forwards
+ * to its client. The tradeoff is that these adapters lose 429 response
+ * capture, so their retry classification falls back to error wording.
+ */
+export function adapterRejectsCustomFetch(api: string): boolean {
+  return api === "google-generative-ai" || api === "google-vertex";
+}
+
+/** Whether this provider's resolved wire API rejects a custom `fetch`. */
+export function providerRejectsCustomFetch(provider: RuntimeProviderConfig): boolean {
+  return adapterRejectsCustomFetch(apiBindingForProviderModel(provider).api);
+}
+
+/**
  * The desktop stores OAuth accounts under local row UUIDs, while pi-ai's
  * native Copilot model records carry the required client identity headers.
  * Preserve those transport defaults without changing the row identity used by

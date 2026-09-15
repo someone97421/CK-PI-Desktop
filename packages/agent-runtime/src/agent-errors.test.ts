@@ -28,6 +28,16 @@ describe("classifyAgentError", () => {
       .toMatchObject({ code: "PROVIDER_ERROR", retriable: false });
   });
 
+  it("treats a rejected custom fetch as a terminal adapter mismatch", () => {
+    // pi-ai's Google adapters throw this whenever a caller attaches its own
+    // fetch; retrying the identical request can never succeed.
+    expect(
+      classifyAgentError(
+        "Custom fetch is not supported by the Google Generative AI adapter",
+      ),
+    ).toMatchObject({ code: "PROVIDER_ERROR", retriable: false });
+  });
+
   it("detects context overflow from 400 bodies and bare messages", () => {
     expect(
       classifyAgentError(

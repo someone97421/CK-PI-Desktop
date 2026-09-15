@@ -123,6 +123,27 @@ describe("withProviderHeaders", () => {
     });
     expect(base).toHaveBeenCalledOnce();
   });
+
+  it("keeps the headers but forwards no fetch when wrapping is disabled", () => {
+    const base = vi.fn(async () => new Response("ok"));
+    const result = withProviderHeaders(
+      { headers: { "User-Agent": "sdk" }, fetch: base },
+      { "X-Gateway": "1" },
+      false,
+    );
+    expect(result.headers).toMatchObject({
+      "User-Agent": "sdk",
+      "X-Gateway": "1",
+    });
+    expect(result.fetch).toBeUndefined();
+    expect(base).not.toHaveBeenCalled();
+  });
+
+  it("drops a caller-supplied fetch even when no headers are configured", () => {
+    const base = vi.fn(async () => new Response("ok"));
+    const result = withProviderHeaders({ fetch: base }, undefined, false);
+    expect(result.fetch).toBeUndefined();
+  });
 });
 
 describe("runWithProviderHeaders", () => {

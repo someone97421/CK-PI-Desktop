@@ -169,8 +169,24 @@ export function withProviderHeadersFetch(
 export function withProviderHeaders(
   options: SimpleStreamOptions | undefined,
   headers: Record<string, string> | undefined,
+  /**
+   * Set false for adapters that reject a custom `fetch` (pi-ai's Google
+   * adapters, see `providerRejectsCustomFetch`): the headers still ride on
+   * `options.headers`, but no fetch — not even a caller-supplied one — is
+   * forwarded, because the adapter refuses anything that is not
+   * `globalThis.fetch`.
+   */
+  wrapFetch = true,
 ): SimpleStreamOptions {
   const normalized = normalizeProviderHeaders(headers);
+  if (!wrapFetch) {
+    const rest: SimpleStreamOptions = { ...(options ?? {}) };
+    delete rest.fetch;
+    const merged = normalized
+      ? mergeProviderHeaders(rest.headers, normalized)
+      : undefined;
+    return { ...rest, ...(merged ? { headers: merged } : {}) };
+  }
   if (!normalized) return options ?? {};
   const merged = mergeProviderHeaders(options?.headers, normalized);
   const fetch = withProviderHeadersFetch(options?.fetch, normalized);

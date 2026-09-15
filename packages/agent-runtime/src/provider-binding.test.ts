@@ -4,10 +4,12 @@ import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
 import { modelConfigWithBinding } from "./model-capabilities.js";
 import type { ModelConfig } from "./thinking-level.js";
 import {
+  adapterRejectsCustomFetch,
   apiBindingForStyle,
   buildProviderModel,
   copilotRequestHeaders,
   createProviderModels,
+  providerRejectsCustomFetch,
   runtimeBaseUrlForApi,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
@@ -22,6 +24,24 @@ const keyedProvider: RuntimeProviderConfig = {
   supportsReasoning: false,
   supportedThinkingLevels: ["off"],
 };
+
+describe("providerRejectsCustomFetch", () => {
+  it("is true only for the adapters that refuse a custom fetch", () => {
+    expect(adapterRejectsCustomFetch("google-generative-ai")).toBe(true);
+    expect(adapterRejectsCustomFetch("google-vertex")).toBe(true);
+    expect(adapterRejectsCustomFetch("openai-completions")).toBe(false);
+    expect(adapterRejectsCustomFetch("anthropic-messages")).toBe(false);
+  });
+
+  it("resolves the provider's own wire api", () => {
+    const google: RuntimeProviderConfig = {
+      ...keyedProvider,
+      apiStyle: "google_generative_ai",
+    };
+    expect(providerRejectsCustomFetch(google)).toBe(true);
+    expect(providerRejectsCustomFetch(keyedProvider)).toBe(false);
+  });
+});
 
 describe("apiBindingForStyle", () => {
   it("binds OpenCode Go to its fixed OpenAI-compatible endpoint", () => {

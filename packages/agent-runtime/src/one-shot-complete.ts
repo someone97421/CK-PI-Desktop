@@ -18,6 +18,7 @@ import {
   buildProviderModel,
   copilotRequestHeaders,
   createProviderModels,
+  providerRejectsCustomFetch,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import {
@@ -86,16 +87,23 @@ export async function completeOneShot(
   let transientRetryAttempt = 0;
   let rateLimitRetryAttempt = 0;
 
+  const rejectsCustomFetch = providerRejectsCustomFetch(provider);
   const requestOptions: SimpleStreamOptions = withProviderHeaders(
     withOpenCodeSessionHeaders(
       {
         ...(options.signal ? { signal: options.signal } : {}),
         maxRetries: 0,
         ...(thinkingLevel !== "off" ? { reasoning: thinkingLevel } : {}),
-        fetch: captureProviderResponse(undefined, (response) => {
-          providerStatus = response?.status;
-          providerHeaders = response?.headers;
-        }),
+        // pi-ai's Google adapters reject any fetch that is not globalThis.fetch,
+        // so the 429-capture wrapper is skipped for them.
+        ...(rejectsCustomFetch
+          ? {}
+          : {
+              fetch: captureProviderResponse(undefined, (response) => {
+                providerStatus = response?.status;
+                providerHeaders = response?.headers;
+              }),
+            }),
       },
       {
         ...openCodeEndpointFromProvider(provider, model),
@@ -106,6 +114,7 @@ export async function completeOneShot(
       copilotRequestHeaders(provider, context),
       provider.headers,
     ),
+    !rejectsCustomFetch,
   );
   const stream = createProviderRetryStream(
     model,

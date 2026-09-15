@@ -126,6 +126,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_TOKENS,
   providerRequestKey,
+  providerRejectsCustomFetch,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { PathMutex } from "./path-lock.js";
@@ -1658,16 +1659,22 @@ Delegation rules:
               sessionId: this.sessionId,
               // pi-ai only exposes onResponse after a request succeeds. Capture the
               // failed response separately so a 429 can honor Retry-After headers.
-              fetch: captureProviderResponse(options?.fetch, (response) => {
-                this.providerResponseStatus = response?.status;
-                // A gateway 502/503 can also state Retry-After, so keep headers for
-                // every status whose delay is usable instead of only for 429.
-                this.providerRetryHeaders = carriesRetryDelayHeaders(
-                  response?.status,
-                )
-                  ? response?.headers
-                  : undefined;
-              }),
+              // pi-ai's Google adapters reject any fetch that is not globalThis.fetch,
+              // so for those the wrapper is skipped entirely.
+              ...(providerRejectsCustomFetch(this.provider)
+                ? {}
+                : {
+                    fetch: captureProviderResponse(options?.fetch, (response) => {
+                      this.providerResponseStatus = response?.status;
+                      // A gateway 502/503 can also state Retry-After, so keep headers for
+                      // every status whose delay is usable instead of only for 429.
+                      this.providerRetryHeaders = carriesRetryDelayHeaders(
+                        response?.status,
+                      )
+                        ? response?.headers
+                        : undefined;
+                    }),
+                  }),
               onResponse: async (response, responseModel) => {
                 this.providerResponseStatus = response.status;
                 await options?.onResponse?.(response, responseModel);
@@ -1682,6 +1689,7 @@ Delegation rules:
             copilotRequestHeaders(this.provider, context),
             this.provider.headers,
           ),
+          !providerRejectsCustomFetch(this.provider),
         );
         const hookedOptions = this.withExtensionProviderHooks(requestOptions, m);
         return createProviderRetryStream(

@@ -156,6 +156,12 @@ export function classifyAgentError(err: unknown): ClassifiedAgentError {
     return result("PROVIDER_ERROR", true);
   }
 
+  // A deterministic adapter mismatch, not a transient failure: pi-ai's Google
+  // adapters throw this when a caller attaches its own fetch. Retrying it can
+  // never succeed, so it must not burn the provider retry budget.
+  if (/custom fetch is not supported/i.test(rawMessage)) {
+    return result("PROVIDER_ERROR", false);
+  }
   if (/invalid[ _]api[ _]key|api key not valid|unauthorized|authentication|permission denied/i.test(rawMessage)) {
     return result("PROVIDER_UNAUTHORIZED", false);
   }

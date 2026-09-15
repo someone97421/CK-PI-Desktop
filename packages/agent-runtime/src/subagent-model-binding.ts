@@ -2,6 +2,7 @@ import {
   buildProviderModel,
   copilotRequestHeaders,
   createProviderModels,
+  providerRejectsCustomFetch,
   providerRequestKey,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
@@ -59,20 +60,27 @@ export function subagentModelBinding(opts: {
     streamFn: (m, context, options) => {
       retry.headers = undefined;
       retry.status = undefined;
+      // pi-ai's Google adapters reject any fetch that is not globalThis.fetch, so
+      // the 429-capture wrapper is skipped for them.
+      const rejectsCustomFetch = providerRejectsCustomFetch(opts.provider);
       const requestOptions = withProviderHeaders(
         withOpenCodeSessionHeaders(
           {
             ...options,
             maxRetries: 0,
             sessionId: opts.sessionId,
-            fetch: captureProviderResponse(options?.fetch, (response) => {
-              retry.status = response?.status;
-              retry.headers = carriesRetryDelayHeaders(
-                response?.status,
-              )
-                ? response?.headers
-                : undefined;
-            }),
+            ...(rejectsCustomFetch
+              ? {}
+              : {
+                  fetch: captureProviderResponse(options?.fetch, (response) => {
+                    retry.status = response?.status;
+                    retry.headers = carriesRetryDelayHeaders(
+                      response?.status,
+                    )
+                      ? response?.headers
+                      : undefined;
+                  }),
+                }),
           },
           {
             ...openCodeEndpointFromProvider(opts.provider, m),
@@ -83,6 +91,7 @@ export function subagentModelBinding(opts: {
           copilotRequestHeaders(opts.provider, context),
           opts.provider.headers,
         ),
+        !rejectsCustomFetch,
       );
       return createProviderRetryStream(
         m,
