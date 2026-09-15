@@ -57,7 +57,9 @@ import { NotificationCenter } from "./NotificationCenter";
 import { ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { SessionRenameDialog } from "./SessionRenameDialog";
-import { useUpdateState } from "../hooks/use-update-state";
+// Fork: the upstream update channel (GitHub Releases) is disabled, so the
+// sidebar build chip no longer needs the update state.
+// import { useUpdateState } from "../hooks/use-update-state";
 import {
   IconArchive,
   IconArchiveRestore,
@@ -255,10 +257,11 @@ export function Sidebar({
   const setProjectSort = useAppStore((s) => s.setProjectSort);
   const reorderProjects = useAppStore((s) => s.reorderProjects);
   const showToast = useAppStore((s) => s.showToast);
-  const version = useAppStore((s) => s.version);
-  const setSettingsTab = useAppStore((s) => s.setSettingsTab);
-  const setSettingsAnchor = useAppStore((s) => s.setSettingsAnchor);
-  const update = useUpdateState();
+  // Fork: only the build chip used these; the upstream update channel is off.
+  // const version = useAppStore((s) => s.version);
+  // const setSettingsTab = useAppStore((s) => s.setSettingsTab);
+  // const setSettingsAnchor = useAppStore((s) => s.setSettingsAnchor);
+  // const update = useUpdateState();
 
   const [sortOpen, setSortOpen] = useState(false);
   const [sessionMenu, setSessionMenu] = useState<string | null>(null);
@@ -512,21 +515,22 @@ export function Sidebar({
 
   // Footer utility bar: settings / plugins / notifications + build chip.
 
+  // Fork: the upstream update channel (GitHub Releases) is disabled.
   // An update only earns the accent dot once it is actionable — a pending
   // check or a failed one keeps the chip quiet.
-  const updateReady =
-    update?.status === "available" || update?.status === "downloaded";
-  const appVersion = update?.currentVersion || version?.version || "";
-  const buildLabel = updateReady
-    ? `v${update?.availableVersion ?? appVersion}`
-    : update?.status === "checking"
-      ? t("updates.checking")
-      : appVersion
-        ? `v${appVersion}`
-        : t("nav.buildUnknown");
-  const buildTitle = updateReady
-    ? t("updates.available", { version: update?.availableVersion ?? "" })
-    : t("nav.checkForUpdates");
+  // const updateReady =
+  //   update?.status === "available" || update?.status === "downloaded";
+  // const appVersion = update?.currentVersion || version?.version || "";
+  // const buildLabel = updateReady
+  //   ? `v${update?.availableVersion ?? appVersion}`
+  //   : update?.status === "checking"
+  //     ? t("updates.checking")
+  //     : appVersion
+  //       ? `v${appVersion}`
+  //       : t("nav.buildUnknown");
+  // const buildTitle = updateReady
+  //   ? t("updates.available", { version: update?.availableVersion ?? "" })
+  //   : t("nav.checkForUpdates");
 
   const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
@@ -2192,6 +2196,8 @@ export function Sidebar({
             <NotificationCenter onBeforeOpen={() => closeMenus(false)} />
           </div>
 
+          {/* Fork: the build chip was the entry point for the upstream update
+              check. Restore it, or replace it with a fork-owned channel.
           <TooltipButton
             type="button"
             className={`footer-build ${updateReady ? "has-update" : ""}`}
@@ -2207,13 +2213,14 @@ export function Sidebar({
               void (async () => {
                 try {
                   await api.updatesCheck();
-                } catch { /* ignore */ }
+                } catch {}
               })();
             }}
           >
             <span className="footer-build-version">{buildLabel}</span>
             {updateReady ? <span className="footer-build-dot" aria-hidden /> : null}
           </TooltipButton>
+          */}
         </div>
       </div>
       {renderFloatingMenu()}

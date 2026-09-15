@@ -50,7 +50,8 @@ import {
 import {
   AgentInstructionsSection,
   ImportSection,
-  UpdatesRow,
+  // Fork: UpdatesRow is unused while the upstream update channel is disabled.
+  // UpdatesRow,
 } from "./agent-sections";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginSettingsDestination } from "../../components/settings/PluginSettingsDestination";
@@ -463,6 +464,9 @@ export function SettingsPage() {
                     {t("settings.openLogs")}
                   </Button>
                 </SettingsRow>
+                {/* Fork: the upstream feedback link points at the original
+                    project's issue tracker, which does not apply here.
+                    Restore or replace with a fork-owned channel later.
                 <SettingsRow
                   title={t("settings.feedback")}
                   description={t("settings.feedbackDesc")}
@@ -474,7 +478,11 @@ export function SettingsPage() {
                     {t("settings.openFeedback")}
                   </Button>
                 </SettingsRow>
+                */}
+                {/* Fork: the upstream update channel (GitHub Releases) is
+                    disabled. Restore or replace with a fork-owned channel.
                 <UpdatesRow currentVersion={version?.version} />
+                */}
               </SettingsCard>
 
               {settings && (
