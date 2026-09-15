@@ -3,7 +3,13 @@ import { useTranslation } from "react-i18next";
 import type { AgentInstructionFile } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
-import type { ImportCandidate, ModelConfigImportCandidate } from "../../lib/api";
+import type {
+  ImportCandidate,
+  ModelConfigImportCandidate,
+  PiSyncAction,
+  PiSyncPreview,
+  PiSyncStatus,
+} from "../../lib/api";
 import { useUpdateState } from "../../hooks/use-update-state";
 import {
   DEFAULT_IMPORT_GROUP_BY,
@@ -196,6 +202,7 @@ export function ImportSection() {
     <div className="settings-stack">
       <SessionImportPanel />
       <ModelConfigImportPanel />
+      <PiConfigSyncPanel />
     </div>
   );
 }
@@ -665,6 +672,219 @@ export function ModelConfigImportPanel() {
         </SettingsCard>
       )}
     </>
+  );
+}
+
+/**
+ * Manual pi configuration sync (ADR 0257). Import runs through the existing
+ * explicit model-config scan restricted to the `pi` source; export previews
+ * the merge and only writes after the user confirms.
+ */
+export function PiConfigSyncPanel() {
+  const { t } = useTranslation();
+  const refreshProviders = useAppStore((s) => s.refreshProviders);
+  const showToast = useAppStore((s) => s.showToast);
+  const [status, setStatus] = useState<PiSyncStatus | null>(null);
+  const [preview, setPreview] = useState<PiSyncPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      setStatus(await api.getPiSyncStatus());
+    } catch {
+      setStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
+
+  const importFromPi = async () => {
+    setBusy(true);
+    try {
+      const scan = await api.scanImportModelConfigs();
+      const items = scan.providers.filter((candidate) => candidate.source === "pi");
+      if (items.length === 0) {
+        showToast(t("settings.importModelsNone"), { variant: "error" });
+        return;
+      }
+      const result = await api.runImportModelConfigs(items);
+      await refreshProviders();
+      showToast(
+        t("settings.importResult", {
+          imported: result.imported,
+          skipped: result.skipped,
+          failed: result.failed,
+        }),
+        { variant: result.failed > 0 ? "error" : "success" },
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), {
+        variant: "error",
+      });
+    } finally {
+      setBusy(false);
+      await loadStatus();
+    }
+  };
+
+  const previewExport = async () => {
+    setBusy(true);
+    try {
+      setPreview(await api.previewPiExport());
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), {
+        variant: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyExport = async () => {
+    setBusy(true);
+    try {
+      const result = await api.exportPiConfig();
+      setPreview(null);
+      showToast(
+        t("settings.piSyncDone", {
+          applied: result.applied,
+          skipped: result.skipped,
+        }),
+        { variant: result.ok ? "success" : "error" },
+      );
+      await loadStatus();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), {
+        variant: "error",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const actionLabel = (action: PiSyncAction["action"]) =>
+    action === "create"
+      ? t("settings.piSyncActionCreate")
+      : action === "update"
+        ? t("settings.piSyncActionUpdate")
+        : action === "removed"
+          ? t("settings.piSyncActionRemoved")
+          : t("settings.piSyncActionUnchanged");
+
+  const reasonLabel = (reason?: string) =>
+    reason === "oauth-not-synced"
+      ? t("settings.piSyncSkipOauth")
+      : reason === "unresolved-value"
+        ? t("settings.piSyncSkipUnresolved")
+        : reason === "duplicate-key"
+          ? t("settings.piSyncSkipDuplicate")
+          : (reason ?? "");
+
+  const available = status?.available === true;
+  const drifted =
+    status?.files.models.drifted === true ||
+    status?.files.auth.drifted === true ||
+    status?.files.settings.drifted === true;
+
+  const statusText = !status || !available
+    ? t("settings.piSyncUnavailable", { dir: status?.agentDir ?? "~/.pi/agent" })
+    : `${t("settings.piSyncAvailable", { dir: status.agentDir })} · ${
+        status.lastSyncedAt
+          ? t("settings.piSyncLastSynced", { time: status.lastSyncedAt })
+          : t("settings.piSyncNeverSynced")
+      }`;
+
+  return (
+    <SettingsCard title={t("settings.piSyncTitle")}>
+      <SettingsRow
+        title={t("settings.piSyncTitle")}
+        description={t("settings.piSyncDesc")}
+      >
+        <div className="import-toolbar-actions">
+          <Button
+            variant="secondary"
+            disabled={busy || !available}
+            onClick={() => void importFromPi()}
+          >
+            {t("settings.piSyncImportAction")}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy || !available}
+            onClick={() => void previewExport()}
+          >
+            {t("settings.piSyncExportAction")}
+          </Button>
+        </div>
+      </SettingsRow>
+      <div className="settings-row">
+        <div className="settings-row-copy">
+          <div className="settings-row-desc">{statusText}</div>
+          {drifted ? (
+            <div className="settings-row-desc">{t("settings.piSyncDrift")}</div>
+          ) : null}
+        </div>
+      </div>
+      {preview ? (
+        <div className="import-groups">
+          <div className="import-group">
+            <div className="import-group-header">
+              <span className="import-group-name">
+                {t("settings.piSyncPreviewTitle")}
+              </span>
+              <div className="import-toolbar-actions">
+                <Button
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => setPreview(null)}
+                >
+                  {t("settings.piSyncCancel")}
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={busy}
+                  onClick={() => void applyExport()}
+                >
+                  {t("settings.piSyncConfirm")}
+                </Button>
+              </div>
+            </div>
+            <div className="import-group-body">
+              {preview.blockers.map((blocker) => (
+                <div key={blocker} className="settings-empty">
+                  {blocker}
+                </div>
+              ))}
+              {preview.actions.length === 0 && preview.skipped.length === 0 ? (
+                <div className="settings-empty">
+                  {t("settings.piSyncPreviewEmpty")}
+                </div>
+              ) : (
+                [...preview.actions, ...preview.skipped].map((action, index) => (
+                  <div
+                    key={`${action.kind}:${action.key}:${index}`}
+                    className="import-row"
+                  >
+                    <span className="import-row-main">
+                      <span className="import-row-title">
+                        {action.key}
+                        {action.name ? ` · ${action.name}` : ""}
+                      </span>
+                      <span className="import-row-meta">
+                        {actionLabel(action.action)}
+                        {action.reason ? ` · ${reasonLabel(action.reason)}` : ""}
+                      </span>
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </SettingsCard>
   );
 }
 

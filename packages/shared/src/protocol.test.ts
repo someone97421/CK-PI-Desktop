@@ -59,6 +59,16 @@ describe("Plan protocol contracts", () => {
     expect(IPC.invoke.modelConfigImportRun).toBe("pi-desktop/modelConfig/importRun");
     expect(IPC_WHITELIST.has(IPC.invoke.modelConfigImportScan)).toBe(true);
     expect(IPC_WHITELIST.has(IPC.invoke.modelConfigImportRun)).toBe(true);
+    expect(IPC.invoke.piSyncStatus).toBe("pi-desktop/piSync/status");
+    expect(IPC.invoke.piSyncPreviewExport).toBe("pi-desktop/piSync/previewExport");
+    expect(IPC.invoke.piSyncExport).toBe("pi-desktop/piSync/export");
+    for (const channel of [
+      IPC.invoke.piSyncStatus,
+      IPC.invoke.piSyncPreviewExport,
+      IPC.invoke.piSyncExport,
+    ]) {
+      expect(IPC_WHITELIST.has(channel)).toBe(true);
+    }
     expect(IPC.invoke.projectClone).toBe("pi-desktop/project/clone");
     expect(IPC_WHITELIST.has(IPC.invoke.projectClone)).toBe(true);
   });

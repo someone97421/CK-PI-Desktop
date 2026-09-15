@@ -12,6 +12,7 @@ import {
   type CatalogApiStyle,
 } from "./model-catalog.js";
 import { matchNamedPreset, normalizeEndpointUrl } from "./provider-presets.js";
+import { parsePiAuthApiKeys } from "./pi-config-sync.js";
 import type { ModelBinding, ProviderCreateInput, ThinkingLevel } from "./types.js";
 
 export const MODEL_CONFIG_IMPORT_SOURCES = [
@@ -450,6 +451,32 @@ export function parsePiModelConfig(
     if (draft) drafts.push(draft);
   }
   return drafts;
+}
+
+/**
+ * Overlay API keys from `~/.pi/agent/auth.json` onto the `models.json`
+ * provider map. Only providers already defined in `models.json` gain a key, so
+ * an auth-only entry (a built-in vendor with no custom model list) is not
+ * turned into a provider row without models. OAuth entries and unresolved
+ * `"!command"` / `$ENV` values are ignored (ADR 0257).
+ */
+export function applyPiAuthApiKeys(modelsJson: unknown, auth: unknown): unknown {
+  const { keys } = parsePiAuthApiKeys(auth);
+  if (Object.keys(keys).length === 0) return modelsJson;
+  const root = asRecord(modelsJson);
+  const providers = asRecord(root?.providers);
+  if (!root || !providers) return modelsJson;
+  const next: Record<string, unknown> = {};
+  for (const [id, raw] of Object.entries(providers)) {
+    const record = asRecord(raw);
+    const hasInlineKey = record?.apiKey !== undefined || record?.api_key !== undefined;
+    if (record && !hasInlineKey && keys[id]) {
+      next[id] = { ...record, apiKey: keys[id] };
+    } else {
+      next[id] = raw;
+    }
+  }
+  return { ...root, providers: next };
 }
 
 const CC_SWITCH_APP_TYPES = [

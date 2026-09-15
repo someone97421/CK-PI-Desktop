@@ -15,6 +15,7 @@ import { registerNotificationIpc } from "./notification-ipc";
 import { registerPluginIpc } from "./plugin-ipc";
 import { registerPluginUiIpc } from "./plugin-ui-ipc";
 import { registerProviderIpc } from "./provider-ipc";
+import { registerPiSyncIpc } from "./pi-sync-ipc";
 import { registerPullsIpc } from "./pulls-ipc";
 import { registerScheduledIpc } from "./scheduled-ipc";
 import { registerSessionIpc } from "./session-ipc";
@@ -229,6 +230,11 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     listRuntimeProviders,
     enrichProviderList,
     bindingForModel,
+  });
+  registerPiSyncIpc({
+    registrar,
+    getHost,
+    logger,
   });
   const loadComposerTemplatesCached = createComposerTemplateLoader(logger);
   const composerCommandService = registerComposerIpc({

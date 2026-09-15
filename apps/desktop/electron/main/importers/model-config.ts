@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  applyPiAuthApiKeys,
   draftMatchesExisting,
   parseCcSwitchConfigJson,
   parseCcSwitchProviders,
@@ -85,10 +86,13 @@ async function scanPi(
   home: string,
   env: ModelConfigImportEnv,
 ): Promise<ModelConfigImportDraft[]> {
+  const agentDir = path.join(home, ".pi", "agent");
   const models =
-    (await readJson(path.join(home, ".pi", "agent", "models.json"))) ??
+    (await readJson(path.join(agentDir, "models.json"))) ??
     (await readJson(path.join(home, ".pi", "models.json")));
-  return parsePiModelConfig(models, env);
+  if (models == null) return [];
+  const auth = await readJson(path.join(agentDir, "auth.json"));
+  return parsePiModelConfig(applyPiAuthApiKeys(models, auth), env);
 }
 
 async function scanCcSwitch(

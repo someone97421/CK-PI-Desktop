@@ -115,8 +115,17 @@ export type ImportSource = "claude-code" | "opencode" | "codex" | "pi";
 import type {
   ModelConfigImportCandidate,
   ModelConfigImportSource,
+  PiSyncApplyResult,
+  PiSyncPreview,
+  PiSyncStatus,
 } from "@pi-desktop/shared";
-export type { ModelConfigImportCandidate, ModelConfigImportSource };
+export type {
+  ModelConfigImportCandidate,
+  ModelConfigImportSource,
+  PiSyncApplyResult,
+  PiSyncPreview,
+  PiSyncStatus,
+};
 
 export interface ImportCandidate {
   source: ImportSource;
@@ -399,6 +408,9 @@ export const api = {
     ),
   runImportModelConfigs: (items: ModelConfigImportCandidate[]) =>
     invoke<ImportRunResult>(IPC.invoke.modelConfigImportRun, items),
+  getPiSyncStatus: () => invoke<PiSyncStatus>(IPC.invoke.piSyncStatus),
+  previewPiExport: () => invoke<PiSyncPreview>(IPC.invoke.piSyncPreviewExport),
+  exportPiConfig: () => invoke<PiSyncApplyResult>(IPC.invoke.piSyncExport),
   getSettings: () => invoke<AppSettings>(IPC.invoke.settingsGet).then(normalizeSettings),
   setSettings: (settings: AppSettings) =>
     invoke(IPC.invoke.settingsSet, validateSettingsWrite(settings)),
