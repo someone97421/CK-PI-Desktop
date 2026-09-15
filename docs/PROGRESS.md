@@ -10,6 +10,8 @@
 | 0 | 建立本 fork 的精简文档与流程（`AGENTS.md` §0、`docs/` 三件套、归档旧文档） | done | 文件已就位；未跑构建/测试（NOT RUN） |
 | 1 | pi 配置手动双向同步（决策 `F001`） | todo | 代码已落地，未验证 |
 | 2 | 技能面板「扩展路径」只读引用（决策 `F002`） | done | host-core 408 / shared 692 / desktop 能力页 21 全通过；E2E 未跑 |
+| 3 | 品牌改名与图标替换（决策 `F003`） | done | desktop 全量 1892：1886 通过，5 个为改动前既有失败；typecheck 通过 |
+| 4 | provider 设置导入/导出（决策 `F004`） | done | shared 712 通过；desktop 同上 5 个既有失败；typecheck 通过 |
 
 ## 记录规则
 

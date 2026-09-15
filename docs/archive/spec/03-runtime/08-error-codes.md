@@ -231,6 +231,8 @@ malformed.
 | `PLUGIN_MARKET_YANKED` | no | the requested release was withdrawn from the catalog |
 | `MCP_INVALID` | no | a user MCP server definition failed validation |
 | `SKILL_INVALID` | no | a user skill document failed validation |
+| `SKILL_ROOT_INVALID` | no | an extra read-only skill path is not an absolute existing directory |
+| `SKILL_READONLY` | no | a skill from an extra read-only path was edited or removed |
 | `SUBAGENT_INVALID` | no | a user subagent document failed validation |
 | `CAPABILITY_INVALID` | no | an agent capability root or scope setting failed validation |
 | `PLUGIN_COMMAND_NOT_FOUND` | no | command id missing (reserved) |

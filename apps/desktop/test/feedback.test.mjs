@@ -17,9 +17,9 @@ const [
   enSource,
   zhSource,
 ] = await Promise.all([
-  read("../../../.github/ISSUE_TEMPLATE/bug_report.yml"),
-  read("../../../.github/ISSUE_TEMPLATE/feature_request.yml"),
-  read("../../../.github/ISSUE_TEMPLATE/config.yml"),
+  read("../../../docs/archive/github/ISSUE_TEMPLATE/bug_report.yml"),
+  read("../../../docs/archive/github/ISSUE_TEMPLATE/feature_request.yml"),
+  read("../../../docs/archive/github/ISSUE_TEMPLATE/config.yml"),
   read("../../../packages/shared/src/protocol.ts"),
   readMainSource(),
   read("../src/lib/api.ts"),

@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const desktopPackageUrl = new URL("../package.json", import.meta.url);
-const dependencyBuild = "pnpm --filter '@pi-desktop/desktop^...' build";
+// Double quotes work under both cmd.exe and sh; single quotes are literal on
+// Windows, which silently matched no projects and skipped the dependency build.
+const dependencyBuild = 'pnpm --filter "@pi-desktop/desktop^..." build';
 const depsScript = "pnpm run build:deps";
 
 const readScripts = async () => {
