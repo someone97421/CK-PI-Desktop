@@ -644,6 +644,21 @@ sklm: {
       builtinHint: "Uygulamayla gelir, her zaman kullanılabilir",
       remoteLoading: "Katalog kaynağı yükleniyor…",
       remoteError: "Kaynak erişilemiyor – yerleşik seçkiler gösteriliyor",
+      previewError: "Bu skilin belgesi yüklenemedi; hiçbir şey kurulmadı.",
+      previewPolicyError: "Uygulamanın adres denetimi bu belgeyi engelledi; hiçbir şey kurulmadı.",
+      proxyHint: "Bu denetim ana makineyi yerel olarak çözer, indirme ise proxy üzerinden yapılır. Proxy veya VPN kullanıyorsanız Ayarlar → Genel → Ağ bölümüne bakın.",
+      failureDetail: "Ayrıntılar: ",
+      retryPreview: "Yeniden dene",
+      remoteErrorPolicy: "Uygulamanın adres denetimi katalog kaynaklarını engelledi – yerleşik seçkiler gösteriliyor",
+      remoteErrorUnresolved:
+        "Yerel çözümleyici katalog kaynaklarını çözemedi – yerleşik seçkiler gösteriliyor",
+      previewResolveError:
+        "Uygulamanın adres denetimi bu ana bilgisayarı çözemedi – hiçbir şey yüklenmedi.",
+      dnsHint:
+        "Bu denetim ana bilgisayarı yerel olarak çözer, indirmenin kendisi ise proxy'nizden geçer. Proxy, VPN veya özel bir DNS kurulumu kullanıyorsanız Ayarlar → Genel → Ağ bölümünü kontrol edin.",
+      failureSourceHost: "{{name}} ({{host}})",
+      remoteErrorQuery: "Skill market sorgulanamadı – yerleşik seçkiler gösteriliyor",
+      remotePartial: "Bazı katalog kaynakları kullanılamıyor ({{names}})",
     },
     title: "Ayarlar",
     providers: "AI servisleri",
@@ -2227,6 +2242,7 @@ importConfirm: "İçe aktarılan uzantılar ajan sürecinde, ajanın kendi araç
     PROVIDER_RATE_LIMITED: "AI servisi istekleri hız sınırlıyor. Biraz bekleyip yeniden deneyin.",
     PROVIDER_ERROR: "AI servisi bir hata döndürdü.",
     NETWORK_ERROR: "AI servisine ulaşılamıyor. Ağınızı veya temel URL’yi kontrol edin.",
+    NETWORK_POLICY_BLOCKED: "Uygulamanın adres denetimi bu isteği engelledi. Proxy veya VPN kullanıyorsanız Ayarlar → Genel → Ağ bölümüne bakın.",
     TIMEOUT: "AI servisine istek zaman aşımına uğradı.",
     STREAM_FAILED: "Yanıt kesildi.",
     EMPTY_MODEL_RESPONSE:

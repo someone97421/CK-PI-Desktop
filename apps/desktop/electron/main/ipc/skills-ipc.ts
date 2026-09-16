@@ -1,13 +1,19 @@
 import { dialog, shell } from "electron";
-import { IPC, type ActivationScope, type AgentCapabilityQuery, type UserSkillRecord, type UserSubagentRecord } from "@pi-desktop/shared";
+import { ErrorCodes, IPC, type ActivationScope, type AgentCapabilityQuery, type UserSkillRecord, type UserSubagentRecord } from "@pi-desktop/shared";
 import { loadSubagentDefinitions, type UserSubagentDocument } from "@pi-desktop/agent-runtime";
 import type { HostProcess } from "../host-process";
+import type { Logger } from "../logger";
 import {
   fetchSkillMarketDocument,
   searchSkillMarket,
   type SkillMarketDocument,
   type SkillMarketSearchResult,
 } from "../skill-market-catalog";
+import {
+  skillMarketFailureDetail,
+  type SkillMarketFailureDetail,
+  type SkillMarketFailureKind,
+} from "../skill-market-scan";
 import type { IpcRegistrar } from "./types";
 
 export type SkillsIpcDependencies = {
@@ -19,6 +25,7 @@ export type SkillsIpcDependencies = {
   sendToRenderer: (channel: string, payload?: unknown) => void;
   searchSkillMarket: (query: string, sources: { id: string; name: string; url: string }[]) => Promise<SkillMarketSearchResult>;
   fetchSkillMarketDocument: (entry: { id: string; name: string; url: string }) => Promise<SkillMarketDocument>;
+  logger: Pick<Logger, "app">;
 };
 
 /** Register user-owned skill and subagent definition channels. */
@@ -31,7 +38,59 @@ export function registerSkillsIpc({
   sendToRenderer,
   searchSkillMarket,
   fetchSkillMarketDocument,
+  logger,
 }: SkillsIpcDependencies): void {
+  /*
+    The market's two channels are the only place that knows why a source went
+    quiet, and they previously reported nothing outside the panel. A refusal
+    from the public-network guard (issue #419: a proxy that answers DNS itself
+    resolves a public host to a non-public address, so the local pre-check
+    refuses a URL the browser reaches) was therefore impossible to diagnose
+    from a user's logs. `diagnostics` is the category spec 09 gives to blocked
+    requests; the payload is host + source + kind only, never the full URL.
+
+    `reason` and `addressKind` were added for the same issue: "the resolver
+    answered nothing" and "the resolved address is not public" need different
+    fixes, and a single `kind` could not tell them apart in a report.
+  */
+  /**
+   * The code a refusal is logged under. Two codes, because the guard refuses
+   * for two different reasons: a judged address is a policy decision
+   * (`NETWORK_POLICY_BLOCKED`), while a resolver that answered nothing is an
+   * environment condition (`NETWORK_RESOLVE_FAILED`). A plain transport failure
+   * carries no code, as before.
+   */
+  const refusalCode = (kind: SkillMarketFailureKind): string | undefined => {
+    if (kind === "policy") return ErrorCodes.NETWORK_POLICY_BLOCKED;
+    if (kind === "unresolved") return ErrorCodes.NETWORK_RESOLVE_FAILED;
+    return undefined;
+  };
+  const logSourceFailure = (name: string, detail: SkillMarketFailureDetail) => {
+    const code = refusalCode(detail.kind);
+    logger.app("diagnostics", "warn", "skill market source produced no entries", {
+      ...(code ? { code } : {}),
+      event: "skillMarket.sourceFailed",
+      data: {
+        ...(name ? { source: name } : {}),
+        ...(detail.host ? { host: detail.host } : {}),
+        kind: detail.kind,
+        ...(detail.reason ? { reason: detail.reason } : {}),
+        ...(detail.addressKind ? { addressKind: detail.addressKind } : {}),
+        ...(detail.route ? { route: detail.route } : {}),
+      },
+    });
+  };
+  /**
+   * What one failed source reports. `failureDetails` carries the host and the
+   * guard's own reason; `failureKinds` is the earlier name-only view, kept so a
+   * result that predates the details still logs a kind rather than nothing.
+   */
+  const marketFailure = (result: SkillMarketSearchResult, name: string): SkillMarketFailureDetail => {
+    const detail = result.failureDetails?.[name];
+    if (detail) return detail;
+    const kind = result.failureKinds?.[name];
+    return { kind: kind === "policy" || kind === "unresolved" ? kind : "network" };
+  };
   let host: HostProcess | null = null;
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
     registrar.handle(channel, async (...args) => {
@@ -45,13 +104,35 @@ export function registerSkillsIpc({
   // registers outside the host-bound wrapper.
   registrar.handle(
     IPC.invoke.skillMarketSearch,
-    async ({ query, sources }: { query?: string; sources?: { id: string; name: string; url: string }[] } = {}) =>
-      searchSkillMarket(query ?? "", Array.isArray(sources) ? sources : []),
+    async ({ query, sources }: { query?: string; sources?: { id: string; name: string; url: string }[] } = {}) => {
+      const requested = Array.isArray(sources) ? sources : [];
+      const result = await searchSkillMarket(query ?? "", requested);
+      // One record per source that produced nothing. The panel shows the names,
+      // so without this the reason and the host exist nowhere a user can reach.
+      for (const name of result.failedSources ?? []) {
+        logSourceFailure(name, marketFailure(result, name));
+      }
+      return result;
+    },
   );
   registrar.handle(
     IPC.invoke.skillMarketFetch,
-    async ({ entry }: { entry: { id: string; name: string; url: string } }) =>
-      fetchSkillMarketDocument(entry),
+    async ({ entry }: { entry: { id: string; name: string; url: string } }) => {
+      try {
+        return await fetchSkillMarketDocument(entry);
+      } catch (error) {
+        // The install sheet shows this refusal; the log is what makes it
+        // diagnosable after the fact, and it survives the sheet closing.
+        const detail = skillMarketFailureDetail(entry, error);
+        const code = refusalCode(detail.kind);
+        logger.app("diagnostics", "warn", "skill market document fetch failed", {
+          ...(code ? { code } : {}),
+          event: "skillMarket.documentFailed",
+          data: detail,
+        });
+        throw error;
+      }
+    },
   );
 
 // --- Skills the user owns -------------------------------------------------
