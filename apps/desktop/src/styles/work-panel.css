@@ -1175,6 +1175,16 @@
   flex-direction: column;
 }
 
+.file-viewer-markdown {
+  padding: 20px 24px 32px;
+}
+
+@media (max-width: 640px) {
+  .file-viewer-markdown {
+    padding: 16px 16px 24px;
+  }
+}
+
 .file-viewer-code {
   margin: 0;
   padding: 10px 12px 20px;

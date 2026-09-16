@@ -5575,7 +5575,7 @@ describe("DesktopAgentRuntime subagents", () => {
     expect(host.call).toHaveBeenCalledWith("provider.resolveSubagentModel", { key: "remote/remote-model" });
     await taskTool(runtime).execute("own-pin", { agent: "reviewer", task: "Review." });
     expect(subagentRuns.calls[0].provider).toBe(remote);
-    expect(taskTool(runtime).description).toContain("Default model: remote/remote-model");
+    expect(taskTool(runtime).description).toContain("Locked primary model: remote/remote-model");
     const echoed = await taskTool(runtime).execute("own-pin-echo", {
       agent: "reviewer", task: "Review.", model: "remote/remote-model",
     });
@@ -5584,22 +5584,55 @@ describe("DesktopAgentRuntime subagents", () => {
     expect(host.call).toHaveBeenCalledTimes(1);
   });
 
-  it("allows an opted-in model to override a definition pin without changing D278", async () => {
-    const pinnedProvider = { ...provider, modelId: "remote-model", modelConfig: undefined };
+  it.each(["allowed/selected-model", "local/local-model", "unknown/model", "remote/remote-model"])("keeps the pinned primary model despite Task.model=%s", async (model) => {
+    const pinnedProvider: RuntimeProviderConfig = { ...provider, modelId: "remote-model", modelConfig: undefined, supportsReasoning: false, supportedThinkingLevels: ["off"] };
     const selected = { ...provider, modelId: "selected-model", modelConfig: undefined };
+    const host = { call: vi.fn().mockResolvedValue(selected) };
     const runtime = createRuntime({
-      subagents: [pinned],
+      subagents: [{ ...pinned, fallbackModels: [{ providerId: "allowed", modelId: "selected-model" }] }],
       subagentProviders: { "remote/remote-model": pinnedProvider, "allowed/selected-model": selected },
       subagentModelKeys: ["allowed/selected-model"],
+      thinkingLevel: "high",
+      host,
     });
     subagentRuns.calls.length = 0;
     subagentRuns.deferred = false;
+    subagentRuns.result = undefined;
     expect((runtime as any).subagentModelSummary()).toContain("allowed/selected-model");
     expect((runtime as any).subagentModelSummary()).not.toContain("remote/remote-model");
-    await taskTool(runtime).execute("allowed", { agent: "reviewer", task: "Review.", model: "allowed/selected-model" });
-    expect(subagentRuns.calls[0].provider).toBe(selected);
+    expect((runtime as any).subagentModelSummary()).toContain("Task.model is ignored");
+    const tool = taskTool(runtime);
+    expect(tool.description).toContain("Task.model is ignored");
+    expect(tool.parameters.properties.model.description).toContain("Ignored when the definition pins a primary model");
+    const result = await tool.execute("allowed", { agent: "reviewer", task: "Review.", model });
+    expect(result.details).toMatchObject({ modelId: "remote-model", thinkingLevel: "off" });
+    expect(subagentRuns.calls).toHaveLength(1);
+    expect(subagentRuns.calls[0].provider).toBe(pinnedProvider);
+    expect(subagentRuns.calls[0].thinkingLevel).toBe("off");
+    expect(subagentRuns.calls[0].inheritedThinkingLevel).toBe("high");
+    expect(subagentRuns.calls[0].fallbackModels).toEqual([{ key: "allowed/selected-model", provider: selected }]);
+    expect(host.call).not.toHaveBeenCalled();
     expect(runtimeMatches(runtime)).toBe(true);
     expect(runtimeMatches(runtime, { subagentModelKeys: [] })).toBe(false);
+    await runtime.dispose();
+  });
+
+  it("allows an opted-in model for an unpinned definition and otherwise inherits the session", async () => {
+    const selected = { ...provider, modelId: "selected-model", modelConfig: undefined };
+    const host = { call: vi.fn() };
+    const runtime = createRuntime({
+      subagents: [explorer],
+      subagentProviders: { "allowed/selected-model": selected },
+      subagentModelKeys: ["allowed/selected-model"],
+      host,
+    });
+    subagentRuns.calls.length = 0;
+    subagentRuns.deferred = false;
+    subagentRuns.result = undefined;
+    await taskTool(runtime).execute("selected", { agent: "explorer", task: "Search.", model: "allowed/selected-model" });
+    await taskTool(runtime).execute("inherited", { agent: "explorer", task: "Search." });
+    expect(subagentRuns.calls.map((call) => call.provider)).toEqual([selected, provider]);
+    expect(host.call).not.toHaveBeenCalled();
     await runtime.dispose();
   });
 
@@ -5736,7 +5769,7 @@ describe("DesktopAgentRuntime subagents", () => {
     subagentRuns.result = undefined;
 
     expect((runtime as any).agent.state.systemPrompt).toContain(
-      "Omit the `model` parameter on Task to use the definition's default model, or inherit the parent conversation's selected model when no default is pinned.",
+      "Omit `model` to inherit the parent conversation's selected model when no model is pinned.",
     );
     const result = await tool.execute("task-1", {
       agent: "explorer",
@@ -5750,17 +5783,28 @@ describe("DesktopAgentRuntime subagents", () => {
     await runtime.dispose();
   });
 
-  it("refuses to silently downgrade an unresolved pinned model", async () => {
-    const runtime = createRuntime({ subagents: [pinned] });
+  it.each([undefined, "remote/remote-model", "local/local-model", "allowed/selected-model", "unknown/model"])("rejects an unresolved pin despite Task.model=%s", async (model) => {
+    const selected = { ...provider, modelId: "selected-model", modelConfig: undefined };
+    const host = { call: vi.fn().mockResolvedValue(selected) };
+    const runtime = createRuntime({
+      subagents: [{ ...pinned, fallbackModels: [{ providerId: "allowed", modelId: "selected-model" }] }],
+      subagentProviders: { "allowed/selected-model": selected },
+      subagentModelKeys: ["allowed/selected-model"],
+      host,
+    });
     const tool = taskTool(runtime);
+    subagentRuns.calls.length = 0;
 
     const result = await tool.execute("task-1", {
       agent: "reviewer",
       task: "Review src/app.ts.",
+      model,
     });
 
     expect(result.content[0].text).toContain("pins remote/remote-model");
     expect(result.content[0].text).toContain("not configured");
+    expect(subagentRuns.calls).toHaveLength(0);
+    expect(host.call).not.toHaveBeenCalled();
     await expect(
       (runtime as any).agent.afterToolCall({ toolCall: { id: "task-1" } }),
     ).resolves.toEqual({ isError: true });
@@ -5828,6 +5872,7 @@ describe("DesktopAgentRuntime subagents", () => {
     const result = await taskTool(runtime).execute("task-omit", {
       agent: "reviewer",
       task: "Inspect the provider request.",
+      model: "local/local-model",
     });
 
     expect(result.details).toMatchObject({
@@ -5836,6 +5881,7 @@ describe("DesktopAgentRuntime subagents", () => {
       thinkingLevel: "omit",
     });
     expect(subagentRuns.calls[0].thinkingLevel).toBe("omit");
+    expect(subagentRuns.calls[0].provider).toBe(remote);
     await runtime.dispose();
   });
 

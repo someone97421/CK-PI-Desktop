@@ -3225,7 +3225,7 @@ Delegation rules:
   }
 
   /**
-   * An explicit override that names the session's own provider/model is
+   * For unpinned definitions, an override naming the session's provider/model is
    * semantically the same as omitting `Task.model`. Models sometimes echo the
    * current model id even when the delegation catalog is empty; accepting this
    * exact inheritance case avoids turning that harmless echo into a false
@@ -3250,35 +3250,6 @@ Delegation rules:
           value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "") ===
           requestedProvider,
       );
-  }
-
-  /**
-   * Repeating the target definition's own pin is omit, not an override. The
-   * Task catalog prints that key, and models copy it back into `model`.
-   */
-  private isDefinitionPinOverride(
-    definition: SubagentDefinition,
-    key: string,
-  ): boolean {
-    if (!definition.model) return false;
-    if (key === subagentModelKey(definition.model)) return true;
-    const slash = key.indexOf("/");
-    if (slash < 1) return false;
-    const requestedProvider = key
-      .slice(0, slash)
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "");
-    const requestedModel = key.slice(slash + 1).trim().toLowerCase();
-    const pinProvider = definition.model.providerId
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "");
-    return (
-      Boolean(requestedProvider) &&
-      requestedProvider === pinProvider &&
-      requestedModel === definition.model.modelId.toLowerCase()
-    );
   }
 
   /**
@@ -3348,12 +3319,14 @@ Delegation rules:
     if (keys.length === 0) {
       return [
         "No delegation model overrides are configured.",
-        "Omit the `model` parameter on Task to use the definition's default model, or inherit the parent conversation's selected model when no default is pinned.",
-        "Repeating a definition's own Default model key is the same as omitting `model`. Never invent a provider/model key.",
+        "A definition's pinned primary model is locked: Task.model is ignored. Configured fallback models are used only after failure.",
+        "Omit `model` to inherit the parent conversation's selected model when no model is pinned. Never invent a provider/model key.",
       ].join(" ");
     }
     const lines: string[] = [
-      "Available models for delegation (pass as `model` parameter on Task):\n",
+      "Available models for unpinned subagents (pass as `model` parameter on Task):\n",
+      "A definition's pinned primary model is locked: Task.model is ignored. Configured fallback models are used only after failure.",
+      "For unpinned subagents, omit `model` to inherit the parent conversation's selected model.\n",
     ];
     for (const key of keys) {
       const provider =
@@ -3440,10 +3413,10 @@ Delegation rules:
     const names = this.subagents.map((definition) => definition.name);
     const catalog = this.subagents
       .map((definition) => {
-        const defaultModel = definition.model
-          ? `${subagentModelKey(definition.model)}; omit model or repeat this key to keep this default.`
-          : "inherits the session.";
-        return `- ${definition.name} (tools: ${subagentToolsLabel(definition)}): ${definition.description} Default model: ${defaultModel}`;
+        const model = definition.model
+          ? `Locked primary model: ${subagentModelKey(definition.model)}; Task.model is ignored.`
+          : "Primary model: inherits the session unless Task.model selects an authorized model.";
+        return `- ${definition.name} (tools: ${subagentToolsLabel(definition)}): ${definition.description} ${model}`;
       })
       .join("\n");
     return {
@@ -3453,12 +3426,13 @@ Delegation rules:
         "Start one subagent in the background and return immediately; you keep working while it runs, then converge with TaskWait when you need its report.",
         "Use it when the work is separable: parallel exploration of independent directions (one Task per direction in the same assistant message), a multi-file implementation with a complete spec (fixer), an adversarial read-only review of a change you just made (code-reviewer), or a wide search / long log / multi-file survey whose intermediate output would otherwise fill this context (explorer, test-runner).",
         "Do not delegate what you can finish in a couple of tool calls, and do not delegate anything that needs the user — a subagent cannot ask a question or propose a plan on your behalf.",
+        "A definition's pinned primary model is locked: Task.model is ignored, including the parent model or another authorized model. Configured fallback models are used only after failure.",
         ...(this.availableSubagentModelKeys().length
           ? [
-              "Only pass `model` when deliberately overriding the definition default with a listed delegation model; otherwise omit it. Repeating the definition's own Default model key, or the exact parent provider/model, is the same as omitting `model`.",
+              "Only pass `model` for an unpinned subagent to select an authorized delegation model; otherwise omit it. For unpinned subagents, omitting `model` or repeating the exact parent provider/model inherits the session model.",
             ]
           : [
-              "No delegation model overrides are configured. Omit `model` to use the definition's default, or the parent model when no default is pinned. Repeating a definition's own Default model key is the same as omitting `model`; never invent a provider/model key.",
+              "No delegation model overrides are configured. Omit `model` to use the locked primary model, or inherit the parent model when no model is pinned. Never invent a provider/model key.",
             ]),
         "`task` is the delegate's only instruction. It cannot see this conversation, and you cannot correct it while it runs, so state the goal, the paths and facts it cannot infer, and exactly what to report back.",
         "To run delegates concurrently, emit several Task calls in one assistant message. A message that mixes Task with any other tool runs one call at a time. You may keep working or talk to the user while they run; the runtime delivers their reports when they finish. Call TaskStop only to cancel.",
@@ -3481,7 +3455,7 @@ Delegation rules:
         model: Type.Optional(
           Type.String({
             description:
-              "Override the delegate's model for this run, e.g. 'anthropic/claude-sonnet-4-20250514'. Omit to use the subagent's default. Repeating the definition's own Default model key is the same as omitting this parameter. Only choose a different override from the available delegation model catalog.",
+              "Select an authorized model only for an unpinned subagent, e.g. 'anthropic/claude-sonnet-4-20250514'; omit to inherit the session model. Ignored when the definition pins a primary model. Only choose a different model from the available delegation model catalog. Configured fallback models are used only after failure.",
           }),
         ),
       }),
@@ -3509,22 +3483,14 @@ Delegation rules:
             `Delegating to ${definition.name} needs a non-empty \`task\` brief.`,
           );
         }
-        // Model override: Task.model > definition.model pin > session model.
+        // Primary model: definition.model pin > authorized Task.model > session.
         const modelOverride =
           isRecord(params) && typeof params.model === "string"
             ? params.model.trim()
             : "";
         let provider: RuntimeProviderConfig | undefined;
-        if (modelOverride) {
-          if (this.isDefinitionPinOverride(definition, modelOverride)) {
-            provider = this.subagentProvider(definition);
-            if (!provider) {
-              return this.subagentToolError(
-                toolCallId,
-                `The ${definition.name} subagent pins ${definition.model?.providerId}/${definition.model?.modelId}, which is not configured in PI-Desktop. Do this work yourself or delegate to another subagent.`,
-              );
-            }
-          } else if (this.isSessionModelOverride(modelOverride)) {
+        if (!definition.model && modelOverride) {
+          if (this.isSessionModelOverride(modelOverride)) {
             provider = this.provider;
           } else {
             provider = this.subagentModelKeys.has(modelOverride)

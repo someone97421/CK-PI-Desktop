@@ -87,6 +87,8 @@ describe("subagent model fallback over real transport", () => {
     const f = await fixture({ fail: failedModels });
     const changes: string[] = [];
     const result = await f.run({
+      definition: { name: "worker", description: "Fixture", tools: ["Edit"], prompt: "Finish.", source: "user",
+        model: { providerId: "primary", modelId: "primary" } },
       fallbackModels: chain.slice(1).map((id) => ({ key: `${id}/${id}`, provider: f.provider(id) })),
       onModelChange: (provider) => changes.push(provider.modelId),
     });
