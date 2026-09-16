@@ -339,7 +339,14 @@ export function createPluginServices({
         runtimeProvider,
         context,
         launch.sidecarParams.thinkingLevel,
-        { signal: input.signal, sessionId: launchSessionId },
+        {
+          signal: input.signal,
+          sessionId: launchSessionId,
+          // Spec 07-plugins/03-plugin-api.md: empty model output answers the
+          // plugin with INVALID_ARGUMENT, not the runtime's internal code.
+          emptyErrorCode: "INVALID_ARGUMENT",
+          emptyErrorMessage: "The model returned no text.",
+        },
       );
       return {
         text: result.text,
@@ -512,6 +519,13 @@ export function createPluginServices({
      * (ADR 0252) instead of the bare primary path.
      */
     getWorkspaceInfo: () => pluginWorkspaceInfo(getWorkspacePath()),
+    /**
+     * The project each live session belongs to, so an fs call made by one
+     * session's tool follows that session instead of whichever project the
+     * window happens to be showing (ADR 0016, D093). Cold for a session whose
+     * runtime has not launched yet, which falls back to the visible workspace.
+     */
+    getWorkspacePathForSession: (sessionId) => sessionProjects.get(sessionId) ?? null,
     agentExtensionsChanged: () =>
       sendToRenderer(IPC.event.pluginChanged, { reason: "agentExtensions" }),
     browser: {
