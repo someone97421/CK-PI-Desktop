@@ -28,7 +28,7 @@ export const isAppearanceFontFamily = (value: unknown): value is string =>
   typeof value === "string" && value.length <= 2048 && !/[;{}<>\u0000-\u001f]/.test(value);
 
 export const isAppearanceFontWeight = (value: unknown): value is number =>
-  typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 900;
+  typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= 1000;
 
 /** Validate known fields only; future optional settings survive older clients. */
 export function isAppearanceSettings(value: unknown): value is AppearanceSettings {

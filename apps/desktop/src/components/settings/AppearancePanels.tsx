@@ -10,6 +10,7 @@ import {
 import { useAppStore } from "../../stores/app-store";
 import { DEFAULT_CODE_FONT, DEFAULT_UI_FONT, readableFontFamily } from "../../lib/fonts";
 import { FontFamilyRow } from "./FontFamilyRow";
+import { FontWeightControl } from "./FontWeightControl";
 import { Button } from "../ui";
 
 function ColorField({ label, value, onChange }: {
@@ -106,12 +107,9 @@ export function AppearancePanels({ settings, saveSettings }: {
               return <FontFamilyRow key={scope} title={t(label)} description={t(description)}
                 settings={{ fontFamily: font?.family }} defaultFamily={fallback} defaultLabel={defaultLabel}
                 saveSettings={(patch) => updateFont({ family: patch.fontFamily ?? "" })}
-                weightControl={<select className="field-select appearance-weight"
-                  aria-label={t("settings.appearanceWeightLabel", { scope: t(label) })} value={font?.weight ?? ""}
-                  onChange={(event) => { void updateFont({ weight: event.target.value ? Number(event.target.value) : undefined }).catch(() => undefined); }}>
-                  <option value="">{t("settings.appearanceDefaultWeight")}</option>
-                  {[100, 200, 300, 400, 500, 600, 700, 800, 900].map((weight) => <option key={weight} value={weight}>{weight}</option>)}
-                </select>} />;
+                weightControl={<FontWeightControl key={resetVersion[mode]} family={font?.family || fallback} value={font?.weight}
+                  label={t("settings.appearanceWeightLabel", { scope: t(label) })}
+                  onChange={(weight) => updateFont({ weight })} />} />;
             })}
           </section>
         );

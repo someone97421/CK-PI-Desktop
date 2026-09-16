@@ -23,6 +23,7 @@ import type {
   AskToolResolution,
   AgentInstructionFile,
   AppSettings,
+  FontMetadata,
   CommandShellCatalog,
   AppVersionInfo,
   BrowserAction,
@@ -430,6 +431,7 @@ export const api = {
     invoke<{ ok: boolean; error?: string }>(IPC.invoke.networkProxyTest, settings),
   /** Installed system font families (Electron main, cached briefly). */
   listSystemFonts: () => invoke<string[]>(IPC.invoke.systemFontsList),
+  getFontMetadata: (family: string) => invoke<FontMetadata>(IPC.invoke.fontMetadata, family),
   listCommandShells: () =>
     invoke<CommandShellCatalog>(IPC.invoke.commandShellList),
   listProviders: () =>

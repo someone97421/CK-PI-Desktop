@@ -1,3 +1,5 @@
+import type { FontFaceMetadata, FontMetadata } from "@pi-desktop/shared";
+
 /**
  * Global UI font model for the Settings picker.
  *
@@ -84,8 +86,9 @@ export function cssFamilyForName(name: string): string {
 
 /** Extract the first readable family name from a CSS stack. */
 export function readableFontFamily(stack: string): string {
-  const first = stack.split(",")[0]?.trim() ?? stack;
-  return first.replace(/^['"]|['"]$/g, "").replace(/\\'/g, "'");
+  const first = stack.match(/^\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,]+)/)?.[1]?.trim() ?? "";
+  return first.replace(/^['"]|['"]$/g, "").replace(/\\([\da-f]{1,6})\s?|\\(.)/gi,
+    (_, hex: string | undefined, escaped: string) => hex ? String.fromCodePoint(Math.min(parseInt(hex, 16) || 0xfffd, 0x10ffff)) : escaped);
 }
 
 function systemStack(family: string): string {
@@ -129,17 +132,71 @@ export function buildFontOptions(
   return options;
 }
 
-let cachedSystemFonts: string[] | null = null;
+let cachedSystemFonts: { fonts: string[]; at: number } | null = null;
 let pendingSystemFonts: Promise<string[]> | null = null;
 
-/** Installed system font families, fetched once per process via Electron main. */
+/** Installed system font families, shared by all six appearance rows. */
 export async function loadSystemFonts(): Promise<string[]> {
-  if (cachedSystemFonts) return cachedSystemFonts;
+  if (cachedSystemFonts && Date.now() - cachedSystemFonts.at < 60_000) return cachedSystemFonts.fonts;
   pendingSystemFonts ??= import("./api")
     .then(({ api }) => api.listSystemFonts())
     .finally(() => {
       pendingSystemFonts = null;
     });
-  cachedSystemFonts = await pendingSystemFonts;
-  return cachedSystemFonts;
+  const fonts = await pendingSystemFonts;
+  cachedSystemFonts = { fonts, at: Date.now() };
+  return fonts;
+}
+
+const metadataCache = new Map<string, { metadata: FontMetadata; at: number }>();
+const metadataPending = new Map<string, Promise<FontMetadata>>();
+const genericFamilies = new Set(["", "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded", "math", "fangsong", "emoji", "-apple-system", "blinkmacsystemfont", "inherit", "initial", "unset", "revert"]);
+
+/** Resolve only the leading family, never claim the fallback stack is a face. */
+export async function loadFontMetadata(stack: string): Promise<FontMetadata> {
+  const family = readableFontFamily(stack);
+  const key = family.normalize("NFC").toLowerCase();
+  if (genericFamilies.has(key)) return { family, source: "generic", status: "unavailable", faces: [] };
+  const cached = metadataCache.get(key);
+  if (cached && Date.now() - cached.at < 60_000) return cached.metadata;
+  const pending = metadataPending.get(key);
+  if (pending) return pending;
+  const task = (async () => {
+    let timer: ReturnType<typeof setTimeout>;
+    try {
+      const metadata = await Promise.race([
+        import("./api").then(({ api }) => api.getFontMetadata(family)),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Font metadata timeout")), 25_000); }),
+      ]);
+      if (metadataCache.size >= 256) metadataCache.delete(metadataCache.keys().next().value!);
+      metadataCache.set(key, { metadata, at: Date.now() });
+      return metadata;
+    } catch {
+      const metadata: FontMetadata = { family, source: "system", status: "unavailable", faces: [] };
+      if (metadataCache.size >= 256) metadataCache.delete(metadataCache.keys().next().value!);
+      metadataCache.set(key, { metadata, at: Date.now() });
+      return metadata;
+    } finally {
+      clearTimeout(timer!);
+    }
+  })().finally(() => metadataPending.delete(key));
+  metadataPending.set(key, task);
+  return task;
+}
+
+/** CSS matches width before style/weight: for normal, try <=5 descending, then >5 ascending. */
+export function weightFaces(metadata: FontMetadata): FontFaceMetadata[] {
+  const widths = metadata.faces.map((face) => face.width);
+  const narrower = widths.filter((width) => width <= 5);
+  const width = narrower.length ? Math.max(...narrower) : Math.min(...widths);
+  const faces = metadata.faces.filter((face) => face.width === width && face.style === "normal");
+  return faces.sort((a, b) => a.weight - b.weight || a.name.localeCompare(b.name))
+    .filter((face, i, all) => all.findIndex((candidate) => candidate.weight === face.weight &&
+      candidate.variable === face.variable && candidate.wght?.min === face.wght?.min && candidate.wght?.max === face.wght?.max) === i);
+}
+
+export function supportsFontWeight(faces: readonly FontFaceMetadata[], weight: number): boolean {
+  return Number.isFinite(weight) && weight >= 1 && weight <= 1000 && faces.some((face) =>
+    face.wght ? weight >= face.wght.min && weight <= face.wght.max : weight === face.weight,
+  );
 }

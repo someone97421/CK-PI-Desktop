@@ -44,7 +44,7 @@ async function darwinFontFamilies(): Promise<string[]> {
   const { stdout } = await execFileAsync(
     "system_profiler",
     ["SPFontsDataType", "-json"],
-    { maxBuffer: 64 * 1024 * 1024 },
+    { maxBuffer: 64 * 1024 * 1024, timeout: 15_000 },
   );
   const data = JSON.parse(stdout) as {
     SPFontsDataType?: Array<{ typefaces?: Array<{ family?: string }> }>;
@@ -65,6 +65,7 @@ async function win32FontFamilies(): Promise<string[]> {
   const { stdout } = await execAsync(command, {
     maxBuffer: 10 * 1024 * 1024,
     windowsHide: true,
+    timeout: 15_000,
   });
   return stdout
     .split("\n")
@@ -76,7 +77,7 @@ async function linuxFontFamilies(): Promise<string[]> {
   const { stdout } = await execFileAsync(
     "fc-list",
     ["-f", "%{family[0]}\n"],
-    { maxBuffer: 10 * 1024 * 1024 },
+    { maxBuffer: 10 * 1024 * 1024, timeout: 15_000 },
   );
   return stdout
     .split("\n")

@@ -1,10 +1,10 @@
 /* Weight ramps stay relative to each scope's base, rather than flattening headings. */
 :root[data-appearance-typography] {
   --font-weight-normal: var(--appearance-ui-weight, 400);
-  --font-weight-medium: min(950, calc(var(--appearance-ui-weight, 400) + 100));
-  --font-weight-medium-plus: min(950, calc(var(--appearance-ui-weight, 400) + 120));
-  --font-weight-strong: min(950, calc(var(--appearance-ui-weight, 400) + 160));
-  --font-weight-semibold: min(950, calc(var(--appearance-ui-weight, 400) + 200));
+  --font-weight-medium: min(1000, calc(var(--appearance-ui-weight, 400) + 100));
+  --font-weight-medium-plus: min(1000, calc(var(--appearance-ui-weight, 400) + 120));
+  --font-weight-strong: min(1000, calc(var(--appearance-ui-weight, 400) + 160));
+  --font-weight-semibold: min(1000, calc(var(--appearance-ui-weight, 400) + 200));
 }
 
 :root[data-appearance-typography] :is(body, #root) {
@@ -13,18 +13,18 @@
 
 :root[data-appearance-typography] :is(.prose-chat, .message-user-text) {
   --font-weight-normal: var(--appearance-content-weight, 400);
-  --font-weight-medium: min(950, calc(var(--appearance-content-weight, 400) + 100));
-  --font-weight-medium-plus: min(950, calc(var(--appearance-content-weight, 400) + 120));
-  --font-weight-strong: min(950, calc(var(--appearance-content-weight, 400) + 160));
-  --font-weight-semibold: min(950, calc(var(--appearance-content-weight, 400) + 200));
+  --font-weight-medium: min(1000, calc(var(--appearance-content-weight, 400) + 100));
+  --font-weight-medium-plus: min(1000, calc(var(--appearance-content-weight, 400) + 120));
+  --font-weight-strong: min(1000, calc(var(--appearance-content-weight, 400) + 160));
+  --font-weight-semibold: min(1000, calc(var(--appearance-content-weight, 400) + 200));
   font-weight: var(--font-weight-normal);
 }
 
 :root[data-appearance-typography] :is(code, pre, .font-mono, .code-block-lang) {
-  --appearance-code-strong: min(950, calc(var(--appearance-code-weight, 400) + 300));
+  --appearance-code-strong: min(1000, calc(var(--appearance-code-weight, 400) + 300));
   --font-weight-normal: var(--appearance-code-weight, 400);
-  --font-weight-medium: min(950, calc(var(--appearance-code-weight, 400) + 100));
-  --font-weight-semibold: min(950, calc(var(--appearance-code-weight, 400) + 200));
+  --font-weight-medium: min(1000, calc(var(--appearance-code-weight, 400) + 100));
+  --font-weight-semibold: min(1000, calc(var(--appearance-code-weight, 400) + 200));
   font-family: var(--font-mono);
   font-weight: var(--font-weight-normal);
 }
@@ -147,7 +147,8 @@
 .appearance-panel .settings-row-copy { min-width: 0; flex: 1 1 180px; }
 .appearance-panel .settings-row-control {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 8px;
   min-width: 0;
   max-width: 100%;
@@ -155,7 +156,30 @@
 }
 .appearance-panel .settings-font { min-width: 0; flex: 1 1 150px; }
 .appearance-panel .settings-font-trigger { min-width: 0; width: 100%; max-width: none; }
-.appearance-panel .appearance-weight { min-width: 0; max-width: 100%; flex: 0 1 130px; }
+.appearance-weight-control { min-width: 0; flex: 0 1 132px; }
+.appearance-panel .appearance-weight-trigger { gap: 4px; padding-right: 6px; }
+.appearance-weight-trigger .appearance-weight {
+  min-width: 0;
+  width: 100%;
+  flex: 1;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+}
+.appearance-weight::placeholder { color: var(--ds-text-primary); opacity: 1; }
+.appearance-weight-trigger[data-invalid] { outline: 1px solid var(--ds-error); }
+.appearance-weight-trigger:focus-within { outline: 1px solid var(--ds-border-strong); }
+.appearance-weight-toggle { display: flex; align-items: center; justify-content: center; flex: 0 0 24px; height: 24px; color: var(--ds-text-muted); border-radius: var(--radius-full); }
+.appearance-weight-toggle:hover { background: var(--ds-bg-hover); }
+.appearance-weight-menu { padding: 6px; }
+.appearance-weight-menu .settings-font-item { width: 100%; font-size: var(--text-sm-plus); }
+.appearance-weight-menu .settings-font-item:focus-visible { background: var(--ds-bg-hover); outline: none; }
 
 @container (max-width: 400px) {
   .appearance-panel .settings-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }

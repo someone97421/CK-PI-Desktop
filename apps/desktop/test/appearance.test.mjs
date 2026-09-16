@@ -90,7 +90,7 @@ test("all eight languages declare the same appearance keys", async () => {
     const text = await readFile(new URL(`../../../packages/i18n/src/locales/${locale}/index.ts`, import.meta.url), "utf8");
     const keys = [...text.matchAll(/^\s+(appearance\w+):/gm)].map((match) => match[1]).sort();
     expected ??= keys;
-    assert.equal(keys.length, 21);
+    assert.equal(keys.length, 33);
     assert.deepEqual(keys, expected);
   }
 });
@@ -139,7 +139,7 @@ test("settings page delegates saving and error subscriptions to renderer-owned s
 
 test("bold inline code keeps the code scope's relative weight for either nesting order", async () => {
   const css = await readFile(new URL("../src/styles/appearance.css", import.meta.url), "utf8");
-  assert.match(css, /:is\(code, pre, \.font-mono, \.code-block-lang\)\s*\{[^}]*--font-weight-semibold:\s*min\(950, calc\(var\(--appearance-code-weight, 400\) \+ 200\)\)/s);
+  assert.match(css, /:is\(code, pre, \.font-mono, \.code-block-lang\)\s*\{[^}]*--font-weight-semibold:\s*min\(1000, calc\(var\(--appearance-code-weight, 400\) \+ 200\)\)/s);
   assert.match(css, /:root\[data-appearance-typography\] :is\(strong, b\)\s*\{\s*font-weight: var\(--font-weight-semibold\);/);
   assert.match(css, /:root\[data-appearance-typography\] :is\(strong, b\) code\s*\{\s*font-weight: var\(--font-weight-semibold\);/);
 });

@@ -59,6 +59,7 @@ export const IPC = {
     appDismissOnboarding: "pi-desktop/app/dismissOnboarding",
     /** Installed system font families, resolved by Electron main. */
     systemFontsList: "pi-desktop/app/systemFonts",
+    fontMetadata: "pi-desktop/app/fontMetadata",
     updatesGetState: "pi-desktop/updates/getState",
     updatesCheck: "pi-desktop/updates/check",
     updatesDownload: "pi-desktop/updates/download",

@@ -2,6 +2,7 @@ import { BrowserWindow } from "electron";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { listInstalledFonts } from "../system-fonts";
+import { getFontMetadata } from "../font-metadata";
 import {
   APP_NAME,
   APP_VERSION,
@@ -109,15 +110,19 @@ export function registerAppIpc({
   });
 
   let systemFontsCache: { at: number; fonts: string[] } | null = null;
+  let systemFontsPending: Promise<string[]> | null = null;
   handle(IPC.invoke.systemFontsList, async () => {
     const now = Date.now();
     if (systemFontsCache && now - systemFontsCache.at < 60_000) {
       return systemFontsCache.fonts;
     }
-    const families = await listInstalledFonts().catch(() => []);
-    systemFontsCache = { at: now, fonts: families };
-    return families;
+    systemFontsPending ??= listInstalledFonts().catch(() => []).then((fonts) => {
+      systemFontsCache = { at: Date.now(), fonts };
+      return fonts;
+    }).finally(() => { systemFontsPending = null; });
+    return systemFontsPending;
   });
+  handle(IPC.invoke.fontMetadata, (family: unknown) => getFontMetadata(family));
 
   const instructionFile = async (
     scope: "global" | "project",

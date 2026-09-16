@@ -50,6 +50,7 @@ export * from "./network-proxy.js";
 export * from "./attachment-limits.js";
 export * from "./font-size.js";
 export * from "./appearance.js";
+export * from "./font-metadata.js";
 export * from "./racp.js";
 export * from "./trusted-extensions.js";
 export * from "./provider-retry.js";
