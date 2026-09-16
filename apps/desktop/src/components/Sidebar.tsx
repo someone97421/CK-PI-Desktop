@@ -2032,7 +2032,7 @@ export function Sidebar({
         <div className="sidebar-header-actions no-drag">
           <TooltipButton
             type="button"
-            className="icon-btn"
+            className="icon-btn icon-btn-square"
             tooltip={
               sidebarToggleShortcut
                 ? `${t("nav.collapseSidebar")} (${sidebarToggleShortcut})`

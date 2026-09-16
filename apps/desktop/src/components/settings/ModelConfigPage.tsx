@@ -543,7 +543,7 @@ export function ModelConfigPage() {
                       ) : null}
                       <TooltipButton
                         type="button"
-                        className="icon-btn model-provider-icon-btn"
+                        className="icon-btn icon-btn-square model-provider-icon-btn"
                         tooltip={t("settings.copyProvider")}
                         ariaLabel={t("settings.copyProvider")}
                         disabled={rowBusy}
@@ -556,7 +556,7 @@ export function ModelConfigPage() {
                       </TooltipButton>
                       <TooltipButton
                         type="button"
-                        className="icon-btn model-provider-icon-btn"
+                        className="icon-btn icon-btn-square model-provider-icon-btn"
                         tooltip={t("settings.editProvider")}
                         ariaLabel={t("settings.editProvider")}
                         disabled={rowBusy}
@@ -567,7 +567,7 @@ export function ModelConfigPage() {
                       <TooltipButton
                         type="button"
                         className={cx(
-                          "icon-btn model-provider-icon-btn",
+                          "icon-btn icon-btn-square model-provider-icon-btn",
                           testingId === provider.id && "is-testing",
                         )}
                         tooltip={t("settings.testConnection")}
@@ -590,7 +590,7 @@ export function ModelConfigPage() {
                       ) : (
                         <TooltipButton
                           type="button"
-                          className="icon-btn model-provider-icon-btn is-danger"
+                          className="icon-btn icon-btn-square model-provider-icon-btn is-danger"
                           tooltip={t("settings.delete")}
                           ariaLabel={t("settings.delete")}
                           disabled={rowBusy}
