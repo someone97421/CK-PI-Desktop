@@ -548,6 +548,102 @@ describe("AgentHost attach and subscribe", () => {
 });
 
 describe("AgentHost queue extras", () => {
+  it("transfers backend attachments once under admission without stopping the active turn", async () => {
+    const { host, runtime } = build();
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    const attachments = [{ path: "/safe/image.png", name: "image.png", kind: "image" as const }];
+    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide", attachments }, context: { requestId: "q" } });
+    const steer = vi.fn(async () => ({ accepted: true, turnId: "rt_1" }));
+    (runtime as RuntimePort).steer = steer;
+    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" };
+    const results = await Promise.allSettled([host.steerQueuedTurn(owner, request), host.steerQueuedTurn(owner, request)]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(steer).toHaveBeenCalledWith(expect.objectContaining({ content: "guide", attachments, expectedTurnId: "rt_1", messageId: expect.any(String) }));
+    expect(host.queueEntries("s1")).toEqual([]);
+    expect(host.getTurn("rt_1").status).toBe("running");
+    expect(runtime.stops).toEqual([]);
+    expect(runtime.prompts).toEqual([]);
+  });
+
+  it("quarantines an unknown RPC result against cancel, prioritize, attach and drain", async () => {
+    const store = new MemoryQueueStore();
+    const { host, runtime } = build({ queueStore: store });
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
+    const steer = vi.fn(async () => { throw new Error("RPC timeout"); });
+    (runtime as RuntimePort).steer = steer;
+    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" };
+    await expect(host.steerQueuedTurn(owner, request)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(host.steerQueuedTurn(owner, request)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(host.cancelTurn(owner, queued.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(host.prioritizeTurn(owner, queued.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    host.ingest(envelope("s1", "rt_1", { type: "agent_end", messageIds: [] }));
+    await host.attach(owner, { sessionId: "s1" });
+    host.kick("s1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(runtime.prompts).toEqual([]);
+    expect(await store.listAll()).toHaveLength(1);
+    expect(host.queueEntries("s1")).toHaveLength(1);
+  });
+
+  it("holds drain and cancellation while the steering acknowledgement is in flight", async () => {
+    const { host, runtime } = build();
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
+    let entered!: () => void;
+    let accept!: (result: { accepted: boolean; turnId: string }) => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    (runtime as RuntimePort).steer = () => { entered(); return new Promise((resolve) => { accept = resolve; }); };
+    const transfer = host.steerQueuedTurn(owner, { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" });
+    await started;
+    host.ingest(envelope("s1", "rt_1", { type: "agent_end", messageIds: [] }));
+    host.kick("s1");
+    const canceled = expect(host.cancelTurn(owner, queued.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(host.queueEntries("s1")).toHaveLength(1);
+    accept({ accepted: true, turnId: "rt_1" });
+    await transfer;
+    await canceled;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.prompts).toEqual([]);
+    expect(host.queueEntries("s1")).toEqual([]);
+  });
+
+  it("retains a failed delete and retries only storage, never steering", async () => {
+    const store = new MemoryQueueStore();
+    const { host, runtime } = build({ queueStore: store });
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
+    const steer = vi.fn(async () => ({ accepted: true, turnId: "rt_1" }));
+    (runtime as RuntimePort).steer = steer;
+    vi.spyOn(store, "remove").mockRejectedValueOnce(new Error("disk failure"));
+    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" };
+    await expect(host.steerQueuedTurn(owner, request)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(host.queueEntries("s1")).toHaveLength(1);
+    expect(await store.listAll()).toHaveLength(1);
+    await host.steerQueuedTurn(owner, request);
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(await store.listAll()).toEqual([]);
+  });
+
+  it("preserves explicitly rejected input and rejects collaboration and viewer steering", async () => {
+    const { host, runtime } = build();
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
+    const steer = vi.fn(async () => { throw Object.assign(new Error("stale target"), { steeringRejected: true }); });
+    (runtime as RuntimePort).steer = steer;
+    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_old" };
+    await expect(host.steerQueuedTurn(viewer, request)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(host.steerQueuedTurn(owner, request)).rejects.toThrow("stale target");
+    expect(host.queueEntries("s1")).toHaveLength(1);
+    await host.cancelTurn(owner, queued.turn.id);
+    const collaboration = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "delivery", sessionMessageId: "delivery-id" }, context: { requestId: "c" } });
+    await expect(host.steerQueuedTurn(owner, { ...request, queuedTurnId: collaboration.turn.id })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(steer).toHaveBeenCalledTimes(1);
+    expect(host.queueEntries("s1")).toHaveLength(1);
+  });
+
   it("prioritizes a queued turn, reports queue changes, and respects runtime busy state", async () => {
     const changes: Array<{ sessionId: string; ids: string[] }> = [];
     const runtime = new FakeRuntime();

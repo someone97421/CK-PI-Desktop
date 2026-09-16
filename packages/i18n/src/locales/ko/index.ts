@@ -276,7 +276,7 @@ export const ko = {
     queuedPromptEmpty: "대기 중인 메시지",
     removeQueuedPrompt: "대기 중인 메시지 제거",
     sendNow: "지금 보내기",
-    sendNowPending: "다음 메시지 보내는 중",
+    sendNowPending: "보내는 중",
     enhancePrompt: "프롬프트 개선",
     enhancingPrompt: "개선 중…",
     undoEnhancement: "개선 취소",

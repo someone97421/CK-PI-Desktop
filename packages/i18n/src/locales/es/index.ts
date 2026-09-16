@@ -267,7 +267,7 @@ export const es = {
     "queuedPromptEmpty": "Mensaje en cola",
     "removeQueuedPrompt": "Eliminar mensaje en cola",
     "sendNow": "Enviar ahora",
-    "sendNowPending": "Enviar el siguiente",
+    "sendNowPending": "Enviando",
     "enhancePrompt": "Mejorar mensaje",
     "enhancingPrompt": "Mejorando...",
     "undoEnhancement": "Deshacer mejora",

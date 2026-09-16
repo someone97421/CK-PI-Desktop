@@ -18,6 +18,7 @@ import type {
   AgentEventEnvelope,
   AgentQueueChangedEvent,
   AgentQueuePushRequest,
+  AgentQueueSteerRequest,
   AskToolResolution,
   QueuedTurnSummary,
   RacpApprovalResult,
@@ -28,6 +29,9 @@ import type {
 import { IPC, isGlobalPermissionMode } from "@pi-desktop/shared";
 
 type IpcInvoke = (channel: string, args: readonly unknown[]) => Promise<unknown>;
+
+// Main-process only: a renderer cannot serialize this token over Electron IPC.
+export const QUEUED_STEERING_DURABILITY = Symbol("queued-steering-durability");
 
 type HostLike = {
   call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
@@ -83,6 +87,9 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
   };
 
   const runtime: RuntimePort = {
+    async steer(request) {
+      return await options.invoke(options.channels.agentSteer, [request, QUEUED_STEERING_DURABILITY]) as { accepted: boolean; turnId: string };
+    },
     async prompt(request: TurnStartRequest) {
       try {
         const summary = await sessions.get(request.sessionId);
@@ -259,6 +266,9 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
 
   /** The desktop's queue operations, all under the owner principal. */
   const queue = {
+    async steer(request: AgentQueueSteerRequest) {
+      return forIpc(() => agentHost.steerQueuedTurn(DESKTOP_PRINCIPAL, request));
+    },
     async push(request: AgentQueuePushRequest): Promise<QueuedTurnSummary> {
       const result = await forIpc(() =>
         agentHost.startTurn(DESKTOP_PRINCIPAL, {

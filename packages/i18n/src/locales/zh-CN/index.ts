@@ -269,7 +269,7 @@ export const zhCN = {
     queuedPromptEmpty: "待发送消息",
     removeQueuedPrompt: "移除待发送消息",
     sendNow: "立即发送",
-    sendNowPending: "即将发送",
+    sendNowPending: "正在发送",
     enhancePrompt: "增强提示词",
     enhancingPrompt: "增强中…",
     undoEnhancement: "撤回增强",

@@ -269,7 +269,7 @@ export const zhTW = {
     queuedPromptEmpty: "待發送訊息",
     removeQueuedPrompt: "移除待發送訊息",
     sendNow: "立即傳送",
-    sendNowPending: "即將傳送",
+    sendNowPending: "正在傳送",
     enhancePrompt: "增強提示詞",
     enhancingPrompt: "增強中…",
     undoEnhancement: "撤回增強",

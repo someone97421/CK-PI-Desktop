@@ -27,7 +27,6 @@ export function ComposerStatus({
   removeQueuedPrompt,
   sendQueuedNow,
   approvalPending,
-  runActive,
   enhancementError,
   clearEnhancementError,
   droppedDirectories,
@@ -70,7 +69,7 @@ export function ComposerStatus({
                 <button
                   type="button"
                   className="composer-queued-prompt-send-now"
-                  disabled={approvalPending || (runActive && item.sendNowRequested === true)}
+                  disabled={approvalPending || item.sendNowRequested === true}
                   onClick={() => void sendQueuedNow(item.id)}
                 >
                   {item.sendNowRequested ? t("chat.sendNowPending") : t("chat.sendNow")}

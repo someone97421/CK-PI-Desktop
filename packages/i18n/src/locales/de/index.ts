@@ -267,7 +267,7 @@ export const de = {
     "queuedPromptEmpty": "Nachricht in der Warteschlange",
     "removeQueuedPrompt": "Nachricht in der Warteschlange entfernen",
     "sendNow": "Jetzt senden",
-    "sendNowPending": "Nächstes senden",
+    "sendNowPending": "Wird gesendet",
     "enhancePrompt": "Eingabeaufforderung verbessern",
     "enhancingPrompt": "Verbesserung…",
     "undoEnhancement": "Verbesserung rückgängig machen",

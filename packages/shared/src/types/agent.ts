@@ -61,6 +61,12 @@ export type AgentSteerRequest = Pick<
   expectedTurnId: string;
 };
 
+export type AgentQueueSteerRequest = {
+  sessionId: string;
+  queuedTurnId: string;
+  expectedTurnId: string;
+};
+
 export type AgentPromptResponse = {
   accepted: boolean;
   turnId: string;

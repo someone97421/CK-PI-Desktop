@@ -48,9 +48,11 @@ const { register } = await import("node:module");
 register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 const { IPC } = await import("@pi-desktop/shared");
 const { registerAgentIpc } = await import("../electron/main/ipc/agent-ipc.ts");
+const { QUEUED_STEERING_DURABILITY, createAgentHostBridge } = await import("../electron/main/agent-host-bridge.ts");
 const { searchSessionsAcrossSources } = await import("../electron/main/services/session-search.ts");
 const { createEventsSlice } = await import("../src/stores/slices/events-slice.ts");
 const { createTranscriptSlice } = await import("../src/stores/slices/transcript-slice.ts");
+const { createQueueSlice } = await import("../src/stores/slices/queue-slice.ts");
 const { api } = await import("../src/lib/api.ts");
 const { mergeLiveSessionMessages, reconcilePersistedUserMessage } = await import("../src/lib/session-transcript.ts");
 
@@ -136,6 +138,122 @@ test("queue remove/prioritize preserve the Desktop opaque host turnId contract",
   await handlers.get(IPC.invoke.agentQueueRemove)({ turnId: "host-turn" });
   await handlers.get(IPC.invoke.agentQueuePrioritize)({ turnId: "host-turn" });
   assert.deepEqual(calls, [["remove", "host-turn"], ["prioritize", "host-turn"]]);
+});
+
+test("queue steering forwards identity only and rejects native sessions", async () => {
+  const handlers = new Map();
+  const calls = [];
+  registerAgentIpc({
+    registrar: { handle: (channel, handler) => handlers.set(channel, handler) },
+    getHost: () => null, getSidecar: () => null,
+    getAgentHostBridge: () => ({ queue: {
+      steer: async (request) => { calls.push(request); return { accepted: true, turnId: request.expectedTurnId }; },
+    } }),
+  });
+  const request = { sessionId: "desktop-session", queuedTurnId: "opaque-queue-id", expectedTurnId: "runtime-turn" };
+  assert.deepEqual(await handlers.get(IPC.invoke.agentQueueSteer)(request), { accepted: true, turnId: "runtime-turn" });
+  assert.deepEqual(calls, [request]);
+  await assert.rejects(handlers.get(IPC.invoke.agentQueueSteer)({ ...request, sessionId: "native-pi:fixture" }), { errorCode: "NATIVE_PI_UNSUPPORTED" });
+  await assert.rejects(handlers.get(IPC.invoke.agentQueueSteer)({ ...request, expectedTurnId: "" }), { errorCode: "INVALID_ARGUMENT" });
+});
+
+test("send-now steers the captured turn once, never stops it, and preserves idle prioritization", async () => {
+  const original = { steer: api.steerQueuedPrompt, stop: api.stop, prioritize: api.prioritizeQueuedPrompt };
+  const calls = [];
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const item = { id: "queue-id", sessionId: "s1", content: "guide", draft: { text: "guide", fileReferences: [] }, createdAt: 1 };
+  const state = {
+    activeSessionId: "s1", queuedPrompts: { s1: [item] }, runningSessions: { s1: true },
+    agentStatuses: { s1: { currentTurnId: "turn-one" } }, pendingPlans: {},
+    showToast: () => assert.fail("unexpected error"),
+  };
+  api.steerQueuedPrompt = async (request) => { calls.push(request); await gate; return { accepted: true, turnId: request.expectedTurnId }; };
+  api.stop = async () => assert.fail("send-now must not stop");
+  api.prioritizeQueuedPrompt = async (id) => { calls.push({ prioritize: id }); };
+  try {
+    const slice = createQueueSlice({ ...stateHarness(state) });
+    const pending = slice.sendQueuedNow(item.id);
+    state.agentStatuses.s1.currentTurnId = "turn-two";
+    await slice.sendQueuedNow(item.id);
+    assert.deepEqual(calls, [{ sessionId: "s1", queuedTurnId: "queue-id", expectedTurnId: "turn-one" }]);
+    release();
+    await pending;
+    state.runningSessions.s1 = false;
+    state.queuedPrompts.s1 = [item];
+    await slice.sendQueuedNow(item.id);
+    assert.deepEqual(calls[1], { prioritize: "queue-id" });
+  } finally {
+    release();
+    api.steerQueuedPrompt = original.steer;
+    api.stop = original.stop;
+    api.prioritizeQueuedPrompt = original.prioritize;
+  }
+});
+
+test("only queue steering awaits durability; accepted ordinary steering does not reject on outbox failure", async () => {
+  const cases = [undefined, "queued-steering-durability", QUEUED_STEERING_DURABILITY].flatMap(
+    (durability) => ["stale", "transport", "outbox", "none"].map((failure) => ({ durability, failure })),
+  );
+  for (const { durability, failure } of cases) {
+    const queued = durability === QUEUED_STEERING_DURABILITY;
+    const handlers = new Map();
+    const calls = [];
+    registerAgentIpc({
+      registrar: { handle: (channel, handler) => handlers.set(channel, handler) },
+      getHost: () => ({ call: async () => ({ session: { messages: [] } }) }),
+      getSidecar: () => ({ call: async (method) => {
+        calls.push(method);
+        if (method === "agent.steeringContext") return { supportsVision: false };
+        if (failure === "transport") throw new Error("RPC timeout");
+        return { accepted: true, turnId: "turn-one" };
+      } }),
+      getAgentHostBridge: () => null,
+      isTurnDispatchable: () => failure !== "stale",
+      persistenceOutbox: { enqueue: async () => {
+        calls.push("outbox");
+        if (failure === "outbox") throw new Error("disk unavailable");
+      } },
+      dataDir: ".",
+    });
+    const pending = handlers.get(IPC.invoke.agentSteer)({
+      sessionId: "s1", expectedTurnId: "turn-one", content: "guide", attachments: [],
+      messageId: "a1efb234-4521-4f00-9be3-aba511abcdef",
+    }, durability);
+    if (failure === "none" || (failure === "outbox" && !queued)) {
+      assert.deepEqual(await pending, { accepted: true, turnId: "turn-one" });
+      assert.deepEqual(calls, ["agent.steeringContext", "agent.steer", ...(queued ? ["outbox"] : [])]);
+    } else {
+      await assert.rejects(pending, (error) => {
+        assert.equal(error.steeringRejected === true, failure === "stale");
+        return true;
+      });
+    }
+  }
+});
+
+test("queue bridge requests the private durability barrier before removing the entry", async () => {
+  const calls = [];
+  const bridge = createAgentHostBridge({
+    channels: IPC.invoke,
+    isSessionBusy: () => true,
+    log() {},
+    getHost: () => ({ call: async (method) => {
+      if (method === "session.get") return { session: { id: "s1", permissionMode: "ask" } };
+      if (method === "session.queuePush") return {};
+      if (method === "session.queueRemove") { calls.push("remove"); return { removed: true }; }
+      assert.fail(`unexpected host method: ${method}`);
+    } }),
+    invoke: async (channel, [request, durability]) => {
+      assert.equal(channel, IPC.invoke.agentSteer);
+      assert.equal(durability, QUEUED_STEERING_DURABILITY);
+      calls.push("durable-steer");
+      return { accepted: true, turnId: request.expectedTurnId };
+    },
+  });
+  const entry = await bridge.queue.push({ sessionId: "s1", content: "guide" });
+  await bridge.queue.steer({ sessionId: "s1", queuedTurnId: entry.id, expectedTurnId: "turn-one" });
+  assert.deepEqual(calls, ["durable-steer", "remove"]);
 });
 
 test("native prompt only dispatches sidecar and cannot create a host queue entry", async () => {

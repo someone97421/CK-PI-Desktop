@@ -142,6 +142,12 @@ const MAX_TURNS_PER_SESSION = 200;
  * the messaging integration are callers of this one object.
  */
 export class AgentHost {
+  // Process-local quarantine: neither attach/resume nor kick may replay an
+  // input whose runtime acknowledgement or durable deletion is uncertain.
+  private readonly steeringTransfers = new Map<string, {
+    sessionId: string; expectedTurnId: string; messageId: string;
+    accepted?: { accepted: boolean; turnId: string };
+  }>();
   readonly hub: EventHub;
   readonly queue: TurnQueue;
   readonly approvals: ApprovalBroker;
@@ -516,7 +522,7 @@ export class AgentHost {
     this.requireRole(principal, "turn/stop");
     const state = this.stateForTurn(turnId);
     const turn = state.turns.get(turnId)!;
-    if (turn.status === "queued") return this.cancelQueued(state, turn);
+    if (turn.status === "queued") return this.withAdmission(state.id, () => this.cancelQueued(state, turn));
     if (isActive(turn.status)) await this.runtime.stop(state.id);
     return this.toRacpTurn(state, turn);
   }
@@ -525,7 +531,7 @@ export class AgentHost {
     this.requireRole(principal, "turn/interrupt");
     const state = this.stateForTurn(turnId);
     const turn = state.turns.get(turnId)!;
-    if (turn.status === "queued") return this.cancelQueued(state, turn);
+    if (turn.status === "queued") return this.withAdmission(state.id, () => this.cancelQueued(state, turn));
     if (isActive(turn.status)) await this.runtime.abort(state.id, turn.runtimeTurnId ?? turn.id);
     return this.toRacpTurn(state, turn);
   }
@@ -538,7 +544,7 @@ export class AgentHost {
       if (turn.status === "canceled") return this.toRacpTurn(state, turn);
       throw racpError("CONFLICT", "only a queued turn can be canceled");
     }
-    return this.cancelQueued(state, turn);
+    return this.withAdmission(state.id, () => this.cancelQueued(state, turn));
   }
 
   /** Remove a collaboration delivery from both the live and durable queue. */
@@ -557,17 +563,90 @@ export class AgentHost {
   async prioritizeTurn(principal: Principal, turnId: string): Promise<RacpTurn> {
     this.requireRole(principal, "turn/prioritize");
     const state = this.stateForTurn(turnId);
-    const turn = state.turns.get(turnId)!;
-    if (turn.status !== "queued") {
-      throw racpError("CONFLICT", "only a queued turn can be prioritized");
+    return this.withAdmission(state.id, async () => {
+      this.assertQueueNotTransferring(state.id);
+      const turn = state.turns.get(turnId)!;
+      if (turn.status !== "queued") {
+        throw racpError("CONFLICT", "only a queued turn can be prioritized");
+      }
+      await this.queue.moveToHead(state.id, turn.id);
+      this.renumberQueue(state);
+      this.emit(state, "turn.queued", { turn: this.toRacpTurn(state, turn) }, { turnId: turn.id });
+      this.notifyQueue(state.id);
+      this.queue.resume(state.id);
+      void this.drain(state.id);
+      return this.toRacpTurn(state, turn);
+    });
+  }
+
+  /** Transfer queue ownership without ending or replacing the active turn. */
+  async steerQueuedTurn(
+    principal: Principal,
+    request: { sessionId: string; queuedTurnId: string; expectedTurnId: string },
+  ): Promise<{ accepted: boolean; turnId: string }> {
+    this.requireRole(principal, "turn/prioritize");
+    return this.withAdmission(request.sessionId, async () => {
+      const { sessionId, queuedTurnId, expectedTurnId } = request;
+      const state = this.stateForTurn(queuedTurnId);
+      if (state.id !== sessionId || !expectedTurnId) throw racpError("INVALID_ARGUMENT", "queue session or target turn mismatch");
+      const previous = this.steeringTransfers.get(queuedTurnId);
+      if (previous && previous.expectedTurnId !== expectedTurnId) throw racpError("CONFLICT", "queued input already belongs to another turn");
+      if (previous && !previous.accepted) throw racpError("CONFLICT", "Steering outcome is unknown; queue is paused. Do not resend this input.");
+      if (!previous) this.assertQueueNotTransferring(sessionId);
+      const record = this.queue.find(queuedTurnId);
+      if (!record || state.turns.get(queuedTurnId)?.status !== "queued") throw racpError("CONFLICT", "input is no longer queued");
+      if (record.sessionMessageId) throw racpError("CONFLICT", "Collaboration deliveries cannot be steered; leave this entry queued.");
+      if (!this.runtime.steer) throw racpError("AGENT_UNAVAILABLE", "runtime does not support steering");
+      const session = await this.requireSession(sessionId);
+      const permissionMode = effectiveRemotePermissionMode({
+        sessionMode: session.permissionMode, policy: this.policy,
+        pairedDevice: principal.pairedDevice ?? false,
+        approverOverride: principal.approverOverride ?? false,
+      });
+      if (record.effectivePermissionMode !== session.permissionMode || permissionMode !== session.permissionMode) {
+        throw racpError("FORBIDDEN", "queued permission mode differs from the active session or caller ceiling");
+      }
+      const transfer: { sessionId: string; expectedTurnId: string; messageId: string; accepted?: { accepted: boolean; turnId: string } } =
+        previous ?? { sessionId, expectedTurnId, messageId: globalThis.crypto.randomUUID() };
+      this.steeringTransfers.set(queuedTurnId, transfer);
+      try {
+        if (!transfer.accepted) {
+          const result = await this.runtime.steer({
+            sessionId, expectedTurnId, messageId: transfer.messageId,
+            content: record.content, attachments: record.attachments,
+          });
+          if (!result.accepted || result.turnId !== expectedTurnId) throw new Error("Unexpected steering acknowledgement");
+          transfer.accepted = result;
+        }
+        await this.queue.remove(sessionId, queuedTurnId);
+      } catch (error) {
+        if (!transfer.accepted && (error as { steeringRejected?: boolean }).steeringRejected) {
+          this.steeringTransfers.delete(queuedTurnId);
+        } else {
+          throw racpError("CONFLICT", "Steering transfer is unresolved; the queue is paused and the input is retained. Do not resend it.");
+        }
+        throw error;
+      }
+      this.steeringTransfers.delete(queuedTurnId);
+      const turn = state.turns.get(queuedTurnId)!;
+      // This queue admission is fulfilled, not a new runtime turn or alias.
+      turn.status = "completed";
+      turn.queuePosition = undefined;
+      turn.endedAt = new Date(this.clock.now()).toISOString();
+      this.emit(state, "turn.completed", { turn: this.toRacpTurn(state, turn) }, { turnId: queuedTurnId });
+      this.renumberQueue(state);
+      this.notifyQueue(sessionId);
+      // A terminal event may have arrived during the acknowledgement. Its
+      // queued drain still goes through admission after this transfer finishes.
+      void this.drain(sessionId);
+      return transfer.accepted!;
+    });
+  }
+
+  private assertQueueNotTransferring(sessionId: string): void {
+    if ([...this.steeringTransfers.values()].some((entry) => entry.sessionId === sessionId)) {
+      throw racpError("CONFLICT", "Queue is paused for an unresolved steering transfer");
     }
-    await this.queue.moveToHead(state.id, turn.id);
-    this.renumberQueue(state);
-    this.emit(state, "turn.queued", { turn: this.toRacpTurn(state, turn) }, { turnId: turn.id });
-    this.notifyQueue(state.id);
-    this.queue.resume(state.id);
-    void this.drain(state.id);
-    return this.toRacpTurn(state, turn);
   }
 
   async respondApproval(principal: Principal, response: RacpApprovalResponse): Promise<RacpApprovalResult> {
@@ -694,6 +773,7 @@ export class AgentHost {
 
   private async drainAdmitted(sessionId: string): Promise<void> {
       while (true) {
+        if ([...this.steeringTransfers.values()].some((entry) => entry.sessionId === sessionId)) return;
         const state = this.state(sessionId);
         if (this.queue.isHeld(sessionId) || this.isOccupied(state)) return;
         const record = await this.queue.shift(sessionId);
@@ -749,6 +829,11 @@ export class AgentHost {
   }
 
   private async cancelQueued(state: SessionState, turn: TurnRecord): Promise<RacpTurn> {
+    this.assertQueueNotTransferring(state.id);
+    if (turn.status !== "queued") {
+      if (turn.status === "canceled") return this.toRacpTurn(state, turn);
+      throw racpError("CONFLICT", "only a queued turn can be canceled");
+    }
     const removed = await this.queue.remove(state.id, turn.id);
     if (removed || turn.status === "queued") {
       turn.status = "canceled";

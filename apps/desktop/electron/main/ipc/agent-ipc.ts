@@ -6,13 +6,14 @@ import { appendPromptFallbackPaths, durableUserMessageId, preparePromptAttachmen
 import { executionFromResponse } from "../plan-execution";
 import { resolveSessionMessageInput } from "../session-message-input";
 import type { AgentExtensionBridge } from "../agent-extensions";
-import type { AgentHostBridge } from "../agent-host-bridge";
+import { QUEUED_STEERING_DURABILITY, type AgentHostBridge } from "../agent-host-bridge";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { HostProcess } from "../host-process";
 import type { Logger } from "../logger";
 import type { PersistenceOutbox } from "../persistence-outbox";
 import type { ComposerCommandService } from "./composer-ipc";
 import type { IpcRegistrar } from "./types";
+import type { AgentQueueSteerRequest } from "@pi-desktop/shared";
 
 export type AgentIpcDependencies = {
   registrar: IpcRegistrar;
@@ -202,7 +203,9 @@ export function registerAgentIpc({
     return { title };
   });
 
-  handle(IPC.invoke.agentSteer, async (req: AgentSteerRequest) => {
+  handle(IPC.invoke.agentSteer, async (req: AgentSteerRequest, durability?: unknown) => {
+    let dispatched = false;
+    try {
     if (!host || !sidecar) throw new Error("backend unavailable");
     if (
       !req?.sessionId || typeof req.content !== "string" || !req.expectedTurnId ||
@@ -239,7 +242,11 @@ export function registerAgentIpc({
     };
     // Revalidate inside the runtime after all file/host IO. A stale target must
     // never turn into a normal prompt or alter the next turn's configuration.
-    return sidecar.call<{ accepted: boolean; turnId: string }>("agent.steer", {
+    if (!isTurnDispatchable(req.sessionId, req.expectedTurnId)) {
+      throw Object.assign(new Error("The target turn has ended"), { errorCode: ErrorCodes.TURN_NOT_FOUND });
+    }
+    dispatched = true;
+    const result = await sidecar.call<{ accepted: boolean; turnId: string }>("agent.steer", {
       sessionId: req.sessionId, expectedTurnId: req.expectedTurnId, message,
       content: appendPromptFallbackPaths(req.content, prepared),
       attachments: prepared.filter((attachment) => attachment.inlineData).map((attachment) => ({
@@ -247,6 +254,26 @@ export function registerAgentIpc({
         mimeType: attachment.message.mimeType, size: attachment.message.size, data: attachment.inlineData,
       })),
     });
+    if (result.accepted && durability === QUEUED_STEERING_DURABILITY) {
+      // Do not release a queued input until its echo is durably recoverable.
+      // Event persistence uses this same key, so replay remains idempotent.
+      await persistenceOutbox.enqueue({
+        key: `message:${req.sessionId}:${message.id}`,
+        sessionId: req.sessionId, message, turnId: result.turnId,
+      }, getHost);
+    }
+    // Ordinary steering is accepted by the runtime, not by transcript storage.
+    // Its existing event/outbox path must not turn acceptance into a rejection.
+    return result;
+    } catch (error) {
+      // Only pre-dispatch failures and the runtime's explicit stale-target
+      // rejection prove that nothing was accepted. Transport errors do not.
+      const failure = error as Error & { errorCode?: string; data?: { errorCode?: string }; steeringRejected?: boolean };
+      if (!dispatched || failure.errorCode === ErrorCodes.TURN_NOT_FOUND || failure.data?.errorCode === ErrorCodes.TURN_NOT_FOUND) {
+        failure.steeringRejected = true;
+      }
+      throw error;
+    }
   });
 
   handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest) => {
@@ -664,6 +691,14 @@ export function registerAgentIpc({
     rejectNativeAgentOperation(req.sessionId);
     if (!agentHostBridge) throw new Error("agent host unavailable");
     return agentHostBridge.queue.push(req);
+  });
+  handle(IPC.invoke.agentQueueSteer, async (req: AgentQueueSteerRequest) => {
+    if (!req?.sessionId || !req.queuedTurnId || !req.expectedTurnId) {
+      throw Object.assign(new Error("Queue entry and target turn required"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+    }
+    rejectNativeAgentOperation(req.sessionId);
+    if (!agentHostBridge) throw new Error("agent host unavailable");
+    return agentHostBridge.queue.steer(req);
   });
   handle(IPC.invoke.agentQueueList, async (req: { sessionId: string }) => {
     rejectNativeAgentOperation(req.sessionId);

@@ -82,9 +82,11 @@ export class TurnQueue {
     if (!queue) return undefined;
     const index = queue.findIndex((record) => record.id === id);
     if (index === -1) return undefined;
+    // Keep the live record recoverable if the durable delete fails. A repeated
+    // delete is safe when an earlier acknowledgement was lost.
+    await this.store.remove(id);
     const [record] = queue.splice(index, 1);
     if (queue.length === 0) this.bySession.delete(sessionId);
-    await this.store.remove(id);
     return record;
   }
 

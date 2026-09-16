@@ -267,7 +267,7 @@ export const fr = {
     "queuedPromptEmpty": "Message en file d'attente",
     "removeQueuedPrompt": "Supprimer le message en file d'attente",
     "sendNow": "Envoyer maintenant",
-    "sendNowPending": "Envoi suivant",
+    "sendNowPending": "Envoi en cours",
     "enhancePrompt": "Améliorer l'invite",
     "enhancingPrompt": "Amélioration…",
     "undoEnhancement": "Annuler l'amélioration",

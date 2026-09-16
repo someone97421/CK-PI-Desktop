@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,6 +7,22 @@ import { PersistenceOutbox } from "../electron/main/persistence-outbox.ts";
 import { readMainSource } from "./helpers/main-source.mjs";
 
 const silent = () => undefined;
+
+test("a full outbox rejects new input instead of acknowledging a dropped message", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-full-"));
+  try {
+    const entries = Array.from({ length: 1024 }, (_, index) => ({
+      key: `message:s:${index}`, sessionId: "s", message: { id: String(index) },
+    }));
+    await writeFile(join(dir, "session-message-outbox.json"), JSON.stringify(entries));
+    const outbox = new PersistenceOutbox(dir, silent);
+    await assert.rejects(outbox.enqueue({ key: "new", sessionId: "s", message: { id: "new" } }, () => null), /outbox is full/);
+    assert.equal(outbox.size(), 1024);
+    assert.deepEqual(JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8")), entries);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("session delete drops the outbox for that session (D318)", async () => {
   const main = await readMainSource();

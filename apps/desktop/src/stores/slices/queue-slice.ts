@@ -71,6 +71,7 @@ export function createQueueSlice({
 > {
   const queuedDrafts = new Map<string, ComposerDraftSnapshot>();
   const pendingSubmissions = new Set<string>();
+  const pendingQueueSends = new Set<string>();
 
   function toQueuedPrompt(
     entry: QueuedTurnSummary,
@@ -174,7 +175,7 @@ export function createQueueSlice({
 
     removeQueuedPrompt: (promptId) => {
       const sessionId = get().activeSessionId;
-      if (!sessionId) return;
+      if (!sessionId || pendingQueueSends.has(sessionId)) return;
       set((state) => ({
         queuedPrompts: removeQueuedPrompt(
           state.queuedPrompts,
@@ -195,13 +196,21 @@ export function createQueueSlice({
 
     sendQueuedNow: async (promptId) => {
       const sessionId = get().activeSessionId;
-      if (!sessionId) return;
+      if (!sessionId || pendingQueueSends.has(sessionId)) return;
       const item = queuedPromptForSession(
         get().queuedPrompts,
         sessionId,
         promptId,
       );
       if (!item || item.id.startsWith("pending:") || item.sendNowRequested) return;
+      const state = get();
+      const running = state.runningSessions[sessionId];
+      const expectedTurnId = state.agentStatuses[sessionId]?.currentTurnId;
+      if (state.pendingPlans[sessionId]?.status === "pending" || (running && !expectedTurnId)) {
+        get().showToast(i18n.t("chat.steeringUnavailable"), { variant: "info" });
+        return;
+      }
+      pendingQueueSends.add(sessionId);
       set((state) => ({
         queuedPrompts: prioritizeQueuedPrompt(
           state.queuedPrompts,
@@ -210,17 +219,10 @@ export function createQueueSlice({
         ),
       }));
       try {
-        await api.prioritizeQueuedPrompt(promptId);
-        if (get().runningSessions[sessionId]) {
-          const result = await api.stop(sessionId);
-          if (!result.requested) {
-            set((state) => ({
-              queuedPrompts: clearQueuedPromptSendNow(
-                state.queuedPrompts,
-                sessionId,
-              ),
-            }));
-          }
+        if (running && expectedTurnId) {
+          await api.steerQueuedPrompt({ sessionId, queuedTurnId: promptId, expectedTurnId });
+        } else {
+          await api.prioritizeQueuedPrompt(promptId);
         }
       } catch (error) {
         set((state) => ({
@@ -233,6 +235,12 @@ export function createQueueSlice({
           error instanceof Error ? error.message : String(error),
           { variant: "error" },
         );
+        void get().refreshQueuedPrompts(sessionId);
+      } finally {
+        pendingQueueSends.delete(sessionId);
+        set((state) => ({
+          queuedPrompts: clearQueuedPromptSendNow(state.queuedPrompts, sessionId),
+        }));
       }
     },
 

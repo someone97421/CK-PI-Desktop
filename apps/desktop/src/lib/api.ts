@@ -6,6 +6,7 @@ import type {
   AgentCompactResponse,
   AgentPromptRequest,
   AgentSteerRequest,
+  AgentQueueSteerRequest,
   UiMessage,
   MessageRevisionSummary,
   AgentPromptResponse,
@@ -633,6 +634,8 @@ export const api = {
     invoke(IPC.invoke.agentQueueRemove, { turnId }),
   prioritizeQueuedPrompt: (turnId: string) =>
     invoke(IPC.invoke.agentQueuePrioritize, { turnId }),
+  steerQueuedPrompt: (req: AgentQueueSteerRequest) =>
+    invoke<AgentPromptResponse>(IPC.invoke.agentQueueSteer, req),
   getStatus: (sessionId: string) =>
     invoke<{ status: AgentStatus }>(IPC.invoke.agentGetStatus, sessionId),
   getAgentInstructions: (projectPath?: string) =>

@@ -276,7 +276,7 @@ export const tr = {
     queuedPromptEmpty: "Kuyruktaki ileti",
     removeQueuedPrompt: "Kuyruktaki iletiyi kaldır",
     sendNow: "Şimdi gönder",
-    sendNowPending: "Sıradaki gönderiliyor",
+    sendNowPending: "Gönderiliyor",
     enhancePrompt: "İstemi iyileştir",
     enhancingPrompt: "İyileştiriliyor…",
     undoEnhancement: "İyileştirmeyi geri al",

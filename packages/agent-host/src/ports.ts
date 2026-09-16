@@ -1,5 +1,6 @@
 import type {
   AgentPromptAttachment,
+  AgentSteerRequest,
   AskToolResolution,
   RacpItemSummary,
   RacpPermissionMode,
@@ -44,6 +45,7 @@ export type TurnStartRequest = {
 /** The pi runtime as the module drives it. Electron Main adapts its prompt,
  * stop, abort, and asktool paths to this port; nothing here knows about IPC. */
 export interface RuntimePort {
+  steer?(request: AgentSteerRequest): Promise<{ accepted: boolean; turnId: string }>;
   prompt(request: TurnStartRequest): Promise<{ turnId: string }>;
   stop(sessionId: string): Promise<{ requested: boolean }>;
   abort(sessionId: string, turnId?: string): Promise<void>;

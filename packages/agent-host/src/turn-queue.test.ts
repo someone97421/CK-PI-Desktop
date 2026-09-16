@@ -17,6 +17,16 @@ function record(id: string, sessionId = "s1", createdAt = 1): QueuedTurnRecord {
 }
 
 describe("TurnQueue", () => {
+  it("keeps the live entry and order when durable removal fails", async () => {
+    const store = new MemoryQueueStore();
+    const queue = new TurnQueue(store, 2);
+    await queue.push(record("a"));
+    await queue.push(record("b"));
+    store.remove = async () => { throw new Error("storage unavailable"); };
+    await expect(queue.remove("s1", "a")).rejects.toThrow("storage unavailable");
+    expect(queue.list("s1").map((entry) => entry.id)).toEqual(["a", "b"]);
+    expect(await store.listAll()).toHaveLength(2);
+  });
   it("keeps arrival order, positions, and the per-session bound", async () => {
     const queue = new TurnQueue(new MemoryQueueStore(), 2);
     expect(await queue.push(record("a"))).toBe(1);

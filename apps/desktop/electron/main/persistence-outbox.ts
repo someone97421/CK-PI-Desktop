@@ -46,7 +46,7 @@ export class PersistenceOutbox {
         size: this.entries.length,
         max: MAX_ENTRIES,
       });
-      return;
+      throw new Error("session persistence outbox is full");
     } else this.entries.push(entry);
     await this.persist();
     void this.flush(getHost);

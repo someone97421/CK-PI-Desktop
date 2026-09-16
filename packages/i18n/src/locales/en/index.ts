@@ -274,7 +274,7 @@ export const en = {
     queuedPromptEmpty: "Queued message",
     removeQueuedPrompt: "Remove queued message",
     sendNow: "Send now",
-    sendNowPending: "Sending next",
+    sendNowPending: "Sending",
     enhancePrompt: "Enhance prompt",
     enhancingPrompt: "Enhancing…",
     undoEnhancement: "Undo enhancement",
