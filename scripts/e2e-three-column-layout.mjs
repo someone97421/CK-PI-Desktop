@@ -315,6 +315,43 @@ async function main() {
       JSON.stringify(baseline),
     );
 
+    // Icon-only controls must render as squares in the live chrome, not only in
+    // the stylesheet: `.icon-btn` takes its width from its label, so an
+    // icon-only use states `.icon-btn-square`, and this is what proves the
+    // geometry actually stuck once flex layout and the cascade have run.
+    const iconControls = await cdp.evaluate(`(() => {
+      const expected = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue("--ds-control-size"),
+      );
+      const offenders = [];
+      let measured = 0;
+      for (const control of document.querySelectorAll(".icon-btn")) {
+        if (control.textContent.trim() !== "") continue;
+        const box = control.getBoundingClientRect();
+        if (box.width === 0 && box.height === 0) continue;
+        measured += 1;
+        if (
+          Math.round(box.width) !== Math.round(box.height) ||
+          Math.abs(box.width - expected) > 1
+        ) {
+          offenders.push({
+            classes: control.className,
+            width: Math.round(box.width),
+            height: Math.round(box.height),
+          });
+        }
+      }
+      return { expected, measured, offenders };
+    })()`);
+    check(
+      Number.isFinite(iconControls.expected) &&
+        iconControls.expected > 0 &&
+        iconControls.measured > 0 &&
+        iconControls.offenders.length === 0,
+      "every rendered icon-only control is a square hit target",
+      JSON.stringify(iconControls),
+    );
+
     // 1. Opening the panel may not touch the native window.
     await rig(`window.__PI_DESKTOP__.openWorkPanel()`);
     await rig(`window.__PI_DESKTOP__.setWorkPanelWidth(720)`);
