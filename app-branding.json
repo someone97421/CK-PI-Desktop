@@ -1,0 +1,10 @@
+{
+  "name": "这是一个助手",
+  "slug": "this-is-a-agent",
+  "appId": "com.someone97421.this-is-a-agent",
+  "repository": "someone97421/CK-PI-Desktop",
+  "buildTimezone": "Asia/Shanghai",
+  "iconSource": "ico.png",
+  "sharedDataDirectory": ".pi-desktop",
+  "legacyLockName": "PI-Desktop"
+}

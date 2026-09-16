@@ -1,34 +1,32 @@
 {
   "name": "@pi-desktop/desktop",
-  "version": "0.14.8-native.1",
-  "desktopName": "pi-desktop.desktop",
+  "version": "2609.1622.5115",
+  "desktopName": "this-is-a-agent.desktop",
   "private": true,
   "description": "这是一个助手 — local-first AI coding agent desktop app",
-  "homepage": "https://github.com/vastsa/PI-Desktop",
+  "homepage": "https://github.com/someone97421/CK-PI-Desktop",
   "author": {
-    "name": "vastsa",
-    "email": "hhxk666@gmail.com"
+    "name": "someone97421"
   },
   "main": "./out/main/index.js",
   "type": "module",
   "scripts": {
     "build:deps": "pnpm --filter \"@pi-desktop/desktop^...\" build",
-    "predev": "pnpm run build:deps && cargo build --manifest-path ../../Cargo.toml -p host-core",
-    "dev": "node ../../scripts/dev-electron.mjs",
-    "build": "electron-vite build",
+    "dev": "node ../../scripts/build.mjs dev",
+    "build": "node ../../scripts/build.mjs desktop",
     "preview": "electron-vite preview",
     "postinstall": "node ../../scripts/ensure-electron.mjs && electron-builder install-app-deps",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.mjs",
     "lint": "node ../../scripts/check-style-tokens.mjs",
     "clean": "node -e \"fs.rmSync('out',{recursive:true,force:true});fs.rmSync('dist',{recursive:true,force:true})\"",
-    "build:host-release": "cargo build --release --manifest-path ../../Cargo.toml -p host-core",
-    "bundle:runtime": "pnpm -C ../../packages/agent-runtime bundle",
-    "pack": "pnpm run build:deps && pnpm run build:host-release && pnpm run bundle:runtime && electron-vite build && electron-builder --dir",
-    "dist": "pnpm run build:deps && pnpm run build:host-release && pnpm run bundle:runtime && electron-vite build && electron-builder --publish never",
-    "dist:mac": "pnpm run build:deps && pnpm run build:host-release && pnpm run bundle:runtime && electron-vite build && electron-builder --mac --publish never",
-    "dist:win": "pnpm run build:deps && pnpm run build:host-release && pnpm run bundle:runtime && electron-vite build && electron-builder --win --publish never",
-    "dist:linux": "pnpm run build:deps && pnpm run build:host-release && pnpm run bundle:runtime && electron-vite build && electron-builder --linux --publish never"
+    "build:host-release": "node ../../scripts/build.mjs host",
+    "bundle:runtime": "node ../../scripts/build.mjs runtime",
+    "pack": "node ../../scripts/build.mjs pack",
+    "dist": "node ../../scripts/build.mjs dist",
+    "dist:mac": "node ../../scripts/build.mjs dist:mac",
+    "dist:win": "node ../../scripts/build.mjs dist:win",
+    "dist:linux": "node ../../scripts/build.mjs dist:linux"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
@@ -71,7 +69,7 @@
     "zustand": "^5.0.15"
   },
   "build": {
-    "appId": "com.pi-desktop.app",
+    "appId": "com.someone97421.this-is-a-agent",
     "productName": "this-is-a-agent",
     "directories": {
       "output": "release"
@@ -79,8 +77,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "vastsa",
-        "repo": "PI-Desktop"
+        "owner": "someone97421",
+        "repo": "CK-PI-Desktop"
       }
     ],
     "files": [
@@ -128,7 +126,7 @@
       }
     ],
     "mac": {
-      "artifactName": "this-is-a-agent-${version}-${arch}-mac.${ext}",
+      "artifactName": "this-is-a-agent-20260916-225115-${arch}-mac.${ext}",
       "target": [
         {
           "target": "dmg"
@@ -154,13 +152,17 @@
         }
       ],
       "extraDistFiles": [
-        "PI-Desktop-macOS-open.command",
-        "PI-Desktop-macOS-opening-help.txt"
-      ]
+        "this-is-a-agent-macOS-open.command",
+        "this-is-a-agent-macOS-opening-help.txt"
+      ],
+      "extendInfo": {
+        "CFBundleDisplayName": "这是一个助手",
+        "CFBundleName": "这是一个助手"
+      },
+      "bundleVersion": "2609.1622.5115"
     },
     "dmg": {
-      "artifactName": "this-is-a-agent-${version}-${arch}.${ext}",
-      "background": "build/dmg-background.png",
+      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}",
       "window": {
         "width": 720,
         "height": 500
@@ -183,9 +185,10 @@
           "y": 370,
           "type": "file",
           "name": "If app won't open, read this.txt",
-          "path": "PI-Desktop-macOS-opening-help.txt"
+          "path": "this-is-a-agent-macOS-opening-help.txt"
         }
-      ]
+      ],
+      "backgroundColor": "#292929"
     },
     "win": {
       "executableName": "this-is-a-agent",
@@ -219,26 +222,28 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "这是一个助手",
-      "artifactName": "this-is-a-agent-Setup-${version}.${ext}"
+      "artifactName": "this-is-a-agent-Setup-20260916-225115-${arch}.${ext}",
+      "uninstallDisplayName": "这是一个助手",
+      "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "this-is-a-agent-Portable-${version}.${ext}",
+      "artifactName": "this-is-a-agent-Portable-20260916-225115-${arch}.${ext}",
       "requestExecutionLevel": "user"
     },
     "deb": {
-      "packageName": "pi-desktop",
-      "artifactName": "pi-desktop_${version}_${arch}.${ext}"
+      "packageName": "this-is-a-agent",
+      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}"
     },
     "rpm": {
-      "packageName": "pi-desktop",
-      "artifactName": "pi-desktop-${version}-${arch}.${ext}",
+      "packageName": "this-is-a-agent",
+      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}",
       "fpm": [
         "--rpm-rpmbuild-define",
         "_build_id_links none"
       ]
     },
     "linux": {
-      "executableName": "pi-desktop",
+      "executableName": "this-is-a-agent",
       "syncDesktopName": true,
       "target": [
         {
@@ -267,10 +272,23 @@
           "from": "../../target/release/pi-desktop-host-core",
           "to": "bin/pi-desktop-host-core"
         }
-      ]
+      ],
+      "desktop": {
+        "entry": {
+          "Name": "这是一个助手",
+          "Name[en]": "this-is-a-agent",
+          "Comment": "这是一个助手"
+        }
+      },
+      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}"
     },
     "asar": {
       "smartUnpack": false
+    },
+    "buildVersion": "2609.1622.5115.0",
+    "extraMetadata": {
+      "name": "this-is-a-agent"
     }
-  }
+  },
+  "buildVersionLabel": "20260916-225115"
 }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { UpdateState } from "@pi-desktop/shared";
+import { displayAppVersion } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { useUpdateState } from "../hooks/use-update-state";
 import { Button, TooltipButton } from "./ui";
@@ -114,7 +115,7 @@ function bannerMessage(
     return t("updates.downloading", { percent: update.progressPercent ?? 0 });
   }
   if (update.status === "downloaded") {
-    return t("updates.downloaded", { version: update.availableVersion });
+    return t("updates.downloaded", { version: displayAppVersion(update.availableVersion) });
   }
-  return t("updates.available", { version: update.availableVersion });
+  return t("updates.available", { version: displayAppVersion(update.availableVersion) });
 }

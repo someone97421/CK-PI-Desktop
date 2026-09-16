@@ -1,8 +1,8 @@
 /**
  * App auto-update via electron-updater against GitHub Releases.
  *
- * The feed (latest*.yml + installers) is attached to each GitHub Release by
- * .github/workflows/release.yml. Discovery always tracks the latest stable
+ * The fork's published releases must include latest*.yml and installers.
+ * Discovery always tracks the latest stable
  * release (`allowPrerelease = false`) so RC installs still graduate to newer
  * stables. Delivery mode per install:
  *  - Windows NSIS / Linux AppImage → full in-app flow: silent background
@@ -18,7 +18,8 @@ import { app, shell } from "electron";
 import electronUpdaterPkg from "electron-updater";
 import type { UpdateInfo, ProgressInfo } from "electron-updater";
 import {
-  formatChangelogNotes,
+  APP_REPOSITORY,
+  formatForkChangelogNotes,
   IPC,
   type UpdateMode,
   type UpdateState,
@@ -32,7 +33,7 @@ import {
 
 const { autoUpdater } = electronUpdaterPkg;
 
-export const RELEASES_URL = "https://github.com/vastsa/PI-Desktop/releases/latest";
+export const RELEASES_URL = `https://github.com/${APP_REPOSITORY}/releases/latest`;
 
 const AUTO_CHECK_INITIAL_DELAY_MS = 15_000;
 const AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -107,7 +108,7 @@ export class AppUpdaterController {
   /** Localized product notes for a discovered version, if catalogued. */
   private notesFor(version: string | undefined): string | undefined {
     if (!version) return undefined;
-    return formatChangelogNotes(version, this.getLocale());
+    return formatForkChangelogNotes(version, this.getLocale());
   }
 
   private attachListeners() {

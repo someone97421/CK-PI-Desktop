@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { displayAppVersion } from "@pi-desktop/shared";
 import type {
   AppSettings,
   GlobalPermissionMode,
@@ -51,8 +52,7 @@ import {
 import {
   AgentInstructionsSection,
   ImportSection,
-  // Fork: UpdatesRow is unused while the upstream update channel is disabled.
-  // UpdatesRow,
+  UpdatesRow,
 } from "./agent-sections";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginSettingsDestination } from "../../components/settings/PluginSettingsDestination";
@@ -452,10 +452,10 @@ export function SettingsPage() {
                 <SettingsRow title={t("settings.application")} description={t("settings.applicationDesc")}>
                   <div className="settings-about-meta">
                     <div className="font-medium">
-                      {version?.name || "这是一个助手"} {version?.version}
+                      {version?.name || "这是一个助手"} {displayAppVersion(version?.version)}
                     </div>
                     <div className="font-mono text-xs-plus text-text-muted">
-                      protocol {version?.protocolVersion} · host {version?.hostVersion}
+                      protocol {version?.protocolVersion} · host {displayAppVersion(version?.hostVersion)}
                     </div>
                   </div>
                 </SettingsRow>
@@ -464,9 +464,6 @@ export function SettingsPage() {
                     {t("settings.openLogs")}
                   </Button>
                 </SettingsRow>
-                {/* Fork: the upstream feedback link points at the original
-                    project's issue tracker, which does not apply here.
-                    Restore or replace with a fork-owned channel later.
                 <SettingsRow
                   title={t("settings.feedback")}
                   description={t("settings.feedbackDesc")}
@@ -478,11 +475,7 @@ export function SettingsPage() {
                     {t("settings.openFeedback")}
                   </Button>
                 </SettingsRow>
-                */}
-                {/* Fork: the upstream update channel (GitHub Releases) is
-                    disabled. Restore or replace with a fork-owned channel.
                 <UpdatesRow currentVersion={version?.version} />
-                */}
               </SettingsCard>
 
               {settings && (

@@ -1,11 +1,11 @@
 @echo off
 setlocal EnableExtensions
-title PI-Desktop DEV
+title this-is-a-agent DEV
 
 cd /d "%~dp0"
 
 echo ============================================
-echo  PI-Desktop dev launcher
+echo  this-is-a-agent dev launcher
 echo ============================================
 echo.
 

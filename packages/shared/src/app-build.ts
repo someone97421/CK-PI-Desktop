@@ -1,0 +1,10 @@
+// 由 scripts/prepare-build.mjs 生成；身份配置请修改根目录 app-branding.json。
+export const APP_ID = "com.someone97421.this-is-a-agent";
+export const APP_NAME = "这是一个助手";
+export const APP_SLUG = "this-is-a-agent";
+export const APP_REPOSITORY = "someone97421/CK-PI-Desktop";
+export const APP_VERSION = "2609.1622.5115";
+export const APP_DISPLAY_VERSION = "20260916-225115";
+export const APP_BUILD_TIME = "2026-09-16T14:51:15.327Z";
+export const APP_BUILD_TIMEZONE = "Asia/Shanghai";
+export const APP_LEGACY_LOCK_NAME = "PI-Desktop";

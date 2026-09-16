@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentInstructionFile } from "@pi-desktop/shared";
+import { displayAppVersion } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
 import type {
@@ -134,7 +135,7 @@ export function UpdatesRow({ currentVersion }: { currentVersion?: string }) {
         statusText = t("updates.upToDate");
         break;
       case "available":
-        statusText = `${t("updates.available", { version: update.availableVersion })}${
+        statusText = `${t("updates.available", { version: displayAppVersion(update.availableVersion) })}${
           update.mode === "manual" ? ` ${t("updates.manualHint")}` : ""
         }`;
         break;
@@ -145,7 +146,7 @@ export function UpdatesRow({ currentVersion }: { currentVersion?: string }) {
         break;
       case "downloaded":
         statusText = t("updates.downloaded", {
-          version: update.availableVersion,
+          version: displayAppVersion(update.availableVersion),
         });
         break;
       case "error":

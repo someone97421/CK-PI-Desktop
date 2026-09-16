@@ -1,0 +1,28 @@
+name: 问题反馈
+description: 向 CK-PI-Desktop 个人 fork 反馈问题。
+title: "[问题] "
+body:
+  - type: input
+    id: app-version
+    attributes:
+      label: 软件版本
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题描述与复现步骤
+      description: 请勿粘贴 API Key、密码或私人对话内容。
+    validations:
+      required: true

@@ -6,7 +6,7 @@ const desktopPackageUrl = new URL("../package.json", import.meta.url);
 // Double quotes work under both cmd.exe and sh; single quotes are literal on
 // Windows, which silently matched no projects and skipped the dependency build.
 const dependencyBuild = 'pnpm --filter "@pi-desktop/desktop^..." build';
-const depsScript = "pnpm run build:deps";
+const buildSource = await readFile(new URL("../../../scripts/build.mjs", import.meta.url), "utf8");
 
 const readScripts = async () => {
   const pkg = JSON.parse(await readFile(desktopPackageUrl, "utf8"));
@@ -24,33 +24,19 @@ test("build:deps rebuilds every workspace dependency consumed by Electron", asyn
 
 test("desktop dev builds all workspace dependencies before Electron starts", async () => {
   const scripts = await readScripts();
-  const predev = scripts.predev ?? "";
-  const hostBuild = "cargo build --manifest-path ../../Cargo.toml -p host-core";
-
-  assert.ok(predev.includes(depsScript), "predev must rebuild workspace dependencies");
-  assert.ok(predev.includes(hostBuild), "predev must continue building host-core");
-  assert.ok(
-    predev.indexOf(depsScript) < predev.indexOf(hostBuild),
-    "workspace dependency builds must complete before the desktop boot sequence continues",
-  );
+  assert.equal(scripts.dev, "node ../../scripts/build.mjs dev");
+  assert.ok(buildSource.indexOf('await pnpm(["run", "build:deps"]') < buildSource.indexOf('if (mode === "dev")'));
+  assert.match(buildSource, /if \(mode === "dev"\)[\s\S]*?await run\("cargo", \["build", "-p", "host-core"\]\);[\s\S]*?scripts\/dev-electron\.mjs/);
 });
 
 test("packaging scripts rebuild workspace dependencies before bundling", async () => {
   const scripts = await readScripts();
-  const rendererBuild = "electron-vite build";
 
   for (const name of ["pack", "dist", "dist:mac", "dist:win", "dist:linux"]) {
-    const script = scripts[name] ?? "";
-
-    assert.ok(
-      script.includes(depsScript),
-      `${name} must rebuild workspace dependencies so packaging never consumes a stale dist/`,
-    );
-    assert.ok(
-      script.indexOf(depsScript) < script.indexOf(rendererBuild),
-      `${name} must rebuild workspace dependencies before ${rendererBuild}`,
-    );
+    assert.equal(scripts[name], `node ../../scripts/build.mjs ${name}`);
   }
+  assert.ok(buildSource.indexOf('await pnpm(["run", "build:deps"]') < buildSource.indexOf("await vite()"));
+  assert.ok(buildSource.indexOf("prepareBuild()") < buildSource.indexOf("await pnpm("));
 });
 
 // tsc -p exits 0 without emitting when a tsbuildinfo claims the project is

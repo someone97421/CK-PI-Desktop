@@ -1,11 +1,7 @@
 export const PROTOCOL_VERSION = 11 as const;
 export const SCHEMA_VERSION = 16 as const;
-export const APP_ID = "com.pi-desktop.app";
-/** Display name for the UI, window title and OS surfaces. */
-export const APP_NAME = "这是一个助手";
-/** Filesystem- and protocol-safe name for paths, executables and peers. */
-export const APP_SLUG = "this-is-a-agent";
-export const APP_VERSION = "0.14.8-native.1";
+export { APP_ID, APP_NAME, APP_SLUG, APP_REPOSITORY, APP_VERSION, APP_DISPLAY_VERSION,
+  APP_BUILD_TIME, APP_BUILD_TIMEZONE, APP_LEGACY_LOCK_NAME } from "./app-build.js";
 
 export const APP_MENU_COMMANDS = [
   "newTask",

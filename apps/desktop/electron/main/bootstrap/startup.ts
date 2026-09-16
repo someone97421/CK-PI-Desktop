@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu } from "electron";
 import {
   APP_NAME,
+  APP_DISPLAY_VERSION,
   APP_VERSION,
   ErrorCodes,
   IPC,
@@ -145,8 +146,8 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     createTray();
     app.setAboutPanelOptions({
       applicationName: APP_NAME,
-      applicationVersion: APP_VERSION,
-      version: APP_VERSION,
+      applicationVersion: APP_DISPLAY_VERSION,
+      version: APP_DISPLAY_VERSION,
     });
     installApplicationMenu({
       locale: app.getLocale(),

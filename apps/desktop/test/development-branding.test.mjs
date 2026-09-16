@@ -33,7 +33,7 @@ const packageJson = JSON.parse(
   await readFile(new URL("../package.json", import.meta.url), "utf8"),
 );
 const protocolSource = await readFile(
-  new URL("../../../packages/shared/src/protocol.ts", import.meta.url),
+  new URL("../../../packages/shared/src/app-build.ts", import.meta.url),
   "utf8",
 );
 const windowsIcon = await readFile(
@@ -44,7 +44,7 @@ test("Windows runtime registers the canonical native application identity", () =
   const appId = protocolSource.match(/APP_ID = "([^"]+)"/)?.[1];
   assert.equal(appId, packageJson.build.appId);
   assert.ok(startupSource.includes("app.whenReady()"), "main process readiness hook");
-  assert.match(mainIndexSource, /app\.setName\(APP_NAME\)/);
+  assert.match(mainIndexSource, /configureApplicationIdentity\(app\)/);
   assert.match(
     mainIndexSource,
     /process\.platform === "win32"[\s\S]*app\.setAppUserModelId\(\s*app\.isPackaged \? APP_ID : `\$\{APP_ID\}\.dev`\s*\)/,
@@ -76,7 +76,7 @@ test("Windows packages and windows use the canonical PI-Desktop icon", () => {
 });
 
 test("Linux packages align the desktop entry with the Wayland app identity", () => {
-  assert.equal(packageJson.desktopName, "pi-desktop.desktop");
+  assert.equal(packageJson.desktopName, "this-is-a-agent.desktop");
   assert.equal(packageJson.build.linux.syncDesktopName, true);
 });
 
@@ -102,16 +102,16 @@ test("macOS development uses the canonical PI-Desktop Dock icon", () => {
 });
 
 test("macOS icon derivation preserves the canonical renderer asset", () => {
-  assert.match(iconScriptSource, /SOURCE = BUILD \/ "icon_1024\.png"/);
+  assert.match(iconScriptSource, /SOURCE = ROOT \/ "ico\.png"/);
   assert.match(iconScriptSource, /with Image\.open\(SOURCE\) as source/);
-  assert.doesNotMatch(
+  assert.match(
     iconScriptSource,
     /\.save\(BUILD \/ "icon_1024\.png"\)/,
   );
 });
 
 test("macOS development launches from a branded host bundle", () => {
-  assert.equal(packageJson.scripts.dev, "node ../../scripts/dev-electron.mjs");
+  assert.equal(packageJson.scripts.dev, "node ../../scripts/build.mjs dev");
   assert.match(devScriptSource, /process\.platform === "darwin"/);
   assert.match(devScriptSource, /PI_DESKTOP_DEV: "1"/);
   assert.match(devScriptSource, /ELECTRON_EXEC_PATH/);
@@ -120,7 +120,7 @@ test("macOS development launches from a branded host bundle", () => {
   assert.match(devScriptSource, /CFBundleExecutable", APP_NAME/);
   // Bundle directories and the executable stay ASCII; only plist display
   // fields carry the Chinese product name.
-  assert.match(devScriptSource, /const APP_NAME = "this-is-a-agent"/);
+  assert.match(devScriptSource, /const APP_NAME = branding\.slug/);
   assert.match(devScriptSource, /CFBundleIconFile", "icon\.icns"/);
   assert.match(
     devScriptSource,
@@ -192,7 +192,7 @@ test(
         "canonical-icon",
       );
       assert.match(plist, /<string>这是一个助手<\/string>/);
-      assert.match(plist, /<string>com\.pi-desktop\.app\.dev<\/string>/);
+      assert.match(plist, /<string>com\.someone97421\.this-is-a-agent\.dev<\/string>/);
       assert.equal(prepareMacDevelopmentBundle(options), brandedExecutable);
     } finally {
       await rm(root, { recursive: true, force: true });

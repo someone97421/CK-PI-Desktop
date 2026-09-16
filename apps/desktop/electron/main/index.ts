@@ -8,6 +8,7 @@ import {
 } from "electron";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { configureApplicationIdentity } from "./application-identity";
 import {
   applyNetworkProxyFromAppSettings,
   currentNetworkProxy,
@@ -178,7 +179,11 @@ const ErrorCodes = {
 ignoreBrokenStdio();
 installMainProcessErrorHandlers();
 
-app.setName(APP_NAME);
+const { dataDir, hasSingleInstanceLock } = configureApplicationIdentity(app);
+if (!hasSingleInstanceLock) {
+  // 立即终止，防止下面的日志、outbox 和插件初始化触碰另一个进程的业务目录。
+  app.exit(0);
+}
 if (process.platform === "win32") {
   // Development must not claim the packaged app's AUMID. Windows resolves the
   // taskbar identity through it, so sharing the id with an installed build made
@@ -187,28 +192,6 @@ if (process.platform === "win32") {
   app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`);
 }
 
-// One data directory admits exactly one desktop process. host-core owns
-// `pi.sqlite` exclusively (D002), Electron main owns the persistence outbox and
-// the log tree beside it, and the tray, the global launcher shortcut, and the
-// updater are singletons of the running app — a second process fights the first
-// for every one of them and leaves the user with two shells over one database.
-//
-// Electron keeps the lock in `userData`, which is derived from the app name set
-// just above, so it is taken after `setName` and before anything else in this
-// module touches the data directory. That scope is the installation, not
-// `PI_DESKTOP_DATA_DIR`: a run pointed at its own data directory (E2E
-// harnesses, the capture rig, a side-by-side profile) shares no state with the
-// default installation and stays launchable while one is running.
-const singleInstanceRequired = !process.env.PI_DESKTOP_DATA_DIR;
-const hasSingleInstanceLock = singleInstanceRequired
-  ? app.requestSingleInstanceLock()
-  : true;
-if (!hasSingleInstanceLock) {
-  // Nothing has booted yet: no window, no tray, no child process, no log line.
-  // Quit here and let the instance that holds the lock surface itself from
-  // `second-instance`.
-  app.quit();
-}
 
 const WINDOW_MIN_WIDTH = 1040;
 const WINDOW_MIN_HEIGHT = 700;
@@ -523,9 +506,6 @@ const {
   recordPastedClipboardFiles,
   safeOpenExternal,
 } = desktopServices;
-
-const dataDir =
-  process.env.PI_DESKTOP_DATA_DIR || join(homedir(), ".pi-desktop");
 
 // Agent extensions (D387/D388, ADR 0214): plugins contribute the modules,
 // the sidecar loads them; this bridge carries commands, diagnostics, and

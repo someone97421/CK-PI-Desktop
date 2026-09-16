@@ -348,17 +348,9 @@ test("macOS activation resurfaces a tray-hidden window", () => {
 });
 
 test("desktop packaging builds the native host before every local target", () => {
-  assert.match(
-    packageJson.scripts["build:host-release"],
-    /cargo build --release .* -p host-core/,
-  );
+  assert.equal(packageJson.scripts["build:host-release"], "node ../../scripts/build.mjs host");
   for (const name of ["pack", "dist", "dist:mac", "dist:win", "dist:linux"]) {
-    const script = packageJson.scripts[name];
-    assert.match(script, /pnpm run build:host-release/);
-    assert.ok(
-      script.indexOf("pnpm run build:host-release") < script.indexOf("electron-builder"),
-      `${name} must build the native host before electron-builder packages it`,
-    );
+    assert.equal(packageJson.scripts[name], `node ../../scripts/build.mjs ${name}`);
   }
   assert.equal(packageJson.build.win.extraResources[0].to, "bin/pi-desktop-host-core.exe");
   assert.equal(packageJson.build.linux.extraResources[0].to, "bin/pi-desktop-host-core");

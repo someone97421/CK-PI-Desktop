@@ -7,7 +7,9 @@
 
 | 脚本 | 调用 | 用途 |
 |---|---|---|
-| `dev-electron.mjs` | `pnpm dev`（经 `predev`） | 起 Electron + 开发服务器 |
+| `build.mjs` | `pnpm dev` / `pnpm build` / `pnpm dist` | 统一生成版本，按顺序构建依赖、host、界面及安装包 |
+| `dev-electron.mjs` | 由 `build.mjs dev` 调用 | 起 Electron + 开发服务器，应用开发版身份 |
+| `stop-dev.ps1` | `kill-dev.cmd` | 仅清理当前工作区的开发进程树 |
 
 ## 手动检查
 
@@ -24,7 +26,13 @@
 
 | 脚本 | 用途 |
 |---|---|
-| `make-icon.py` | 从 canonical PNG 派生应用图标、macOS tray 模板与 ICNS |
+| `make-icon.py` | 从根目录 `ico.png` 派生各平台及界面的小恐龙图标（需要 Python + Pillow） |
+| `prepare-build.mjs` | 从 `app-branding.json` 与北京时间生成日期版本及统一打包身份 |
+
+Windows 安装包：`pnpm --filter @pi-desktop/desktop dist:win`。
+本地构建均使用 `--publish never`；是否发布由用户决定。
+同一版本的多平台构建应显式传入相同的 `THIS_IS_A_AGENT_BUILD_TIME`（带时区的 ISO 时间）。
+完整隔离边界和版本格式见根目录 `AGENTS.md`。
 
 ## E2E
 

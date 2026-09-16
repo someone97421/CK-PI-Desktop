@@ -1,0 +1,13 @@
+this-is-a-agent macOS first launch
+
+This build is unsigned. After moving this-is-a-agent.app to Applications, if macOS
+says the app is damaged or does not open, open Terminal and run:
+
+xattr -r -d com.apple.quarantine /Applications/this-is-a-agent.app
+
+Use this only for an app obtained from a trusted this-is-a-agent source. It removes
+only Apple's quarantine attribute from this-is-a-agent.app. Signed and notarized
+builds do not need it.
+
+The macOS ZIP package also includes this-is-a-agent-macOS-open.command, which can
+clear the same attribute and launch the app after installation.

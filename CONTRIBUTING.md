@@ -3,8 +3,8 @@
 本仓库是 PI-Desktop 的**个人 fork**（`someone97421/CK-PI-Desktop`），仅自用，不向
 原项目 `vastsa/PI-Desktop` 提交 issue、PR 或 review。
 
-规则以 [`AGENTS.md`](AGENTS.md) 为准，尤其是 §0「Fork 策略（自用）」定义的单人精简
-流程。
+规则以 [`AGENTS.md`](AGENTS.md) 为准，产品名称为「这是一个助手 / this-is-a-agent」。
+该文件记录安装隔离、共用业务数据、图标来源和日期时间版本的边界。
 
 ## 开始前
 

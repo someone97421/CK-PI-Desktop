@@ -9,15 +9,15 @@ const sharedPackageJson = JSON.parse(
   await readFile(new URL("../../../packages/shared/package.json", import.meta.url), "utf8"),
 );
 const macOpenFixNote = await readFile(
-  new URL("../PI-Desktop-macOS-opening-help.txt", import.meta.url),
+  new URL("../this-is-a-agent-macOS-opening-help.txt", import.meta.url),
   "utf8",
 );
 const macOpenScript = await readFile(
-  new URL("../PI-Desktop-macOS-open.command", import.meta.url),
+  new URL("../this-is-a-agent-macOS-open.command", import.meta.url),
   "utf8",
 );
 const macOpenScriptStat = await stat(
-  new URL("../PI-Desktop-macOS-open.command", import.meta.url),
+  new URL("../this-is-a-agent-macOS-open.command", import.meta.url),
 );
 const dmgBackground = await readFile(
   new URL("../build/dmg-background.png", import.meta.url),
@@ -232,10 +232,11 @@ test("macOS targets follow the native architecture selected by the runner", () =
 
 test("macOS installers expose DMG guidance and retain the ZIP helper", () => {
   assert.deepEqual(packageJson.build.mac.extraDistFiles, [
-    "PI-Desktop-macOS-open.command",
-    "PI-Desktop-macOS-opening-help.txt",
+    "this-is-a-agent-macOS-open.command",
+    "this-is-a-agent-macOS-opening-help.txt",
   ]);
-  assert.equal(packageJson.build.dmg.background, "build/dmg-background.png");
+  assert.equal(packageJson.build.dmg.background, undefined);
+  assert.equal(packageJson.build.dmg.backgroundColor, "#292929");
   assert.deepEqual(packageJson.build.dmg.window, { width: 720, height: 500 });
   assert.equal(packageJson.build.dmg.iconSize, 96);
   assert.equal(packageJson.build.dmg.iconTextSize, 12);
@@ -247,12 +248,12 @@ test("macOS installers expose DMG guidance and retain the ZIP helper", () => {
       y: 370,
       type: "file",
       name: "If app won't open, read this.txt",
-      path: "PI-Desktop-macOS-opening-help.txt",
+      path: "this-is-a-agent-macOS-opening-help.txt",
     },
   ]);
   assert.doesNotMatch(
     JSON.stringify(packageJson.build.dmg.contents),
-    /PI-Desktop-macOS-open\.command|Open PI-Desktop\.command/,
+    /this-is-a-agent-macOS-open\.command|Open PI-Desktop\.command/,
     "the DMG must not expose the command helper",
   );
   assert.deepEqual([...dmgBackground.subarray(0, 8)], [
@@ -265,17 +266,17 @@ test("macOS installers expose DMG guidance and retain the ZIP helper", () => {
   ]);
   assert.equal(dmgBackgroundRetina.readUInt32BE(16), 1440);
   assert.equal(dmgBackgroundRetina.readUInt32BE(20), 1000);
-  assert.ok(macOpenScriptStat.mode & 0o111, "opening helper must be executable");
+  if (process.platform !== "win32") assert.ok(macOpenScriptStat.mode & 0o111, "opening helper must be executable");
   assert.match(
     macOpenFixNote,
-    /xattr -r -d com\.apple\.quarantine \/Applications\/PI-Desktop\.app/,
+    /xattr -r -d com\.apple\.quarantine \/Applications\/this-is-a-agent\.app/,
   );
-  assert.match(macOpenFixNote, /trusted PI-Desktop source/);
+  assert.match(macOpenFixNote, /trusted this-is-a-agent source/);
   assert.match(macOpenFixNote, /Signed and\s+notarized\s+builds do not need/);
-  assert.match(macOpenFixNote, /PI-Desktop-macOS-open\.command/);
+  assert.match(macOpenFixNote, /this-is-a-agent-macOS-open\.command/);
   assert.match(macOpenScript, /\/Applications\/\$\{APP_BUNDLE_NAME\}/);
   assert.match(macOpenScript, /CFBundleIdentifier/);
-  assert.match(macOpenScript, /com\.pi-desktop\.app/);
+  assert.match(macOpenScript, /com\.someone97421\.this-is-a-agent/);
   assert.match(macOpenScript, /\/usr\/bin\/xattr -r -d com\.apple\.quarantine/);
   assert.match(macOpenScript, /\/usr\/bin\/open/);
   assert.doesNotMatch(macOpenScript, /\bsudo\s+\//);

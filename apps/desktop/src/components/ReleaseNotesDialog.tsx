@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  CHANGELOG,
+  FORK_CHANGELOG as CHANGELOG,
+  displayAppVersion,
   normalizeChangelogVersion,
   resolveChangelogLocale,
 } from "@pi-desktop/shared";
@@ -127,7 +128,7 @@ export function ReleaseNotesDialog({
                 <div className="release-notes-version-header">
                   <div>
                     <h3>
-                      {t("updates.versionLabel", { version: entry.version })}
+                      {t("updates.versionLabel", { version: displayAppVersion(entry.version) })}
                     </h3>
                     {entry.date ? (
                       <time dateTime={entry.date}>

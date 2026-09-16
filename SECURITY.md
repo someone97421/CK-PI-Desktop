@@ -1,64 +1,27 @@
-# Security Policy
+# 安全说明
 
-PI-Desktop is an early-preview, local-first desktop application. We take
-security reports seriously and appreciate responsible disclosure.
+这是「这是一个助手 / this-is-a-agent」的个人 fork：`someone97421/CK-PI-Desktop`。
+本仓库的修改和发布由 fork 维护，不能将本 fork 的问题发送到原项目维护者的邮箱或 issue。
 
-## Supported Versions
+## 报告问题
 
-Security fixes are provided for the latest release published on the
-[GitHub Releases page](https://github.com/vastsa/PI-Desktop/releases). Older
-releases and development builds may not receive security fixes.
+普通问题使用本仓库的 Issues，提供日期时间版本、操作系统和复现步骤。
+请移除 API Key、令牌、密码、私人对话、私有源码和其他敏感信息。
 
-## Reporting a Vulnerability
+安全漏洞不要直接公开完整复现方法或敏感数据。若本仓库启用了 GitHub 私人漏洞报告，使用：
 
-**Please do not report security vulnerabilities through public GitHub issues,
-pull requests, or discussions.**
+https://github.com/someone97421/CK-PI-Desktop/security/advisories/new
 
-Send a private report to **hhxk666@gmail.com** with the subject:
+如果该入口不可用，先在本仓库请求私密联系渠道，不在公开留言中贴出漏洞细节或凭据。
+这个个人 fork 不承诺原项目的响应时限，也没有漏洞赏金计划。
 
-```text
-[PI-Desktop Security] <short description>
-```
+## 数据与权限边界
 
-If private vulnerability reporting is enabled for this repository, you may
-also use GitHub's private security advisory form:
+- 原版与本 fork 按用户约定共用 `~/.pi-desktop` 业务目录，不能同时写入。
+- 共用数据格式、单实例互斥和独立缓存的具体约束以项目根目录 `AGENTS.md` 为准。
+- 内置终端会以当前用户身份运行真实 Shell。保留插件权限、路径检查和沙箱边界，不以关闭检查作为兼容方案。
+- 仅对自己的程序和数据进行排查；不访问其他用户的数据或执行破坏性验证。
 
-<https://github.com/vastsa/PI-Desktop/security/advisories/new>
+本 fork 的软件发布页：
 
-Please include as much of the following information as you can:
-
-- A clear description of the vulnerability and its security impact.
-- The affected PI-Desktop version, operating system, and installation type.
-- Reproduction steps or a minimal proof of concept.
-- The affected component, feature, configuration, or extension boundary.
-- Any relevant logs, screenshots, stack traces, or suggested remediation.
-
-Please remove API keys, access tokens, passwords, private source code, personal
-data, and other sensitive information before sending a report. Do not test
-against other users, access data that does not belong to you, or perform
-destructive actions. PI-Desktop does not currently operate a bug bounty
-program.
-
-## Response and Disclosure
-
-We aim to acknowledge a report within 7 calendar days and provide an initial
-assessment within 14 calendar days. We will keep the reporter informed about
-triage, remediation, and release plans when appropriate.
-
-Please allow us reasonable time to investigate and release a fix before making
-the vulnerability public. We will coordinate a disclosure date with the
-reporter whenever possible and will credit the reporter in release notes only
-with their permission.
-
-## Scope
-
-Reports are generally in scope when they affect the PI-Desktop application,
-official release artifacts, Electron main or preload boundaries, the Rust host
-core, the agent runtime, or the handling of credentials, permissions, local
-files, plugins, MCP servers, or IPC/RPC messages.
-
-Issues that affect only a third-party provider, model service, operating
-system, dependency, or user-installed extension should also be reported to the
-relevant maintainer. They are still in scope for PI-Desktop if the application
-introduces an exploitable integration, permission, sandbox, or credential
-handling weakness.
+https://github.com/someone97421/CK-PI-Desktop/releases

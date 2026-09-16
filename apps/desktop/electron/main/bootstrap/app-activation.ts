@@ -16,9 +16,7 @@ export function registerApplicationActivation({
 }: ApplicationActivationDependencies): void {
   app.on("activate", restoreMainWindow);
 
-  // Launching PI-Desktop again is a request to see the app that is already
-  // running, not to start another process. Electron hands that launch to the
-  // lock holder, so the visible result matches the tray's Show action.
+  // 共用业务目录时，再次启动（包括兼容原版）交给锁持有者恢复窗口。
   app.on("second-instance", restoreMainWindow);
 
   // macOS can activate the app without emitting `activate` (Cmd+Tab, App

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Derive PI-Desktop platform icon resources from the canonical logo.
-
-The tracked ``apps/desktop/build/icon_1024.png`` file is the brand source of
-truth. This script preserves that file and emits:
+"""从项目根目录 ico.png 派生所有平台及界面的小恐龙图标。
 
   apps/desktop/build/icon.iconset/  - all macOS iconset sizes
   apps/desktop/build/icon.icns      - via `iconutil` (macOS only)
@@ -19,11 +16,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "apps" / "desktop" / "build"
-SOURCE = BUILD / "icon_1024.png"
+SOURCE = ROOT / "ico.png"
 
 BASE = 1024
 
@@ -33,13 +30,17 @@ def main() -> None:
         raise FileNotFoundError(f"canonical logo is missing: {SOURCE}")
 
     with Image.open(SOURCE) as source:
-        master = source.convert("RGBA")
-    if master.size != (BASE, BASE):
-        raise ValueError(
-            f"canonical logo must be {BASE}x{BASE}, got {master.width}x{master.height}"
-        )
+        artwork = ImageOps.contain(source.convert("RGBA"), (BASE, BASE), Image.Resampling.NEAREST)
+    master = Image.new("RGBA", (BASE, BASE), (0, 0, 0, 0))
+    master.paste(artwork, ((BASE - artwork.width) // 2, (BASE - artwork.height) // 2))
 
     BUILD.mkdir(parents=True, exist_ok=True)
+    master.save(BUILD / "icon_1024.png")
+    master.save(BUILD / "logo_dark.png")
+    renderer = ROOT / "apps" / "desktop" / "src" / "assets" / "brand"
+    renderer.mkdir(parents=True, exist_ok=True)
+    for name in ("logo-light.png", "logo-dark.png"):
+        master.resize((128, 128), Image.Resampling.NEAREST).save(renderer / name)
     windows_icon = BUILD / "icon.ico"
     master.save(
         windows_icon,

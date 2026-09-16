@@ -581,7 +581,7 @@
 }
 
 .home-mascot-logo img {
-  display: none;
+  display: block;
   width: 100px;
   height: 100px;
   object-fit: contain;
@@ -590,22 +590,7 @@
   user-select: none;
 }
 
-:root:not([data-theme="light"]) .home-mascot-logo .home-mascot-motion.home-mascot-dark,
-:root[data-theme="light"] .home-mascot-logo .home-mascot-motion.home-mascot-light {
-  display: block;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root:not([data-theme="light"]) .home-mascot-logo .home-mascot-motion.home-mascot-dark,
-  :root[data-theme="light"] .home-mascot-logo .home-mascot-motion.home-mascot-light {
-    display: none;
-  }
-
-  :root:not([data-theme="light"]) .home-mascot-logo .home-mascot-still.home-mascot-dark,
-  :root[data-theme="light"] .home-mascot-logo .home-mascot-still.home-mascot-light {
-    display: block;
-  }
-}
+.home-mascot-dinosaur { image-rendering: pixelated; }
 
 .empty-hero h1 {
   margin: 0;
