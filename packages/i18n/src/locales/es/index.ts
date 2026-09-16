@@ -1842,6 +1842,10 @@ sklm: {
       "mcp.server.local": "Ejecutar un servidor MCP local",
       "mcp.server.remote": "Llegar a un servidor MCP remoto",
       "background.service": "Mantener un servicio en segundo plano en ejecución",
+      "audio.capture.background": "Usar el micrófono en segundo plano",
+      "audio.playback.background": "Reproducir audio en segundo plano",
+      "keyboard.globalShortcut": "Registrar atajos de teclado del sistema",
+      "net.websocket": "Abrir conexiones en tiempo real",
       "bus.publish": "Enviar mensajes a otros complementos",
       "bus.subscribe": "Recibir mensajes de otros complementos",
       "browser.cdp": "Controlar el navegador del panel de trabajo"
@@ -1872,6 +1876,10 @@ sklm: {
       "mcp.server.local": "Inicia un programa en esta computadora para ofrecer herramientas adicionales al agente.",
       "mcp.server.remote": "Envía llamadas a herramientas a un punto final MCP remoto que el complemento declaró. El punto final puede utilizar HTTP sin cifrar.",
       "background.service": "Mantiene a un trabajador en ejecución mientras el complemento está habilitado.",
+      "audio.capture.background": "Captura el micrófono mientras el complemento se ejecuta en segundo plano, sin ningún panel abierto.",
+      "audio.playback.background": "Reproduce el audio que transmite el complemento, incluso cuando no hay ningún panel abierto.",
+      "keyboard.globalShortcut": "Registra atajos de teclado del sistema que activan los comandos propios de este complemento mientras PI-Desktop no tiene el foco.",
+      "net.websocket": "Abre conexiones bidireccionales en tiempo real con los hosts que declara el complemento.",
       "bus.publish": "Puede enviar mensajes sobre los temas que declaró.",
       "bus.subscribe": "Puede recibir mensajes sobre los temas que declaró.",
       "browser.cdp": "Puede navegar por el navegador del panel de trabajo, leer la página, ejecutar JavaScript y enviar comandos de Chrome DevTools incluidos en la lista permitida. Las cookies y los métodos de almacenamiento están bloqueados."

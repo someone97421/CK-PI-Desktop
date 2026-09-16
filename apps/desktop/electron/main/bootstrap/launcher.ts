@@ -29,6 +29,24 @@ export type LauncherDependencies = {
   restoreMainWindow: () => void;
 };
 
+/**
+ * Bindings the app currently spends on a process-wide accelerator, keyed by the
+ * shortcut id that owns them. The plugin shortcut registry reads this, so a
+ * plugin is refused an accelerator the app already holds and gets it back once
+ * the user rebinds the app shortcut away.
+ */
+const hostGlobalBindings = new Map<string, string>();
+
+/** Live view of the app's own global accelerators, for the plugin runtime. */
+export function hostGlobalShortcutBindings(): string[] {
+  return [...hostGlobalBindings.values()];
+}
+
+function recordHostGlobalBinding(id: string, binding: string | null): void {
+  if (binding) hostGlobalBindings.set(id, binding);
+  else hostGlobalBindings.delete(id);
+}
+
 export function createLauncher({
   state,
   launcherState,
@@ -199,6 +217,7 @@ export function createLauncher({
     const binding = resolveKeybinding(shortcut, keybindings, platform);
     const accelerator = keybindingToElectronAccelerator(binding, platform);
     state.pluginLauncherBinding = binding;
+    recordHostGlobalBinding("openPluginLauncher", binding);
 
     if (process.platform === "win32" && getHost()?.isAvailable()) {
       void getHost()!
@@ -254,6 +273,7 @@ export function createLauncher({
           : "linux";
     const binding = resolveKeybinding(shortcut, keybindings, platform);
     const accelerator = keybindingToElectronAccelerator(binding, platform);
+    recordHostGlobalBinding("summonWindow", binding);
 
     if (launcherState.summonWindowAccelerator && launcherState.summonWindowAccelerator !== accelerator) {
       globalShortcut.unregister(launcherState.summonWindowAccelerator);

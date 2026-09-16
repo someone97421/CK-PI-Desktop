@@ -1618,3 +1618,154 @@ fn verified_trust_is_honoured_only_from_the_official_source() {
         std::env::remove_var("PI_DESKTOP_PLUGIN_MARKET_URL");
     }
 }
+
+#[test]
+fn global_shortcuts_require_permission_and_a_declared_command() {
+    let dir = tempdir().unwrap();
+    let commands = || json!([{ "id": "voice.pushToTalk", "title": "Push to talk" }]);
+
+    // Accepted, and the contribution survives parsing.
+    let ok = dir.path().join("ok");
+    write_plugin(
+        &ok,
+        capability_manifest(
+            json!({
+                "commands": commands(),
+                "globalShortcuts": [{
+                    "id": "voice.pushToTalk",
+                    "command": "voice.pushToTalk",
+                    "default": "Alt+Space"
+                }]
+            }),
+            json!(["keyboard.globalShortcut"]),
+        ),
+        &[],
+    );
+    let manifest = PluginManager::read_manifest(&ok).unwrap();
+    let contributes = manifest.contributes.as_ref().expect("contributes parsed");
+    assert_eq!(
+        contributes["globalShortcuts"],
+        json!([{
+            "id": "voice.pushToTalk",
+            "command": "voice.pushToTalk",
+            "default": "Alt+Space"
+        }])
+    );
+
+    // A shortcut declared without the permission would register silently.
+    let no_perm = dir.path().join("no-perm");
+    write_plugin(
+        &no_perm,
+        capability_manifest(
+            json!({
+                "commands": commands(),
+                "globalShortcuts": [{ "id": "voice.pushToTalk", "command": "voice.pushToTalk" }]
+            }),
+            json!([]),
+        ),
+        &[],
+    );
+    assert!(read_manifest_err(&no_perm)
+        .contains("global shortcuts require the keyboard.globalShortcut permission"));
+
+    // A shortcut may only reach a command this plugin declares.
+    let undeclared = dir.path().join("undeclared");
+    write_plugin(
+        &undeclared,
+        capability_manifest(
+            json!({
+                "commands": commands(),
+                "globalShortcuts": [{ "id": "voice.pushToTalk", "command": "voice.other" }]
+            }),
+            json!(["keyboard.globalShortcut"]),
+        ),
+        &[],
+    );
+    assert!(read_manifest_err(&undeclared).contains("references an undeclared command"));
+}
+
+#[test]
+fn global_shortcut_entries_are_validated() {
+    let dir = tempdir().unwrap();
+    let commands = || json!([{ "id": "voice.pushToTalk", "title": "Push to talk" }]);
+    let grant = || json!(["keyboard.globalShortcut"]);
+
+    let duplicate = dir.path().join("duplicate");
+    write_plugin(
+        &duplicate,
+        capability_manifest(
+            json!({
+                "commands": commands(),
+                "globalShortcuts": [
+                    { "id": "voice.pushToTalk", "command": "voice.pushToTalk" },
+                    { "id": "voice.pushToTalk", "command": "voice.pushToTalk" }
+                ]
+            }),
+            grant(),
+        ),
+        &[],
+    );
+    assert!(read_manifest_err(&duplicate).contains("duplicate global shortcut id voice.pushToTalk"));
+
+    let bad_id = dir.path().join("bad-id");
+    write_plugin(
+        &bad_id,
+        capability_manifest(
+            json!({
+                "commands": commands(),
+                "globalShortcuts": [{ "id": "voice push", "command": "voice.pushToTalk" }]
+            }),
+            grant(),
+        ),
+        &[],
+    );
+    assert!(read_manifest_err(&bad_id).contains("global shortcut id is missing or invalid"));
+
+    let bad_default = dir.path().join("bad-default");
+    for (name, default) in [("text", json!("Ctrl+")), ("number", json!(42))] {
+        let root = bad_default.join(name);
+        write_plugin(
+            &root,
+            capability_manifest(
+                json!({
+                    "commands": commands(),
+                    "globalShortcuts": [{
+                        "id": "voice.pushToTalk",
+                        "command": "voice.pushToTalk",
+                        "default": default
+                    }]
+                }),
+                grant(),
+            ),
+            &[],
+        );
+        assert!(read_manifest_err(&root)
+            .contains("global shortcut voice.pushToTalk has an invalid default"));
+    }
+
+    let too_many = dir.path().join("too-many");
+    write_plugin(
+        &too_many,
+        capability_manifest(
+            json!({
+                "commands": commands(),
+                "globalShortcuts": (0..9)
+                    .map(|index| json!({ "id": format!("voice.slot{index}"), "command": "voice.pushToTalk" }))
+                    .collect::<Vec<_>>()
+            }),
+            grant(),
+        ),
+        &[],
+    );
+    assert!(read_manifest_err(&too_many)
+        .contains("contributes.globalShortcuts allows at most 8 entries"));
+
+    let not_an_object = dir.path().join("not-an-object");
+    write_plugin(
+        &not_an_object,
+        capability_manifest(json!({ "globalShortcuts": ["voice.pushToTalk"] }), grant()),
+        &[],
+    );
+    assert!(read_manifest_err(&not_an_object)
+        .contains("contributes.globalShortcuts entry must be an object"));
+}

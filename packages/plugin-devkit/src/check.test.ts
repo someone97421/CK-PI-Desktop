@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { check } from "./check.js";
+import { check, HIGH_RISK_PERMISSIONS } from "./check.js";
 import { scaffold } from "./templates.js";
 
 const created: string[] = [];
@@ -97,5 +97,53 @@ describe("check", () => {
     const result = await check(dir);
     expect(result.ok).toBe(false);
     expect(result.errors.map((e) => e.code)).toContain("manifest.invalid-id");
+  });
+
+  it("treats background audio and websocket access as high risk", () => {
+    for (const permission of [
+      "net.fetch",
+      "net.websocket",
+      "fs.write",
+      "fs.delete",
+      "agent.prompt.inject",
+      "agent.tool.register",
+      "browser.cdp",
+      "audio.capture.background",
+    ]) {
+      expect(HIGH_RISK_PERMISSIONS).toContain(permission);
+    }
+  });
+
+  it("warns when background capability permissions are declared but never called", async () => {
+    const dir = join(await tempDir(), "background-apis");
+    await scaffold({ dir, template: "panel-basic" });
+    await editManifest(dir, (m) => {
+      m.permissions = [...(m.permissions ?? []), "audio.capture.background", "net.websocket"];
+    });
+
+    const result = await check(dir);
+    expect(result.ok).toBe(true);
+    const unused = result.warnings
+      .filter((w) => w.code === "permission.unused")
+      .map((w) => w.message);
+    expect(unused.some((m) => m.includes('"audio.capture.background"'))).toBe(true);
+    expect(unused.some((m) => m.includes("audio.openInput"))).toBe(true);
+    expect(unused.some((m) => m.includes('"net.websocket"'))).toBe(true);
+    expect(unused.some((m) => m.includes("net.websocket.connect"))).toBe(true);
+    const highRisk = result.warnings.find((w) => w.code === "permission.high-risk");
+    expect(highRisk?.message).toContain("audio.capture.background");
+    expect(highRisk?.message).toContain("net.websocket");
+
+    // Calling one hinted API clears that permission's hint and leaves the other.
+    await writeFile(
+      join(dir, "main.js"),
+      "export async function onLoad() { await pi.audio.openInput({}); }\n",
+      "utf8",
+    );
+    const called = (await check(dir)).warnings
+      .filter((w) => w.code === "permission.unused")
+      .map((w) => w.message);
+    expect(called.some((m) => m.includes('"audio.capture.background"'))).toBe(false);
+    expect(called.some((m) => m.includes('"net.websocket"'))).toBe(true);
   });
 });

@@ -35,5 +35,9 @@ test("settings writes validate values, notify the plugin, and never use global s
   assert.match(runtime, /isAllowedKeybinding/);
   assert.match(app, /isActiveInProject\(plugin, projectPath\)/);
   assert.match(app, /api\.executeCommand\(pluginShortcut\.setting\.command/);
-  assert.doesNotMatch(runtime, /globalShortcut/);
+  // The runtime routes plugin accelerators into the host-owned registry; it
+  // must never call Electron's API itself, and a plugin's window-scoped
+  // shortcut setting still must not become a system-wide binding.
+  assert.doesNotMatch(runtime, /globalShortcut\.(?:register|unregister)\(/);
+  assert.match(runtime, /assertPermission\(loaded, "keyboard\.globalShortcut"\)/);
 });

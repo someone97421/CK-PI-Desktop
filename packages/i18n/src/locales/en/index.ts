@@ -1859,6 +1859,10 @@ importConfirm: "Imported extensions run inside the agent process with the same a
       "mcp.server.local": "Run a local MCP server",
       "mcp.server.remote": "Reach a remote MCP server",
       "background.service": "Keep a background service running",
+      "audio.capture.background": "Use the microphone in the background",
+      "audio.playback.background": "Play audio in the background",
+      "keyboard.globalShortcut": "Register system-wide shortcuts",
+      "net.websocket": "Open real-time connections",
       "bus.publish": "Send messages to other plugins",
       "bus.subscribe": "Receive messages from other plugins",
       "browser.cdp": "Control the work-panel browser",
@@ -1900,6 +1904,10 @@ importConfirm: "Imported extensions run inside the agent process with the same a
       "mcp.server.remote":
         "Sends tool calls to a remote MCP endpoint the plugin declared. The endpoint may use unencrypted HTTP.",
       "background.service": "Keeps a worker running while the plugin is enabled.",
+      "audio.capture.background": "Captures the microphone while the plugin runs in the background, with no panel open.",
+      "audio.playback.background": "Plays audio the plugin streams, even when no panel is open.",
+      "keyboard.globalShortcut": "Registers system-wide keyboard shortcuts that trigger this plugin's own commands while PI-Desktop is not focused.",
+      "net.websocket": "Opens real-time two-way connections to the hostnames the plugin declared.",
       "bus.publish": "Can send messages on the topics it declared.",
       "bus.subscribe": "Can receive messages on the topics it declared.",
       "browser.cdp":

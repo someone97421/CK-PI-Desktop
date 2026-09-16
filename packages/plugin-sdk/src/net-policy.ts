@@ -119,3 +119,20 @@ export function isNetUrlAllowed(url: string, domains: readonly string[]): boolea
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
   return isNetHostAllowed(parsed.hostname, domains);
 }
+
+/**
+ * True when a WebSocket URL may be connected to. `ws`/`wss` are the same
+ * decision as `http`/`https` for the host: the hostname still has to be in the
+ * allowlist, and `ws://` is the plaintext form of `http://` rather than a
+ * second, more permissive channel.
+ */
+export function isNetSocketUrlAllowed(url: string, domains: readonly string[]): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "wss:" && parsed.protocol !== "ws:") return false;
+  return isNetHostAllowed(parsed.hostname, domains);
+}

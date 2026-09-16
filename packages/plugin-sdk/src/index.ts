@@ -95,6 +95,12 @@ export type PluginManifest = {
     views?: PluginViewContrib[];
     /** External session namespaces this plugin may import and own. */
     sessionSources?: PluginSessionSourceContrib[];
+    /**
+     * System-wide accelerators this plugin may own (`keyboard.globalShortcut`).
+     * Each entry maps one accelerator to one of the plugin's own commands; the
+     * host registers, conflict-checks, and releases it with the plugin.
+     */
+    globalShortcuts?: PluginGlobalShortcutContrib[];
   };
   permissions?: string[];
   /**
@@ -378,6 +384,33 @@ export type PluginBusContrib = {
   /** Topic patterns this plugin may subscribe to. */
   subscribe?: string[];
 };
+/** One system-wide accelerator a plugin declares (`keyboard.globalShortcut`). */
+export type PluginGlobalShortcutContrib = {
+  /** Local id, unique inside the plugin; also the handle later handed back. */
+  id: string;
+  /**
+   * Command to run, which must be declared in `contributes.commands`. A
+   * shortcut carries no payload and can only reach this plugin's own commands.
+   */
+  command: string;
+  /**
+   * Accelerator the host registers until the user overrides it. The host
+   * reports an OS-reserved or already-claimed accelerator as a registration
+   * error rather than silently replacing the other owner.
+   */
+  default?: string;
+};
+
+/** One accelerator the host currently holds for this plugin. */
+export type PluginGlobalShortcut = {
+  id: string;
+  accelerator: string;
+  command: string;
+  /** False when the OS or another owner holds the accelerator instead. */
+  registered: boolean;
+  /** Why registration failed, when it did. */
+  error?: string;
+};
 
 /**
  * Icon tokens a docked view may name.
@@ -609,6 +642,104 @@ export type PluginDesktopInvokeInput = {
   args?: unknown[];
   confirm?: boolean;
 };
+/** One capturable audio endpoint (`audio.capture.background`). */
+export type PluginAudioInputDevice = {
+  /** Opaque host id; `""` names the system default input. */
+  deviceId: string;
+  label: string;
+  /** The entry the host picks when `deviceId` is omitted. */
+  isDefault: boolean;
+};
+
+/** A capture the host is holding for this plugin. */
+export type PluginAudioCaptureState = {
+  active: boolean;
+  streamId?: string;
+  deviceId?: string;
+  label?: string;
+  sampleRate?: number;
+  channels?: number;
+  startedAtMs?: number;
+  /** Frames the host dropped because the plugin did not drain its queue in time. */
+  droppedFrames: number;
+};
+
+/** One PCM frame delivered through `pi.audio.onInputFrame`. */
+export type PluginAudioInputFrame = {
+  streamId: string;
+  /** Monotonic per stream; a gap means dropped frames, not reordered ones. */
+  sequence: number;
+  timestampMs: number;
+  sampleRate: number;
+  channels: number;
+  format: "pcm16";
+  /** Little-endian signed 16-bit samples, interleaved when `channels` is 2. */
+  data: Uint8Array;
+};
+
+export type PluginAudioOpenInputOptions = {
+  /** From `pi.audio.getInputDevices`; omitted means the system default. */
+  deviceId?: string;
+  sampleRate?: number;
+  channels?: number;
+  echoCancellation?: boolean;
+  noiseSuppression?: boolean;
+  autoGainControl?: boolean;
+};
+
+/** An open capture (`pi.audio.openInput`). */
+export type PluginAudioInputSession = {
+  streamId: string;
+  sampleRate: number;
+  channels: number;
+  deviceId?: string;
+  label?: string;
+};
+
+export type PluginAudioOpenOutputOptions = {
+  sampleRate: number;
+  channels?: number;
+  format?: "pcm16";
+};
+
+/** An open playback queue (`pi.audio.openOutput`). */
+export type PluginAudioOutputSession = {
+  streamId: string;
+  sampleRate: number;
+  channels: number;
+  format: "pcm16";
+};
+
+/** Input for `pi.net.websocket.connect` (`net.websocket`). */
+export type PluginWebSocketConnectInput = {
+  /** Absolute `ws://` / `wss://` URL; its host must be in `manifest.net.domains`. */
+  url: string;
+  headers?: Record<string, string>;
+  protocols?: string[];
+  timeoutMs?: number;
+};
+
+export type PluginWebSocketOpenEvent = { socketId: string; protocol: string };
+
+export type PluginWebSocketMessageEvent = {
+  socketId: string;
+  /** Text frames arrive as `string`; binary frames arrive as bytes. */
+  data: string | Uint8Array;
+};
+
+export type PluginWebSocketCloseEvent = {
+  socketId: string;
+  code: number;
+  reason: string;
+  /** False when the connection failed rather than closed cleanly. */
+  wasClean: boolean;
+};
+
+export type PluginWebSocketErrorEvent = {
+  socketId: string;
+  code: string;
+  message: string;
+};
 
 /** Classified preview returned by `fs.readPreview`. */
 export type PluginFsPreview = {
@@ -706,6 +837,37 @@ export type PluginHostApi = {
   desktop: {
     listOperations: () => Promise<PluginDesktopOperation[]>;
     invoke: (input: PluginDesktopInvokeInput) => Promise<unknown>;
+  };
+  /**
+   * Background microphone capture and streaming playback
+   * (`audio.capture.background`, `audio.playback.background`). The host owns
+   * the device: plugins exchange PCM frames and never see a device handle.
+   */
+  audio: {
+    getInputDevices: () => Promise<PluginAudioInputDevice[]>;
+    openInput: (options?: PluginAudioOpenInputOptions) => Promise<PluginAudioInputSession>;
+    closeInput: (streamId: string) => Promise<void>;
+    /** Which plugin currently holds an input, if any. */
+    getCaptureState: () => Promise<PluginAudioCaptureState>;
+    /** Frames arrive at capture pace; a handler that falls behind drops frames. */
+    onInputFrame: (handler: (frame: PluginAudioInputFrame) => void) => void;
+    offInputFrame: (handler: (frame: PluginAudioInputFrame) => void) => void;
+    openOutput: (options: PluginAudioOpenOutputOptions) => Promise<PluginAudioOutputSession>;
+    /** Queues PCM16 for playback; rejects when the queue is full. */
+    writeOutput: (input: { streamId: string; data: Uint8Array }) => Promise<void>;
+    /** Drops queued but unplayed audio — the barge-in primitive. */
+    stopOutput: (streamId: string) => Promise<void>;
+    closeOutput: (streamId: string) => Promise<void>;
+  };
+  /** System-wide accelerators, registered and released by the host (`keyboard.globalShortcut`). */
+  keyboard: {
+    registerGlobalShortcut: (input: {
+      id: string;
+      accelerator: string;
+      command: string;
+    }) => Promise<PluginGlobalShortcut>;
+    unregisterGlobalShortcut: (id: string) => Promise<void>;
+    listGlobalShortcuts: () => Promise<PluginGlobalShortcut[]>;
   };
   /**
    * Paths are relative to the rule's root: the workspace by default, or the
@@ -834,6 +996,16 @@ export type PluginHostApi = {
       body?: string;
       timeoutMs?: number;
     }) => Promise<{ status: number; headers: Record<string, string>; bodyText: string }>;
+    /**
+     * Real-time bidirectional sockets (`net.websocket`). A connect is confined
+     * to `manifest.net.domains` exactly like `fetch`, and the host closes every
+     * socket the plugin still holds when it unloads.
+     */
+    websocket: {
+      connect: (input: PluginWebSocketConnectInput) => Promise<{ socketId: string }>;
+      send: (input: { socketId: string; data: string | Uint8Array }) => Promise<void>;
+      close: (input: { socketId: string; code?: number; reason?: string }) => Promise<void>;
+    };
   };
   events: {
     on: (event: string, handler: (...args: unknown[]) => void) => void;
@@ -850,6 +1022,8 @@ export type PluginModule = {
 
 /** Upper bound on ExtensionAPI modules one plugin may contribute. */
 export const MAX_AGENT_EXTENSIONS_PER_PLUGIN = 8;
+/** Upper bound on system-wide accelerators one plugin may declare. */
+export const MAX_GLOBAL_SHORTCUTS_PER_PLUGIN = 8;
 
 export const PLUGIN_PERMISSIONS = [
   "ui.panel",
@@ -884,6 +1058,12 @@ export const PLUGIN_PERMISSIONS = [
   "bus.publish",
   "bus.subscribe",
   "browser.cdp",
+  // Background device access. `ui.microphone` stays panel-scoped: these two are
+  // what a service may use with no page open.
+  "audio.capture.background",
+  "audio.playback.background",
+  "keyboard.globalShortcut",
+  "net.websocket",
 ] as const;
 
 export type PluginPermission = (typeof PLUGIN_PERMISSIONS)[number];
@@ -961,6 +1141,16 @@ export function validateManifest(raw: unknown): {
       error: "contributes.windowAppearance requires the ui.window.appearance permission",
     };
   }
+  if (
+    !contributesError &&
+    (m.contributes?.globalShortcuts?.length ?? 0) > 0 &&
+    !(m.permissions ?? []).includes("keyboard.globalShortcut")
+  ) {
+    return {
+      ok: false,
+      error: "contributes.globalShortcuts requires the keyboard.globalShortcut permission",
+    };
+  }
   if (contributesError) {
     return { ok: false, error: contributesError };
   }
@@ -1021,6 +1211,38 @@ export function validateContributions(
     }
     if (commandIds.has(command.id)) return `duplicate command id "${command.id}"`;
     commandIds.add(command.id);
+  }
+  const shortcuts = contributes.globalShortcuts ?? [];
+  if (!Array.isArray(shortcuts)) return "contributes.globalShortcuts must be an array";
+  if (shortcuts.length > MAX_GLOBAL_SHORTCUTS_PER_PLUGIN) {
+    return `contributes.globalShortcuts is limited to ${MAX_GLOBAL_SHORTCUTS_PER_PLUGIN} entries`;
+  }
+  const shortcutIds = new Set<string>();
+  for (const shortcut of shortcuts) {
+    if (!shortcut || typeof shortcut !== "object") {
+      return "contributes.globalShortcuts entries must be objects";
+    }
+    if (
+      typeof shortcut.id !== "string" ||
+      !/^[a-zA-Z][a-zA-Z0-9._-]{0,63}$/.test(shortcut.id)
+    ) {
+      return "contributes.globalShortcuts entries need an id matching [a-zA-Z][a-zA-Z0-9._-]{0,63}";
+    }
+    if (shortcutIds.has(shortcut.id)) {
+      return `duplicate global shortcut id "${shortcut.id}"`;
+    }
+    shortcutIds.add(shortcut.id);
+    if (typeof shortcut.command !== "string" || !shortcut.command.trim()) {
+      return `global shortcut "${shortcut.id}" requires a command`;
+    }
+    // A shortcut may only reach its own plugin's commands, so the command has
+    // to exist here rather than be resolved later against the whole registry.
+    if (!commandIds.has(shortcut.command)) {
+      return `global shortcut "${shortcut.id}" references an undeclared command`;
+    }
+    if (shortcut.default !== undefined && !isValidShortcutShape(shortcut.default)) {
+      return `global shortcut "${shortcut.id}" has an invalid default`;
+    }
   }
   for (const setting of settings) {
     if (!setting || typeof setting !== "object") {
@@ -1434,6 +1656,7 @@ export {
   isLocalNetDomain,
   isNetHostAllowed,
   isNetUrlAllowed,
+  isNetSocketUrlAllowed,
   parseNetDomains,
   type PluginNetDomain,
 } from "./net-policy.js";

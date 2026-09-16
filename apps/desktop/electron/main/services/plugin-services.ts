@@ -1,4 +1,4 @@
-import { dialog, shell, type BrowserWindow } from "electron";
+import { dialog, globalShortcut, shell, type BrowserWindow } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -7,6 +7,7 @@ import {
   type AppSettings,
   type BrowserState,
   type ModelBinding,
+  type ShortcutPlatform,
   type ThinkingLevel,
   type UiMessage,
 } from "@pi-desktop/shared";
@@ -31,6 +32,9 @@ import { createFsConsentService } from "../plugin-fs-consent";
 import { pluginWorkspaceInfo } from "../workspace-roots";
 import { createDesktopConsentService } from "../plugin-desktop-consent";
 import { PluginRuntime } from "../plugin-runtime";
+import { PluginShortcutRegistry } from "../plugin-shortcut-registry";
+import { PluginWebSocketRegistry } from "../plugin-websocket";
+import { hostGlobalShortcutBindings } from "../bootstrap/launcher";
 import { UserMcpRuntime } from "../user-mcp";
 import {
   MCP_CALL_TIMEOUT_MS,
@@ -154,7 +158,47 @@ export function createPluginServices({
     }
     return { projectId: project.id, path: project.path, name: project.name };
   };
+  /**
+   * System-wide accelerators for plugins. Electron's `globalShortcut` is the
+   * same registration API the app's own shortcuts use, so a plugin binding
+   * conflicts with the host instead of fighting it, and the registry owns
+   * every release path.
+   */
+  const shortcutPlatform: ShortcutPlatform =
+    process.platform === "darwin"
+      ? "darwin"
+      : process.platform === "win32"
+        ? "win32"
+        : "linux";
+  const pluginShortcuts = new PluginShortcutRegistry({
+    platform: shortcutPlatform,
+    // The launcher owns the app's own global accelerators; asking it what it
+    // currently holds keeps a rebound accelerator available to plugins instead
+    // of blocking the shipped default forever.
+    hostBindings: hostGlobalShortcutBindings,
+    register: (accelerator, handler) => globalShortcut.register(accelerator, handler),
+    unregister: (accelerator) => {
+      globalShortcut.unregister(accelerator);
+    },
+    // Late-bound: the runtime is constructed just below, and a trigger can
+    // only arrive once the app is running and a plugin holds a shortcut.
+    onTrigger: (entry) => {
+      void plugins.triggerPluginShortcut(entry);
+    },
+    onRefused: (info) =>
+      logger.app("plugin", "warn", "plugin global shortcut refused", { data: info }),
+  });
+  /**
+   * Real-time sockets for plugins. The transport is `ws`, wrapped by a registry
+   * that owns the budget, the bounds, and the release path; events are routed
+   * to the owning plugin's process only.
+   */
+  const pluginSockets = new PluginWebSocketRegistry({
+    onEvent: (pluginId, event) => plugins.deliverSocketEvent(pluginId, event),
+  });
   const plugins: PluginRuntime = new PluginRuntime({
+    pluginShortcuts,
+    pluginSockets,
     getWorkspacePath: () => {
       // Filled after host boots; temporary stub until services rebinding.
       return null;

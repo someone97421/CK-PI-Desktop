@@ -60,6 +60,12 @@ export const PERMISSION_RISK: Record<string, RiskTier> = {
   "mcp.server.local": "high",
   "mcp.server.remote": "high",
   "background.service": "high",
+  // Two capabilities that reach outside PI-Desktop's own window or read its
+  // live audio stream sit at the top tier with the other outbound paths.
+  "net.websocket": "high",
+  "audio.capture.background": "high",
+  "audio.playback.background": "medium",
+  "keyboard.globalShortcut": "medium",
   "bus.publish": "medium",
   "bus.subscribe": "medium",
   "ui.panel": "low",

@@ -72,6 +72,16 @@ function toolAbortedError(reason) {
   return Object.assign(new Error(reason), { code: "PLUGIN_TOOL_ABORTED" });
 }
 
+/**
+ * The same refusal the broker returns for the audio surface, for the two
+ * synchronous registration helpers that cannot reject.
+ */
+function audioUnavailable(api) {
+  return Object.assign(new Error(`host api not available: ${api}`), {
+    code: "UNSUPPORTED",
+  });
+}
+
 function rejectInvocationCalls(invocationId, error) {
   for (const [id, entry] of pending) {
     if (entry.invocationId !== invocationId) continue;
@@ -346,6 +356,46 @@ function buildApi() {
     },
     net: {
       fetch: (input) => call("net.fetch", [input]),
+      // Real-time connections (`net.websocket`). Frames arrive back as
+      // `net:websocket:message` host events, so a plugin subscribes with
+      // `pi.events.on` exactly as it does for any other host event.
+      websocket: {
+        connect: (input) => call("net.websocket.connect", [input ?? {}]),
+        send: (input) => call("net.websocket.send", [input ?? {}]),
+        close: (input) => call("net.websocket.close", [input ?? {}]),
+      },
+    },
+    /**
+     * Background audio (`audio.capture.background`, `audio.playback.background`).
+     * The host has no device backend yet, so the async calls travel to the
+     * broker and come back as a coded `UNSUPPORTED` refusal — a plugin can
+     * branch on `error.code` instead of catching a TypeError. The two
+     * registration helpers are synchronous by contract and cannot reject, so
+     * they throw the same refusal immediately rather than registering a handler
+     * that could never fire.
+     */
+    audio: {
+      getInputDevices: () => call("audio.getInputDevices"),
+      openInput: (options) => call("audio.openInput", [options ?? {}]),
+      closeInput: (streamId) => call("audio.closeInput", [streamId]),
+      getCaptureState: () => call("audio.getCaptureState"),
+      onInputFrame: () => {
+        throw audioUnavailable("audio.onInputFrame");
+      },
+      offInputFrame: () => {
+        throw audioUnavailable("audio.offInputFrame");
+      },
+      openOutput: (options) => call("audio.openOutput", [options ?? {}]),
+      writeOutput: (input) => call("audio.writeOutput", [input ?? {}]),
+      stopOutput: (streamId) => call("audio.stopOutput", [streamId]),
+      closeOutput: (streamId) => call("audio.closeOutput", [streamId]),
+    },
+    // System-wide accelerators. The arrow handlers live in the host: this
+    // object only carries requests across the boundary.
+    keyboard: {
+      registerGlobalShortcut: (input) => call("keyboard.registerGlobalShortcut", [input]),
+      unregisterGlobalShortcut: (id) => call("keyboard.unregisterGlobalShortcut", [id]),
+      listGlobalShortcuts: () => call("keyboard.listGlobalShortcuts"),
     },
     // Fed by the parent's `event` frames; bus deliveries also arrive as
     // `bus.message` here, so a plugin can watch the raw stream if it wants to.

@@ -1861,6 +1861,10 @@ importConfirm: "İçe aktarılan uzantılar ajan sürecinde, ajanın kendi araç
       "mcp.server.local": "Yerel bir MCP sunucusu çalıştır",
       "mcp.server.remote": "Uzak bir MCP sunucusuna ulaş",
       "background.service": "Arka plan servisini çalışır tut",
+      "audio.capture.background": "Mikrofonu arka planda kullan",
+      "audio.playback.background": "Sesi arka planda çal",
+      "keyboard.globalShortcut": "Sistem geneli klavye kısayolları kaydet",
+      "net.websocket": "Gerçek zamanlı bağlantılar aç",
       "bus.publish": "Diğer eklentilere ileti gönder",
       "bus.subscribe": "Diğer eklentilerden ileti al",
       "browser.cdp": "Çalışma paneli tarayıcısını kontrol et",
@@ -1901,6 +1905,10 @@ importConfirm: "İçe aktarılan uzantılar ajan sürecinde, ajanın kendi araç
       "mcp.server.remote":
         "Eklentinin bildirdiği uzak bir MCP uç noktasına araç çağrıları gönderir. Uç nokta şifresiz HTTP kullanabilir.",
       "background.service": "Eklenti açıkken bir işçiyi çalışır tutar.",
+      "audio.capture.background": "Eklenti arka planda çalışırken, hiçbir panel açık olmadan mikrofonu yakalar.",
+      "audio.playback.background": "Hiçbir panel açık olmasa bile eklentinin akışa verdiği sesi çalar.",
+      "keyboard.globalShortcut": "PI-Desktop odakta değilken bu eklentinin kendi komutlarını tetikleyen sistem geneli klavye kısayollarını kaydeder.",
+      "net.websocket": "Eklentinin bildirdiği ana makinelere gerçek zamanlı iki yönlü bağlantılar açar.",
       "bus.publish": "Bildirdiği konularda ileti gönderebilir.",
       "bus.subscribe": "Bildirdiği konularda ileti alabilir.",
       "browser.cdp":

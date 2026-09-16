@@ -1842,6 +1842,10 @@ sklm: {
       "mcp.server.local": "Exécuter un serveur MCP local",
       "mcp.server.remote": "Atteindre un serveur MCP distant",
       "background.service": "Maintenir un service en arrière-plan en cours d'exécution",
+      "audio.capture.background": "Utiliser le microphone en arrière-plan",
+      "audio.playback.background": "Lire l'audio en arrière-plan",
+      "keyboard.globalShortcut": "Enregistrer des raccourcis clavier système",
+      "net.websocket": "Ouvrir des connexions en temps réel",
       "bus.publish": "Envoyer des messages à d'autres plugins",
       "bus.subscribe": "Recevoir des messages d'autres plugins",
       "browser.cdp": "Contrôler le navigateur du panneau de travail"
@@ -1872,6 +1876,10 @@ sklm: {
       "mcp.server.local": "Démarre un programme sur cet ordinateur pour fournir des outils d'agent supplémentaires.",
       "mcp.server.remote": "Envoie des appels d'outil à un point de terminaison MCP distant déclaré par le plugin. Le point de terminaison peut utiliser du HTTP non chiffré.",
       "background.service": "Maintient un travailleur en cours d'exécution pendant que le plugin est activé.",
+      "audio.capture.background": "Capture le microphone pendant que le plugin s'exécute en arrière-plan, sans panneau ouvert.",
+      "audio.playback.background": "Lit l'audio diffusé par le plugin, même lorsqu'aucun panneau n'est ouvert.",
+      "keyboard.globalShortcut": "Enregistre des raccourcis clavier système qui déclenchent les commandes propres à ce plugin lorsque PI-Desktop n'est pas au premier plan.",
+      "net.websocket": "Ouvre des connexions bidirectionnelles en temps réel vers les hôtes déclarés par le plugin.",
       "bus.publish": "Peut envoyer des messages sur les sujets qu'il a déclarés.",
       "bus.subscribe": "Peut recevoir des messages sur les sujets qu'il a déclarés.",
       "browser.cdp": "Peut naviguer dans le navigateur du panneau de travail, lire la page, exécuter JavaScript et envoyer des commandes Chrome DevTools sur liste autorisée. Les cookies et les méthodes de stockage sont bloqués."

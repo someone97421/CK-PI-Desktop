@@ -19,15 +19,18 @@ import {
 
 /**
  * Permissions the permission dialog surfaces as high risk. Kept in sync with
- * `RISK_BY_PERMISSION` in apps/desktop/src/pages/PluginsPage.tsx.
+ * `PERMISSION_RISK` in apps/desktop/src/features/plugins/model.ts, which is the
+ * copy the install dialog actually renders.
  */
 export const HIGH_RISK_PERMISSIONS = [
   "net.fetch",
+  "net.websocket",
   "fs.write",
   "fs.delete",
   "agent.prompt.inject",
   "agent.tool.register",
   "browser.cdp",
+  "audio.capture.background",
 ] as const;
 
 /** Host API surface each permission unlocks, used for the unused-permission hint. */
@@ -56,6 +59,25 @@ const PERMISSION_API_HINTS: Record<string, string[]> = {
   "fs.delete": ["fs.remove"],
   "agent.tool.register": ["agent.registerTool"],
   "net.fetch": ["net.fetch"],
+  "audio.capture.background": [
+    "audio.getInputDevices",
+    "audio.openInput",
+    "audio.closeInput",
+    "audio.getCaptureState",
+    "audio.onInputFrame",
+  ],
+  "audio.playback.background": [
+    "audio.openOutput",
+    "audio.writeOutput",
+    "audio.stopOutput",
+    "audio.closeOutput",
+  ],
+  "keyboard.globalShortcut": [
+    "keyboard.registerGlobalShortcut",
+    "keyboard.unregisterGlobalShortcut",
+    "keyboard.listGlobalShortcuts",
+  ],
+  "net.websocket": ["net.websocket.connect", "net.websocket.send", "net.websocket.close"],
   "shell.openExternal": ["shell.openExternal"],
   "browser.cdp": [
     "browser.navigate",

@@ -1842,6 +1842,10 @@ sklm: {
       "mcp.server.local": "Einen lokalen MCP-Server ausführen",
       "mcp.server.remote": "Einen Remote-MCP-Server erreichen",
       "background.service": "Einen Hintergrunddienst laufen lassen",
+      "audio.capture.background": "Das Mikrofon im Hintergrund nutzen",
+      "audio.playback.background": "Audio im Hintergrund wiedergeben",
+      "keyboard.globalShortcut": "Systemweite Tastaturkürzel registrieren",
+      "net.websocket": "Echtzeitverbindungen öffnen",
       "bus.publish": "Nachrichten an andere Plugins senden",
       "bus.subscribe": "Nachrichten von anderen Plugins empfangen",
       "browser.cdp": "Den Arbeitspanel-Browser steuern"
@@ -1872,6 +1876,10 @@ sklm: {
       "mcp.server.local": "Startet ein Programm auf diesem Computer, um zusätzliche Agent-Tools bereitzustellen.",
       "mcp.server.remote": "Sendet Toolaufrufe an einen Remote-MCP-Endpunkt, den das Plugin deklariert hat. Der Endpunkt verwendet möglicherweise unverschlüsseltes HTTP.",
       "background.service": "Hält einen Worker am Laufen, während das Plugin aktiviert ist.",
+      "audio.capture.background": "Erfasst das Mikrofon, während das Plugin im Hintergrund läuft und kein Panel geöffnet ist.",
+      "audio.playback.background": "Gibt Audio wieder, das das Plugin streamt, auch wenn kein Panel geöffnet ist.",
+      "keyboard.globalShortcut": "Registriert systemweite Tastaturkürzel, die die eigenen Befehle dieses Plugins auslösen, während PI-Desktop nicht fokussiert ist.",
+      "net.websocket": "Öffnet bidirektionale Echtzeitverbindungen zu den Hosts, die das Plugin deklariert hat.",
       "bus.publish": "Kann Nachrichten zu den angegebenen Themen senden.",
       "bus.subscribe": "Kann Nachrichten zu den angegebenen Themen empfangen.",
       "browser.cdp": "Kann im Arbeitsbereichsbrowser navigieren, die Seite lesen, JavaScript ausführen und auf der Zulassungsliste stehende Chrome DevTools-Befehle senden. Cookies und Speichermethoden sind blockiert."

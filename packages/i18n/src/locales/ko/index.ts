@@ -1861,6 +1861,10 @@ importConfirm: "가져온 확장은 에이전트 프로세스 안에서 에이�
       "mcp.server.local": "로컬 MCP 서버 실행",
       "mcp.server.remote": "원격 MCP 서버에 연결",
       "background.service": "백그라운드 서비스 계속 실행",
+      "audio.capture.background": "백그라운드에서 마이크 사용",
+      "audio.playback.background": "백그라운드 오디오 재생",
+      "keyboard.globalShortcut": "시스템 전역 키보드 단축키 등록",
+      "net.websocket": "실시간 연결 열기",
       "bus.publish": "다른 플러그인에 메시지 보내기",
       "bus.subscribe": "다른 플러그인의 메시지 받기",
       "browser.cdp": "작업 패널 브라우저 제어",
@@ -1901,6 +1905,10 @@ importConfirm: "가져온 확장은 에이전트 프로세스 안에서 에이�
       "mcp.server.remote":
         "플러그인이 선언한 원격 MCP 엔드포인트로 도구 호출을 보냅니다. 엔드포인트가 암호화되지 않은 HTTP를 사용할 수 있습니다.",
       "background.service": "플러그인이 활성화된 동안 작업자를 계속 실행합니다.",
+      "audio.capture.background": "플러그인이 백그라운드에서 실행되는 동안 패널이 열려 있지 않아도 마이크를 캡처합니다.",
+      "audio.playback.background": "패널이 열려 있지 않아도 플러그인이 스트리밍하는 오디오를 재생합니다.",
+      "keyboard.globalShortcut": "PI-Desktop이 포커스되지 않은 상태에서 이 플러그인 자체 명령을 실행하는 시스템 전역 키보드 단축키를 등록합니다.",
+      "net.websocket": "플러그인이 선언한 호스트로 실시간 양방향 연결을 엽니다.",
       "bus.publish": "선언한 주제로 메시지를 보낼 수 있습니다.",
       "bus.subscribe": "선언한 주제의 메시지를 받을 수 있습니다.",
       "browser.cdp":
