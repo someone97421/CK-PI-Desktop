@@ -1030,6 +1030,13 @@
   line-height: var(--leading-normal);
 }
 
+/* The context-window field says when its number still follows models.dev. */
+.provider-chosen-limit-hint {
+  color: var(--ds-text-faint);
+  font-size: var(--text-3xs);
+  line-height: var(--leading-normal);
+}
+
 .provider-chosen-thinking-default {
   display: flex;
   align-items: center;

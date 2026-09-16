@@ -29,6 +29,11 @@ export function copyProviderConfiguration(provider: ProviderPublic, name: string
       id: model.id,
       ...(model.alias !== undefined ? { alias: model.alias } : {}),
       contextWindow: model.contextWindow,
+      // Provenance travels with the value, so a copied catalog window keeps
+      // following models.dev and a copied override stays the user's.
+      ...(model.contextWindowSource !== undefined
+        ? { contextWindowSource: model.contextWindowSource }
+        : {}),
       maxTokens: model.maxTokens,
       thinkingLevels: [...model.thinkingLevels],
       defaultThinkingLevel: model.defaultThinkingLevel,

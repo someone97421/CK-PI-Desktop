@@ -1207,6 +1207,7 @@ sklm: {
     imageInput: "圖片",
     documentInput: "PDF",
     thinkingManualOverrideHint: "目錄未標註，可手動開啟",
+    contextWindowCatalogHint: "跟隨 models.dev；手動修改後會固定為你的值",
     availableForSubagents: "可供 AI 自動排程",
     availableForSubagentsHint: "允許 AI 在委派子任務時自動選用此模型",
     notSupported: "不支援",

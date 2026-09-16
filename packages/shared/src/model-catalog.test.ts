@@ -46,6 +46,54 @@ describe("effective model context windows", () => {
   });
 });
 
+describe("binding context-window provenance", () => {
+  it("marks the catalog snapshot a fresh binding is seeded with", () => {
+    const binding = bindingFromModelInfo({
+      ...textModel(),
+      limit: { context: 1_048_576, output: 64_000 },
+    });
+    expect(binding.contextWindow).toBe(1_048_576);
+    expect(binding.contextWindowSource).toBe("catalog");
+  });
+
+  it("follows a catalog correction for a catalog-sourced window", () => {
+    // The bug this guards: a binding saved before models.dev corrected the
+    // model kept the old snapshot forever, so the only fix was deleting and
+    // re-adding the model.
+    expect(effectiveContextWindow(1_050_000, 1_048_576, "catalog")).toBe(1_050_000);
+    expect(effectiveContextWindow(1_050_000, 64_000, "catalog")).toBe(1_050_000);
+  });
+
+  it("keeps a hand-edited window even when it equals the generic seed", () => {
+    // 128k is a real user answer, not the "inherit the catalog" sentinel, once
+    // the binding records where the value came from.
+    expect(effectiveContextWindow(1_050_000, 128_000, "user")).toBe(128_000);
+    expect(effectiveContextWindow(1_050_000, 256_000, "user")).toBe(256_000);
+    // An unpublished model leaves the stored value as the only answer.
+    expect(effectiveContextWindow(undefined, 256_000, "user")).toBe(256_000);
+    expect(effectiveContextWindow(undefined, 128_000, "catalog")).toBe(128_000);
+  });
+
+  it("keeps the historical rule for records written before the marker", () => {
+    // Older bindings name no source. The documented fallback is the rule this
+    // helper always applied: only the generic 128k seed is inherited.
+    expect(effectiveContextWindow(1_050_000, 128_000, undefined)).toBe(1_050_000);
+    expect(effectiveContextWindow(1_050_000, 1_048_576, undefined)).toBe(1_048_576);
+    expect(effectiveContextWindow(1_050_000, 256_000, null)).toBe(256_000);
+    expect(effectiveContextWindow(undefined, 128_000, undefined)).toBe(128_000);
+  });
+
+  it("keeps the provenance marker across a JSON round trip", () => {
+    const stored = JSON.parse(JSON.stringify(bindingFromModelInfo(textModel())));
+    expect(stored.contextWindowSource).toBe("catalog");
+    // An edit path stamps the user as the author.
+    const edited = { ...stored, contextWindow: 256_000, contextWindowSource: "user" };
+    expect(effectiveContextWindow(1_050_000, edited.contextWindow, edited.contextWindowSource)).toBe(
+      256_000,
+    );
+  });
+});
+
 describe("provider API style compatibility", () => {
   it("falls back to Chat Completions for missing or unknown persisted styles", () => {
     expect(normalizeApiStyle(undefined)).toBe("chat_completions");

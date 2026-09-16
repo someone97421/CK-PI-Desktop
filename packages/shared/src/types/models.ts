@@ -68,6 +68,15 @@ export function modelIdsMatch(candidate: string, requested: string): boolean {
   return false;
 }
 
+/**
+ * Where a saved context window came from.
+ *
+ * `catalog` is a metadata snapshot: the value follows the published models.dev
+ * record, so a later catalog correction still reaches an already saved binding.
+ * `user` is the user's own number and is never overwritten by the catalog.
+ */
+export type ContextWindowSource = "catalog" | "user";
+
 /** Provider-local model settings persisted with the provider configuration. */
 export type ModelBinding = {
   id: string;
@@ -75,6 +84,10 @@ export type ModelBinding = {
    * shows a model label; the id remains the wire identity. */
   alias?: string;
   contextWindow: number;
+  /** Provenance of `contextWindow`. Absent on records written before the
+   * marker existed; readers then apply the historical rule documented on
+   * `effectiveContextWindow`. */
+  contextWindowSource?: ContextWindowSource;
   maxTokens: number;
   /** Explicit endpoint levels; an empty or off-only set disables thinking. */
   thinkingLevels: ThinkingLevel[];
@@ -98,7 +111,6 @@ export type ModelBinding = {
    */
   availableForSubagents?: boolean;
 };
-
 
 export const MODEL_MODALITIES = ["text", "image", "audio", "video", "pdf"] as const;
 export type ModelModality = (typeof MODEL_MODALITIES)[number];

@@ -562,8 +562,7 @@ async function main() {
         const controls = row.querySelector(".window-controls");
         const sidebar = document.querySelector(".sidebar");
         const platform = document.documentElement.dataset.platform;
-        const fullscreen = document.documentElement.dataset.fullscreen === "true";
-        const inset = platform === "darwin" && !fullscreen && !sidebar ? 76 : 8;
+        const inset = parseFloat(getComputedStyle(row).paddingLeft);
         const actionRight = Math.max(...actions.map(el => el.getBoundingClientRect().right));
         return {
           headerLeft: headerBox.left,

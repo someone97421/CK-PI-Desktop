@@ -1119,7 +1119,7 @@
 
 .app-shell.work-panel-maximized {
   --preview-chrome-inset: 8px;
-  --preview-chrome-action-lane: 30px;
+  --preview-chrome-action-lane: calc(var(--ds-control-size) + 8px);
 }
 
 .app-shell.work-panel-maximized.sidebar-collapsed {
@@ -1127,12 +1127,7 @@
 }
 
 :root[data-platform="darwin"] .app-shell.work-panel-maximized.sidebar-collapsed {
-  --preview-chrome-inset: 76px;
-}
-
-:root[data-platform="darwin"][data-fullscreen="true"]
-  .app-shell.work-panel-maximized.sidebar-collapsed {
-  --preview-chrome-inset: 8px;
+  --preview-chrome-inset: var(--ds-window-lead-inset);
 }
 
 .window-chrome-row {

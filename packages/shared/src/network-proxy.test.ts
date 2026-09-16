@@ -7,6 +7,7 @@ import {
   normalizeNetworkProxy,
   parseProxyUrl,
   proxyEnvAssignments,
+  proxyHasCredentials,
   redactProxyUrl,
   restoreProxyEnv,
   snapshotProxyEnv,
@@ -112,7 +113,7 @@ describe("chromium and env projections", () => {
         url: "socks5h://user:secret@127.0.0.1:1080",
       }),
     ).toEqual({
-      proxyRules: "socks5://user:secret@127.0.0.1:1080",
+      proxyRules: "socks5://127.0.0.1:1080",
       proxyBypassRules: DEFAULT_NETWORK_PROXY_BYPASS,
     });
     expect(
@@ -121,6 +122,26 @@ describe("chromium and env projections", () => {
       proxyRules: "socks://127.0.0.1:1080",
       proxyBypassRules: DEFAULT_NETWORK_PROXY_BYPASS,
     });
+  });
+
+  it("strips userinfo from Chromium proxyRules (issue #490)", () => {
+    expect(
+      chromiumProxyConfig({
+        mode: "custom",
+        url: "http://user:s3cret@10.0.0.1:8080",
+      }),
+    ).toEqual({
+      proxyRules: "http://10.0.0.1:8080",
+      proxyBypassRules: DEFAULT_NETWORK_PROXY_BYPASS,
+    });
+    const parsed = parseProxyUrl("socks5://user:s3cret@127.0.0.1:1080");
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(proxyHasCredentials(parsed.value)).toBe(true);
+    expect(proxyEnvAssignments({
+      mode: "custom",
+      url: "http://user:s3cret@10.0.0.1:8080",
+    }).HTTP_PROXY).toBe("http://user:s3cret@10.0.0.1:8080");
   });
 
   it("omits Chromium <local> from NO_PROXY and does not set HTTP_PROXY for SOCKS", () => {

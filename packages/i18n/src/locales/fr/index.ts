@@ -1206,6 +1206,7 @@ sklm: {
     "imageInput": "Images",
     "documentInput": "PDF",
     "thinkingManualOverrideHint": "Pas dans le catalogue ; activer si pris en charge.",
+    "contextWindowCatalogHint": "Suit models.dev ; une modification fixe votre valeur.",
     "availableForSubagents": "Disponible pour la délégation de l'IA",
     "availableForSubagentsHint": "Autoriser l'IA à utiliser ce modèle lors de la délégation de tâches à des sous-agents",
     "notSupported": "Non pris en charge",

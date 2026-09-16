@@ -1222,6 +1222,7 @@ sklm: {
     imageInput: "Images",
     documentInput: "PDF",
     thinkingManualOverrideHint: "Not in catalog; enable if supported.",
+    contextWindowCatalogHint: "Follows models.dev; editing pins your value.",
     availableForSubagents: "Available for AI delegation",
     availableForSubagentsHint: "Allow AI to use this model when delegating tasks to subagents",
     notSupported: "Not supported",

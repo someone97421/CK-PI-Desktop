@@ -11,7 +11,7 @@ pub(crate) const MAX_PLUGIN_PROVIDERS: usize = 8;
 pub(crate) const MAX_PLUGIN_PROVIDER_MODELS: usize = 64;
 
 /// Provider ids created from a manifest carry this prefix so a plugin row is
-/// recognizable without a database read (ADR 0257). A user-created provider id
+/// recognizable without a database read (ADR 0259). A user-created provider id
 /// is a UUID and can never collide with it.
 pub(crate) const PLUGIN_PROVIDER_ID_PREFIX: &str = "plugin:";
 
@@ -127,6 +127,7 @@ pub(crate) fn declared_providers(manifest: &PluginManifest) -> Vec<DeclaredPlugi
                                     .map(str::trim)
                                     .filter(|value| !value.is_empty())
                                     .map(str::to_string),
+                                context_window_source: None,
                                 context_window: model
                                     .get("contextWindow")
                                     .and_then(Value::as_u64)

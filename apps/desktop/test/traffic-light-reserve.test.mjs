@@ -86,7 +86,11 @@ test("every shell surface reserves the shared lead inset", () => {
   );
   assert.match(
     chromeSource,
-    /:root\[data-platform="darwin"\] \.window-chrome-row:not\(\.sidebar-expanded\) \{[\s\S]*?padding-left:\s*var\(--ds-window-lead-inset\);/,
+    /:root\[data-platform="darwin"\] \.app-shell\.work-panel-maximized\.sidebar-collapsed \{[^}]*--preview-chrome-inset:\s*var\(--ds-window-lead-inset\);/,
+  );
+  assert.match(
+    chromeSource,
+    /\.window-chrome-row \{[^}]*padding-left:\s*var\(--preview-chrome-inset\);/,
   );
   assert.match(
     chromeSource,
@@ -94,7 +98,7 @@ test("every shell surface reserves the shared lead inset", () => {
   );
   assert.match(
     workPanelSource,
-    /\.work-panel-header \{[\s\S]*?padding-left: calc\(\s*var\(--ds-window-lead-inset\) \+ var\(--ds-preview-action-lane-width\)\s*\);/,
+    /\.work-panel-header \{[^}]*margin-left: calc\(var\(--preview-chrome-inset\) \+ var\(--preview-chrome-action-lane\)\);/,
   );
 });
 

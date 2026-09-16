@@ -32,7 +32,23 @@ const surfaces = {
   thinkingCode: [".thinking-prose code", "--ds-thinking-code-bg"],
   sendDisabled: [".send-btn:disabled", "--ds-send-disabled-bg"],
   kbd: [".prose-chat kbd", "--ds-prose-kbd-fg", "ink"],
+  asktoolCard: [".composer-stack > .asktool-card", "--ds-bg-composer"],
+  asktoolOption: [".asktool-option", "--ds-tile-deep"],
 };
+
+// Issue #360: the dock question card rides the composer plate and its option
+// rows are inlaid on it. Sampled the same way as the table above.
+Object.assign(DEFAULT_RGBA.light, {
+  asktoolCard: [255, 255, 255, 255],
+  asktoolOption: [26, 26, 26, 20],
+});
+Object.assign(DEFAULT_RGBA.dark, {
+  asktoolCard: [33, 33, 33, 245],
+  asktoolOption: [255, 255, 255, 20],
+});
+const COMPOSER_SHADOW = "rgba(0, 0, 0, 0.04) 0px 3px 7.5px 0px, rgba(0, 0, 0, 0.05) 0px 0px 20px 0px";
+Object.assign(DEFAULT_SHADOWS.light, { asktoolCard: COMPOSER_SHADOW });
+Object.assign(DEFAULT_SHADOWS.dark, { asktoolCard: COMPOSER_SHADOW });
 const customColors = {
   "--ds-settings-rail-bg": "#243645",
   "--ds-settings-field-bg": "#365476",
@@ -50,6 +66,7 @@ const customColors = {
   "--ds-thinking-code-bg": "#4a2f5e",
   "--ds-send-disabled-bg": "#6b5c2f",
   "--ds-prose-kbd-fg": "#a1b2c3",
+  "--ds-tile-deep": "#586166",
 };
 const canvas = document.createElement("canvas");
 canvas.width = canvas.height = 1;
