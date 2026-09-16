@@ -4,6 +4,7 @@ import {
   isActiveInProject,
   isCommandShellCatalog,
   normalizeMode,
+  trustedExtensionAgentKeyFromProviderId,
   type CommandShellCatalog,
   type McpServerRecord,
   type ModelBinding,
@@ -272,34 +273,45 @@ export function createSessionLaunchRuntime({
       { includeDisabled: false },
     );
     const requestedProviderId = overrides.providerId ?? session.providerId;
-    const provider =
-      providers.providers.find((item) => item.id === requestedProviderId) ||
-      providers.providers.find((item) => item.id === settings.defaultProviderId) ||
-      providers.providers.find(
-        (item) => item.hasSecret || item.hasOauth || item.authKind === "none",
-      ) ||
-      providers.providers[0];
+    const extensionAgentKey = requestedProviderId
+      ? trustedExtensionAgentKeyFromProviderId(requestedProviderId)
+      : undefined;
+    const provider: RuntimeProvider = extensionAgentKey
+      ? {
+          id: requestedProviderId!,
+          name: "Plugin agent",
+          modelId: overrides.modelId ?? session.modelId,
+          authKind: "none",
+          extensionAgentKey,
+        }
+      : providers.providers.find((item) => item.id === requestedProviderId) ||
+        providers.providers.find((item) => item.id === settings.defaultProviderId) ||
+        providers.providers.find(
+          (item) => item.hasSecret || item.hasOauth || item.authKind === "none",
+        ) ||
+        providers.providers[0];
     if (!provider) {
       throw Object.assign(new Error("No provider configured"), {
         errorCode: ErrorCodes.MODEL_NOT_CONFIGURED,
       });
     }
-    // A vendor account has no long-lived key to read: the sidecar asks main for
-    // short-lived request auth instead (see `provider.resolveAuth`), so the
-    // launch payload deliberately carries no credential at all.
-    const isVendorAccount = provider.authKind === OAUTH_AUTH_KIND;
-    const secret = isVendorAccount
+    // Plugin-owned agents resolve credentials and transport inside the trusted
+    // extension; the host never reads or injects a secret for them.
+    const isExtensionAgent = Boolean(extensionAgentKey);
+    const isVendorAccount = !isExtensionAgent && provider.authKind === OAUTH_AUTH_KIND;
+    const secret = isExtensionAgent || isVendorAccount
       ? { value: undefined }
       : await runtimeState.host!.call<{ value?: string }>("providers.getSecret", {
           id: provider.id,
         });
-    if (!secret.value && !isVendorAccount && provider.authKind !== "none") {
+    if (!secret.value && !isExtensionAgent && !isVendorAccount && provider.authKind !== "none") {
       throw Object.assign(new Error("Provider API key missing"), {
         errorCode: ErrorCodes.PROVIDER_SECRET_MISSING,
       });
     }
-    const modelId =
-      (provider.id === requestedProviderId
+    const modelId = isExtensionAgent
+      ? overrides.modelId ?? session.modelId
+      : (provider.id === requestedProviderId
         ? overrides.modelId ?? session.modelId
         : undefined) ||
       (provider.id === settings.defaultProviderId
@@ -604,6 +616,7 @@ export function createSessionLaunchRuntime({
           modelId,
           apiKey: secret.value || "",
           authKind: provider.authKind,
+          extensionAgentKey: provider.extensionAgentKey,
           apiStyle,
           ...optionalProviderHeaders(provider.headers),
           supportsReasoning: thinkingCapabilities.supportsReasoning,

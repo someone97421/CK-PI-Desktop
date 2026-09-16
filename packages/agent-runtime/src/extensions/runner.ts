@@ -12,6 +12,19 @@
 import { spawn } from "node:child_process";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import {
+  createAssistantMessageEventStream,
+  type Api,
+  type AssistantMessage,
+  type AssistantMessageEventStream,
+  type Context,
+  type Model,
+  type SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import {
+  trustedExtensionAgentProviderId,
+  type TrustedExtensionAgentModelConfig,
+} from "@pi-desktop/shared";
+import {
   createVirtualModules,
   knownStubSymbols,
   loadExtensionFactory,
@@ -91,7 +104,7 @@ const RESULT_EVENTS = new Set<string>([
   "project_trust",
 ]);
 
-/** ExtensionAPI members deferred to v2 or unsupported in v1 (spec §5). */
+/** ExtensionAPI members deferred to v2 or unsupported in v1. */
 const INERT_API_MEMBERS = [
   "sendMessage",
   "appendEntry",
@@ -101,8 +114,6 @@ const INERT_API_MEMBERS = [
   "registerMarkdownTransformer",
   "registerMessageRenderer",
   "registerEntryRenderer",
-  "registerProvider",
-  "registerAgent",
   "getKeybindings",
   "registerLifecycle",
   "getInputPolicy",
@@ -144,6 +155,37 @@ export type ExtensionExecResult = {
 };
 
 export type ExtensionToolInfo = { name: string; description: string; active: boolean };
+
+export type TrustedExtensionAgentDefinition = {
+  id: string;
+  name?: string;
+  models: TrustedExtensionAgentModelConfig[];
+  stream?: (
+    model: Model<Api>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ) => AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
+  complete?: (
+    model: Model<Api>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ) => Promise<AssistantMessage>;
+};
+
+export type RegisteredTrustedExtensionAgent = {
+  key: string;
+  extensionId: string;
+  extensionLabel: string;
+  id: string;
+  name: string;
+  providerId: string;
+  models: Model<Api>[];
+  stream: (
+    model: Model<Api>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ) => AssistantMessageEventStream;
+};
 
 /** What the desktop runtime provides to extensions. All methods may be sync or async. */
 export interface TrustedExtensionBridge {
@@ -209,9 +251,84 @@ type LoadedExtension = {
   spec: TrustedExtensionSpec;
   tools: Map<string, ToolDefinitionLike>;
   commands: Map<string, RegisteredCommandLike>;
+  agents: Map<string, RegisteredTrustedExtensionAgent>;
   handlers: Map<string, Handler[]>;
   flags: Map<string, { type: "boolean" | "string"; default?: boolean | string }>;
 };
+function extensionErrorResult(model: Model<Api>, error: unknown): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "error",
+    errorMessage: error instanceof Error ? error.message : String(error),
+    timestamp: Date.now(),
+  };
+}
+
+function modelFromAgentConfig(
+  providerId: string,
+  config: TrustedExtensionAgentModelConfig,
+): Model<Api> {
+  const id = String(config.id ?? "").trim();
+  if (!id || id.length > 256) throw new Error("agent model id must be 1-256 characters");
+  const contextWindow = Number.isSafeInteger(config.contextWindow) && (config.contextWindow ?? 0) > 0
+    ? config.contextWindow!
+    : 128_000;
+  const maxTokens = Number.isSafeInteger(config.maxTokens) && (config.maxTokens ?? 0) > 0
+    ? config.maxTokens!
+    : 8_192;
+  const input = (config.input ?? ["text"]).filter((value): value is "text" | "image" =>
+    value === "text" || value === "image",
+  );
+  return {
+    id,
+    name: String(config.name ?? id).trim() || id,
+    api: (config.api ?? "openai-completions") as Api,
+    provider: providerId,
+    baseUrl: "",
+    reasoning: config.reasoning === true,
+    input: input.length > 0 ? input : ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow,
+    maxTokens,
+  } as Model<Api>;
+}
+
+function streamForAgent(
+  definition: TrustedExtensionAgentDefinition,
+  model: Model<Api>,
+  context: Context,
+  options?: SimpleStreamOptions,
+): AssistantMessageEventStream {
+  const output = createAssistantMessageEventStream();
+  void (async () => {
+    try {
+      if (definition.stream) {
+        const source = await definition.stream(model, context, options);
+        for await (const event of source) output.push(event);
+        output.end(await source.result());
+        return;
+      }
+      if (!definition.complete) throw new Error("agent must provide stream() or complete()");
+      output.end(await definition.complete(model, context, options));
+    } catch (error) {
+      output.end(extensionErrorResult(model, error));
+    }
+  })();
+  return output;
+}
+
 
 const factoryCache = new Map<string, ExtensionFactory>();
 
@@ -278,6 +395,7 @@ export class TrustedExtensionRunner {
         spec,
         tools: new Map(),
         commands: new Map(),
+        agents: new Map(),
         handlers: new Map(),
         flags: new Map(),
       };
@@ -321,6 +439,7 @@ export class TrustedExtensionRunner {
         state: "loaded",
         toolNames: [...extension.tools.keys()],
         commandNames: [...extension.commands.keys()],
+        agentNames: [...extension.agents.keys()],
         eventNames: [...extension.handlers.keys()],
       });
     }
@@ -341,6 +460,28 @@ export class TrustedExtensionRunner {
     return [...this.reports.values()];
   }
 
+  getAgents(): RegisteredTrustedExtensionAgent[] {
+    return [...this.loaded.values()].flatMap((extension) => [...extension.agents.values()]);
+  }
+
+  getAgentModels(): Model<Api>[] {
+    return this.getAgents().flatMap((agent) => agent.models);
+  }
+
+  findAgentModel(model: unknown): RegisteredTrustedExtensionAgent | undefined {
+    if (!model || typeof model !== "object") return undefined;
+    const candidate = model as { provider?: unknown; id?: unknown };
+    if (typeof candidate.provider !== "string" || typeof candidate.id !== "string") return undefined;
+    return this.getAgents().find(
+      (agent) => agent.providerId === candidate.provider && agent.models.some((item) => item.id === candidate.id),
+    );
+  }
+
+  findAgent(agentKey: string, modelId?: string): { agent: RegisteredTrustedExtensionAgent; model: Model<Api> } | undefined {
+    const agent = this.getAgents().find((item) => item.key === agentKey);
+    const model = agent?.models.find((item) => !modelId || item.id === modelId);
+    return agent && model ? { agent, model } : undefined;
+  }
   getDiagnostics(): TrustedExtensionDiagnostic[] {
     return [...this.diagnostics.values()];
   }
@@ -440,7 +581,7 @@ export class TrustedExtensionRunner {
   }
 
   private errorReport(extensionId: string): TrustedExtensionLoadReport {
-    return { extensionId, state: "error", toolNames: [], commandNames: [], eventNames: [] };
+    return { extensionId, state: "error", toolNames: [], commandNames: [], agentNames: [], eventNames: [] };
   }
 
   private report(
@@ -612,6 +753,58 @@ export class TrustedExtensionRunner {
     };
   }
 
+  private registerAgentDefinition(extension: LoadedExtension, input: unknown): void {
+    if (!input || typeof input !== "object") {
+      this.report(extension.spec.id, "rejected_registration", "agent definition must be an object", "registerAgent");
+      return;
+    }
+    const definition = input as Partial<TrustedExtensionAgentDefinition>;
+    const id = typeof definition.id === "string" ? definition.id.trim() : "";
+    const models = Array.isArray(definition.models) ? definition.models : [];
+    if (!id || models.length === 0 || (!definition.stream && !definition.complete)) {
+      this.report(
+        extension.spec.id,
+        "rejected_registration",
+        "agent needs id, models, and stream() or complete()",
+        id || "registerAgent",
+      );
+      return;
+    }
+    const key = `${extension.spec.id}:${id}`;
+    if (
+      [...this.loaded.values()].some((item) => item.agents.has(id) || [...item.agents.values()].some((agent) => agent.key === key)) ||
+      extension.agents.has(id)
+    ) {
+      this.report(extension.spec.id, "rejected_registration", `agent "${id}" is already registered`, id);
+      return;
+    }
+    try {
+      const providerId = trustedExtensionAgentProviderId(key);
+      const normalizedModels = models.map((model) => modelFromAgentConfig(providerId, model));
+      const ids = new Set<string>();
+      for (const model of normalizedModels) {
+        if (ids.has(model.id)) throw new Error(`duplicate agent model id "${model.id}"`);
+        ids.add(model.id);
+      }
+      extension.agents.set(id, {
+        key,
+        extensionId: extension.spec.id,
+        extensionLabel: extension.spec.label,
+        id,
+        name: typeof definition.name === "string" && definition.name.trim() ? definition.name.trim() : id,
+        providerId,
+        models: normalizedModels,
+        stream: (model, context, options) => streamForAgent(definition as TrustedExtensionAgentDefinition, model, context, options),
+      });
+    } catch (error) {
+      this.report(extension.spec.id, "rejected_registration", errorMessage(error), id);
+    }
+  }
+
+  private unregisterAgentDefinition(extension: LoadedExtension, id: string): void {
+    extension.agents.delete(String(id).trim());
+  }
+
   private createApi(extension: LoadedExtension): Record<string, unknown> {
     const bridge = this.bridge;
     const api: Record<string, unknown> = {
@@ -656,6 +849,69 @@ export class TrustedExtensionRunner {
           return;
         }
         extension.commands.set(clean, options);
+      },
+      registerAgent: (definition: TrustedExtensionAgentDefinition) => {
+        this.registerAgentDefinition(extension, definition);
+      },
+      unregisterAgent: (id: string) => {
+        this.unregisterAgentDefinition(extension, id);
+      },
+      // The upstream compatibility alias: `registerProvider` accepts the same
+      // plugin-owned shape as `registerAgent`, in both the upstream call form
+      // (`(id, config)`) and the object form. A `complete` implementation is
+      // as valid as a streaming one, so it is carried through rather than
+      // dropped.
+      registerProvider: (...args: unknown[]) => {
+        const first = args[0];
+        const second = args[1];
+        const isFunction = (value: unknown): boolean => typeof value === "function";
+        const pickStream = (source: Record<string, unknown>) =>
+          isFunction(source.streamSimple) || isFunction(source.stream)
+            ? ((source.streamSimple ?? source.stream) as TrustedExtensionAgentDefinition["stream"])
+            : undefined;
+        const pickComplete = (source: Record<string, unknown>) =>
+          isFunction(source.complete)
+            ? (source.complete as TrustedExtensionAgentDefinition["complete"])
+            : undefined;
+        if (typeof first === "string" && second && typeof second === "object") {
+          const config = second as Record<string, unknown>;
+          this.registerAgentDefinition(extension, {
+            id: first,
+            name: typeof config.name === "string" ? config.name : first,
+            models: Array.isArray(config.models)
+              ? (config.models as TrustedExtensionAgentModelConfig[])
+              : [],
+            stream: pickStream(config),
+            complete: pickComplete(config),
+          });
+          return;
+        }
+        if (first && typeof first === "object") {
+          const provider = first as Record<string, unknown>;
+          const getModels = provider.getModels;
+          const models = isFunction(getModels)
+            ? (getModels as () => unknown).call(first)
+            : provider.models;
+          this.registerAgentDefinition(extension, {
+            id: typeof provider.id === "string" ? provider.id : "provider",
+            name: typeof provider.name === "string" ? provider.name : undefined,
+            models: Array.isArray(models)
+              ? (models as TrustedExtensionAgentModelConfig[])
+              : [],
+            stream: pickStream(provider),
+            complete: pickComplete(provider),
+          });
+          return;
+        }
+        this.report(
+          extension.spec.id,
+          "rejected_registration",
+          "provider needs a name and a model stream",
+          "registerProvider",
+        );
+      },
+      unregisterProvider: (id: string) => {
+        this.unregisterAgentDefinition(extension, id);
       },
       registerFlag: (name: string, options: { type?: "boolean" | "string"; default?: boolean | string }) => {
         extension.flags.set(String(name), {

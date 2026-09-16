@@ -55,6 +55,7 @@ export type TrustedExtensionLoadReport = {
   state: TrustedExtensionLoadState;
   toolNames: string[];
   commandNames: string[];
+  agentNames: string[];
   eventNames: string[];
 };
 
@@ -160,4 +161,31 @@ export function trustedExtensionCommandName(commandId: string): string | undefin
   return commandId.startsWith(TRUSTED_EXTENSION_COMMAND_ID_PREFIX)
     ? commandId.slice(TRUSTED_EXTENSION_COMMAND_ID_PREFIX.length)
     : undefined;
+}
+/** Public model metadata a trusted extension may register for its own agent. */
+export type TrustedExtensionAgentModelConfig = {
+  id: string;
+  name?: string;
+  api?: string;
+  reasoning?: boolean;
+  thinkingLevels?: Array<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
+  input?: Array<"text" | "image">;
+  contextWindow?: number;
+  maxTokens?: number;
+};
+
+/** Stable provider id used when a session is bound to a plugin-owned agent. */
+export const TRUSTED_EXTENSION_AGENT_PROVIDER_PREFIX = "extension-agent:";
+
+export function trustedExtensionAgentProviderId(agentKey: string): string {
+  return `${TRUSTED_EXTENSION_AGENT_PROVIDER_PREFIX}${encodeURIComponent(agentKey)}`;
+}
+
+export function trustedExtensionAgentKeyFromProviderId(providerId: string): string | undefined {
+  if (!providerId.startsWith(TRUSTED_EXTENSION_AGENT_PROVIDER_PREFIX)) return undefined;
+  try {
+    return decodeURIComponent(providerId.slice(TRUSTED_EXTENSION_AGENT_PROVIDER_PREFIX.length));
+  } catch {
+    return undefined;
+  }
 }

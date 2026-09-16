@@ -73,10 +73,12 @@ const HOST_PROXY_ALLOWED = new Set([
   "extensions.commands.publish",
   "extensions.ui.request",
   "extensions.diagnostics.publish",
+  "extensions.model.configure",
   "session.rename",
   "session.create",
   "session.fork",
   "session.queuePush",
+  "session.queuePrioritize",
 ]);
 
 /** Main-side answers for the `extensions.*` proxy methods. */
@@ -84,6 +86,7 @@ export type TrustedExtensionSidecarBridge = {
   publishCommands: (params: Record<string, unknown>) => void;
   publishDiagnostics: (params: Record<string, unknown>) => void;
   requestUi: (params: Record<string, unknown>) => Promise<unknown>;
+  configureModel: (params: Record<string, unknown>) => Promise<unknown>;
   /** `sendUserMessage`: the Host-owned queue drains it (D386); host-core alone would only store it. */
   queuePush: (params: Record<string, unknown>) => Promise<unknown>;
   queuePrioritize: (params: Record<string, unknown>) => Promise<unknown>;
@@ -490,6 +493,7 @@ export class AgentSidecar {
           let result: unknown = { ok: true };
           if (method === "extensions.commands.publish") bridge.publishCommands(params);
           else if (method === "extensions.diagnostics.publish") bridge.publishDiagnostics(params);
+          else if (method === "extensions.model.configure") result = await bridge.configureModel(params);
           else if (method === "session.queuePush") result = await bridge.queuePush(params);
           else if (method === "session.queuePrioritize") result = await bridge.queuePrioritize(params);
           else result = await bridge.requestUi(params);

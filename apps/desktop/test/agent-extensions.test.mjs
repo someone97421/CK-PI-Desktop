@@ -188,12 +188,18 @@ test("a legacy package-lock dependency tree with a non-registry source is droppe
 test("session publications drive the plugin's agent-extension status and the command list", () => {
   const { b, events } = bridge();
   const ids = ["/p/a.ts", "/p/b.ts"];
-  assert.deepEqual(b.statusForPlugin(ids), { state: "enabled", toolNames: [], commandNames: [], diagnostics: [] });
+  assert.deepEqual(b.statusForPlugin(ids), {
+    state: "enabled",
+    toolNames: [],
+    commandNames: [],
+    agentNames: [],
+    diagnostics: [],
+  });
 
   b.publishDiagnostics("s1", [{ extensionId: "/p/a.ts", kind: "unsupported_api", message: "x", member: "setWidget", count: 2 }], [
-    { extensionId: "/p/a.ts", state: "loaded", toolNames: ["fx_add"], commandNames: ["greet"], eventNames: [] },
-    { extensionId: "/p/b.ts", state: "loaded", toolNames: ["fx_two"], commandNames: [], eventNames: [] },
-    { extensionId: "/other.ts", state: "error", toolNames: [], commandNames: [], eventNames: [] },
+    { extensionId: "/p/a.ts", state: "loaded", toolNames: ["fx_add"], commandNames: ["greet"], agentNames: ["commandcode"], eventNames: [] },
+    { extensionId: "/p/b.ts", state: "loaded", toolNames: ["fx_two"], commandNames: [], agentNames: [], eventNames: [] },
+    { extensionId: "/other.ts", state: "error", toolNames: [], commandNames: [], agentNames: [], eventNames: [] },
   ]);
   b.publishCommands("s1", [{ extensionId: "/p/a.ts", extensionLabel: "P", name: "greet", description: "hi" }]);
   b.publishCommands("s2", [{ extensionId: "/p/a.ts", extensionLabel: "P", name: "greet" }, { extensionId: "/p/a.ts", extensionLabel: "P", name: "other" }]);
@@ -202,11 +208,13 @@ test("session publications drive the plugin's agent-extension status and the com
   assert.equal(status.state, "loaded", "the other plugin's error does not leak in");
   assert.deepEqual(status.toolNames, ["fx_add", "fx_two"]);
   assert.deepEqual(status.commandNames, ["greet"]);
+  // A custom agent a module registered reaches the plugin row (spec §11).
+  assert.deepEqual(status.agentNames, ["commandcode"]);
   assert.equal(status.diagnostics[0].member, "setWidget");
   assert.deepEqual(b.allCommands().map((c) => [c.name, c.description]), [["greet", "hi"], ["other", undefined]]);
   assert.deepEqual(b.commandsForSession("s2").map((c) => c.name), ["greet", "other"]);
 
-  b.publishDiagnostics("s1", [], [{ extensionId: "/p/a.ts", state: "error", toolNames: [], commandNames: [], eventNames: [] }]);
+  b.publishDiagnostics("s1", [], [{ extensionId: "/p/a.ts", state: "error", toolNames: [], commandNames: [], agentNames: [], eventNames: [] }]);
   assert.equal(b.statusForPlugin(ids).state, "error");
   b.clearSession("s1");
   b.clearSession("s2");

@@ -47,6 +47,8 @@ export type RuntimeProviderConfig = {
   modelId: string;
   apiKey: string;
   authKind?: string;
+  /** Plugin-owned trusted agent key when this is not a host provider row. */
+  extensionAgentKey?: string;
   /** Wire protocol for the endpoint (provider config apiStyle). */
   apiStyle?: string;
   supportsReasoning: boolean;
@@ -300,6 +302,30 @@ export function createProviderModels(
       },
       models: [model],
       api: apiBindingForProviderModel(provider).adapter(),
+    }),
+  );
+  return models;
+}
+/** Build a pi-ai model collection for a trusted extension-owned agent. */
+export function createExtensionAgentModels(input: {
+  providerId: string;
+  providerName: string;
+  model: Model<Api>;
+  stream: ProviderStreams;
+}): Models {
+  const models = createModels();
+  models.setProvider(
+    createProvider({
+      id: input.providerId,
+      name: input.providerName,
+      models: [input.model],
+      auth: {
+        apiKey: {
+          name: `${input.providerName} plugin credential`,
+          resolve: async () => ({ auth: { apiKey: "pi-desktop-plugin-agent" } }),
+        },
+      },
+      api: input.stream,
     }),
   );
   return models;

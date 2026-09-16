@@ -257,6 +257,9 @@ export type PluginAgentExtensionStatus = {
   state: "enabled" | "loaded" | "error";
   toolNames: string[];
   commandNames: string[];
+  /** Custom agents the modules registered through `registerAgent` /
+   * `registerProvider` (spec 07-plugins/16 §5). */
+  agentNames: string[];
   diagnostics: TrustedExtensionDiagnostic[];
 };
 

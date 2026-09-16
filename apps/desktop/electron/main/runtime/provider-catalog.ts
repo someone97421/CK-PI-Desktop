@@ -39,6 +39,8 @@ export type RuntimeProvider = {
   apiKey?: string;
   authKind?: string;
   apiStyle?: string;
+  /** Plugin-owned trusted agent key; no host secret is associated with it. */
+  extensionAgentKey?: string;
   hasSecret?: boolean;
   hasOauth?: boolean;
   oauthAccountLabel?: string;

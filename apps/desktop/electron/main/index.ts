@@ -914,6 +914,7 @@ applicationLifecycle = createApplicationLifecycle({
   applyPluginLauncherShortcut: applyPluginLauncherShortcutForLifecycle,
   applySummonWindowShortcut: applySummonWindowShortcutForLifecycle,
   broadcastPluginPanelEvent,
+  getHost: () => host,
 });
 const {
   applyDevelopmentBranding,
@@ -1225,6 +1226,7 @@ runtimeLifecycle = createRuntimeLifecycle({
   rememberPluginScopes,
   refreshUserMcp,
   isQuitting: () => quitting,
+  getDisplayLocale: () => applicationAppearanceState.updaterLocale,
 });
 const { bootHostStatus, runtimeArch, bootBackends } = runtimeLifecycle;
 

@@ -1663,6 +1663,15 @@ async fn handle_request(
             // `market.refresh` after switching sources.
             let market_source = crate::plugins::market_source_from_settings(Some(&settings));
             st.plugins.set_market_source(market_source);
+            // A concrete app language pins the plugin display locale here, so a
+            // shell that only writes settings still gets localized plugin rows.
+            // `auto` is resolved by the shell and pushed through
+            // `plugins.setLocale`.
+            if let Some(language) = settings.get("language").and_then(Value::as_str) {
+                if language != "auto" {
+                    st.plugins.set_locale(language);
+                }
+            }
             crate::network_proxy::apply_from_settings(Some(&settings));
             Ok(json!({ "ok": true }))
         }
@@ -3737,6 +3746,18 @@ async fn handle_request(
             let session_id = params.get("sessionId").and_then(|v| v.as_str());
             let st = state.lock().await;
             Ok(json!({ "requests": st.permissions.pending_requests(session_id) }))
+        }
+
+        "plugins.setLocale" => {
+            // The desktop shell owns the app language — `settings.language`, or
+            // the OS locale while that is `auto` — so it pushes the resolved
+            // locale here whenever it changes. Rows then read their display
+            // strings from the matching `i18n` entry, and a locale change needs
+            // no registry rewrite.
+            let locale = params.get("locale").and_then(Value::as_str).unwrap_or("");
+            let mut st = state.lock().await;
+            st.plugins.set_locale(locale);
+            Ok(json!({ "ok": true, "locale": st.plugins.locale() }))
         }
 
         "plugins.list" => {
@@ -7966,5 +7987,71 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM notifications", [], |row| row.get(0))
             .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    #[tokio::test]
+    async fn plugin_labels_follow_the_pushed_app_language() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let mut app_state = AppState::open(data_dir.path()).unwrap();
+        app_state.handshook = true;
+        let state = Arc::new(Mutex::new(app_state));
+        let tx = mpsc::unbounded_channel().0;
+
+        // A concrete app language in settings pins the locale even before the
+        // shell pushes one.
+        handle_request(
+            state.clone(),
+            "settings.set",
+            json!({ "language": "zh-CN" }),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        {
+            let st = state.lock().await;
+            assert_eq!(st.plugins.locale(), "zh-CN");
+        }
+
+        // `auto` is a setting, not a locale: the shell resolves it, and the
+        // host must not start reading `zh-CN` off the raw value.
+        handle_request(
+            state.clone(),
+            "settings.set",
+            json!({ "language": "auto" }),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        {
+            let st = state.lock().await;
+            assert_eq!(st.plugins.locale(), "zh-CN");
+        }
+
+        let pushed = handle_request(
+            state.clone(),
+            "plugins.setLocale",
+            json!({ "locale": "en-US" }),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(pushed["locale"], "en-US");
+        {
+            let st = state.lock().await;
+            assert_eq!(st.plugins.locale(), "en-US");
+        }
+
+        // Neither an empty value nor `auto` overwrites the resolved locale.
+        for value in [
+            json!({ "locale": "" }),
+            json!({ "locale": "auto" }),
+            json!({}),
+        ] {
+            handle_request(state.clone(), "plugins.setLocale", value, tx.clone())
+                .await
+                .unwrap();
+        }
+        let st = state.lock().await;
+        assert_eq!(st.plugins.locale(), "en-US");
     }
 }

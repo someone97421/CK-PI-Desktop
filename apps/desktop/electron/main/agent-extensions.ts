@@ -116,6 +116,7 @@ export class AgentExtensionBridge {
       state: "enabled",
       toolNames: [],
       commandNames: [],
+      agentNames: [],
       diagnostics: [],
     };
     for (const session of this.sessions.values()) {
@@ -124,6 +125,7 @@ export class AgentExtensionBridge {
       status.state = reports.some((r) => r.state === "error") ? "error" : "loaded";
       status.toolNames = reports.flatMap((r) => r.toolNames);
       status.commandNames = reports.flatMap((r) => r.commandNames);
+      status.agentNames = reports.flatMap((r) => r.agentNames);
       status.diagnostics = session.diagnostics.filter((d) => ids.has(d.extensionId));
     }
     return status;

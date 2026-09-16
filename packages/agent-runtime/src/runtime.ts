@@ -53,6 +53,7 @@ import {
 } from "@pi-desktop/shared";
 import {
   TrustedExtensionRunner,
+  type RegisteredTrustedExtensionAgent,
   type TrustedExtensionBridge,
 } from "./extensions/runner.js";
 import type {
@@ -122,6 +123,7 @@ import {
   apiBindingForProviderModel,
   buildProviderModel,
   copilotRequestHeaders,
+  createExtensionAgentModels,
   createProviderModels,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_TOKENS,
@@ -149,7 +151,7 @@ import {
   harvestRetainedReasoning,
   type ReasoningReplayIdentity,
 } from "./reasoning-replay.js";
-import { visionFromModelConfig } from "./model-capabilities.js";
+import { genericModelConfig, visionFromModelConfig } from "./model-capabilities.js";
 import type { ProjectInstructions } from "./project-instructions.js";
 import { projectInstructionsPrompt } from "./project-instructions-prompt.js";
 import { projectMemoryPrompt } from "./project-memory-prompt.js";
@@ -1611,7 +1613,6 @@ export class DesktopAgentRuntime {
     const tools = this.activeTools();
     const models = createProviderModels(this.provider, model);
     this.models = models;
-    const runtimeApiKey = providerRequestKey(this.provider);
 
     this.fullEntries = this.historyToEntries(opts.history ?? []);
     this.activeCompaction = opts.compaction;
@@ -1737,7 +1738,7 @@ Delegation rules:
           m,
           context,
           hookedOptions,
-          (retryOptions) => models.streamSimple(m, context, retryOptions),
+          (retryOptions) => this.models.streamSimple(m, context, retryOptions),
           {
             claim: (error, phase) => this.claimProviderRetry(error, phase),
             headers: () => this.providerRetryHeaders,
@@ -1757,7 +1758,7 @@ Delegation rules:
       },
       // A vendor account has no long-lived key. Leaving it unset keeps pi-ai
       // from overriding the auth the provider just resolved for this request.
-      getApiKey: async () => runtimeApiKey || undefined,
+      getApiKey: async () => providerRequestKey(this.provider) || undefined,
       convertToLlm: (messages) =>
         alignRetainedReasoningIdentity(
           convertToLlm(messages),
@@ -2044,8 +2045,11 @@ Delegation rules:
     ]
       .sort()
       .join(",");
-    return (
-      !this.disposed &&
+    const extensionAgentMatches =
+      Boolean(this.provider.extensionAgentKey) &&
+      this.provider.extensionAgentKey === config.provider.extensionAgentKey &&
+      this.provider.modelId === config.provider.modelId;
+    const providerMatches = extensionAgentMatches || (
       this.provider.id === config.provider.id &&
       this.provider.modelId === config.provider.modelId &&
       (this.provider.baseUrl ?? "") === (config.provider.baseUrl ?? "") &&
@@ -2055,8 +2059,11 @@ Delegation rules:
       providerHeadersEqual(this.provider.headers, config.provider.headers) &&
       this.provider.supportsReasoning === config.provider.supportsReasoning &&
       currentThinkingLevels === nextThinkingLevels &&
-      safeJson(this.provider.modelConfig ?? null) ===
-        safeJson(config.provider.modelConfig ?? null) &&
+      safeJson(this.provider.modelConfig ?? null) === safeJson(config.provider.modelConfig ?? null)
+    );
+    return (
+      !this.disposed &&
+      providerMatches &&
       this.mode === config.mode &&
       this.thinkingLevel ===
         clampThinkingLevel(config.provider, config.thinkingLevel) &&
@@ -2109,19 +2116,105 @@ Delegation rules:
     return { handled: await this.extensionRunner.runCommand(name, args) };
   }
 
+  private extensionProviderFor(agent: RegisteredTrustedExtensionAgent, model: Model<Api>): RuntimeProviderConfig {
+    const supportedThinkingLevels: ThinkingLevel[] = model.reasoning
+      ? ["off", "low", "medium", "high"]
+      : ["off"];
+    return {
+      id: agent.providerId,
+      name: agent.name,
+      modelId: model.id,
+      apiKey: "",
+      authKind: "none",
+      extensionAgentKey: agent.key,
+      supportsReasoning: model.reasoning,
+      supportedThinkingLevels,
+      modelConfig: genericModelConfig(model.id, ""),
+    };
+  }
+
+  private applyExtensionAgent(agent: RegisteredTrustedExtensionAgent, model: Model<Api>): void {
+    this.provider = this.extensionProviderFor(agent, model);
+    this.model = model;
+    this.models = createExtensionAgentModels({
+      providerId: agent.providerId,
+      providerName: agent.name,
+      model,
+      stream: { stream: agent.stream, streamSimple: agent.stream },
+    });
+    this.thinkingLevel = clampThinkingLevel(this.provider, this.thinkingLevel);
+    this.agent.state.model = model;
+    this.agent.state.thinkingLevel = this.thinkingLevel;
+  }
+
+  async activateTrustedExtensionAgent(agentKey: string, modelId: string): Promise<boolean> {
+    const found = this.extensionRunner?.findAgent(agentKey, modelId);
+    if (!found) return false;
+    this.applyExtensionAgent(found.agent, found.model);
+    return true;
+  }
+
+  private async setExtensionModel(model: unknown): Promise<boolean> {
+    if (!this.extensionRunner || !this.isIdle()) return false;
+    const agent = this.extensionRunner.findAgentModel(model);
+    if (!agent) return false;
+    const modelId = model && typeof model === "object" && typeof (model as { id?: unknown }).id === "string"
+      ? (model as { id: string }).id
+      : "";
+    const candidate = agent.models.find((item) => item.id === modelId);
+    if (!candidate) return false;
+    try {
+      const result = await this.host.call<{ ok?: boolean }>("extensions.model.configure", {
+        sessionId: this.sessionId,
+        mode: this.mode,
+        providerId: agent.providerId,
+        modelId: candidate.id,
+        thinkingLevel: this.thinkingLevel,
+      });
+      if (result?.ok === false) return false;
+      this.applyExtensionAgent(agent, candidate);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private isIdle(): boolean {
+    return !this.agent.state.isStreaming;
+  }
+
+  private extensionModelRegistry(): Record<string, unknown> {
+    const getRunner = () => this.extensionRunner;
+    const models = () => [this.model, ...(getRunner()?.getAgentModels() ?? [])];
+    return {
+      getAll: () => [...new Map(models().map((model) => [`${model.provider}/${model.id}`, model])).values()],
+      getAvailable: () => [...new Map(models().map((model) => [`${model.provider}/${model.id}`, model])).values()],
+      find: (providerId: string, modelId: string) =>
+        models().find((model) => model.provider === providerId && model.id === modelId),
+      getProviderDisplayName: (providerId: string) =>
+        getRunner()?.getAgents().find((agent) => agent.providerId === providerId)?.name ??
+        (providerId === this.provider.id ? this.provider.name : providerId),
+      getProviderAuthStatus: (providerId: string) => ({
+        configured: [this.provider.id, ...(getRunner()?.getAgents().map((agent) => agent.providerId) ?? [])].includes(providerId),
+        source: "plugin",
+      }),
+      hasConfiguredAuth: (model: { provider?: string }) =>
+        typeof model.provider === "string" &&
+        [this.provider.id, ...(getRunner()?.getAgents().map((agent) => agent.providerId) ?? [])].includes(model.provider),
+    };
+  }
+
   getTrustedExtensionReports() {
     return this.extensionRunner?.getLoadReports() ?? [];
   }
-
   private createExtensionBridge(): TrustedExtensionBridge {
     const runtime = this;
     return {
       sessionId: this.sessionId,
       cwd: this.projectPath ?? process.cwd(),
       getModel: () => runtime.model,
-      // The desktop owns the provider binding per session (D342); an
-      // extension cannot swap it from inside a turn.
-      setModel: async () => false,
+      setModel: (model) => runtime.setExtensionModel(model),
+      modelRegistry: runtime.extensionModelRegistry(),
       getThinkingLevel: () => runtime.thinkingLevel,
       setThinkingLevel: (level) => {
         runtime.thinkingLevel = clampThinkingLevel(runtime.provider, level as ThinkingLevel);
