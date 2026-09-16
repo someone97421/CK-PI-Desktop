@@ -509,6 +509,7 @@ export const es = {
     "untitledTask": "Nueva tarea"
   },
   "sideChat": {
+    parentBusy: "La conversación principal sigue respondiendo. Espera a que termine antes de iniciar este chat lateral.",
     readOnly: "Esta sesión nativa de Pi es de solo lectura en este momento.",
     "title": "Chat lateral",
     "sessionTitle": "Chat lateral: {{title}}",
@@ -1421,6 +1422,9 @@ sklm: {
     "deleteSessions_other": "{{count}} sesiones guardadas se eliminarán de forma permanente junto con sus transcripciones.",
     "deleteFolderKept": "La carpeta del disco no se elimina.",
     "deleteRunningBlocked": "Detenga las tareas en ejecución de este proyecto antes de eliminarlo.",
+    "deleteRunning_one": "Todavía se está ejecutando {{count}} sesión de este proyecto. Al eliminar el proyecto se detendrá.",
+    "deleteRunning_other": "Todavía se están ejecutando {{count}} sesiones de este proyecto. Al eliminar el proyecto se detendrán.",
+    "deleteRunningConfirm": "Detener tareas y eliminar",
     "deleteConfirm": "Eliminar proyecto",
     "deleteCancel": "Cancelar",
     "deleting": "Eliminando…",

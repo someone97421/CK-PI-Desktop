@@ -516,6 +516,7 @@ export const en = {
     untitledTask: "New task",
   },
   sideChat: {
+    parentBusy: "The main conversation is still replying. Wait for it to finish before starting this side chat.",
     readOnly: "This native Pi session is read-only right now.",
     title: "Side chat",
     sessionTitle: "Side chat: {{title}}",
@@ -1437,6 +1438,9 @@ sklm: {
     deleteSessions_other: "{{count}} saved sessions and their transcripts are deleted permanently.",
     deleteFolderKept: "The folder on disk is not deleted.",
     deleteRunningBlocked: "Stop this project's running tasks before deleting it.",
+    deleteRunning_one: "{{count}} session in this project is still running. Deleting the project stops it.",
+    deleteRunning_other: "{{count}} sessions in this project are still running. Deleting the project stops them.",
+    deleteRunningConfirm: "Stop tasks and delete",
     deleteConfirm: "Delete project",
     deleteCancel: "Cancel",
     deleting: "Deleting…",

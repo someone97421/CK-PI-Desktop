@@ -46,7 +46,6 @@ export function SelectionQuoteButton({
     (s) => s.openResponseAnnotationEditor,
   );
   const openSideChat = useAppStore((s) => s.openSideChat);
-  const sendPrompt = useAppStore((s) => s.sendPrompt);
   const { copied, copy } = useCopy();
   const [target, setTarget] = useState<SelectionQuoteTarget | null>(null);
   const [placement, setPlacement] = useState<{
@@ -179,14 +178,8 @@ export function SelectionQuoteButton({
   };
 
   const askInSideChat = async () => {
-    const childSessionId = await openSideChat(target.rowAnchorId);
+    await openSideChat(target.rowAnchorId, target.markdown);
     dismiss();
-    if (!childSessionId) return;
-    await sendPrompt(
-      target.markdown,
-      { text: target.markdown, fileReferences: [] },
-      childSessionId,
-    );
   };
 
   return createPortal(

@@ -99,21 +99,10 @@ test("side chats are listed for their own conversation, newest first", () => {
   assert.deepEqual(sideChatsForParent(chats, undefined), []);
 });
 
-test("opening a side chat forks without activating and docks a panel tab", () => {
-  assert.match(store, /openSideChat: async \(messageId\) => \{/);
-  assert.match(store, /i18n\.t\("sideChat\.sessionTitle", \{ title: sourceTitle \}\)/);
-  // The visible conversation must not be replaced by the child.
+test("side-chat drafts and durable children share the panel surface", () => {
+  assert.match(store, /pending: true/);
   assert.match(store, /commitForkedSession\(child, \{ activate: false, clearError: true \}\)/);
-  assert.match(store, /registerSideChat\(/);
-  assert.match(
-    store,
-    /get\(\)\.openWorkPanelTabForSession\(\s*parentSessionId,\s*sideChatWorkPanelTab\(child\.id\)/,
-  );
-  // One side chat per anchor message: re-opening reuses the existing child.
-  assert.match(store, /sideChatsForParent\(state\.sideChats, parentSessionId\)\.find\(/);
   assert.match(panel, /<SideChatTab sessionId=\{sessionId\} \/>/);
-  assert.match(panel, /if \(tab\.kind === "sidechat"\) return t\("sideChat\.title"\)/);
-  assert.match(panel, /sidechat: IconChat,/);
 });
 
 test("a side chat streams through the shared background projection", () => {
@@ -142,7 +131,7 @@ test("the panel can stop the child and quote its answer into the main chat", () 
   assert.match(store, /addSideChatReplyToMain: \(sessionId\) => \{/);
   assert.match(store, /get\(\)\.quoteMessageIntoComposer\(\{ title: entry\.title, text: answer\.content \}\)/);
   // Send targets the child session and never the visible one.
-  assert.match(sideChatTab, /sendPrompt\(\s*text,\s*\{ text, fileReferences: \[\] \},\s*sessionId,?\s*\)/);
+  assert.match(sideChatTab, /sendSideChatPrompt\(sessionId\)/);
   assert.match(sideChatTab, /t\("sideChat\.placeholder"\)/);
   assert.match(sideChatTab, /t\("sideChat\.empty"\)/);
 });
@@ -206,13 +195,7 @@ test("deleting a session strips its side-chat tab from every panel context", () 
   assert.match(deletion, /workPanelTabs,/);
 });
 
-test("two clicks on one anchor share a single fork", () => {
-  assert.match(store, /const sideChatOpens = new Map<string, Promise<string \| null>>\(\)/);
-  assert.match(store, /const inFlight = sideChatOpens\.get\(openKey\);/);
-  assert.match(store, /if \(inFlight\) return inFlight;/);
-  assert.match(store, /sideChatOpens\.delete\(openKey\)/);
-  // The tab docks into the parent's own context, not whichever session is
-  // visible when the fork resolves.
-  assert.match(store, /get\(\)\.openWorkPanelTabForSession\(\s*parentSessionId,\s*sideChatWorkPanelTab\(/);
-  assert.doesNotMatch(store, /get\(\)\.openWorkPanelTab\(sideChatWorkPanelTab\(/);
+test("draft promotion preserves each panel context", () => {
+  assert.match(store, /workPanelContexts: Object.fromEntries/);
+  assert.match(store, /replaceTabs\(context.tabs\)/);
 });

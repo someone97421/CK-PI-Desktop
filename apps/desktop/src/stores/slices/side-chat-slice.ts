@@ -3,93 +3,131 @@ import type { AppState } from "../app-state";
 import type { StoreAccess } from "./types";
 import { api } from "../../lib/api";
 import { forkedSessionMessages } from "../../lib/session-fork";
-import { registerSideChat, removeSideChat, sideChatEntry, sideChatWorkPanelTab, sideChatsForParent } from "../../lib/side-chat";
+import { sideChatSendBlockReason, registerSideChat, removeSideChat, sideChatEntry, sideChatWorkPanelTab, sideChatsForParent } from "../../lib/side-chat";
 import type { SessionSliceDependencies } from "./session-slice";
 
 export function createSideChatSlice({ get, set, commitForkedSession, withoutRecordKey }: StoreAccess &
   Pick<SessionSliceDependencies, "commitForkedSession" | "withoutRecordKey">): Pick<AppState,
-  "openSideChat" | "closeSideChat" | "addSideChatReplyToMain" | "abortSession"> {
-  const sideChatOpens = new Map<string, Promise<string | null>>();
+  "openSideChat" | "updateSideChatDraft" | "sendSideChatPrompt" | "closeSideChat" | "addSideChatReplyToMain" | "abortSession"> {
+  const sends = new Map<string, Promise<boolean>>();
+  const updateEntry = (id: string, patch: Partial<AppState["sideChats"][string]>) => {
+    set((state) => state.sideChats[id] ? {
+      sideChats: { ...state.sideChats, [id]: { ...state.sideChats[id], ...patch } },
+    } : {});
+  };
   return {
-    openSideChat: async (messageId) => {
+    openSideChat: async (messageId, quote) => {
       const state = get();
       const parentSessionId = state.activeSessionId;
       if (!parentSessionId) return null;
-      // One fork per anchored message: two clicks before the host answers must
-      // share one round trip, not create two children for the same anchor (D-LOCAL-message-quotes).
-      const openKey = `${parentSessionId}:${messageId}`;
-      const inFlight = sideChatOpens.get(openKey);
-      if (inFlight) return inFlight;
-      const request = (async () => {
-        const message = state.messages.find(
-          (candidate) => candidate.id === messageId,
-        );
-        const parent = state.sessions.find(
-          (session) => session.id === parentSessionId,
-        );
-        if (!message || !parent) return null;
-        // Re-opening an existing side chat brings its panel back instead of
-        // forking a second child from the same answer.
-        const existing = sideChatsForParent(state.sideChats, parentSessionId).find(
-          (chat) => chat.anchorMessageId === messageId,
-        );
-        if (existing) {
-          // Dock into the parent's own context: the fork may resolve after the
-          // user switched conversations, and the panel must not follow them.
-          get().openWorkPanelTabForSession(
-            parentSessionId,
-            sideChatWorkPanelTab(existing.sessionId),
-          );
-          return existing.sessionId;
-        }
-        // The host refuses a fork while the source turn is still running.
-        if (state.runningSessions[parentSessionId]) return null;
+      const index = state.messages.findIndex((message) => message.id === messageId);
+      const parent = state.sessions.find((session) => session.id === parentSessionId);
+      if (index < 0 || !parent || state.runningSessions[parentSessionId]) return null;
+      const existing = sideChatsForParent(state.sideChats, parentSessionId).find(
+        (chat) => chat.anchorMessageId === messageId,
+      );
+      const id = existing?.sessionId ?? `side-draft:${crypto.randomUUID()}`;
+      const prefill = quote ? `${quote.split("\n").map((line) => `> ${line}`).join("\n")}\n\n` : "";
+      if (existing) {
+        if (prefill) updateEntry(id, { draft: [existing.draft, prefill].filter(Boolean).join("\n\n") });
+      } else {
         const sourceTitle = parent.title.trim() || i18n.t("chat.untitledTask");
+        set((current) => ({
+          sideChats: registerSideChat(current.sideChats, sideChatEntry({
+            sessionId: id,
+            parentSessionId,
+            anchorMessageId: messageId,
+            title: i18n.t("sideChat.sessionTitle", { title: sourceTitle }),
+            pending: true,
+            draft: prefill,
+          })),
+          sideChatTranscripts: {
+            ...current.sideChatTranscripts,
+            [id]: state.messages.slice(0, index + 1),
+          },
+        }));
+      }
+      get().openWorkPanelTabForSession(parentSessionId, sideChatWorkPanelTab(id));
+      return id;
+    },
+    updateSideChatDraft: (id, text) => updateEntry(id, { draft: text }),
+    sendSideChatPrompt: async (id) => {
+      const inFlight = sends.get(id);
+      if (inFlight) return inFlight;
+      const entry = get().sideChats[id];
+      const text = entry?.draft?.trim();
+      if (!entry || !text || entry.sending) return false;
+      const blocked = sideChatSendBlockReason(entry, get().sessions, get().runningSessions);
+      if (blocked) {
+        get().showToast(i18n.t(blocked), { variant: "info" });
+        return false;
+      }
+      updateEntry(id, { sending: true, error: undefined });
+      const request = (async () => {
+        let targetId = id;
         try {
-          const result = await api.forkSession(
-            parentSessionId,
-            i18n.t("sideChat.sessionTitle", { title: sourceTitle }),
-            messageId,
+          if (entry.pending) {
+            const result = await api.forkSession(entry.parentSessionId, entry.title, entry.anchorMessageId);
+            const child = result.session;
+            targetId = child.id;
+            commitForkedSession(child, { activate: false, clearError: true });
+            // Replace only the original draft's tab. A close or parent switch
+            // during the host call must never reopen a panel in another context.
+            set((state) => {
+              const current = state.sideChats[id];
+              if (!current) return {};
+              const oldTabId = sideChatWorkPanelTab(id).id;
+              const tab = sideChatWorkPanelTab(child.id);
+              const replaceTabs = (tabs: AppState["workPanelTabs"]) =>
+                tabs.map((item) => item.id === oldTabId ? tab : item);
+              return {
+                sideChats: registerSideChat(removeSideChat(state.sideChats, id), {
+                  ...current, sessionId: child.id, title: child.title, pending: false,
+                }),
+                sideChatTranscripts: {
+                  ...withoutRecordKey(state.sideChatTranscripts, id),
+                  [child.id]: forkedSessionMessages(child),
+                },
+                workPanelTabs: replaceTabs(state.workPanelTabs),
+                activeWorkPanelTabId: state.activeWorkPanelTabId === oldTabId ? tab.id : state.activeWorkPanelTabId,
+                workPanelContexts: Object.fromEntries(Object.entries(state.workPanelContexts).map(([key, context]) => [key, {
+                  ...context,
+                  tabs: replaceTabs(context.tabs),
+                  activeTabId: context.activeTabId === oldTabId ? tab.id : context.activeTabId,
+                }])),
+              };
+            });
+          }
+          // Forking may await auth/host work. Check the returned child's live
+          // availability, including when its panel was closed during creation.
+          const blocked = sideChatSendBlockReason(
+            { ...entry, sessionId: targetId, pending: false },
+            get().sessions,
+            get().runningSessions,
           );
-          const child = result.session;
-          const messages = forkedSessionMessages(child);
-          // The child is durable on the host now. Recording it is what puts it in
-          // the session list; activation is what is deliberately skipped, so the
-          // main conversation keeps its transcript, its draft, and its run state.
-          commitForkedSession(child, { activate: false, clearError: true });
-          set((current) => ({
-            sideChats: registerSideChat(
-              current.sideChats,
-              sideChatEntry({
-                sessionId: child.id,
-                parentSessionId,
-                title: child.title,
-                anchorMessageId: messageId,
-              }),
-            ),
-            sideChatTranscripts: {
-              ...current.sideChatTranscripts,
-              [child.id]: messages,
-            },
-          }));
-          get().openWorkPanelTabForSession(
-            parentSessionId,
-            sideChatWorkPanelTab(child.id),
-          );
-          return child.id;
+          if (blocked) {
+            get().showToast(i18n.t(blocked), { variant: "info" });
+            return false;
+          }
+          const accepted = await get().sendPrompt(text, { text, fileReferences: [] }, targetId);
+          if (accepted && get().sideChats[targetId]?.draft === entry.draft) {
+            updateEntry(targetId, { draft: "" });
+          }
+          return accepted;
         } catch (error) {
-          set({
-            error: error instanceof Error ? error.message : String(error),
-            errorCode: (error as { code?: string })?.code ?? null,
-          });
-          return null;
+          const message = error instanceof Error ? error.message : String(error);
+          updateEntry(targetId, { error: message });
+          set({ error: message, errorCode: (error as { code?: string })?.code ?? null });
+          return false;
+        } finally {
+          updateEntry(targetId, { sending: false });
         }
       })();
-      sideChatOpens.set(openKey, request);
+      sends.set(id, request);
       try {
         return await request;
       } finally {
-        if (sideChatOpens.get(openKey) === request) sideChatOpens.delete(openKey);
+        sends.delete(id);
       }
     },
     closeSideChat: (sessionId) => {
@@ -133,7 +171,7 @@ export function createSideChatSlice({ get, set, commitForkedSession, withoutReco
 
     addSideChatReplyToMain: (sessionId) => {
       const entry = get().sideChats[sessionId];
-      if (!entry) return;
+      if (!entry || entry.pending) return;
       const messages = get().sideChatTranscripts[sessionId] ?? [];
       const answer = [...messages]
         .reverse()

@@ -389,8 +389,10 @@ export type AppState = {
     /** Text the user selected inside the message, when there is one. */
     selection?: string;
   }) => void;
-  /** Open a side chat from a message; resolves to the child session id. */
-  openSideChat: (messageId: string) => Promise<string | null>;
+  /** Open a renderer-only side-chat draft; resolves to its panel id. */
+  openSideChat: (messageId: string, quote?: string) => Promise<string | null>;
+  updateSideChatDraft: (id: string, text: string) => void;
+  sendSideChatPrompt: (id: string) => Promise<boolean>;
   /** Release a side chat, keeping its durable child session. */
   closeSideChat: (sessionId: string) => void;
   /** Quote a side chat's newest answer into the main conversation's draft. */

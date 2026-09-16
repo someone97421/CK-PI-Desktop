@@ -509,6 +509,7 @@ export const de = {
     "untitledTask": "Neue Aufgabe"
   },
   "sideChat": {
+    parentBusy: "Das Hauptgespräch antwortet noch. Warte auf das Ende, bevor du diesen Seitenchat startest.",
     readOnly: "Diese native Pi-Sitzung ist derzeit schreibgeschützt.",
     "title": "Seitenchat",
     "sessionTitle": "Seitenchat: {{title}}",
@@ -1421,6 +1422,9 @@ sklm: {
     "deleteSessions_other": "{{count}} gespeicherte Sitzungen werden mit ihren Verläufen dauerhaft gelöscht.",
     "deleteFolderKept": "Der Ordner auf dem Datenträger wird nicht gelöscht.",
     "deleteRunningBlocked": "Stoppen Sie die laufenden Aufgaben dieses Projekts, bevor Sie es löschen.",
+    "deleteRunning_one": "In diesem Projekt läuft noch {{count}} Sitzung. Beim Löschen wird sie gestoppt.",
+    "deleteRunning_other": "In diesem Projekt laufen noch {{count}} Sitzungen. Beim Löschen werden sie gestoppt.",
+    "deleteRunningConfirm": "Aufgaben stoppen und löschen",
     "deleteConfirm": "Projekt löschen",
     "deleteCancel": "Abbrechen",
     "deleting": "Wird gelöscht…",

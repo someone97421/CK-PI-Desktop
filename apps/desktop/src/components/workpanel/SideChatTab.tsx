@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
 import { ChatTranscript, TranscriptReadOnlyContext } from "../ChatTranscript";
@@ -6,6 +5,7 @@ import { PermissionCard } from "../PermissionCard";
 import { AskToolCard } from "../AskToolCard";
 import { Button } from "../ui";
 import { useAppStore } from "../../stores/app-store";
+import { sideChatSendBlockReason } from "../../lib/side-chat";
 import { headAsk, queuedAskCount } from "../../lib/pending-asks";
 import { headPermission, sessionPermissions } from "../../lib/pending-permissions";
 
@@ -14,7 +14,8 @@ const EMPTY_MESSAGES: UiMessage[] = [];
 /**
  * The docked side-chat surface (ADR message-quotes-and-side-chats / D-LOCAL-message-quotes).
  *
- * The panel renders the child session's own live projection, so a follow-up
+ * Before first Send the panel shows an anchored preview and a draft. After
+ * creation it renders the child session's own live projection, so a follow-up
  * conversation streams, asks for permission, and can be stopped without making
  * the child the application's visible session. Closing the panel or promoting it
  * releases the renderer-only registration; the child session is durable and
@@ -35,41 +36,28 @@ export function SideChatTab({ sessionId }: { sessionId: string }) {
   );
   const pendingAsk = useAppStore((s) => headAsk(s.pendingAsks, sessionId));
   const queuedAsks = useAppStore((s) => queuedAskCount(s.pendingAsks, sessionId));
-  const sendPrompt = useAppStore((s) => s.sendPrompt);
+  const sendSideChatPrompt = useAppStore((s) => s.sendSideChatPrompt);
+  const entry = useAppStore((s) => s.sideChats[sessionId]);
+  const updateSideChatDraft = useAppStore((s) => s.updateSideChatDraft);
   const abortSession = useAppStore((s) => s.abortSession);
   const closeSideChat = useAppStore((s) => s.closeSideChat);
   const addSideChatReplyToMain = useAppStore((s) => s.addSideChatReplyToMain);
   const selectSession = useAppStore((s) => s.selectSession);
-  const childSummary = useAppStore((s) =>
-    s.sessions.find((session) => session.id === sessionId),
-  );
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  // `busy` is a live-turn state, not a durable read-only state: it must not
-  // trap the composer once the turn has settled. Other reasons (provider,
-  // trust, externally changed) disable Send without touching Stop.
-  const readOnlyReason = childSummary?.readOnlyReason;
-  const sendBlocked = Boolean(readOnlyReason && readOnlyReason !== "busy");
+  const draft = entry?.draft ?? "";
+  const sending = entry?.sending ?? false;
+  const blockedReason = useAppStore((state) => sideChatSendBlockReason(
+    state.sideChats[sessionId], state.sessions, state.runningSessions,
+  ));
+  const sendBlocked = Boolean(blockedReason);
 
   const send = async () => {
     const text = draft.trim();
     if (!text || sending || sendBlocked) return;
-    setSending(true);
-    setDraft("");
-    // The child session is the prompt target, so its stream never becomes the
-    // visible conversation; the panel reads the projection it feeds (D-LOCAL-message-quotes).
-    const accepted = await sendPrompt(
-      text,
-      { text, fileReferences: [] },
-      sessionId,
-    );
-    // Text typed while the send was in flight is never overwritten by the
-    // failed draft; only an empty composer gets the old text back.
-    if (!accepted) setDraft((current) => (current ? current : text));
-    setSending(false);
+    await sendSideChatPrompt(sessionId);
   };
 
   const openAsConversation = async () => {
+    if (entry?.pending || sending) return;
     // Release first: the promotion replaces the panel with the ordinary
     // conversation surface, including the full composer and prompt queue.
     closeSideChat(sessionId);
@@ -85,7 +73,7 @@ export function SideChatTab({ sessionId }: { sessionId: string }) {
           size="sm"
           className="side-chat-action"
           data-side-chat-action="add-to-main"
-          disabled={!messages.some((message) => message.role === "assistant")}
+          disabled={entry?.pending || !messages.some((message) => message.role === "assistant")}
           onClick={() => addSideChatReplyToMain(sessionId)}
         >
           {t("sideChat.addToMain")}
@@ -96,6 +84,7 @@ export function SideChatTab({ sessionId }: { sessionId: string }) {
           size="sm"
           className="side-chat-action"
           data-side-chat-action="open-as-session"
+          disabled={entry?.pending || sending}
           onClick={() => void openAsConversation()}
         >
           {t("sideChat.openAsSession")}
@@ -124,6 +113,7 @@ export function SideChatTab({ sessionId }: { sessionId: string }) {
       {pendingAsk ? (
         <AskToolCard request={pendingAsk} queued={queuedAsks} />
       ) : null}
+      {entry?.error ? <div role="alert">{entry.error}</div> : null}
       <form
         className="side-chat-composer"
         onSubmit={(event) => {
@@ -140,7 +130,7 @@ export function SideChatTab({ sessionId }: { sessionId: string }) {
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => updateSideChatDraft(sessionId, event.target.value)}
           onKeyDown={(event) => {
             // Same contract as the composer: Enter sends, Shift+Enter breaks the
             // line, and an in-flight IME composition owns Enter (D125).
@@ -152,8 +142,8 @@ export function SideChatTab({ sessionId }: { sessionId: string }) {
         />
         <div className="side-chat-composer-row">
           <span className="side-chat-hint">
-            {sendBlocked
-              ? t("sideChat.readOnly")
+            {blockedReason
+              ? t(blockedReason)
               : messages.length === 0
                 ? t("sideChat.empty")
                 : null}

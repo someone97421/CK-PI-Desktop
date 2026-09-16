@@ -514,6 +514,7 @@ export const zhTW = {
     untitledTask: "新建任務",
   },
   sideChat: {
+    parentBusy: "主對話仍在回覆中，請等待回覆結束後再傳送側邊問題。",
     readOnly: "此原生 Pi 工作階段目前為唯讀狀態。",
     title: "側邊聊天",
     sessionTitle: "側邊聊天：{{title}}",
@@ -1423,6 +1424,9 @@ sklm: {
     deleteSessions_other: "{{count}} 個會話及其對話記錄將被永久刪除。",
     deleteFolderKept: "磁碟上的資料夾不會被刪除。",
     deleteRunningBlocked: "請先停止該專案中正在執行的任務，再刪除專案。",
+    deleteRunning_one: "該專案中還有 {{count}} 個會話正在執行，刪除專案會將其停止。",
+    deleteRunning_other: "該專案中還有 {{count}} 個會話正在執行，刪除專案會將它們停止。",
+    deleteRunningConfirm: "停止任務並刪除",
     deleteConfirm: "刪除專案",
     deleteCancel: "取消",
     deleting: "刪除中…",

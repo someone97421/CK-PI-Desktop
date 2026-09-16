@@ -192,8 +192,8 @@ test("the overlay offers add to chat, ask in side chat, and copy", () => {
   assert.match(overlay, /t\("chat\.addToChat"\)/);
   assert.match(overlay, /t\("chat\.askInSideChat"\)/);
   assert.match(overlay, /t\("chat\.copy"\)/);
-  assert.match(overlay, /await openSideChat\(target\.rowAnchorId\)/);
-  assert.match(overlay, /sendPrompt\(\s*target\.markdown,\s*\{ text: target\.markdown, fileReferences: \[\] \},\s*childSessionId,?\s*\)/);
+  assert.match(overlay, /await openSideChat\(target\.rowAnchorId, target\.markdown\)/);
+  assert.doesNotMatch(overlay, /sendPrompt\(/);
   // The action consumes the selection, as in the reference overlay.
   assert.match(overlay, /window\.getSelection\(\)\?\.removeAllRanges\(\)/);
   // And it never sends to the conversation being read.

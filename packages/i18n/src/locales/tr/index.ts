@@ -518,6 +518,7 @@ export const tr = {
     untitledTask: "Yeni görev",
   },
   sideChat: {
+    parentBusy: "Ana sohbet hâlâ yanıt veriyor. Yan sohbeti başlatmadan önce bitmesini bekleyin.",
     readOnly: "Bu yerel Pi oturumu şu anda salt okunur.",
     title: "Yan sohbet",
     sessionTitle: "Yan sohbet: {{title}}",
@@ -1439,6 +1440,9 @@ sklm: {
     deleteSessions_other: "{{count}} kayıtlı oturum, konuşma dökümleriyle birlikte kalıcı olarak silinir.",
     deleteFolderKept: "Diskteki klasör silinmez.",
     deleteRunningBlocked: "Bu projeyi silmeden önce çalışan görevleri durdurun.",
+    deleteRunning_one: "Bu projede hâlâ çalışan {{count}} oturum var. Proje silinirse durdurulur.",
+    deleteRunning_other: "Bu projede hâlâ çalışan {{count}} oturum var. Proje silinirse hepsi durdurulur.",
+    deleteRunningConfirm: "Görevleri durdur ve sil",
     deleteConfirm: "Projeyi sil",
     deleteCancel: "İptal",
     deleting: "Siliniyor…",
