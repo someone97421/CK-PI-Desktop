@@ -163,6 +163,7 @@ import {
   openCodeEndpointFromProvider,
   withOpenCodeSessionHeaders,
 } from "./opencode-session-headers.js";
+import { withCompactionRequestHeaders } from "./compaction-request.js";
 import {
   mergeProviderHeaders,
   providerHeadersEqual,
@@ -180,6 +181,14 @@ import {
   providerRateLimitDelayMs,
   providerSetupRetryDelayMs,
 } from "./provider-retry.js";
+
+import { rebuildNodeNetworkTransport } from "./node-proxy.js";
+import {
+  createProviderTransportHealth,
+  explainsProviderFetchFailure,
+  type ProviderFetchFailure,
+  type ProviderTransportHealth,
+} from "./provider-transport-recovery.js";
 
 export type { RuntimeProviderConfig } from "./provider-binding.js";
 
@@ -1457,6 +1466,28 @@ export class DesktopAgentRuntime {
   private delegationWaitTargets?: DelegationRecord[];
   private providerResponseStatus?: number;
   private providerRetryHeaders?: Record<string, string>;
+  /**
+   * Size and message count of the provider attempt in flight. A failed request
+   * has to be correlatable with how much context it carried, and on a network
+   * failure the request never returns a response to read it from (issue #234).
+   */
+  private providerRequestBytes?: number;
+  private providerRequestMessages?: number;
+  /**
+   * Transport cause of the last provider attempt that rejected before any
+   * response arrived, captured where the original Error still exists. pi-ai
+   * only forwards a flattened `errorMessage`, so without this the real errno is
+   * gone before classification and `fetch failed` reaches the log as
+   * `networkCategory: "unknown"` (issue #234).
+   */
+  private providerFetchFailure?: ProviderFetchFailure;
+  /**
+   * Consecutive-failure policy for the shared undici pool. Rebuilding the pool
+   * is a process-wide action, so the evidence stays per session and the pool is
+   * rebuilt only when the same origin keeps failing unanswered (issue #234).
+   */
+  private readonly providerTransportHealth: ProviderTransportHealth =
+    createProviderTransportHealth();
   private pendingProviderRetry?: ReturnType<typeof classifyAgentError>;
   /**
    * Shared bounded retry count for non-rate-limit transient failures, counted
@@ -1652,6 +1683,12 @@ Delegation rules:
         this.setAgentActivity({ phase: "waiting-model", since: Date.now() });
         this.providerResponseStatus = undefined;
         this.providerRetryHeaders = undefined;
+        this.providerRequestBytes = undefined;
+        this.providerRequestMessages = context.messages?.length;
+        // A new model request starts a new transport streak: the evidence that
+        // justified a rebuild does not carry into the next request (issue #234).
+        this.providerFetchFailure = undefined;
+        this.providerTransportHealth.reset();
         const requestOptions: SimpleStreamOptions = withProviderHeaders(
           withOpenCodeSessionHeaders(
             {
@@ -1665,8 +1702,11 @@ Delegation rules:
               ...(providerRejectsCustomFetch(this.provider)
                 ? {}
                 : {
-                    fetch: captureProviderResponse(options?.fetch, (response) => {
+                    fetch: captureProviderResponse(options?.fetch, (response, requestBytes, failure) => {
                       this.providerResponseStatus = response?.status;
+                      this.providerRequestBytes = requestBytes;
+                      this.providerFetchFailure = failure;
+                      if (failure) this.recoverProviderTransport(failure);
                       // A gateway 502/503 can also state Retry-After, so keep headers for
                       // every status whose delay is usable instead of only for 429.
                       this.providerRetryHeaders = carriesRetryDelayHeaders(
@@ -1702,6 +1742,7 @@ Delegation rules:
             claim: (error, phase) => this.claimProviderRetry(error, phase),
             headers: () => this.providerRetryHeaders,
             status: () => this.providerResponseStatus,
+            failure: () => this.providerFetchFailure,
             onRetry: ({ error, phase, attempt, delayMs }) => {
               this.setAgentActivity({
                 phase: "retrying",
@@ -4617,6 +4658,9 @@ Delegation rules:
     const detailStatus = isRecord(error.details)
       ? error.details.providerStatus
       : undefined;
+    const detailNetworkCode = isRecord(error.details)
+      ? error.details.networkCode
+      : undefined;
     const providerStatus =
       typeof detailStatus === "number"
         ? detailStatus
@@ -4625,6 +4669,12 @@ Delegation rules:
       code: error.code,
       message: error.message,
       ...(typeof providerStatus === "number" ? { providerStatus } : {}),
+      // While the turn is still retrying, the transport errno is the only thing
+      // that tells a DNS failure from a TLS failure from a dropped socket; the
+      // localized summary cannot (issue #234).
+      ...(typeof detailNetworkCode === "string"
+        ? { networkCode: detailNetworkCode }
+        : {}),
     };
   }
 
@@ -4679,11 +4729,41 @@ Delegation rules:
     streamMs?: number,
   ): ReturnType<typeof classifyAgentError> {
     const existingDetails = isRecord(error.details) ? error.details : {};
+    // A capture exists only for an attempt that rejected before any response, so
+    // it is also the honest phase: whatever the message lifecycle that surfaced
+    // the failure looks like, this request never reached the provider, and
+    // pi-agent-core's synthetic `message_start` must not read as a started
+    // stream (issue #234).
+    const captured =
+      this.providerFetchFailure !== undefined &&
+      explainsProviderFetchFailure(error.code)
+        ? this.providerFetchFailure
+        : undefined;
     return {
       ...error,
       details: {
         ...existingDetails,
-        phase,
+        // First-hand cause, so it replaces the `unknown` the text classifier
+        // falls back to for a bare `fetch failed`.
+        ...(captured ? captured.fields : {}),
+        phase: captured ? "request" : phase,
+        // Correlation for a failure that produced no response to inspect: how
+        // much context and how many bytes the attempt carried, and which
+        // compaction generation the session was on (issue #234). Counts, flags
+        // and sizes only — never message content.
+        ...(this.providerRequestMessages !== undefined
+          ? { requestMessages: this.providerRequestMessages }
+          : {}),
+        ...(this.providerRequestBytes !== undefined
+          ? { requestBytes: this.providerRequestBytes }
+          : {}),
+        ...(this.activeCompaction
+          ? {
+              compactionGeneration: checkpointGeneration(
+                this.activeCompaction.details,
+              ),
+            }
+          : {}),
         ...(providerWaitMs !== undefined ? { providerWaitMs } : {}),
         ...(streamMs !== undefined ? { streamMs } : {}),
         ...(this.providerResponseStatus !== undefined &&
@@ -4695,6 +4775,31 @@ Delegation rules:
           : {}),
       },
     };
+  }
+
+  /**
+   * Rebuild the shared provider transport once the same origin has failed
+   * repeatedly without ever answering (issue #234).
+   *
+   * A rejection that produced no response is the only transport event that says
+   * the connection itself never worked, so `createProviderTransportHealth`
+   * counts them per origin and asks for a rebuild after the second one. The
+   * rebuild swaps a dispatcher every session shares, which is safe precisely
+   * because the swap is not a teardown: undici resolves the global dispatcher per
+   * dispatch, in-flight requests keep finishing on the pool they started on, and
+   * the replaced pool is closed gracefully by its owner in `node-proxy.ts`. A
+   * process-wide throttle there bounds how often any session can spend that cost,
+   * and the capture is reported either way, so a rebuild that does not help
+   * still leaves an accurate record.
+   */
+  private recoverProviderTransport(failure: ProviderFetchFailure): void {
+    if (!this.providerTransportHealth.observeFailure(failure)) return;
+    const result = rebuildNodeNetworkTransport();
+    process.stderr.write(
+      `[agent-runtime] provider transport ${
+        result.rebuilt ? "rebuilt after" : "rebuild skipped within throttling for"
+      } a ${failure.category} failure (session=${this.sessionId} route=${result.route})\n`,
+    );
   }
 
   /**
@@ -4712,6 +4817,8 @@ Delegation rules:
     this.providerTransientRetryAttempt = 0;
     this.providerRateLimitRetryAttempt = 0;
     this.providerRetryHeaders = undefined;
+    this.providerFetchFailure = undefined;
+    this.providerTransportHealth.reset();
     this.activeProviderRetryAttempt = 0;
     this.providerRetryInProgress = false;
     this.suppressProviderRetryRunEnd = false;
@@ -5665,7 +5772,10 @@ Delegation rules:
   ): Promise<Awaited<ReturnType<typeof compact>>> {
     return compact(
       preparation,
-      this.models,
+      // The summary is a provider request like any other turn, but
+      // pi-agent-core builds its options itself and never reaches `streamFn`,
+      // so the headers have to ride on the collection.
+      withCompactionRequestHeaders(this.models, this.provider, this.sessionId),
       this.model,
       undefined,
       this.thinkingLevel,
