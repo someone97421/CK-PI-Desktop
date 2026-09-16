@@ -96,6 +96,13 @@ type RuntimeParams = {
   turnId?: string;
   thinkingLevel?: ThinkingLevel;
   provider: RuntimeProviderConfig;
+  /**
+   * Optional dedicated context-compaction model, fully resolved by Electron
+   * main (row, credential, override-applied modelConfig). Absent means the
+   * summary follows the session model; a candidate that fails the runtime's
+   * capability gate falls back to it as well.
+   */
+  compactionProvider?: RuntimeProviderConfig;
   commandShell: CommandShellOption;
   pluginTools?: PluginToolDef[];
   pluginSkills?: PluginSkillDef[];
@@ -292,6 +299,22 @@ async function runtimeFor(
       providerInput?.supportsReasoning === true,
     ),
   });
+  // Optional summary model. Main resolves it completely; the sidecar only
+  // normalizes it the way it normalizes the session provider and hands it the
+  // vendor-account auth resolver. Whether it may actually be used is decided
+  // by the runtime's capability gate, never here.
+  const compactionInput = params.compactionProvider;
+  const compactionProvider =
+    compactionInput && typeof compactionInput === "object"
+      ? withVendorAuth(sessionId, {
+          ...compactionInput,
+          supportsReasoning: compactionInput.supportsReasoning === true,
+          supportedThinkingLevels: normalizeSupportedThinkingLevels(
+            compactionInput.supportedThinkingLevels,
+            compactionInput.supportsReasoning === true,
+          ),
+        })
+      : undefined;
   const thinkingLevel = normalizeThinkingLevel(params.thinkingLevel);
   const pluginTools = params.pluginTools ?? [];
   const pluginSkills = params.pluginSkills ?? [];
@@ -337,6 +360,9 @@ async function runtimeFor(
     projectMemory: params.projectMemory,
     projectPath: params.projectPath,
     commandShell: params.commandShell,
+    // A summary-model change retires the runtime: the next launch rebuilds the
+    // summary binding instead of reusing the previous one.
+    compactionProvider,
   })
     ? existing
     : undefined;
@@ -385,6 +411,7 @@ async function runtimeFor(
     history,
     compaction,
     compactionSettings: params.compactionSettings,
+    compactionProvider,
     pluginTools,
     pluginSkills,
     trustedExtensions,

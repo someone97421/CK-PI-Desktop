@@ -167,6 +167,10 @@ import {
 } from "./opencode-session-headers.js";
 import { withCompactionRequestHeaders } from "./compaction-request.js";
 import {
+  compactionProvidersEqual,
+  resolveCompactionProvider,
+} from "./compaction-model.js";
+import {
   mergeProviderHeaders,
   providerHeadersEqual,
   withProviderHeaders,
@@ -810,6 +814,13 @@ export type AgentRuntimeOptions = {
    * `PI_DESKTOP_COMPACTION_STRATEGY` and otherwise summarizes.
    */
   compactionStrategy?: CompactionStrategy;
+  /**
+   * Fully resolved candidate for the context-compaction summary — provider
+   * row, credential, and the same override-applied `modelConfig` as the
+   * session model. Absent, or rejected by the capability gate in
+   * `compaction-model.ts`, means the summary follows the session model.
+   */
+  compactionProvider?: RuntimeProviderConfig;
   /** Plugin agent tools to expose to the model this session. */
   pluginTools?: PluginToolDef[];
   /** Plugin skills advertised in the system prompt and loaded via `Skill`. */
@@ -855,6 +866,8 @@ export type RuntimeMatchConfig = {
   subagentProviders?: Record<string, RuntimeProviderConfig>;
   /** Resolved keys explicitly opted into Task.model selection; pins alone grant no override. */
   subagentModelKeys?: string[];
+  /** Launched summary-model candidate; changing it retires the runtime. */
+  compactionProvider?: RuntimeProviderConfig;
 };
 
 /** Tool calls ride in the assistant content array as `type: "toolCall"`. A
@@ -1545,6 +1558,24 @@ export class DesktopAgentRuntime {
   private activeCompaction?: ContextCompactionRecord;
   private compactionEnabled: boolean;
   private readonly compactionStrategy: CompactionStrategy;
+  /**
+   * Launched summary-model candidate, kept raw so it can be re-evaluated
+   * against a session model that changes later (extension agent activation).
+   */
+  private compactionCandidate?: RuntimeProviderConfig;
+  /**
+   * Dedicated summary binding. All three stay unset when the summary follows
+   * the session model, which is the default and the fallback for any candidate
+   * that did not prove compatible.
+   */
+  private compactionProvider?: RuntimeProviderConfig;
+  private compactionModel?: Model<Api>;
+  /**
+   * Independent registry for the summary request: it is built from the
+   * selected provider row, so a dedicated model never reuses the session's
+   * registry (and a following model reuses it exactly as before).
+   */
+  private compactionModels?: Models;
   private pendingUserMessageId?: string;
   private acceptingSteering = false;
   private steeringContinuation = false;
@@ -1612,6 +1643,10 @@ export class DesktopAgentRuntime {
     const tools = this.activeTools();
     const models = createProviderModels(this.provider, model);
     this.models = models;
+    // The summary follows the session model unless the launched candidate
+    // proved compatible with it (see `compaction-model.ts`).
+    this.compactionCandidate = opts.compactionProvider;
+    this.applyCompactionBinding();
 
     this.fullEntries = this.historyToEntries(opts.history ?? []);
     this.activeCompaction = opts.compaction;
@@ -2060,6 +2095,14 @@ Delegation rules:
       currentThinkingLevels === nextThinkingLevels &&
       safeJson(this.provider.modelConfig ?? null) === safeJson(config.provider.modelConfig ?? null)
     );
+    // A summary-model selection change (or a newly rejected/accepted
+    // candidate) retires the runtime so the next launch rebuilds the summary
+    // binding. Both sides are put through the same gate, so a candidate that
+    // merely restates the session model stays a no-op.
+    const nextCompactionProvider = resolveCompactionProvider(
+      config.provider,
+      config.compactionProvider,
+    );
     return (
       !this.disposed &&
       providerMatches &&
@@ -2086,7 +2129,8 @@ Delegation rules:
       // Enabling or disabling a trusted extension retires the runtime so the
       // next prompt reloads the set (spec 16 §4.3).
       trustedExtensionIds(this.trustedExtensionSpecs) ===
-        trustedExtensionIds(config.trustedExtensions ?? [])
+        trustedExtensionIds(config.trustedExtensions ?? []) &&
+      compactionProvidersEqual(this.compactionProvider, nextCompactionProvider)
     );
   }
 
@@ -2144,6 +2188,10 @@ Delegation rules:
     this.thinkingLevel = clampThinkingLevel(this.provider, this.thinkingLevel);
     this.agent.state.model = model;
     this.agent.state.thinkingLevel = this.thinkingLevel;
+    // The session model changed, so a launched candidate has to be proven
+    // against the one actually in use — an extension agent's catalog-free
+    // model cannot be verified, so the summary follows it.
+    this.applyCompactionBinding();
   }
 
   async activateTrustedExtensionAgent(agentKey: string, modelId: string): Promise<boolean> {
@@ -5676,10 +5724,24 @@ Delegation rules:
     preparation: ShapedPreparation,
     budget: { hardLimit: number; requestHeadroom: number },
   ): boolean {
-    const contextWindow = budget.hardLimit + budget.requestHeadroom;
+    // The summary is issued by the selected summary model, so the request this
+    // guard predicts has to be measured against that model's own window and
+    // output budget, not the session model's. pi-agent-core caps the summary
+    // output at 80% of the preparation's reserve — the session model's request
+    // headroom, which stays the ceiling — so the summary model's own
+    // `maxTokens` can only lower it. Following the session model reproduces
+    // the previous numbers exactly: a candidate's window is never smaller.
+    const summaryModel = this.compactionModel ?? this.model;
+    const contextWindow = Math.max(
+      budget.hardLimit + budget.requestHeadroom,
+      Math.max(
+        1,
+        Math.round(summaryModel.contextWindow || DEFAULT_CONTEXT_WINDOW),
+      ),
+    );
     const modelOutputBudget = Math.min(
       Math.floor(budget.requestHeadroom * 0.8),
-      Math.max(1, Math.round(this.model.maxTokens || DEFAULT_MAX_TOKENS)),
+      Math.max(1, Math.round(summaryModel.maxTokens || DEFAULT_MAX_TOKENS)),
     );
     const summaryInputLimit = Math.max(
       1,
@@ -5851,19 +5913,49 @@ Delegation rules:
     return false;
   }
 
+  /**
+   * Rebuild the summary binding from the session model currently in use and
+   * the raw launched candidate. A candidate that is unavailable, incomplete,
+   * or incompatible leaves all three fields unset, which is the "follow the
+   * session model" state.
+   */
+  private applyCompactionBinding(): void {
+    const provider = resolveCompactionProvider(
+      this.provider,
+      this.compactionCandidate,
+    );
+    if (!provider) {
+      this.compactionProvider = undefined;
+      this.compactionModel = undefined;
+      this.compactionModels = undefined;
+      return;
+    }
+    const model = buildProviderModel(provider);
+    this.compactionProvider = provider;
+    this.compactionModel = model;
+    this.compactionModels = createProviderModels(provider, model);
+  }
+
   private async generateCompaction(
     preparation: ShapedPreparation,
     signal: AbortSignal,
   ): Promise<Awaited<ReturnType<typeof compact>>> {
+    // The dedicated summary model only ever changes provider, model, registry
+    // and thinking level; the preparation — and with it the reserve, the
+    // retained tail and every budget decision — stays the session model's.
+    const provider = this.compactionProvider ?? this.provider;
+    const model = this.compactionModel ?? this.model;
+    const models = this.compactionModels ?? this.models;
     return compact(
       preparation,
       // The summary is a provider request like any other turn, but
       // pi-agent-core builds its options itself and never reaches `streamFn`,
-      // so the headers have to ride on the collection.
-      withCompactionRequestHeaders(this.models, this.provider, this.sessionId),
-      this.model,
+      // so the headers have to ride on the collection — and they must be the
+      // selected provider's, not the session provider's.
+      withCompactionRequestHeaders(models, provider, this.sessionId),
+      model,
       undefined,
-      this.thinkingLevel,
+      clampThinkingLevel(provider, this.thinkingLevel),
       undefined,
       undefined,
       withAbortSignal(signal, BACKGROUND_CONTEXT),

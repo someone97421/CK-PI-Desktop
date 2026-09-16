@@ -1144,6 +1144,13 @@ sklm: {
     headersImportError: "Use a JSON object with header names and string values.",
     next: "Next",
     changeDefaultModel: "Change",
+    compactionModel: "Context compaction model",
+    changeCompactionModel: "Change",
+    compactionModelFollow: "Follow the default model",
+    compactionModelFollowHint: "Falls back to the main model if the selected model cannot cover its context window or input modalities.",
+    compactionModelUnavailable:
+      "Unavailable: {{provider}} · {{model}}. Pick another model or follow the default.",
+    compactionModelUpdated: "Context compaction model updated",
     setupStageProvider: "Provider",
     setupStageCredential: "Credential",
     setupStageModels: "Models",

@@ -1145,6 +1145,14 @@ sklm: {
     headersImportError: "JSON, başlık adları ve metin değerlerinden oluşan bir nesne olmalıdır.",
     next: "İleri",
     changeDefaultModel: "Değiştir",
+    compactionModel: "Bağlam sıkıştırma modeli",
+    changeCompactionModel: "Değiştir",
+    compactionModelFollow: "Varsayılan modeli izle",
+    compactionModelFollowHint:
+      "Seçilen model ana modelin bağlam penceresini veya girdi türlerini kapsamıyorsa ana model kullanılır.",
+    compactionModelUnavailable:
+      "Kullanılamıyor: {{provider}} · {{model}}. Başka bir model seçin veya varsayılanı izleyin.",
+    compactionModelUpdated: "Bağlam sıkıştırma modeli güncellendi",
     setupStageProvider: "Sağlayıcı",
     setupStageCredential: "Kimlik bilgisi",
     setupStageModels: "Modeller",

@@ -1128,6 +1128,14 @@ sklm: {
     "headersImportError": "Utilisez un objet JSON avec des noms d'en-tête et des valeurs de chaîne.",
     "next": "Suivant",
     "changeDefaultModel": "Modifier",
+    "compactionModel": "Modèle de compactage du contexte",
+    "changeCompactionModel": "Modifier",
+    "compactionModelFollow": "Suivre le modèle par défaut",
+    "compactionModelFollowHint":
+      "Utilise le modèle principal si le modèle choisi ne couvre pas sa fenêtre de contexte ou ses modalités d’entrée.",
+    "compactionModelUnavailable":
+      "Indisponible : {{provider}} · {{model}}. Choisissez un autre modèle ou suivez celui par défaut.",
+    "compactionModelUpdated": "Modèle de compactage du contexte mis à jour",
     "setupStageProvider": "Fournisseur",
     "setupStageCredential": "Informations d'identification",
     "setupStageModels": "Modèles",

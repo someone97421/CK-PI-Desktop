@@ -33,6 +33,15 @@ export type CloseBehavior = "ask" | "tray" | "quit";
 export type AppSettings = {
   defaultProviderId?: string;
   defaultModelId?: string;
+  /**
+   * Optional model for context compaction. Empty strings (or absent fields)
+   * mean compaction follows the current session's main model; a set pair
+   * names a configured provider and one of its models. Persisted as an explicit
+   * empty string when following, because the host merges incoming settings over
+   * the stored object and an omitted key would keep the previous pin.
+   */
+  compactionProviderId?: string;
+  compactionModelId?: string;
   defaultMode: Mode;
   /** Configured command shell for the agent Bash protocol tool. */
   defaultCommandShell?: CommandShellId;

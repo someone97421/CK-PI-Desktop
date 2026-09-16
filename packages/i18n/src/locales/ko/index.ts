@@ -1145,6 +1145,14 @@ sklm: {
     headersImportError: "헤더 이름과 문자열 값을 가진 JSON 객체를 사용하세요.",
     next: "다음",
     changeDefaultModel: "변경",
+    compactionModel: "컨텍스트 압축 모델",
+    changeCompactionModel: "변경",
+    compactionModelFollow: "기본 모델 따르기",
+    compactionModelFollowHint:
+      "선택한 모델이 주 모델의 컨텍스트 길이나 입력 모달리티를 지원하지 못하면 주 모델을 사용합니다.",
+    compactionModelUnavailable:
+      "사용할 수 없음: {{provider}} · {{model}}. 다른 모델을 선택하거나 기본 모델을 따르세요.",
+    compactionModelUpdated: "컨텍스트 압축 모델이 업데이트되었습니다",
     setupStageProvider: "프로바이더",
     setupStageCredential: "자격 증명",
     setupStageModels: "모델",

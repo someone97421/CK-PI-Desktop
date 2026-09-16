@@ -1128,6 +1128,14 @@ sklm: {
     "headersImportError": "Verwenden Sie ein JSON-Objekt mit Header-Namen und Zeichenfolgenwerten.",
     "next": "Weiter",
     "changeDefaultModel": "Ändern",
+    "compactionModel": "Modell für Kontextkomprimierung",
+    "changeCompactionModel": "Ändern",
+    "compactionModelFollow": "Standardmodell folgen",
+    "compactionModelFollowHint":
+      "Verwendet das Hauptmodell, wenn das gewählte Modell dessen Kontextfenster oder Eingabemodalitäten nicht abdeckt.",
+    "compactionModelUnavailable":
+      "Nicht verfügbar: {{provider}} · {{model}}. Anderes Modell wählen oder dem Standardmodell folgen.",
+    "compactionModelUpdated": "Modell für Kontextkomprimierung aktualisiert",
     "setupStageProvider": "Anbieter",
     "setupStageCredential": "Anmeldeinformationen",
     "setupStageModels": "Modelle",

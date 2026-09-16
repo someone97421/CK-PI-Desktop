@@ -16,6 +16,7 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
+import { saveSettingsPatch } from "../../lib/settings-save";
 import { Badge, Button, Field, Input, TooltipButton, cx } from "../ui";
 import {
   IconCheck,
@@ -37,12 +38,36 @@ import {
   defaultModelIdOf,
   defaultModelOptions,
   displayedDefaultModelId,
+  providerOffersModel,
+  type DefaultModelOption,
 } from "./default-model";
 import { copyProviderConfiguration, type ProviderCopyDraft } from "./provider-copy";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { VendorAccountsSection } from "./VendorAccountsSection";
 
 const DELETE_CONFIRM_MS = 3000;
+
+/**
+ * A row of the context-compaction picker: the follow entry, which names the
+ * main model, or one model a ready provider configures.
+ */
+type CompactionModelRow =
+  | { kind: "follow" }
+  | { kind: "model"; provider: ProviderPublic; modelId: string };
+
+/** The follow entry comes first, then the same list the default picker offers. */
+function compactionModelRows(
+  options: readonly DefaultModelOption[],
+): CompactionModelRow[] {
+  return [
+    { kind: "follow" },
+    ...options.map(({ provider, modelId }) => ({
+      kind: "model" as const,
+      provider,
+      modelId,
+    })),
+  ];
+}
 
 type CatalogStatus = {
   loaded: boolean;
@@ -76,6 +101,8 @@ export function ModelConfigPage() {
   const [setupFor, setSetupFor] = useState<string | null>(null);
   const [pickingDefault, setPickingDefault] = useState(false);
   const [defaultModelQuery, setDefaultModelQuery] = useState("");
+  const [pickingCompaction, setPickingCompaction] = useState(false);
+  const [compactionModelQuery, setCompactionModelQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
@@ -169,6 +196,21 @@ export function ModelConfigPage() {
   );
   const readyProviders = providers.filter(providerReady);
   const defaultModelOptionsList = defaultModelOptions(readyProviders);
+  /*
+    The compaction picker offers the follow entry plus the same configured
+    models the default picker lists, filtered locally like every other picker.
+  */
+  const compactionQuery = compactionModelQuery.trim().toLowerCase();
+  const visibleCompactionModelRows = compactionModelRows(
+    defaultModelOptionsList,
+  ).filter((row) => {
+    if (!compactionQuery) return true;
+    const haystack =
+      row.kind === "follow"
+        ? t("settings.compactionModelFollow")
+        : `${row.provider.name} ${row.modelId}`;
+    return haystack.toLowerCase().includes(compactionQuery);
+  });
   const visibleDefaultModelOptions = useMemo(() => {
     const query = defaultModelQuery.trim().toLowerCase();
     if (!query) return defaultModelOptionsList;
@@ -184,6 +226,23 @@ export function ModelConfigPage() {
   const editingProvider =
     setupFor ? providers.find((provider) => provider.id === setupFor) ?? null : null;
   const defaultProviderReady = defaultProvider !== null && providerReady(defaultProvider);
+  /*
+    Compaction follows the main model until both fields name a provider and one
+    of its models. A pin is only runnable while that provider is still ready and
+    still offers the model; otherwise the stored value stays on screen as
+    configured so the row can be reset deliberately instead of silently.
+  */
+  const compactionPinned = !!settings.compactionProviderId && !!settings.compactionModelId;
+  const compactionModelId = settings.compactionModelId ?? "";
+  const compactionProvider =
+    providers.find((provider) => provider.id === settings.compactionProviderId) ?? null;
+  const compactionProviderLabel =
+    compactionProvider?.name ?? settings.compactionProviderId ?? "";
+  const compactionPinRunnable =
+    compactionPinned &&
+    compactionProvider !== null &&
+    providerReady(compactionProvider) &&
+    providerOffersModel(compactionProvider, compactionModelId);
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
     setBusyId(provider.id);
@@ -202,6 +261,33 @@ export function ModelConfigPage() {
     } finally {
       setBusyId(null);
       setPickingDefault(false);
+    }
+  };
+
+  /**
+   * `null` returns the compaction row to following the main model. Following is
+   * written as two empty strings rather than omitted keys: the host merges
+   * incoming settings over the stored object, so a missing key would leave the
+   * previous pin in place.
+   */
+  const setCompactionModel = async (
+    provider: ProviderPublic | null,
+    modelId: string,
+  ) => {
+    setBusyId(provider?.id ?? null);
+    try {
+      await saveSettingsPatch({
+        compactionProviderId: provider?.id ?? "",
+        compactionModelId: provider ? modelId : "",
+      });
+      showToast(t("settings.compactionModelUpdated"), { variant: "success" });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), {
+        variant: "error",
+      });
+    } finally {
+      setBusyId(null);
+      setPickingCompaction(false);
     }
   };
 
@@ -455,6 +541,145 @@ export function ModelConfigPage() {
                             {isCurrent ? <IconCheck size={12} /> : null}
                           </span>
                           <span className="model-default-option-model font-mono">{modelId}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </AnchoredMenu>
+          </div>
+          <div className="settings-row model-default-row">
+            <div className="settings-row-copy model-default-copy">
+              <div className="settings-row-title model-default-label" title={t("settings.compactionModelFollowHint")}>
+                {t("settings.compactionModel")}
+              </div>
+              {!compactionPinned ? (
+                <div className="settings-row-desc model-default-value">
+                  <span className="model-default-provider">
+                    {t("settings.compactionModelFollow")}
+                  </span>
+                </div>
+              ) : compactionPinRunnable ? (
+                <div className="settings-row-desc model-default-value">
+                  <span className="model-default-provider">{compactionProviderLabel}</span>
+                  <span className="model-default-sep" aria-hidden>
+                    ·
+                  </span>
+                  <span className="model-default-model font-mono">{compactionModelId}</span>
+                </div>
+              ) : (
+                <div className="settings-row-desc model-default-value">
+                  <span className="model-default-empty">
+                    {t("settings.compactionModelUnavailable", {
+                      provider: compactionProviderLabel,
+                      model: compactionModelId,
+                    })}
+                  </span>
+                </div>
+              )}
+            </div>
+            <AnchoredMenu
+              className="model-default-anchor"
+              open={pickingCompaction}
+              onClose={() => setPickingCompaction(false)}
+              menuClassName="model-default-menu"
+              label={t("settings.changeCompactionModel")}
+              align="end"
+              trigger={(ref) => (
+                <Button
+                  ref={ref}
+                  className="settings-text-action model-default-trigger"
+                  variant="ghost"
+                  // A stale pin must stay reachable even with nothing ready, so
+                  // the row can be reset to follow instead of being stuck.
+                  disabled={readyProviders.length === 0 && !compactionPinned}
+                  onClick={() => {
+                    setCompactionModelQuery("");
+                    setPickingCompaction((current) => !current);
+                  }}
+                  aria-haspopup="listbox"
+                  aria-expanded={pickingCompaction}
+                >
+                  {t("settings.changeCompactionModel")}
+                  <IconChevronDown className="model-default-trigger-chevron" size={13} aria-hidden />
+                </Button>
+              )}
+            >
+              <div className="model-default-search">
+                <IconSearch size={14} aria-hidden />
+                <Input
+                  value={compactionModelQuery}
+                  onChange={(event) => setCompactionModelQuery(event.target.value)}
+                  placeholder={t("settings.defaultModelSearch")}
+                  aria-label={t("settings.defaultModelSearch")}
+                  autoFocus
+                />
+              </div>
+              <div className="model-default-results" role="presentation">
+                {visibleCompactionModelRows.length === 0 ? (
+                  <div className="model-default-no-results">{t("settings.noModelMatches")}</div>
+                ) : null}
+                <ul className="model-default-list">
+                  {visibleCompactionModelRows.map((row, index) => {
+                    if (row.kind === "follow") {
+                      const isCurrent = !compactionPinned;
+                      return (
+                        <li key="follow">
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={isCurrent}
+                            aria-label={t("settings.compactionModelFollow")}
+                            className={cx("model-default-option", isCurrent && "is-current")}
+                            onClick={() => void setCompactionModel(null, "")}
+                          >
+                            <span className="model-default-option-check" aria-hidden>
+                              {isCurrent ? <IconCheck size={12} /> : null}
+                            </span>
+                            <span className="model-default-option-model">
+                              {t("settings.compactionModelFollow")}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    }
+                    const isCurrent =
+                      compactionPinned &&
+                      row.provider.id === settings.compactionProviderId &&
+                      modelIdsMatch(compactionModelId, row.modelId);
+                    const previous = visibleCompactionModelRows[index - 1];
+                    const startsGroup =
+                      !previous ||
+                      previous.kind !== "model" ||
+                      previous.provider.id !== row.provider.id;
+                    return (
+                      <li key={`${row.provider.id}:${row.modelId}`}>
+                        {startsGroup ? (
+                          <div
+                            className={cx(
+                              "model-default-provider-group",
+                              index > 0 && "has-divider",
+                            )}
+                          >
+                            {row.provider.name}
+                          </div>
+                        ) : null}
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={isCurrent}
+                          aria-label={`${row.provider.name} · ${row.modelId}`}
+                          className={cx("model-default-option", isCurrent && "is-current")}
+                          disabled={busyId === row.provider.id}
+                          onClick={() => void setCompactionModel(row.provider, row.modelId)}
+                        >
+                          <span className="model-default-option-check" aria-hidden>
+                            {isCurrent ? <IconCheck size={12} /> : null}
+                          </span>
+                          <span className="model-default-option-model font-mono">
+                            {row.modelId}
+                          </span>
                         </button>
                       </li>
                     );

@@ -25,6 +25,7 @@ import {
   optionalProviderHeaders,
   resolveSubagentProviders,
   visionFromModelConfig,
+  type RuntimeProviderConfig,
   type UserSubagentDocument,
 } from "@pi-desktop/agent-runtime";
 import { builtinSkills } from "../builtin-skills";
@@ -254,6 +255,58 @@ export function createSessionLaunchRuntime({
     return catalog;
   }
 
+  async function resolveCompactionProvider(
+    providers: RuntimeProvider[],
+    settings: { compactionProviderId?: string | null; compactionModelId?: string | null },
+  ): Promise<RuntimeProviderConfig | undefined> {
+    const { compactionProviderId, compactionModelId } = settings;
+    if (!compactionProviderId || !compactionModelId) return undefined;
+    const row = providers.find(
+      (candidate) => candidate.id === compactionProviderId && candidate.enabled !== false,
+    );
+    const binding = row && bindingForModel(row, compactionModelId);
+    // A stale selection must not resurrect a removed model or block the main turn.
+    if (!row || !binding) return undefined;
+    try {
+      const isVendorAccount = row.authKind === OAUTH_AUTH_KIND;
+      const vendorBinding = isVendorAccount
+        ? await vendorOAuth.bindingFor(row.id, binding.id)
+        : undefined;
+      if (isVendorAccount && !vendorBinding) return undefined;
+      const apiKey = isVendorAccount || row.authKind === "none"
+        ? ""
+        : (await runtimeState.host!.call<{ value?: string }>(
+            "providers.getSecret", { id: row.id },
+          )).value ?? "";
+      if (!apiKey && !isVendorAccount && row.authKind !== "none") return undefined;
+      const baseUrl = vendorBinding?.baseUrl ?? row.baseUrl;
+      const catalogModel = modelsDevModelFor(row, binding.id);
+      const catalogConfig = vendorBinding?.modelConfig ?? (catalogModel
+        ? modelConfigFromModelsDev(catalogModel, baseUrl)
+        : genericModelConfig(binding.id, baseUrl ?? ""));
+      const resolved = resolveBindingContextWindow(catalogConfig, binding);
+      const modelConfig = modelConfigWithBinding(resolved.catalogConfig, resolved.binding);
+      const capabilities = capabilitiesFromModelConfig(modelConfig);
+      return {
+        id: row.id,
+        name: row.name,
+        vendorKey: row.vendorKey,
+        baseUrl,
+        modelId: binding.id,
+        apiKey,
+        authKind: row.authKind,
+        apiStyle: vendorBinding?.apiStyle ?? row.apiStyle,
+        ...optionalProviderHeaders(row.headers),
+        supportsReasoning: capabilities.supportsReasoning,
+        supportedThinkingLevels: [...capabilities.supportedThinkingLevels],
+        modelConfig,
+      };
+    } catch {
+      // Optional model resolution is best effort; use the main model on failure.
+      return undefined;
+    }
+  }
+
   async function resolveAgentRuntimeLaunch(
     sessionId: string,
     session: any,
@@ -361,6 +414,7 @@ export function createSessionLaunchRuntime({
           storedModel?.defaultThinkingLevel,
       ),
     );
+    const compactionProvider = await resolveCompactionProvider(providers.providers, settings);
     const projectPath =
       typeof session.projectPath === "string" && session.projectPath.trim()
         ? session.projectPath.trim()
@@ -580,13 +634,14 @@ export function createSessionLaunchRuntime({
       });
     }
     // Bind the vendor-account rows this turn is allowed to sign requests with:
-    // the session's own provider plus any row a pinned subagent resolved to. The
-    // sidecar may then ask main for request auth, but only for a row named here,
+    // the session's own provider, its compaction model and pinned subagent rows.
+    // The sidecar may then ask main for request auth, but only for a row named here,
     // and the set is rewritten on every launch.
     runtimeState.sidecar?.setVendorAuthBindings(
       sessionId,
       [
         provider.id,
+        ...(compactionProvider ? [compactionProvider.id] : []),
         ...Object.values(subagentBindings.providers).map((binding) => binding.id),
       ]
         .map((id) => providers.providers.find((row) => row.id === id))
@@ -613,6 +668,7 @@ export function createSessionLaunchRuntime({
         projectPath,
         projectInstructions,
         projectMemory,
+        compactionProvider,
         provider: {
           id: provider.id,
           name: provider.name,
