@@ -3,6 +3,7 @@ import {
   THINKING_LEVELS,
   defaultCommandShellForPlatform,
   isCommandShellId,
+  isAppearanceSettings,
   modelIdsMatch,
   validateNetworkProxy,
   type CommandShellId,
@@ -171,7 +172,13 @@ export function createProviderCatalogRuntime({
     const value = settings as T & {
       defaultCommandShell?: unknown;
       networkProxy?: unknown;
+      appearance?: unknown;
     };
+    if (value.appearance !== undefined && !isAppearanceSettings(value.appearance)) {
+      throw Object.assign(new Error("appearance is invalid"), {
+        errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
     if (
       Object.prototype.hasOwnProperty.call(value, "defaultCommandShell") &&
       !isCommandShellId(value.defaultCommandShell)

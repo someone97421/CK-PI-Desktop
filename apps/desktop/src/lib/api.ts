@@ -1,3 +1,4 @@
+import { isAppearanceSettings, normalizeAppearance } from "@pi-desktop/shared";
 import type {
   ActivationScope,
   AgentCapabilityQuery,
@@ -226,6 +227,7 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
       (settings as { largePasteThreshold?: unknown }).largePasteThreshold,
     ),
     fontScale: resolveFontScale(settings),
+    ...(settings.appearance === undefined ? {} : { appearance: normalizeAppearance(settings.appearance) }),
     networkProxy: normalizeNetworkProxy(
       (settings as { networkProxy?: unknown }).networkProxy,
     ),
@@ -233,6 +235,9 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
 }
 
 export function validateSettingsWrite(settings: AppSettings): AppSettings {
+  if (settings.appearance !== undefined && !isAppearanceSettings(settings.appearance)) {
+    throw Object.assign(new Error("appearance is invalid"), { errorCode: "INVALID_PARAMS" });
+  }
   const value = settings as AppSettings & {
     defaultCommandShell?: unknown;
     largePasteThreshold?: unknown;

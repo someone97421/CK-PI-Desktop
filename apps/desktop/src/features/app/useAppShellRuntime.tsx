@@ -14,6 +14,7 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
+import { applyAppearance, resolveAppearance } from "../../lib/appearance";
 import { installRendererApi } from "../../capture/renderer-api";
 import { commitWorkPanelPresentation } from "../../lib/work-panel-presentation";
 import { browserPluginTab } from "../../lib/work-panel-tabs";
@@ -467,7 +468,7 @@ export function useAppShellRuntime() {
     return api.onPluginChanged(refresh);
   }, [ready, projectPath]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const preference = settings?.theme ?? "system";
     const pluginTheme = preference.startsWith("plugin:")
       ? pluginThemes.find((entry) => entry.id === preference)
@@ -496,36 +497,39 @@ export function useAppShellRuntime() {
     }
 
     const mq = window.matchMedia("(prefers-color-scheme: light)");
+    let clearAppearance = () => {};
     const apply = () => {
+      clearAppearance();
       const resolvedTheme =
         base === "system" ? (mq.matches ? "light" : "dark") : base;
       document.documentElement.dataset.theme = resolvedTheme;
+      const appearance = resolveAppearance({
+        theme: preference,
+        appearance: settings?.appearance,
+        fontFamily: settings?.fontFamily,
+      }, resolvedTheme);
+      clearAppearance = applyAppearance(document.documentElement, appearance.tokens);
+      document.documentElement.toggleAttribute("data-appearance-colors", appearance.colors);
+      document.documentElement.toggleAttribute("data-appearance-typography", appearance.typography);
       // A contributed theme may name the native window background for this
       // palette. Deriving it here (rather than remembering an applied value) is
       // what restores the host default on a switch, a disable, or an uninstall:
       // the plugin theme is gone from the catalog, so there is nothing left to
       // pass and the host colour wins.
       void api
-        .setWindowBackgroundColor(resolvedTheme, pluginTheme?.windowBackground?.[resolvedTheme])
+        .setWindowBackgroundColor(resolvedTheme, pluginTheme?.windowBackground?.[resolvedTheme] ?? appearance.background)
         .catch(() => undefined);
     };
     apply();
-    if (base !== "system") return;
     const onChange = () => apply();
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, [settings?.theme, pluginThemes]);
-
-  // Global UI font: the Settings picker stores a CSS `font-family` stack in
-  // `AppSettings.fontFamily`; absent means the built-in token stack.
-  useEffect(() => {
-    const root = document.documentElement;
-    if (settings?.fontFamily) {
-      root.style.setProperty("--font-sans", settings.fontFamily);
-    } else {
-      root.style.removeProperty("--font-sans");
-    }
-  }, [settings?.fontFamily]);
+    if (base === "system") mq.addEventListener("change", onChange);
+    return () => {
+      mq.removeEventListener("change", onChange);
+      clearAppearance();
+      document.documentElement.removeAttribute("data-appearance-colors");
+      document.documentElement.removeAttribute("data-appearance-typography");
+    };
+  }, [settings?.theme, settings?.appearance, settings?.fontFamily, pluginThemes]);
 
   // Global type scale: Settings persists a multiplier in
   // `AppSettings.fontScale`; the `--text-*` ramp multiplies from `--font-scale`.

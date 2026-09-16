@@ -49,6 +49,35 @@ test("launcher never turns the app into a macOS accessory process", () => {
   assert.doesNotMatch(main, /setActivationPolicy/);
 });
 
+test("launcher refreshes settings safely and cleans up subscriptions", () => {
+  assert.match(launcher, /let requestId = 0/);
+  assert.match(
+    launcher,
+    /const refreshSettings = async \(\) => \{\s*const currentRequest = \+\+requestId;\s*pendingPatch = \{\};/,
+  );
+  assert.match(
+    launcher,
+    /const result = await api\.getSettings\(\);\s*if \(disposed \|\| currentRequest !== requestId\) return;/,
+  );
+  assert.match(launcher, /settings = \{ \.\.\.result, \.\.\.pendingPatch \}/);
+  assert.match(
+    launcher,
+    /const onShown = \(\) => \{[\s\S]*?void refreshSettings\(\);\s*reset\(\);\s*\}/,
+  );
+  assert.match(
+    launcher,
+    /const offSettings = api\.onSettingsChanged\(\(patch\) => \{\s*if \(disposed\) return;[\s\S]*?pendingPatch = \{ \.\.\.pendingPatch, \.\.\.update \};\s*settings = \{ \.\.\.settings, \.\.\.update \};/,
+  );
+  assert.match(
+    launcher,
+    /const offShown = api\.onPluginLauncherShown\(onShown\);[\s\S]*?\bonShown\(\);/,
+  );
+  assert.match(
+    launcher,
+    /return \(\) => \{\s*disposed = true;\s*offSettings\(\);\s*offShown\(\);\s*mediaQuery\.removeEventListener\("change",/,
+  );
+});
+
 test("launcher renderer supports keyboard selection and has no window controls", () => {
   assert.match(renderer, /rendererSurface === "plugin-launcher" \? <PluginLauncher \/>/);
   assert.match(launcher, /event\.nativeEvent\.isComposing/);
@@ -61,4 +90,18 @@ test("launcher renderer supports keyboard selection and has no window controls",
   assert.doesNotMatch(launcher, /requestAnimationFrame\(\(\) => inputRef/);
   assert.doesNotMatch(launcher, /WindowControls|window-controls/);
   assert.match(styles, /html\[data-surface="plugin-launcher"\][\s\S]*background: transparent/);
+});
+
+test("launcher uses the shell appearance helpers without changing another window's background", () => {
+  assert.match(launcher, /import \{ applyAppearance, resolveAppearance \} from "\.\.\/lib\/appearance"/);
+  assert.match(launcher, /root\.dataset\.theme = resolvedTheme;\s*clearAppearance\(\);\s*const appearance = resolveAppearance\(\{ \.\.\.settings, theme: preference \}, resolvedTheme\);/);
+  assert.match(launcher, /clearAppearance = applyAppearance\(root, appearance\.tokens\)/);
+  assert.match(launcher, /root\.toggleAttribute\("data-appearance-colors", appearance\.colors\)/);
+  assert.match(launcher, /root\.toggleAttribute\("data-appearance-typography", appearance\.typography\)/);
+  assert.match(launcher, /String\(resolveFontScale\(settings\)\)/);
+  assert.match(launcher, /mediaQuery\.removeEventListener\("change", applyTheme\);\s*clearAppearance\(\);/);
+  assert.match(launcher, /removeAttribute\("data-appearance-colors"\)/);
+  assert.match(launcher, /removeAttribute\("data-appearance-typography"\)/);
+  assert.match(launcher, /removeProperty\("--font-scale"\)/);
+  assert.doesNotMatch(launcher, /setWindowBackgroundColor|sendToRenderer/);
 });

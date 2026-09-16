@@ -16,16 +16,16 @@ const tokensSource = await readFile(
 );
 const styles = await loadStyles();
 
-test("Appearance card renders a font-size row after the font family picker", () => {
+test("Appearance retains global font scale alongside per-mode font panels", () => {
   const generalStart = settingsPageSource.indexOf(
     '{tab === "general" && settings && (',
   );
   const aiStart = settingsPageSource.indexOf('{tab === "ai" && settings && (');
   const generalSource = settingsPageSource.slice(generalStart, aiStart);
-  const fontFamily = generalSource.indexOf("<FontFamilyRow ");
+  const panels = generalSource.indexOf("<AppearancePanels ");
   const fontSize = generalSource.indexOf("<FontSizeRow ");
-  assert.ok(fontFamily >= 0);
-  assert.ok(fontSize > fontFamily);
+  assert.ok(fontSize >= 0);
+  assert.ok(panels > fontSize);
 });
 
 test("presets and the scale slider persist AppSettings.fontScale", () => {

@@ -108,7 +108,7 @@ export function ThemeRow({
   const choose = (id: ThemePreference) => {
     close();
     if (id === selectedId) return;
-    void saveSettings({ theme: id });
+    void saveSettings({ theme: id }).catch(() => undefined);
   };
 
   const moveActive = (delta: number) => {

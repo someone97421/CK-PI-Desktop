@@ -1,0 +1,163 @@
+/* Weight ramps stay relative to each scope's base, rather than flattening headings. */
+:root[data-appearance-typography] {
+  --font-weight-normal: var(--appearance-ui-weight, 400);
+  --font-weight-medium: min(950, calc(var(--appearance-ui-weight, 400) + 100));
+  --font-weight-medium-plus: min(950, calc(var(--appearance-ui-weight, 400) + 120));
+  --font-weight-strong: min(950, calc(var(--appearance-ui-weight, 400) + 160));
+  --font-weight-semibold: min(950, calc(var(--appearance-ui-weight, 400) + 200));
+}
+
+:root[data-appearance-typography] :is(body, #root) {
+  font-weight: var(--font-weight-normal);
+}
+
+:root[data-appearance-typography] :is(.prose-chat, .message-user-text) {
+  --font-weight-normal: var(--appearance-content-weight, 400);
+  --font-weight-medium: min(950, calc(var(--appearance-content-weight, 400) + 100));
+  --font-weight-medium-plus: min(950, calc(var(--appearance-content-weight, 400) + 120));
+  --font-weight-strong: min(950, calc(var(--appearance-content-weight, 400) + 160));
+  --font-weight-semibold: min(950, calc(var(--appearance-content-weight, 400) + 200));
+  font-weight: var(--font-weight-normal);
+}
+
+:root[data-appearance-typography] :is(code, pre, .font-mono, .code-block-lang) {
+  --appearance-code-strong: min(950, calc(var(--appearance-code-weight, 400) + 300));
+  --font-weight-normal: var(--appearance-code-weight, 400);
+  --font-weight-medium: min(950, calc(var(--appearance-code-weight, 400) + 100));
+  --font-weight-semibold: min(950, calc(var(--appearance-code-weight, 400) + 200));
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-normal);
+}
+
+:root[data-appearance-typography] :is(strong, b) {
+  font-weight: var(--font-weight-semibold);
+}
+
+:root[data-appearance-typography] :is(strong, b) code {
+  font-weight: var(--font-weight-semibold);
+}
+
+/* These literal-color exceptions apply only when a built-in palette is customized. */
+:root[data-appearance-colors] :is(
+  .btn-primary, .copy-btn.primary, .provider-thinking-chip.selected,
+  .scope-option.is-on .scope-option-check, .provider-model-check.checked,
+  .mcpm-chip.is-active, .mcpm-install, .mcpm-page-btn.is-active,
+  .sklm-chip.is-active, .sklm-install, .sklm-page-btn.is-active
+) {
+  color: var(--ds-on-accent);
+}
+
+:root[data-appearance-colors] .send-btn:not(:disabled) {
+  background: var(--ds-accent);
+  color: var(--ds-on-accent);
+}
+
+:root[data-appearance-colors] .send-btn:disabled {
+  background: var(--ds-bg-active);
+  color: var(--ds-text-muted);
+}
+
+:root[data-appearance-colors] .composer-toolbar :is(.icon-btn, .mode-chip) {
+  color: var(--ds-text-secondary) !important;
+}
+
+:root[data-appearance-colors] .composer-input::placeholder,
+:root[data-appearance-colors] .composer-placeholder {
+  color: var(--ds-text-muted);
+  -webkit-text-fill-color: var(--ds-text-muted);
+}
+
+:root[data-appearance-colors] .tool-row-content {
+  background: var(--ds-tile);
+}
+
+:root[data-appearance-colors] .thinking-prose {
+  color: var(--ds-text-secondary);
+}
+
+:root[data-appearance-colors] .prose-chat :is(h5, h6, kbd, blockquote) {
+  color: var(--ds-text-secondary);
+}
+
+:root[data-appearance-colors] .prose-chat th {
+  color: var(--ds-text-primary);
+}
+
+:root[data-appearance-colors] .prose-chat :not(pre) > code {
+  background: var(--ds-tile-deep);
+  color: var(--ds-text-primary);
+}
+
+:root[data-appearance-colors] .prose-chat a {
+  text-decoration-color: var(--ds-accent-soft);
+}
+
+.appearance-panels {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.appearance-panel {
+  min-width: 0;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--ds-tile);
+  container-type: inline-size;
+}
+
+.appearance-panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.appearance-panel-header .settings-card-heading { margin: 0; }
+
+.appearance-colors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.appearance-color-field { min-width: 0; }
+.appearance-color-inputs { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.appearance-color-inputs input[type="color"] {
+  width: 32px;
+  height: 32px;
+  padding: 2px;
+  flex: 0 0 32px;
+  border: 1px solid var(--ds-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--ds-raised);
+  cursor: pointer;
+}
+.appearance-color-inputs .appearance-hex {
+  width: 100%;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+.appearance-hex[aria-invalid="true"] { outline: 1px solid var(--ds-error); }
+.appearance-error { color: var(--ds-error); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.appearance-panel .settings-row { padding-inline: 0; flex-wrap: wrap; background: transparent; }
+.appearance-panel .settings-row-copy { min-width: 0; flex: 1 1 180px; }
+.appearance-panel .settings-row-control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 280px;
+}
+.appearance-panel .settings-font { min-width: 0; flex: 1 1 150px; }
+.appearance-panel .settings-font-trigger { min-width: 0; width: 100%; max-width: none; }
+.appearance-panel .appearance-weight { min-width: 0; max-width: 100%; flex: 0 1 130px; }
+
+@container (max-width: 400px) {
+  .appearance-panel .settings-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .appearance-panel .settings-row-copy, .appearance-panel .settings-row-control { flex-basis: auto; width: 100%; }
+}

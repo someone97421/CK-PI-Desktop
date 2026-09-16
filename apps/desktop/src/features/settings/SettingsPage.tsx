@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   AppSettings,
@@ -8,6 +8,7 @@ import type {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
+import { getSettingsSaveError, saveSettingsPatch, subscribeSettingsSaveError } from "../../lib/settings-save";
 import {
   SETTINGS_NAV,
   SETTINGS_NAV_GROUP_LABELS,
@@ -30,7 +31,7 @@ import {
 import { Button, cx } from "../../components/ui";
 import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
 import { KeyboardShortcutsSection } from "../../components/settings/KeyboardShortcutsSection";
-import { FontFamilyRow } from "../../components/settings/FontFamilyRow";
+import { AppearancePanels } from "../../components/settings/AppearancePanels";
 import { FontSizeRow } from "../../components/settings/FontSizeRow";
 import { LanguageRow } from "../../components/settings/LanguageRow";
 import { ThemeRow } from "../../components/settings/ThemeRow";
@@ -81,6 +82,7 @@ export function SettingsPage() {
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
 
   const [query, setQuery] = useState("");
+  const saveError = useSyncExternalStore(subscribeSettingsSaveError, getSettingsSaveError);
   const [recoveringSettings, setRecoveringSettings] = useState(!settings);
   const [settingsRecoveryFailed, setSettingsRecoveryFailed] = useState(false);
   const [extensions, setExtensions] = useState<PluginSettingsDestinationMeta[]>([]);
@@ -159,11 +161,8 @@ export function SettingsPage() {
   }, [settingsAnchor, tab, t, setSettingsAnchor]);
 
   const saveSettings = async (patch: Partial<AppSettings>) => {
-    if (!settings) return;
-    const nextSettings = { ...settings, ...patch };
-    await api.setSettings(nextSettings);
-    useAppStore.setState({ settings: nextSettings });
-    await refreshProviders();
+    await saveSettingsPatch(patch);
+    if (patch.appearance === undefined && patch.theme === undefined && patch.fontScale === undefined) await refreshProviders();
   };
 
   // Nav structure comes from the shared settings index (lib/settings-search)
@@ -328,9 +327,10 @@ export function SettingsPage() {
               <SettingsCard title={t("settings.appearance")}>
                 <ThemeRow settings={settings} saveSettings={saveSettings} />
                 <LanguageRow settings={settings} saveSettings={saveSettings} />
-                <FontFamilyRow settings={settings} saveSettings={saveSettings} />
                 <FontSizeRow settings={settings} saveSettings={saveSettings} />
               </SettingsCard>
+              {saveError && <p className="appearance-error" role="alert">{t("settings.appearanceSaveError")}</p>}
+              <AppearancePanels settings={settings} saveSettings={saveSettings} />
 
               <NetworkProxySection settings={settings} saveSettings={saveSettings} />
 

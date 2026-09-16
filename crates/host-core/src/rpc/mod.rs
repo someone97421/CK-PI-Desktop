@@ -5538,6 +5538,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn settings_appearance_survives_partial_writes_and_reopen() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let mut app_state = AppState::open(data_dir.path()).unwrap();
+        app_state.handshook = true;
+        let state = Arc::new(Mutex::new(app_state));
+        let tx = mpsc::unbounded_channel().0;
+        let appearance = json!({
+            "light": { "accent": "#AABBCC", "ui": { "family": "Inter", "weight": 500 } },
+            "dark": { "background": "#121212", "code": { "weight": 300 } },
+            "future": { "keep": true }
+        });
+        handle_request(state.clone(), "settings.set", json!({
+            "appearance": appearance,
+            "fontFamily": "Legacy",
+            "fontScale": 1.25,
+            "futureSetting": "keep"
+        }), tx.clone()).await.unwrap();
+        handle_request(state.clone(), "settings.set", json!({ "theme": "system" }), tx.clone())
+            .await.unwrap();
+        drop(state);
+        let mut reopened = AppState::open(data_dir.path()).unwrap();
+        reopened.handshook = true;
+        let state = Arc::new(Mutex::new(reopened));
+        let settings = handle_request(state, "settings.get", json!({}), tx).await.unwrap();
+        assert_eq!(settings["appearance"], appearance);
+        assert_eq!(settings["fontFamily"], "Legacy");
+        assert_eq!(settings["fontScale"], 1.25);
+        assert_eq!(settings["futureSetting"], "keep");
+        assert_eq!(settings["theme"], "system");
+    }
+
+    #[tokio::test]
     async fn settings_set_preserves_stored_shell_when_shell_is_omitted() {
         let Some(current_shell) = available_test_shell_id() else {
             return;

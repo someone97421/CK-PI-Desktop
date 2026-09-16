@@ -97,7 +97,7 @@ test("Basics and AI tabs expose their respective app and AI controls", () => {
 
   assert.match(generalSource, /<ThemeRow /);
   assert.match(generalSource, /<LanguageRow /);
-  assert.match(generalSource, /<FontFamilyRow /);
+  assert.match(generalSource, /<AppearancePanels /);
   assert.match(generalSource, /<FontSizeRow /);
   assert.match(generalSource, /<NetworkProxySection /);
   assert.doesNotMatch(generalSource, /\(\["auto", "zh-CN", "en"\] as const\)/);

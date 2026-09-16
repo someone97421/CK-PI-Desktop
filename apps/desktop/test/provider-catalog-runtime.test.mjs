@@ -50,6 +50,18 @@ async function fixtureRuntime() {
   return { catalog, runtime };
 }
 
+test("settings bridge preserves optional appearance and unknown fields but rejects invalid known values", async () => {
+  const { runtime } = await fixtureRuntime();
+  const settings = { theme: "system", fontFamily: "Legacy", future: true, appearance: {
+    light: { accent: "#abcdef", ui: { family: "Inter", weight: 500 } }, dark: { future: 1 },
+  } };
+  assert.deepEqual(runtime.normalizeSettings(settings).appearance, settings.appearance);
+  assert.equal(runtime.validateSettingsWrite(settings), settings);
+  assert.equal(runtime.normalizeSettings(settings).future, true);
+  assert.throws(() => runtime.validateSettingsWrite({ appearance: { dark: { background: "#12" } } }), /appearance is invalid/);
+  assert.throws(() => runtime.validateSettingsWrite({ appearance: { light: { code: { weight: 999 } } } }), /appearance is invalid/);
+});
+
 for (const modelId of ["catalog-model", "unpublished-model"]) {
   test(`cached metadata keeps provider binding changes immediate for ${modelId}`, async () => {
     const { catalog, runtime } = await fixtureRuntime();

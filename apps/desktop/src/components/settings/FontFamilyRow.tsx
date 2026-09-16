@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -23,18 +24,26 @@ import {
 import { IconCheck, IconChevronDown, IconSearch } from "../icons";
 
 /**
- * Global UI font picker (Settings → Basics → Appearance). Offers the
- * system default, bundled open-licensed families, and installed system
- * families; the selected stack is persisted as `AppSettings.fontFamily`
- * and applied to `--font-sans` by App. Selecting System default persists an
- * empty stack, which every consumer treats as the built-in token stack.
+ * Searchable font row shared by the appearance scopes. The parent maps the
+ * selected stack into its mode/scope; an empty stack selects that scope's
+ * default. Installed font enumeration is cached across all six rows.
  */
 export function FontFamilyRow({
   settings,
   saveSettings,
+  title,
+  description,
+  defaultLabel,
+  defaultFamily,
+  weightControl,
 }: {
-  settings: AppSettings;
+  settings: Pick<AppSettings, "fontFamily">;
   saveSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  title?: string;
+  description?: string;
+  defaultLabel?: string;
+  defaultFamily?: string;
+  weightControl?: ReactNode;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -154,7 +163,7 @@ export function FontFamilyRow({
   const selectedOption =
     options.find((option) => option.value === selectedValue) ?? null;
   const selectedLabel =
-    selectedOption?.label ?? readableFontFamily(settings.fontFamily ?? "");
+    selectedValue ? selectedOption?.label ?? readableFontFamily(selectedValue) : defaultLabel ?? t("settings.fontSystemDefault");
   const selectedFamily = selectedOption?.family ?? readableFontFamily(selectedValue);
 
   const filtered = useMemo(() => {
@@ -264,8 +273,7 @@ export function FontFamilyRow({
     try {
       await saveSettings(value ? { fontFamily: value } : { fontFamily: "" });
     } catch {
-      // The generic settings row treats save failures as transient; the
-      // store is only updated on success.
+      // The parent restores the persisted state and reports save failures.
     }
   };
 
@@ -293,8 +301,8 @@ export function FontFamilyRow({
   return (
     <div className="settings-row">
       <div className="settings-row-copy">
-        <div className="settings-row-title">{t("settings.font")}</div>
-        <div className="settings-row-desc">{t("settings.fontDesc")}</div>
+        <div className="settings-row-title">{title ?? t("settings.font")}</div>
+        <div className="settings-row-desc">{description ?? t("settings.fontDesc")}</div>
       </div>
       <div className="settings-row-control">
         <div className="settings-font" ref={rootRef} onKeyDown={onKeyDown}>
@@ -304,9 +312,10 @@ export function FontFamilyRow({
             className="settings-font-trigger"
             aria-haspopup="listbox"
             aria-expanded={open}
+            aria-label={title ?? t("settings.font")}
             onClick={() => setOpen((value) => !value)}
           >
-            <span className="settings-font-trigger-label" style={{ fontFamily: selectedFamily || undefined }}>
+            <span className="settings-font-trigger-label" style={{ fontFamily: selectedFamily || defaultFamily }}>
               {selectedLabel}
             </span>
             <IconChevronDown size={14} />
@@ -320,7 +329,7 @@ export function FontFamilyRow({
                   menuPosition ? " is-open" : ""
                 }`}
                 role="listbox"
-                aria-label={t("settings.font")}
+                aria-label={title ?? t("settings.font")}
                 onKeyDown={onKeyDown}
                 style={
                   menuPosition
@@ -338,17 +347,19 @@ export function FontFamilyRow({
                     type="text"
                     value={query}
                     placeholder={t("settings.fontSearchPlaceholder")}
+                    aria-label={t("settings.fontSearchPlaceholder")}
                     spellCheck={false}
                     autoCorrect="off"
                     autoCapitalize="off"
                     onChange={(event) => setQuery(event.target.value)}
                   />
                 </div>
-                {loadError && !systemFonts ? (
+                {loadError && !systemFonts && (
                   <div className="settings-font-empty">
                     {t("settings.fontLoadError")}
                   </div>
-                ) : filtered.length === 0 ? (
+                )}
+                {filtered.length === 0 ? (
                   <div className="settings-font-empty">
                     {t("settings.noResults")}
                   </div>
@@ -395,14 +406,14 @@ export function FontFamilyRow({
                               left: 6,
                               right: 6,
                               height: FONT_OPTION_ROW_HEIGHT,
-                              fontFamily: row.option.family || undefined,
+                              fontFamily: row.option.family || defaultFamily,
                             }}
                             onClick={() => void selectOption(row.option.value)}
                             onMouseEnter={() => setHighlight(row.optionIndex)}
                           >
                             <span className="settings-font-item-label">
                               {row.option.group === "default"
-                                ? t("settings.fontSystemDefault")
+                                ? defaultLabel ?? t("settings.fontSystemDefault")
                                 : row.option.label}
                             </span>
                             {row.option.license ? (
@@ -426,6 +437,7 @@ export function FontFamilyRow({
               document.body,
             )}
         </div>
+        {weightControl}
       </div>
     </div>
   );

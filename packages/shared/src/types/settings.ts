@@ -9,6 +9,17 @@ import type { PluginMarketSource } from "./plugins.js";
 
 export type ThemePreference = "system" | "light" | "dark" | `plugin:${string}`;
 
+export type AppearanceFont = { family?: string; weight?: number };
+export type ModeAppearance = {
+  accent?: string;
+  background?: string;
+  foreground?: string;
+  ui?: AppearanceFont;
+  content?: AppearanceFont;
+  code?: AppearanceFont;
+};
+export type AppearanceSettings = Partial<Record<"light" | "dark", ModeAppearance>>;
+
 /**
  * What closing the main window does on Windows/Linux. macOS keeps the native
  * Dock lifecycle and never consults this preference.
@@ -36,6 +47,8 @@ export type AppSettings = {
    * are offered by the settings picker.
    */
   fontFamily?: string;
+  /** Optional built-in theme overrides. Missing values keep the original tokens. */
+  appearance?: AppearanceSettings;
   /**
    * Global UI type scale (D343). `1` is the product `--text-*` ramp.
    * Absent means 1. Range 0.8–1.5 in 0.025 steps. Window zoom is independent.

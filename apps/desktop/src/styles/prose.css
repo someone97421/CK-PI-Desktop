@@ -13,6 +13,7 @@
   Blocks render as direct children of .prose-chat.
 */
 .prose-chat {
+  font-family: var(--appearance-content-font, inherit);
   color: var(--ds-text-primary);
   font-size: var(--text-base);
   line-height: var(--leading-prose);

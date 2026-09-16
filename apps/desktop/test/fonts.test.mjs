@@ -5,11 +5,19 @@ import {
   buildFontOptions,
   cssFamilyForName,
   readableFontFamily,
+  appearanceFontStack,
+  DEFAULT_CODE_FONT,
 } from "../src/lib/fonts.ts";
 
 test("cssFamilyForName quotes names and escapes single quotes", () => {
   assert.equal(cssFamilyForName("PingFang SC"), "'PingFang SC'");
   assert.equal(cssFamilyForName("O'Brien"), "'O\\'Brien'");
+});
+
+test("code faces fall back to monospace before CJK sans fonts", () => {
+  assert.equal(appearanceFontStack(`"Missing Code", "Noto Sans SC", sans-serif`, true), `"Missing Code", ${DEFAULT_CODE_FONT}`);
+  assert.equal(appearanceFontStack(`"A, B", sans-serif`, true), `"A, B", ${DEFAULT_CODE_FONT}`);
+  assert.match(appearanceFontStack("Missing UI"), /system-ui.*Noto Sans SC/);
 });
 
 test("readableFontFamily extracts the first family without quotes", () => {

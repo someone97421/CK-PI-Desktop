@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { isThemeColorScheme, type PluginSummary } from "@pi-desktop/shared";
+import { isThemeColorScheme, resolveFontScale, type AppSettings, type PluginSummary } from "@pi-desktop/shared";
 import { api } from "../lib/api";
+import { applyAppearance, resolveAppearance } from "../lib/appearance";
 import { searchLaunchablePlugins } from "../lib/plugin-launcher-search";
 import {
   loadPluginLaunchHistory,
@@ -26,38 +27,6 @@ export function PluginLauncher() {
     loadPluginLaunchHistory().map((record) => record.id),
   );
   const loadPromiseRef = useRef<Promise<void> | null>(null);
-
-  useEffect(() => {
-    let disposed = false;
-    let mediaQuery: MediaQueryList | undefined;
-    let onSystemThemeChange: (() => void) | undefined;
-    const applyTheme = (preference: string) => {
-      if (disposed) return;
-      document.documentElement.dataset.theme = isThemeColorScheme(preference)
-        ? preference
-        : window.matchMedia("(prefers-color-scheme: light)").matches
-          ? "light"
-          : "dark";
-    };
-
-    void api
-      .getSettings()
-      .then((settings) => {
-        applyTheme(settings.theme);
-        if (isThemeColorScheme(settings.theme)) return;
-        mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
-        onSystemThemeChange = () => applyTheme(settings.theme);
-        mediaQuery.addEventListener("change", onSystemThemeChange);
-      })
-      .catch(() => applyTheme("system"));
-
-    return () => {
-      disposed = true;
-      if (mediaQuery && onSystemThemeChange) {
-        mediaQuery.removeEventListener("change", onSystemThemeChange);
-      }
-    };
-  }, []);
 
   const results = useMemo(
     () => searchLaunchablePlugins(plugins, query, recentIds).slice(0, 7),
@@ -89,32 +58,85 @@ export function PluginLauncher() {
     }
   }, []);
 
-  const reset = useCallback(() => {
+  const reset = useEffectEvent(() => {
     setQuery("");
     setHighlighted(0);
     setOpeningId(null);
     setError(null);
     setRecentIds(loadPluginLaunchHistory().map((record) => record.id));
-    // Warm-up may run before the host is ready, so retry the persisted theme
-    // when the launcher is actually shown instead of keeping the fallback.
-    void api
-      .getSettings()
-      .then((settings) => {
-        document.documentElement.dataset.theme = isThemeColorScheme(settings.theme)
-          ? settings.theme
-          : window.matchMedia("(prefers-color-scheme: light)").matches
-            ? "light"
-            : "dark";
-      })
-      .catch(() => undefined);
     inputRef.current?.focus();
     void load();
-  }, [load]);
+  });
 
   useEffect(() => {
-    reset();
-    return api.onPluginLauncherShown(reset);
-  }, [reset]);
+    let disposed = false;
+    let requestId = 0;
+    let settings: Partial<AppSettings> = {};
+    let pendingPatch: Partial<AppSettings> = {};
+    let clearAppearance = () => {};
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+    const applyTheme = () => {
+      if (disposed) return;
+      const preference = settings.theme ?? "system";
+      const resolvedTheme = isThemeColorScheme(preference)
+        ? preference
+        : mediaQuery.matches
+          ? "light"
+          : "dark";
+      const root = document.documentElement;
+      root.dataset.theme = resolvedTheme;
+      clearAppearance();
+      const appearance = resolveAppearance({ ...settings, theme: preference }, resolvedTheme);
+      clearAppearance = applyAppearance(root, appearance.tokens);
+      root.toggleAttribute("data-appearance-colors", appearance.colors);
+      root.toggleAttribute("data-appearance-typography", appearance.typography);
+      root.style.setProperty("--font-scale", String(resolveFontScale(settings)));
+      mediaQuery.removeEventListener("change", applyTheme);
+      if (!isThemeColorScheme(preference)) {
+        mediaQuery.addEventListener("change", applyTheme);
+      }
+    };
+    const refreshSettings = async () => {
+      const currentRequest = ++requestId;
+      pendingPatch = {};
+      try {
+        const result = await api.getSettings();
+        if (disposed || currentRequest !== requestId) return;
+        // Events received during this read take precedence over its snapshot.
+        settings = { ...result, ...pendingPatch };
+        applyTheme();
+      } catch {
+        if (!disposed && currentRequest === requestId) applyTheme();
+      }
+    };
+    const onShown = () => {
+      // Warm-up may precede host readiness. Ordinary settings writes are not
+      // broadcast to this window, so every show must read a fresh snapshot.
+      void refreshSettings();
+      reset();
+    };
+    const offSettings = api.onSettingsChanged((patch) => {
+      if (disposed) return;
+      const update = patch as Partial<AppSettings>;
+      pendingPatch = { ...pendingPatch, ...update };
+      settings = { ...settings, ...update };
+      applyTheme();
+    });
+    const offShown = api.onPluginLauncherShown(onShown);
+    applyTheme();
+    onShown();
+
+    return () => {
+      disposed = true;
+      offSettings();
+      offShown();
+      mediaQuery.removeEventListener("change", applyTheme);
+      clearAppearance();
+      document.documentElement.removeAttribute("data-appearance-colors");
+      document.documentElement.removeAttribute("data-appearance-typography");
+      document.documentElement.style.removeProperty("--font-scale");
+    };
+  }, []);
 
   useEffect(() => {
     setHighlighted(0);

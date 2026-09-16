@@ -131,7 +131,7 @@ function tokenStyle(token: ThemedToken): CSSProperties | undefined {
   const style: CSSProperties = {};
   if (token.color) style.color = token.color;
   if (fontStyle & 1) style.fontStyle = "italic";
-  if (fontStyle & 2) style.fontWeight = "bold";
+  if (fontStyle & 2) style.fontWeight = "var(--appearance-code-strong, 700)";
   if (fontStyle & 4) style.textDecoration = "underline";
   return style;
 }

@@ -48,7 +48,7 @@ test("theme changes synchronize the native non-macOS window background", () => {
   );
   assert.ok(
     appSource.includes(
-      "setWindowBackgroundColor(resolvedTheme, pluginTheme?.windowBackground?.[resolvedTheme])",
+      "setWindowBackgroundColor(resolvedTheme, pluginTheme?.windowBackground?.[resolvedTheme] ?? appearance.background)",
     ),
   );
 });

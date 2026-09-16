@@ -1708,6 +1708,7 @@
 }
 
 .message-user-text {
+  font-family: var(--appearance-content-font, inherit);
   /* Preserve hard newlines; wrap long tokens without splitting every CJK glyph. */
   white-space: pre-wrap;
   overflow-wrap: break-word;
