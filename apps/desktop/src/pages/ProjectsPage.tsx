@@ -528,11 +528,9 @@ export function ProjectsPage() {
           <div className="projects-empty-title">
             {items.length === 0 ? t("project.noProjects") : t("project.noSearchResults")}
           </div>
-          <div className="projects-empty-body">
-            {items.length === 0
-              ? t("project.emptyIndexBody")
-              : t("project.noSearchResultsBody")}
-          </div>
+          {items.length === 0 ? null : (
+            <div className="projects-empty-body">{t("project.noSearchResultsBody")}</div>
+          )}
           {items.length === 0 ? (
             <Button variant="primary" onClick={addProject}>
               <IconPlus size={14} />

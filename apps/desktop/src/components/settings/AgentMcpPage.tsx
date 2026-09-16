@@ -400,7 +400,6 @@ export function AgentMcpPage() {
 
   const marketButton = (
     <CapabilityButton
-      title={t("settings.mcpMarket.subtitle")}
       onClick={() => setView("market")}
     >
       <IconServer size={14} />
@@ -461,7 +460,6 @@ export function AgentMcpPage() {
         {counts.all === 0 && search.trim() ? (
           <CapabilityEmpty
             message={t("settings.capabilityNoMatches")}
-            hint={t("settings.capabilityNoMatchesHint")}
             icon={<IconServer size={18} />}
           />
         ) : (

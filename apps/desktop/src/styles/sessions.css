@@ -41,8 +41,7 @@
   white-space: nowrap;
 }
 
-.import-group-select.settings-pill-select {
-  min-width: 116px;
+.import-group-select .settings-menu-select-trigger {
   height: 28px;
 }
 

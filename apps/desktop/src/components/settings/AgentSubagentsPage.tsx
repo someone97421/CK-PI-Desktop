@@ -369,7 +369,6 @@ export function AgentSubagentsPage() {
         {noMatches ? (
           <CapabilityEmpty
             message={t("settings.capabilityNoMatches")}
-            hint={t("settings.capabilityNoMatchesHint")}
             icon={<IconBot size={18} />}
           />
         ) : (

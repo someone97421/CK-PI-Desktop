@@ -464,7 +464,6 @@ export function AgentSkillsPage() {
 
   const marketButton = (
     <CapabilityButton
-      title={t("settings.sklm.subtitle")}
       onClick={() => setView("market")}
     >
       <IconFileText size={14} />
@@ -528,7 +527,6 @@ export function AgentSkillsPage() {
         {counts.all === 0 && search.trim() ? (
           <CapabilityEmpty
             message={t("settings.capabilityNoMatches")}
-            hint={t("settings.capabilityNoMatchesHint")}
             icon={<IconBookOpen size={18} />}
           />
         ) : (

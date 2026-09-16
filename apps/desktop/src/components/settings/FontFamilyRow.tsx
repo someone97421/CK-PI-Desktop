@@ -302,7 +302,7 @@ export function FontFamilyRow({
     <div className="settings-row">
       <div className="settings-row-copy">
         <div className="settings-row-title">{title ?? t("settings.font")}</div>
-        <div className="settings-row-desc">{description ?? t("settings.fontDesc")}</div>
+        {description && <div className="settings-row-desc">{description}</div>}
       </div>
       <div className="settings-row-control">
         <div className="settings-font" ref={rootRef} onKeyDown={onKeyDown}>

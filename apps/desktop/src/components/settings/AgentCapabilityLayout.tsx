@@ -8,10 +8,10 @@ import { useTranslation } from "react-i18next";
 import type { ProjectRecord } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { useAppStore } from "../../stores/app-store";
-import { Button, Select, TooltipButton, cx } from "../ui";
+import { Button, TooltipButton, cx } from "../ui";
 import { AnchoredMenu } from "./AnchoredMenu";
+import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import {
-  IconChevronDown,
   IconFolder,
   IconFolderOpen,
   IconMore,
@@ -142,27 +142,24 @@ export function AgentProjectPicker({
 }) {
   const { t } = useTranslation();
   return (
-    <label className="agent-capability-project-picker">
-      <span className="sr-only">{label}</span>
+    <div className="agent-capability-project-picker">
       <IconFolder size={13} aria-hidden="true" />
-      <Select
+      <SettingsMenuSelect
+        className="agent-capability-project-select"
+        label={label}
         value={value ?? ""}
-        aria-label={label}
         disabled={disabled || options.length === 0}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.length === 0 ? (
-          <option value="">{t("settings.noProjects")}</option>
-        ) : (
-          options.map((project) => (
-            <option key={project.path} value={project.path}>
-              {project.name}
-            </option>
-          ))
-        )}
-      </Select>
-      <IconChevronDown size={12} aria-hidden="true" />
-    </label>
+        onChange={onChange}
+        options={
+          options.length === 0
+            ? [{ id: "", label: t("settings.noProjects"), disabled: true }]
+            : options.map((project) => ({
+                id: project.path,
+                label: project.name,
+              }))
+        }
+      />
+    </div>
   );
 }
 
