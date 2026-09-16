@@ -9,6 +9,7 @@ import type {
   AgentActivity,
   ContextCompactionMark,
 } from "@pi-desktop/shared";
+import { formatCompactTokenCount } from "@pi-desktop/shared";
 import {
   assistantTurnContent,
   assistantTurnMessages,
@@ -36,7 +37,6 @@ import {
   AssistantErrorMessage,
   CopyButton,
   MessageMeta,
-  formatTokenCount,
 } from "./shared";
 import { activityItemsEqual, ActivityGroup } from "./ActivityGroup";
 import { MessageRow } from "./MessageRow";
@@ -423,7 +423,7 @@ export function CompactionRow({ mark }: { mark: ContextCompactionMark }) {
       <span className="transcript-compaction-detail">
         {mark.summarized
           ? t("chat.compactionRowSummary", {
-              tokens: formatTokenCount(mark.summaryTokens),
+              tokens: formatCompactTokenCount(mark.summaryTokens),
             })
           : t("chat.compactionRowNoSummary")}
       </span>

@@ -44,6 +44,10 @@ import {
   sourcePositionProps,
   type SourcePositionProps,
 } from "../lib/markdown-source";
+import {
+  normalizeLatexMathDelimiters,
+  remarkLatexBracketDisplay,
+} from "../lib/latex-math";
 import { useAppStore } from "../stores/app-store";
 import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
@@ -893,7 +897,10 @@ function remarkAnnotationMarkers() {
 
 const staticRemarkPlugins = [remarkGfm, remarkMath, remarkAnnotationMarkers];
 
-// Extend the default schema only for the media elements rendered above.
+// Extend the default schema only for the media elements rendered above, plus
+// `remark-math`'s math classes on `<code>`: the default `language-*` allow list
+// drops `math-display`, which leaves `rehype-katex` rendering TeX `\[ … \]`
+// (single-line or mid-paragraph) as inline math instead of display math.
 const sanitizeSchema = {
   ...defaultSchema,
   protocols: {
@@ -904,6 +911,7 @@ const sanitizeSchema = {
   },
   attributes: {
     ...defaultSchema.attributes,
+    code: [["className", /^language-./, "math-inline", "math-display"]],
     img: [...(defaultSchema.attributes?.img || []), "src", "alt", "title", "className"],
     audio: ["src", "controls", "preload", "className"],
     video: ["src", "controls", "preload", "className", "poster"],
@@ -996,12 +1004,14 @@ const Block = memo(function MarkdownBlock({
     }),
     [raw, renderDiagrams],
   );
+  const normalized = useMemo(() => normalizeLatexMathDelimiters(raw), [raw]);
   const remarkPlugins = useMemo(
     () => [
       ...staticRemarkPlugins,
+      remarkLatexBracketDisplay(raw),
       remarkChatFileLinks(workspaceRoot, baseDir),
     ],
-    [workspaceRoot, baseDir],
+    [raw, workspaceRoot, baseDir],
   );
   const positionedRehypePlugins = useMemo(
     () => [...rehypePlugins!, [rehypeSourcePositions, { offset: sourceOffset }]] as Options["rehypePlugins"],
@@ -1014,7 +1024,7 @@ const Block = memo(function MarkdownBlock({
         rehypePlugins={positionedRehypePlugins}
         components={markdownComponents}
       >
-        {raw}
+        {normalized}
       </ReactMarkdown>
     </MarkdownBlockContext.Provider>
   );

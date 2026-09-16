@@ -11,7 +11,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [apiSource, appSource, composerSource, settingsSource, commandsSource, storeSource, surfaceSource, transcriptSource, barSource, topbarSource, componentSpec, englishSource, chineseSource, planStateSource] =
+const [apiSource, appSource, composerSource, settingsSource, commandsSource, storeSource, surfaceSource, transcriptSource, barSource, topbarSource, componentSpec, englishSource, chineseSource, planStateSource, composerCss] =
   await Promise.all([
     read("../src/lib/api.ts"),
     readAppSource(),
@@ -27,6 +27,7 @@ const [apiSource, appSource, composerSource, settingsSource, commandsSource, sto
     read("../../../packages/i18n/src/locales/en/index.ts"),
     read("../../../packages/i18n/src/locales/zh-CN/index.ts"),
     read("../src/lib/plan-mode-state.ts"),
+    read("../src/styles/composer.css"),
   ]);
 const eventsSource = readStoreModuleSync("slices/events-slice.ts");
 const interactionSource = readStoreModuleSync("slices/interaction-slice.ts");
@@ -140,6 +141,7 @@ test("the component spec assigns mode ownership to Composer", () => {
   assert.doesNotMatch(topbarSpec, /Agent \| Plan|mode toggle|mode indicator/);
   assert.match(composerSpec, /combined model ×\s+reasoning-level control/);
   assert.match(composerSpec, /Composer-left Agent\/Plan\/Goal chip is the sole mode/);
+  assert.match(composerSpec, /--ds-bg-composer/);
 });
 
 test("plan approval sends exact identities and waits for host confirmation", () => {
@@ -172,6 +174,13 @@ test("plan approval sends exact identities and waits for host confirmation", () 
   assert.doesNotMatch(resolveBlock, /planApprovalPermissionMode/);
   assert.doesNotMatch(storeSource, /planApprovalPermissionMode/);
   assert.doesNotMatch(resolveBlock, /finally[\s\S]*pendingPlans/);
+});
+
+test("plan approval bar paints the composer plate over the transparent dock", () => {
+  const barRule = composerCss.match(/\.plan-approval-bar \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(barRule, /background:\s*var\(--ds-bg-composer\)/);
+  assert.match(barRule, /box-shadow:\s*var\(--ds-shadow-composer\)/);
+  assert.doesNotMatch(barRule, /--ds-tile\b/);
 });
 
 test("terminal Plan checkpoints stop rendering the approval bar", () => {

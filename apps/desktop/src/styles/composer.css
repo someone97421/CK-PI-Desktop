@@ -49,12 +49,16 @@
   transition: width var(--chat-width-transition, var(--motion-duration-normal) var(--motion-ease-out));
 }
 
-/* Asktool uses the same decision surface as Plan and Goal approval. Its
- * transcript card width is intentionally widened here to align with the
- * composer stack instead of leaving an inset panel above the input. */
+/* Asktool uses the same decision surface as Plan and Goal approval: it is
+ * mounted in the transparent composer dock, so it paints the composer plate
+ * with its shadow rather than the in-flow `--ds-tile` wash (03-permission-ux
+ * §9). Its width is the composer stack's instead of an inset panel above the
+ * input. */
 .composer-stack > .asktool-card {
   width: 100%;
   margin: 0 0 8px;
+  background: var(--ds-bg-composer);
+  box-shadow: var(--ds-shadow-composer);
 }
 
 .composer-queued-prompts {
@@ -520,7 +524,9 @@
 }
 
 /* Plan approval surface. Keep the gate in the composer layer so it remains
-   adjacent to the input and follows the same container width as the dock. */
+   adjacent to the input and follows the same container width as the dock.
+   The dock itself is transparent, so this plate uses the composer elevated
+   fill and shadow rather than the in-flow `--ds-tile` wash. */
 .plan-approval-bar {
   display: grid;
   width: 100%;
@@ -531,7 +537,8 @@
   margin-bottom: 8px;
   padding: 7px 9px;
   border-radius: var(--radius-md);
-  background: var(--ds-tile);
+  background: var(--ds-bg-composer);
+  box-shadow: var(--ds-shadow-composer);
 }
 
 .plan-approval-copy {

@@ -166,6 +166,8 @@
   scroll-padding-block: 2px;
 }
 
+/* The card rides the composer plate below, so its option rows are inlaid fills
+   on that plate rather than the raised layer of an in-flow surface (D297). */
 .asktool-option {
   display: flex;
   width: 100%;
@@ -174,8 +176,7 @@
   min-height: 30px;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
-  background: var(--ds-raised);
-  box-shadow: var(--ds-raised-shadow);
+  background: var(--ds-tile-deep);
   color: var(--ds-text-secondary);
   cursor: pointer;
   font: inherit;
@@ -186,7 +187,7 @@
 
 .asktool-option:hover,
 .asktool-option.selected {
-  background: color-mix(in oklab, var(--ds-accent) 10%, var(--ds-raised));
+  background: color-mix(in oklab, var(--ds-accent) 10%, var(--ds-tile-deep));
   color: var(--ds-text-primary);
 }
 
@@ -218,8 +219,7 @@
   padding: 6px 8px;
   border: 0;
   border-radius: var(--radius-sm);
-  background: var(--ds-raised);
-  box-shadow: var(--ds-raised-shadow);
+  background: var(--ds-tile-deep);
   color: var(--ds-text-primary);
   font: inherit;
   font-size: var(--text-md);
@@ -333,7 +333,8 @@
 
 /* The retry reason borrows the assistant error card's hierarchy without
    adding a second transcript row. It is hover/focus-only so the active row
-   remains compact at rest. */
+   remains compact at rest. The in-flow `.message-error` wash is transparent;
+   this floating tooltip mixes the same tint over an opaque elevated plate. */
 .run-activity-error-popover.message-error {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -342,6 +343,7 @@
   display: block;
   width: min(360px, calc(100vw - 32px));
   padding: 10px 12px;
+  background: color-mix(in oklab, var(--ds-error) 10%, var(--ds-bg-elevated-opaque));
   box-shadow: var(--ds-shadow-dialog);
   opacity: 0;
   pointer-events: none;
@@ -1643,11 +1645,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Compact composer plate: same surface and radius as the bottom composer,
+   without the floating shadow. The textarea is unboxed; actions sit in a
+   28px footer. */
 .message-edit {
   display: flex;
   width: min(100%, 720px);
+  margin: 0;
   flex-direction: column;
-  gap: 8px;
+  border: 0;
+  border-radius: var(--ds-composer-radius, var(--radius-xl));
+  background: var(--ds-bg-composer);
+  box-shadow: none;
+  isolation: isolate;
 }
 
 /* A prompt being edited needs typing room, so the user column drops its
@@ -1659,34 +1669,65 @@
 
 .message-row.user .message-bubble:has(.message-edit) {
   width: 100%;
+  max-width: 100%;
+  border-radius: 0;
   background: transparent;
   padding: 0;
 }
 
 .message-edit-input {
+  display: block;
   width: 100%;
-  min-height: 112px;
-  max-height: 50vh;
-  resize: vertical;
+  min-height: 3lh;
+  max-height: min(12lh, 50vh);
+  resize: none;
+  overflow-y: auto;
   border: 0;
-  border-radius: var(--radius-md-plus);
-  background: var(--ds-raised);
-  box-shadow: var(--ds-raised-shadow);
-  padding: 10px 12px;
+  background: transparent;
+  padding: 12px 14px 8px;
   color: var(--ds-text-primary);
   font: inherit;
+  font-size: var(--text-base);
   line-height: var(--leading-chat);
   outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
-.message-edit-input:focus {
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ds-accent) 30%, transparent);
+.message-edit-input:focus,
+.message-edit-input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .message-edit-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 4px;
+  padding: 4px 8px 8px;
+}
+
+.message-edit-cancel {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-compact);
+  white-space: nowrap;
+}
+
+.send-btn.message-edit-submit {
+  width: auto;
+  min-width: 28px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-compact);
+  white-space: nowrap;
 }
 
 .message-revision-label {
@@ -2726,6 +2767,12 @@
   margin: 4px 0 6px 24px;
   padding: 4px 0 8px 12px;
   color: var(--ds-text-secondary);
+}
+
+/* Tool details stay in the tool row's level rather than adding a second inset. */
+.tool-row:not(.thinking):not(.subagent-topology-node) > .tool-row-body {
+  margin-left: 0;
+  padding-left: 0;
 }
 
 .disclosure-collapse-rail {
