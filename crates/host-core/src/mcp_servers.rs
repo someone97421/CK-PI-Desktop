@@ -1,7 +1,8 @@
 use crate::activation::{ActivationMode, ActivationScope};
 use crate::agent_capabilities::{
-    capability_dir, file_timestamp, normalize_project_path, sorted_files, CapabilityLevel,
-    CapabilityState,
+    capability_dir, file_timestamp, move_capability_file, normalize_project_path,
+    set_moved_capability_state, sorted_files, suffixed_capability_id, suffixed_display_name,
+    CapabilityLevel, CapabilityState, CapabilityTarget,
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -526,6 +527,96 @@ impl McpServerRegistry {
         self.find(id, None, None)
     }
 
+    /// Move one server between the global directory and a project's.
+    ///
+    /// The document moves instead of being copied: a copy would leave the old
+    /// level holding a definition the user just said belongs somewhere else.
+    /// When the destination already owns the same id or label the arriving
+    /// server is renamed, so both definitions survive with names that tell them
+    /// apart. Activation state follows the document.
+    pub fn transfer(
+        &mut self,
+        id: &str,
+        from: &CapabilityTarget,
+        to: &CapabilityTarget,
+    ) -> Result<McpServerRecord> {
+        let Some(source) = self.find(id, Some(from.level), from.project_path.as_deref())? else {
+            bail!("MCP_INVALID: unknown MCP server \"{id}\"");
+        };
+        if from.same_directory(to) {
+            return Ok(source);
+        }
+        let source_path = source
+            .path
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("MCP_INVALID: server has no configuration file"))?;
+        let existing = self.list(to.level, to.project_path.as_deref())?;
+        if existing.len() >= MAX_SERVERS {
+            bail!("MCP_INVALID: at most {MAX_SERVERS} MCP servers");
+        }
+        // Lowercased: `suffixed_capability_id` compares this way, and on a
+        // case-insensitive volume `MyServer.json` and `myserver.json` are one
+        // file, so a case-sensitive check would let the move overwrite it.
+        let taken_ids = existing
+            .iter()
+            .map(|record| record.id.to_lowercase())
+            .collect::<HashSet<_>>();
+        let taken_labels = existing
+            .iter()
+            .map(|record| record.label.to_lowercase())
+            .collect::<HashSet<_>>();
+        let (target_id, _) = suffixed_capability_id(&source.id, &taken_ids, 64)
+            .ok_or_else(|| anyhow::anyhow!("MCP_INVALID: no free id at the destination"))?;
+        let target_label = suffixed_display_name(&source.label, &taken_labels, MAX_VALUE_BYTES);
+
+        let mut config: McpConfig = serde_json::from_str(
+            &fs::read_to_string(&source_path)
+                .with_context(|| format!("read {source_path}"))?,
+        )
+        .with_context(|| format!("parse {source_path}"))?;
+        let rename = config.id != target_id || config.label != target_label;
+        if rename {
+            config.id = target_id.clone();
+            config.label = target_label;
+            check_len("label", &config.label)?;
+        }
+        let directory = capability_dir(to.level, to.project_path.as_deref(), "servers")?;
+        let target_path = directory.join(format!("{target_id}.json"));
+        if rename {
+            // Never replace what is already at the destination. On a
+            // case-insensitive volume `fs::write` would silently hit an
+            // existing `MyServer.json` from `myserver.json`; refusing is the
+            // only non-destructive answer there.
+            if target_path.exists() {
+                bail!(
+                    "MCP_INVALID: destination already exists: {}",
+                    target_path.display()
+                );
+            }
+            // The document has to change, so it is written first and the source
+            // removed only after the destination exists: a failure in between
+            // leaves a shadowed duplicate rather than no server at all.
+            fs::create_dir_all(&directory)?;
+            fs::write(&target_path, serde_json::to_string_pretty(&config)?)
+                .with_context(|| format!("write {}", target_path.display()))?;
+            fs::remove_file(&source_path).ok();
+        } else {
+            move_capability_file(Path::new(&source_path), &target_path)?;
+        }
+        set_moved_capability_state(
+            &mut self.state,
+            MCP_KIND,
+            from.level,
+            &source.id,
+            source.project_path.as_deref(),
+            to,
+            &target_id,
+            source.enabled,
+        )?;
+        self.find(&target_id, Some(to.level), to.project_path.as_deref())?
+            .ok_or_else(|| anyhow::anyhow!("MCP_INVALID: moved server was not found"))
+    }
+
     /// Compatibility lookup for older host callers; management uses level-aware list/find paths.
     #[allow(dead_code)]
     pub fn get(&mut self, id: &str) -> Option<McpServerRecord> {
@@ -536,7 +627,17 @@ impl McpServerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_capabilities::test_support;
     use tempfile::tempdir;
+
+    /// A registry plus the two directories a level switch needs.
+    fn scaffolding() -> (tempfile::TempDir, tempfile::TempDir, tempfile::TempDir) {
+        (
+            tempdir().unwrap(),
+            tempdir().unwrap(),
+            tempdir().unwrap(),
+        )
+    }
 
     fn stdio(id: &str) -> McpServerInput {
         McpServerInput {
@@ -664,5 +765,290 @@ mod tests {
             "files",
             Some(&project_path)
         ));
+    }
+
+    #[test]
+    fn a_global_server_moves_into_a_project_with_its_state() {
+        let (home, app, project) = scaffolding();
+        let project_path = project.path().to_str().unwrap().to_string();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut input = stdio("files");
+            input.label = Some("Files".into());
+            registry.upsert(input).unwrap();
+            // Turned off for this one project only, which is the value a move
+            // has to carry because it is what the user was looking at.
+            registry
+                .set_enabled(
+                    "files",
+                    false,
+                    Some(CapabilityLevel::Global),
+                    Some(&project_path),
+                )
+                .unwrap();
+
+            let moved = registry
+                .transfer(
+                    "files",
+                    &CapabilityTarget::new(CapabilityLevel::Global, Some(&project_path)).unwrap(),
+                    &CapabilityTarget::new(CapabilityLevel::Project, Some(&project_path)).unwrap(),
+                )
+                .unwrap();
+
+            assert_eq!(moved.level.as_deref(), Some("project"));
+            assert_eq!(moved.project_path.as_deref(), Some(project_path.as_str()));
+            assert!(!moved.enabled);
+            assert!(!home.path().join("servers/files.json").exists());
+            assert!(project.path().join(".agents/servers/files.json").is_file());
+            assert!(registry
+                .list(CapabilityLevel::Global, None)
+                .unwrap()
+                .is_empty());
+            // The global override is gone with the document, not left pointing
+            // at an id the global directory no longer holds.
+            assert!(registry
+                .state
+                .enabled(MCP_KIND, CapabilityLevel::Global, "files", Some(&project_path)));
+        });
+    }
+
+    #[test]
+    fn a_destination_collision_renames_the_arriving_server() {
+        let (home, app, project) = scaffolding();
+        let project_path = project.path().to_str().unwrap().to_string();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut global = stdio("files");
+            global.label = Some("Files".into());
+            registry.upsert(global).unwrap();
+            let mut local = stdio("files");
+            local.label = Some("Files".into());
+            local.level = Some("project".into());
+            local.project_path = Some(project_path.clone());
+            registry.upsert(local).unwrap();
+
+            let moved = registry
+                .transfer(
+                    "files",
+                    &CapabilityTarget::new(CapabilityLevel::Global, None).unwrap(),
+                    &CapabilityTarget::new(CapabilityLevel::Project, Some(&project_path)).unwrap(),
+                )
+                .unwrap();
+
+            assert_eq!(moved.id, "files-2");
+            assert_eq!(moved.label, "Files (2)");
+            assert!(!home.path().join("servers/files.json").exists());
+            let listed = registry
+                .list(CapabilityLevel::Project, Some(&project_path))
+                .unwrap();
+            assert_eq!(listed.len(), 2);
+            // The server that was already there is untouched.
+            assert!(listed
+                .iter()
+                .any(|record| record.id == "files" && record.label == "Files"));
+            let document =
+                fs::read_to_string(project.path().join(".agents/servers/files-2.json")).unwrap();
+            assert!(document.contains("\"id\": \"files-2\""));
+            assert!(document.contains("\"label\": \"Files (2)\""));
+        });
+    }
+
+    #[test]
+    fn a_project_server_moves_to_global_without_leaving_a_project_override() {
+        let (home, app, project) = scaffolding();
+        let project_path = project.path().to_str().unwrap().to_string();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut input = stdio("files");
+            input.label = Some("Files".into());
+            input.level = Some("project".into());
+            input.project_path = Some(project_path.clone());
+            input.enabled = Some(false);
+            registry.upsert(input).unwrap();
+
+            let moved = registry
+                .transfer(
+                    "files",
+                    &CapabilityTarget::new(CapabilityLevel::Project, Some(&project_path)).unwrap(),
+                    &CapabilityTarget::new(CapabilityLevel::Global, None).unwrap(),
+                )
+                .unwrap();
+
+            assert_eq!(moved.level.as_deref(), Some("global"));
+            assert_eq!(moved.project_path, None);
+            assert!(!moved.enabled);
+            assert!(home.path().join("servers/files.json").is_file());
+            assert!(!project.path().join(".agents/servers/files.json").exists());
+            // The disabled state is now the global default: it follows the
+            // document, and no project-only entry is left behind.
+            assert!(!registry
+                .state
+                .enabled(MCP_KIND, CapabilityLevel::Global, "files", Some("/elsewhere")));
+            assert!(registry
+                .state
+                .enabled(MCP_KIND, CapabilityLevel::Project, "files", Some(&project_path)));
+        });
+    }
+
+    #[test]
+    fn transferring_within_one_directory_changes_nothing() {
+        let (home, app, project) = scaffolding();
+        let project_path = project.path().to_str().unwrap().to_string();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut input = stdio("files");
+            input.label = Some("Files".into());
+            input.level = Some("project".into());
+            input.project_path = Some(project_path.clone());
+            registry.upsert(input).unwrap();
+
+            let target =
+                CapabilityTarget::new(CapabilityLevel::Project, Some(&project_path)).unwrap();
+            let same = registry.transfer("files", &target, &target).unwrap();
+            assert_eq!(same.id, "files");
+            assert!(project.path().join(".agents/servers/files.json").is_file());
+        });
+    }
+
+    #[test]
+    fn transferring_an_unknown_server_is_an_error() {
+        let (home, app, _project) = scaffolding();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let error = registry
+                .transfer(
+                    "missing",
+                    &CapabilityTarget::new(CapabilityLevel::Global, None).unwrap(),
+                    &CapabilityTarget::new(CapabilityLevel::Global, None).unwrap(),
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("MCP_INVALID"));
+        });
+    }
+
+    #[test]
+    fn a_case_differing_id_at_the_destination_is_not_overwritten() {
+        let (home, app, project) = scaffolding();
+        let project_path = project.path().to_str().unwrap().to_string();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut global = stdio("files");
+            global.label = Some("Files".into());
+            registry.upsert(global).unwrap();
+            let mut local = stdio("FILES");
+            local.label = Some("Uppercase files".into());
+            local.level = Some("project".into());
+            local.project_path = Some(project_path.clone());
+            registry.upsert(local).unwrap();
+            let existing =
+                fs::read_to_string(project.path().join(".agents/servers/FILES.json")).unwrap();
+
+            let moved = registry
+                .transfer(
+                    "files",
+                    &CapabilityTarget::new(CapabilityLevel::Global, None).unwrap(),
+                    &CapabilityTarget::new(CapabilityLevel::Project, Some(&project_path)).unwrap(),
+                )
+                .unwrap();
+
+            // `FILES` and `files` are the same file on macOS and Windows, so the
+            // arriving server must take a genuinely free id instead.
+            assert_eq!(moved.id, "files-2");
+            assert!(!home.path().join("servers/files.json").exists());
+            assert_eq!(
+                fs::read_to_string(project.path().join(".agents/servers/FILES.json")).unwrap(),
+                existing
+            );
+            assert!(project.path().join(".agents/servers/files-2.json").is_file());
+            let listed = registry
+                .list(CapabilityLevel::Project, Some(&project_path))
+                .unwrap();
+            assert_eq!(listed.len(), 2);
+        });
+    }
+
+    #[test]
+    fn a_rename_never_writes_over_a_file_the_scan_does_not_list() {
+        let (home, app, project) = scaffolding();
+        let project_path = project.path().to_str().unwrap().to_string();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut global = stdio("files");
+            global.label = Some("Files".into());
+            registry.upsert(global).unwrap();
+            // Two project entries: one listed server whose label forces the
+            // arriving server to rename, plus an unparseable file that occupies
+            // the destination path without appearing in any scan.
+            let mut local = stdio("other");
+            local.label = Some("Files".into());
+            local.level = Some("project".into());
+            local.project_path = Some(project_path.clone());
+            registry.upsert(local).unwrap();
+            let bogus = project.path().join(".agents/servers/files.json");
+            fs::write(&bogus, "not a server config").unwrap();
+
+            let error = registry
+                .transfer(
+                    "files",
+                    &CapabilityTarget::new(CapabilityLevel::Global, None).unwrap(),
+                    &CapabilityTarget::new(CapabilityLevel::Project, Some(&project_path)).unwrap(),
+                )
+                .unwrap_err();
+
+            assert!(error.to_string().contains("MCP_INVALID"));
+            assert_eq!(fs::read_to_string(&bogus).unwrap(), "not a server config");
+            // The move refused before deleting anything.
+            assert!(home.path().join("servers/files.json").is_file());
+        });
+    }
+
+    #[test]
+    fn moving_one_projects_server_to_global_keeps_another_projects_state() {
+        let (home, app, project) = scaffolding();
+        let other = tempdir().unwrap();
+        let project_a = project.path().to_str().unwrap().to_string();
+        let project_b = other.path().to_str().unwrap().to_string();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut a = stdio("files");
+            a.label = Some("Files".into());
+            a.level = Some("project".into());
+            a.project_path = Some(project_a.clone());
+            a.enabled = Some(false);
+            registry.upsert(a).unwrap();
+            let mut b = stdio("files");
+            b.label = Some("Files".into());
+            b.level = Some("project".into());
+            b.project_path = Some(project_b.clone());
+            b.enabled = Some(false);
+            registry.upsert(b).unwrap();
+
+            registry
+                .transfer(
+                    "files",
+                    &CapabilityTarget::new(CapabilityLevel::Project, Some(&project_a)).unwrap(),
+                    &CapabilityTarget::new(CapabilityLevel::Global, None).unwrap(),
+                )
+                .unwrap();
+
+            // Project B's document and its disabled state survive: moving A's
+            // same-id server says nothing about B.
+            assert!(other.path().join(".agents/servers/files.json").is_file());
+            assert!(!registry.state.enabled(
+                MCP_KIND,
+                CapabilityLevel::Project,
+                "files",
+                Some(&project_b)
+            ));
+            assert!(registry.state.enabled(
+                MCP_KIND,
+                CapabilityLevel::Project,
+                "files",
+                Some(&project_a)
+            ));
+            assert!(!registry
+                .state
+                .enabled(MCP_KIND, CapabilityLevel::Global, "files", None));
+        });
     }
 }
