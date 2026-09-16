@@ -29,6 +29,7 @@ import type { HostProcess } from "./host-process";
 
 type ProviderRow = {
   id: string;
+  ownerPluginId?: string | null;
   name: string;
   vendorKey?: string | null;
   type?: string | null;
@@ -65,7 +66,7 @@ function exportFileName(now: Date): string {
 }
 
 /**
- * Read every provider, resolve the portable credential where one exists, and
+ * Read user-owned providers, resolve the portable credential where one exists, and
  * write the document the user picked. The key values never appear in the
  * returned result or the log.
  */
@@ -79,7 +80,8 @@ export async function exportProviderConfig(
   const { providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", {
     includeDisabled: true,
   });
-  const rows = providers ?? [];
+  // 插件声明由插件恢复；导出只包含用户自己管理的配置。
+  const rows = (providers ?? []).filter((provider) => !provider.ownerPluginId);
 
   const entries: ProviderExportEntry[] = [];
   let withCredentials = 0;
@@ -163,7 +165,9 @@ export async function importProviderConfig(
     includeDisabled: true,
   });
   const plan = planProviderImport(
-    (providers ?? []).map((provider) => ({ id: provider.id, name: provider.name })),
+    (providers ?? [])
+      .filter((provider) => !provider.ownerPluginId)
+      .map((provider) => ({ id: provider.id, name: provider.name })),
     parsed.file.providers,
   );
   const steps = plan.steps;

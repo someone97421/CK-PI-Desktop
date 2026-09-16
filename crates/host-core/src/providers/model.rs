@@ -49,6 +49,12 @@ pub struct ProviderPublic {
     /// Sampling temperature override. `None` leaves the provider default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
+    /// Owning plugin id when the row came from `contributes.providers`
+    /// (ADR 0257). Absent for a row the user created. A plugin-owned row is
+    /// read-only in Settings: the plugin refreshes it on every load, and
+    /// `providers.update` / `providers.delete` refuse it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_plugin_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

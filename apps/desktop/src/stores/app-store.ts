@@ -139,9 +139,8 @@ import {
   type ComposerPrefill,
 } from "../lib/composer-smart-stop";
 import {
-  clearQueuedPromptSendNow,
   enqueueQueuedPrompt,
-  prioritizeQueuedPrompt,
+  promoteQueuedPrompt,
   queuedPromptForSession,
   removeQueuedPrompt,
   type QueuedPrompt,

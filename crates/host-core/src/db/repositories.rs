@@ -173,6 +173,10 @@ impl Database {
                 migrate_v14_to_v15(&conn, path)?;
             }
             15 => {}
+            16 => {}
+            17 => {
+                migrate_v17_to_v18(&conn, path)?;
+            }
             legacy @ 1..=6 => {
                 let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
                 drop(conn);
@@ -186,9 +190,19 @@ impl Database {
                 ));
             }
         }
-        let migrated_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        // Each post-match step stamps the version it produces rather than the
+        // latest constant, so a second step can follow it in the same launch.
+        let mut migrated_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if migrated_version == 15 {
             super::session_collaboration_migration::migrate(&conn, path)?;
+            migrated_version = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        }
+        if migrated_version == 16 {
+            super::plugin_providers_migration::migrate(&conn, path)?;
+            migrated_version = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        }
+        if migrated_version == 17 {
+            migrate_v17_to_v18(&conn, path)?;
         }
         let db = Self { conn, data_dir };
         db.boot_maintenance()?;

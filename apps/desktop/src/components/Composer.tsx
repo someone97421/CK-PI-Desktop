@@ -81,6 +81,8 @@ export function Composer({
   const sendPrompt = useAppStore((s) => s.sendPrompt);
   const steerPrompt = useAppStore((s) => s.steerPrompt);
   const removeQueuedPrompt = useAppStore((s) => s.removeQueuedPrompt);
+  const moveQueuedPrompt = useAppStore((s) => s.moveQueuedPrompt);
+  const editQueuedPrompt = useAppStore((s) => s.editQueuedPrompt);
   const sendQueuedNow = useAppStore((s) => s.sendQueuedNow);
   const abort = useAppStore((s) => s.abort);
   const isRunning = useAppStore((s) => s.isRunning);
@@ -182,6 +184,7 @@ export function Composer({
     restoreDraftForKey,
     persistDraft,
     commitEditorDom,
+    readLiveDraft,
     insertNewlineInEditor,
     handleInput,
   } = draft;
@@ -228,6 +231,16 @@ export function Composer({
     value,
     activeFileReferences,
   );
+  // Edit returns one queued row to the composer. The row is removed and its
+  // captured draft becomes the input, so the input must be empty first: the
+  // live read is the only current source (the draft cache is not per keystroke).
+  const handleEditQueuedPrompt = (id: string) => {
+    if (readLiveDraft().trim() || activeFileReferences.length) {
+      showToast(t("chat.editQueuedPromptBusy"), { variant: "info" });
+      return;
+    }
+    editQueuedPrompt(id);
+  };
   const placeholderKeys = PLACEHOLDER_KEYS[variant];
   const placeholderKey =
     placeholderKeys[placeholderIndex % placeholderKeys.length] ?? placeholderKeys[0];
@@ -513,9 +526,10 @@ export function Composer({
           t={t}
           queuedPrompts={queuedPrompts}
           removeQueuedPrompt={removeQueuedPrompt}
+          moveQueuedPrompt={moveQueuedPrompt}
+          editQueuedPrompt={handleEditQueuedPrompt}
           sendQueuedNow={sendQueuedNow}
           approvalPending={approvalPending}
-          runActive={runActive}
           enhancementError={enhancementError}
           clearEnhancementError={clearEnhancementError}
           droppedDirectories={droppedDirectories}

@@ -13,12 +13,12 @@ import {
   type SessionPort,
   type SessionSummary,
   type TurnStartRequest,
+  type TurnSteerRequest,
 } from "@pi-desktop/agent-host";
 import type {
   AgentEventEnvelope,
   AgentQueueChangedEvent,
   AgentQueuePushRequest,
-  AgentQueueSteerRequest,
   AskToolResolution,
   QueuedTurnSummary,
   RacpApprovalResult,
@@ -29,9 +29,6 @@ import type {
 import { IPC, isGlobalPermissionMode } from "@pi-desktop/shared";
 
 type IpcInvoke = (channel: string, args: readonly unknown[]) => Promise<unknown>;
-
-// Main-process only: a renderer cannot serialize this token over Electron IPC.
-export const QUEUED_STEERING_DURABILITY = Symbol("queued-steering-durability");
 
 type HostLike = {
   call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
@@ -87,9 +84,6 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
   };
 
   const runtime: RuntimePort = {
-    async steer(request) {
-      return await options.invoke(options.channels.agentSteer, [request, QUEUED_STEERING_DURABILITY]) as { accepted: boolean; turnId: string };
-    },
     async prompt(request: TurnStartRequest) {
       try {
         const summary = await sessions.get(request.sessionId);
@@ -128,6 +122,32 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
           }
         }
         throw error;
+      }
+    },
+    /**
+     * Deliver one more user message into a running turn (`send now` keeps the
+     * promoted messages adjacent). This is the same channel the Composer's
+     * Alt+Enter uses, so admission, attachments, and persistence are unchanged.
+     */
+    async steer(request: TurnSteerRequest) {
+      try {
+        const result = (await options.invoke(options.channels.agentSteer, [
+          {
+            sessionId: request.sessionId,
+            expectedTurnId: request.turnId,
+            content: request.content,
+            ...(request.sessionMessageId ? { messageId: request.sessionMessageId } : {}),
+            ...(request.attachments ? { attachments: request.attachments } : {}),
+          },
+        ])) as { accepted?: boolean } | undefined;
+        return { accepted: result?.accepted !== false };
+      } catch (error) {
+        options.log("warn", "agent host steer failed", {
+          sessionId: request.sessionId,
+          turnId: request.turnId,
+          error: String(error),
+        });
+        return { accepted: false };
       }
     },
     async stop(sessionId: string) {
@@ -252,6 +272,13 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
     async prioritize(id) {
       await requireHost().call("session.queuePrioritize", { id });
     },
+    async reorder(id, direction) {
+      const result = await requireHost().call<{ moved?: boolean }>("session.queueReorder", {
+        id,
+        direction,
+      });
+      return result.moved === true;
+    },
   };
 
   const agentHost = new AgentHost({
@@ -266,9 +293,6 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
 
   /** The desktop's queue operations, all under the owner principal. */
   const queue = {
-    async steer(request: AgentQueueSteerRequest) {
-      return forIpc(() => agentHost.steerQueuedTurn(DESKTOP_PRINCIPAL, request));
-    },
     async push(request: AgentQueuePushRequest): Promise<QueuedTurnSummary> {
       const result = await forIpc(() =>
         agentHost.startTurn(DESKTOP_PRINCIPAL, {
@@ -316,6 +340,12 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
     async prioritize(turnId: string): Promise<void> {
       await forIpc(() => agentHost.prioritizeTurn(DESKTOP_PRINCIPAL, turnId));
     },
+    async reorder(
+      turnId: string,
+      direction: "up" | "down",
+    ): Promise<{ moved: boolean }> {
+      return forIpc(() => agentHost.reorderTurn(DESKTOP_PRINCIPAL, turnId, direction));
+    },
   };
 
   return {
@@ -361,6 +391,30 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
         options.log("warn", "agent host settle failed", { approvalId, error: String(error) });
       }
     },
+    /**
+     * The runtime settled one turn. Main is authoritative here: a real abort can
+     * lose its terminal event (`isStaleTerminalEvent` drops a terminal event for
+     * a turn main no longer owns, and the runtime need not emit one), and a turn
+     * left active in the Host would hold the queue forever.
+     */
+    endTurn(
+      sessionId: string,
+      turnId: string,
+      status: "completed" | "failed" | "interrupted" | "canceled",
+      error?: { code: string; message: string; retriable: boolean; traceId: string },
+    ): void {
+      abortingSessions.delete(sessionId);
+      try {
+        agentHost.endTurn(sessionId, turnId, status, error ? { error } : {});
+      } catch (error_) {
+        options.log("warn", "agent host end turn failed", {
+          sessionId,
+          turnId,
+          status,
+          error: String(error_),
+        });
+      }
+    },
     markAborting(sessionId: string): void {
       abortingSessions.add(sessionId);
     },
@@ -392,6 +446,7 @@ function toQueueSummary(entry: QueueEntryView): QueuedTurnSummary {
     ...(entry.sessionMessageId ? { sessionMessageId: entry.sessionMessageId } : {}),
     ...(entry.attachments ? { attachments: entry.attachments } : {}),
     position: entry.turn.queuePosition ?? 0,
+    ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
     createdAt: entry.turn.startedAt ?? new Date().toISOString(),
   };
 }
@@ -407,6 +462,7 @@ type HostQueueEntry = {
   attachments?: unknown;
   permissionMode: string;
   position: number;
+  priority?: number;
   createdAt: string;
 };
 
@@ -423,6 +479,7 @@ function fromHostQueueEntry(entry: HostQueueEntry): QueuedTurnRecord {
     effectivePermissionMode: permissionMode,
     ...(entry.idempotencyKey ? { idempotencyKey: entry.idempotencyKey } : {}),
     inputHash: entry.inputHash,
+    ...(entry.priority !== undefined ? { priority: entry.priority } : {}),
     createdAt: Date.parse(entry.createdAt) || 0,
   };
 }

@@ -105,6 +105,12 @@ export type PluginManifest = {
      * the plugin directory (spec 07-plugins/16).
      */
     agentExtensions?: string[];
+    /**
+     * Providers this plugin adds to Settings' provider list. Requires the
+     * `provider.register` permission; each row is read-only for the user and
+     * refreshed from this manifest on every load.
+     */
+    providers?: PluginProviderContrib[];
     settings?: PluginSettingContrib[];
     themes?: PluginThemeContrib[];
     /** Sandboxed pages placed exclusively in Settings' host-owned Extensions group. */
@@ -361,6 +367,70 @@ export type PluginSettingsDestinationContrib = {
   icon: "sliders" | "sparkles" | "palette" | "plug" | "settings";
   keywords?: Array<PluginLocalizedString | string>;
   entry: string;
+};
+
+/** Wire format a contributed provider may declare. Absent means `chat_completions`. */
+export const PLUGIN_PROVIDER_API_STYLES = [
+  "chat_completions",
+  "opencode_go",
+  "responses",
+  "anthropic_messages",
+  "google_generative_ai",
+  "openai_codex_responses",
+  "pi_messages",
+] as const;
+
+export type PluginProviderApiStyle = (typeof PLUGIN_PROVIDER_API_STYLES)[number];
+
+/**
+ * Credential a contributed provider accepts. Absent means `api_key`. `oauth`
+ * is deliberately absent: a plugin OAuth provider needs a Host-owned login
+ * flow that does not exist yet, so a declaration asking for one is refused
+ * instead of materializing a row nobody can sign in to.
+ */
+export const PLUGIN_PROVIDER_AUTH_KINDS = ["api_key", "none"] as const;
+
+export type PluginProviderAuthKind = (typeof PLUGIN_PROVIDER_AUTH_KINDS)[number];
+
+/** Upper bound on `contributes.providers` entries one plugin may declare. */
+export const MAX_PLUGIN_PROVIDERS_PER_PLUGIN = 8;
+
+/** Upper bound on the model list of one contributed provider. */
+export const MAX_PLUGIN_PROVIDER_MODELS = 64;
+
+/** One model a contributed provider exposes to the model picker. */
+export type PluginProviderModelContrib = {
+  /** Model id sent on the wire, 1..256 characters. */
+  id: string;
+  /** Label shown in the picker; the id when omitted. */
+  name?: string;
+  /** Context window in tokens; the runtime default when omitted. */
+  contextWindow?: number;
+  /** Max output tokens; the runtime default when omitted. */
+  maxTokens?: number;
+  /** Whether the model accepts image input. */
+  supportsImages?: boolean;
+};
+
+/**
+ * One provider a plugin adds to Settings' provider list. The plugin supplies
+ * the endpoint and model catalog; the user's API key stays in the host and is
+ * never handed to the plugin. The row appears as `plugin:<pluginId>:<id>` and
+ * is read-only in Settings.
+ */
+export type PluginProviderContrib = {
+  /** Plugin-local id matching [a-zA-Z][a-zA-Z0-9_-]{0,63}, unique per plugin. */
+  id: string;
+  /** Display name for the provider row; required and non-empty. */
+  name: string;
+  /** Vendor the row is attributed to; `custom` when omitted. */
+  vendorKey?: string;
+  /** Endpoint the runtime reaches; must be an absolute http(s) URL. */
+  baseUrl?: string;
+  apiStyle?: PluginProviderApiStyle;
+  authKind?: PluginProviderAuthKind;
+  /** 1..64 models with unique ids. */
+  models: PluginProviderModelContrib[];
 };
 
 /**
@@ -1065,6 +1135,7 @@ export const PLUGIN_PERMISSIONS = [
   "agent.prompt.inject",
   "agent.complete",
   "agent.extension",
+  "provider.register",
   "desktop.control",
   "models.list",
   "project.create",
@@ -1155,6 +1226,13 @@ export function validateManifest(raw: unknown): {
     !(m.permissions ?? []).includes("agent.extension")
   ) {
     return { ok: false, error: "contributes.agentExtensions requires the agent.extension permission" };
+  }
+  if (
+    !contributesError &&
+    (m.contributes?.providers?.length ?? 0) > 0 &&
+    !(m.permissions ?? []).includes("provider.register")
+  ) {
+    return { ok: false, error: "contributes.providers requires the provider.register permission" };
   }
   if (
     !contributesError &&
@@ -1352,6 +1430,98 @@ export function validateContributions(
     if (pathError) return pathError;
     if (!/\.(ts|mts|js|mjs)$/.test(entry)) {
       return "contributes.agentExtensions entries must be .ts or .js files";
+    }
+  }
+
+  const declaredProviders = contributes.providers ?? [];
+  if (!Array.isArray(declaredProviders)) return "contributes.providers must be an array";
+  if (declaredProviders.length > MAX_PLUGIN_PROVIDERS_PER_PLUGIN) {
+    return `contributes.providers allows at most ${MAX_PLUGIN_PROVIDERS_PER_PLUGIN} entries`;
+  }
+  const providerIds = new Set<string>();
+  for (const provider of declaredProviders) {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
+      return "contributes.providers entries must be objects";
+    }
+    if (typeof provider.id !== "string" || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(provider.id)) {
+      return "provider declaration id is missing or invalid";
+    }
+    if (providerIds.has(provider.id)) {
+      return `duplicate provider declaration id "${provider.id}"`;
+    }
+    providerIds.add(provider.id);
+    if (typeof provider.name !== "string" || !provider.name.trim()) {
+      return `provider "${provider.id}" requires a name`;
+    }
+    if (
+      provider.vendorKey !== undefined &&
+      (typeof provider.vendorKey !== "string" || !provider.vendorKey.trim())
+    ) {
+      return `provider "${provider.id}" vendorKey must be a non-empty string`;
+    }
+    if (provider.baseUrl !== undefined) {
+      if (typeof provider.baseUrl !== "string") {
+        return `provider "${provider.id}" baseUrl must be a string`;
+      }
+      // The runtime reaches this endpoint, so only an absolute http(s) URL
+      // may be declared.
+      if (!(provider.baseUrl.startsWith("http://") || provider.baseUrl.startsWith("https://"))) {
+        return `provider "${provider.id}" baseUrl must be an http(s) URL`;
+      }
+    }
+    if (provider.apiStyle !== undefined) {
+      if (typeof provider.apiStyle !== "string") {
+        return `provider "${provider.id}" apiStyle must be a string`;
+      }
+      if (!(PLUGIN_PROVIDER_API_STYLES as readonly string[]).includes(provider.apiStyle)) {
+        return `provider "${provider.id}" has unsupported apiStyle ${provider.apiStyle}`;
+      }
+    }
+    if (provider.authKind !== undefined) {
+      if (typeof provider.authKind !== "string") {
+        return `provider "${provider.id}" authKind must be a string`;
+      }
+      if (!(PLUGIN_PROVIDER_AUTH_KINDS as readonly string[]).includes(provider.authKind)) {
+        return `provider "${provider.id}" has unsupported authKind ${provider.authKind}`;
+      }
+    }
+    // A Host-owned plugin login flow does not exist yet, so a declaration that
+    // asks for one is refused rather than turned into a row nobody can sign in
+    // to.
+    if ((provider as { oauth?: unknown }).oauth !== undefined) {
+      return `provider "${provider.id}" declares oauth; plugin OAuth providers are not supported in this release`;
+    }
+    if (!Array.isArray(provider.models)) {
+      return `provider "${provider.id}" requires models`;
+    }
+    if (provider.models.length === 0 || provider.models.length > MAX_PLUGIN_PROVIDER_MODELS) {
+      return `provider "${provider.id}" declares 1 to ${MAX_PLUGIN_PROVIDER_MODELS} models`;
+    }
+    const modelIds = new Set<string>();
+    for (const model of provider.models) {
+      if (!model || typeof model !== "object" || Array.isArray(model)) {
+        return `provider "${provider.id}" model entries must be objects`;
+      }
+      const modelId = typeof model.id === "string" ? model.id.trim() : "";
+      if (!modelId || modelId.length > 256) {
+        return `provider "${provider.id}" has a model without a valid id`;
+      }
+      if (modelIds.has(modelId)) {
+        return `provider "${provider.id}" declares model ${modelId} twice`;
+      }
+      modelIds.add(modelId);
+      if (model.name !== undefined && (typeof model.name !== "string" || !model.name.trim())) {
+        return `provider "${provider.id}" model ${modelId} name must be a non-empty string`;
+      }
+      for (const field of ["contextWindow", "maxTokens"] as const) {
+        const value = model[field];
+        if (value !== undefined && (!Number.isInteger(value) || value <= 0)) {
+          return `provider "${provider.id}" model ${modelId} ${field} must be a positive integer`;
+        }
+      }
+      if (model.supportsImages !== undefined && typeof model.supportsImages !== "boolean") {
+        return `provider "${provider.id}" model ${modelId} supportsImages must be a boolean`;
+      }
     }
   }
 

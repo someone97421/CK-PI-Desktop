@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   settledDelegationMessage,
   taskMessageSnapshot,
@@ -1548,8 +1548,7 @@ export class DesktopAgentRuntime {
   private pendingUserMessageId?: string;
   private acceptingSteering = false;
   private steeringContinuation = false;
-  private readonly delegationWaitWakeups = new Set<(reason: "steered" | "aborted") => void>();
-  private readonly acceptedSteering = new Map<string, { turnId: string; fingerprint: string }>();
+  private steeringWaitAbort?: AbortController;
   private pendingSteering = new Map<AgentMessage, string>();
   private pendingOverflow = false;
   private overflowRecoveryAttempted = false;
@@ -3919,7 +3918,6 @@ Delegation rules:
    */
   private terminateParentTurn(): void {
     this.turnHadError = true;
-    for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptingSteering = false;
     this.retainPendingSteering();
     this.abortRunningDelegations();
@@ -4043,9 +4041,14 @@ Delegation rules:
     ) {
       const targets = this.pendingCurrentTurnDelegations();
       this.beginDelegationWait(targets);
+      const waitAbort = new AbortController();
+      this.steeringWaitAbort = waitAbort;
       try {
-        await this.waitForDelegations(targets, targets.length, null);
+        if (!this.pendingSteering.size) {
+          await this.waitForDelegations(targets, targets.length, null, waitAbort.signal);
+        }
       } finally {
+        if (this.steeringWaitAbort === waitAbort) this.steeringWaitAbort = undefined;
         this.endDelegationWait();
       }
       if (this.pendingSteering.size && !this.runCancelled && !this.turnHadError) {
@@ -4108,7 +4111,7 @@ Delegation rules:
       name: SUBAGENT_WAIT_TOOL_NAME,
       label: "Task Wait",
       description:
-        "Wait for one or more subagents started by Task and return their reports. `delegationIds` defaults to every running subagent; use mode \"any\" with `minCompleted` to converge as soon as the first (or first N) finish. Settled delegations return immediately, so re-reading a report by id is cheap. User steering wakes this wait without canceling subagents: process that guidance before waiting again. A wait timeout is not a failure: unfinished delegates keep working and the runtime delivers their reports when they finish.",
+        "Wait for one or more subagents started by Task and return their reports. `delegationIds` defaults to every running subagent; use mode \"any\" with `minCompleted` to converge as soon as the first (or first N) finish. Settled delegations return immediately, so re-reading a report by id is cheap. A wait timeout is not a failure: unfinished delegates keep working and the runtime delivers their reports when they finish.",
       parameters: Type.Object({
         delegationIds: Type.Optional(
           Type.Array(
@@ -4175,9 +4178,9 @@ Delegation rules:
             : Math.min(Math.max(minCompleted, 1), targets.length);
         const deadline = Date.now() + timeoutSeconds * 1000;
         this.beginDelegationWait(targets);
-        let outcome: "completed" | "timeout" | "aborted" | "steered";
+        let timedOut = false;
         try {
-          outcome = await this.waitForDelegations(
+          timedOut = await this.waitForDelegations(
             targets,
             targetCompleted,
             deadline,
@@ -4205,11 +4208,7 @@ Delegation rules:
               ? formatDelegationHeartbeat(record)
               : (record.result?.report ?? `(${record.status} without a report)`),
         }));
-        const note = outcome === "steered"
-          ? "Wait interrupted by user steering. Unfinished subagents are still running; process the user's guidance before waiting again."
-          : outcome === "aborted"
-          ? "The calling run was canceled."
-          : outcome === "timeout"
+        const note = timedOut
           ? `Still running after ${timeoutSeconds}s: ${results.filter((r) => r.status !== "running").length}/${targets.length} finished. This is not a failure — unfinished delegates keep working and the runtime will deliver their reports when they finish. Call TaskStop only to cancel.\n${targets
               .filter((record) => record.status === "running")
               .map(formatDelegationHeartbeat)
@@ -4241,7 +4240,7 @@ Delegation rules:
             },
           ],
           details: {
-            status: outcome,
+            status: timedOut ? "timeout" : "completed",
             ...(unknownIds.length ? { unknownIds } : {}),
             delegations: results,
           },
@@ -4252,7 +4251,7 @@ Delegation rules:
 
   /**
    * Resolve once `targetCompleted` of the targets are settled, or the deadline
-   * passes, the calling run aborts, or user steering wakes this wait only.
+   * passes, or the calling run aborts. Returns true on timeout/abort.
    * `deadline` null waits until they settle (D328 auto-resume).
    */
   private waitForDelegations(
@@ -4260,40 +4259,33 @@ Delegation rules:
     targetCompleted: number,
     deadline: number | null,
     signal?: AbortSignal,
-  ): Promise<"completed" | "timeout" | "aborted" | "steered"> {
+  ): Promise<boolean> {
     const settledCount = () =>
       targets.filter((record) => record.status !== "running").length;
-    if (signal?.aborted || this.runCancelled || this.disposed || this.turnHadError) return Promise.resolve("aborted");
-    if (this.pendingSteering.size) return Promise.resolve("steered");
-    if (settledCount() >= targetCompleted) return Promise.resolve("completed");
-    return new Promise((resolve) => {
+    if (settledCount() >= targetCompleted) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => {
       let done = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const finish = (reason: "completed" | "timeout" | "aborted" | "steered") => {
+      const finish = (timedOut: boolean) => {
         if (done) return;
         done = true;
         if (timer !== undefined) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        this.delegationWaitWakeups.delete(finish);
-        resolve(reason);
+        resolve(timedOut);
       };
       const check = () => {
-        if (settledCount() >= targetCompleted) finish("completed");
+        if (settledCount() >= targetCompleted) finish(false);
       };
       for (const record of targets) {
         if (record.status === "running") {
           record.completion.then(check);
         }
       }
-      const onAbort = () => finish("aborted");
-      this.delegationWaitWakeups.add(finish);
+      const onAbort = () => finish(true);
       signal?.addEventListener("abort", onAbort, { once: true });
-      timer =
+      const timer =
         deadline === null
           ? undefined
-          : setTimeout(() => finish("timeout"), Math.max(0, deadline - Date.now()));
-      if (signal?.aborted) finish("aborted");
-      else if (this.pendingSteering.size) finish("steered");
+          : setTimeout(() => finish(true), Math.max(0, deadline - Date.now()));
     });
   }
 
@@ -6996,20 +6988,11 @@ Delegation rules:
   }
 
   steer(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): { accepted: boolean; turnId: string } {
-    const fingerprint = createHash("sha256").update(JSON.stringify({ input, content: message.content, attachments: message.attachments })).digest("hex");
-    const previous = this.acceptedSteering.get(message.id);
-    if (previous) {
-      if (previous.turnId !== expectedTurnId || previous.fingerprint !== fingerprint) {
-        throw Object.assign(new Error("Steering message identity was reused with different input"), { errorCode: "INVALID_ARGUMENT" });
-      }
-      return { accepted: true, turnId: previous.turnId };
-    }
     this.steeringContext(expectedTurnId);
     const queued: AgentMessage = { role: "user", content: promptContent(input), timestamp: Date.now() };
     this.pendingSteering.set(queued, message.id);
     this.agent.steer(queued);
-    this.acceptedSteering.set(message.id, { turnId: expectedTurnId, fingerprint });
-    for (const wake of this.delegationWaitWakeups) wake("steered");
+    this.steeringWaitAbort?.abort();
     // Main persists this echo through the same outbox as assistant messages.
     this.emit({ type: "message_start", message });
     this.emit({
@@ -7054,7 +7037,6 @@ Delegation rules:
     this.acceptingSteering = false;
     this.gracefulStopRequested = false;
     this.runCancelled = true;
-    for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.resolvePendingAskTools();
     this.abortRunningDelegations();
     this.turnSubagentUsage = undefined;
@@ -7099,8 +7081,6 @@ Delegation rules:
     this.disposed = true;
     this.acceptingSteering = false;
     this.runCancelled = true;
-    for (const wake of this.delegationWaitWakeups) wake("aborted");
-    this.acceptedSteering.clear();
     this.resolvePendingAskTools();
     this.abortRunningDelegations();
     this.delegationWaitTargets = undefined;

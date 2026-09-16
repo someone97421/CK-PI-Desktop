@@ -40,6 +40,13 @@ export type ProviderPublic = {
   maxOutputTokens?: number;
   /** Sampling temperature override (provider default when absent). */
   temperature?: number;
+  /**
+   * Owning plugin id when the row came from `contributes.providers`. Absent for
+   * a row the user created. A plugin-owned row is read-only in Settings: the
+   * plugin refreshes it on every load, and `providers.update` /
+   * `providers.delete` refuse it.
+   */
+  ownerPluginId?: string;
   createdAt: string;
   updatedAt: string;
 };

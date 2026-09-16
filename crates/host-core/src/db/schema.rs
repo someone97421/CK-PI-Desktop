@@ -30,8 +30,15 @@ CREATE TABLE providers (
   default_model_id TEXT,
   config_json      TEXT NOT NULL DEFAULT '{}',
   created_at       INTEGER NOT NULL,
-  updated_at       INTEGER NOT NULL
+  updated_at       INTEGER NOT NULL,
+  -- Owning plugin id for a row a plugin declared in `contributes.providers`
+  -- (schema v17, ADR 0257). NULL is a user-owned row: the plugin refreshes its
+  -- own fields on every load, while the user path may edit or delete only the
+  -- rows it owns.
+  owner_plugin_id  TEXT
 );
+CREATE INDEX idx_providers_owner ON providers(owner_plugin_id)
+  WHERE owner_plugin_id IS NOT NULL;
 
 CREATE TABLE models (
   provider_id       TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
@@ -111,6 +118,7 @@ CREATE TABLE turn_queue (
   session_message_id TEXT,
   permission_mode  TEXT NOT NULL,
   position         INTEGER NOT NULL,
+  priority         INTEGER,
   created_at       INTEGER NOT NULL
 );
 CREATE INDEX idx_turn_queue_session ON turn_queue(session_id, position);

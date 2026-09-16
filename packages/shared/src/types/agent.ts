@@ -61,12 +61,6 @@ export type AgentSteerRequest = Pick<
   expectedTurnId: string;
 };
 
-export type AgentQueueSteerRequest = {
-  sessionId: string;
-  queuedTurnId: string;
-  expectedTurnId: string;
-};
-
 export type AgentPromptResponse = {
   accepted: boolean;
   turnId: string;
@@ -133,6 +127,8 @@ export type QueuedTurnSummary = {
   sessionMessageId?: string;
   attachments?: AgentPromptAttachment[];
   position: number;
+  /** Set only for promoted entries; entries arrive in delivery order. */
+  priority?: number;
   createdAt: string;
 };
 

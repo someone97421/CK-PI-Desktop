@@ -56,6 +56,7 @@ pub(crate) fn provider_from_row(
             .get::<_, String>(11)
             .ok()
             .and_then(|raw| config_limit_f64(&raw, "temperature")),
+        owner_plugin_id: row.get(14)?,
         created_at: ms_to_ts(row.get(12)?),
         updated_at: ms_to_ts(row.get(13)?),
     })
@@ -162,9 +163,16 @@ pub fn update_provider(
     secrets: &SecretStore,
     input: ProviderUpdateInput,
 ) -> Result<Option<ProviderPublic>> {
-    let existing = get_provider(db, secrets, &input.id)?;
-    if existing.is_none() {
+    let Some(current) = get_provider(db, secrets, &input.id)? else {
         return Ok(None);
+    };
+    // A plugin-declared row is refreshed from its manifest on every load, so a
+    // generic edit would be silently reverted. The plugin path owns it.
+    if let Some(owner) = current.owner_plugin_id.as_deref() {
+        bail!(
+            "PROVIDER_OWNED_BY_PLUGIN: provider {} belongs to plugin {owner}",
+            input.id
+        );
     }
     // Validate before any side effect: a rejected alias must not replace the
     // stored secret.
@@ -262,7 +270,31 @@ pub fn update_provider(
     get_provider(db, secrets, &input.id)
 }
 
+/// Delete a user-owned provider row. A plugin-declared row is refused here:
+/// only its plugin (or the user disabling/uninstalling it) may remove it.
 pub fn delete_provider(db: &Database, secrets: &SecretStore, id: &str) -> Result<bool> {
+    if let Some(owner) = provider_owner_plugin(db, id)? {
+        bail!("PROVIDER_OWNED_BY_PLUGIN: provider {id} belongs to plugin {owner}");
+    }
+    delete_provider_row(db, secrets, id)
+}
+
+/// The plugin that owns a provider row, or `None` for a user-owned row.
+pub(crate) fn provider_owner_plugin(db: &Database, id: &str) -> Result<Option<String>> {
+    db.conn()
+        .query_row(
+            "SELECT owner_plugin_id FROM providers WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map(Option::flatten)
+        .map_err(Into::into)
+}
+
+/// Row deletion without the ownership guard, for callers that already checked
+/// it — the plugin provider sync and the plugin-scoped RPC methods.
+pub(crate) fn delete_provider_row(db: &Database, secrets: &SecretStore, id: &str) -> Result<bool> {
     // Both credential channels are provider-scoped, so deleting the row must
     // take the OAuth credential with it or a re-created provider could inherit
     // a stranger's refresh token.
@@ -270,7 +302,10 @@ pub fn delete_provider(db: &Database, secrets: &SecretStore, id: &str) -> Result
         secret_ref_for_provider(id),
         secret_ref_for_provider_oauth(id),
     ] {
-        let _ = secrets.delete(&sref);
+        // A credential that outlives its row would be inherited by a row that a
+        // later declaration recreates under the same id, so a failure here is
+        // reported rather than swallowed.
+        secrets.delete(&sref)?;
         db.conn()
             .prepare_cached("DELETE FROM secrets_meta WHERE secret_ref = ?1")?
             .execute(params![sref])?;
@@ -282,6 +317,52 @@ pub fn delete_provider(db: &Database, secrets: &SecretStore, id: &str) -> Result
     Ok(n > 0)
 }
 
+/// Store or clear the API key of one provider row, whoever owns it.
+///
+/// A plugin-declared row is not editable through `update_provider`, but the
+/// credential it asks for is the *user's*: the plugin publishes an endpoint and
+/// this method is how the user hands over the key that endpoint needs. Only the
+/// `api_key` reference and the row's `secret_ref` change; no field the plugin's
+/// manifest owns is touched, so the next load still refreshes the declaration.
+///
+/// An empty value deletes the stored key and clears `secret_ref`.
+pub fn set_provider_secret(
+    db: &Database,
+    secrets: &SecretStore,
+    id: &str,
+    secret_value: Option<&str>,
+) -> Result<Option<ProviderPublic>> {
+    if get_provider(db, secrets, id)?.is_none() {
+        return Ok(None);
+    }
+    let api_key_ref = secret_ref_for_provider(id);
+    match secret_value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => {
+            let backend = secrets.set(&api_key_ref, value)?;
+            upsert_secret_meta(db, &api_key_ref, id, &backend)?;
+            db.conn()
+                .prepare_cached(
+                    "UPDATE providers SET secret_ref = ?2, updated_at = ?3 WHERE id = ?1",
+                )?
+                .execute(params![id, api_key_ref, now_ms()])?;
+        }
+        None => {
+            let _ = secrets.delete(&api_key_ref);
+            db.conn()
+                .prepare_cached("DELETE FROM secrets_meta WHERE secret_ref = ?1")?
+                .execute(params![api_key_ref])?;
+            db.conn()
+                .prepare_cached(
+                    "UPDATE providers SET secret_ref = NULL, updated_at = ?2 WHERE id = ?1",
+                )?
+                .execute(params![id, now_ms()])?;
+        }
+    }
+    get_provider(db, secrets, id)
+}
 pub fn get_provider(
     db: &Database,
     secrets: &SecretStore,

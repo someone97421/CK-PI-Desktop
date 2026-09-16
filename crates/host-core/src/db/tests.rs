@@ -1397,3 +1397,101 @@ fn normalize_project_path_strips_extended_length_prefix() {
         Some("/home/user/project".to_string()),
     );
 }
+
+/// The v16 → v17 step runs after the v15 → v16 step in the same launch, so a
+/// file one version behind must land on the current version with both changes
+/// applied rather than stopping at the version the first step stamps.
+#[test]
+fn a_v16_file_gains_the_provider_owner_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pi.sqlite");
+    let provider_id;
+    {
+        let db = Database::open(&path).unwrap();
+        provider_id = db
+            .conn()
+            .query_row(
+                "INSERT INTO providers (id, name, created_at, updated_at)
+                 VALUES ('p-user', 'Mine', 1, 1) RETURNING id",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        // Back to a file that predates the ownership column. SQLite will not
+        // drop a column an index still references, so the index goes first.
+        db.conn()
+            .execute_batch(
+                "DROP INDEX idx_providers_owner;
+                 ALTER TABLE providers DROP COLUMN owner_plugin_id;
+                 PRAGMA user_version=16;",
+            )
+            .unwrap();
+    }
+    let db = Database::open(&path).unwrap();
+    assert_eq!(
+        db.conn()
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        SCHEMA_VERSION
+    );
+    assert!(migration_backup_path(&path, 16).exists());
+    // The existing row survives and stays user-owned.
+    let owner: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT owner_plugin_id FROM providers WHERE id = ?1",
+            params![provider_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(owner.is_none());
+}
+
+/// 升级旧库时保留手动提供商和排队内容，并让两个迁移步骤连续执行。
+#[test]
+fn v16_and_v17_upgrade_to_v18_without_losing_waiting_inputs() {
+    for previous in [16_i64, 17_i64] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pi.sqlite");
+        {
+            let db = Database::open(&path).unwrap();
+            db.conn().execute_batch(
+                r#"INSERT INTO providers (id, name, config_json, created_at, updated_at)
+                   VALUES ('migration-user', 'My service', '{"kept":true}', 1, 1);
+                 INSERT INTO sessions (id, title, provider_id, created_at, updated_at)
+                   VALUES ('migration-session', 'Keep my conversation', 'migration-user', 1, 1);
+                 INSERT INTO turn_queue
+                   (id, session_id, principal, input_hash, content, permission_mode, position, created_at)
+                   VALUES ('migration-input', 'migration-session', 'desktop', 'input-hash',
+                           'Keep this queued message', 'ask', 1, 1);
+                 ALTER TABLE turn_queue DROP COLUMN priority;"#
+            ).unwrap();
+            if previous == 16 {
+                db.conn().execute_batch(
+                    "DROP INDEX idx_providers_owner;
+                     ALTER TABLE providers DROP COLUMN owner_plugin_id;"
+                ).unwrap();
+            }
+            db.conn().pragma_update(None, "user_version", previous).unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        assert_eq!(schema_version(db.conn()), 18);
+        assert!(migration_backup_path(&path, previous).exists());
+        assert!(migration_backup_path(&path, 17).exists());
+        let provider: (String, Option<String>) = db.conn().query_row(
+            "SELECT config_json, owner_plugin_id FROM providers WHERE id = 'migration-user'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(provider.0, r#"{"kept":true}"#);
+        assert_eq!(provider.1, None);
+        let queued: (String, i64, Option<i64>) = db.conn().query_row(
+            "SELECT content, position, priority FROM turn_queue WHERE id = 'migration-input'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(queued, ("Keep this queued message".into(), 1, None));
+        let title: String = db.conn().query_row(
+            "SELECT title FROM sessions WHERE id = 'migration-session'", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(title, "Keep my conversation");
+    }
+}

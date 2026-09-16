@@ -91,6 +91,20 @@ export function registerProviderIpc({
       ? { ...result, provider: enrichProvider(result.provider) }
       : result;
   });
+  handle(
+    IPC.invoke.providersSetSecret,
+    async (input: { id: string; secretValue?: string }) => {
+      if (!host) throw new Error("host unavailable");
+      const result = await host.call<{ provider?: RuntimeProvider | null }>(
+        "providers.setSecret",
+        input,
+      );
+      await modelsDevCatalog.ensureLoaded();
+      return result.provider
+        ? { ...result, provider: enrichProvider(result.provider) }
+        : result;
+    },
+  );
   handle(IPC.invoke.providersDelete, async (id: string) => {
     if (!host) throw new Error("host unavailable");
     return host.call("providers.delete", { id });

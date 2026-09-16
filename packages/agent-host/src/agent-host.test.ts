@@ -19,6 +19,7 @@ import {
   type SessionPort,
   type SessionSummary,
   type TurnStartRequest,
+  type TurnSteerRequest,
 } from "./ports.js";
 
 class FixedClock implements Clock {
@@ -38,19 +39,29 @@ class SeqIds implements IdSource {
 
 class FakeRuntime implements RuntimePort {
   prompts: TurnStartRequest[] = [];
+  steers: TurnSteerRequest[] = [];
   stops: string[] = [];
   aborts: Array<{ sessionId: string; turnId?: string }> = [];
   inputs: AskToolResolution[] = [];
   private counter = 0;
   failNext = false;
+  /** When true, `steer` refuses so the promoted block must fall back. */
+  refuseSteers = false;
   async prompt(request: TurnStartRequest): Promise<{ turnId: string }> {
     if (this.failNext) {
       this.failNext = false;
+      throw Object.assign(new Error("runtime rejected"), { code: "AGENT_UNAVAILABLE" });
       throw Object.assign(new Error("runtime rejected"), { code: "AGENT_UNAVAILABLE" });
     }
     this.prompts.push(request);
     this.counter += 1;
     return { turnId: `rt_${this.counter}` };
+  }
+
+  async steer(request: TurnSteerRequest): Promise<{ accepted: boolean }> {
+    if (this.refuseSteers) return { accepted: false };
+    this.steers.push(request);
+    return { accepted: true };
   }
   async stop(sessionId: string): Promise<{ requested: boolean }> {
     this.stops.push(sessionId);
@@ -372,6 +383,68 @@ describe("AgentHost turns", () => {
     expect(runtime.stops).toEqual(["s1"]);
   });
 
+
+  it("folds the rest of the promoted block into the started turn, in click order", async () => {
+    const { host, runtime } = build();
+    const first = await host.startTurn(controller, { sessionId: "s1", input: { text: "one" }, context: { requestId: "r1" } });
+    host.ingest(envelope("s1", first.turn.id, { type: "agent_start" }));
+    const second = await host.startTurn(controller, { sessionId: "s1", admission: "queue", input: { text: "two" }, context: { requestId: "r2" } });
+    const third = await host.startTurn(controller, { sessionId: "s1", admission: "queue", input: { text: "three" }, context: { requestId: "r3" } });
+    // Send now on the later row first, then on the earlier one: click order is
+    // delivery order.
+    await host.prioritizeTurn(controller, third.turn.id);
+    await host.prioritizeTurn(controller, second.turn.id);
+    expect(host.queueEntries("s1").map((entry) => entry.content)).toEqual(["three", "two"]);
+
+    host.ingest(envelope("s1", first.turn.id, { type: "agent_end", messageIds: [] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // One turn carries both rows: the first click starts it, the second joins it
+    // as input.
+    expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["one", "three"]);
+    expect(runtime.steers.map((steer) => steer.content)).toEqual(["two"]);
+    expect(runtime.steers[0]?.turnId).toBe("rt_2");
+    expect(host.queueEntries("s1")).toHaveLength(0);
+    // The injected row never runs its own turn.
+    expect(host.getTurn(second.turn.id).status).toBe("canceled");
+    expect(host.getTurn(third.turn.id).status).toBe("running");
+  });
+
+  it("keeps a promoted row queued when the runtime cannot steer it", async () => {
+    const { host, runtime } = build();
+    runtime.refuseSteers = true;
+    const first = await host.startTurn(controller, { sessionId: "s1", input: { text: "one" }, context: { requestId: "r1" } });
+    host.ingest(envelope("s1", first.turn.id, { type: "agent_start" }));
+    const second = await host.startTurn(controller, { sessionId: "s1", admission: "queue", input: { text: "two" }, context: { requestId: "r2" } });
+    const third = await host.startTurn(controller, { sessionId: "s1", admission: "queue", input: { text: "three" }, context: { requestId: "r3" } });
+    await host.prioritizeTurn(controller, second.turn.id);
+    await host.prioritizeTurn(controller, third.turn.id);
+
+    host.ingest(envelope("s1", first.turn.id, { type: "agent_end", messageIds: [] }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Nothing is lost: the refused row is still the next queued turn.
+    expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["one", "two"]);
+    expect(host.queueEntries("s1").map((entry) => entry.content)).toEqual(["three"]);
+    expect(host.getTurn(third.turn.id).status).toBe("queued");
+  });
+
+  it("settles a turn whose terminal event never reached the Host", async () => {
+    const { host, runtime } = build();
+    const first = await host.startTurn(controller, { sessionId: "s1", input: { text: "one" }, context: { requestId: "r1" } });
+    host.ingest(envelope("s1", first.turn.id, { type: "agent_start" }));
+    await host.startTurn(controller, { sessionId: "s1", admission: "queue", input: { text: "two" }, context: { requestId: "r2" } });
+
+    // Main finalized the abort; `isStaleTerminalEvent` dropped the agent_end, so
+    // the settlement itself must close the turn and release the queue.
+    host.endTurn("s1", first.turn.id, "interrupted");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(host.getTurn(first.turn.id).status).toBe("interrupted");
+    expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["one", "two"]);
+    expect(host.queueEntries("s1")).toHaveLength(0);
+  });
   it("marks a queued turn failed when the runtime rejects it and keeps draining", async () => {
     const { host, runtime, received } = build();
     const first = await host.startTurn(controller, { sessionId: "s1", input: { text: "one" }, context: { requestId: "r1" } });
@@ -548,102 +621,6 @@ describe("AgentHost attach and subscribe", () => {
 });
 
 describe("AgentHost queue extras", () => {
-  it("transfers backend attachments once under admission without stopping the active turn", async () => {
-    const { host, runtime } = build();
-    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
-    const attachments = [{ path: "/safe/image.png", name: "image.png", kind: "image" as const }];
-    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide", attachments }, context: { requestId: "q" } });
-    const steer = vi.fn(async () => ({ accepted: true, turnId: "rt_1" }));
-    (runtime as RuntimePort).steer = steer;
-    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" };
-    const results = await Promise.allSettled([host.steerQueuedTurn(owner, request), host.steerQueuedTurn(owner, request)]);
-    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
-    expect(steer).toHaveBeenCalledTimes(1);
-    expect(steer).toHaveBeenCalledWith(expect.objectContaining({ content: "guide", attachments, expectedTurnId: "rt_1", messageId: expect.any(String) }));
-    expect(host.queueEntries("s1")).toEqual([]);
-    expect(host.getTurn("rt_1").status).toBe("running");
-    expect(runtime.stops).toEqual([]);
-    expect(runtime.prompts).toEqual([]);
-  });
-
-  it("quarantines an unknown RPC result against cancel, prioritize, attach and drain", async () => {
-    const store = new MemoryQueueStore();
-    const { host, runtime } = build({ queueStore: store });
-    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
-    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
-    const steer = vi.fn(async () => { throw new Error("RPC timeout"); });
-    (runtime as RuntimePort).steer = steer;
-    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" };
-    await expect(host.steerQueuedTurn(owner, request)).rejects.toMatchObject({ code: "CONFLICT" });
-    await expect(host.steerQueuedTurn(owner, request)).rejects.toMatchObject({ code: "CONFLICT" });
-    await expect(host.cancelTurn(owner, queued.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
-    await expect(host.prioritizeTurn(owner, queued.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
-    host.ingest(envelope("s1", "rt_1", { type: "agent_end", messageIds: [] }));
-    await host.attach(owner, { sessionId: "s1" });
-    host.kick("s1");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(steer).toHaveBeenCalledTimes(1);
-    expect(runtime.prompts).toEqual([]);
-    expect(await store.listAll()).toHaveLength(1);
-    expect(host.queueEntries("s1")).toHaveLength(1);
-  });
-
-  it("holds drain and cancellation while the steering acknowledgement is in flight", async () => {
-    const { host, runtime } = build();
-    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
-    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
-    let entered!: () => void;
-    let accept!: (result: { accepted: boolean; turnId: string }) => void;
-    const started = new Promise<void>((resolve) => { entered = resolve; });
-    (runtime as RuntimePort).steer = () => { entered(); return new Promise((resolve) => { accept = resolve; }); };
-    const transfer = host.steerQueuedTurn(owner, { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" });
-    await started;
-    host.ingest(envelope("s1", "rt_1", { type: "agent_end", messageIds: [] }));
-    host.kick("s1");
-    const canceled = expect(host.cancelTurn(owner, queued.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
-    expect(host.queueEntries("s1")).toHaveLength(1);
-    accept({ accepted: true, turnId: "rt_1" });
-    await transfer;
-    await canceled;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(runtime.prompts).toEqual([]);
-    expect(host.queueEntries("s1")).toEqual([]);
-  });
-
-  it("retains a failed delete and retries only storage, never steering", async () => {
-    const store = new MemoryQueueStore();
-    const { host, runtime } = build({ queueStore: store });
-    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
-    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
-    const steer = vi.fn(async () => ({ accepted: true, turnId: "rt_1" }));
-    (runtime as RuntimePort).steer = steer;
-    vi.spyOn(store, "remove").mockRejectedValueOnce(new Error("disk failure"));
-    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_1" };
-    await expect(host.steerQueuedTurn(owner, request)).rejects.toMatchObject({ code: "CONFLICT" });
-    expect(host.queueEntries("s1")).toHaveLength(1);
-    expect(await store.listAll()).toHaveLength(1);
-    await host.steerQueuedTurn(owner, request);
-    expect(steer).toHaveBeenCalledTimes(1);
-    expect(await store.listAll()).toEqual([]);
-  });
-
-  it("preserves explicitly rejected input and rejects collaboration and viewer steering", async () => {
-    const { host, runtime } = build();
-    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
-    const queued = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "guide" }, context: { requestId: "q" } });
-    const steer = vi.fn(async () => { throw Object.assign(new Error("stale target"), { steeringRejected: true }); });
-    (runtime as RuntimePort).steer = steer;
-    const request = { sessionId: "s1", queuedTurnId: queued.turn.id, expectedTurnId: "rt_old" };
-    await expect(host.steerQueuedTurn(viewer, request)).rejects.toMatchObject({ code: "FORBIDDEN" });
-    await expect(host.steerQueuedTurn(owner, request)).rejects.toThrow("stale target");
-    expect(host.queueEntries("s1")).toHaveLength(1);
-    await host.cancelTurn(owner, queued.turn.id);
-    const collaboration = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "delivery", sessionMessageId: "delivery-id" }, context: { requestId: "c" } });
-    await expect(host.steerQueuedTurn(owner, { ...request, queuedTurnId: collaboration.turn.id })).rejects.toMatchObject({ code: "CONFLICT" });
-    expect(steer).toHaveBeenCalledTimes(1);
-    expect(host.queueEntries("s1")).toHaveLength(1);
-  });
-
   it("prioritizes a queued turn, reports queue changes, and respects runtime busy state", async () => {
     const changes: Array<{ sessionId: string; ids: string[] }> = [];
     const runtime = new FakeRuntime();
@@ -671,6 +648,9 @@ describe("AgentHost queue extras", () => {
     expect(host.queueEntries("s1").map((entry) => entry.content)).toEqual(["two", "one"]);
     expect(changes.at(-1)?.ids).toEqual([second.turn.id, first.turn.id]);
     await expect(host.prioritizeTurn(viewer, first.turn.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // Promotion is one-way: the Host refuses a second click instead of moving it.
+    await expect(host.prioritizeTurn(owner, second.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(changes.at(-1)?.ids).toEqual([second.turn.id, first.turn.id]);
 
     runtimeBusy = false;
     host.kick("s1");
@@ -678,6 +658,47 @@ describe("AgentHost queue extras", () => {
     expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["two"]);
     expect(changes.at(-1)?.ids).toEqual([first.turn.id]);
     await expect(host.prioritizeTurn(owner, second.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+
+
+  it("reorders plain queued turns and guards the operation like prioritize", async () => {
+    const changes: Array<{ sessionId: string; ids: string[] }> = [];
+    const runtime = new FakeRuntime();
+    const sessions = new FakeSessions();
+    sessions.summaries.set("s1", summary("s1"));
+    let runtimeBusy = false;
+    (runtime as RuntimePort).isBusy = () => runtimeBusy;
+    const host = new AgentHost({
+      runtime,
+      sessions,
+      approvals: new FakeApprovals(),
+      clock: new FixedClock(),
+      ids: new SeqIds(),
+      onQueueChange: (sessionId, entries) => changes.push({ sessionId, ids: entries.map((entry) => entry.turn.id) }),
+    });
+    runtimeBusy = true;
+    const first = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "one" }, context: { requestId: "r1" } });
+    const second = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "two" }, context: { requestId: "r2" } });
+    const third = await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "three" }, context: { requestId: "r3" } });
+
+    await expect(host.reorderTurn(viewer, third.turn.id, "up")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(await host.reorderTurn(owner, first.turn.id, "up")).toEqual({ moved: false });
+    expect(await host.reorderTurn(owner, third.turn.id, "up")).toEqual({ moved: true });
+    expect(host.queueEntries("s1").map((entry) => entry.content)).toEqual(["one", "three", "two"]);
+    expect(changes.at(-1)?.ids).toEqual([first.turn.id, third.turn.id, second.turn.id]);
+
+    // A promoted entry keeps its place at the head of the priority block.
+    await host.prioritizeTurn(owner, second.turn.id);
+    expect(host.queueEntries("s1").map((entry) => entry.content)).toEqual(["two", "one", "three"]);
+    expect(host.queueEntries("s1")[0]?.priority).toBe(1);
+    expect(await host.reorderTurn(owner, second.turn.id, "down")).toEqual({ moved: false });
+    expect(host.queueEntries("s1").map((entry) => entry.content)).toEqual(["two", "one", "three"]);
+
+    runtimeBusy = false;
+    host.kick("s1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["two"]);
+    await expect(host.reorderTurn(owner, second.turn.id, "down")).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
   it("queues behind a pending contract approval and drains when planning leaves it", async () => {

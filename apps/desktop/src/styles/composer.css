@@ -129,6 +129,33 @@
   opacity: 0.65;
 }
 
+/* A promoted row ("Send now") starts next: it reads as the head of the queue
+   and locks its own actions until the Host delivers it. */
+.composer-queued-prompt[data-priority="true"] {
+  background: var(--ds-bg-elevated);
+  box-shadow:
+    var(--ds-shadow-composer),
+    inset 2px 0 0 0 var(--ds-accent);
+  color: var(--ds-text-primary);
+}
+
+.composer-queued-prompt[data-priority="true"] .composer-queued-prompt-send-now:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+/* A locked row action stays visible and explains the state instead of going
+   dim: the row is already queued as the next turn. */
+.composer-queued-prompt-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.composer-queued-prompt-action:disabled:hover {
+  background: transparent;
+  color: var(--ds-text-muted);
+}
+
 .composer-shell {
   /* Positioning context for the autocomplete panel (D123–D125, ADR 0024). */
   position: relative;

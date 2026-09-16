@@ -282,11 +282,13 @@ fn schema_v15_upgrade_preserves_sessions_and_adds_the_ledger() {
             .title,
         "Existing user session"
     );
+    // A v15 file walks every later step in the same launch, so it lands on the
+    // current version rather than the one this migration happens to produce.
     assert_eq!(
         db.conn()
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        16
+        crate::db::SCHEMA_VERSION
     );
     assert!(crate::db::migration_backup_path(&path, 15).exists());
     assert!(repository::pending_callbacks(&db, None).unwrap().is_empty());

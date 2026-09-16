@@ -6313,53 +6313,6 @@ describe("DesktopAgentRuntime subagents", () => {
     await runtime.dispose();
   });
 
-  it("wakes TaskWait and automatic waits for steering without aborting delegates, and deduplicates message ids", async () => {
-    const runtime = createRuntime({ subagents: [explorer] });
-    const internal = runtime as any;
-    subagentRuns.instances.length = 0;
-    subagentRuns.deferred = true;
-    try {
-      const started = await taskTool(runtime).execute("task-steer", { agent: "explorer", task: "Keep working." });
-      const wait = internal.agent.state.tools.find((tool: any) => tool.name === "TaskWait");
-      vi.spyOn(runtime, "steeringContext").mockReturnValue({ supportsVision: true });
-      internal.turnId = "steered-turn";
-      const enqueue = vi.spyOn(internal.agent, "steer");
-      const waiting = wait.execute("wait-steer", {});
-      const automatic = internal.waitForDelegations([...internal.delegations.values()], 1, null);
-      const message: UiMessage = { id: "steering-id", role: "user", content: "Change focus", status: "complete", createdAt: new Date().toISOString(), steering: true };
-      runtime.steer({ text: message.content }, "steered-turn", message);
-      runtime.steer({ text: message.content }, "steered-turn", message);
-      expect(enqueue).toHaveBeenCalledTimes(1);
-      expect((await waiting).details.status).toBe("steered");
-      await expect(automatic).resolves.toBe("steered");
-      expect(subagentRuns.instances[0]?.settled).toBe(false);
-      expect(internal.delegationWaitWakeups.size).toBe(0);
-      expect((await wait.execute("wait-pending", {})).details.status).toBe("steered");
-      internal.pendingSteering.clear();
-      runtime.steer({ text: message.content }, "steered-turn", message);
-      expect(enqueue).toHaveBeenCalledTimes(1);
-      expect(() => runtime.steer({ text: "different" }, "steered-turn", message)).toThrow("identity");
-      subagentRuns.resolveRun!({ agentName: "explorer", status: "completed", report: "Still delivered", turns: 1, toolCalls: 0 });
-      const completed = await wait.execute("wait-completed", { delegationIds: [(started.details as any).delegationId] });
-      expect(completed.details.status).toBe("completed");
-      expect(completed.content[0].text).toContain("Still delivered");
-    } finally {
-      await runtime.dispose();
-      subagentRuns.deferred = false;
-    }
-  });
-
-  it("does not hang delegation waits with an already aborted signal", async () => {
-    const runtime = createRuntime();
-    try {
-      const controller = new AbortController();
-      controller.abort();
-      await expect((runtime as any).waitForDelegations([], 1, null, controller.signal)).resolves.toBe("aborted");
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
   it("waits for running delegates with mode all/any and stops them with TaskStop", async () => {
     const runtime = createRuntime({ subagents: [explorer] });
     subagentRuns.calls.length = 0;

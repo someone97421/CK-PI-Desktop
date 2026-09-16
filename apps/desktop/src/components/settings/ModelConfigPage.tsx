@@ -16,7 +16,7 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
-import { Badge, Button, Input, TooltipButton, cx } from "../ui";
+import { Badge, Button, Field, Input, TooltipButton, cx } from "../ui";
 import {
   IconCheck,
   IconChevronDown,
@@ -24,6 +24,7 @@ import {
   IconCopy,
   IconDownload,
   IconFolderOpen,
+  IconKey,
   IconPencil,
   IconPlug,
   IconPlus,
@@ -82,7 +83,7 @@ export function ModelConfigPage() {
   const [transferBusy, setTransferBusy] = useState<"export" | "import" | null>(null);
   const [catalogStatus, setCatalogStatus] = useState<CatalogStatus | null>(null);
 
-  /** Write every provider to a JSON file the user picks. */
+  /** 导出用户自己管理的提供商配置。 */
   const exportProviders = async () => {
     if (transferBusy) return;
     setTransferBusy("export");
@@ -131,6 +132,10 @@ export function ModelConfigPage() {
   };
   // Two-step delete: the first click arms the row, the second removes it.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Inline API-key entry for a plugin-declared row. The plugin owns the
+  // provider's fields, so the user supplies only the credential it asks for.
+  const [keyFor, setKeyFor] = useState<string | null>(null);
+  const [keyValue, setKeyValue] = useState("");
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -257,6 +262,26 @@ export function ModelConfigPage() {
       await api.deleteProvider(provider.id);
       await refreshProviders();
       showToast(t("settings.providerRemoved"), { variant: "success" });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), {
+        variant: "error",
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const saveProviderKey = async (provider: ProviderPublic, value: string) => {
+    setBusyId(provider.id);
+    try {
+      await api.setProviderSecret({ id: provider.id, secretValue: value });
+      await refreshProviders();
+      setKeyFor(null);
+      setKeyValue("");
+      showToast(
+        t(value.trim() ? "settings.pluginProviderKeySaved" : "settings.pluginProviderKeyRemoved"),
+        { variant: "success" },
+      );
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), {
         variant: "error",
@@ -501,6 +526,11 @@ export function ModelConfigPage() {
                 const rowBusy = busyId === provider.id || testingId === provider.id;
                 const confirming = confirmDeleteId === provider.id;
                 const modelCount = provider.models?.length ?? 0;
+                // A plugin-declared row is refreshed from the plugin's manifest
+                // on every load, so its fields and its enabled switch are not
+                // the user's to change. The credential is.
+                const ownedByPlugin = provider.ownerPluginId;
+                const keyEntry = keyFor === provider.id;
                 return (
                   <li
                     key={provider.id}
@@ -518,6 +548,15 @@ export function ModelConfigPage() {
                         {!provider.enabled ? (
                           <Badge tone="neutral">{t("settings.providerDisabledBadge")}</Badge>
                         ) : null}
+                        {ownedByPlugin ? (
+                          <span
+                            title={t("settings.pluginProviderManaged", {
+                              plugin: ownedByPlugin,
+                            })}
+                          >
+                            <Badge tone="neutral">{t("settings.pluginProviderBadge")}</Badge>
+                          </span>
+                        ) : null}
                       </div>
                       <div className="model-provider-row-meta">
                         <span>{hostFromBaseUrl(provider.baseUrl)}</span>
@@ -525,6 +564,14 @@ export function ModelConfigPage() {
                           ·
                         </span>
                         <span>{t("settings.providerModelCount", { count: modelCount })}</span>
+                        {ownedByPlugin ? (
+                          <>
+                            <span className="model-provider-meta-dot" aria-hidden>
+                              ·
+                            </span>
+                            <span>{t("settings.pluginProviderBy", { plugin: ownedByPlugin })}</span>
+                          </>
+                        ) : null}
                       </div>
                     </div>
 
@@ -541,25 +588,46 @@ export function ModelConfigPage() {
                           {t("settings.makeDefault")}
                         </Button>
                       ) : null}
+                      {!ownedByPlugin ? (
+                        <TooltipButton
+                          type="button"
+                          className="icon-btn icon-btn-square model-provider-icon-btn"
+                          tooltip={t("settings.copyProvider")}
+                          ariaLabel={t("settings.copyProvider")}
+                          disabled={rowBusy}
+                          onClick={() => {
+                            setCopyDraft(copyProviderConfiguration(provider, t("settings.copyProviderName", { name: provider.name })));
+                            setSetupFor("");
+                          }}
+                        >
+                          <IconCopy size={14} />
+                        </TooltipButton>
+                      ) : null}
+                      {ownedByPlugin && provider.authKind === "api_key" ? (
+                        <TooltipButton
+                          type="button"
+                          className="icon-btn icon-btn-square model-provider-icon-btn"
+                          tooltip={t("settings.pluginProviderKey")}
+                          ariaLabel={t("settings.pluginProviderKey")}
+                          disabled={rowBusy}
+                          onClick={() => {
+                            setKeyFor(keyEntry ? null : provider.id);
+                            setKeyValue("");
+                          }}
+                        >
+                          <IconKey size={14} />
+                        </TooltipButton>
+                      ) : null}
                       <TooltipButton
                         type="button"
                         className="icon-btn icon-btn-square model-provider-icon-btn"
-                        tooltip={t("settings.copyProvider")}
-                        ariaLabel={t("settings.copyProvider")}
-                        disabled={rowBusy}
-                        onClick={() => {
-                          setCopyDraft(copyProviderConfiguration(provider, t("settings.copyProviderName", { name: provider.name })));
-                          setSetupFor("");
-                        }}
-                      >
-                        <IconCopy size={14} />
-                      </TooltipButton>
-                      <TooltipButton
-                        type="button"
-                        className="icon-btn icon-btn-square model-provider-icon-btn"
-                        tooltip={t("settings.editProvider")}
+                        tooltip={
+                          ownedByPlugin
+                            ? t("settings.pluginProviderManaged", { plugin: ownedByPlugin })
+                            : t("settings.editProvider")
+                        }
                         ariaLabel={t("settings.editProvider")}
-                        disabled={rowBusy}
+                        disabled={rowBusy || Boolean(ownedByPlugin)}
                         onClick={() => setSetupFor(provider.id)}
                       >
                         <IconPencil size={14} />
@@ -591,9 +659,13 @@ export function ModelConfigPage() {
                         <TooltipButton
                           type="button"
                           className="icon-btn icon-btn-square model-provider-icon-btn is-danger"
-                          tooltip={t("settings.delete")}
+                          tooltip={
+                            ownedByPlugin
+                              ? t("settings.pluginProviderManaged", { plugin: ownedByPlugin })
+                              : t("settings.delete")
+                          }
                           ariaLabel={t("settings.delete")}
-                          disabled={rowBusy}
+                          disabled={rowBusy || Boolean(ownedByPlugin)}
                           onClick={() => setConfirmDeleteId(provider.id)}
                         >
                           <IconTrash size={14} />
@@ -604,14 +676,71 @@ export function ModelConfigPage() {
                         className={cx("settings-toggle", provider.enabled && "on")}
                         role="switch"
                         aria-checked={provider.enabled}
-                        tooltip={t("settings.enabledToggle")}
+                        tooltip={
+                          ownedByPlugin
+                            ? t("settings.pluginProviderManaged", { plugin: ownedByPlugin })
+                            : t("settings.enabledToggle")
+                        }
                         ariaLabel={t("settings.enabledToggle")}
-                        disabled={rowBusy}
+                        disabled={rowBusy || Boolean(ownedByPlugin)}
                         onClick={() => void toggleEnabled(provider)}
                       >
                         <span className="settings-toggle-thumb" />
                       </TooltipButton>
                     </div>
+                    {keyEntry ? (
+                      <div className="model-provider-key-entry">
+                        <Field
+                          label={t("settings.pluginProviderKey")}
+                          hint={t("settings.pluginProviderKeyHint")}
+                        >
+                          <Input
+                            type="password"
+                            autoFocus
+                            disabled={rowBusy}
+                            value={keyValue}
+                            placeholder={
+                              provider.hasSecret ? t("settings.apiKeyKeepHint") : undefined
+                            }
+                            onChange={(event) => setKeyValue(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") setKeyFor(null);
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                if (!rowBusy && keyValue.trim()) void saveProviderKey(provider, keyValue);
+                              }
+                            }}
+                          />
+                        </Field>
+                        <div className="model-provider-key-actions">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={rowBusy}
+                            onClick={() => setKeyFor(null)}
+                          >
+                            {t("settings.cancel")}
+                          </Button>
+                          {provider.hasSecret ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={rowBusy}
+                              onClick={() => void saveProviderKey(provider, "")}
+                            >
+                              {t("settings.pluginProviderKeyRemove")}
+                            </Button>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            disabled={rowBusy || !keyValue.trim()}
+                            onClick={() => void saveProviderKey(provider, keyValue)}
+                          >
+                            {t("settings.save")}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
                   </li>
                 );
               })}

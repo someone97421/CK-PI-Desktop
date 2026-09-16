@@ -36,7 +36,10 @@ import type {
 } from "../lib/sidebar-preferences";
 import type { PermissionQueues } from "../lib/pending-permissions";
 import type { AskQueues } from "../lib/pending-asks";
-import type { QueuedPrompts } from "../lib/queued-prompts";
+import type {
+  QueuedPromptDirection,
+  QueuedPrompts,
+} from "../lib/queued-prompts";
 import type { SubagentPanelSelection } from "../lib/subagent-panel";
 import type {
   ComposerDraftSnapshot,
@@ -213,6 +216,13 @@ export type AppState = {
     sessionId?: string,
   ) => Promise<boolean>;
   removeQueuedPrompt: (promptId: string) => void;
+  /** Move one waiting row past its neighbour; promoted rows stay locked. */
+  moveQueuedPrompt: (
+    promptId: string,
+    direction: QueuedPromptDirection,
+  ) => Promise<void>;
+  /** Return one waiting row to the composer as an editable draft. */
+  editQueuedPrompt: (promptId: string) => void;
   sendQueuedNow: (promptId: string) => Promise<void>;
   refreshQueuedPrompts: (sessionId: string) => Promise<void>;
   applyQueueChanged: (event: AgentQueueChangedEvent) => void;

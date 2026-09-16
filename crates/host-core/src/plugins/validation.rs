@@ -215,6 +215,99 @@ pub(crate) fn validate_contributions(root: &Path, manifest: &PluginManifest) -> 
         }
     }
 
+    if let Some(providers) = map.get("providers") {
+        let entries = array_of(providers, "contributes.providers")?;
+        if entries.len() > MAX_PLUGIN_PROVIDERS {
+            bail!(
+                "PLUGIN_INVALID: contributes.providers allows at most {MAX_PLUGIN_PROVIDERS} entries"
+            );
+        }
+        if !entries.is_empty() {
+            require_permission(manifest, "provider.register", "contributes.providers")?;
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        for entry in entries {
+            let obj = entry.as_object().ok_or_else(|| {
+                anyhow!("PLUGIN_INVALID: contributes.providers entry must be an object")
+            })?;
+            let id = obj
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|id| is_contrib_id(id))
+                .ok_or_else(|| {
+                    anyhow!("PLUGIN_INVALID: provider declaration id is missing or invalid")
+                })?;
+            if seen.contains(&id) {
+                bail!("PLUGIN_INVALID: duplicate provider declaration id {id}");
+            }
+            seen.push(id);
+            if obj
+                .get("name")
+                .and_then(Value::as_str)
+                .map(|name| name.trim().is_empty())
+                .unwrap_or(true)
+            {
+                bail!("PLUGIN_INVALID: provider {id} requires a name");
+            }
+            if let Some(style) = obj.get("apiStyle") {
+                let style = style.as_str().ok_or_else(|| {
+                    anyhow!("PLUGIN_INVALID: provider {id} apiStyle must be a string")
+                })?;
+                if !is_known_api_style(style) {
+                    bail!("PLUGIN_INVALID: provider {id} has unsupported apiStyle {style}");
+                }
+            }
+            // `oauth` declarations arrive with the Host-owned plugin login
+            // flow. Until it exists, a manifest that asks for one is refused
+            // rather than turned into a row nobody can sign in to.
+            if obj.get("oauth").is_some() {
+                bail!(
+                    "PLUGIN_INVALID: provider {id} declares oauth; plugin OAuth providers are not supported in this release"
+                );
+            }
+            let auth_kind = obj
+                .get("authKind")
+                .and_then(Value::as_str)
+                .unwrap_or("api_key");
+            if !is_known_auth_kind(auth_kind) {
+                bail!("PLUGIN_INVALID: provider {id} has unsupported authKind {auth_kind}");
+            }
+            if let Some(base_url) = obj.get("baseUrl").and_then(Value::as_str) {
+                // The runtime reaches this endpoint, so a declaration may only
+                // name an absolute http(s) URL.
+                if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
+                    bail!("PLUGIN_INVALID: provider {id} baseUrl must be an http(s) URL");
+                }
+            }
+            let models = match obj.get("models") {
+                Some(value) => array_of(value, "contributes.providers.models")?,
+                None => bail!("PLUGIN_INVALID: provider {id} requires models"),
+            };
+            if models.is_empty() || models.len() > MAX_PLUGIN_PROVIDER_MODELS {
+                bail!(
+                    "PLUGIN_INVALID: provider {id} declares 1 to {MAX_PLUGIN_PROVIDER_MODELS} models"
+                );
+            }
+            let mut seen_models: Vec<&str> = Vec::new();
+            for model in models {
+                let model = model.as_object().ok_or_else(|| {
+                    anyhow!("PLUGIN_INVALID: provider {id} model entries must be objects")
+                })?;
+                let model_id = model
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty() && value.len() <= 256)
+                    .ok_or_else(|| {
+                        anyhow!("PLUGIN_INVALID: provider {id} has a model without a valid id")
+                    })?;
+                if seen_models.contains(&model_id) {
+                    bail!("PLUGIN_INVALID: provider {id} declares model {model_id} twice");
+                }
+                seen_models.push(model_id);
+            }
+        }
+    }
     if let Some(themes) = map.get("themes") {
         let entries = array_of(themes, "contributes.themes")?;
         if !entries.is_empty() {

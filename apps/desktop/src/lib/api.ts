@@ -8,7 +8,6 @@ import type {
   AgentCompactResponse,
   AgentPromptRequest,
   AgentSteerRequest,
-  AgentQueueSteerRequest,
   UiMessage,
   MessageRevisionSummary,
   AgentPromptResponse,
@@ -445,6 +444,15 @@ export const api = {
       input,
     ),
   deleteProvider: (id: string) => invoke(IPC.invoke.providersDelete, id),
+  /**
+   * Set or clear one provider's API key. The only write a plugin-declared row
+   * accepts from the user path, since `updateProvider` refuses it.
+   */
+  setProviderSecret: (input: { id: string; secretValue?: string }) =>
+    invoke<{ provider: ProviderPublic | null }>(
+      IPC.invoke.providersSetSecret,
+      input,
+    ),
   testProvider: (id: string) => invoke(IPC.invoke.providersTest, id),
   /**
    * Discover models from the provider's own endpoint. Saved providers pass
@@ -642,8 +650,8 @@ export const api = {
     invoke(IPC.invoke.agentQueueRemove, { turnId }),
   prioritizeQueuedPrompt: (turnId: string) =>
     invoke(IPC.invoke.agentQueuePrioritize, { turnId }),
-  steerQueuedPrompt: (req: AgentQueueSteerRequest) =>
-    invoke<AgentPromptResponse>(IPC.invoke.agentQueueSteer, req),
+  reorderQueuedPrompt: (turnId: string, direction: "up" | "down") =>
+    invoke<{ moved: boolean }>(IPC.invoke.agentQueueReorder, { turnId, direction }),
   getStatus: (sessionId: string) =>
     invoke<{ status: AgentStatus }>(IPC.invoke.agentGetStatus, sessionId),
   getAgentInstructions: (projectPath?: string) =>

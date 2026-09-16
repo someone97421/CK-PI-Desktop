@@ -103,6 +103,14 @@ impl AppState {
             data_dir,
             crate::plugins::market_source_from_settings(app_settings.as_ref()),
         );
+        // Provider rows a plugin declared are rebuilt from the registry on
+        // launch, so the table matches the enabled plugins whatever path
+        // (install, enable, an upgraded manifest) last changed them.
+        match crate::plugins::reconcile_all(&db, &secrets, &plugins) {
+            Ok(0) => {}
+            Ok(count) => tracing::info!(count, "reconciled plugin provider rows"),
+            Err(error) => tracing::warn!(%error, "plugin provider reconciliation failed"),
+        }
         let mcp_servers = McpServerRegistry::new(data_dir);
         let user_skills = UserSkillRegistry::new(data_dir);
         let user_subagents = UserSubagentRegistry::new(data_dir);

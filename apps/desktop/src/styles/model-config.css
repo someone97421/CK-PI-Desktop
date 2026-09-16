@@ -1508,6 +1508,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* A plugin-declared row's key entry takes a full line of its own; every
+     other row keeps the single-line layout. */
+  flex-wrap: wrap;
   padding: 10px 12px;
   border-radius: var(--radius-md-plus);
   background: var(--ds-tile);
@@ -1555,6 +1558,28 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: none;
+}
+
+   to the plugin, so the user supplies only the key. */
+.model-provider-key-entry {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-basis: 100%;
+  padding-top: 10px;
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+.model-provider-key-entry > label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.model-provider-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: none;
 }
 

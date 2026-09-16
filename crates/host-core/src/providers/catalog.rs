@@ -2,7 +2,7 @@ use super::*;
 
 pub(crate) const PROVIDER_SELECT: &str =
     "SELECT id, name, vendor_key, type, protocol, enabled, base_url, auth_kind, secret_ref,
-            default_model_id, api_style, config_json, created_at, updated_at
+            default_model_id, api_style, config_json, created_at, updated_at, owner_plugin_id
      FROM providers";
 
 pub(crate) const CANONICAL_THINKING_LEVELS: &[&str] =

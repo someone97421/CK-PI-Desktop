@@ -76,6 +76,9 @@ pub(crate) fn derive_capabilities(manifest: &PluginManifest) -> Vec<String> {
     if has("agentExtensions") {
         out.push("agentExtension".into());
     }
+    if has("providers") {
+        out.push("providers".into());
+    }
     if has("agentTools") {
         out.push("tools".into());
     }

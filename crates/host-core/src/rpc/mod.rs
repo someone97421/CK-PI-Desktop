@@ -1786,6 +1786,20 @@ async fn handle_request(
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             Ok(json!({ "value": value }))
         }
+        // The credential of a plugin-declared provider. `providers.update`
+        // refuses that row, so this is the one path that writes the key the
+        // declaration asks for without touching the declaration's own fields.
+        "providers.setSecret" => {
+            let id = params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| rpc_err(1002, "id required", "INVALID_PARAMS"))?;
+            let secret_value = params.get("secretValue").and_then(|v| v.as_str());
+            let st = state.lock().await;
+            let provider = providers::set_provider_secret(&st.db, &st.secrets, id, secret_value)
+                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            Ok(json!({ "provider": provider }))
+        }
         "providers.listModels" => {
             let provider_id = params.get("providerId").and_then(|v| v.as_str());
             let st = state.lock().await;
@@ -2439,9 +2453,41 @@ async fn handle_request(
                 .ok_or_else(|| rpc_err(1002, "id required", "INVALID_PARAMS"))?;
             let st = state.lock().await;
             let entry = turn_queue::prioritize(&st.db, id)
-                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?
+                .map_err(|e| {
+                    let message = e.to_string();
+                    if message == "ALREADY_PRIORITIZED" {
+                        rpc_err(1008, message, "CONFLICT")
+                    } else {
+                        rpc_err(1000, message, "INTERNAL")
+                    }
+                })?
                 .ok_or_else(|| rpc_err(1007, "queue entry not found", "NOT_FOUND"))?;
             Ok(json!({ "entry": entry }))
+        }
+        "session.queueReorder" => {
+            let id = params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| rpc_err(1002, "id required", "INVALID_PARAMS"))?;
+            let direction = params
+                .get("direction")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| rpc_err(1002, "direction required", "INVALID_PARAMS"))?;
+            let direction = match direction {
+                "up" => turn_queue::ReorderDirection::Up,
+                "down" => turn_queue::ReorderDirection::Down,
+                other => {
+                    return Err(rpc_err(
+                        1002,
+                        format!("unknown direction: {other}"),
+                        "INVALID_PARAMS",
+                    ))
+                }
+            };
+            let st = state.lock().await;
+            let moved = turn_queue::reorder(&st.db, id, direction)
+                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            Ok(json!({ "moved": moved }))
         }
 
         "notification.list" => {
@@ -3795,6 +3841,13 @@ async fn handle_request(
                     rpc_err(1010, msg, "PLUGIN_LOAD_FAILED")
                 }
             })?;
+            // A development plugin owns its declared provider rows the same way
+            // an installed one does.
+            if let Err(error) =
+                crate::plugins::reconcile_plugin(&st.db, &st.secrets, &st.plugins, &plugin.id, true)
+            {
+                tracing::warn!(plugin = %plugin.id, %error, "plugin provider sync failed");
+            }
             Ok(json!({ "plugin": plugin }))
         }
         "plugins.enable" => {
@@ -3807,6 +3860,17 @@ async fn handle_request(
                 .plugins
                 .set_enabled(id, true)
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            if let Some(current) = plugin.as_ref() {
+                if let Err(error) = crate::plugins::reconcile_plugin(
+                    &st.db,
+                    &st.secrets,
+                    &st.plugins,
+                    &current.id,
+                    true,
+                ) {
+                    tracing::warn!(plugin = %current.id, %error, "plugin provider sync failed");
+                }
+            }
             Ok(json!({ "plugin": plugin }))
         }
         "plugins.disable" => {
@@ -3819,6 +3883,14 @@ async fn handle_request(
                 .plugins
                 .set_enabled(id, false)
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            // The declaration still exists, so the rows stay and are turned
+            // off: a re-enable restores the credential the user already gave.
+            if plugin.is_some() {
+                if let Err(error) = crate::plugins::set_plugin_providers_enabled(&st.db, id, false)
+                {
+                    tracing::warn!(plugin = id, %error, "plugin provider disable failed");
+                }
+            }
             Ok(json!({ "plugin": plugin }))
         }
         "plugins.uninstall" => {
@@ -3831,6 +3903,12 @@ async fn handle_request(
                 .plugins
                 .uninstall(id)
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            if ok {
+                if let Err(error) = crate::plugins::remove_plugin_providers(&st.db, &st.secrets, id)
+                {
+                    tracing::warn!(plugin = id, %error, "plugin provider removal failed");
+                }
+            }
             Ok(json!({ "ok": ok }))
         }
         "plugins.getPermissions" => {

@@ -11,6 +11,7 @@ import {
   MAX_GLOBAL_SHORTCUTS_PER_PLUGIN,
   PLUGIN_PERMISSIONS,
   PLUGIN_VIEW_ICONS,
+  type PluginProviderContrib,
 } from "./index.js";
 
 const base = { schemaVersion: 1, id: "demo.x", name: "X", version: "0.1.0", main: "main.js" };
@@ -662,6 +663,106 @@ describe("manifest i18n", () => {
     );
     expect(validateManifest({ ...base, i18n: { en: { name: 7 } } as never }).error).toMatch(
       /manifest\.i18n\.en\.name must be a string/,
+    );
+  });
+});
+
+describe("contributes.providers", () => {
+  const base = { schemaVersion: 1, id: "demo.providers", name: "P", version: "0.1.0", main: "main.js" };
+  // Annotated so a deliberate bad value in one test does not widen the literal
+  // type for every other call.
+  const provider: PluginProviderContrib = {
+    id: "demo",
+    name: "Demo",
+    baseUrl: "https://api.example.com/v1",
+    apiStyle: "chat_completions",
+    authKind: "api_key",
+    models: [
+      { id: "demo-large", name: "Demo Large", contextWindow: 200000, maxTokens: 8192 },
+      { id: "demo-small" },
+    ],
+  };
+
+  it("accepts a declaration when provider.register is declared", () => {
+    const result = validateManifest({
+      ...base,
+      permissions: ["provider.register"],
+      contributes: { providers: [provider] },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.manifest?.contributes?.providers?.[0]?.id).toBe("demo");
+    expect(result.manifest?.contributes?.providers?.[0]?.models).toHaveLength(2);
+  });
+
+  it("rejects a declaration without the provider.register permission", () => {
+    expect(validateManifest({ ...base, contributes: { providers: [provider] } }).error).toMatch(
+      /provider\.register permission/,
+    );
+    expect(PLUGIN_PERMISSIONS).toContain("provider.register");
+  });
+
+  it("rejects an unsupported apiStyle or authKind", () => {
+    const perm = { ...base, permissions: ["provider.register"] };
+    expect(
+      validateManifest({
+        ...perm,
+        contributes: { providers: [{ ...provider, apiStyle: "grpc" as never }] },
+      }).error,
+    ).toMatch(/unsupported apiStyle/);
+    expect(
+      validateManifest({
+        ...perm,
+        contributes: { providers: [{ ...provider, authKind: "basic" as never }] },
+      }).error,
+    ).toMatch(/unsupported authKind/);
+  });
+
+  it("rejects a non-http baseUrl, an unbound model list, duplicate ids, and too many entries", () => {
+    expect(
+      validateContributions({
+        providers: [{ ...provider, baseUrl: "file:///etc/passwd" }],
+      }),
+    ).toMatch(/http\(s\) URL/);
+    expect(validateContributions({ providers: [{ ...provider, models: [] }] })).toMatch(
+      /1 to 64 models/,
+    );
+    expect(
+      validateContributions({
+        providers: [{ ...provider, models: [{ id: "m" }, { id: "m" }] }],
+      }),
+    ).toMatch(/declares model m twice/);
+    expect(validateContributions({ providers: [{ ...provider, id: "1bad" }] })).toMatch(
+      /id is missing or invalid/,
+    );
+    expect(validateContributions({ providers: [provider, provider] })).toMatch(
+      /duplicate provider declaration id/,
+    );
+    expect(
+      validateContributions({
+        providers: Array.from({ length: 9 }, (_, index) => ({ ...provider, id: `p${index}` })),
+      }),
+    ).toMatch(/at most 8 entries/);
+    expect(
+      validateContributions({
+        providers: [{ ...provider, models: [{ id: "" }] }],
+      }),
+    ).toMatch(/without a valid id/);
+  });
+
+  it("rejects oauth, which needs a Host-owned login flow", () => {
+    expect(
+      validateContributions({ providers: [{ ...provider, authKind: "oauth" as never }] }),
+    ).toMatch(/unsupported authKind oauth/);
+    expect(
+      validateContributions({
+        providers: [{ ...provider, oauth: { label: "Demo" } } as never],
+      }),
+    ).toMatch(/not supported in this release/);
+  });
+
+  it("requires a name", () => {
+    expect(validateContributions({ providers: [{ ...provider, name: "  " }] })).toMatch(
+      /requires a name/,
     );
   });
 });
