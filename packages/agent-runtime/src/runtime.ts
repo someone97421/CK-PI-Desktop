@@ -1705,7 +1705,7 @@ Work splits into independent pieces — delegate, and keep your context for the 
 Use the Task tool when:
 - Parallel exploration: two or more independent directions (for example one subagent per subsystem, or backend + frontend + tests). Start one Task per direction in the same assistant message.
 - Adversarial review: after implementing a non-trivial change, delegate a read-only review of it to code-reviewer before you commit.
-- Implementation: a multi-file change with a complete, self-contained spec — delegate to fixer, which may write inside the workspace.
+- Implementation: a substantial change with a complete, self-contained spec — delegate to fixer, which may write inside the workspace.
 - Context economy: wide searches, long logs, multi-file surveys whose intermediate output you do not need — explorer / test-runner.
 - Batch sharding: the same bounded job repeated over many independent targets.
 
@@ -1716,7 +1716,7 @@ Delegation rules:
 - Specify reportIntervalSteps when the user has not fixed it. Progress reports do not pause children; use TaskGuide for corrections at the next tool boundary and TaskInspect for bounded records. Respect explicit user stops and never automatically recreate that work.
 - Review completed work. If fixes are needed, use TaskList to find canResume and execution, then TaskResume with the same delegationId, expectedExecution and review instructions. It retains that child's context in this session runtime; stopped, failed or released contexts cannot resume. Context persistence and restart recovery are not implemented.
 - You may talk to the user while subagents run. Do not TaskStop unless you have decided the work should not continue. The runtime keeps them alive and delivers their reports when they finish — ending your turn does not abort them.
-- Never delegate what you can finish in a couple of tool calls, and never delegate anything that needs the user.`,
+- Handle simple and small-to-medium tasks yourself when the context is clear. Delegate only substantial work, independently parallelizable work, or independent review; touching multiple files alone is not a reason to delegate. Never delegate work that needs user input.`,
             ...(this.subagentModelSummary()
               ? [this.subagentModelSummary()!]
               : []),
@@ -3649,8 +3649,8 @@ Delegation rules:
       label: "Task",
       description: [
         "Start one subagent in the background and return immediately; you keep working while it runs, then converge with TaskWait when you need its report.",
-        "Use it when the work is separable: parallel exploration of independent directions (one Task per direction in the same assistant message), a multi-file implementation with a complete spec (fixer), an adversarial read-only review of a change you just made (code-reviewer), or a wide search / long log / multi-file survey whose intermediate output would otherwise fill this context (explorer, test-runner).",
-        "Do not delegate what you can finish in a couple of tool calls, and do not delegate anything that needs the user — a subagent cannot ask a question or propose a plan on your behalf.",
+        "Use it when the work is separable: parallel exploration of independent directions (one Task per direction in the same assistant message), a substantial implementation with a complete spec (fixer), an adversarial read-only review of a change you just made (code-reviewer), or a wide search / long log / multi-file survey whose intermediate output would otherwise fill this context (explorer, test-runner).",
+        "Handle simple and small-to-medium tasks yourself when the context is clear. Delegate only substantial work, independently parallelizable work, or independent review; touching multiple files alone is not a reason to delegate. Never delegate work that needs user input — a subagent cannot ask a question or propose a plan on your behalf.",
         "A definition's pinned primary model is locked: Task.model is ignored, including the parent model or another authorized model. Configured fallback models are used only after failure.",
         ...(this.availableSubagentModelKeys().length
           ? [
