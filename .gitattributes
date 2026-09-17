@@ -1,1 +1,4 @@
 * text=auto eol=lf
+/start-dev.cmd text eol=crlf
+/kill-dev.cmd text eol=crlf
+/scripts/stop-dev.ps1 text eol=crlf

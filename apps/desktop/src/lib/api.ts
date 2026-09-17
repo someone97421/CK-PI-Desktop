@@ -1,4 +1,5 @@
 import { isAppearanceSettings, normalizeAppearance } from "@pi-desktop/shared";
+import { resolveLocale } from "@pi-desktop/i18n";
 import type {
   ConfigScope,
   ConfigTransferResult,
@@ -219,6 +220,7 @@ export type SessionHistoryReadOptions = {
 export function normalizeSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    language: !settings.language || settings.language === "auto" ? "auto" : resolveLocale(settings.language),
     defaultMode: normalizeMode((settings as { defaultMode?: unknown }).defaultMode),
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [sidebarSource, projectsSource, dialogSource, apiSource, protocolSource, hostSource, enSource, zhSource, trSource] =
+const [sidebarSource, projectsSource, dialogSource, apiSource, protocolSource, hostSource, enSource, zhSource] =
   await Promise.all([
     read("../src/components/Sidebar.tsx"),
     read("../src/pages/ProjectsPage.tsx"),
@@ -13,7 +13,6 @@ const [sidebarSource, projectsSource, dialogSource, apiSource, protocolSource, h
     read("../../../crates/host-core/src/rpc/mod.rs"),
     read("../../../packages/i18n/src/locales/en/index.ts"),
     read("../../../packages/i18n/src/locales/zh-CN/index.ts"),
-    read("../../../packages/i18n/src/locales/tr/index.ts"),
   ]);
 
 test("project rows expose an edit action in both project surfaces", () => {
@@ -45,7 +44,7 @@ test("project group update is available through the host RPC and preload API", (
   assert.match(hostSource, /update_project_group\(group_id, name, &folders\)/);
 });
 
-for (const [locale, source] of [["en", enSource], ["zh-CN", zhSource], ["tr", trSource]]) {
+for (const [locale, source] of [["en", enSource], ["zh-CN", zhSource]]) {
   test(`project edit labels are present in ${locale}`, () => {
     for (const key of [
       "edit",

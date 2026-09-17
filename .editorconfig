@@ -1,0 +1,8 @@
+# Windows 启停入口使用 CRLF；CMD 保持无 BOM，PowerShell 中文脚本必须带 BOM。
+[{start-dev.cmd,kill-dev.cmd}]
+charset = utf-8
+end_of_line = crlf
+
+[scripts/stop-dev.ps1]
+charset = utf-8-bom
+end_of_line = crlf

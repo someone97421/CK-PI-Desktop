@@ -139,9 +139,8 @@ test("a composer folder drop asks for an explicit project decision", () => {
 test("new drag/drop copy ships in the reviewed locales", () => {
   const en = read("../../../packages/i18n/src/locales/en/index.ts");
   const zhCN = read("../../../packages/i18n/src/locales/zh-CN/index.ts");
-  const zhTW = read("../../../packages/i18n/src/locales/zh-TW/index.ts");
 
-  for (const source of [en, zhCN, zhTW]) {
+  for (const source of [en, zhCN]) {
     for (const key of [
       "sessionMoved",
       "moveRunningSessionBlocked",

@@ -18,12 +18,7 @@ const en = entry([
 /** 本 fork 从日期构建版重新记版本；原项目历史保留在 changelog 文件中。 */
 export const FORK_CHANGELOG: Record<ChangelogLocale, readonly ChangelogEntry[]> = {
   "zh-CN": zh,
-  "zh-TW": entry([
-    "以編譯日期和時間記錄此 fork 版本。",
-    "獨立的安裝身分、快取與更新來源，繼續共用既有對話、設定和外掛資料。",
-    "統一使用小恐龍圖示，內建 Windows 黑畫面修正版終端。",
-  ]),
-  en, de: en, es: en, fr: en, ko: en, tr: en,
+  en,
 };
 
 export function formatForkChangelogNotes(version: string | undefined, locale?: string | null): string | undefined {

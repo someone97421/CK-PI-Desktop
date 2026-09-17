@@ -275,7 +275,7 @@ test("shared shipped-locale changelog is the in-app notes source of truth", () =
   assert.match(changelogSource, /export const CHANGELOG/);
   assert.match(changelogSource, /formatChangelogNotes/);
   assert.match(changelogSource, /"zh-CN"/);
-  assert.match(changelogSource, /"zh-TW"/);
+  assert.match(changelogSource, /ChangelogLocale = "en" \| "zh-CN"/);
   assert.match(changelogSource, /version: "0\.2\.7"/);
   assert.match(
     mainSource,

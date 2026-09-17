@@ -96,14 +96,7 @@
     "electronLanguages": [
       "en-US",
       "zh-CN",
-      "zh_CN",
-      "zh-TW",
-      "zh_TW",
-      "tr",
-      "de",
-      "es",
-      "fr",
-      "ko"
+      "zh_CN"
     ],
     "extraResources": [
       {

@@ -12,10 +12,8 @@ import { fileURLToPath } from "node:url";
 
 import { en } from "../../../packages/i18n/src/locales/en/index.ts";
 import { zhCN } from "../../../packages/i18n/src/locales/zh-CN/index.ts";
-import { tr } from "../../../packages/i18n/src/locales/tr/index.ts";
-import { ko } from "../../../packages/i18n/src/locales/ko/index.ts";
 
-const catalogs = { en, "zh-CN": zhCN, tr, ko };
+const catalogs = { en, "zh-CN": zhCN };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = join(here, "..");

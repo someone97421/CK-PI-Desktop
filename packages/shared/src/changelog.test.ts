@@ -15,12 +15,6 @@ describe("changelog catalog", () => {
     const zh = CHANGELOG["zh-CN"];
     for (const catalog of [
       zh,
-      CHANGELOG["zh-TW"],
-      CHANGELOG.tr,
-      CHANGELOG.de,
-      CHANGELOG.es,
-      CHANGELOG.fr,
-      CHANGELOG.ko,
     ]) {
       expect(catalog.map((e) => e.version)).toEqual(en.map((e) => e.version));
       for (let i = 0; i < en.length; i += 1) {
@@ -118,15 +112,15 @@ describe("changelog catalog", () => {
   it("normalizes versions and resolves locales", () => {
     expect(normalizeChangelogVersion(" v0.2.7 ")).toBe("0.2.7");
     expect(resolveChangelogLocale("zh-CN")).toBe("zh-CN");
-    expect(resolveChangelogLocale("zh-TW")).toBe("zh-TW");
-    expect(resolveChangelogLocale("zh-Hant")).toBe("zh-TW");
-  expect(resolveChangelogLocale("zh_HK")).toBe("zh-TW");
-  expect(resolveChangelogLocale("tr-TR")).toBe("tr");
-  expect(resolveChangelogLocale("de-DE")).toBe("de");
-  expect(resolveChangelogLocale("es-MX")).toBe("es");
-  expect(resolveChangelogLocale("fr-CA")).toBe("fr");
-  expect(resolveChangelogLocale("ko-KR")).toBe("ko");
-  expect(resolveChangelogLocale("ko_KR")).toBe("ko");
+    expect(resolveChangelogLocale("zh-TW")).toBe("zh-CN");
+    expect(resolveChangelogLocale("zh-Hant")).toBe("zh-CN");
+  expect(resolveChangelogLocale("zh_HK")).toBe("zh-CN");
+  expect(resolveChangelogLocale("tr-TR")).toBe("en");
+  expect(resolveChangelogLocale("de-DE")).toBe("en");
+  expect(resolveChangelogLocale("es-MX")).toBe("en");
+  expect(resolveChangelogLocale("fr-CA")).toBe("en");
+  expect(resolveChangelogLocale("ko-KR")).toBe("en");
+  expect(resolveChangelogLocale("ko_KR")).toBe("en");
     expect(resolveChangelogLocale("en-US")).toBe("en");
     expect(resolveChangelogLocale()).toBe("en");
   });

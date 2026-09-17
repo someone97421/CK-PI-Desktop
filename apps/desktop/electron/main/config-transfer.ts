@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { dialog } from "electron";
 import { globalInstructionPath } from "@pi-desktop/agent-runtime";
+import { resolveLocale } from "@pi-desktop/i18n";
 import {
   APPEARANCE_KEYS, CONFIG_SCOPES, KEYBOARD_SHORTCUTS, SUBAGENT_THINKING_LEVELS,
   isAllowedKeybinding, isReservedKeybinding, isAppearanceSettings,
@@ -24,8 +25,10 @@ const filters = [{ name: "JSON 配置文件", extensions: ["json"] }];
 const appearanceLabels = { theme: "主题", language: "语言", fontFamily: "字体", fontScale: "字号", appearance: "分区字体与配色" };
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 function invalid(message: string): never { throw new Error(`配置文件无效：${message}`); }
-const appearanceOf = (s: AppSettings) => ({
-  theme: s.theme, language: s.language ?? "auto", fontFamily: s.fontFamily ?? "",
+const appearanceOf = (s: AppSettings): NonNullable<ConfigExportFile["appearance"]> => ({
+  theme: s.theme,
+  language: !s.language || s.language === "auto" ? "auto" : resolveLocale(s.language),
+  fontFamily: s.fontFamily ?? "",
   fontScale: s.fontScale ?? 1, appearance: s.appearance ?? {},
 });
 async function readInstructions() {
@@ -52,7 +55,10 @@ function parseFile(raw: string): ConfigExportFile {
     const a = file.appearance;
     if (!record(a) || Object.keys(a).some((k) => !(APPEARANCE_KEYS as readonly string[]).includes(k))) invalid("外观字段不正确");
     if (a.theme !== undefined && (typeof a.theme !== "string" || !["system", "light", "dark"].includes(a.theme) && !a.theme.startsWith("plugin:"))) invalid("主题不正确");
-    if (a.language !== undefined && !["auto", "en", "zh-CN", "zh-TW", "tr", "de", "es", "fr", "ko"].includes(a.language)) invalid("语言不正确");
+    if (a.language !== undefined) {
+      if (typeof a.language !== "string") invalid("语言不正确");
+      a.language = a.language === "auto" ? "auto" : resolveLocale(a.language);
+    }
     if (a.fontFamily !== undefined && typeof a.fontFamily !== "string") invalid("字体不正确");
     if (a.fontScale !== undefined && (typeof a.fontScale !== "number" || a.fontScale < 0.8 || a.fontScale > 1.5)) invalid("字号比例不正确");
     if (a.appearance !== undefined && !isAppearanceSettings(a.appearance)) invalid("外观配色不正确");

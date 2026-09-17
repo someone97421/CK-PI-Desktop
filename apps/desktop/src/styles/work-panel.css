@@ -614,11 +614,7 @@
 }
 
 :lang(zh-CN) .subagent-detail-section-label,
-:lang(zh-CN) .subagent-detail > .subagent-run .subagent-run-heading.is-dock,
-:lang(zh-TW) .subagent-detail-section-label,
-:lang(zh-TW) .subagent-detail > .subagent-run .subagent-run-heading.is-dock,
-:lang(ko) .subagent-detail-section-label,
-:lang(ko) .subagent-detail > .subagent-run .subagent-run-heading.is-dock {
+:lang(zh-CN) .subagent-detail > .subagent-run .subagent-run-heading.is-dock {
   letter-spacing: var(--tracking-normal);
   text-transform: none;
 }

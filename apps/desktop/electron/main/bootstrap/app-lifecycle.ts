@@ -452,12 +452,13 @@ export function createApplicationLifecycle({
     keybindings?: unknown;
     developerMode?: unknown;
   } | null) {
-    const locale =
+    const locale = resolveLocale(
       typeof settings?.language === "string" &&
       settings.language &&
       settings.language !== "auto"
         ? settings.language
-        : app.getLocale();
+        : app.getLocale(),
+    );
     if (locale !== appearanceState.updaterLocale) {
       appearanceState.updaterLocale = locale;
       refreshReleaseNotes();
