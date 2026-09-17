@@ -50,16 +50,12 @@ export function subagentDefinitionDir(_workspaceRoot: string): string {
 }
 
 /**
- * Definitions PI-Desktop ships. Each one earns its prompt-token cost by being
- * a delegation the main agent would otherwise do inline at full context cost:
- * fast codebase navigation, a second opinion on a diff, running a test
- * command, and — for `fixer` — implementing a multi-file change in its own
- * context (ADR 0089).
+ * 内置定义描述可用能力；是否派发由主代理优先、收益明确的协作规则决定。
  */
 export const BUILTIN_SUBAGENT_DOCUMENTS: readonly string[] = [
   `---
 name: explorer
-description: Fast codebase search and pattern matching — find files, locate implementations and answer "where is X?" / "how does Y work?". Use when answering needs a sweep over many files and you only want the conclusion.
+description: Deep investigation of an independent subsystem, complex call chain or fault hypothesis, returning concise evidence. Useful for substantial parallel exploration; routine targeted searches stay with the main agent.
 tools: [Read, Glob, Grep, Bash]
 ---
 
@@ -84,7 +80,7 @@ than a guess.
 </answer>`,
   `---
 name: code-reviewer
-description: Review specific code or a specific change for defects. Use for a second opinion on correctness, edge cases and missing tests before you commit.
+description: Focused read-only review of finished changes when an independent perspective or isolated context adds value. Not a mandatory step before every commit; ordinary self-review stays with the main agent.
 tools: [Read, Glob, Grep]
 ---
 
@@ -101,7 +97,7 @@ what input. Order by severity. If the code is sound, say so plainly and name
 the cases you checked — an empty review with no evidence is not a review.`,
   `---
 name: test-runner
-description: Run a specific test or build command and report what failed and why. Use when a command's output is long and only the failures matter.
+description: Substantial independent verification, reproduction or failure diagnosis while the main agent advances other work. Ordinary test/build commands or long output alone do not require a delegate.
 tools: [Read, Glob, Grep, Bash]
 ---
 
@@ -118,7 +114,7 @@ assertion or error, and the \`path:line\` you believe is responsible. Keep the
 raw output out of the report except for the lines that carry the failure.`,
   `---
 name: fixer
-description: Implement a complete multi-file change from a spec. Use when a feature or fix spans several files and the work is separable — it can write files inside the workspace while you keep working.
+description: Implement a substantial independent module or generation batch with clear scope, stable interfaces and non-overlapping file ownership. Local or naturally sequential changes stay with the main agent, even across multiple files.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 ---
 
@@ -150,7 +146,7 @@ Report in this shape:
 </verification>`,
   `---
 name: ui-designer
-description: Design and implement a web interface from a brief — visual system, motion and complete interaction states, inspected in the browser preview or project browser tests. Use for building or restyling a UI when the visual work should run in its own context.
+description: Design and implement a substantial, clearly scoped interface when parallel visual work or isolated design context adds value. Small styling and interaction changes stay with the main agent.
 tools: [Read, Glob, Grep, BrowserPreview, Bash, Edit, Write]
 ---
 
