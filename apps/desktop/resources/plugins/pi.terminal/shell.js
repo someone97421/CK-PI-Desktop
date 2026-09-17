@@ -113,19 +113,40 @@ function resolveDefaultShell(opts = {}) {
 function gitBashPath(opts = {}) {
   const existsSync = opts.existsSync || fs.existsSync;
   const env = opts.env || process.env;
+  const pathMod = opts.path || path;
   const pf = env.ProgramFiles || "C:\\Program Files";
   const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
-  const local = env.LOCALAPPDATA || "";
-  return firstExisting(
-    [
-      which("bash.exe", { ...opts, env }),
-      path.join(pf, "Git", "bin", "bash.exe"),
-      path.join(pf, "Git", "usr", "bin", "bash.exe"),
-      path.join(pf86, "Git", "bin", "bash.exe"),
-      local ? path.join(local, "Programs", "Git", "bin", "bash.exe") : null,
-    ].filter(Boolean),
-    existsSync,
+  const local = env.LOCALAPPDATA || pathMod.join(opts.home || os.homedir(), "AppData", "Local");
+  const roots = [];
+  // 从 PATH 中的 Git/Bash 推导安装根目录，支持自定义安装位置。
+  // 不能直接使用第一个 bash.exe：它可能是 System32 或 WindowsApps 中的 WSL 入口。
+  for (const name of ["git.exe", "bash.exe"]) {
+    const executable = which(name, { ...opts, env });
+    if (!executable) continue;
+    let dir = pathMod.dirname(executable);
+    for (let level = 0; level < 3; level += 1) {
+      roots.push(dir);
+      dir = pathMod.dirname(dir);
+    }
+  }
+  roots.push(
+    pathMod.join(pf, "Git"),
+    pathMod.join(pf86, "Git"),
+    pathMod.join(local, "Programs", "Git"),
   );
+  for (const root of new Set(roots)) {
+    // 只有带 Git 可执行文件的安装目录才能提供内置 Git Bash profile。
+    if (!firstExisting([
+      pathMod.join(root, "cmd", "git.exe"),
+      pathMod.join(root, "bin", "git.exe"),
+    ], existsSync)) continue;
+    const bash = firstExisting([
+      pathMod.join(root, "bin", "bash.exe"),
+      pathMod.join(root, "usr", "bin", "bash.exe"),
+    ], existsSync);
+    if (bash) return bash;
+  }
+  return null;
 }
 
 function discoverBuiltinProfiles(opts = {}) {

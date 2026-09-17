@@ -69,6 +69,12 @@ try {
         const cli = require.resolve("electron-builder/cli.js");
         const args = mode === "pack" ? ["--dir", "--publish", "never"]
           : [...(mode.includes(":") ? [`--${mode.split(":")[1]}`] : []), "--publish", "never"];
+        // 重试时可换用独立产物目录，避免清理或覆盖被占用的旧目录。
+        const outputDirectory = process.env.THIS_IS_A_AGENT_OUTPUT_DIR?.trim();
+        if (outputDirectory) args.push(`--config.directories.output=${outputDirectory}`);
+        // Windows 解压后重命名失败时，可显式复用同版本的已解压 Electron。
+        const electronDistribution = process.env.THIS_IS_A_AGENT_ELECTRON_DIST?.trim();
+        if (electronDistribution) args.push(`--config.electronDist=${electronDistribution}`);
         await run(process.execPath, [cli, ...args], desktop);
       }
     }

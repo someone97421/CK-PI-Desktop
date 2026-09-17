@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/desktop",
-  "version": "2609.1622.5115",
+  "version": "2609.1712.5047",
   "desktopName": "this-is-a-agent.desktop",
   "private": true,
   "description": "这是一个助手 — local-first AI coding agent desktop app",
@@ -121,7 +121,7 @@
       }
     ],
     "mac": {
-      "artifactName": "this-is-a-agent-20260916-225115-${arch}-mac.${ext}",
+      "artifactName": "this-is-a-agent-20260917-125047-${arch}-mac.${ext}",
       "target": [
         {
           "target": "dmg"
@@ -154,10 +154,10 @@
         "CFBundleDisplayName": "这是一个助手",
         "CFBundleName": "这是一个助手"
       },
-      "bundleVersion": "2609.1622.5115"
+      "bundleVersion": "2609.1712.5047"
     },
     "dmg": {
-      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-20260917-125047-${arch}.${ext}",
       "window": {
         "width": 720,
         "height": 500
@@ -217,21 +217,21 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "这是一个助手",
-      "artifactName": "this-is-a-agent-Setup-20260916-225115-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-Setup-20260917-125047-${arch}.${ext}",
       "uninstallDisplayName": "这是一个助手",
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "this-is-a-agent-Portable-20260916-225115-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-Portable-20260917-125047-${arch}.${ext}",
       "requestExecutionLevel": "user"
     },
     "deb": {
       "packageName": "this-is-a-agent",
-      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}"
+      "artifactName": "this-is-a-agent-20260917-125047-${arch}.${ext}"
     },
     "rpm": {
       "packageName": "this-is-a-agent",
-      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-20260917-125047-${arch}.${ext}",
       "fpm": [
         "--rpm-rpmbuild-define",
         "_build_id_links none"
@@ -275,15 +275,15 @@
           "Comment": "这是一个助手"
         }
       },
-      "artifactName": "this-is-a-agent-20260916-225115-${arch}.${ext}"
+      "artifactName": "this-is-a-agent-20260917-125047-${arch}.${ext}"
     },
     "asar": {
       "smartUnpack": false
     },
-    "buildVersion": "2609.1622.5115.0",
+    "buildVersion": "2609.1712.5047.0",
     "extraMetadata": {
       "name": "this-is-a-agent"
     }
   },
-  "buildVersionLabel": "20260916-225115"
+  "buildVersionLabel": "20260917-125047"
 }

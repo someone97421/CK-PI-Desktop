@@ -1087,7 +1087,8 @@ function pluginProcessEnv(pluginId: string): Record<string, string> {
     PI_PLUGIN_ID: pluginId,
     NODE_ENV: process.env.NODE_ENV ?? "production",
   };
-  for (const key of ["PATH", "SystemRoot", "windir", "TEMP", "TMP", "TMPDIR", "LANG"]) {
+  // Windows Shell 依赖 PATHEXT 识别可执行文件；遗漏后，省略 .exe 的命令无法查找。
+  for (const key of ["PATH", "PATHEXT", "SystemRoot", "windir", "TEMP", "TMP", "TMPDIR", "LANG"]) {
     const value = process.env[key];
     if (value) env[key] = value;
   }

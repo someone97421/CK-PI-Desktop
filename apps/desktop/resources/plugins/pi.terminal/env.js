@@ -123,6 +123,10 @@ function mergeUserEnv(loginEnv, opts = {}) {
     platform,
     env: merged,
   });
+  // 兼容尚未传递 PATHEXT 的旧宿主，保留宿主已有的扩展名配置。
+  if (platform === "win32" && !String(merged.PATHEXT || "").trim()) {
+    merged.PATHEXT = ".COM;.EXE;.BAT;.CMD";
+  }
   merged.HOME = merged.HOME || home;
   merged.SHELL = merged.SHELL || opts.shell || processEnv.SHELL;
   merged.USER = merged.USER || processEnv.USER || processEnv.USERNAME || os.userInfo().username;

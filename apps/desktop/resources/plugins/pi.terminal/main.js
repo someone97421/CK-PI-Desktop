@@ -114,7 +114,7 @@ async function loadConfig() {
     maxSessions,
     scrollbackBytes: scrollback * 256,
   });
-  const builtin = shell.discoverBuiltinProfiles();
+  const builtin = shell.discoverBuiltinProfiles({ env: await loginEnv() });
   const user = shell.normalizeUserProfiles(settings.profiles);
   return {
     fontSize,
