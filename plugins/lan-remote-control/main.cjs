@@ -7,7 +7,7 @@
  * wires four things together:
  *
  *   1. the desktop panel channels (`onPanelInvoke`) — the only place a device
- *      can be approved, revoked or paired;
+ *      can set the access password or revoke devices;
  *   2. the resident service declared as `lan-remote-control`, which owns the
  *      network server's lifecycle but never starts it on its own;
  *   3. the host adapter (`host-adapter.cjs`) through
@@ -18,7 +18,7 @@
  *      server).
  *
  * No listener is created until the user starts the service from the panel, and
- * stopping it leaves nothing behind: no socket, no token, no staged file.
+ * stopping it leaves nothing behind: no socket or staged file; password hashes and device records stay in plugin data.
  */
 
 const crypto = require("node:crypto");
@@ -40,10 +40,7 @@ const SERVICE_ID = "lan-remote-control";
 const DEFAULT_SETTINGS = Object.freeze({
   bindAddress: "",
   port: 7878,
-  pairTtlSeconds: 120,
 });
-const MIN_PAIR_TTL_SECONDS = 30;
-const MAX_PAIR_TTL_SECONDS = 600;
 const SETTINGS_CACHE_MS = 5000;
 const APPEARANCE_CACHE_MS = 15_000;
 const LOG_RING_SIZE = 50;
@@ -55,9 +52,9 @@ const PANEL_CHANNELS = Object.freeze([
   "remote.refresh",
   "remote.start",
   "remote.stop",
-  "remote.pair",
-  "remote.approve",
-  "remote.reject",
+  "remote.link",
+  "remote.setPassword",
+  "remote.indicator",
   "remote.revoke",
   "remote.revokeAll",
 ]);
@@ -138,18 +135,8 @@ function normalizeSettings(raw) {
     }
   }
 
-  let pairTtlSeconds = DEFAULT_SETTINGS.pairTtlSeconds;
-  if (source.pairTtlSeconds !== undefined) {
-    const parsed = Number(source.pairTtlSeconds);
-    if (Number.isFinite(parsed) && parsed >= MIN_PAIR_TTL_SECONDS && parsed <= MAX_PAIR_TTL_SECONDS) {
-      pairTtlSeconds = Math.round(parsed);
-    } else {
-      errors.push(`pairTtlSeconds 必须在 ${MIN_PAIR_TTL_SECONDS}..${MAX_PAIR_TTL_SECONDS} 秒之间，已回退为默认值`);
-    }
-  }
-
   return {
-    settings: { bindAddress, port, pairTtlSeconds },
+    settings: { bindAddress, port },
     error: errors.length ? errors.join("；") : null,
   };
 }
@@ -377,8 +364,7 @@ async function buildStatus() {
         startedAt: null,
         error: null,
         restartRequired: false,
-        pairing: null,
-        pendingRequests: [],
+        passwordConfigured: false,
         devices: [],
         capabilities: null,
         capabilitiesError: null,
@@ -433,16 +419,10 @@ async function stopFromPanel() {
   }
 }
 
-async function pairFromPanel(input) {
-  if (!remote) return { ok: false, error: { code: "NOT_RUNNING", message: "请先启动远程服务" } };
-  await refreshSettings(true);
-  const requested = Number(input.ttlSeconds);
-  const ttlSeconds = Number.isFinite(requested)
-    ? Math.min(MAX_PAIR_TTL_SECONDS, Math.max(MIN_PAIR_TTL_SECONDS, Math.round(requested)))
-    : settings.pairTtlSeconds;
-  const result = await remote.createPairing({ ttlSeconds });
-  if (!result.ok) return { ok: false, error: { code: result.code, message: result.message } };
-  return { ok: true, pairing: result.pairing };
+async function linkFromPanel() {
+  if (!remote) return { ok: false, error: { code: "NOT_RUNNING", message: "请先开启远程访问" } };
+  const result = remote.createLink();
+  return result.ok ? result : { ok: false, error: { code: result.code, message: result.message } };
 }
 
 async function refreshFromPanel() {
@@ -465,28 +445,16 @@ async function onPanelInvoke(channel, payload) {
       return startFromPanel(input);
     case "remote.stop":
       return stopFromPanel();
-    case "remote.pair":
-      return pairFromPanel(input);
-    case "remote.approve": {
-      if (!remote) return { ok: false, error: { code: "NOT_RUNNING", message: "远程服务未启动" } };
-      const requestId = typeof input.requestId === "string" ? input.requestId : "";
-      if (!requestId) return { ok: false, error: { code: "INVALID_PARAMS", message: "requestId 必填" } };
-      const result = remote.approveRequest(requestId);
-      if (!result.ok) return { ok: false, error: { code: result.code, message: result.message } };
+    case "remote.link":
+      return linkFromPanel();
+    case "remote.indicator":
+      return { running: remote?.getStatus().running === true };
+    case "remote.setPassword": {
       try {
-        await pi.ui.showToast(`已授权设备：${result.request.deviceName}`);
-      } catch {
-        /* a toast is a nicety, not part of the result */
-      }
-      return { ok: true, request: result.request, status: await buildStatus() };
-    }
-    case "remote.reject": {
-      if (!remote) return { ok: false, error: { code: "NOT_RUNNING", message: "远程服务未启动" } };
-      const requestId = typeof input.requestId === "string" ? input.requestId : "";
-      if (!requestId) return { ok: false, error: { code: "INVALID_PARAMS", message: "requestId 必填" } };
-      const result = remote.rejectRequest(requestId);
-      if (!result.ok) return { ok: false, error: { code: result.code, message: result.message } };
-      return { ok: true, request: result.request, status: await buildStatus() };
+        await ensureRemote();
+        await remote.setPassword(input.password);
+        return { ok: true, status: await buildStatus() };
+      } catch (error) { return { ok: false, error: errorPayload(error) }; }
     }
     case "remote.revoke": {
       if (!remote) return { ok: false, error: { code: "NOT_RUNNING", message: "远程服务未启动" } };
@@ -516,8 +484,8 @@ function actionForCommandId(id) {
       return "start";
     case "stop":
       return "stop";
-    case "pair":
-      return "pair";
+    case "link":
+      return "link";
     default:
       return null;
   }
@@ -549,14 +517,8 @@ async function runCommandAction(action, title) {
       await stopFromPanel();
       return;
     }
-    case "pair": {
-      const paired = await pairFromPanel({});
+    case "link": {
       await openPanel(title);
-      try {
-        await pi.ui.showToast(paired.ok ? "二维码已生成，请在面板中查看" : `配对失败：${paired.error.message}`, paired.ok ? "info" : "error");
-      } catch {
-        /* ignore */
-      }
       return;
     }
     default:
@@ -582,7 +544,7 @@ async function registerCommands(manifest) {
       await pi.commands.register({
         id: entry.id,
         title: entry.title,
-        keywords: ["remote", "lan", "二维码", "手机"],
+        keywords: ["remote", "lan", "访问链接", "手机"],
         run: () => runCommandAction(entry.action, title),
       });
       registeredCommands.push(entry.id);

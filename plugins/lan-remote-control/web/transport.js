@@ -1,5 +1,5 @@
 /**
- * 传输层：HTTP RPC、配对、附件上传/读取、WebSocket 事件流。
+ * 传输层：HTTP RPC、密码登录、附件上传/读取、WebSocket 事件流。
  *
  * 只负责「把请求发出去、把信封拆开、把事件交给上层」，不含 UI 文案与渲染。
  * 失败一律抛 ProtocolError（带 code / status / retriable / requestId）。
@@ -20,8 +20,7 @@ import {
   HEARTBEAT_TIMEOUT_MS,
   MUTATION_PATH,
   MUTATION_TIMEOUT_MS,
-  PAIR_PATH,
-  PAIR_STATUS_PATH,
+  LOGIN_PATH,
   ProtocolError,
   READ_TIMEOUT_MS,
   RECONNECT_MAX_MS,
@@ -32,8 +31,6 @@ import {
   UPLOAD_PATH,
   WS_PATH,
   isMutationOperation,
-  normalizePairResult,
-  normalizePairStatus,
   protocolErrorFromResponse,
   uuid,
 } from "./protocol.js";
@@ -252,35 +249,24 @@ export class RemoteClient {
     });
   }
 
-  // --- 配对 ---------------------------------------------------------------
+  // --- 登录 ---------------------------------------------------------------
 
   async health({ signal } = {}) {
     const { result } = await this.rawRequest("/api/health", { method: "GET", headers: {}, signal });
     return result;
   }
 
-  async pair(token, name, signal) {
-    const { result } = await this.rawRequest(PAIR_PATH, {
-      method: "POST",
-      headers: this.baseHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ token, name }),
-      timeoutMs: READ_TIMEOUT_MS,
-      signal,
+  async login(password, name) {
+    const { result } = await this.rawRequest(LOGIN_PATH, {
+      method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ password, name }), allowUnauthorized: true,
     });
-    const normalized = normalizePairResult(result);
-    if (!normalized.ticket) throw new ProtocolError("INTERNAL", "配对响应缺少 ticket");
-    return normalized;
+    if (!result || typeof result.token !== "string" || !result.deviceId) throw new ProtocolError("INTERNAL", "登录响应无效");
+    return result;
   }
 
-  async pairStatus(ticket, { signal } = {}) {
-    const query = new URLSearchParams({ ticket });
-    const { result } = await this.rawRequest(`${PAIR_STATUS_PATH}?${query.toString()}`, {
-      method: "GET",
-      headers: {},
-      timeoutMs: READ_TIMEOUT_MS,
-      signal,
-    });
-    return normalizePairStatus(result);
+  async logout() {
+    await this.rawRequest("/api/logout", { method: "POST", headers: this.baseHeaders() });
   }
 
   // --- 附件 ---------------------------------------------------------------
@@ -443,7 +429,7 @@ export class EventSocket {
       const code = event && event.code;
       if (code === 4401 || code === 4403) {
         this.setStatus("unauthorized", { code });
-        this.onError(new ProtocolError(ErrorCodes.UNAUTHORIZED, "授权已失效，请重新配对", { status: 401 }));
+        this.onError(new ProtocolError(ErrorCodes.UNAUTHORIZED, "授权已失效，请重新登录", { status: 401 }));
         return;
       }
       this.scheduleReconnect(code === 4001 ? "电脑端服务已停止" : "连接已断开");

@@ -892,6 +892,7 @@ export const api = {
   listPluginThemes: () => invoke<PluginTheme[]>(IPC.invoke.pluginThemes),
   listPluginSettingsDestinations: () => invoke<PluginSettingsDestinationMeta[]>(IPC.invoke.pluginSettingsDestinations),
   listPluginServices: () => invoke<PluginServiceStatus[]>(IPC.invoke.pluginServices),
+  getRemoteAccessStatus: () => invoke<{ available: boolean; running: boolean; failed?: boolean }>(IPC.invoke.pluginRemoteAccessStatus),
   /**
    * Work panel views, already filtered by permission, activation scope, and
    * entry existence, with titles resolved for the active locale (ADR 0104).

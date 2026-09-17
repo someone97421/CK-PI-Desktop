@@ -18,6 +18,13 @@ export { formatBytes, formatRelative, formatTime };
  */
 export function el(tag, props, ...children) {
   const node = document.createElement(tag);
+  if (tag === "dialog") enableDialogDismiss(node);
+  if (tag === "select") node.addEventListener("change", () => {
+    // 收起选择器但保留设置面板，让用户仍能点击“应用”。
+    const dialog = node.closest("dialog");
+    if (dialog) dialog.focus({ preventScroll: true });
+    else node.blur();
+  });
   if (props) {
     for (const [key, value] of Object.entries(props)) {
       if (value === undefined || value === null) continue;
@@ -76,6 +83,13 @@ export function withClass(tag, className, ...children) {
 
 /** 只允许静态图标表；path 数据是本文件内的常量，不含远端内容。 */
 const ICON_PATHS = {
+  theme: "M20 13a8 8 0 01-9-9 8 8 0 109 9z",
+  model: "M8 3v3M16 3v3M8 18v3M16 18v3M3 8h3M3 16h3M18 8h3M18 16h3M6 6h12v12H6zM10 10h4v4h-4z",
+  commands: "M4 6l6 6-6 6M13 18h7",
+  library: "M3 5h18v14H3zM9 5v14",
+  shield: "M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6zM8 12l3 3 5-6",
+  login: "M14 4h6v16h-6M3 12h12M10 7l5 5-5 5",
+  logout: "M10 4H4v16h6M10 12h11M16 7l5 5-5 5",
   back: "M15 18l-6-6 6-6",
   forward: "M9 6l6 6-6 6",
   menu: "M3 6h18M3 12h18M3 18h18",
@@ -100,7 +114,6 @@ const ICON_PATHS = {
   up: "M6 15l6-6 6 6",
   device: "M8 3h8v18H8zM11 19h2",
   link: "M10 13a5 5 0 007 0l2-2a5 5 0 00-7-7l-1 1M14 11a5 5 0 00-7 0l-2 2a5 5 0 007 7l1-1",
-  qr: "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z",
   power: "M12 3v8M6.3 6.3a8 8 0 1011.4 0",
   warning: "M12 4l9 16H3zM12 10v4M12 17h.01",
   info: "M12 4a8 8 0 100 16 8 8 0 000-16zM12 11v5M12 8h.01",
@@ -127,16 +140,66 @@ export function icon(name, { size = 18, className = "" } = {}) {
   return svg;
 }
 
-export function button(label, { variant = "ghost", iconName, onClick, className = "", title, disabled = false, type = "button", size = "" } = {}) {
+const ACTION_ICONS = {
+  "主题": "theme", "退出登录": "logout", "登录": "login", "发送": "send", "停止": "stop",
+  "附件": "attach", "命令/技能": "commands", "模型": "model", "队列": "queue",
+  "项目列表": "library", "刷新": "refresh", "＋ 新对话": "plus",
+  "返回主对话": "back", "打开侧边对话": "sidechat", "侧边对话": "sidechat",
+  "加载更多会话": "down", "加载更早消息": "up", "复制": "copy", "引用": "quote",
+  "批注": "annotation", "编辑重发": "edit", "重试": "retry", "编辑": "edit",
+  "关闭": "close", "取消": "close", "移除": "close", "预览": "search", "应用": "check",
+  "批准": "check", "拒绝": "close", "提交回答": "send", "立即发送": "send",
+  "上移": "up", "下移": "down", "查询原提交": "search", "已核对，解除未决状态": "check",
+};
+
+export function button(label, { variant = "ghost", iconName, preserveLabel = false, onClick, className = "", title, disabled = false, type = "button", size = "" } = {}) {
+  if (!preserveLabel) iconName ||= ACTION_ICONS[label] || (/^批注 \d/.test(label) ? "annotation" : undefined);
   const node = el("button", {
-    className: `btn btn-${variant}${size ? ` btn-${size}` : ""}${className ? ` ${className}` : ""}`,
+    className: `btn btn-${variant}${iconName && !preserveLabel ? " btn-icon-action" : ""}${size ? ` btn-${size}` : ""}${className ? ` ${className}` : ""}`,
     attrs: { type, title: title || label || "", disabled: disabled || undefined, "aria-label": title || label || "" },
   });
   if (iconName) node.append(icon(iconName, { size: 16 }));
-  if (label) node.append(el("span", { text: label }));
+  if (label) node.append(el("span", { className: "btn-label", text: label }));
   if (onClick) node.addEventListener("click", onClick);
   return node;
 }
+
+/** 所有选项、队列、预览弹窗共用：点空白、焦点移出、Esc 均可关闭。 */
+function enableDialogDismiss(dialog) {
+  dialog.tabIndex = -1;
+  const remove = dialog.remove.bind(dialog);
+  let removing = false;
+  dialog.remove = () => {
+    if (removing) return;
+    removing = true;
+    if (dialog.open) dialog.close();
+    remove();
+    removing = false;
+  };
+  dialog.addEventListener("cancel", (event) => { event.preventDefault(); dialog.remove(); });
+  dialog.addEventListener("close", () => dialog.remove());
+  dialog.addEventListener("pointerdown", (event) => {
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+      event.preventDefault();
+      dialog.remove();
+    }
+  });
+  dialog.addEventListener("focusout", () => {
+    queueMicrotask(() => {
+      if (dialog.open && document.hasFocus() && !dialog.contains(document.activeElement)) dialog.remove();
+    });
+  });
+}
+
+function dismissOpenDialogs() {
+  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.remove();
+}
+window.addEventListener("blur", () => {
+  // 原生选择器可能暂时取得系统焦点，允许用户完成选择。
+  if (document.activeElement?.tagName !== "SELECT") dismissOpenDialogs();
+});
+document.addEventListener("visibilitychange", () => { if (document.hidden) dismissOpenDialogs(); });
 
 export function iconButton(name, { title, onClick, className = "", disabled = false } = {}) {
   const node = el("button", {

@@ -1,3 +1,4 @@
+import { createLoginView } from "./views/connect.js";
 import { el, button, copyText } from "./dom.js";
 import { RemoteClient, EventSocket } from "./transport.js";
 import { uuid, TOKEN_STORAGE_KEY, describeError } from "./protocol.js";
@@ -41,7 +42,18 @@ function onEvent(frame) {
 }
 
 const root = document.querySelector("#app");
-let token = sessionStorage.getItem(TOKEN_STORAGE_KEY) || "",
+function readToken() {
+  try { return localStorage.getItem(TOKEN_STORAGE_KEY) || sessionStorage.getItem(TOKEN_STORAGE_KEY) || ""; } catch { return ""; }
+}
+function storeToken(value) {
+  try { localStorage.setItem(TOKEN_STORAGE_KEY, value); }
+  catch { try { sessionStorage.setItem(TOKEN_STORAGE_KEY, value); } catch { /* 浏览器禁用存储时，本标签页仍可登录。 */ } }
+}
+function clearToken() {
+  try { localStorage.removeItem(TOKEN_STORAGE_KEY); sessionStorage.removeItem(TOKEN_STORAGE_KEY); } catch {}
+}
+let loginVisible = false;
+let token = readToken(),
   current = null,
   snapshot = null,
   projects = [],
@@ -97,6 +109,13 @@ const header = el(
   "header",
   { className: "topbar" },
   el("strong", { text: "这是一个助手 · 远程" }),
+  button("退出登录", {
+    className: "logout-button",
+    onClick: () => action(async () => {
+      await api.logout();
+      token = ""; clearToken(); showLogin(); notice.textContent = "已退出登录";
+    }),
+  }),
   button("主题", {
     onClick: () => {
       document.documentElement.dataset.theme =
@@ -118,9 +137,10 @@ const api = new RemoteClient({
   getToken: () => token,
   onUnauthorized: () => {
     token = "";
-    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    clearToken();
     socket?.close?.();
-    notice.textContent = "授权已失效，请回到电脑重新配对。";
+    showLogin();
+    notice.textContent = "登录已失效，请重新输入主机密码。";
   },
 });
 function report(error) {
@@ -224,57 +244,24 @@ function layout() {
   drawRecovery();
   delete document.documentElement.dataset.booting;
 }
-async function pair() {
+function showLogin() {
+  if (loginVisible) return;
+  loginVisible = true;
+  root.dataset.authenticated = "false";
+  renderVersion++; refreshVersion++;
+  current = null; snapshot = null; messages = []; liveTools.clear(); recentEvents.length = 0;
+  socket?.close?.();
+  for (const dialog of document.querySelectorAll("dialog")) dialog.remove();
   layout();
   document.querySelector(".remote-layout").dataset.view = "chat";
-  library.hidden = true;
-  composer.hidden = true;
-  const params = new URLSearchParams(location.hash.slice(1));
-  const code = params.get("token");
+  library.replaceChildren(); library.hidden = true; composer.hidden = true;
+  recoveryPanel.hidden = true;
   history.replaceState(null, "", location.pathname);
-  const name = el("input", {
-    value: "我的手机",
-    attrs: { maxlength: 64, "aria-label": "设备名称" },
-  });
-  transcript.replaceChildren(
-    el("h1", { text: "连接你的助手" }),
-    el("p", {
-      text: code
-        ? "填写设备名称，并在电脑上批准本次连接。"
-        : "请在电脑的远程控制面板生成新二维码或配对链接。",
-    }),
-  );
-  if (!code) return;
-  const connect = button("请求连接", {
-    variant: "primary",
-    onClick: () =>
-      action(async () => {
-        connect.disabled = true;
-        try {
-          const result = await api.pair(code, name.value);
-          notice.textContent = "等待电脑批准…";
-          await pollPair(result.ticket);
-        } catch (e) {
-          connect.disabled = false;
-          throw e;
-        }
-      }),
-  });
-  transcript.append(name, connect);
-}
-async function pollPair(ticket) {
-  const result = await api.pairStatus(ticket);
-  if (result.status === "approved") {
-    token = result.token;
-    sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
-    await start();
-    return;
-  }
-  if (result.status === "pending") {
-    setTimeout(() => action(() => pollPair(ticket)), 1500);
-    return;
-  }
-  throw new Error("配对已过期或被拒绝，请重新生成链接。");
+  transcript.replaceChildren(createLoginView({
+    login: (password, name) => api.login(password, name),
+    onSuccess: async (result) => { token = result.token; storeToken(token); await start(); },
+    onError: report,
+  }));
 }
 async function loadLibrary() {
   const p = await api.read("projects.list");
@@ -325,6 +312,7 @@ async function loadLibrary() {
       for (const s of visible)
         group.append(
           button(`${s.running ? "● " : ""}${s.title || "新对话"}`, {
+            preserveLabel: true,
             onClick: () => action(() => openSession(s.id)),
           }),
         );
@@ -537,6 +525,8 @@ async function drawChat() {
     for (const a of m.attachments || [])
       card.append(
         button(a.name || "附件", {
+          preserveLabel: true,
+          iconName: "attach",
           onClick: () =>
             action(async () => {
               const p = await api.read("attachments.read", {
@@ -718,6 +708,7 @@ function renderPending() {
     for (const decision of a.allowedDecisions || []) {
       box.append(
         button(decision, {
+          iconName: /deny|reject|cancel/.test(decision) ? "close" : /always|session/.test(decision) ? "shield" : "check",
           onClick: () =>
             action(async () => {
               if (a.kind !== "tool") {
@@ -895,6 +886,7 @@ fileInput.addEventListener("change", () =>
       } catch (error) {
         report(error);
         const retry = button(`重试上传 ${file.name}`, {
+          iconName: "retry",
           onClick: () =>
             action(async () => {
               const a = await api.upload(file, sessionId);
@@ -923,10 +915,10 @@ async function modelOptions() {
     el("h3", { text: "会话模型" }),
     el("p", { text: "变更模型与思考强度需要电脑确认" }),
   );
-  const select = el("select"),
-    thinking = el("select"),
-    mode = el("select"),
-    permission = el("select");
+  const select = el("select", { attrs: { "aria-label": "模型" } }),
+    thinking = el("select", { attrs: { "aria-label": "思考强度" } }),
+    mode = el("select", { attrs: { "aria-label": "工作模式" } }),
+    permission = el("select", { attrs: { "aria-label": "权限模式" } });
   for (const value of ["agent", "plan", "goal"])
     mode.append(
       el("option", {
@@ -998,6 +990,7 @@ async function commands() {
       button(
         `/${c.name} · ${c.title || c.description || ""}${c.supported === false ? "（桌面专属）" : ""}`,
         {
+          preserveLabel: true,
           disabled: c.supported === false,
           onClick: () => {
             input.value += `/${c.name} `;
@@ -1015,6 +1008,7 @@ async function commands() {
   for (const agent of agents.items || [])
     dialog.append(
       button(agent.name, {
+        preserveLabel: true,
         onClick: () => {
           input.value += `${input.value ? "\n" : ""}请使用 ${agent.name} 子智能体处理以下任务：`;
           dialog.remove();
@@ -1138,6 +1132,10 @@ composer.addEventListener("submit", (event) => {
   });
 });
 async function start() {
+  loginVisible = false;
+  root.dataset.authenticated = "true";
+  recoveryPanel.hidden = false;
+  transcript.replaceChildren(el("p", { text: "选择项目或会话开始使用。" }));
   layout();
   library.hidden = false;
   composer.hidden = false;
@@ -1150,6 +1148,7 @@ async function start() {
   socket = new EventSocket({
     getToken: () => token,
     onStatus: (status) => {
+      if (status === "unauthorized") { token = ""; clearToken(); showLogin(); }
       notice.textContent = `连接状态：${status}`;
     },
     onReady: () => {
@@ -1169,4 +1168,4 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && current) action(refresh);
 });
 if (token) action(start);
-else action(pair);
+else showLogin();

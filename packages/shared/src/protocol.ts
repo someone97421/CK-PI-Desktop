@@ -190,6 +190,7 @@ export const IPC = {
     pluginThemes: "pi-desktop/plugin/themes",
     pluginSettingsDestinations: "pi-desktop/plugin/settings/destinations",
     pluginServices: "pi-desktop/plugin/services",
+    pluginRemoteAccessStatus: "pi-desktop/plugin/remoteAccessStatus",
     pluginViews: "pi-desktop/plugin/views",
     pluginViewOpen: "pi-desktop/plugin/view/open",
     pluginViewClose: "pi-desktop/plugin/view/close",

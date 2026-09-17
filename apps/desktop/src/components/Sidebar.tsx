@@ -11,6 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { TooltipButton, cx } from "./ui";
+import { RemoteAccessButton } from "./RemoteAccessButton";
 
 /** Default number of most-recent sessions shown per project group before the rest fold. */
 const MAX_VISIBLE_SESSIONS = 10;
@@ -2229,6 +2230,7 @@ export function Sidebar({
               <IconPlug size={14} aria-hidden />
             </TooltipButton>
             <NotificationCenter onBeforeOpen={() => closeMenus(false)} />
+            <RemoteAccessButton />
           </div>
 
           {/* Fork: the build chip was the entry point for the upstream update

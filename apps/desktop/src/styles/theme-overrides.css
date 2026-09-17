@@ -313,3 +313,8 @@
 .composer-plus-sep {
   height: 6px;
 }
+
+.remote-access-action { position: relative; }
+.remote-access-dot { position: absolute; right: 2px; bottom: 2px; width: 6px; height: 6px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ds-bg-primary); pointer-events: none; }
+.remote-access-dot.is-on { background: var(--ds-status-success, #53aa70); }
+.remote-access-dot.is-off { background: var(--ds-status-error, #d85858); }

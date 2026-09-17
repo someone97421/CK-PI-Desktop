@@ -1,16 +1,6 @@
 "use strict";
 
-/**
- * LAN remote-control server.
- *
- * Owns one HTTP listener bound to a private IPv4 address plus a WebSocket
- * endpoint on the same port. Everything privileged is memory-only: devices,
- * pairing tickets, RPC idempotency records, attachment staging. Stopping the
- * server leaves no listener, no token and no staged file behind.
- *
- * This module never touches the host's data: `web/` is read-only, and the only
- * writable location is the plugin's own tmp directory.
- */
+/** 局域网监听、密码登录与设备会话。关闭监听会断开连接，已登录设备记录保留。 */
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -22,7 +12,7 @@ const path = require("node:path");
 const httpHelpers = require("./http.cjs");
 const network = require("./network.cjs");
 const { SubscriptionPool } = require("./subscriptions.cjs");
-const { DeviceStore, MAX_DEVICES, PairingStore } = require("./auth.cjs");
+const { DeviceStore, MAX_DEVICES } = require("./auth.cjs");
 const { AttachmentStore, DEFAULT_MAX_BYTES, ID_PATTERN } = require("./uploads.cjs");
 const { buildOperationTable, createRpcDispatcher, isUuid, statusForCode } = require("./rpc.cjs");
 
@@ -35,7 +25,7 @@ const MAX_WS_CONNECTIONS = 16;
 const MAX_WS_PER_DEVICE = 4;
 const MAX_HTTP_CONNECTIONS = 64;
 const RPC_BODY_MAX_BYTES = 256 * 1024;
-const PAIR_BODY_MAX_BYTES = 4 * 1024;
+const LOGIN_BODY_MAX_BYTES = 4 * 1024;
 const DEFAULT_PORT = 7878;
 const REQUEST_TIMEOUT_MS = 30_000;
 const HEADERS_TIMEOUT_MS = 15_000;
@@ -45,8 +35,7 @@ const SWEEP_INTERVAL_MS = 30_000;
 
 const RATE_LIMITS = Object.freeze({
   general: { windowMs: 60_000, max: 600 },
-  pair: { windowMs: 60_000, max: 20 },
-  pairStatus: { windowMs: 60_000, max: 240 },
+  login: { windowMs: 60_000, max: 6 },
   rpc: { windowMs: 60_000, max: 240 },
   upload: { windowMs: 60_000, max: 40 },
 });
@@ -140,14 +129,13 @@ function createRemoteServer(options = {}) {
     connections: new Set(),
     timers: new Set(),
     inFlight: new Set(),
-    pairing: new PairingStore(),
-    devices: new DeviceStore(),
+    devices: new DeviceStore({ file: dataDir ? path.join(dataDir, "remote-access.json") : undefined }),
     attachments: new AttachmentStore({
       dir: path.join(dataDir ?? os.tmpdir(), "tmp", "lan-remote-control"),
       maxBytes: uploadMaxBytes,
     }),
     capabilities: { value: null, error: null, at: 0 },
-    lastPairingUrl: null,
+    loginInFlight: 0,
   };
 
   let lifecycle = Promise.resolve();
@@ -162,8 +150,8 @@ function createRemoteServer(options = {}) {
 
   const rateLimiters = {
     general: httpHelpers.createRateLimiter(RATE_LIMITS.general),
-    pair: httpHelpers.createRateLimiter(RATE_LIMITS.pair),
-    pairStatus: httpHelpers.createRateLimiter(RATE_LIMITS.pairStatus),
+    login: httpHelpers.createRateLimiter(RATE_LIMITS.login),
+    loginGlobal: httpHelpers.createRateLimiter({ windowMs: 60_000, max: 24 }),
     rpc: httpHelpers.createRateLimiter(RATE_LIMITS.rpc),
     upload: httpHelpers.createRateLimiter(RATE_LIMITS.upload),
     ws: httpHelpers.createRateLimiter({ windowMs: 60_000, max: MAX_WS_CONNECTIONS * 4 }),
@@ -199,12 +187,6 @@ function createRemoteServer(options = {}) {
     return { connections, subscriptions };
   }
 
-  function pairingStatus() {
-    const offer = state.pairing.activeOffer;
-    if (!offer) return null;
-    return { active: true, url: state.lastPairingUrl, expiresAt: new Date(offer.expiresAt).toISOString() };
-  }
-
   function getStatus() {
     const running = state.phase === "running";
     const url = running && state.address ? `http://${state.address}:${state.port}/` : null;
@@ -219,8 +201,7 @@ function createRemoteServer(options = {}) {
       startedAt: state.startedAt ? new Date(state.startedAt).toISOString() : null,
       error: state.lastError,
       restartRequired: state.restartRequired === true,
-      pairing: pairingStatus(),
-      pendingRequests: state.pairing.listPending(),
+      passwordConfigured: state.devices.passwordConfigured,
       devices: state.devices.list().map((device) => ({
         ...device,
         ...deviceConnections(device.deviceId),
@@ -543,50 +524,39 @@ function createRemoteServer(options = {}) {
       version,
       requiresAuth: true,
       protocolVersion: 1,
-      pairingOpen: state.pairing.activeOffer !== null,
+      authMode: "password",
+      passwordConfigured: state.devices.passwordConfigured,
     };
   }
 
-  async function handlePairPost(req, res, address) {
-    if (!rateLimiters.pair.take(`pair:${address}`)) {
-      httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many pairing attempts");
+  async function handleLogin(req, res, address) {
+    const loginGeneration = generation, authRevision = state.devices.revision;
+    if (!rateLimiters.login.take(address) || !rateLimiters.loginGlobal.take("all") || state.loginInFlight >= 2) {
+      httpHelpers.sendError(res, 429, "RATE_LIMITED", "登录尝试过多，请稍后重试");
       return;
     }
-    const body = await httpHelpers.readJsonBody(req, { maxBytes: PAIR_BODY_MAX_BYTES });
-    if (!body.ok) {
-      httpHelpers.sendError(res, body.status, body.code, body.message);
+    const body = await httpHelpers.readJsonBody(req, { maxBytes: LOGIN_BODY_MAX_BYTES });
+    if (!body.ok) { httpHelpers.sendError(res, body.status, body.code, body.message); return; }
+    if (state.loginInFlight >= 2) {
+      httpHelpers.sendError(res, 429, "RATE_LIMITED", "登录尝试过多，请稍后重试");
       return;
     }
-    const result = state.pairing.consumeOffer(body.value.token, {
-      name: body.value.name,
-      remoteAddress: address,
-    });
-    if (!result.ok) {
-      httpHelpers.sendError(res, statusForCode(result.code), result.code, result.message);
-      return;
-    }
-    httpHelpers.sendResult(res, {
-      ticket: result.ticket,
-      expiresAt: result.expiresAt,
-      pollIntervalMs: result.pollIntervalMs,
-    });
-  }
-
-  function handlePairStatus(req, res, url) {
-    const address = clientAddress(req);
-    if (!rateLimiters.pairStatus.take(`pair-status:${address}`)) {
-      httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many status polls");
-      return;
-    }
-    const result = state.pairing.status(url.searchParams.get("ticket") ?? "");
-    if (!result.ok) {
-      httpHelpers.sendError(res, statusForCode(result.code), result.code, result.message);
-      return;
-    }
-    httpHelpers.sendResult(res, result.result);
+    state.loginInFlight++;
+    try {
+      const valid = await state.devices.verify(body.value.password);
+      if (!valid || generation !== loginGeneration || state.devices.revision !== authRevision || state.phase !== "running") {
+        httpHelpers.sendError(res, 401, "UNAUTHORIZED", "密码错误或登录已失效");
+        return;
+      }
+      const result = state.devices.add({ name: body.value.name, remoteAddress: address, userAgent: req.headers["user-agent"] });
+      if (!result.ok) { httpHelpers.sendError(res, statusForCode(result.code), result.code, result.message); return; }
+      httpHelpers.sendResult(res, { token: result.token, deviceId: result.device.id, deviceName: result.device.name,
+        expiresAt: new Date(result.device.expiresAt).toISOString() });
+    } finally { state.loginInFlight--; }
   }
 
   async function handleRpc(req, res) {
+    const requestGeneration = generation;
     const address = clientAddress(req);
     if (!rateLimiters.rpc.take(`rpc:${address}`)) {
       httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many requests");
@@ -606,7 +576,7 @@ function createRemoteServer(options = {}) {
       httpHelpers.sendError(res, body.status, body.code, body.message);
       return;
     }
-    if (state.phase !== "running" || authenticate(req)?.id !== device.id) {
+    if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
       return;
     }
@@ -616,12 +586,12 @@ function createRemoteServer(options = {}) {
         : undefined;
     const task = dispatcher.handle({
       deviceId: device.id, sessionId, body: body.value,
-      isAuthorized: () => state.phase === "running" && authenticate(req)?.id === device.id,
+      isAuthorized: () => generation === requestGeneration && state.phase === "running" && authenticate(req)?.id === device.id,
     });
     state.inFlight.add(task);
     try {
       const { status, envelope } = await task;
-      if (state.phase !== "running" || authenticate(req)?.id !== device.id) {
+      if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
         httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
         return;
       }
@@ -632,6 +602,7 @@ function createRemoteServer(options = {}) {
   }
 
   async function handleUpload(req, res) {
+    const requestGeneration = generation;
     const address = clientAddress(req);
     if (!rateLimiters.upload.take(`upload:${address}`)) {
       httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many uploads");
@@ -651,7 +622,7 @@ function createRemoteServer(options = {}) {
       httpHelpers.sendError(res, body.status, body.code, body.message);
       return;
     }
-    if (state.phase !== "running" || authenticate(req)?.id !== device.id) {
+    if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
       return;
     }
@@ -661,7 +632,7 @@ function createRemoteServer(options = {}) {
       name: headerValue("x-filename"),
       mimeType: headerValue("content-type"),
       buffer: body.buffer,
-      isAuthorized: () => state.phase === "running" && authenticate(req)?.id === device.id,
+      isAuthorized: () => generation === requestGeneration && state.phase === "running" && authenticate(req)?.id === device.id,
     });
     if (!saved.ok) {
       httpHelpers.sendError(res, statusForCode(saved.code), saved.code, saved.message);
@@ -671,6 +642,7 @@ function createRemoteServer(options = {}) {
   }
 
   async function handleAttachment(req, res, pathname, url) {
+    const requestGeneration = generation;
     const device = authenticate(req);
     if (!device) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device token is missing or invalid");
@@ -700,7 +672,7 @@ function createRemoteServer(options = {}) {
       file = await fsp.open(item.filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
       stats = await file.stat();
       if (!stats.isFile() || stats.size !== item.size || stats.ino !== link.ino || stats.dev !== link.dev) throw new Error("invalid file");
-      if (state.phase !== "running" || authenticate(req)?.id !== device.id) {
+      if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
         await file.close();
         httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
         return;
@@ -809,20 +781,17 @@ function createRemoteServer(options = {}) {
         httpHelpers.sendResult(res, healthResult());
         return;
       }
-      if (pathname === "/api/pair") {
-        if (req.method !== "POST") {
-          httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed");
-          return;
-        }
-        await handlePairPost(req, res, address);
+      if (pathname === "/api/login") {
+        if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
+        await handleLogin(req, res, address);
         return;
       }
-      if (pathname === "/api/pair/status") {
-        if (!isGet) {
-          httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed");
-          return;
-        }
-        handlePairStatus(req, res, url);
+      if (pathname === "/api/logout") {
+        if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
+        const device = authenticate(req);
+        if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
+        await revokeDevice(device.id);
+        httpHelpers.sendResult(res, { loggedOut: true });
         return;
       }
       if (pathname === "/api/rpc") {
@@ -921,9 +890,8 @@ function createRemoteServer(options = {}) {
   }
 
   async function sweepNow() {
-    const orphanDeviceIds = state.pairing.takeOrphanDevices();
-    for (const deviceId of orphanDeviceIds) {
-      await revokeDevice(deviceId);
+    for (const conn of [...state.connections]) {
+      if (conn.deviceId && !state.devices.get(conn.deviceId)) closeWs(conn, 4403, "session expired");
     }
     await state.attachments.pruneExpired();
     dispatcher.mutations.sweep();
@@ -950,6 +918,7 @@ function createRemoteServer(options = {}) {
   async function start({ address, port } = {}, expectedGeneration = generation) {
     if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
     if (state.phase === "running") return getStatus();
+    if (!state.devices.passwordConfigured) throw fail("PASSWORD_REQUIRED", "请先在电脑端设置访问密码");
     if (state.phase === "starting" || state.phase === "stopping") {
       throw fail("NOT_READY", "server is busy");
     }
@@ -1080,8 +1049,6 @@ function createRemoteServer(options = {}) {
   async function stop() {
     if (state.phase === "stopped") return getStatus();
     state.phase = "stopping";
-    state.devices.revokeAll();
-    state.pairing.clear();
     clearTimers();
 
     // Stop talking to devices first, then give in-flight mutations a bounded
@@ -1107,9 +1074,6 @@ function createRemoteServer(options = {}) {
     if (server) await closeHttpServer(server);
 
     await subscriptionPool.clear();
-    state.devices.revokeAll();
-    state.pairing.clear();
-    state.lastPairingUrl = null;
     await state.attachments.dispose();
     dispatcher.cancel();
     state.connections.clear();
@@ -1123,56 +1087,15 @@ function createRemoteServer(options = {}) {
 
   // --- panel-facing helpers -------------------------------------------------
 
-  async function createPairing({ ttlSeconds } = {}) {
-    if (state.phase !== "running") {
-      return { ok: false, code: "NOT_RUNNING", message: "start the remote service before pairing" };
-    }
-    const offer = state.pairing.createOffer({
-      ttlMs: ttlSeconds === undefined ? undefined : Number(ttlSeconds) * 1000,
-    });
-    const host = state.address ?? "127.0.0.1";
-    state.lastPairingUrl = `http://${host}:${state.port}/#token=${encodeURIComponent(offer.token)}`;
-    return {
-      ok: true,
-      pairing: {
-        token: offer.token,
-        url: state.lastPairingUrl,
-        expiresAt: new Date(offer.expiresAt).toISOString(),
-        ttlSeconds: offer.ttlMs / 1000,
-      },
-    };
+  function createLink() {
+    if (state.phase !== "running") return { ok: false, code: "NOT_RUNNING", message: "请先开启远程访问" };
+    return { ok: true, url: `http://${state.address}:${state.port}/` };
   }
 
-  function approveRequest(requestId) {
-    const request = state.pairing.get(requestId);
-    if (state.phase !== 'running') return {ok:false,code:'NOT_RUNNING',message:'server is not running'};
-    if (!request) return { ok: false, code: "NOT_FOUND", message: "pairing request not found" };
-    const added = state.devices.add({ name: request.name });
-    if (!added.ok) return { ok: false, code: added.code, message: added.message };
-    const approved = state.pairing.approve(requestId, {
-      deviceId: added.device.id,
-      deviceName: added.device.name,
-      deviceToken: added.token,
-    });
-    if (!approved.ok) {
-      state.devices.revoke(added.device.id);
-      return { ok: false, code: approved.code, message: approved.message };
-    }
-    return {
-      ok: true,
-      request: {
-        requestId: request.requestId,
-        status: "approved",
-        deviceId: added.device.id,
-        deviceName: added.device.name,
-      },
-    };
-  }
-
-  function rejectRequest(requestId) {
-    const rejected = state.pairing.reject(requestId);
-    if (!rejected.ok) return { ok: false, code: rejected.code, message: rejected.message };
-    return { ok: true, request: { requestId: requestId, status: "rejected" } };
+  async function setPassword(password) {
+    const ids = await state.devices.setPassword(password);
+    for (const id of ids) await revokeDevice(id);
+    return { ok: true };
   }
 
   async function revokeDevice(deviceId) {
@@ -1189,6 +1112,7 @@ function createRemoteServer(options = {}) {
   }
 
   async function revokeAllDevices() {
+    state.devices.revision++;
     const ids = state.devices.list().map((device) => device.deviceId);
     for (const id of ids) await revokeDevice(id);
     return ids.length;
@@ -1225,15 +1149,12 @@ function createRemoteServer(options = {}) {
     },
     stop: () => {
       generation += 1;
-      state.devices.revokeAll();
-      state.pairing.clear();
       if (state.phase !== "stopped") state.phase = "stopping";
       return serializeLifecycle(stop);
     },
     getStatus,
-    createPairing,
-    approveRequest,
-    rejectRequest,
+    createLink,
+    setPassword: (password) => serializeLifecycle(() => setPassword(password)),
     revokeDevice,
     revokeAllDevices,
     broadcast,
@@ -1247,7 +1168,7 @@ function createRemoteServer(options = {}) {
       MAX_WS_CONNECTIONS,
       MAX_HTTP_CONNECTIONS,
       RPC_BODY_MAX_BYTES,
-      PAIR_BODY_MAX_BYTES,
+      LOGIN_BODY_MAX_BYTES,
       SHUTDOWN_GRACE_MS,
     },
     _internals: state,

@@ -9,9 +9,9 @@
 | 路径 | 鉴权 | 作用 |
 | --- | --- | --- |
 | GET /、静态资源 | 无 | 自包含移动网页 |
-| GET /api/health | 无 | name、version、protocolVersion:1、requiresAuth、pairingOpen |
-| POST /api/pair | 一次性短期 token | `{token,name}` 换取待批准 ticket |
-| GET /api/pair/status?ticket=… | ticket | pending/approved/rejected/expired；approved 仅交付一次设备 token |
+| GET /api/health | 无 | name、version、protocolVersion:1、requiresAuth、authMode:password、passwordConfigured |
+| POST /api/login | 主机密码 | `{password,name}` 返回 `{token,deviceId,deviceName,expiresAt}` |
+| POST /api/logout | Bearer | 退出并移除当前设备 |
 | POST /api/rpc | Bearer | `{requestId,operation,input,mutationId?}` |
 | GET /api/mutation/:id | Bearer | 查询本设备变更状态，不执行变更 |
 | POST /api/upload | Bearer | 原始文件字节；X-Filename 为 encodeURIComponent 文件名，X-Session-Id 指定会话 |
@@ -33,12 +33,17 @@
 
 - remote.status / remote.refresh → `{ok,status}`。
 - remote.start `{address,port}`、remote.stop。
-- remote.pair `{ttlSeconds?}` → `{ok,pairing:{url,expiresAt,ttlSeconds}}`。
-- remote.approve / remote.reject `{requestId}`。
+- remote.setPassword `{password}`：首次设置或改密；成功后退出全部已登录设备。
+- remote.link → `{ok,url}`：返回当前监听地址，不包含认证信息。
+- remote.indicator → `{running}`：宿主侧栏专用只读状态。
 - remote.revoke `{deviceId}`、remote.revokeAll。
 
-status 包含 phase、running、address、port、url、addresses、error、pendingRequests、devices、pairing、capabilities、adapter。设备标识字段为 deviceId。配对链接 token 放 URL fragment，交换前清理地址。上述批准/管理通道不暴露到网络。
+status 包含 phase、running、address、port、url、addresses、error、devices、passwordConfigured、capabilities、adapter。设备标识字段为 deviceId，附在线连接数、IP、最近访问时间和到期时间。改密和设备管理通道只供本地面板调用。
 
-设备 token 服务端只保留内存哈希；浏览器使用 sessionStorage，浏览器会话恢复可能保留，但服务停用后仍失效。暂存文件在磁盘，不能称为全部数据只在内存。
+认证持久化在插件数据目录的 remote-access.json，版本为 1：密码为随机盐 scrypt 校验值，设备 token 为 SHA-256 哈希。浏览器记住随机 token，不保存密码。设备登录期限为 30 天；停用服务断开连接但保留设备记录。改密、撤销和过期都会拒绝后续请求。跨启停的旧请求还需通过监听代际检查，不能借重启恢复执行权限。
+
+登录每 IP 每分钟最多 6 次，全局每分钟 24 次，最多 2 个并发密码校验；同时保留网络请求、连接、上传和 WebSocket 限制。密码为至少 8 个字符、最多 256 UTF-8 字节。旧的一次性配对接口已移除，旧网页需刷新。
+
+暂存附件写入插件自己的临时目录，停止服务或撤销设备时清理。业务数据及宿主原有操作审批保持兼容。
 
 实际验收与未完成项见 `IMPLEMENTATION-STATUS.md`。

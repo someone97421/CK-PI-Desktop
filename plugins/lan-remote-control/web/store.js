@@ -90,19 +90,10 @@ export function emptyChat() {
 
 export function createInitialState() {
   return {
-    phase: "boot", // boot | pairing | connecting | online | reconnecting | unauthorized | error | closed
+    phase: "boot", // boot | login | connecting | online | reconnecting | unauthorized | error | closed
     connectionError: null,
     health: null,
-    pairing: {
-      token: "",
-      deviceName: "",
-      deviceId: "",
-      ticket: "",
-      status: "idle", // idle | creating | pending | approved | rejected | expired | error
-      message: "",
-      expiresAt: "",
-      pollIntervalMs: 1500,
-    },
+    login: { deviceName: "", status: "idle", message: "" },
     ready: { device: null, capabilities: {} },
     capabilities: normalizeCapabilities({}),
     diagnostics: { socketStatus: "idle", socketDetail: {}, lastError: null, renderer: "", replay: "snapshot-then-delta" },

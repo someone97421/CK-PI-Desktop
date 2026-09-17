@@ -6,8 +6,8 @@
 
 | 计划项 | 实际落点 | 当前证据/限制 |
 | --- | --- | --- |
-| 独立插件、默认关闭、管理面板 | manifest.json、main.cjs、panel/ | 本地面板启停、地址/端口、二维码、批准/拒绝/撤销；已修复配对异步等待和设备 ID 字段 |
-| 网络鉴权与限制 | server/auth.cjs、http.cjs、index.cjs | Host/Origin、一次性配对、设备 token 哈希、限流、连接数/帧/订阅限额；停用立即撤销，启动/停止串行化 |
+| 独立插件、默认关闭、管理面板 | manifest.json、main.cjs、panel/ | 本地面板启停、地址/端口、密码设置、访问链接与已登录设备管理 |
+| 网络鉴权与限制 | server/auth.cjs、http.cjs、index.cjs | Host/Origin、密码校验与设备 token 哈希、登录限流、连接数/帧/订阅限额；停用断开连接，启动/停止串行化 |
 | 项目和会话 | host-adapter.cjs、web/app.js | 已有项目新建会话、项目/会话搜索、列表分页、历史分页；不切换桌面导航 |
 | 消息与实时事件 | web/live.js、plugin-runtime.ts、runtime/sidecar.ts | 使用 shared/message-stream.ts 合并增量、工具进度/结果、停止；补充订阅/退订/快照 API |
 | 普通/优先队列 | host-adapter.cjs、agentQueue* 网关 | 普通排队、移除/移动/优先发送；编辑恢复草稿及原附件，锁定组拒绝变更 |
@@ -33,7 +33,17 @@
 6. **界面收口**：尚使用浏览器 prompt/confirm 承载部分编辑/批注；能力禁用没有覆盖全部入口；搜索只覆盖已加载的会话页；大段 Markdown/高频工具事件性能未验证；PDF 未提供内嵌内容预览。
 7. **主应用类型与运行集成**：只做改动 TS 语法检查和 SDK 类型检查，未做完整宿主类型检查。安装、启停/崩溃、审批竞争、真实手机/软键盘均未运行。
 
-## 实际检查
+## 0.2.0 本轮改动（2026-09-17）
+
+- 改为主机密码登录和持久化设备记录，移除二维码依赖及逐台批准流程；改密撤销全部设备。
+- 手机操作按钮使用 SVG，选择弹窗支持点击外部、焦点移出及 Esc 关闭。
+- 宿主在通知铃铛右侧增加插件入口，只读监听状态驱动红绿角标；插件未加载或不在当前启用范围时隐藏。
+- 已更新依赖锁文件。按用户后续要求执行 `npm --prefix plugins/lan-remote-control run pack`，插件构建及 manifest/资源检查通过，生成 `dist/local.lan-remote-control-0.2.0.piplug`（551,272 字节），随源码提交。
+- 安装包 SHA-256：`fe3520aa0b2691614458223f386e8af73f1fe97199ee4bd037edbd562bbb540f`。检查了包内九个文件，均为插件代码、清单和网页资源。
+- 打包器提示 `clipboard.write` 未在 main.cjs 中直接调用；实际由桌面面板通过 bridge 复制访问链接，保留该权限。未运行测试、宿主类型检查、宿主构建、安装或手机实机验证。
+- 补充 `scripts/check-auth.mjs`，覆盖密码校验、设备记录恢复、改密、撤销和到期；本轮未执行。
+
+## 0.1.0 历史检查（不代表本轮通过）
 
 - `node scripts/check-source.mjs`：插件 JS 语法与相对导入检查通过；六项审查修复后为 27 文件。
 - `node scripts/check-regressions.mjs`：六项审查缺陷的定向回归通过，包含页面恢复、并发订阅失败/重试和退订竞争；未启动监听。

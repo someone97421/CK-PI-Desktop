@@ -4,7 +4,7 @@
  * 信封（SERVER-PROTOCOL.md，桌面端已固定）：
  *   HTTP  { ok: true, result, requestId? } | { ok: false, error: { code, message }, requestId? }
  *   RPC   POST /api/rpc  { requestId, operation, input, mutationId? }（变更必须有 mutationId）
- *   401   => code "UNAUTHORIZED"（会话失效，需重新配对）
+ *   401   => code "UNAUTHORIZED"（会话失效，需重新登录）
  *   变更结果查询  GET /api/mutation/:id（Bearer，只读；断网后不要盲目重发）
  *   WS    { type: "auth", token } -> { type: "ready" }
  *         { type: "subscribe", sessionId } -> { type: "subscribed", sessionId }
@@ -28,8 +28,7 @@
 
 export const RPC_PATH = "/api/rpc";
 export const MUTATION_PATH = "/api/mutation";
-export const PAIR_PATH = "/api/pair";
-export const PAIR_STATUS_PATH = "/api/pair/status";
+export const LOGIN_PATH = "/api/login";
 export const HEALTH_PATH = "/api/health";
 export const UPLOAD_PATH = "/api/upload";
 export const ATTACHMENT_PATH = "/api/attachment";
@@ -38,12 +37,7 @@ export const WS_PATH = "/ws";
 export const FILENAME_HEADER = "X-Filename";
 export const SESSION_HEADER = "X-Session-Id";
 
-/** 配对 token 在 URL fragment；交换后立刻从地址栏清掉。 */
-export const PAIR_FRAGMENT_KEYS = ["token", "pair", "pairing", "t", "code"];
-/**
- * 认证 token 只放 sessionStorage：标签页级存储（浏览器会话恢复可能保留），
- * 不以任何形式落盘；服务端停止服务、撤销设备或重载插件后立即失效。
- */
+/** 浏览器记住设备令牌；主机仅保存哈希，撤销、改密或到期后失效。 */
 export const TOKEN_STORAGE_KEY = "lan-remote-control.token";
 export const DEVICE_NAME_STORAGE_KEY = "lan-remote-control.device-name";
 
@@ -317,7 +311,7 @@ export function formatDuration(ms) {
   return `${minutes}分${seconds}秒`;
 }
 
-/** 倒计时文案（配对有效期、审批有效期）。 */
+/** 倒计时文案（审批有效期）。 */
 export function formatCountdown(expiresAt) {
   const ms = Date.parse(expiresAt);
   if (!Number.isFinite(ms)) return "";
@@ -616,35 +610,13 @@ export function normalizePending(raw) {
   };
 }
 
-export function normalizePairResult(raw) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  return {
-    ticket: asString(pick(source, ["ticket"])),
-    expiresAt: asString(pick(source, ["expiresAt"]), ""),
-    pollIntervalMs: Math.max(500, asNumber(pick(source, ["pollIntervalMs"]), 1500)),
-  };
-}
-
-export function normalizePairStatus(raw) {
-  const source = raw && typeof raw === "object" ? raw : {};
-  const status = asString(pick(source, ["status"]), "pending");
-  return {
-    status: ["pending", "approved", "rejected", "expired"].includes(status) ? status : "pending",
-    token: asString(pick(source, ["token"])),
-    deviceId: asString(pick(source, ["deviceId"])),
-    deviceName: asString(pick(source, ["deviceName"])),
-    message: asString(pick(source, ["message", "reason"])),
-    expiresAt: asString(pick(source, ["expiresAt"]), ""),
-  };
-}
-
 export function normalizeHealth(raw) {
   const source = raw && typeof raw === "object" ? raw : {};
   return {
     name: asString(pick(source, ["name"])),
     version: asString(pick(source, ["version"])),
     requiresAuth: asBool(pick(source, ["requiresAuth"]), true),
-    pairingOpen: asBool(pick(source, ["pairingOpen"]), false),
+    passwordConfigured: asBool(pick(source, ["passwordConfigured"]), false),
     capabilities: pick(source, ["capabilities"]) || {},
   };
 }
@@ -780,7 +752,7 @@ export function describeError(error) {
   const message = asString(error.message);
   switch (code) {
     case ErrorCodes.UNAUTHORIZED:
-      return "连接已失效，请重新配对";
+      return "连接已失效，请重新登录";
     case ErrorCodes.CONFIRMATION_REQUIRED:
       return "需要电脑上的确认，请查看桌面端弹窗";
     case ErrorCodes.FORBIDDEN:
