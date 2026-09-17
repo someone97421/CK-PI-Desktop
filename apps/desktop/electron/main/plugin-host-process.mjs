@@ -225,6 +225,12 @@ function buildApi() {
     desktop: {
       listOperations: () => call("desktop.listOperations"),
       invoke: (input) => call("desktop.invoke", [input ?? {}]),
+      // Live session events. The broker registers a scoped subscription and
+      // pushes frames back as `desktop:event` host events, so the delivery half
+      // is the shared `pi.events.on` path below.
+      subscribe: (input) => call("desktop.subscribe", [input ?? {}]),
+      unsubscribe: (subscriptionId) => call("desktop.unsubscribe", [subscriptionId]),
+      getSessionSnapshot: (input) => call("desktop.getSessionSnapshot", [input ?? {}]),
     },
     fs: {
       readText: (path) => call("fs.readText", [path]),

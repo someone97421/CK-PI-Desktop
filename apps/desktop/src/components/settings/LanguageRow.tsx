@@ -2,9 +2,7 @@
  * Language picker for Settings → General → Appearance.
  *
  * Theme and language both use this searchable anchored-menu pattern.
- * Language is a growing named list: Auto pinned at the top, then shipped
- * locales with native names (endonyms, never translated) and English names
- * for search/sort.
+ * 仅提供跟随系统、English 和简体中文，名称和搜索数据来自统一语言列表。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";

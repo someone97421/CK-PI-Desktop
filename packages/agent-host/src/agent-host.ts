@@ -636,11 +636,21 @@ export class AgentHost {
       sessionId: entry.original.sessionId,
       answers: response.answers,
     });
-    state.pendingInputs.delete(response.inputId);
+    const stillPending = state.pendingInputs.delete(response.inputId);
     const turn = state.turns.get(entry.request.turnId);
     if (turn && turn.status === "waiting_input") turn.status = "running";
-    this.emit(state, "input.resolved", { inputId: response.inputId, status: "resolved", by: principal.subject }, { turnId: entry.request.turnId });
+    if (stillPending) this.emit(state, "input.resolved", { inputId: response.inputId, status: "resolved", by: principal.subject }, { turnId: entry.request.turnId });
     return { inputId: response.inputId, status: "resolved" };
+  }
+
+  settleInputExternally(sessionId: string, inputId: string): void {
+    const state = this.states.get(sessionId);
+    const entry = state?.pendingInputs.get(inputId);
+    if (!state || !entry) return;
+    state.pendingInputs.delete(inputId);
+    const turn = state.turns.get(entry.request.turnId);
+    if (turn?.status === "waiting_input") turn.status = "running";
+    this.emit(state, "input.resolved", { inputId, status: "resolved", by: "desktop" }, { turnId: entry.request.turnId });
   }
 
   async history(
@@ -655,6 +665,10 @@ export class AgentHost {
       ...(params.beforeItemId ? { beforeItemId: params.beforeItemId } : {}),
     });
     return { ...page, revision: state.revision };
+  }
+
+  sessionRevision(sessionId: string): number {
+    return this.states.get(sessionId)?.revision ?? 0;
   }
 
   async snapshot(sessionId: string, summary?: SessionSummary): Promise<RacpSessionSnapshot> {

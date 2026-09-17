@@ -166,7 +166,40 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       isSessionBusy,
       onQueueChange: (event) => {
         sendToRenderer(IPC.event.agentQueueChanged, event);
+        // The session's new queue, for the plugins subscribed to that session.
+        // The renderer keeps its own copy; this is the same payload on the
+        // plugin stream so a remote client never has to poll for it.
+        plugins.publishDesktopEvent({
+          kind: "agent.queueChanged",
+          sessionId: event.sessionId,
+          payload: event,
+        });
         deps.onSessionQueueChange?.();
+      },
+      // A plugin approving or rejecting an approval asks for a refresh through
+      // this, and so does a reconnecting client; the state itself stays with
+      // the Agent Host, which is the only owner of pending approvals.
+      onApprovalResolved: (event) => {
+        plugins.publishDesktopEvent({
+          kind: "session.changed",
+          sessionId: event.sessionId,
+          payload: {
+            reason: "approval-resolved",
+            sessionId: event.sessionId,
+            approvalId: event.approvalId,
+          },
+        });
+      },
+      onInputResolved: (event) => {
+        plugins.publishDesktopEvent({
+          kind: "session.changed",
+          sessionId: event.sessionId,
+          payload: {
+            reason: "input-resolved",
+            sessionId: event.sessionId,
+            inputId: event.inputId,
+          },
+        });
       },
       log: (level, message, data) => logger.app("runtime", level, message, { data }),
     });
@@ -176,11 +209,23 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       invokeSessionCollaboration: deps.invokeSessionCollaboration,
       onOperationComplete: async (operation, result, args, source) => {
         const event = mcpControlRendererEvent(operation, result, args, source);
-        if (event) sendToRenderer(IPC.event.sessionsChanged, event);
+        if (event) {
+          sendToRenderer(IPC.event.sessionsChanged, event);
+          plugins.publishDesktopEvent({ kind: "session.changed", payload: event });
+        }
       },
     });
     state.desktopControl = control;
-    plugins.setServices({ desktopControl: control });
+    plugins.setServices({
+      desktopControl: control,
+      // The live session state a subscription starts from. Read through the
+      // Agent Host's own resync snapshot so pending approvals, pending asks,
+      // streaming items and the queue all come from the one owner.
+      desktopSessionSnapshot: async (sessionId: string) => {
+        if (!state.agentHostBridge) throw Object.assign(new Error("agent host unavailable"), { code: "UNSUPPORTED" });
+        return state.agentHostBridge.agentHost.snapshot(sessionId);
+      },
+    });
     // Load the bundled model snapshot at startup without blocking the first
     // window. Startup neither fetches nor rewrites the catalog; the snapshot
     // is refreshed on demand from Settings (see models-dev-catalog / the

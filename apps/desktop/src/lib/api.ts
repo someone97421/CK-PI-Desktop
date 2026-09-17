@@ -1,5 +1,8 @@
 import { isAppearanceSettings, normalizeAppearance } from "@pi-desktop/shared";
+import { resolveLocale } from "@pi-desktop/i18n";
 import type {
+  ConfigScope,
+  ConfigTransferResult,
   ActivationScope,
   AgentCapabilityMove,
   AgentCapabilityQuery,
@@ -217,6 +220,7 @@ export type SessionHistoryReadOptions = {
 export function normalizeSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
+    language: !settings.language || settings.language === "auto" ? "auto" : resolveLocale(settings.language),
     defaultMode: normalizeMode((settings as { defaultMode?: unknown }).defaultMode),
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
@@ -507,7 +511,12 @@ export const api = {
   /** Vendor catalog plus every locally configured account for each vendor. */
   listOauthVendors: () =>
     invoke<{ vendors: OAuthVendor[] }>(IPC.invoke.providersOauthVendors),
-  /** Write every provider to a JSON file the user picks. */
+  /** 按范围导出配置；导入由主进程预览并确认冲突。 */
+  exportConfig: (scopes: ConfigScope[]) =>
+    invoke<ConfigTransferResult>(IPC.invoke.settingsExportConfig, scopes),
+  importConfig: () =>
+    invoke<ConfigTransferResult>(IPC.invoke.settingsImportConfig),
+  /** Write user-owned providers to a JSON file the user picks. */
   exportProviderConfig: () =>
     invoke<ProviderExportResult>(IPC.invoke.providersExportConfig),
   /** Apply a previously exported JSON file; matching names update in place. */
@@ -883,6 +892,7 @@ export const api = {
   listPluginThemes: () => invoke<PluginTheme[]>(IPC.invoke.pluginThemes),
   listPluginSettingsDestinations: () => invoke<PluginSettingsDestinationMeta[]>(IPC.invoke.pluginSettingsDestinations),
   listPluginServices: () => invoke<PluginServiceStatus[]>(IPC.invoke.pluginServices),
+  getRemoteAccessStatus: () => invoke<{ available: boolean; running: boolean; failed?: boolean }>(IPC.invoke.pluginRemoteAccessStatus),
   /**
    * Work panel views, already filtered by permission, activation scope, and
    * entry existence, with titles resolved for the active locale (ADR 0104).

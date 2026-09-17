@@ -145,13 +145,6 @@ test("packaging keeps only shipped locales and excludes non-runtime artifacts", 
     "zh-CN",
     // electron-builder uses underscore locale directories in macOS bundles.
     "zh_CN",
-    "zh-TW",
-    "zh_TW",
-    "tr",
-    "de",
-    "es",
-    "fr",
-    "ko",
   ]);
   assert.ok(packageJson.build.files.includes("!**/*.map"));
   assert.ok(

@@ -40,6 +40,26 @@ export function registerPluginUiIpc({
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
     registrar.handle(channel, fn);
   };
+  // fork 的侧栏入口只读取指定插件的监听状态，不开放任意插件调用或网络启停。
+  let remoteStatusPending: Promise<{ available: boolean; running: boolean; failed?: boolean }> | null = null;
+  handle(IPC.invoke.pluginRemoteAccessStatus, async () => {
+    const id = "local.lan-remote-control";
+    const loaded = plugins.getLoaded(id);
+    if (!loaded || !loaded.permissions.has("ui.panel") || !pluginActiveInProject(id, currentWorkspacePath())) {
+      return { available: false, running: false };
+    }
+    if (!remoteStatusPending) {
+      remoteStatusPending = plugins.invokePanelBridge(id, "remote.indicator")
+        .then((result) => {
+          const available = plugins.getLoaded(id) === loaded && pluginActiveInProject(id, currentWorkspacePath());
+          const running = (result as { running?: unknown } | null)?.running;
+          return { available, running: available && running === true, failed: typeof running !== "boolean" };
+        })
+        .catch(() => ({ available: plugins.getLoaded(id) === loaded, running: false, failed: true }))
+        .finally(() => { remoteStatusPending = null; });
+    }
+    return remoteStatusPending;
+  });
   handle(IPC.invoke.pluginOpenPanel, async (id: string) => {
     const loaded = plugins.getLoaded(id);
     if (!loaded) throw new Error("plugin not loaded");

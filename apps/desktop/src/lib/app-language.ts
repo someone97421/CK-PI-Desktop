@@ -1,6 +1,5 @@
 import i18n from "i18next";
 import {
-  isAppLocale,
   resolveLocale,
   type AppLocale,
 } from "@pi-desktop/i18n";
@@ -29,7 +28,7 @@ export function resolveOsLocale(): string {
 export function resolveAppLanguage(
   language: AppSettings["language"],
 ): AppLocale {
-  if (language && language !== "auto" && isAppLocale(language)) return language;
+  if (language && language !== "auto") return resolveLocale(language);
   return resolveLocale(resolveOsLocale());
 }
 

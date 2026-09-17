@@ -47,10 +47,6 @@ const chineseCatalogSource = await readFile(
   new URL("../../../packages/i18n/src/locales/zh-CN/index.ts", import.meta.url),
   "utf8",
 );
-const turkishCatalogSource = await readFile(
-  new URL("../../../packages/i18n/src/locales/tr/index.ts", import.meta.url),
-  "utf8",
-);
 
 test("a delegation card reads its outcome from the lifecycle rows", () => {
   // `Task` returns as soon as the delegate starts, so its own payload says
@@ -292,7 +288,6 @@ test("the aggregate label counts, so a lone delegation is not called plural", ()
   for (const [locale, source] of [
     ["en", englishCatalogSource],
     ["zh-CN", chineseCatalogSource],
-    ["tr", turkishCatalogSource],
   ]) {
     for (const key of [
       "subagentsWorking",

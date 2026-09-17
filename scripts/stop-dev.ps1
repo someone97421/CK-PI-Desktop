@@ -1,4 +1,10 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
+# Windows PowerShell 按 BOM 识别脚本编码；此文件须保存为 UTF-8 BOM。
+# 控制台和原生命令的输入输出统一使用 UTF-8。
+$consoleEncoding = New-Object System.Text.UTF8Encoding($false)
+[Console]::InputEncoding = $consoleEncoding
+[Console]::OutputEncoding = $consoleEncoding
+$OutputEncoding = $consoleEncoding
 $workspaceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..')).TrimEnd('\', '/')
 $workspacePrefix = $workspaceRoot + [IO.Path]::DirectorySeparatorChar
 $processes = @(Get-CimInstance Win32_Process)

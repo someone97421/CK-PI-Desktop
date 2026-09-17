@@ -1,4 +1,5 @@
-import { IPC } from "@pi-desktop/shared";
+import { IPC, type AppSettings, type ConfigScope } from "@pi-desktop/shared";
+import { exportConfig, importConfig } from "../config-transfer";
 import { testNetworkProxy } from "../network-proxy";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { HostProcess } from "../host-process";
@@ -59,7 +60,7 @@ export function registerSettingsIpc({
     return testNetworkProxy(settings);
   });
 
-  handle(IPC.invoke.settingsSet, async (settings: unknown) => {
+  const saveSettings = async (settings: unknown) => {
     if (!host) throw new Error("host unavailable");
     const validatedSettings = validateSettingsWrite(settings);
     const result = await host.call("settings.set", validatedSettings);
@@ -85,7 +86,34 @@ export function registerSettingsIpc({
     );
     applyDeveloperMode(validatedSettings as { developerMode?: unknown } | null);
     return result;
+  };
+  handle(IPC.invoke.settingsSet, saveSettings);
+
+  // 文件操作和冲突确认留在主进程；不向渲染进程返回密钥。
+  let transferring = false;
+  const transfer = async (scopes?: ConfigScope[]) => {
+    if (transferring) throw new Error("正在处理配置，请稍候");
+    const transferHost = getHost();
+    if (!transferHost) throw new Error("host unavailable");
+    transferring = true;
+    try {
+      const deps = {
+        host: transferHost,
+        saveSettings: async (patch: Partial<AppSettings>) => {
+          const current = await transferHost.call<Record<string, unknown>>("settings.get");
+          return saveSettings({ ...current, ...patch });
+        },
+      };
+      return scopes === undefined ? await importConfig(deps) : await exportConfig(deps, scopes);
+    } finally {
+      transferring = false;
+    }
+  };
+  handle(IPC.invoke.settingsExportConfig, (scopes: ConfigScope[]) => {
+    if (!Array.isArray(scopes)) throw new Error("请选择导出范围");
+    return transfer(scopes);
   });
+  handle(IPC.invoke.settingsImportConfig, () => transfer());
 
   handle(IPC.invoke.commandShellList, async () => resolveEffectiveCommandShell());
 }

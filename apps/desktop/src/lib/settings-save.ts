@@ -17,6 +17,8 @@ let saveError = false;
 const listeners = new Set<() => void>();
 
 export const getSettingsSaveError = () => saveError;
+/** 配置迁移前等待已排队的设置写入，防止旧快照覆盖导入结果。 */
+export async function flushSettingsWrites(): Promise<void> { await queue; }
 export function subscribeSettingsSaveError(listener: () => void): () => void {
   listeners.add(listener);
   return () => { listeners.delete(listener); };

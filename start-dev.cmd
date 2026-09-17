@@ -1,5 +1,6 @@
 @echo off
 setlocal EnableExtensions
+chcp 65001 >nul
 title this-is-a-agent DEV
 
 cd /d "%~dp0"
@@ -11,6 +12,12 @@ echo.
 
 echo [1/4] Killing stale dev processes ...
 call "%~dp0kill-dev.cmd" /nopause
+if errorlevel 1 (
+  echo   ERROR: Failed to stop stale dev processes. Startup aborted.
+  echo.
+  pause
+  exit /b 1
+)
 echo.
 
 echo [2/4] Checking prerequisites ...

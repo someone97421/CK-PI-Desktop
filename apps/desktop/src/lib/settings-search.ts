@@ -51,6 +51,7 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     group: "preferences",
     keywordKeys: [
       "settings.appearance",
+      "settings.configTransfer",
       "settings.theme",
       "settings.language",
       "settings.languageAuto",

@@ -97,6 +97,18 @@ export function createSidecarRuntime({
     if (isStaleTerminalEvent(envelope)) return;
     runtimeState.agentHostBridge?.ingest(envelope);
     sendToRenderer(IPC.event.agentMessage, envelope);
+    // The live half of the plugin stream. Delivery is filtered inside the
+    // runtime: only a plugin holding `desktop.control` with a live subscription
+    // for this session receives it, and a plugin that is not subscribed pays
+    // nothing but the map lookup.
+    plugins.publishDesktopEvent({
+      kind: "agent.event",
+      sessionId: envelope.sessionId,
+      payload: {
+        ...envelope,
+        hostRevision: runtimeState.agentHostBridge?.agentHost.sessionRevision(envelope.sessionId),
+      },
+    });
   };
   const activeToolCalls = new Map<
     string,
@@ -172,6 +184,14 @@ export function createSidecarRuntime({
       // Native AgentSession already persisted the event to its canonical Pi
       // JSONL. It owns neither the Desktop outbox nor Host queue/turn state.
       sendToRenderer(IPC.event.agentMessage, params as AgentEventEnvelope);
+      // Same live stream for plugin subscribers: this is the history a native
+      // Pi session shows, so excluding it would leave a subscribed client with
+      // a session that looks idle while it streams.
+      plugins.publishDesktopEvent({
+        kind: "agent.event",
+        sessionId: (params as AgentEventEnvelope)?.sessionId,
+        payload: params,
+      });
       return;
     }
     if (method === "agent.event") {

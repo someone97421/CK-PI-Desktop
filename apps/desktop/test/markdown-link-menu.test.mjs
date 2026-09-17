@@ -6,8 +6,8 @@ const markdownSource = await readFile(
   new URL("../src/components/Markdown.tsx", import.meta.url),
   "utf8",
 );
-const koreanCatalog = await readFile(
-  new URL("../../../packages/i18n/src/locales/ko/index.ts", import.meta.url),
+const chineseCatalog = await readFile(
+  new URL("../../../packages/i18n/src/locales/zh-CN/index.ts", import.meta.url),
   "utf8",
 );
 
@@ -34,7 +34,7 @@ test("copy link feedback follows the clipboard result", () => {
   );
 });
 
-test("Korean ships every chat link setting and menu label", () => {
+test("Simplified Chinese ships every chat link setting and menu label", () => {
   for (const key of [
     "linkOpenTarget",
     "linkOpenTargetWorkpanel",
@@ -45,6 +45,6 @@ test("Korean ships every chat link setting and menu label", () => {
     "linkCopied",
     "linkCopyFailed",
   ]) {
-    assert.match(koreanCatalog, new RegExp(`\\b${key}:`), key);
+    assert.match(chineseCatalog, new RegExp(`\\b${key}:`), key);
   }
 });

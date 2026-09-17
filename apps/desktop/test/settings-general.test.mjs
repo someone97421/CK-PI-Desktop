@@ -62,18 +62,6 @@ const zhLocaleSource = await readFile(
   new URL("../../../packages/i18n/src/locales/zh-CN/index.ts", import.meta.url),
   "utf8",
 );
-const trLocaleSource = await readFile(
-  new URL("../../../packages/i18n/src/locales/tr/index.ts", import.meta.url),
-  "utf8",
-);
-const zhTWLocaleSource = await readFile(
-  new URL("../../../packages/i18n/src/locales/zh-TW/index.ts", import.meta.url),
-  "utf8",
-);
-const koLocaleSource = await readFile(
-  new URL("../../../packages/i18n/src/locales/ko/index.ts", import.meta.url),
-  "utf8",
-);
 const mainSource = await readFile(
   new URL("../src/main.tsx", import.meta.url),
   "utf8",
@@ -122,7 +110,6 @@ test("Basics and AI tabs expose their respective app and AI controls", () => {
     assert.match(settingsSearchSource, new RegExp(key.replaceAll(".", "\\.")));
     assert.match(enLocaleSource, new RegExp(`${key.split(".").at(-1)}:`));
     assert.match(zhLocaleSource, new RegExp(`${key.split(".").at(-1)}:`));
-    assert.match(trLocaleSource, new RegExp(`${key.split(".").at(-1)}:`));
   }
   assert.match(sharedTypesSource, /contextUsageDisplay\?: ContextUsageDisplay/);
   assert.match(sharedTypesSource, /ContextUsageDisplay = "remaining" \| "used"/);
@@ -143,7 +130,7 @@ test("Basics and AI tabs expose their respective app and AI controls", () => {
 test("language persists as part of shared app settings", () => {
   assert.match(
     sharedTypesSource,
-    /language\?: "auto" \| "en" \| "zh-CN" \| "zh-TW" \| "tr" \| "de" \| "es" \| "fr" \| "ko"/,
+    /language\?: "auto" \| "en" \| "zh-CN"/,
   );
   assert.match(sharedTypesSource, /largePasteThreshold\?: number/);
   assert.match(sharedTypesSource, /fontScale\?: number/);
@@ -160,9 +147,6 @@ test("General Network card persists a custom HTTP or SOCKS5 proxy", () => {
   for (const source of [
     enLocaleSource,
     zhLocaleSource,
-    zhTWLocaleSource,
-    trLocaleSource,
-    koLocaleSource,
   ]) {
     assert.match(source, /proxyCustom:/);
     assert.match(source, /proxyUrlPlaceholder:/);
@@ -327,8 +311,6 @@ test("settings nav keeps a flat searchable index with titled visual groups", () 
     assert.match(settingsSearchSource, new RegExp(key.replace(".", "\\.")));
     assert.match(enLocaleSource, new RegExp(`${key.split(".")[1]}:`));
     assert.match(zhLocaleSource, new RegExp(`${key.split(".")[1]}:`));
-    assert.match(zhTWLocaleSource, new RegExp(`${key.split(".")[1]}:`));
-    assert.match(trLocaleSource, new RegExp(`${key.split(".")[1]}:`));
   }
   assert.doesNotMatch(settingsSearchSource, /id: "extensions"/);
   const navOrder = [
@@ -383,8 +365,6 @@ test("settings rail uses short parallel labels and descriptive page titles", () 
     assert.match(settingsSearchSource, new RegExp(key.replaceAll(".", "\\.")));
     assert.match(enLocaleSource, new RegExp(`${key.split(".").at(-1)}:`));
     assert.match(zhLocaleSource, new RegExp(`${key.split(".").at(-1)}:`));
-    assert.match(zhTWLocaleSource, new RegExp(`${key.split(".").at(-1)}:`));
-    assert.match(trLocaleSource, new RegExp(`${key.split(".").at(-1)}:`));
   }
   assert.match(settingsSearchSource, /titleKey: "settings\.configuration"/);
   assert.match(settingsSearchSource, /titleKey: "settings\.projectArchive"/);

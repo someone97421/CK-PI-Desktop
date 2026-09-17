@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN" data-booting="true">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="referrer" content="no-referrer" />
+    <title>局域网远程控制</title>
+    <!--
+      静态页面：所有界面由 /app.js 构建（构建时打包 marked / dompurify 到该文件，
+      本页不使用内联 script，符合服务端 CSP）。静态资源用服务端根路径，页面在
+      `/` 与 `/index.html` 下都成立。
+    -->
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/layout.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div id="app" class="app" data-phase="boot">
+      <div class="boot-screen">
+        <span class="spinner" aria-hidden="true"></span>
+        <p class="boot-text">正在连接电脑端…</p>
+      </div>
+    </div>
+    <div id="overlay-root"></div>
+    <div id="toast-root"></div>
+    <noscript>
+      <p class="noscript">这个页面需要 JavaScript 才能工作。</p>
+    </noscript>
+  </body>
+</html>

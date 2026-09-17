@@ -3,6 +3,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { isIP } from "node:net";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  createGatewayAttachmentImporter,
+  GATEWAY_ATTACHMENT_OPERATIONS,
+  type GatewayAttachmentImporter,
+} from "./gateway-attachments";
 import { SESSION_COLLABORATION_OPERATIONS } from "./session-collaboration-control";
 
 /** A small JSON Schema subset used by MCP's tools/list response. */
@@ -206,6 +211,13 @@ const CONTROL_OPERATION_SPECS: OperationSpec[] = [
   spec("agentAbort", "agent/abort", "Abort an active Agent turn.", "write", ["request"]),
   spec("agentStop", "agent/stop", "Request a graceful Agent stop.", "write", ["request"]),
   spec("agentGetStatus", "agent/getStatus", "Read Agent runtime status.", "read", ["sessionId"]),
+  // The Host-owned turn queue. `queue/edit` is not an operation: the desktop
+  // edits a queued prompt by removing it and restoring the composer draft.
+  spec("agentQueueList", "queue/list", "List a session's Host-owned pending turns in delivery order.", "read", ["{sessionId}"]),
+  spec("agentQueuePush", "queue/push", "Append one prompt to a session's Host-owned turn queue.", "write", ["{sessionId,content,attachments?,sessionMessageId?,idempotencyKey?}"]),
+  spec("agentQueueRemove", "queue/remove", "Remove one queued turn.", "write", ["{turnId}"]),
+  spec("agentQueuePrioritize", "queue/prioritize", "Promote one queued turn to start next (send now).", "write", ["{turnId}"]),
+  spec("agentQueueReorder", "queue/reorder", "Move one waiting queued turn up or down past its neighbour.", "write", ["{turnId,direction}"]),
   spec("sessionList", "session/list", "List durable sessions.", "read", []),
   spec("sessionCreate", "session/create", "Create a durable session.", "write", ["input"]),
   spec("sessionFork", "session/fork", "Fork a session.", "write", ["input"]),
@@ -217,6 +229,7 @@ const CONTROL_OPERATION_SPECS: OperationSpec[] = [
   spec("sessionMoveProject", "session/moveProject", "Move an idle session to another project.", "write", ["input"]),
   spec("sessionListRevisions", "session/listRevisions", "List transcript revisions.", "read", ["input"]),
   spec("sessionGetScratchPath", "session/getScratchPath", "Return a session scratch path.", "read", ["input"]),
+  spec("sessionCollaboration", "session/collaboration/get", "Read a session's collaboration status and live activity.", "read", ["{sessionId}"]),
   spec("sessionImportScan", "session/importScan", "Scan supported external session sources.", "read", []),
   spec("modelConfigImportScan", "modelConfig/importScan", "Scan supported model configuration sources.", "read", []),
   spec("sessionSummarizeTitle", "session/summarizeTitle", "Generate a session title.", "write", ["request"]),
@@ -608,6 +621,7 @@ export function createMcpControlOperations(
       description: entry.description,
       risk: entry.risk,
       argumentShape: entry.argumentShape,
+      ...(entry.id.startsWith("queue/") || entry.id === "session/collaboration/get" ? { pluginOnly: true } : {}),
     }];
   });
 }
@@ -673,6 +687,13 @@ export function createMcpControlController(options: {
   channels: Readonly<Record<string, string>>;
   invoke: IpcInvoke;
   invokeSessionCollaboration?: (input: McpControlInvokeInput) => Promise<unknown>;
+  /**
+   * Overrides the built-in staging implementation for `attachments/import`.
+   * The default importer only needs the IPC invoker and the channel map, so a
+   * host that registers the controller gets a working operation with no extra
+   * wiring.
+   */
+  gatewayAttachments?: GatewayAttachmentImporter;
   onOperationComplete?: (
     operation: McpControlOperation,
     result: unknown,
@@ -680,7 +701,10 @@ export function createMcpControlController(options: {
     source?: McpControlInvocationSource,
   ) => void | Promise<void>;
 }): McpControlController {
+  const gatewayAttachments = options.gatewayAttachments
+    ?? createGatewayAttachmentImporter({ channels: options.channels, invoke: options.invoke }).import;
   const operations = [...createMcpControlOperations(options.channels),
+    ...GATEWAY_ATTACHMENT_OPERATIONS,
     ...(options.invokeSessionCollaboration ? SESSION_COLLABORATION_OPERATIONS : [])];
   const operationById = new Map(operations.map((operation) => [operation.id, operation]));
   return {
@@ -694,6 +718,9 @@ export function createMcpControlController(options: {
         throw Object.assign(new Error(`operation is not exposed: ${input.operation}`), {
           code: "NOT_FOUND",
         });
+      }
+      if (operation.pluginOnly && input.source !== "plugin") {
+        throw Object.assign(new Error("operation requires a plugin caller"), { code: "PERMISSION_DENIED" });
       }
       const args = input.args === undefined ? [] : input.args;
       if (!Array.isArray(args)) {
@@ -710,7 +737,9 @@ export function createMcpControlController(options: {
       const sanitized = args.map((value) => stripSecretMaterial(value)) as unknown[];
       const result = operation.channel === "internal:session-collaboration"
         ? await options.invokeSessionCollaboration!({ ...input, args: sanitized })
-        : await options.invoke(operation.channel, sanitized);
+        : operation.channel === "internal:gateway-attachment"
+          ? await gatewayAttachments({ ...input, args: sanitized })
+          : await options.invoke(operation.channel, sanitized);
       await options.onOperationComplete?.(operation, result, sanitized, input.source);
       return result;
     },

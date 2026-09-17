@@ -735,6 +735,189 @@ export type PluginDesktopInvokeInput = {
   args?: unknown[];
   confirm?: boolean;
 };
+
+/**
+ * Event kinds delivered on the `desktop:event` stream of a live
+ * `pi.desktop.subscribe` subscription. Delivery is one-way and best-effort:
+ * a plugin that is loading, unloading or crashing simply misses the frames, so
+ * `pi.desktop.getSessionSnapshot` is the way to re-align after a gap.
+ */
+export const PLUGIN_DESKTOP_EVENT_KINDS = [
+  /** One raw AgentEventEnvelope: live transcript, tools and approval requests. */
+  "agent.event",
+  /** Terminal state of one host turn. */
+  "agent.turnEnded",
+  /** The session's turn queue, in delivery order. */
+  "agent.queueChanged",
+  /** Unscoped hint that the session list may have changed. */
+  "session.changed",
+] as const;
+
+export type PluginDesktopEventKind = (typeof PLUGIN_DESKTOP_EVENT_KINDS)[number];
+
+/**
+ * One `desktop:event` frame. Received in the plugin process through
+ * `pi.events.on("desktop:event", handler)`; the subscription was created with
+ * `pi.desktop.subscribe({ sessionId })` and only events of that session (plus
+ * the unscoped `session.changed` hint) are delivered to it.
+ */
+export type PluginDesktopEvent = {
+  /** Host-assigned subscription this frame belongs to. */
+  subscriptionId: string;
+  /** Session the event belongs to; `""` for the unscoped `session.changed`. */
+  sessionId: string;
+  kind: PluginDesktopEventKind;
+  /** ISO timestamp assigned by the host when the frame was sent. */
+  at: string;
+  /** Frame payload; its shape depends on `kind`. */
+  payload: unknown;
+};
+
+/**
+ * Payload of `agent.event`: the host's AgentEventEnvelope, unmodified. Carries
+ * message streaming (`message_start` / `message_update` with `deltaText` and
+ * `stream: "delta"` / `message_end`), tool lifecycle, `planning_state`, the
+ * approval requests (`tool_permission_request`, `asktool_request`) and status
+ * frames. `event.type` is the discriminator; the union is the desktop's own.
+ */
+export type PluginDesktopAgentEventPayload = {
+  sessionId: string;
+  turnId?: string;
+  /** Host wall-clock timestamp in milliseconds. */
+  ts: number;
+  event: { type: string; [key: string]: unknown };
+  /** Set on every event emitted from inside a subagent. */
+  parentToolCallId?: string;
+  agentName?: string;
+};
+
+/** Payload of `agent.turnEnded`. */
+export type PluginDesktopTurnEndedPayload = {
+  sessionId: string;
+  turnId: string;
+  /** `aborted` is a cancelled turn; a graceful stop still ends `completed`. */
+  reason: "completed" | "aborted" | "error";
+};
+
+/** One queued turn as the host reports it (`agent.queueChanged.entries`). */
+export type PluginDesktopQueueEntry = {
+  id: string;
+  sessionId: string;
+  content: string;
+  sessionMessageId?: string;
+  position: number;
+  /** Set only for promoted entries; entries arrive in delivery order. */
+  priority?: number;
+  createdAt: string;
+};
+
+/** Payload of `agent.queueChanged`: the session's queue after the change. */
+export type PluginDesktopQueueChangedPayload = {
+  sessionId: string;
+  entries: PluginDesktopQueueEntry[];
+};
+
+/**
+ * Payload of `session.changed`: a session list change signal with no session
+ * identity of its own. Re-list through `desktop.invoke` (`session/list`) when
+ * it arrives.
+ */
+export type PluginDesktopSessionChangedPayload = {
+  reason: string;
+  /** Set when a plugin's own call caused the change. */
+  pluginId?: string;
+};
+
+/** One approval (tool, Plan or Goal) the host is waiting on. */
+export type PluginDesktopApprovalRequest = {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  kind: "tool" | "plan" | "goal";
+  summary: string;
+  expiresAt: string;
+  revision: number;
+  toolName?: string;
+  risk?: "low" | "medium" | "high";
+  agentName?: string;
+  parentToolCallId?: string;
+  title?: string;
+  question?: string;
+  /** Decisions this approval accepts; anything else is refused by the host. */
+  allowedDecisions: Array<"allow-once" | "allow-session" | "deny" | "approve" | "reject">;
+  /** Required for `plan` / `goal` approvals, which need a permission mode. */
+  allowedPermissionModes?: string[];
+};
+
+/** One Ask-tool question the host is waiting on. */
+export type PluginDesktopInputRequest = {
+  id: string;
+  sessionId: string;
+  turnId: string;
+  expiresAt: string;
+  agentName?: string;
+  parentToolCallId?: string;
+  questions: Array<{
+    id: string;
+    question: string;
+    options: string[];
+    multiSelect: boolean;
+  }>;
+};
+
+/** One transcript item the host currently holds for a session. */
+export type PluginDesktopSessionItem = {
+  id: string;
+  turnId: string;
+  itemType: string;
+  status: "streaming" | "completed";
+  sequence?: number;
+  createdAt: string;
+  parentToolCallId?: string;
+  agentName?: string;
+  content: unknown;
+};
+
+/**
+ * Live state of one session, as the host's Agent Host holds it right now. The
+ * snapshot and later `desktop:event` frames may overlap: merge by item /
+ * approval id instead of assuming a strict hand-off.
+ */
+export type PluginDesktopSessionSnapshot = {
+  sessionId: string;
+  /** Monotonic state revision; it grows as the host applies changes. */
+  revision: number;
+  status: string;
+  planningState?: string;
+  permissionMode?: string;
+  /** The turn the host is running, when one is. */
+  activeTurn?: Record<string, unknown>;
+  queuedTurns: Array<Record<string, unknown>>;
+  /** Recent durable history page. */
+  items: PluginDesktopSessionItem[];
+  /** Items still streaming; merge them by id with the live stream. */
+  activeItems: PluginDesktopSessionItem[];
+  /** Tool and Plan/Goal approvals awaiting a decision. */
+  pendingApprovals: PluginDesktopApprovalRequest[];
+  /** Ask-tool questions awaiting an answer. */
+  pendingInputs: PluginDesktopInputRequest[];
+  hasMoreHistory: boolean;
+  /** Stream cursor the snapshot was taken at. */
+  cursor?: number;
+  generatedAt: string;
+};
+
+/** One live session subscription created by `pi.desktop.subscribe`. */
+export type PluginDesktopSubscription = {
+  subscriptionId: string;
+  sessionId: string;
+  /**
+   * Live state captured after the subscription was registered, or `null` when
+   * the host cannot capture one. Events emitted after registration arrive
+   * through `desktop:event` either way.
+   */
+  snapshot: PluginDesktopSessionSnapshot | null;
+};
 /** One capturable audio endpoint (`audio.capture.background`). */
 export type PluginAudioInputDevice = {
   /** Opaque host id; `""` names the system default input. */
@@ -930,6 +1113,23 @@ export type PluginHostApi = {
   desktop: {
     listOperations: () => Promise<PluginDesktopOperation[]>;
     invoke: (input: PluginDesktopInvokeInput) => Promise<unknown>;
+    /**
+     * Live session subscription (`desktop.control`). Frames arrive through
+     * `pi.events.on("desktop:event", handler)`; the reply carries the
+     * subscription id and the session's live snapshot captured right after
+     * registration. Register the listener first so nothing is missed.
+     */
+    subscribe: (input: { sessionId: string }) => Promise<PluginDesktopSubscription>;
+    /** Drops a subscription. Owner-only, idempotent, also runs on unload. */
+    unsubscribe: (subscriptionId: string) => Promise<{ ok: true }>;
+    /**
+     * Re-read the session's live state without touching the subscription: the
+     * way to close a delivery gap after a reconnect, or to re-align after
+     * answering one of the pending approvals.
+     */
+    getSessionSnapshot: (input: {
+      sessionId: string;
+    }) => Promise<PluginDesktopSessionSnapshot>;
   };
   /**
    * Background microphone capture and streaming playback

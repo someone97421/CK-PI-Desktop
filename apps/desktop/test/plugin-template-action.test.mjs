@@ -30,10 +30,6 @@ const zhSrc = readFileSync(
   join(repoRoot, "packages/i18n/src/locales/zh-CN/index.ts"),
   "utf8",
 );
-const trSrc = readFileSync(
-  join(repoRoot, "packages/i18n/src/locales/tr/index.ts"),
-  "utf8",
-);
 
 /** Template ids in declaration order, read from a `[...] as const` literal. */
 function templateIds(source, marker) {
@@ -86,7 +82,6 @@ test("the renderer template list mirrors the devkit catalogue", () => {
     for (const [locale, source] of [
       ["en", enSrc],
       ["zh-CN", zhSrc],
-      ["tr", trSrc],
     ]) {
       assert.ok(
         source.includes(`"${id}":`),
@@ -110,7 +105,6 @@ test("the template action is reachable from the menu and the empty state", () =>
   ]) {
     assert.ok(enSrc.includes(`${key}:`), `en must define plugins.${key}`);
     assert.ok(zhSrc.includes(`${key}:`), `zh-CN must define plugins.${key}`);
-    assert.ok(trSrc.includes(`${key}:`), `tr must define plugins.${key}`);
   }
 });
 

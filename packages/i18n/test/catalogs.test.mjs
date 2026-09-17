@@ -8,8 +8,6 @@ import {
   resolveLocale,
   supportedLocales,
   zhCN,
-  zhTW,
-  ko,
 } from "../src/index.ts";
 
 function placeholders(value) {
@@ -149,65 +147,33 @@ test("import, project, and temporary-session copy is catalog-backed", () => {
 
 test("locale resolution maps variants onto shipped catalogs and falls back to English", () => {
   assert.equal(resolveLocale("zh-CN"), "zh-CN");
-  assert.equal(resolveLocale("zh-TW"), "zh-TW");
-  assert.equal(resolveLocale("zh-Hant"), "zh-TW");
-  assert.equal(resolveLocale("zh_Hant_TW"), "zh-TW");
-  assert.equal(resolveLocale("zh-HK"), "zh-TW");
+  assert.equal(resolveLocale("zh-TW"), "zh-CN");
+  assert.equal(resolveLocale("zh-Hant"), "zh-CN");
+  assert.equal(resolveLocale("zh_Hant_TW"), "zh-CN");
+  assert.equal(resolveLocale("zh-HK"), "zh-CN");
   assert.equal(resolveLocale("zh"), "zh-CN");
   assert.equal(resolveLocale("en-US"), "en");
-  assert.equal(resolveLocale("tr"), "tr");
-  assert.equal(resolveLocale("tr-TR"), "tr");
-  assert.equal(resolveLocale("tr_TR"), "tr");
-  assert.equal(resolveLocale("es-MX"), "es");
-  assert.equal(resolveLocale("fr-CA"), "fr");
-  assert.equal(resolveLocale("de-DE"), "de");
-  assert.equal(resolveLocale("ko"), "ko");
-  assert.equal(resolveLocale("ko-KR"), "ko");
-  assert.equal(resolveLocale("ko_KR"), "ko");
+  assert.equal(resolveLocale("tr"), "en");
+  assert.equal(resolveLocale("tr-TR"), "en");
+  assert.equal(resolveLocale("tr_TR"), "en");
+  assert.equal(resolveLocale("es-MX"), "en");
+  assert.equal(resolveLocale("fr-CA"), "en");
+  assert.equal(resolveLocale("de-DE"), "en");
+  assert.equal(resolveLocale("ko"), "en");
+  assert.equal(resolveLocale("ko-KR"), "en");
+  assert.equal(resolveLocale("ko_KR"), "en");
   assert.equal(resolveLocale(), "en");
 });
 
-test("the locale registry lists English first, then other locales by English name", () => {
-  assert.deepEqual(
-    supportedLocales.map((locale) => locale.id),
-    ["en", "zh-CN", "zh-TW", "de", "es", "tr", "fr", "ko"],
-  );
-  assert.deepEqual(
-    listedLocales().map((locale) => locale.id),
-    ["en", "zh-CN", "zh-TW", "fr", "de", "ko", "es", "tr"],
-  );
-  assert.equal(localeInfoNative("de"), "Deutsch");
-  assert.equal(localeInfoNative("es"), "Español");
-  assert.equal(localeInfoNative("fr"), "Français");
-  assert.equal(localeInfoNative("tr"), "Türkçe");
-  assert.equal(localeInfoNative("ko"), "한국어");
+test("the locale registry contains only English and Simplified Chinese", () => {
+  assert.deepEqual(supportedLocales.map((locale) => locale.id), ["en", "zh-CN"]);
+  assert.deepEqual(listedLocales().map((locale) => locale.id), ["en", "zh-CN"]);
+  assert.equal(supportedLocales[0].nativeName, "English");
+  assert.equal(supportedLocales[1].nativeName, "简体中文");
   assert.equal(english["settings.languageSearchPlaceholder"], "Search languages…");
   assert.equal(english["settings.themeSearchPlaceholder"], "Search themes…");
   assert.equal(english["settings.languageAutoDesc"], "Currently {{state}}");
-  const turkish = flattenCatalog(catalogs.tr);
-  const traditional = flattenCatalog(zhTW);
-  assert.equal(turkish["settings.language"], "Dil");
-  assert.equal(turkish["settings.languageAuto"], "Sistem dilini kullan");
-  assert.equal(turkish["settings.languageSearchPlaceholder"], "Dil ara…");
-  assert.notEqual(turkish["app.tagline"], english["app.tagline"]);
-  assert.equal(traditional["settings.language"], "語言");
-  assert.equal(traditional["settings.languageAuto"], "跟隨系統");
-  assert.equal(traditional["nav.projects"], "專案");
-  assert.equal(traditional["nav.temporarySessions"], "臨時對話");
-  assert.match(traditional["app.tagline"], /程式設計/);
-  assert.equal(flattenCatalog(catalogs.es)["settings.language"], "Idioma");
-  assert.equal(flattenCatalog(catalogs.fr)["settings.language"], "Langue");
-  assert.equal(flattenCatalog(catalogs.de)["settings.language"], "Sprache");
-  assert.equal(flattenCatalog(ko)["settings.language"], "언어");
-  assert.equal(flattenCatalog(ko)["settings.languageAuto"], "시스템 언어 사용");
-  assert.equal(flattenCatalog(ko)["nav.projects"], "프로젝트");
-  assert.equal(flattenCatalog(ko)["nav.temporarySessions"], "임시 대화");
-  assert.notEqual(flattenCatalog(ko)["app.tagline"], english["app.tagline"]);
 });
-
-function localeInfoNative(id) {
-  return supportedLocales.find((locale) => locale.id === id)?.nativeName;
-}
 
 test("inline review cards expose localized accessible labels", () => {
   const chinese = flattenCatalog(zhCN);
