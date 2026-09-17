@@ -41,7 +41,7 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
     id: "explorer",
     name: "Explorer",
     description:
-      "Deep investigation of an independent subsystem, complex call chain or fault hypothesis, returning concise evidence. Useful for substantial parallel exploration; routine targeted searches stay with the main agent.",
+      "Investigate a bounded codebase question, subsystem, call chain or fault hypothesis and return concise evidence. Useful when several searches or file reads can be handled independently or save the main agent context.",
     tools: ["Read", "Glob", "Grep", "Bash"],
     body:
       `You are Explorer — a fast codebase navigation specialist.\n` +
@@ -68,7 +68,7 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
     id: "code-reviewer",
     name: "Code reviewer",
     description:
-      "Focused read-only review of finished changes when an independent perspective or isolated context adds value. Not a mandatory step before every commit; ordinary self-review stays with the main agent.",
+      "Focused read-only review of finished changes for defects, edge cases and missing coverage. Use when a fresh perspective can catch mistakes or resolve uncertainty, including on medium-sized changes.",
     tools: ["Read", "Glob", "Grep"],
     body:
       `Review only what the task names, and read enough surrounding code to judge it.\n` +
@@ -87,7 +87,7 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
     id: "test-runner",
     name: "Test runner",
     description:
-      "Substantial independent verification, reproduction or failure diagnosis while the main agent advances other work. Ordinary test/build commands or long output alone do not require a delegate.",
+      "Run scoped verification, reproduce issues or diagnose failures independently. Useful while the main agent advances other work or when a concise report saves context; respect the user's testing limits.",
     tools: ["Read", "Glob", "Grep", "Bash"],
     body:
       `Run the command the task names. Do not invent a different one, and do not fix\n` +
@@ -106,7 +106,7 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
     id: "fixer",
     name: "Fixer",
     description:
-      "Implement a substantial independent module or generation batch with clear scope, stable interfaces and non-overlapping file ownership. Local or naturally sequential changes stay with the main agent, even across multiple files.",
+      "Implement a self-contained fix, component or module with clear scope and non-overlapping file ownership. Medium-sized tasks qualify when the handoff is straightforward and saves time or context.",
     tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
     body:
       `You are Fixer — a fast, focused implementation specialist. The main agent\n` +
@@ -140,7 +140,7 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
     id: "ui-designer",
     name: "UI designer",
     description:
-      "Design and implement a substantial, clearly scoped interface when parallel visual work or isolated design context adds value. Small styling and interaction changes stay with the main agent.",
+      "Design and implement a scoped interface or component with complete interaction states. Use when focused visual work, parallel implementation or isolated design context adds value.",
     tools: ["Read", "Glob", "Grep", "BrowserPreview", "Bash", "Edit", "Write"],
     body: `You are UI designer — a senior UI/UX designer and frontend engineer. The main
 agent hands you one interface task with its brief; deliver a working,

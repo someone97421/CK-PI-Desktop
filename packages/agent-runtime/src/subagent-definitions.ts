@@ -50,12 +50,12 @@ export function subagentDefinitionDir(_workspaceRoot: string): string {
 }
 
 /**
- * 内置定义描述可用能力；是否派发由主代理优先、收益明确的协作规则决定。
+ * 内置定义描述可用能力；范围明确且有协作收益的中等任务也适合委派。
  */
 export const BUILTIN_SUBAGENT_DOCUMENTS: readonly string[] = [
   `---
 name: explorer
-description: Deep investigation of an independent subsystem, complex call chain or fault hypothesis, returning concise evidence. Useful for substantial parallel exploration; routine targeted searches stay with the main agent.
+description: Investigate a bounded codebase question, subsystem, call chain or fault hypothesis and return concise evidence. Useful when several searches or file reads can be handled independently or save the main agent context.
 tools: [Read, Glob, Grep, Bash]
 ---
 
@@ -80,7 +80,7 @@ than a guess.
 </answer>`,
   `---
 name: code-reviewer
-description: Focused read-only review of finished changes when an independent perspective or isolated context adds value. Not a mandatory step before every commit; ordinary self-review stays with the main agent.
+description: Focused read-only review of finished changes for defects, edge cases and missing coverage. Use when a fresh perspective can catch mistakes or resolve uncertainty, including on medium-sized changes.
 tools: [Read, Glob, Grep]
 ---
 
@@ -97,7 +97,7 @@ what input. Order by severity. If the code is sound, say so plainly and name
 the cases you checked — an empty review with no evidence is not a review.`,
   `---
 name: test-runner
-description: Substantial independent verification, reproduction or failure diagnosis while the main agent advances other work. Ordinary test/build commands or long output alone do not require a delegate.
+description: Run scoped verification, reproduce issues or diagnose failures independently. Useful while the main agent advances other work or when a concise report saves context; respect the user's testing limits.
 tools: [Read, Glob, Grep, Bash]
 ---
 
@@ -114,7 +114,7 @@ assertion or error, and the \`path:line\` you believe is responsible. Keep the
 raw output out of the report except for the lines that carry the failure.`,
   `---
 name: fixer
-description: Implement a substantial independent module or generation batch with clear scope, stable interfaces and non-overlapping file ownership. Local or naturally sequential changes stay with the main agent, even across multiple files.
+description: Implement a self-contained fix, component or module with clear scope and non-overlapping file ownership. Medium-sized tasks qualify when the handoff is straightforward and saves time or context.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 ---
 
@@ -146,7 +146,7 @@ Report in this shape:
 </verification>`,
   `---
 name: ui-designer
-description: Design and implement a substantial, clearly scoped interface when parallel visual work or isolated design context adds value. Small styling and interaction changes stay with the main agent.
+description: Design and implement a scoped interface or component with complete interaction states. Use when focused visual work, parallel implementation or isolated design context adds value.
 tools: [Read, Glob, Grep, BrowserPreview, Bash, Edit, Write]
 ---
 
