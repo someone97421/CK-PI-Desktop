@@ -35,6 +35,18 @@ function definition(
 }
 
 describe("parseSubagentDefinition", () => {
+  it("preserves an optional reporting interval and rejects invalid fixed intervals", () => {
+    const document = (interval: string) => `---\nname: worker\ndescription: work\n${interval}\n---\nWork.`;
+    const old = parse(document(""));
+    expect(old.ok && old.definition.reportIntervalSteps).toBeUndefined();
+    const configured = parse(document("reportIntervalSteps: 4"));
+    expect(configured.ok && configured.definition.reportIntervalSteps).toBe(4);
+    for (const value of ["0", "-1", "1.5", "NaN", "9007199254740992"]) {
+      expect(parse(document(`reportIntervalSteps: ${value}`)).ok).toBe(false);
+    }
+    expect(resolveSubagentToolNames({ tools: [], inheritTools: true }, ["Read", "TaskGuide", "TaskInspect", "TaskStop"]))
+      .toEqual(["Read"]);
+  });
   it("reads the document a project would actually write", () => {
     const result = parse(`---
 name: code-reviewer

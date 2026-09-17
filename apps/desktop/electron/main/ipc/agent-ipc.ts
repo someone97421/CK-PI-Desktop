@@ -597,6 +597,14 @@ export function registerAgentIpc({
     return result;
   });
 
+  handle(IPC.invoke.subagentStop, async (req: { sessionId: string; delegationId: string }) => {
+    if (!sidecar) throw new Error("sidecar unavailable");
+    if (!req || typeof req.sessionId !== "string" || !req.sessionId.trim() ||
+      typeof req.delegationId !== "string" || !req.delegationId.trim()) throw new Error("sessionId and delegationId are required");
+    // 不调用 cancelSessionTools/finishTurn：这次只停止指定子任务。
+    return sidecar.call("agent.subagentStop", { sessionId: req.sessionId, delegationId: req.delegationId });
+  });
+
   handle(IPC.invoke.agentAbort, async (req: { sessionId: string; turnId?: string }) => {
     if (!sidecar) throw new Error("sidecar unavailable");
     const releaseSessionOperation = req.turnId ? await acquireSessionOperation(req.sessionId) : undefined;

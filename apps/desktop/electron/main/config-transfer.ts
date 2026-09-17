@@ -6,7 +6,7 @@ import { globalInstructionPath } from "@pi-desktop/agent-runtime";
 import { resolveLocale } from "@pi-desktop/i18n";
 import {
   APPEARANCE_KEYS, CONFIG_SCOPES, KEYBOARD_SHORTCUTS, SUBAGENT_THINKING_LEVELS,
-  isAllowedKeybinding, isReservedKeybinding, isAppearanceSettings,
+  isAllowedKeybinding, isReservedKeybinding, isAppearanceSettings, isReportIntervalSteps,
   buildProviderExportFile, parseProviderExportFile, planProviderImport, providerImportPayload,
   type AppSettings, type ConfigExportFile, type ConfigScope, type ConfigTransferResult,
   type UserSubagentRecord, type ShortcutPlatform,
@@ -90,7 +90,7 @@ function parseFile(raw: string): ConfigExportFile {
     const s = file.subagents;
     if (!record(s) || !Array.isArray(s.owned) || !Array.isArray(s.disabledBuiltins) || s.disabledBuiltins.some((id) => typeof id !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || id.length > 40)) invalid("子智能体配置不正确");
     const seen = new Set<string>();
-    const keys = ["id", "name", "description", "body", "tools", "model", "fallbackModels", "thinkingLevel", "maxTokens", "enabled"];
+    const keys = ["id", "name", "description", "body", "tools", "model", "fallbackModels", "thinkingLevel", "maxTokens", "reportIntervalSteps", "enabled"];
     for (const agent of s.owned) {
       if (!record(agent) || typeof agent.id !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(agent.id) || agent.id.length > 40 || seen.has(agent.id) ||
         Object.keys(agent).some((k) => !keys.includes(k)) || agent.name !== agent.id ||
@@ -101,6 +101,7 @@ function parseFile(raw: string): ConfigExportFile {
         typeof agent.thinkingLevel !== "string" || !["", ...SUBAGENT_THINKING_LEVELS].includes(agent.thinkingLevel) ||
         typeof agent.maxTokens !== "number" || !Number.isInteger(agent.maxTokens) || agent.maxTokens < 0) invalid("子智能体字段无效或名称重复");
       seen.add(agent.id);
+      if (agent.reportIntervalSteps !== undefined && agent.reportIntervalSteps !== null && !isReportIntervalSteps(agent.reportIntervalSteps)) invalid("子智能体汇报间隔必须为正安全整数");
     }
   }
   return file;
@@ -136,7 +137,8 @@ export async function exportConfig({ host }: Dependencies, scopes: ConfigScope[]
       const { body } = await host.call<{ body: string }>("agents.read", { id: agent.id });
       file.subagents.owned.push({ id: agent.id, name: agent.id, description: agent.description, body,
         tools: agent.tools, model: agent.model ?? "", fallbackModels: agent.fallbackModels ?? [],
-        thinkingLevel: agent.thinkingLevel ?? "", maxTokens: agent.maxTokens ?? 0, enabled: agent.enabled });
+        thinkingLevel: agent.thinkingLevel ?? "", maxTokens: agent.maxTokens ?? 0,
+        ...(agent.reportIntervalSteps !== undefined ? { reportIntervalSteps: agent.reportIntervalSteps } : {}), enabled: agent.enabled });
     }
   }
   await fs.writeFile(picked.filePath, `${JSON.stringify(file, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });

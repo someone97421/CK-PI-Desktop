@@ -607,6 +607,11 @@ async function handle(method: string, params: any): Promise<unknown> {
       await runtime.compactManually();
       return { accepted: true };
     }
+    case "agent.subagentStop": {
+      const runtime = runtimes.get(String(params.sessionId ?? ""));
+      if (!runtime) throw Object.assign(new Error("No active runtime for this subagent"), { errorCode: "SUBAGENT_NOT_FOUND" });
+      return runtime.stopSubagent(String(params.delegationId ?? ""), "user");
+    }
     case "agent.abort": {
       const sessionId = String(params.sessionId);
       if (sessionId.startsWith(NATIVE_PI_SESSION_PREFIX)) {

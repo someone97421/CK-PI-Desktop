@@ -19,6 +19,7 @@ import type {
   SessionSummarizeTitleRequest,
   SessionSummarizeTitleResponse,
   AgentStopResponse,
+  SubagentStopResult,
   AgentQueueChangedEvent,
   AgentQueuePushRequest,
   QueuedTurnSummary,
@@ -651,6 +652,8 @@ export const api = {
     invoke(IPC.invoke.agentAbort, { sessionId }),
   stop: (sessionId: string) =>
     invoke<AgentStopResponse>(IPC.invoke.agentStop, { sessionId }),
+  stopSubagent: (sessionId: string, delegationId: string) =>
+    invoke<SubagentStopResult>(IPC.invoke.subagentStop, { sessionId, delegationId }),
   queuePrompt: (req: AgentQueuePushRequest) =>
     invoke<QueuedTurnSummary>(IPC.invoke.agentQueuePush, req),
   listQueuedPrompts: (sessionId: string) =>

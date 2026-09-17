@@ -2,9 +2,9 @@
 
 - 编写日期：2026-09-17。
 - 实施分支：`agent-combo`，从 `main` 的 `81ee7ebc` 创建。
-- 状态：待实施；本文不是已完成功能清单，也不代表完成运行验证。
+- 状态：代码实现已完成；构建、定向测试及验证边界见第 12 节。
 - 产品依据：[协作决策](./SUBAGENT-COLLABORATION-DECISIONS.md)。出现语义冲突时，以该文档的用户确认行为为准。
-- 实施原则：在用户指定的 `agent-combo` 分支工作；按需修改，默认不运行测试、全量构建或服务。本文的验证场景供后续获准验证时使用。
+- 实施原则：在用户指定的 `agent-combo` 分支工作。本轮用户明确要求代码构建和最轻量的基本连通性测试，已按相关路径执行，结果见第 12 节。
 
 ## 1. 方案概览
 
@@ -23,9 +23,9 @@
 用户终止按钮 ────────────────┘
 ```
 
-## 2. 已核实基础及改动位置
+## 2. 设计基线及改动位置
 
-| 位置 | 当前基础 | 本轮拟改动 |
+| 位置 | 设计时基础 | 本轮改动方向 |
 | --- | --- | --- |
 | [subagent.ts](../packages/agent-runtime/src/subagent.ts) | 独立 `Agent`、顺序工具执行、事件转发、取消信号、轮次/工具计数 | 保存可控制的运行实例，加入执行前拦截、引导应用和分段步骤记录 |
 | [runtime.ts](../packages/agent-runtime/src/runtime.ts) | 派发登记、`TaskWait`/`TaskList`/`TaskStop`、最终报告回收、父 Agent steering | 管理阶段报告和引导请求，唤醒等待、向父模型交付报告、统一终止 |
@@ -36,13 +36,13 @@
 | [SubagentDetail.tsx](../apps/desktop/src/features/chat/transcript/SubagentDetail.tsx)、[ToolRow.tsx](../apps/desktop/src/features/chat/transcript/ToolRow.tsx) | 运行卡片、过程明细和状态 | 单独终止按钮、报告/引导状态、本段与累计计数 |
 | `packages/i18n/src/locales/zh-CN/`、`packages/i18n/src/locales/en/` | 两种界面语言 | 补齐简中与英文文案 |
 
-当前底层 `@earendil-works/pi-agent-core@0.85.1` 的 `steer()` 在 assistant turn 边界交付消息；不能据此保证同一回复中的 A、B、C 在 A 后立即接受引导。现有 `beforeToolCall`/`afterToolCall` 可作为接入点，但要处理被拦截调用的工具结果配对和错误分类。
+项目锁定的 `@earendil-works/pi-agent-core@0.85.1` 的 `steer()` 在 assistant turn 边界交付消息；不能仅凭它保证同一回复中的 A、B、C 在 A 后立即接受引导。本轮使用 `beforeToolCall`/`afterToolCall` 和 `shouldStopAfterTurn`，处理被拦截调用的工具结果配对和控制原因。
 
-`SubagentRun` 目前按一次运行结束返回结果，派发登记只保存 `abort()`，缺少后续引导句柄。阶段报告也不能直接复用最终结算，否则会错误地标记任务已完成、清理运行实例或重复累计用量。
+设计基线的 `SubagentRun` 按一次运行结束返回结果，派发登记只保存 `abort()`。本轮保存运行实例和观察器，允许后续引导、查询与定向停止；阶段报告只更新协作快照，最终结算继续沿原有路径处理，避免重复累计用量。
 
 ## 3. 设置与生效规则
 
-拟增加可选字段 `reportIntervalSteps?: number`。
+增加可选字段 `reportIntervalSteps?: number`。
 
 1. 设置界面显示“汇报间隔（工具调用次数）”，留空提示“由主 Agent 派发时指定”。不设置虚构的统一默认 N。
 2. 用户定义固定值优先；没有固定值时使用 `Task.reportIntervalSteps`。两者均缺失则返回参数错误，启动前失败。
@@ -103,7 +103,7 @@
 
 ## 6. 引导控制与工具边界
 
-### 6.1 拟新增 `TaskGuide`
+### 6.1 `TaskGuide`
 
 ```ts
 type TaskGuideInput = {
@@ -115,7 +115,7 @@ type TaskGuideInput = {
 type GuideReceipt = {
   delegationId: string;
   commandId: string;
-  status: "accepted" | "applied" | "rejected";
+  status: "accepted" | "applying" | "applied" | "cancelled" | "rejected";
   reason?: string;
 };
 ```
@@ -140,7 +140,7 @@ type GuideReceipt = {
 
 当前子 Agent 顺序执行工具，适合设置入口闸门。但仅调用 `agent.steer()` 或仅在 `afterToolCall` 返回终止提示，均不足以保证 A 完成后不执行 B、C。
 
-需用执行前拦截与 steering 配合，并核对当前依赖对被阻止调用的行为：若钩子默认产生错误结果，要使用明确的控制原因标识，避免触发写入失败恢复、模型失败回退或“重试旧工具”的逻辑。只有实际执行过的工具才进入步骤计数。
+实现使用执行前拦截关闭旧计划入口，以 `shouldStopAfterTurn` 让出循环，再通过同一实例的 `prompt()` 追加引导并继续。拦截结果使用 `SUBAGENT_GUIDED` 或 `SUBAGENT_STOPPED` 控制原因，保留合法的工具结果配对；只有实际执行过的工具才进入步骤计数。
 
 若现有钩子无法正确表达该边界，应新增局部执行适配器或受控依赖补丁，并说明影响；禁止直接编辑 `node_modules` 后把本机效果视为仓库实现。
 
@@ -152,7 +152,7 @@ type GuideReceipt = {
 - `TaskList`：展示运行状态、累计次数、当前段、最近报告及引导回执。
 - `TaskWait`：支持报告到达唤醒；结果明确区分阶段进展与任务完成，保留原有终态信息。
 - `TaskGuide`：仅用于中途引导，不兼任终止或创建任务。
-- 可增加只读 `TaskInspect`：按子任务 ID 和步骤范围获取有界详细记录，避免扩大每份自动报告。
+- `TaskInspect`：按子任务 ID 和步骤范围获取有界详细记录，并支持按 `toolCallId` 或历史页查询持久化转录，避免扩大每份自动报告。
 - `TaskStop`：和人工停止共用控制器，不能因等待无法取消的工具而无限阻塞主 Agent。
 
 更新父 Agent 的派发说明，移除“运行中不能纠正子 Agent”的旧表述，说明汇报持续并行、引导回执与人工终止的含义。把新增控制/查询工具加入子 Agent 工具继承排除表，保持不嵌套派发、不越权控制其他子任务的边界。
@@ -175,7 +175,9 @@ type GuideReceipt = {
 
 只维护简体中文与英文。适配现有转录与拓扑布局，避免把子任务终止映射成主会话结束。
 
-持久化优先在现有子 Agent Markdown 前置字段增加可选值，同步 TypeScript/Rust 读写和配置导入导出路径。旧文档缺字段可正常加载，已有其他字段在读写时不得丢失。需要核实旧版本重新保存是否会丢弃新增字段，并在实施时如实说明。
+持久化在现有子 Agent Markdown 前置字段增加可选值，同步 TypeScript/Rust 读写和配置导入导出路径。旧文档缺字段可正常加载；新版本更新定义时保留其他前置字段。输入缺省表示保留间隔，显式 `null` 表示清除固定间隔。
+
+兼容性有方向：新版本读取旧定义和旧导出文件；旧版本编辑并保存定义时可能丢弃新增间隔字段，旧版严格校验的配置导入器也不识别包含该字段的新导出文件。未设置固定间隔时导出省略此字段。本轮未修改数据库 schema、protocol 数字或凭据格式。
 
 本方案不需要预先升级数据库 schema 或 protocol 数字。新字段、IPC 与事件按现有能力边界增量接入；若实现中发现必须改变不兼容格式或公共契约，先集中说明并确认。历史转录缺少新字段时正常展示。
 
@@ -192,9 +194,9 @@ type GuideReceipt = {
 
 不把仅有 UI、仅能发报告或仅能排队 steering 视为整个功能完成。阶段实现状态应与已确认行为逐项对应，不预设人天承诺。
 
-## 11. 后续定向验证场景
+## 11. 定向验证场景
 
-以下是实施时需要覆盖的场景清单，本次文档交付不执行测试或构建。
+以下为实现核对清单。已执行的代码级覆盖及未进行的真实环境验证见第 12 节。
 
 1. 固定 N、由主 Agent 指定 N、双方缺失、非法值，以及用户配置不能被引导覆盖。
 2. 连续执行超过两个汇报周期：子 Agent 未等待主 Agent，步骤区间无重叠丢失，累计计数不重置。
@@ -208,3 +210,54 @@ type GuideReceipt = {
 10. 旧定义、历史转录、内置复制、导入导出和简中/英文界面兼容。
 
 实施验证优先覆盖修改及相关路径，遵守项目默认不跑测试/全量构建的约定；需要执行时集中说明范围，并如实记录实际结果。
+
+## 12. 实现落点与验证记录（2026-09-17）
+
+### 12.1 代码落点
+
+| 能力 | 实现位置与实际行为 |
+| --- | --- |
+| 汇报间隔设置 | `subagent-definition.ts`、`capabilities.ts`、`user_subagents.rs`、设置页及 `config-transfer.ts`；只接受正安全整数，固定值优先，双方未指定则拒绝派发 |
+| 旁路记录与摘要 | 新增 `packages/agent-runtime/src/subagent-observer.ts`；按真实调用 ID 去重，失败计步，每 N 个完成调用生成结构化摘要，引导/终态补齐尾部，区分事实与 Agent 陈述 |
+| 报告交付 | `runtime.ts` 保存有界收件箱，合并时保留报告序号和步骤范围；主模型边界、`TaskWait`、空闲回收共用消费入口，父轮次代次阻止旧通知重新唤醒 |
+| 父上下文消息 | 报告使用 `subagent-supervision` 自定义消息进入模型，不冒充用户输入，避免压缩时把进度通知作为新的用户任务锚点 |
+| 工具边界引导 | `subagent.ts` 保存同一 `Agent` 上下文；A 执行中收到引导后，旧 B/C 生成明确未执行结果；追加引导、重置本段计数，自动继续；累计用量不重置 |
+| 定向终止 | `TaskStop` 与公开 `stopSubagent()` 共用运行控制；立即回执正在终止，真正收束后发布终态；保留部分结果，停止优先于引导 |
+| 人工按钮链路 | `SubagentSupervision.tsx` → Renderer API → 专用 `subagentStop` IPC → `agent.subagentStop` Sidecar 路由 → 所属子任务；卡片和详情页都有入口 |
+| 审批取消 | Rust `rpc/mod.rs` 将已有按工具调用 ID 的取消登记扩展到所有工具，支持取消非 Bash 的待审批调用；正在执行的不可取消工具保持正在终止，等待真实结果 |
+| 查询与落盘 | `TaskInspect` 支持最近步骤和持久化历史页/指定工具 ID；`TaskReport`、`TaskGuidance`、`TaskCancellation` 作为子行写入已有转录路径 |
+| 界面与历史 | 简中/英文显示间隔来源、本段和累计计数、最近报告、引导回执及停止来源；历史无活跃执行器的卡片不提供停止按钮 |
+
+内存详细步骤窗口保留最近 256 条，每份自动报告最多预览 16 条；引导回执窗口最多 64 条，待处理引导最多 16 条。旧细节通过持久化记录查询，调用/命令 ID 仍用于防止重复执行。参数和结果摘要隐藏已知提供商凭据、认证字段及 URL 内凭据；输出截断附带记录引用。程序摘要不增加子 Agent 的模型请求。
+
+`TaskGuide` 的命令 ID 由父工具调用 ID 提供，重复调用不会重复插入；接收、应用中、生效、取消与拒绝状态可追踪。人工终止同时通知父模型尊重用户意图，不把它当作可重试失败。现有权限和 `maxTokens` 的单次响应语义保持不变。
+
+### 12.2 构建与检查
+
+所有构建入口通过 `scripts/build.mjs`，沿用同一 `THIS_IS_A_AGENT_BUILD_TIME`。本次构建显示版本为 `20260917-151353`，内部版本为 `2609.1715.1353`。
+
+| 命令（仓库根目录执行） | 结果及范围 |
+| --- | --- |
+| `pnpm build:js` | 通过；共享包、运行时及 Electron 主进程、preload、Renderer 编译 |
+| `pnpm build:host` | 通过；Rust host release 构建 |
+| `pnpm --filter @pi-desktop/desktop bundle:runtime` | 通过；Sidecar bundle |
+| `node apps/desktop/node_modules/typescript/bin/tsc -p apps/desktop/tsconfig.json --noEmit` | 通过；桌面类型检查 |
+| `git diff --check` | 通过；修改内容空白检查 |
+
+构建保留原有 CSS `::highlight` 优化警告及 API 模块静态/动态导入警告，未阻止输出生成。桌面类型检查同时修正了 `session-ipc.ts` 已使用的 `publishDesktopEvent` 未纳入依赖 `Pick` 类型的问题。
+
+### 12.3 最小相关测试
+
+| 测试 | 结果 | 覆盖 |
+| --- | --- | --- |
+| `packages/agent-runtime/src/subagent-collaboration.test.ts` | 14 通过 | 持续汇报、A/B/C 拦截、生成期引导、同上下文继续、计数/脱敏、回执有界、间隔优先级、父边界/等待/空闲交付、定向停止、旧代次隔离、历史查询 |
+| `packages/agent-runtime/src/subagent.test.ts` | 21 通过 | 原有子任务执行与失败/取消路径 |
+| `runtime.test.ts -t 'DesktopAgentRuntime subagents'` | 39 通过，134 不相关项跳过 | 派发、回收和主子运行时连接 |
+| `packages/shared/src/subagent-definition.test.ts` | 36 通过 | 定义解析、非法间隔、工具继承边界 |
+| `apps/desktop/test/subagent-collaboration.test.mjs` | 3 通过 | 实际按钮回调、Renderer API、专用 IPC 到模拟 Sidecar；编辑器字段及配置导入兼容 |
+| `cargo test -p host-core user_subagents::tests -- --test-threads=1` | 16 通过 | Rust 设置读写与可选间隔兼容 |
+| `cargo test -p host-core subagent_stop_cancels_non_bash_approval_without_writing -- --test-threads=1` | 1 通过 | 取消待审批 Write 后不写文件，取消登记被清理 |
+
+运行时测试在对应包目录使用 `node node_modules/vitest/vitest.mjs run <文件> [过滤条件]`；桌面连接测试在根目录使用 `node --test apps/desktop/test/subagent-collaboration.test.mjs`。合计 130 项相关测试通过。
+
+验证使用内存模型流、受控工具、模拟 UI/IPC 和 Rust 临时数据，不调用真实模型，也不启动后端服务。它证明代码构建及基本控制链路可用，不等于真实 Electron 交互、外部 MCP/插件取消或另一台设备上的实测；本次未执行这些环境验证，也未打包或发布安装程序。

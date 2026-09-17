@@ -70,6 +70,8 @@ export type SubagentDefinition = {
    * rather than per run.
    */
   maxTokens?: number;
+  /** 每完成 N 次工具调用旁路汇报；未设置时由主 Agent 派发时指定。 */
+  reportIntervalSteps?: number;
   /** Idle watchdog in seconds; parser materializes the default for documents. */
   idleTimeoutSeconds?: number;
   /** Total runtime watchdog in seconds; parser materializes the default. */
@@ -111,6 +113,8 @@ export const SUBAGENT_INHERIT_DENY_TOOLS: readonly string[] = [
   "TaskWait",
   "TaskList",
   "TaskStop",
+  "TaskGuide",
+  "TaskInspect",
   "EnterPlanMode",
   "EnterGoalMode",
   "asktool",
@@ -164,6 +168,10 @@ export const DEFAULT_SUBAGENT_TOOLS: readonly SubagentAssignableTool[] = [
  */
 export const MAX_SUBAGENT_MAX_TOKENS = 200_000;
 export const MIN_SUBAGENT_MAX_TOKENS = 1;
+
+export function isReportIntervalSteps(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
 /**
  * Parsed from definition frontmatter for compatibility. Idle and duration
  * watchdogs are withdrawn (D328): the parent agent decides when to stop a
@@ -444,6 +452,13 @@ export function parseSubagentDefinition(
     asScalar(frontmatter.get("maxtokens")),
     warnings,
   );
+  const declaredInterval = asScalar(frontmatter.get("reportintervalsteps"));
+  let reportIntervalSteps: number | undefined;
+  if (declaredInterval !== undefined) {
+    const parsed = /^\d+$/.test(declaredInterval.trim()) ? Number(declaredInterval) : NaN;
+    if (!isReportIntervalSteps(parsed)) errors.push("reportIntervalSteps must be a positive safe integer");
+    else reportIntervalSteps = parsed;
+  }
   const idleTimeoutSeconds = parseTimeoutSeconds(
     asScalar(frontmatter.get("idletimeout")) ??
       asScalar(frontmatter.get("idletimeoutseconds")),
@@ -479,6 +494,7 @@ export function parseSubagentDefinition(
       ...(thinkingLevel ? { thinkingLevel } : {}),
       ...(permission ? { permission } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),
+      ...(reportIntervalSteps !== undefined ? { reportIntervalSteps } : {}),
       idleTimeoutSeconds,
       maxDurationSeconds,
       prompt,
