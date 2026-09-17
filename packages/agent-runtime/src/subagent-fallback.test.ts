@@ -71,6 +71,7 @@ async function fixture(options: {
   const run = (overrides: Partial<SubagentRunOptions> = {}) => new SubagentRun({
     definition: { name: "worker", description: "Fixture", tools: ["Edit"], prompt: "Finish.", source: "user" },
     sessionId: "s", parentToolCallId: "task", task: "Finish the work.", systemPrompt: "Finish the work.",
+    reportIntervalSteps: 10,
     provider: provider("primary"), thinkingLevel: "off", tools: [tool],
     fallbackModels: [{ key: "secondary/secondary", provider: provider("secondary") }],
     onEvent: (event) => events.push(event), ...overrides,

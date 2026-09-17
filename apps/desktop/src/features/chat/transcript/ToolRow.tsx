@@ -1,3 +1,4 @@
+import { SubagentSupervision, useSubagentExecution } from "./SubagentSupervision";
 import {
   Fragment,
   memo,
@@ -18,6 +19,8 @@ import {
   getToolDisplayName,
   getToolSummary,
   getToolSummaryValue,
+  isDelegationStartTool,
+  delegationExecutionKey,
 } from "../../../lib/tool-display";
 import {
   buildToolPresentation,
@@ -93,7 +96,7 @@ function toolRowDelegationId(message: UiMessage): string | undefined {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return undefined;
   }
-  const delegationId = (payload as { delegationId?: unknown }).delegationId;
+  const delegationId = delegationExecutionKey(payload);
   return typeof delegationId === "string" ? delegationId : undefined;
 }
 
@@ -233,7 +236,10 @@ export const ToolRow = memo(function ToolRow({
   // running it has no roster yet, and `delegationIds` would otherwise reach the
   // head as a JSON blob of UUIDs (D268).
   const summary = lifecycle ? rosterSummary : argSummary;
-  const statusLabel = creating
+  const childExecution = useSubagentExecution(message);
+  const statusLabel = outcome === "running" && !childExecution.live ? t("chat.subagentHistorical")
+    : outcome === "running" && childExecution.phase === "stopping" ? t("chat.subagentStoppingNow")
+    : outcome === "running" && childExecution.phase === "guiding" ? t("chat.subagentGuidingNow") : creating
     ? t("chat.subagentCreating")
     : outcome
       ? t(`chat.subagentStatus.${outcome}`)
@@ -252,7 +258,7 @@ export const ToolRow = memo(function ToolRow({
     variant === "topology" ? toolResultPayload(message) : undefined;
   const delegationId =
     delegationPayload && typeof delegationPayload === "object"
-      ? (delegationPayload as { delegationId?: unknown }).delegationId
+      ? delegationExecutionKey(delegationPayload)
       : undefined;
   const panelSelectionId =
     typeof delegationId === "string" && delegationId
@@ -368,11 +374,13 @@ export const ToolRow = memo(function ToolRow({
             ) : null}
             {delegate?.items.length ? (
               <span className="subagent-topology-node-steps">
-                {t("chat.processingSteps", { count: delegate.items.length })}
+                {childExecution.collaboration
+                  ? t("chat.subagentToolCalls", { count: childExecution.collaboration.completedSteps })
+                  : t("chat.subagentProcessRecords", { count: delegate.items.length })}
               </span>
             ) : null}
           </span>
-          {outcome === "running" ? (
+          {outcome === "running" && childExecution.live ? (
             <span className="tool-spinner" aria-label={t("chat.running")} />
           ) : null}
         </button>
@@ -490,6 +498,7 @@ export const ToolRow = memo(function ToolRow({
           {statusLabel}
         </span>
       ) : null}
+      {isDelegationStartTool(message.toolName) ? <SubagentSupervision message={message} running={subagentOutcome(message, delegationStatuses) === "running"} compact /> : null}
       {blocks && blocks.length > 0 ? (
         <div className="tool-row-body" id={detailsId}>
           <DisclosureCollapseRail
@@ -556,8 +565,8 @@ export const SubagentRunRows = memo(function SubagentRunRows({
               ? t("chat.subagentWork", { agent: agentName })
               : t("chat.subagentWorkUnnamed")}
         </span>
-        <span className="subagent-run-count">
-          {t("chat.processingSteps", { count: run.items.length })}
+        <span className="subagent-run-count" title={t("chat.subagentProcessRecordsHint")}>
+          {t("chat.subagentProcessRecords", { count: run.items.length })}
         </span>
       </div>
       <SubagentRunFollow

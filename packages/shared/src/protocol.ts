@@ -73,6 +73,8 @@ export const IPC = {
     agentCompact: "pi-desktop/agent/compact",
     agentAbort: "pi-desktop/agent/abort",
     agentStop: "pi-desktop/agent/stop",
+    subagentStop: "pi-desktop/agent/subagent/stop",
+    subagentRecallStatus: "pi-desktop/agent/subagent/recall-status",
     agentQueuePush: "pi-desktop/agent/queue/push",
     agentQueueList: "pi-desktop/agent/queue/list",
     agentQueueRemove: "pi-desktop/agent/queue/remove",

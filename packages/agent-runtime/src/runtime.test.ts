@@ -36,15 +36,21 @@ const subagentRuns = vi.hoisted(() => ({
 }));
 vi.mock("./subagent.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./subagent.js")>();
+  const { SubagentObserver } = await import("./subagent-observer.js");
   return {
     ...actual,
     SubagentRun: class {
       private signal?: AbortSignal;
+      readonly observation: InstanceType<typeof SubagentObserver>;
       constructor(options: unknown) {
+        const opts = options as any;
+        this.observation = new SubagentObserver(opts.delegationId ?? opts.parentToolCallId,
+          opts.definition.reportIntervalSteps ?? opts.reportIntervalSteps, "definition", () => {});
         subagentRuns.calls.push(options);
         // Per-instance: concurrent delegates must abort on their own signal.
         this.signal = (options as { signal?: AbortSignal }).signal;
       }
+      stop(source: "user" | "parent" | "session") { this.observation.stop(source); }
       run() {
         if (subagentRuns.deferred) {
           return new Promise((resolve) => {
@@ -5641,6 +5647,7 @@ describe("DesktopAgentRuntime plugin skills (D174)", () => {
 describe("DesktopAgentRuntime subagents", () => {
   const explorer: SubagentDefinition = {
     name: "explorer",
+    reportIntervalSteps: 10,
     description: "Search the workspace and report findings.",
     tools: ["Read", "Glob", "Grep"],
     prompt: "Report file paths and line numbers.",
@@ -5648,6 +5655,7 @@ describe("DesktopAgentRuntime subagents", () => {
   };
   const pinned: SubagentDefinition = {
     name: "reviewer",
+    reportIntervalSteps: 10,
     description: "Review a diff.",
     tools: ["Read", "Bash"],
     model: { providerId: "remote", modelId: "remote-model" },
@@ -5680,6 +5688,7 @@ describe("DesktopAgentRuntime subagents", () => {
   it("opts a definition with tools: inherit into the parent catalog minus the deny list", async () => {
     const inheritor: SubagentDefinition = {
       name: "worker",
+      reportIntervalSteps: 10,
       description: "Uses the parent toolset.",
       tools: [],
       inheritTools: true,
@@ -6177,7 +6186,7 @@ describe("DesktopAgentRuntime subagents", () => {
         if (!settlesEarly) await settle();
         const events = onEvent.mock.calls.map(([envelope]) => envelope);
         const snapshots = events.filter((envelope) =>
-          envelope.event.type === "message_end" && envelope.event.message.role === "tool",
+          envelope.event.type === "message_end" && envelope.event.message.toolName === "Task",
         );
         expect(snapshots).toHaveLength(1);
         expect(snapshots[0]).toMatchObject({
@@ -6199,7 +6208,8 @@ describe("DesktopAgentRuntime subagents", () => {
           toolUsage: initialEnd.event.toolUsage,
         });
         expect(internals.delegations.get(sibling.details.delegationId)?.status).toBe("running");
-        const types = events.map((envelope) => envelope.event.type);
+        expect(events.some((envelope) => envelope.event.type === "message_end" && envelope.event.message.toolName === "TaskExecution")).toBe(true);
+        const types = events.filter((envelope) => envelope.event.type !== "message_end" || envelope.event.message.toolName === "Task").map((envelope) => envelope.event.type);
         expect(types.indexOf("tool_end")).toBeLessThan(types.indexOf("message_end"));
       } finally {
         await runtime.dispose();
@@ -6356,12 +6366,11 @@ describe("DesktopAgentRuntime subagents", () => {
     expect(converged.details.status).toBe("completed");
     expect(converged.content[0].text).toContain("src/app.ts:12");
 
-    // TaskStop stops the still-running second delegate and reports "stopped".
+    // TaskStop acknowledges immediately; the terminal event confirms settlement separately.
     const stopped = await stop.execute("stop-1", { delegationIds: [secondId] });
-    expect(stopped.details.stopped).toHaveLength(1);
-    expect((stopped.details.stopped as Array<{ status: string }>)[0].status).toBe(
-      "stopped",
-    );
+    expect(stopped.details.delegations).toHaveLength(1);
+    expect(stopped.details.delegations[0].collaboration.phase).toBe("stopping");
+    await (runtime as any).delegations.get(secondId).completion;
     expect((runtime as any).delegations.get(secondId).status).toBe("stopped");
     const afterStop = await wait.execute("wait-2", {
       delegationIds: [secondId],
@@ -6568,7 +6577,7 @@ describe("DesktopAgentRuntime subagents", () => {
     await resume;
 
     expect(prompt).toHaveBeenCalledTimes(1);
-    const delivered = String(
+    const delivered = JSON.stringify(
       (prompt.mock.calls as unknown as unknown[][])[0]?.[0] ?? "",
     );
     expect(delivered).toContain("src/app.ts:12 misses the null check.");
@@ -6615,7 +6624,7 @@ describe("DesktopAgentRuntime subagents", () => {
     await (runtime as any).resumeAfterDelegations();
 
     expect(prompt).toHaveBeenCalledTimes(1);
-    const delivered = String(
+    const delivered = JSON.stringify(
       (prompt.mock.calls as unknown as unknown[][])[0]?.[0] ?? "",
     );
     expect(delivered).toContain("src/app.ts:12 misses the null check.");
@@ -6718,7 +6727,7 @@ describe("DesktopAgentRuntime subagents", () => {
     await (runtime as any).resumeAfterDelegations();
 
     expect(prompt).toHaveBeenCalledTimes(1);
-    const delivered = String(
+    const delivered = JSON.stringify(
       (prompt.mock.calls as unknown as unknown[][])[0]?.[0] ?? "",
     );
     expect(delivered).toContain("report-4-");
@@ -6762,6 +6771,7 @@ describe("DesktopAgentRuntime subagents", () => {
       tools: ["Read", "Edit", "Write"],
       permission: "accept-edits",
       prompt: "Implement it.",
+      reportIntervalSteps: 10,
       source: "builtin",
     };
     const host = {

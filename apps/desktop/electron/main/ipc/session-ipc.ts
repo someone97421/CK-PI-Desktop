@@ -100,7 +100,7 @@ export type SessionIpcDependencies = {
   sessionProjects: Map<string, string | null>;
   persistenceOutbox: PersistenceOutbox;
   logger: Pick<Logger, "app">;
-  plugins: Pick<PluginRuntime, "broadcastEvent">;
+  plugins: Pick<PluginRuntime, "broadcastEvent" | "publishDesktopEvent">;
   sessionCapabilityContext: () => Promise<{ providers: any; defaults: any }>;
   enrichSession: (session: any, providers: any, defaults: any) => any;
   acquireSessionOperation: (sessionId: string) => Promise<() => void>;

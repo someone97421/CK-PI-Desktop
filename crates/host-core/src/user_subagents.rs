@@ -67,6 +67,8 @@ pub struct UserSubagentRecord {
     pub thinking_level: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report_interval_steps: Option<u64>,
     pub path: String,
     #[serde(default)]
     pub size_bytes: u64,
@@ -86,6 +88,8 @@ pub struct UserSubagentInput {
     pub fallback_models: Option<Vec<String>>,
     pub thinking_level: Option<String>,
     pub max_tokens: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_report_interval")]
+    pub report_interval_steps: Option<Option<u64>>,
     pub enabled: Option<bool>,
     /// Kept for protocol compatibility; subagents are global-only now.
     #[allow(dead_code)]
@@ -95,6 +99,23 @@ pub struct UserSubagentInput {
 pub struct UserSubagentRegistry {
     state: CapabilityState,
     builtins: CapabilityState,
+}
+
+// 区分缺省（保留）和 null（清除）；0 不是关闭汇报的特殊值。
+fn deserialize_report_interval<'de, D>(deserializer: D) -> std::result::Result<Option<Option<u64>>, D::Error>
+where D: serde::Deserializer<'de> {
+    let value = Option::<u64>::deserialize(deserializer)?;
+    if value.is_some_and(|n| n == 0 || n > 9_007_199_254_740_991) {
+        return Err(serde::de::Error::custom("reportIntervalSteps must be a positive safe integer"));
+    }
+    Ok(Some(value))
+}
+
+fn valid_report_interval(value: Option<u64>) -> Result<Option<u64>> {
+    if value.is_some_and(|n| n == 0 || n > 9_007_199_254_740_991) {
+        bail!("SUBAGENT_INVALID: reportIntervalSteps must be a positive safe integer");
+    }
+    Ok(value)
 }
 
 fn normalize_name(value: &str) -> String {
@@ -206,6 +227,12 @@ fn parse_record(path: &Path, state: &CapabilityState) -> Option<UserSubagentReco
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|value| *value > 0)
         .map(|value| value.min(MAX_TOKENS_CEILING));
+    let report_interval_steps = match front.get("reportintervalsteps")
+        .or_else(|| front.get("report-interval-steps")).or_else(|| front.get("report_interval_steps")) {
+        Some(value) if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => valid_report_interval(Some(value.parse::<u64>().ok()?)).ok()?,
+        Some(_) => return None,
+        None => None,
+    };
     Some(UserSubagentRecord {
         id: name.clone(),
         name,
@@ -221,6 +248,7 @@ fn parse_record(path: &Path, state: &CapabilityState) -> Option<UserSubagentReco
         fallback_models: model_fallbacks::parse(&raw).ok()?,
         thinking_level: normalize_thinking(front.get("thinkinglevel").map(String::as_str)),
         max_tokens,
+        report_interval_steps,
         path: path.to_string_lossy().to_string(),
         size_bytes: raw.len() as u64,
         created_at: updated_at.clone(),
@@ -254,6 +282,9 @@ fn render_document(record: &UserSubagentRecord, body: &str) -> String {
     }
     if let Some(max_tokens) = record.max_tokens {
         output.push_str(&format!("maxTokens: {max_tokens}\n"));
+    }
+    if let Some(interval) = record.report_interval_steps {
+        output.push_str(&format!("reportIntervalSteps: {interval}\n"));
     }
     output.push_str("---\n\n");
     output.push_str(body.trim());
@@ -358,6 +389,7 @@ impl UserSubagentRegistry {
                 .max_tokens
                 .filter(|value| *value > 0)
                 .map(|value| value.min(MAX_TOKENS_CEILING)),
+            report_interval_steps: valid_report_interval(input.report_interval_steps.flatten())?,
             path: String::new(),
             size_bytes: 0,
             created_at: Utc::now().to_rfc3339(),
@@ -441,6 +473,10 @@ impl UserSubagentRegistry {
             Some(value) => Some(value.min(MAX_TOKENS_CEILING)),
             None => current.max_tokens,
         };
+        next.report_interval_steps = match input.report_interval_steps {
+            Some(value) => valid_report_interval(value)?,
+            None => current.report_interval_steps,
+        };
         next.enabled = input.enabled.unwrap_or(current.enabled);
         next.path = current.path.clone();
         if next.id != current.id {
@@ -449,7 +485,13 @@ impl UserSubagentRegistry {
                 .to_string_lossy()
                 .to_string();
         }
-        let document = render_document(&next, &body);
+        let mut document = render_document(&next, &body);
+        // 保留权限等由其他版本/手工维护的前置字段，编辑间隔不应清掉它们。
+        let (old_front, _) = parse_front_matter(&raw);
+        let known = ["name", "description", "tools", "model", "fallbackmodels", "thinkinglevel", "maxtokens", "reportintervalsteps", "report-interval-steps", "report_interval_steps"];
+        let extra = old_front.iter().filter(|(key, _)| !known.contains(&key.as_str()))
+            .map(|(key, value)| format!("{key}: {value}\n")).collect::<String>();
+        if !extra.is_empty() { document = document.replacen("---\n\n", &format!("{extra}---\n\n"), 1); }
         if document.len() > MAX_SUBAGENT_BYTES {
             bail!("SUBAGENT_INVALID: document exceeds {MAX_SUBAGENT_BYTES} bytes");
         }
@@ -638,6 +680,30 @@ mod tests {
     }
 
     #[test]
+    fn report_interval_input_and_document_are_compatible() {
+        let absent: UserSubagentInput = serde_json::from_str("{}").unwrap();
+        assert_eq!(absent.report_interval_steps, None);
+        let clear: UserSubagentInput = serde_json::from_str(r#"{"reportIntervalSteps":null}"#).unwrap();
+        assert_eq!(clear.report_interval_steps, Some(None));
+        let fixed: UserSubagentInput = serde_json::from_str(r#"{"reportIntervalSteps":4}"#).unwrap();
+        assert_eq!(fixed.report_interval_steps, Some(Some(4)));
+        for invalid in ["0", "-1", "1.5", "\"4\"", "9007199254740992"] {
+            assert!(serde_json::from_str::<UserSubagentInput>(&format!(r#"{{"reportIntervalSteps":{invalid}}}"#)).is_err());
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("worker.md");
+        let state = CapabilityState::new(temp.path(), SUBAGENT_KIND);
+        fs::write(&path, "---\nname: worker\ndescription: Work\nreportIntervalSteps: 4\nmaxTokens: 100\n---\nKeep the body.\n").unwrap();
+        let record = parse_record(&path, &state).unwrap();
+        assert_eq!(record.report_interval_steps, Some(4));
+        let rendered = render_document(&record, "Keep the body.");
+        assert!(rendered.contains("reportIntervalSteps: 4"));
+        assert!(rendered.contains("maxTokens: 100"));
+        fs::write(&path, rendered.replace("reportIntervalSteps: 4\n", "")).unwrap();
+        assert_eq!(parse_record(&path, &state).unwrap().report_interval_steps, None);
+    }
+
+    #[test]
     fn document_contains_no_activation_state() {
         let record = UserSubagentRecord {
             id: "review".into(),
@@ -651,6 +717,7 @@ mod tests {
             fallback_models: Vec::new(),
             thinking_level: None,
             max_tokens: None,
+            report_interval_steps: None,
             path: "/tmp/review.md".into(),
             size_bytes: 0,
             created_at: String::new(),
@@ -673,6 +740,7 @@ mod tests {
             fallback_models: Vec::new(),
             thinking_level: None,
             max_tokens: Some(16_000),
+            report_interval_steps: None,
             path: "/tmp/review.md".into(),
             size_bytes: 0,
             created_at: String::new(),

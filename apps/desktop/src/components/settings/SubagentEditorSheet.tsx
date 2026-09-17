@@ -53,6 +53,7 @@ export type SubagentDraft = {
    * published limit", which is what a definition without `maxTokens` gets.
    */
   maxTokens: number;
+  reportIntervalSteps: string;
   body: string;
   enabled: boolean;
   scope: ActivationScope;
@@ -96,8 +97,8 @@ export function subagentTemplate(name: string): string {
 Describe the job in the imperative: what to look at, in what order, when to stop.
 
 ## What to report back
-Say exactly what the answer should look like — the parent agent only sees your
-final message, not your steps.
+Write a self-contained final result with findings, changed paths, and anything
+you could not finish.
 
 ## Limits
 Anything you must not do.
@@ -141,6 +142,7 @@ export function emptySubagentDraft(): SubagentDraft {
     fallbackModels: [],
     thinkingLevel: "",
     maxTokens: 0,
+    reportIntervalSteps: "",
     body: "",
     enabled: true,
     scope: GLOBAL_SCOPE,
@@ -159,6 +161,7 @@ export function draftFromRecord(record: UserSubagentRecord, body: string): Subag
     fallbackModels: [...(record.fallbackModels ?? [])],
     thinkingLevel: record.thinkingLevel ?? "",
     maxTokens: record.maxTokens ?? 0,
+    reportIntervalSteps: record.reportIntervalSteps === undefined ? "" : String(record.reportIntervalSteps),
     body,
     enabled: record.enabled,
     scope: resolveScope(record.scope),
@@ -185,6 +188,7 @@ export function draftFromDefinition(definition: SubagentDefinition): SubagentDra
     fallbackModels: (definition.fallbackModels ?? []).map((pin) => `${pin.providerId}/${pin.modelId}`),
     thinkingLevel: definition.thinkingLevel ?? "",
     maxTokens: definition.maxTokens ?? 0,
+    reportIntervalSteps: definition.reportIntervalSteps === undefined ? "" : String(definition.reportIntervalSteps),
     body: definition.prompt,
   };
 }
@@ -265,6 +269,10 @@ export function subagentDraftError(draft: SubagentDraft): string | null {
     return "extensions.subagents.errorMaxTokens";
   }
   if (!draft.body.trim()) return "extensions.subagents.errorBody";
+  if (draft.reportIntervalSteps?.trim() && (!/^\d+$/.test(draft.reportIntervalSteps.trim()) ||
+    !Number.isSafeInteger(Number(draft.reportIntervalSteps)) || Number(draft.reportIntervalSteps) <= 0)) {
+    return "extensions.subagents.errorReportInterval";
+  }
   if (new TextEncoder().encode(draft.body).length > MAX_SUBAGENT_BYTES) {
     return "extensions.subagents.errorTooBig";
   }
@@ -515,6 +523,17 @@ function AdvancedFields({
           modelGroups={modelGroups}
           orphanModel={orphanModel}
         />
+        <Field label={t("extensions.subagents.reportInterval")} hint={t("extensions.subagents.reportIntervalHint")}>
+          <Input
+            type="number"
+            min={1}
+            step={1}
+            max={Number.MAX_SAFE_INTEGER}
+            placeholder={t("extensions.subagents.reportIntervalDefault")}
+            value={draft.reportIntervalSteps}
+            onChange={(event) => setDraft({ ...draft, reportIntervalSteps: event.target.value })}
+          />
+        </Field>
         <Field
           label={t("extensions.subagents.maxTokens")}
           hint={t("extensions.subagents.maxTokensHint", {

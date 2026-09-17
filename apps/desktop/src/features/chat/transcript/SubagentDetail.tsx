@@ -31,6 +31,8 @@ import {
 } from "../../../components/icons";
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
 import { CopyButton } from "./shared";
+import { SubagentSupervision, useSubagentExecution } from "./SubagentSupervision";
+import { delegationExecutionKey } from "../../../lib/tool-display";
 import {
   delegateAgentName,
   delegateModelId,
@@ -44,7 +46,7 @@ import {
 function delegateTaskDescription(message: UiMessage): string {
   const args = message.toolArgs;
   if (!args || typeof args !== "object" || Array.isArray(args)) return "";
-  const task = (args as { task?: unknown }).task;
+  const task = (args as { task?: unknown; instruction?: unknown }).task ?? (args as { instruction?: unknown }).instruction;
   return typeof task === "string" ? task.trim() : "";
 }
 
@@ -132,7 +134,7 @@ function SubagentFailureCard({
 /**
  * The side-sheet view for a selected delegate. It shows a sticky identity
  * header, the task as an inset grouped card, and the live process timeline.
- * Reports and counters remain omitted from this compact surface.
+ * Includes supervision counters, recent reports, guidance and scoped stop.
  */
 export function SubagentDetail({
   message,
@@ -158,7 +160,10 @@ export function SubagentDetail({
   // created: the delegate runtime is spawning. Name that phase explicitly
   // instead of a generic running state, and keep the badge class distinct.
   const creating = outcome === "running" && delegationIsCreating(message);
-  const statusKey = creating
+  const { live, phase } = useSubagentExecution(message);
+  const statusKey = outcome === "running" && !live ? "chat.subagentHistorical"
+    : outcome === "running" && phase === "stopping" ? "chat.subagentStoppingNow"
+    : outcome === "running" && phase === "guiding" ? "chat.subagentGuidingNow" : creating
     ? "chat.subagentCreating"
     : `chat.subagentStatus.${outcome}`;
   const payload = toolResultPayload(message);
@@ -166,10 +171,7 @@ export function SubagentDetail({
     payload && typeof payload === "object" && !Array.isArray(payload)
       ? (payload as { delegationId?: unknown; startedAt?: unknown; completedAt?: unknown })
       : undefined;
-  const delegationId =
-    typeof payloadRecord?.delegationId === "string"
-      ? payloadRecord.delegationId
-      : message.toolCallId || message.id;
+  const delegationId = delegationExecutionKey(payloadRecord) ?? (message.toolCallId || message.id);
   const timing = delegationTimings?.get(delegationId);
   const failure = delegationFailures?.get(delegationId);
   const startedAt =
@@ -268,6 +270,7 @@ export function SubagentDetail({
           ) : null}
         </div>
       </header>
+      <SubagentSupervision message={message} running={outcome === "running"} />
       <section className="subagent-detail-task" aria-labelledby={taskLabelId}>
         <div className="subagent-detail-section-label" id={taskLabelId}>
           {t("panel.subagentTask")}

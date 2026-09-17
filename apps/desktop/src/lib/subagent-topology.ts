@@ -2,6 +2,7 @@ import type { UiMessage } from "@pi-desktop/shared";
 import type { AssistantActivityItem } from "./assistant-turns";
 import {
   delegationLifecycleKind,
+  delegationExecutionKey,
   getToolAction,
   isDelegationStartTool,
   type DelegationLifecycleKind,
@@ -69,7 +70,7 @@ function ingestLifecycleStatuses(
   if (!Array.isArray(entries)) return;
   for (const entry of entries) {
     const record = asRecord(entry);
-    const id = record?.delegationId;
+    const id = delegationExecutionKey(record);
     const status = fromStopped
       ? stoppedEntryStatus(record?.status)
       : asDelegationStatus(record?.status);
@@ -96,7 +97,7 @@ function addTiming(
   value: unknown,
 ): void {
   const record = asRecord(value);
-  const delegationId = record?.delegationId;
+  const delegationId = delegationExecutionKey(record);
   if (typeof delegationId !== "string" || !delegationId) return;
   const startedAt = timestamp(record?.startedAt);
   const completedAt = timestamp(record?.completedAt);
@@ -154,7 +155,7 @@ export function delegationTimingBounds(
   let pending = false;
   for (const item of items) {
     const payload = asRecord(toolResultPayload(item.message));
-    const id = payload?.delegationId;
+    const id = delegationExecutionKey(payload);
     if (typeof id !== "string" || !id) continue;
     const timing = timings.get(id);
     const start = timing?.startedAt ?? timestamp(payload?.startedAt);
@@ -210,7 +211,7 @@ export function collectDelegationStatuses(
     if (!isDelegationActivityItem(item)) continue;
     const payload = asRecord(toolResultPayload(item.message));
     const status = asDelegationStatus(payload?.status);
-    const id = payload?.delegationId;
+    const id = delegationExecutionKey(payload);
     if (typeof id === "string" && id && status && status !== "running") {
       statuses.set(id, status);
     }
@@ -219,7 +220,7 @@ export function collectDelegationStatuses(
     for (const item of items) {
       if (item.kind !== "tool" || !isDelegationActivityItem(item)) continue;
       const payload = asRecord(toolResultPayload(item.message));
-      const id = payload?.delegationId;
+      const id = delegationExecutionKey(payload);
       if (typeof id !== "string" || !id) continue;
       const current = statuses.get(id);
       if (!current || current === "running") statuses.set(id, "aborted");
@@ -277,7 +278,7 @@ export function collectDelegationFailures(
       if (!Array.isArray(entries)) continue;
       for (const entry of entries) {
         const record = asRecord(entry);
-        const id = record?.delegationId;
+        const id = delegationExecutionKey(record);
         if (typeof id !== "string" || !id) continue;
         const failure = readDelegationFailure(entry);
         if (failure) failures.set(id, failure);
@@ -287,7 +288,7 @@ export function collectDelegationFailures(
   for (const item of items) {
     if (!isDelegationActivityItem(item)) continue;
     const payload = asRecord(toolResultPayload(item.message));
-    const id = payload?.delegationId;
+    const id = delegationExecutionKey(payload);
     const failure = readDelegationFailure(payload);
     if (typeof id === "string" && id && failure) failures.set(id, failure);
   }
@@ -389,7 +390,7 @@ export function subagentOutcome(
 ): SubagentOutcome {
   const payload = asRecord(toolResultPayload(message));
   if (payload) {
-    const delegationId = payload.delegationId;
+    const delegationId = delegationExecutionKey(payload);
     if (typeof delegationId === "string") {
       const settled = statuses?.get(delegationId);
       if (settled) return settled;
@@ -425,7 +426,15 @@ export function summarizeSubagentActivity(
   items: readonly DelegationActivityItem[],
   statuses?: ReadonlyMap<string, SubagentOutcome>,
 ) {
-  const outcomes = items.map((item) => subagentOutcome(item.message, statuses));
+  // 多轮返工仍属于同一个子代理；汇总采用各子代理最新一轮的状态。
+  const latest = new Map<string, { item: DelegationActivityItem; execution: number }>();
+  for (const item of items) {
+    const payload = asRecord(toolResultPayload(item.message));
+    const id = typeof payload?.delegationId === "string" ? payload.delegationId : item.message.toolCallId || item.message.id;
+    const execution = typeof payload?.execution === "number" ? payload.execution : 1;
+    if (execution >= (latest.get(id)?.execution ?? 0)) latest.set(id, { item, execution });
+  }
+  const outcomes = [...latest.values()].map(({ item }) => subagentOutcome(item.message, statuses));
   return {
     total: outcomes.length,
     finished: outcomes.filter((outcome) => outcome !== "running").length,

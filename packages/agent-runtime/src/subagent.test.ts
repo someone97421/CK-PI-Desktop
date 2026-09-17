@@ -53,6 +53,7 @@ function createRun(overrides: Partial<SubagentRunOptions> = {}) {
     sessionId: "session-1",
     turnId: "turn-1",
     parentToolCallId: "task-1",
+    reportIntervalSteps: 10,
     task: "Find where the permission dialog is rendered.",
     provider,
     thinkingLevel: "off",
@@ -395,6 +396,7 @@ describe("SubagentRun turn accounting", () => {
       prompt: vi.fn(async () => {
         for (let turn = 0; turn < turns; turn += 1) {
           run.handleEvent({ type: "turn_start" });
+          run.beforeToolCall({ toolCall: { id: `child-${turn}`, name: "Read" }, args: { path: "a.ts" } });
           run.handleEvent({
             type: "tool_execution_start",
             toolCallId: `child-${turn}`,

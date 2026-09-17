@@ -174,6 +174,7 @@ export type UserSubagentRecord = {
   thinkingLevel?: SubagentThinkingLevel;
   /** Output-token cap for one delegate response; omitted follows the model. */
   maxTokens?: number;
+  reportIntervalSteps?: number;
   /** Absolute path of the document, for revealing it. */
   path: string;
   sizeBytes: number;
@@ -195,6 +196,8 @@ export type UserSubagentInput = {
   /** `0` clears the override; absent leaves it unchanged. */
   /** `0` clears the cap; absent leaves it unchanged. */
   maxTokens?: number;
+  /** null 清除固定间隔；省略保留既有配置。 */
+  reportIntervalSteps?: number | null;
   enabled?: boolean;
   scope?: ActivationScope;
 };

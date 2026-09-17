@@ -962,9 +962,6 @@ fn bash_cancellation_requested(receiver: &Option<tokio::sync::watch::Receiver<bo
 }
 
 async fn clear_bash_cancellation(state: &Arc<Mutex<AppState>>, p: &ToolsExecuteParams) {
-    if p.tool_name != "Bash" {
-        return;
-    }
     let mut st = state.lock().await;
     st.clear_bash_cancellation(&p.session_id, &p.tool_call_id);
 }
@@ -3118,7 +3115,8 @@ async fn handle_request(
 
             // Register before permission evaluation so tools.abort can cancel
             // an approval wait as well as an already-spawned process.
-            let cancellation_receiver = if p.tool_name == "Bash" {
+            // 所有工具的审批等待都可按调用 ID 取消；运行中的 Bash 还会取消进程。
+            let cancellation_receiver = {
                 let mut st = state.lock().await;
                 match st.register_bash_cancellation(&p.session_id, &p.tool_call_id) {
                     Ok(receiver) => Some(receiver),
@@ -3126,7 +3124,7 @@ async fn handle_request(
                         let result = shell_failure_result(
                             &p,
                             &error_code,
-                            "another Bash call is already active for this tool call ID",
+                            "another tool call is already active for this tool call ID",
                             command_shell_id.clone(),
                             call_started,
                         );
@@ -3134,8 +3132,6 @@ async fn handle_request(
                             .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"));
                     }
                 }
-            } else {
-                None
             };
 
             let outcome: Result<Value, JsonRpcError> = async {
@@ -6554,6 +6550,37 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(late_resolution.data.unwrap()["errorCode"], "NOT_FOUND");
+        assert_bash_registry_empty(&state).await;
+    }
+
+    #[tokio::test]
+    async fn subagent_stop_cancels_non_bash_approval_without_writing() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let project = data_dir.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let mut app_state = AppState::open(data_dir.path()).unwrap();
+        app_state.handshook = true;
+        let session = sessions::create_session(&app_state.db, Some("Cancel child write".into()),
+            Some("agent".into()), None, None, Some(project.to_string_lossy().into_owned())).unwrap();
+        sessions::configure_session_with_thinking(&app_state.db, &session.id, "agent", None, None, None, Some("ask")).unwrap();
+        let state = Arc::new(Mutex::new(app_state));
+        let pending_state = state.clone();
+        let session_id = session.id.clone();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let pending = tokio::spawn(async move {
+            handle_request(pending_state, "tools.execute", json!({
+                "sessionId": session_id, "toolCallId": "child-write", "toolName": "Write",
+                "args": { "path": "cancelled.txt", "content": "must not be written" }, "mode": "agent"
+            }), tx).await
+        });
+        let note = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
+        let permission: Value = serde_json::from_str(&note).unwrap();
+        assert_eq!(permission["method"], "permissions.request");
+        handle_request(state.clone(), "tools.abort", json!({ "sessionId": session.id, "toolCallId": "child-write" }),
+            mpsc::unbounded_channel().0).await.unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), pending).await.unwrap().unwrap().unwrap();
+        assert_eq!(result["errorCode"], "TOOL_ABORTED");
+        assert!(!project.join("cancelled.txt").exists());
         assert_bash_registry_empty(&state).await;
     }
 

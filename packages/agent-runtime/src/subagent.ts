@@ -8,10 +8,9 @@
  * containment path as the parent's.
  *
  * Two boundaries define the design:
- * - The parent's model context only ever gains the delegate's final report
- *   (and a one-line heartbeat while it runs). Child messages and tool rows
- *   are emitted for the transcript and persisted for review, but the session
- *   runtime filters them out when it rebuilds model context.
+ * - The parent receives bounded progress snapshots and the final report.
+ *   Full child messages/tool rows remain in the transcript; they are not
+ *   replayed wholesale into the parent's model context.
  * - A delegate's lifecycle never reaches Electron main's turn handling. It
  *   runs in the background under the session runtime (ADR 0089 / D328):
  *   `Task` starts it and returns, `TaskWait` may converge early, and when it
@@ -27,6 +26,8 @@ import {
   type AfterToolCallResult,
   type AgentEvent,
   type AgentTool,
+  type BeforeToolCallContext,
+  type BeforeToolCallResult,
 } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
@@ -40,7 +41,10 @@ import {
   type SubagentRunStatus as SharedSubagentRunStatus,
   type SubagentThinkingLevel,
   type UiMessage,
+  type SubagentCollaborationSnapshot,
+  type SubagentGuideReceipt,
 } from "@pi-desktop/shared";
+import { SubagentObserver, type SubagentObservation } from "./subagent-observer.js";
 import { classifyAgentError } from "./agent-errors.js";
 import {
   assistantContent,
@@ -67,9 +71,11 @@ export const SUBAGENT_WAIT_TOOL_NAME = "TaskWait";
 export const SUBAGENT_LIST_TOOL_NAME = "TaskList";
 /** Stop running delegations (ADR 0089). */
 export const SUBAGENT_STOP_TOOL_NAME = "TaskStop";
+export const SUBAGENT_GUIDE_TOOL_NAME = "TaskGuide";
+export const SUBAGENT_INSPECT_TOOL_NAME = "TaskInspect";
+export const SUBAGENT_RESUME_TOOL_NAME = "TaskResume";
 
-/** The report is the only thing that enters the parent's context; keep it
- * from becoming the context problem delegation was supposed to avoid. */
+/** Bound the final report; periodic reports have their own bounded snapshots. */
 export const MAX_SUBAGENT_REPORT_CHARS = 12_000;
 
 export type SubagentRunStatus = SharedSubagentRunStatus;
@@ -87,6 +93,8 @@ export type SubagentRunResult = {
   turns: number;
   toolCalls: number;
   usage?: MessageUsage;
+  /** 本轮新增用量；usage 保留整个子任务累计值。 */
+  executionUsage?: MessageUsage;
   modelFailures?: Array<{ model: string; code: string; message: string }>;
   error?: { code: string; message: string };
 };
@@ -129,6 +137,9 @@ export type SubagentRunOptions = {
     context: AfterToolCallContext,
   ) => SubagentToolOutcome | undefined;
   signal?: AbortSignal;
+  delegationId?: string;
+  reportIntervalSteps?: number;
+  onObservation?: (event: SubagentObservation) => void;
 };
 
 /**
@@ -179,8 +190,9 @@ function boundedReport(value: string): string {
 
 export { addUsage };
 
-/** One delegate execution. Instances are single-use. */
+/** 同一内存上下文可执行多轮；正常完成才可被父 Agent 显式召回。 */
 export class SubagentRun {
+  readonly observation: SubagentObserver;
   private readonly agent: Agent;
   private readonly opts: SubagentRunOptions;
   private currentAssistant?: UiMessage;
@@ -188,6 +200,9 @@ export class SubagentRun {
   private turns = 0;
   private toolCalls = 0;
   private usage?: MessageUsage;
+  private executionUsage?: MessageUsage;
+  private executing = false;
+  private lastStatus?: SubagentRunStatus;
   private streamError?: { code: string; message: string };
   private pendingProviderRetry?: ReturnType<typeof classifyAgentError>;
   private providerRetryInProgress = false;
@@ -205,6 +220,14 @@ export class SubagentRun {
 
   constructor(opts: SubagentRunOptions) {
     this.opts = opts;
+    this.observation = new SubagentObserver(
+      opts.delegationId ?? opts.parentToolCallId,
+      opts.definition.reportIntervalSteps ?? opts.reportIntervalSteps!,
+      opts.definition.reportIntervalSteps === undefined ? "dispatch" : "definition",
+      (event) => opts.onObservation?.(event),
+      [opts.provider, ...(opts.fallbackModels ?? []).flatMap((entry) => entry.provider ? [entry.provider] : [])]
+        .flatMap((provider) => [provider.apiKey ?? "", ...Object.entries(provider.headers ?? {}).filter(([key]) => /authorization|key|token|cookie/i.test(key)).map(([, value]) => String(value))]),
+    );
     this.provider = opts.provider;
     this.thinkingLevel = opts.thinkingLevel;
     this.attemptedModels.add(`${opts.provider.id}/${opts.provider.modelId}`);
@@ -214,6 +237,9 @@ export class SubagentRun {
       getApiKey: binding.getApiKey,
       convertToLlm,
       afterToolCall: async (context) => this.afterToolCall(context),
+      beforeToolCall: async (context) => this.beforeToolCall(context),
+      // 收束原回复的工具结果后让出循环；引导在同一实例上以新输入继续。
+      shouldStopAfterTurn: () => this.observation.hasGuides,
       initialState: {
         systemPrompt: opts.systemPrompt,
         model: binding.model,
@@ -226,19 +252,46 @@ export class SubagentRun {
     this.agent.subscribe((event) => this.handleEvent(event));
   }
 
-  async run(): Promise<SubagentRunResult> {
-    const { signal } = this.opts;
+  get canResume(): boolean {
+    return !this.executing && this.lastStatus === "completed" && !this.runSignal().aborted;
+  }
+
+  run(): Promise<SubagentRunResult> {
+    if (this.executing || this.lastStatus) throw new Error("Subagent already started; use resume after normal completion.");
+    this.executing = true;
+    return this.execute(this.opts.task);
+  }
+
+  resume(instruction: string, turnId: string | undefined, parentToolCallId: string): Promise<SubagentRunResult> {
+    if (!this.canResume) throw new Error("Subagent is busy, stopped, failed, or its context was released.");
+    if (!instruction.trim() || instruction.length > 12_000) throw new Error("instruction must contain 1–12000 characters.");
+    this.executing = true;
+    this.opts.turnId = turnId;
+    this.opts.parentToolCallId = parentToolCallId;
+    this.executionUsage = undefined;
+    this.lastReportText = "";
+    this.streamError = undefined;
+    this.pendingProviderRetry = undefined;
+    this.providerTransientRetryAttempt = 0;
+    this.providerRateLimitRetryAttempt = 0;
+    this.observation.resume();
+    return this.execute(instruction);
+  }
+
+  private async execute(instruction: string): Promise<SubagentRunResult> {
+    const signal = this.runSignal();
     if (signal?.aborted) {
       return this.result("aborted", "The delegated task was aborted before it started.");
     }
     const onAbort = () => {
+      this.observation.stop("session");
       this.runAbortController.abort();
       this.agent.abort();
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     let caughtError: ReturnType<typeof classifyAgentError> | undefined;
     try {
-      await this.agent.prompt(this.opts.task);
+      await this.agent.prompt(instruction);
       await this.agent.waitForIdle();
       while (!signal?.aborted) {
         if (this.pendingProviderRetry) {
@@ -246,6 +299,13 @@ export class SubagentRun {
         } else if (this.streamError && this.useNextModel()) {
           await this.agent.continue();
           await this.agent.waitForIdle();
+        } else if (!this.streamError && this.observation.hasGuides) {
+          const instruction = this.observation.applyGuides();
+          if (instruction && !signal.aborted) {
+            // prompt 在工具结果之后追加指令，不清空上下文也不重放工具。
+            await this.agent.prompt(instruction);
+            await this.agent.waitForIdle();
+          }
         } else {
           break;
         }
@@ -401,13 +461,17 @@ export class SubagentRun {
     report: string,
     error?: { code: string; message: string },
   ): SubagentRunResult {
+    this.executing = false;
+    this.lastStatus = status;
+    if (status === "aborted") this.observation.stop("session");
+    this.observation.finish(status === "aborted" ? "stopped" : status === "completed" ? "completed" : "failed");
     const name = this.opts.definition.name;
     const body = report.trim();
     const text =
       status === "completed"
         ? body
         : status === "aborted"
-          ? `The ${name} subagent was aborted after ${this.turns} turn(s).`
+          ? `The ${name} subagent was aborted after ${this.turns} turn(s). Completed actions were not rolled back.\n${this.observation.safe(this.lastReportText, 2000)}`
           : [
               `The ${name} subagent failed after ${this.turns} turn(s): ${error?.message ?? "unknown error"}.`,
               ...(body ? ["Its last output was:", body] : []),
@@ -424,6 +488,7 @@ export class SubagentRun {
       turns: this.turns,
       toolCalls: this.toolCalls,
       ...(this.usage ? { usage: this.usage } : {}),
+      executionUsage: this.executionUsage,
       ...(this.modelFailures.length ? { modelFailures: [...this.modelFailures] } : {}),
       ...(error ? { error } : {}),
     };
@@ -440,6 +505,27 @@ export class SubagentRun {
       ...(parent?.isError ? { isError: true } : {}),
       ...(terminate ? { terminate: true } : {}),
     };
+  }
+
+  guide(instruction: string, interval?: number, commandId?: string): SubagentGuideReceipt {
+    return this.observation.guide(instruction, interval, commandId);
+  }
+
+  stop(source: NonNullable<SubagentCollaborationSnapshot["stopSource"]>): void {
+    this.observation.stop(source);
+    this.runAbortController.abort();
+    this.agent.abort();
+  }
+
+  private beforeToolCall(context: BeforeToolCallContext): BeforeToolCallResult | undefined {
+    if (this.runSignal().aborted || this.observation.stopping) {
+      return { block: true, reason: "SUBAGENT_STOPPED: not executed; do not retry." };
+    }
+    if (this.observation.hasGuides) {
+      return { block: true, reason: "SUBAGENT_GUIDED: not executed because parent guidance is pending. Replan after the guidance; do not retry the old plan automatically." };
+    }
+    if (this.observation.begin(context.toolCall.id, context.toolCall.name, context.args)) this.toolCalls += 1;
+    return undefined;
   }
 
   private emit(event: AgentEventEnvelope["event"]): void {
@@ -493,6 +579,10 @@ export class SubagentRun {
         this.turns += 1;
         break;
       case "message_start": {
+        if (event.message.role === "user") {
+          this.observation.guidesApplied();
+          break;
+        }
         if (event.message.role !== "assistant") break;
         const content = assistantContent((event.message as AssistantMessage).content);
         const retryingAssistant = this.providerRetryInProgress
@@ -578,10 +668,12 @@ export class SubagentRun {
         }
         const messageUsage = usageFromPi(message.usage);
         this.usage = addUsage(this.usage, messageUsage);
+        this.executionUsage = addUsage(this.executionUsage, messageUsage);
         // The report is the last assistant text; a call-only turn has none and
         // must not clear the text an earlier turn already produced.
         if (content.hasText && content.text.trim() && !failed) {
           this.lastReportText = content.text;
+          this.observation.noteStatement(content.text);
         }
         if (retryAttempt !== undefined) {
           this.currentAssistant = {
@@ -615,7 +707,6 @@ export class SubagentRun {
         break;
       }
       case "tool_execution_start":
-        this.toolCalls += 1;
         this.emit({
           type: "tool_start",
           toolCallId: event.toolCallId,
@@ -631,6 +722,7 @@ export class SubagentRun {
         });
         break;
       case "tool_execution_end":
+        this.observation.end(event.toolCallId, event.result, event.isError);
         this.emit({
           type: "tool_end",
           toolCallId: event.toolCallId,
