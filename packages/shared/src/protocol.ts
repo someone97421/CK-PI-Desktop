@@ -111,6 +111,8 @@ export const IPC = {
     projectOpenFolder: "pi-desktop/project/openFolder",
     settingsGet: "pi-desktop/settings/get",
     settingsSet: "pi-desktop/settings/set",
+    settingsExportConfig: "pi-desktop/settings/exportConfig",
+    settingsImportConfig: "pi-desktop/settings/importConfig",
     networkProxyTest: "pi-desktop/network/testProxy",
     commandShellList: "pi-desktop/commandShell/list",
     secretsSet: "pi-desktop/secrets/set",

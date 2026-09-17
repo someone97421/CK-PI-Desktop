@@ -665,6 +665,7 @@ sklm: {
     appearance: "Appearance",
     about: "Info",
     addProvider: "Add provider",
+    configTransfer: "Import and export configuration",
     exportProviders: "Export manual configs",
     importProviders: "Import",
     exportProvidersDone: "Exported {{count}} providers ({{keys}} with API keys)",

@@ -32,6 +32,7 @@ import {
 import { Button, cx } from "../../components/ui";
 import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
 import { KeyboardShortcutsSection } from "../../components/settings/KeyboardShortcutsSection";
+import { ConfigTransferSection } from "../../components/settings/ConfigTransferSection";
 import { AppearancePanels } from "../../components/settings/AppearancePanels";
 import { FontSizeRow } from "../../components/settings/FontSizeRow";
 import { LanguageRow } from "../../components/settings/LanguageRow";
@@ -336,6 +337,7 @@ export function SettingsPage() {
               <NetworkProxySection settings={settings} saveSettings={saveSettings} />
 
               {platform !== "darwin" && <CloseBehaviorSection />}
+              <ConfigTransferSection />
             </div>
           )}
 

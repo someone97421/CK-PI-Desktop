@@ -1,5 +1,7 @@
 import { isAppearanceSettings, normalizeAppearance } from "@pi-desktop/shared";
 import type {
+  ConfigScope,
+  ConfigTransferResult,
   ActivationScope,
   AgentCapabilityMove,
   AgentCapabilityQuery,
@@ -507,7 +509,12 @@ export const api = {
   /** Vendor catalog plus every locally configured account for each vendor. */
   listOauthVendors: () =>
     invoke<{ vendors: OAuthVendor[] }>(IPC.invoke.providersOauthVendors),
-  /** Write every provider to a JSON file the user picks. */
+  /** 按范围导出配置；导入由主进程预览并确认冲突。 */
+  exportConfig: (scopes: ConfigScope[]) =>
+    invoke<ConfigTransferResult>(IPC.invoke.settingsExportConfig, scopes),
+  importConfig: () =>
+    invoke<ConfigTransferResult>(IPC.invoke.settingsImportConfig),
+  /** Write user-owned providers to a JSON file the user picks. */
   exportProviderConfig: () =>
     invoke<ProviderExportResult>(IPC.invoke.providersExportConfig),
   /** Apply a previously exported JSON file; matching names update in place. */

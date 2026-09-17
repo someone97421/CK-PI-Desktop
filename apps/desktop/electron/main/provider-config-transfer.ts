@@ -27,7 +27,7 @@ import {
 import { dialog } from "electron";
 import type { HostProcess } from "./host-process";
 
-type ProviderRow = {
+export type ProviderRow = {
   id: string;
   ownerPluginId?: string | null;
   name: string;
@@ -60,6 +60,19 @@ export type ProviderTransferDependencies = {
 
 const FILE_FILTER = [{ name: "JSON", extensions: ["json"] }];
 
+/** 两个导出入口共用凭据处理，OAuth 授权始终留在本机。 */
+export async function collectProviderConfig(host: HostProcess) {
+  const { providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", { includeDisabled: true });
+  const entries: ProviderExportEntry[] = [];
+  for (const provider of (providers ?? []).filter((row) => !row.ownerPluginId)) {
+    const apiKey = provider.hasSecret && !provider.hasOauth
+      ? (await host.call<{ value?: string }>("providers.getSecret", { id: provider.id })).value
+      : undefined;
+    entries.push(providerExportEntryFrom(provider, apiKey));
+  }
+  return { file: buildProviderExportFile(entries, { app: APP_NAME }), providers };
+}
+
 function exportFileName(now: Date): string {
   const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, "-");
   return `provider-config-${stamp}.json`;
@@ -77,29 +90,9 @@ export async function exportProviderConfig(
   const empty: ProviderExportResult = { ok: false, count: 0, withCredentials: 0 };
   if (!host) return { ...empty, error: "host-unavailable" };
 
-  const { providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", {
-    includeDisabled: true,
-  });
-  // 插件声明由插件恢复；导出只包含用户自己管理的配置。
-  const rows = (providers ?? []).filter((provider) => !provider.ownerPluginId);
-
-  const entries: ProviderExportEntry[] = [];
-  let withCredentials = 0;
-  for (const provider of rows) {
-    let apiKey: string | null = null;
-    // An OAuth row's stored secret is a vendor grant, not a portable key.
-    if (provider.hasSecret && provider.hasOauth !== true) {
-      try {
-        apiKey =
-          (await host.call<{ value?: string }>("providers.getSecret", { id: provider.id }))
-            .value ?? null;
-      } catch {
-        apiKey = null;
-      }
-    }
-    if (apiKey) withCredentials += 1;
-    entries.push(providerExportEntryFrom(provider, apiKey));
-  }
+  const { file } = await collectProviderConfig(host);
+  const entries = file.providers;
+  const withCredentials = entries.filter((entry) => entry.apiKey).length;
 
   const picked = await dialog.showSaveDialog({
     title: "Export provider settings",
@@ -110,7 +103,6 @@ export async function exportProviderConfig(
     return { ...empty, canceled: true, count: entries.length };
   }
 
-  const file = buildProviderExportFile(entries, { app: APP_NAME });
   try {
     await fs.writeFile(picked.filePath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
   } catch (error) {

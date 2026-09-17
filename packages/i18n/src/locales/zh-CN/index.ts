@@ -660,6 +660,7 @@ sklm: {
     appearance: "外观",
     about: "信息",
     addProvider: "添加服务",
+    configTransfer: "配置导入导出",
     exportProviders: "导出手动配置",
     importProviders: "导入配置",
     exportProvidersDone: "已导出 {{count}} 个提供商（其中 {{keys}} 个含 API 密钥）",
