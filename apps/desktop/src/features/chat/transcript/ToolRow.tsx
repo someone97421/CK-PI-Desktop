@@ -374,7 +374,9 @@ export const ToolRow = memo(function ToolRow({
             ) : null}
             {delegate?.items.length ? (
               <span className="subagent-topology-node-steps">
-                {t("chat.processingSteps", { count: childExecution.collaboration?.completedSteps ?? delegate.items.length })}
+                {childExecution.collaboration
+                  ? t("chat.subagentToolCalls", { count: childExecution.collaboration.completedSteps })
+                  : t("chat.subagentProcessRecords", { count: delegate.items.length })}
               </span>
             ) : null}
           </span>
@@ -563,8 +565,8 @@ export const SubagentRunRows = memo(function SubagentRunRows({
               ? t("chat.subagentWork", { agent: agentName })
               : t("chat.subagentWorkUnnamed")}
         </span>
-        <span className="subagent-run-count">
-          {t("chat.processingSteps", { count: run.items.length })}
+        <span className="subagent-run-count" title={t("chat.subagentProcessRecordsHint")}>
+          {t("chat.subagentProcessRecords", { count: run.items.length })}
         </span>
       </div>
       <SubagentRunFollow

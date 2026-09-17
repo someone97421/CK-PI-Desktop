@@ -50,11 +50,15 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
   const resumable = recall?.canResume && recall.execution === execution;
   const stopping = live && running && (requested || data?.phase === "stopping");
   const canStop = Boolean(id && sessionId && live && running && data?.phase !== "finished");
+  const reportInProgress = live && running && !stopping && data?.phase !== "finished";
+  // 旧快照或无工具调用的召回轮次可能没有最近汇报，不能据此把累计汇报数写成 0。
+  const reportCount = data?.latestReport?.reportSeq ?? (data?.completedSteps === 0 ? 0 : undefined);
   if (!id) return null;
   return <div className={`subagent-supervision${compact ? " compact" : ""}`}>
     <div className="subagent-supervision-status">
-      {data ? <span title={t(`chat.subagentIntervalSource.${data.intervalSource}`)}>
-        {t("chat.subagentReportProgress", { current: data.stepsSinceReport, interval: data.reportIntervalSteps, total: data.completedSteps })}
+      {data ? <span title={`${t(reportInProgress ? "chat.subagentReportProgressHint" : "chat.subagentReportSummaryHint", { interval: data.reportIntervalSteps })} · ${t(`chat.subagentIntervalSource.${data.intervalSource}`)}`}>
+        {t(reportInProgress ? "chat.subagentReportProgress" : reportCount !== undefined ? "chat.subagentReportSummary" : "chat.subagentCallSummary",
+          { current: data.stepsSinceReport, interval: data.reportIntervalSteps, total: data.completedSteps, reports: reportCount })}
       </span> : null}
       {execution ? <span>{t(running && execution > 1 ? "chat.subagentReworking" : "chat.subagentExecution", { execution })}</span> : null}
       {!running && execution ? <span title={t("chat.subagentRecallMemoryOnly")}>
