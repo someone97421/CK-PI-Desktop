@@ -18,7 +18,7 @@ const resolution = registerHooks({
     return nextResolve(specifier, context);
   },
 });
-const { appearancePalette, resolveAppearance, applyAppearance, accentForeground } =
+const { accentInkTokens, appearancePalette, resolveAppearance, applyAppearance, accentForeground } =
   await import(moduleUrl.href).finally(() => resolution.deregister());
 
 test("unconfigured themes do not introduce overrides; legacy UI fonts remain defaults", () => {
@@ -90,7 +90,7 @@ test("all eight languages declare the same appearance keys", async () => {
     const text = await readFile(new URL(`../../../packages/i18n/src/locales/${locale}/index.ts`, import.meta.url), "utf8");
     const keys = [...text.matchAll(/^\s+(appearance\w+):/gm)].map((match) => match[1]).sort();
     expected ??= keys;
-    assert.equal(keys.length, 33);
+    assert.equal(keys.length, 36);
     assert.deepEqual(keys, expected);
   }
 });
@@ -112,11 +112,11 @@ test("system appearance changes update overrides and native background; cleanup 
   let listener;
   const mq = { matches: true, addEventListener: (_, fn) => { listener = fn; }, removeEventListener: () => { listener = undefined; } };
   const calls = [];
-  const effect = new Function("settings", "pluginThemes", "document", "window", "api", "resolveAppearance", "applyAppearance", "isThemeColorScheme", "PLUGIN_THEME_STYLE_ID", body);
+  const effect = new Function("settings", "pluginThemes", "document", "window", "api", "resolveAppearance", "applyAppearance", "isThemeColorScheme", "PLUGIN_THEME_STYLE_ID", "accentInkTokens", body);
   const cleanup = effect({ theme: "system", appearance: { light: { background: "#EEEEEE" }, dark: { background: "#111111", code: { weight: 600 } } } }, [],
     { documentElement: root, getElementById: () => null }, { matchMedia: () => mq },
     { setWindowBackgroundColor: (...args) => { calls.push(args); return Promise.resolve(); } },
-    resolveAppearance, applyAppearance, (value) => ["light", "dark", "system"].includes(value), "pi-plugin-theme");
+    resolveAppearance, applyAppearance, (value) => ["light", "dark", "system"].includes(value), "pi-plugin-theme", accentInkTokens);
   assert.equal(root.dataset.theme, "light");
   assert.equal(values.get("--ds-bg-primary"), "#EEEEEE");
   mq.matches = false;

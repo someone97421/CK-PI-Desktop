@@ -1296,12 +1296,12 @@
 
 .copy-btn.primary {
   background: var(--ds-accent);
-  color: var(--ds-bg-primary);
+  color: var(--ds-on-accent, var(--ds-bg-primary));
 }
 
 .copy-btn.primary:hover {
   background: var(--ds-accent-hover);
-  color: var(--ds-bg-primary);
+  color: var(--ds-on-accent-hover, var(--ds-on-accent));
 }
 
 .copy-btn.danger:hover {

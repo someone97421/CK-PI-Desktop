@@ -82,10 +82,11 @@
 
 .btn-primary {
   background: var(--ds-accent);
-  color: var(--ds-bg-primary);
+  color: var(--ds-on-accent, var(--ds-bg-primary));
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--ds-accent-hover);
+  color: var(--ds-on-accent-hover, var(--ds-on-accent));
   opacity: 1;
 }
 

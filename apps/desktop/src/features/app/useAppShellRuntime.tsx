@@ -14,7 +14,7 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
-import { applyAppearance, resolveAppearance } from "../../lib/appearance";
+import { accentInkTokens, applyAppearance, resolveAppearance } from "../../lib/appearance";
 import { installRendererApi } from "../../capture/renderer-api";
 import { commitWorkPanelPresentation } from "../../lib/work-panel-presentation";
 import { browserPluginTab } from "../../lib/work-panel-tabs";
@@ -498,8 +498,10 @@ export function useAppShellRuntime() {
 
     const mq = window.matchMedia("(prefers-color-scheme: light)");
     let clearAppearance = () => {};
+    let clearAccentInk = () => {};
     const apply = () => {
       clearAppearance();
+      clearAccentInk();
       const resolvedTheme =
         base === "system" ? (mq.matches ? "light" : "dark") : base;
       document.documentElement.dataset.theme = resolvedTheme;
@@ -511,6 +513,8 @@ export function useAppShellRuntime() {
       clearAppearance = applyAppearance(document.documentElement, appearance.tokens);
       document.documentElement.toggleAttribute("data-appearance-colors", appearance.colors);
       document.documentElement.toggleAttribute("data-appearance-typography", appearance.typography);
+      // Read after all palette attributes are applied, including plugin selectors.
+      clearAccentInk = applyAppearance(document.documentElement, accentInkTokens(document.documentElement));
       // A contributed theme may name the native window background for this
       // palette. Deriving it here (rather than remembering an applied value) is
       // what restores the host default on a switch, a disable, or an uninstall:
@@ -526,6 +530,7 @@ export function useAppShellRuntime() {
     return () => {
       mq.removeEventListener("change", onChange);
       clearAppearance();
+      clearAccentInk();
       document.documentElement.removeAttribute("data-appearance-colors");
       document.documentElement.removeAttribute("data-appearance-typography");
     };

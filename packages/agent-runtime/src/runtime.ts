@@ -5,13 +5,9 @@ import {
 } from "./delegation-message.js";
 import {
   Agent,
-  BACKGROUND_CONTEXT,
-  compact,
   convertToLlm,
-  estimateContextTokens,
   estimateTokens,
   prepareCompaction,
-  withAbortSignal,
   type AgentContext,
   type AgentEvent,
   type AgentLoopTurnUpdate,
@@ -170,7 +166,23 @@ import {
   openCodeEndpointFromProvider,
   withOpenCodeSessionHeaders,
 } from "./opencode-session-headers.js";
-import { withCompactionRequestHeaders } from "./compaction-request.js";
+import {
+  compactionSummaryWouldExceedBudget,
+  computeContextBudget,
+  createFallbackCheckpointPlan,
+  generateCompactionSummary,
+  retainedUserMessageBudget,
+  selectRetainedUserMessages,
+  shapeCheckpointPreparation,
+  stripCompactionFallbackNotice,
+  COMPACTION_FALLBACK_KEEP_RECENT_RATIO,
+  COMPACTION_FALLBACK_MAX_SUMMARY_CHARS,
+  type CompactionRetentionMode,
+  type ContextBudget,
+  type ShapedPreparation,
+} from "./context-compaction.js";
+/** Re-exported for callers that read the marker off the runtime module. */
+export { COMPACTION_FALLBACK_MARKER } from "./context-compaction.js";
 import {
   compactionProvidersEqual,
   resolveCompactionProvider,
@@ -508,57 +520,6 @@ function formatDelegationResults(
     includedDelegationIds,
   };
 }
-/**
- * Tokens held back from the context window for the summary prompt and the
- * model's own output. Compaction thresholds are derived from the active model's
- * window rather than configured, and this floor reproduces the reserve that
- * used to be the default setting, so the hard safety boundary is unchanged.
- */
-const COMPACTION_RESERVE_FLOOR_TOKENS = 16_384;
-/**
- * Retained-tail target as a share of the safe budget, bounded so a 32K window
- * still keeps a usable tail and a 1M window does not carry the whole session
- * forward. A single fixed token count cannot serve both.
- */
-const COMPACTION_KEEP_RECENT_RATIO = 0.2;
-const COMPACTION_MIN_KEEP_RECENT_TOKENS = 8_000;
-const COMPACTION_MAX_KEEP_RECENT_TOKENS = 64_000;
-/**
- * Cap on the user messages carried across a compaction boundary, matching
- * Codex's `COMPACT_USER_MESSAGE_MAX_TOKENS`. Clamped against the safe budget so
- * a small model window is not filled by retention alone.
- */
-const COMPACTION_RETAINED_USER_MESSAGE_MAX_TOKENS = 20_000;
-const COMPACTION_FALLBACK_KEEP_RECENT_RATIO = 0.25;
-const COMPACTION_FALLBACK_MAX_SUMMARY_CHARS = 12_000;
-const COMPACTION_SUMMARY_PROMPT_SAFETY_TOKENS = 2_048;
-export const COMPACTION_FALLBACK_MARKER =
-  "[automatic context recovery: older context was omitted after summary generation failed]";
-/** Stored in place of a carried-forward summary when a fallback had none. */
-const COMPACTION_FALLBACK_NO_SUMMARY =
-  "No previous context checkpoint is available.";
-
-/**
- * A retained-tail fallback stores any carried-forward summary ahead of the
- * recovery notice, separated by `COMPACTION_FALLBACK_MARKER` (see
- * `createFallbackCheckpoint`). Only the notice is synthetic: the text before
- * the marker is the real summary the failed compaction was carrying forward.
- * Strip the notice — and the "no previous summary" placeholder — so the next
- * summarization rebuilds from that real summary instead of updating a notice
- * that never was a summary (#224), without discarding the history it carried.
- */
-function stripCompactionFallbackNotice(
-  summary: string | undefined,
-): string | undefined {
-  if (!summary) return undefined;
-  const markerIndex = summary.indexOf(COMPACTION_FALLBACK_MARKER);
-  if (markerIndex === -1) return summary;
-  const carried = summary.slice(0, markerIndex).trim();
-  if (carried.length === 0 || carried === COMPACTION_FALLBACK_NO_SUMMARY) {
-    return undefined;
-  }
-  return carried;
-}
 /** Path-scoped rules are best-effort and must not stall a file tool turn. */
 export const PATH_INSTRUCTION_RESOLUTION_TIMEOUT_MS = 2_000;
 const PATH_SCOPED_INSTRUCTION_TOOLS = new Set([
@@ -641,8 +602,6 @@ function pathInstructionScope(path: string): string {
   return slash >= 0 ? normalized.slice(0, slash) || "/" : ".";
 }
 
-const CHECKPOINT_TRUNCATION_MARKER =
-  "\n\n[checkpoint truncated: this message crossed the retained context budget]\n\n";
 /**
  * Appended for one automatic re-run after a turn that produced nothing the
  * user can see. Two shapes were observed: a wholly empty response, and a
@@ -783,23 +742,6 @@ function contextFallbackReminder(): string {
 }
 
 
-/**
- * Context thresholds derived from the active model's window.
- *
- * `hardLimit` is the safety boundary: the next provider request must not be
- * issued while the context is at or above it. Compaction happens inline at that
- * boundary, the way Codex does it — there is no off-critical-path variant.
- */
-type ContextBudget = {
-  /** Estimated tokens in the reconstructed model context. */
-  tokens: number;
-  /** Point where an uncompacted provider request is no longer allowed. */
-  hardLimit: number;
-  /** Tokens reserved for the request's own prompt and output. */
-  requestHeadroom: number;
-  /** Approximate recent-context tokens a checkpoint should retain. */
-  keepRecentTokens: number;
-};
 
 export type PluginToolDef = {
   /** Full exposed name (`plugin_<pluginIdSafe>_<toolName>`, D015). */
@@ -940,16 +882,6 @@ export function isProgressOnlyAssistantTurn(message: unknown): boolean {
   return hasProgressForwardIntent(text.replace(PROGRESS_TERMINAL_LEAD, ""));
 }
 
-function boundedText(value: string, maxChars: number): string {
-  const text = value.trim();
-  if (text.length <= maxChars) return text;
-  const marker = "\n\n[context recovery summary shortened]\n\n";
-  const available = Math.max(2, maxChars - marker.length);
-  const headChars = Math.ceil(available / 2);
-  const tailChars = Math.floor(available / 2);
-  return `${text.slice(0, headChars)}${marker}${text.slice(-tailChars)}`;
-}
-
 function mutationFailureKey(path: unknown): string {
   return String(path).replaceAll("\\", "/").replace(/^\.\//, "");
 }
@@ -968,22 +900,6 @@ function isPatchCommand(command: unknown): boolean {
 }
 
 type CheckpointPersistResult = "persisted" | "oversized" | "failed";
-
-type CompactionRetentionMode = "active_turn" | "completed_turn";
-
-/**
- * A pi preparation plus the anchor the checkpoint is filed against.
- *
- * pi 0.84 dropped `firstKeptEntryId` from `CompactionPreparation`: the
- * compaction entry it writes *is* the boundary, so nothing needs to name the
- * first kept entry. We still record ours — it becomes
- * `ContextCompactionRecord.firstKeptMessageId`, which is persisted and reported
- * on `compaction_end` — so the Codex-shaped reshape below carries it alongside
- * pi's fields.
- */
-type ShapedPreparation = CompactionPreparation & {
-  firstKeptEntryId?: string;
-};
 
 type CheckpointBuildSuccess = {
   ok: true;
@@ -1236,74 +1152,7 @@ function appendToolProgress(current: string, chunk: string): string {
   return `${codePoints.slice(0, head).join("")}${TOOL_PROGRESS_TRUNCATION_MARKER}${
     tail > 0 ? codePoints.slice(-tail).join("") : ""
   }`;
-}
 
-function truncateTextForCheckpoint(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
-  if (maxChars <= CHECKPOINT_TRUNCATION_MARKER.length) {
-    return CHECKPOINT_TRUNCATION_MARKER.trim().slice(0, maxChars);
-  }
-  const retainedChars = maxChars - CHECKPOINT_TRUNCATION_MARKER.length;
-  const headChars = Math.ceil(retainedChars * 0.75);
-  const tailChars = retainedChars - headChars;
-  return `${text.slice(0, headChars)}${CHECKPOINT_TRUNCATION_MARKER}${
-    tailChars > 0 ? text.slice(-tailChars) : ""
-  }`;
-}
-
-/**
- * Flatten a user message to plain text so it can be truncated at a token
- * budget. Images and other non-text blocks are named rather than kept: a
- * checkpoint that carried them would spend its whole budget on one of them.
- */
-function userMessageTextForCheckpoint(message: UserMessage): string {
-  if (typeof message.content === "string") return message.content;
-  return message.content
-    .map((block) =>
-      block.type === "text"
-        ? block.text
-        : `[${block.type} content omitted from checkpoint]`,
-    )
-    .join("\n");
-}
-
-function truncateUserMessageForCheckpoint(
-  message: UserMessage,
-  tokenBudget: number,
-): UserMessage {
-  return {
-    ...message,
-    content: truncateTextForCheckpoint(
-      userMessageTextForCheckpoint(message),
-      Math.max(1, tokenBudget) * 4,
-    ),
-  };
-}
-
-/**
- * Choose the user messages that survive a compaction boundary: newest first up
- * to `maxTokens`, truncating the one that crosses the budget instead of
- * dropping it, then restored to chronological order. This is Codex's
- * `build_compacted_history_with_limit` selection.
- */
-function selectRetainedUserMessages(
-  candidates: UserMessage[],
-  maxTokens: number,
-): UserMessage[] {
-  const selected: UserMessage[] = [];
-  let remaining = Math.max(0, maxTokens);
-  for (let index = candidates.length - 1; index >= 0 && remaining > 0; index -= 1) {
-    const message = candidates[index];
-    const tokens = estimateTokens(message);
-    if (tokens <= remaining) {
-      selected.push(message);
-      remaining -= tokens;
-      continue;
-    }
-    selected.push(truncateUserMessageForCheckpoint(message, remaining));
-    break;
-  }
-  return selected.reverse();
 }
 
 /** Rebuild a pi-ai tool result from a persisted tool row. Rows that never
@@ -3839,6 +3688,15 @@ Delegation rules:
             provider: this.subagentProviders[subagentModelKey(pin)],
           })),
           inheritedThinkingLevel: this.thinkingLevel,
+          // The delegate re-checks any inherited summary provider against its own
+          // window, and honours the session's automatic-compaction setting.
+          ...(this.compactionProvider || this.compactionCandidate
+            ? {
+                compactionProvider:
+                  this.compactionProvider ?? this.compactionCandidate,
+              }
+            : {}),
+          compactionEnabled: this.compactionEnabled,
           onModelChange: (next, level) => {
             record.modelId = next.modelId;
             record.thinkingLevel = level;
@@ -5500,44 +5358,18 @@ Delegation rules:
     this.agent.state.tools = this.activeTools();
   }
 
+  /**
+   * The session's own budget numbers: the shared rule, measured on this
+   * session's transcript against the active model's window. The session model
+   * charges its system prompt and tool catalog through the provider's usage
+   * report, so nothing is added on top here — see `computeContextBudget`.
+   */
   private contextBudget(messages: AgentMessage[]): ContextBudget {
-    const contextWindow = Math.max(
-      1,
-      Math.round(this.model.contextWindow || DEFAULT_CONTEXT_WINDOW),
-    );
-    const modelOutputBudget = Math.min(
-      Math.max(1, Math.round(this.model.maxTokens || DEFAULT_MAX_TOKENS)),
-      Math.max(1, Math.floor(contextWindow * 0.25)),
-    );
-    const reserveFloor = Math.min(
-      COMPACTION_RESERVE_FLOOR_TOKENS,
-      Math.max(1, Math.floor(contextWindow * 0.5)),
-    );
-    const requestHeadroom = Math.min(
-      contextWindow - 1,
-      Math.max(
-        reserveFloor,
-        modelOutputBudget,
-        Math.ceil(contextWindow * 0.05),
-      ),
-    );
-    const hardLimit = Math.max(1, contextWindow - requestHeadroom);
-    const keepRecentTokens = Math.min(
-      Math.max(
-        COMPACTION_MIN_KEEP_RECENT_TOKENS,
-        Math.min(
-          COMPACTION_MAX_KEEP_RECENT_TOKENS,
-          Math.floor(hardLimit * COMPACTION_KEEP_RECENT_RATIO),
-        ),
-      ),
-      Math.max(1, Math.floor(hardLimit * 0.5)),
-    );
-    return {
-      tokens: estimateContextTokens(messages).tokens,
-      hardLimit,
-      requestHeadroom,
-      keepRecentTokens,
-    };
+    return computeContextBudget({
+      messages,
+      contextWindow: this.model.contextWindow,
+      maxTokens: this.model.maxTokens,
+    });
   }
 
   private automaticCompactionNeeded(
@@ -5550,18 +5382,12 @@ Delegation rules:
   }
 
   /**
- * Cap on the active user message a checkpoint carries forward. Codex uses a
- * flat 20k; the clamp keeps a small model window from being filled by
- * retention alone, which would leave the summary no room.
+   * Cap on the active user message a checkpoint carries forward. Codex uses a
+   * flat 20k; the clamp keeps a small model window from being filled by
+   * retention alone, which would leave the summary no room.
    */
   private retainedUserMessageBudget(budget: ContextBudget): number {
-    return Math.max(
-      1,
-      Math.min(
-        COMPACTION_RETAINED_USER_MESSAGE_MAX_TOKENS,
-        Math.floor(budget.hardLimit * 0.5),
-      ),
-    );
+    return retainedUserMessageBudget(budget);
   }
 
   /**
@@ -5613,33 +5439,21 @@ Delegation rules:
   }
 
   /**
-   * Reshape a pi preparation the way Codex compacts:
+   * Fold a pi preparation into the checkpoint shape the shared rule defines:
+   * every message from the boundary forward is summarized as one range, and the
+   * retained tail is the latest user message only while the turn is still
+   * active. A completed turn carries no user messages across the boundary: its
+   * summary is authoritative, and the next prompt becomes the sole new
+   * instruction after the checkpoint.
    *
-   * - Everything pi would have split across `messagesToSummarize`,
-   *   `turnPrefixMessages` and `retainedTail` is summarized as one range. The
-   *   three are contiguous and ordered, so concatenating them loses nothing —
-   *   and it is what makes dropping the tail safe: no message leaves the model
-   *   context without the summary covering it.
-   * - The retained tail is rebuilt from the latest user message only when the
-   *   turn is still active. Completed turns retain no user messages: their
-   *   summary is authoritative, and the next prompt becomes the sole new
-   *   instruction after the checkpoint. Dropping assistant messages also drops
-   *   their `toolCall` blocks, and their results go with them in the same pass,
-   *   so no orphaned tool call can reach a provider.
-   * - `firstKeptEntryId` points at the anchor the checkpoint is filed against.
-   *   It is ours, not pi's (see `ShapedPreparation`): pi 0.84 takes its own
-   *   boundary from the compaction entry, so this only feeds the persisted
-   *   record and the `compaction_end` event.
+   * See `shapeCheckpointPreparation` for why the fold and the rebuilt tail are
+   * safe, and why `firstKeptEntryId` is ours rather than pi's.
    */
   private codexShapedPreparation(
     preparation: CompactionPreparation,
     retainedUserTokens: number,
     retentionMode: CompactionRetentionMode,
   ): ShapedPreparation {
-    // pi 0.84 replays a previous checkpoint's `retainedTail` as virtual entries
-    // at the head of the compactable range, so those messages already arrive in
-    // `preparation` — prepending them again (which is what this had to do while
-    // pi walked back to `firstKeptEntryId` instead) would duplicate every one.
     const messagesToSummarize = [
       ...preparation.messagesToSummarize,
       ...preparation.turnPrefixMessages,
@@ -5648,16 +5462,12 @@ Delegation rules:
     const latestUser = messagesToSummarize
       .filter((message): message is UserMessage => message.role === "user")
       .at(-1);
-    const candidates =
-      retentionMode === "active_turn" && latestUser ? [latestUser] : [];
-    return {
-      ...preparation,
+    return shapeCheckpointPreparation(preparation, {
       firstKeptEntryId: this.fullEntries.at(-1)?.id,
-      messagesToSummarize,
-      turnPrefixMessages: [],
-      isSplitTurn: false,
-      retainedTail: selectRetainedUserMessages(candidates, retainedUserTokens),
-    };
+      retentionCandidates:
+        retentionMode === "active_turn" && latestUser ? [latestUser] : [],
+      retainedUserTokens,
+    });
   }
 
   private rebuiltAgentContext(): AgentContext {
@@ -5950,43 +5760,23 @@ Delegation rules:
     };
   }
 
+  /**
+   * Wrap the shared retained-tail recovery in a persisted checkpoint: the
+   * summary is the carried-forward one plus the recovery notice, and the
+   * retained messages are the only thing that has to fit (see
+   * `createFallbackCheckpointPlan`).
+   */
   private createFallbackCheckpoint(
     preparation: ShapedPreparation,
     throughMessageId: string,
     maxSummaryChars: number,
     retentionMode: CompactionRetentionMode,
   ): ContextCompactionRecord {
-    const previousSummary = preparation.previousSummary
-      ? boundedText(
-          preparation.previousSummary,
-          Math.min(COMPACTION_FALLBACK_MAX_SUMMARY_CHARS, maxSummaryChars),
-        )
-      : COMPACTION_FALLBACK_NO_SUMMARY;
-    const continuation =
-      retentionMode === "active_turn"
-        ? "The provider is continuing the active turn. Use the one retained latest user request as the source of truth for that continuation."
-        : "The previous turn is complete. Treat this summary as historical context; the next user message is the only new task to execute.";
-    const summary = [
-      previousSummary,
-      COMPACTION_FALLBACK_MARKER,
-      "The automatic summary request did not complete. Older messages before this checkpoint are omitted from the next model request.",
-      `The complete transcript remains available in the session. ${continuation}`,
-    ].join("\n\n");
-    // A completed-turn checkpoint normally retains no naked user messages, but
-    // an empty tail plus a carried-forward (or absent) summary leaves the next
-    // model request with nothing before the boundary: after a runtime rebuild
-    // — model switch, restart — the session restores as if it had just started.
-    // Fall back to the newest user messages under the same budget so the
-    // failure path still restores a bounded, non-empty context (#224).
-    const retainedTail =
-      preparation.retainedTail.length > 0
-        ? preparation.retainedTail
-        : selectRetainedUserMessages(
-            preparation.messagesToSummarize.filter(
-              (message): message is UserMessage => message.role === "user",
-            ),
-            preparation.settings.keepRecentTokens,
-          );
+    const { summary, retainedTail } = createFallbackCheckpointPlan({
+      preparation,
+      maxSummaryChars,
+      retentionMode,
+    });
     return this.createCheckpoint(
       {
         ...preparation,
@@ -6029,47 +5819,21 @@ Delegation rules:
     );
   }
 
+  /**
+   * Whether the summary request itself would cross the summary model's window,
+   * measured by the shared rule. The summary follows the session model unless a
+   * candidate proved compatible (`compaction-model.ts`), so the selected model
+   * is the one the guard has to predict against.
+   */
   private compactionSummaryWouldExceedBudget(
     preparation: ShapedPreparation,
     budget: { hardLimit: number; requestHeadroom: number },
   ): boolean {
-    // The summary is issued by the selected summary model, so the request this
-    // guard predicts has to be measured against that model's own window and
-    // output budget, not the session model's. pi-agent-core caps the summary
-    // output at 80% of the preparation's reserve — the session model's request
-    // headroom, which stays the ceiling — so the summary model's own
-    // `maxTokens` can only lower it. Following the session model reproduces
-    // the previous numbers exactly: a candidate's window is never smaller.
-    const summaryModel = this.compactionModel ?? this.model;
-    const contextWindow = Math.max(
-      budget.hardLimit + budget.requestHeadroom,
-      Math.max(
-        1,
-        Math.round(summaryModel.contextWindow || DEFAULT_CONTEXT_WINDOW),
-      ),
+    return compactionSummaryWouldExceedBudget(
+      preparation,
+      budget,
+      this.compactionModel ?? this.model,
     );
-    const modelOutputBudget = Math.min(
-      Math.floor(budget.requestHeadroom * 0.8),
-      Math.max(1, Math.round(summaryModel.maxTokens || DEFAULT_MAX_TOKENS)),
-    );
-    const summaryInputLimit = Math.max(
-      1,
-      contextWindow -
-        modelOutputBudget -
-        COMPACTION_SUMMARY_PROMPT_SAFETY_TOKENS,
-    );
-    // The summary now covers the whole boundary range, so its input is the
-    // context that tripped the hard limit. On a window whose headroom leaves
-    // less room for the summary request than the hard limit allows, this is the
-    // guard that routes the turn to retained-tail recovery instead.
-    const historyTokens = preparation.messagesToSummarize.reduce(
-      (total, message) => total + estimateTokens(message),
-      0,
-    );
-    const previousSummaryTokens = preparation.previousSummary
-      ? Math.ceil(preparation.previousSummary.length / 4)
-      : 0;
-    return historyTokens + previousSummaryTokens >= summaryInputLimit;
   }
 
   private async persistCheckpoint(
@@ -6245,30 +6009,27 @@ Delegation rules:
     this.compactionModels = createProviderModels(provider, model);
   }
 
+  /**
+   * The dedicated summary model only ever changes provider, model, registry
+   * and thinking level; the preparation — and with it the reserve, the
+   * retained tail and every budget decision — stays the session model's.
+   */
   private async generateCompaction(
     preparation: ShapedPreparation,
     signal: AbortSignal,
-  ): Promise<Awaited<ReturnType<typeof compact>>> {
-    // The dedicated summary model only ever changes provider, model, registry
-    // and thinking level; the preparation — and with it the reserve, the
-    // retained tail and every budget decision — stays the session model's.
-    const provider = this.compactionProvider ?? this.provider;
-    const model = this.compactionModel ?? this.model;
-    const models = this.compactionModels ?? this.models;
-    return compact(
+  ): ReturnType<typeof generateCompactionSummary> {
+    return generateCompactionSummary({
       preparation,
-      // The summary is a provider request like any other turn, but
-      // pi-agent-core builds its options itself and never reaches `streamFn`,
-      // so the headers have to ride on the collection — and they must be the
-      // selected provider's, not the session provider's.
-      withCompactionRequestHeaders(models, provider, this.sessionId),
-      model,
-      undefined,
-      clampThinkingLevel(provider, this.thinkingLevel),
-      undefined,
-      undefined,
-      withAbortSignal(signal, BACKGROUND_CONTEXT),
-    );
+      provider: this.compactionProvider ?? this.provider,
+      model: this.compactionModel ?? this.model,
+      models: this.compactionModels ?? this.models,
+      sessionId: this.sessionId,
+      thinkingLevel: clampThinkingLevel(
+        this.compactionProvider ?? this.provider,
+        this.thinkingLevel,
+      ),
+      signal,
+    });
   }
 
   /**
@@ -6318,7 +6079,7 @@ Delegation rules:
       };
     }
 
-    let result: Awaited<ReturnType<typeof compact>>;
+    let result: Awaited<ReturnType<typeof generateCompactionSummary>>;
     try {
       result = await this.generateCompaction(preparation.value, signal);
     } catch (error) {

@@ -727,7 +727,7 @@
 
 .provider-thinking-chip.selected {
   background: var(--ds-accent);
-  color: var(--ds-bg-primary);
+  color: var(--ds-on-accent, var(--ds-bg-primary));
 }
 
 .provider-thinking-chip:focus-visible,

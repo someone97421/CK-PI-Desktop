@@ -102,6 +102,13 @@
   --ds-accent: var(--gray-0);
   --ds-accent-hover: var(--gray-100);
   --ds-accent-soft: var(--gray-300);
+  /*
+    Ink for solid accent fills. The static value keeps the built-in paint the
+    pill always had; lib/appearance.ts re-derives it at runtime from the accent
+    the active theme actually paints (WCAG luminance), so a contributed theme's
+    accent gets readable button text without an override of its own.
+  */
+  --ds-on-accent: var(--gray-900);
   /* Focus rings / resize affordances. Tied to the accent so themes stay monochrome. */
   --ds-focus: var(--ds-accent);
   /* Settings rail and shared inset searches keep their built-in surface tones. */
@@ -241,6 +248,8 @@
   --ds-accent: #1a1c1f;
   --ds-accent-hover: #303030;
   --ds-accent-soft: #5d5d5d;
+  /* Solid-accent ink inverts with the accent: white on the near-black pill. */
+  --ds-on-accent: #ffffff;
   --ds-focus: var(--ds-accent);
   --ds-settings-rail-bg: #f4f4f4;
   --ds-settings-field-bg: #ffffff;

@@ -1,9 +1,12 @@
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+  APPEARANCE_CONTRAST_MAX,
+  APPEARANCE_CONTRAST_MIN,
   APPEARANCE_DEFAULT_COLORS,
   normalizeHexColor,
   resetModeAppearance,
+  resolveAppearanceContrast,
   type AppSettings,
   type ModeAppearance,
 } from "@pi-desktop/shared";
@@ -73,6 +76,7 @@ export function AppearancePanels({ settings, saveSettings }: {
       {(["light", "dark"] as const).map((mode) => {
         const panel = settings.appearance?.[mode] ?? {};
         const title = t(mode === "light" ? "settings.appearanceLight" : "settings.appearanceDark");
+        const contrast = resolveAppearanceContrast(panel.contrast);
         return (
           <section key={mode} className="appearance-panel" aria-label={title}>
             <div className="appearance-panel-header">
@@ -93,6 +97,26 @@ export function AppearancePanels({ settings, saveSettings }: {
                   value={panel[key] ?? APPEARANCE_DEFAULT_COLORS[mode][key]}
                   onChange={(value) => { void update(mode, { [key]: value }).catch(() => undefined); }} />
               ))}
+            </div>
+
+            <div className="appearance-contrast">
+              <div className="settings-row-title">{t("settings.appearanceContrast")}</div>
+              <p className="settings-row-desc">{t("settings.appearanceContrastDesc")}</p>
+              <div className="appearance-contrast-slider">
+                <input
+                  type="range"
+                  min={APPEARANCE_CONTRAST_MIN}
+                  max={APPEARANCE_CONTRAST_MAX}
+                  step={1}
+                  value={contrast}
+                  aria-label={t("settings.appearanceContrastMode", { mode: title })}
+                  aria-valuetext={String(contrast)}
+                  onChange={(event) => {
+                    void update(mode, { contrast: Number(event.target.value) }).catch(() => undefined);
+                  }}
+                />
+                <span className="appearance-contrast-value">{contrast}</span>
+              </div>
             </div>
             {scopes.map(([scope, label, description]) => {
               const font = panel[scope];

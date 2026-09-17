@@ -874,7 +874,7 @@
 
 .scope-option.is-on .scope-option-check {
   background: var(--ds-accent);
-  color: var(--ds-bg-primary);
+  color: var(--ds-on-accent, var(--ds-bg-primary));
 }
 
 .scope-option-copy {

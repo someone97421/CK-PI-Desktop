@@ -14,6 +14,13 @@ export type ModeAppearance = {
   accent?: string;
   background?: string;
   foreground?: string;
+  /**
+   * Surface separation for this palette, 0–100 (the Codex-style contrast
+   * slider). `50` is the built-in baseline: lower flattens tiles, chips, and
+   * borders into the page, higher sharpens section boundaries; absent means 50.
+   * Contributed plugin themes own their own surfaces and never carry it.
+   */
+  contrast?: number;
   ui?: AppearanceFont;
   content?: AppearanceFont;
   code?: AppearanceFont;

@@ -22,14 +22,19 @@ import { randomUUID } from "node:crypto";
 import {
   Agent,
   convertToLlm,
+  createCompactionSummaryMessage,
   type AfterToolCallContext,
   type AfterToolCallResult,
   type AgentEvent,
+  type AgentMessage,
   type AgentTool,
   type BeforeToolCallContext,
   type BeforeToolCallResult,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import {
+  isContextOverflow,
+  type AssistantMessage,
+} from "@earendil-works/pi-ai";
 import {
   addUsage,
   cumulativeDelta,
@@ -51,9 +56,32 @@ import {
   nowIso,
   usageFromPi,
 } from "./agent-messages.js";
-import type { RuntimeProviderConfig } from "./provider-binding.js";
+import {
+  buildProviderModel,
+  createProviderModels,
+  DEFAULT_CONTEXT_WINDOW,
+  type RuntimeProviderConfig,
+} from "./provider-binding.js";
+import { resolveCompactionProvider } from "./compaction-model.js";
+import {
+  compactionSummaryWouldExceedBudget,
+  compactionThinkingLevel,
+  computeContextBudget,
+  estimatePromptOverheadTokens,
+  fileOpsFromMessages,
+  generateCompactionSummary,
+  prepareLinearCheckpointPreparation,
+  retainedUserMessageBudget,
+  shapeCheckpointPreparation,
+  stripCompactionFallbackNotice,
+  subagentRetentionCandidates,
+  type ContextBudget,
+} from "./context-compaction.js";
 import { clampThinkingLevel } from "./thinking-level.js";
-import { subagentModelBinding, type SubagentProviderRetryState } from "./subagent-model-binding.js";
+import {
+  subagentModelBinding,
+  type SubagentProviderRetryState,
+} from "./subagent-model-binding.js";
 import {
   classifyProviderError,
   delayWithAbort,
@@ -92,6 +120,8 @@ export type SubagentRunResult = {
   /** Provider requests the delegate spent. */
   turns: number;
   toolCalls: number;
+  /** In-memory context checkpoints this delegate's run spent. */
+  contextCompactions?: number;
   usage?: MessageUsage;
   /** 本轮新增用量；usage 保留整个子任务累计值。 */
   executionUsage?: MessageUsage;
@@ -140,6 +170,14 @@ export type SubagentRunOptions = {
   delegationId?: string;
   reportIntervalSteps?: number;
   onObservation?: (event: SubagentObservation) => void;
+  /**
+   * Summary model inherited from the parent. It is used only when it is
+   * available and at least as wide as the delegate's own model, so a delegate
+   * never sends its history to a summary model that cannot hold it.
+   */
+  compactionProvider?: RuntimeProviderConfig;
+  /** The session's automatic-compaction setting; false disables checkpoints. */
+  compactionEnabled?: boolean;
 };
 
 /**
@@ -190,6 +228,16 @@ function boundedReport(value: string): string {
 
 export { addUsage };
 
+/**
+ * Prefix on the in-memory summary message. A delegate that is never told its
+ * history was checkpointed re-reads its own summary as fresh work and repeats
+ * completed steps.
+ */
+const SUBAGENT_CHECKPOINT_NOTICE =
+  "[delegate context checkpoint: earlier work was summarized below. Continue the delegated task from here; do not redo completed steps.]";
+const SUBAGENT_CHECKPOINT_FAILURE_MESSAGE =
+  "The delegate context could not be reduced below its model's safe budget, so it was not sent.";
+
 /** 同一内存上下文可执行多轮；正常完成才可被父 Agent 显式召回。 */
 export class SubagentRun {
   readonly observation: SubagentObserver;
@@ -217,6 +265,21 @@ export class SubagentRun {
     claim: (error, phase) => this.claimProviderRetry(error, phase),
   };
   private readonly runAbortController = new AbortController();
+  /**
+   * In-memory checkpoint state. A delegate is never persisted: the parent's
+   * transcript already holds every child row, so the only thing that has to
+   * survive its own compaction is the summary its later requests are built from.
+   */
+  private checkpointSummary?: string;
+  private checkpointTokensBefore = 0;
+  /** The summary message currently at the head of the in-memory transcript. */
+  private summaryMessage?: AgentMessage;
+  private contextCompactions = 0;
+  /** One overflow-driven checkpoint retry per execution, as in the session. */
+  private overflowCompactionAttempted = false;
+  private pendingOverflowCompaction = false;
+  /** Set when the context could not be reduced: the run fails visibly. */
+  private contextFailure?: { code: string; message: string };
 
   constructor(opts: SubagentRunOptions) {
     this.opts = opts;
@@ -236,6 +299,8 @@ export class SubagentRun {
       streamFn: binding.streamFn,
       getApiKey: binding.getApiKey,
       convertToLlm,
+      // Covers prompt, resume, guidance, retries and fallback-model requests.
+      transformContext: (messages, signal) => this.prepareRequestContext(messages, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
       beforeToolCall: async (context) => this.beforeToolCall(context),
       // 收束原回复的工具结果后让出循环；引导在同一实例上以新输入继续。
@@ -283,6 +348,11 @@ export class SubagentRun {
     if (signal?.aborted) {
       return this.result("aborted", "The delegated task was aborted before it started.");
     }
+    // Recovery state is per execution: a `TaskResume` re-budgets the context and
+    // gets its own single overflow attempt, exactly like a new session prompt.
+    this.overflowCompactionAttempted = false;
+    this.pendingOverflowCompaction = false;
+    this.contextFailure = undefined;
     const onAbort = () => {
       this.observation.stop("session");
       this.runAbortController.abort();
@@ -296,6 +366,19 @@ export class SubagentRun {
       while (!signal?.aborted) {
         if (this.pendingProviderRetry) {
           await this.retryPendingProviderFailure();
+        } else if (this.contextFailure) {
+          // Raised by the next-request hook; reported below.
+          break;
+        } else if (this.pendingOverflowCompaction) {
+          this.pendingOverflowCompaction = false;
+          const outcome = await this.checkpointAfterOverflow(signal);
+          if (outcome === "aborted") {
+            return this.result("aborted", "The delegated task was aborted.");
+          }
+          if (outcome === "compacted") {
+            await this.agent.continue();
+            await this.agent.waitForIdle();
+          }
         } else if (this.streamError && this.useNextModel()) {
           await this.agent.continue();
           await this.agent.waitForIdle();
@@ -319,6 +402,9 @@ export class SubagentRun {
 
     if (signal?.aborted) {
       return this.result("aborted", "The delegated task was aborted.");
+    }
+    if (this.contextFailure) {
+      return this.result("failed", "", this.contextFailure);
     }
     if (caughtError) {
       if (caughtError.code === "TURN_ABORTED") {
@@ -350,7 +436,234 @@ export class SubagentRun {
     }, this.retryState);
   }
 
-  /** Continue the same agent at the failed request; never replay completed tools. */
+  /** The session's automatic-compaction setting gates the delegate's checkpoints. */
+  private get compactionEnabled(): boolean {
+    return this.opts.compactionEnabled !== false;
+  }
+
+  private modelContextWindow(): number {
+    return this.agent.state.model.contextWindow || DEFAULT_CONTEXT_WINDOW;
+  }
+
+  /** System prompt and tool schemas every request pays for before any message. */
+  private promptOverheadTokens(): number {
+    return estimatePromptOverheadTokens(this.opts.systemPrompt, this.opts.tools);
+  }
+
+  /**
+   * The delegate's own budget: its bound model's window and output cap, plus
+   * the prompt and tool overhead the transcript itself never accounts for.
+   */
+  private contextBudget(messages: readonly AgentMessage[]): ContextBudget {
+    return computeContextBudget({
+      messages,
+      contextWindow: this.agent.state.model.contextWindow,
+      maxTokens: this.agent.state.model.maxTokens,
+      promptOverheadTokens: this.promptOverheadTokens(),
+    });
+  }
+
+  /**
+   * The summary binding for the delegate's current model. Re-resolved on every
+   * checkpoint, so a fallback switch re-budgets against the model actually
+   * bound. The parent's summary provider is used only when it is available and
+   * at least as wide as the delegate's own model (`compaction-model.ts`).
+   */
+  private compactionBinding() {
+    const provider =
+      (this.opts.compactionProvider
+        ? resolveCompactionProvider(this.provider, this.opts.compactionProvider)
+        : undefined) ?? this.provider;
+    const model = buildProviderModel(provider);
+    return {
+      provider,
+      model,
+      models: createProviderModels(provider, model),
+      thinkingLevel: compactionThinkingLevel(provider, this.thinkingLevel),
+    };
+  }
+
+
+  /**
+   * Compact when the next provider request would cross the delegate's safe
+   * budget. `false` means the context could not be reduced, and the caller must
+   * fail loudly instead of issuing the request.
+   */
+  private async ensureContextFits(signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) return false;
+    if (!this.compactionEnabled) return true;
+    const budget = this.contextBudget(this.agent.state.messages);
+    if (budget.tokens < budget.hardLimit) return true;
+    if (this.promptOverheadTokens() >= budget.hardLimit) {
+      this.contextFailure = {
+        code: "CONTEXT_COMPACTION_FAILED",
+        message: "The delegate's system prompt and tools exceed its context budget; history compaction cannot make this request fit.",
+      };
+      return false;
+    }
+    return await this.checkpointContext(signal) === "compacted";
+  }
+
+  /** Transform runs after the pending prompt is appended, before every request. */
+  private async prepareRequestContext(
+    messages: AgentMessage[],
+    signal?: AbortSignal,
+  ): Promise<AgentMessage[]> {
+    const requestSignal = signal ?? this.runSignal();
+    const throwIfAborted = () => {
+      if (!requestSignal.aborted && !this.runSignal().aborted) return;
+      const error = new Error("The delegated task was aborted during context preparation.");
+      error.name = "AbortError";
+      throw error;
+    };
+    throwIfAborted();
+    this.agent.state.messages = [...messages];
+    if (!(await this.ensureContextFits(requestSignal))) {
+      throwIfAborted();
+      this.contextFailure ??= { code: "CONTEXT_COMPACTION_FAILED", message: SUBAGENT_CHECKPOINT_FAILURE_MESSAGE };
+      throw new Error(`CONTEXT_COMPACTION_FAILED: ${this.contextFailure.message}`);
+    }
+    throwIfAborted();
+    // The core's transform only changes the outbound view. Mutate the loop's
+    // array too so its next request cannot resurrect pre-checkpoint history.
+    const prepared = this.agent.state.messages;
+    messages.splice(0, messages.length, ...prepared);
+    return messages;
+  }
+
+  /**
+   * One overflow recovery per execution, like the session runtime: checkpoint
+   * this delegate's context and continue the same model at the failed request.
+   * A second overflow follows the ordinary fallback/failure path, so no model
+   * is asked to retry an oversized request forever.
+   */
+  private async checkpointAfterOverflow(
+    signal: AbortSignal,
+  ): Promise<"compacted" | "unavailable" | "aborted"> {
+    if (signal.aborted) return "aborted";
+    // The rejected request's own assistant row must not enter the transcript the
+    // checkpoint is built from, and `continue()` needs it gone.
+    const transcript = [...this.agent.state.messages];
+    const messages = [...transcript];
+    if (messages.at(-1)?.role === "assistant") messages.pop();
+    this.agent.state.messages = messages;
+    const outcome = await this.checkpointContext(signal);
+    if (outcome === "aborted") return "aborted";
+    if (outcome === "compacted") return "compacted";
+    // Nothing could be reduced: hand the request to the ordinary failure path,
+    // which may still find a wider fallback model, and fail visibly if it does
+    // not. The rejected row is restored because that path decides what to drop,
+    // and no request is issued while it is still in place.
+    this.agent.state.messages = transcript;
+    this.contextFailure = undefined;
+    this.streamError ??= {
+      code: "CONTEXT_TOO_LARGE",
+      message:
+        "The provider rejected an oversized model context and it could not be reduced.",
+    };
+    return "unavailable";
+  }
+
+  /**
+   * Checkpoint the delegate's own context in memory.
+   *
+   * The summary covers everything older than the boundary and the retained tail
+   * carries the delegated brief plus the newest instruction, so the task, later
+   * guidance, completed changes and remaining work all survive the boundary. An
+   * existing summary is updated rather than replaced, the same way the session
+   * runtime accumulates one across checkpoints.
+   *
+   * Nothing here is persisted: the parent's transcript already holds every child
+   * row, and the delegate is never resumed from disk.
+   */
+  private async checkpointContext(
+    signal: AbortSignal,
+  ): Promise<"compacted" | "failed" | "aborted"> {
+    if (signal.aborted) return "aborted";
+    const messages = this.agent.state.messages;
+    const source = messages.filter((message) => message !== this.summaryMessage);
+    if (source.length === 0) {
+      this.contextFailure = { code: "CONTEXT_COMPACTION_FAILED", message: "No new history can be summarized to reduce the delegate context." };
+      return "failed";
+    }
+    const budget = this.contextBudget(messages);
+    const binding = this.compactionBinding();
+    // Keep the real carried-forward summary and drop any recovery notice, so a
+    // chained checkpoint updates the history it has instead of cementing a
+    // failure notice that never was a summary.
+    const previousSummary = stripCompactionFallbackNotice(this.checkpointSummary);
+    const preparation = shapeCheckpointPreparation(
+      prepareLinearCheckpointPreparation({
+        messages: source,
+        ...(previousSummary ? { previousSummary } : {}),
+        fileOps: fileOpsFromMessages(source),
+        budget,
+      }),
+      {
+        retentionCandidates: subagentRetentionCandidates(source),
+        retainedUserTokens: retainedUserMessageBudget(budget),
+      },
+    );
+
+    let summary: string | undefined;
+    // Do not send a summary request that cannot fit its model's window.
+    // Failure retains the original transcript rather than omitting work.
+    if (!compactionSummaryWouldExceedBudget(preparation, budget, binding.model)) {
+      const result = await generateCompactionSummary({
+        preparation,
+        provider: binding.provider,
+        models: binding.models,
+        model: binding.model,
+        sessionId: this.opts.sessionId,
+        ...(binding.thinkingLevel ? { thinkingLevel: binding.thinkingLevel } : {}),
+        signal,
+        // An empty or output-truncated summary would replace the delegate's
+        // whole history with nothing; keep the context and recover instead.
+        requireCompleteSummary: true,
+      });
+      if (signal.aborted) return "aborted";
+      if (result.ok) summary = result.value.summary;
+    }
+
+    if (summary === undefined) {
+      this.contextFailure = {
+        code: "CONTEXT_COMPACTION_FAILED",
+        message: "A complete context summary could not be generated within the model budget. Original history was retained; no work was replayed.",
+      };
+      return "failed";
+    }
+
+    if (!this.installCheckpoint(summary, preparation.retainedTail, budget)) {
+      this.contextFailure = {
+        code: "CONTEXT_COMPACTION_FAILED",
+        message: SUBAGENT_CHECKPOINT_FAILURE_MESSAGE,
+      };
+      return "failed";
+    }
+    this.contextCompactions += 1;
+    return "compacted";
+  }
+
+  /** Install atomically only when the complete summary and retained instructions fit. */
+  private installCheckpoint(
+    summary: string,
+    retainedTail: readonly AgentMessage[],
+    budget: ContextBudget,
+  ): boolean {
+    const message = createCompactionSummaryMessage(
+      `${SUBAGENT_CHECKPOINT_NOTICE}\n\n${summary}`,
+      budget.tokens,
+      Date.now(),
+    );
+    const messages: AgentMessage[] = [message, ...retainedTail];
+    if (this.contextBudget(messages).tokens >= budget.hardLimit) return false;
+    this.summaryMessage = message;
+    this.checkpointSummary = summary;
+    this.checkpointTokensBefore = budget.tokens;
+    this.agent.state.messages = messages;
+    return true;
+  }
+
   private useNextModel(): boolean {
     if (this.runSignal().aborted || !this.streamError || this.streamError.code === "TURN_ABORTED") return false;
     if (!this.opts.fallbackModels?.length) return false;
@@ -483,10 +796,20 @@ export class SubagentRun {
       status,
       report: boundedReport([
         ...this.modelFailures.map((failure) => `Model ${failure.model} failed (${failure.code}): ${failure.message}`),
+        // The parent has no other way to learn a delegate was checkpointed; one
+        // line per run keeps it out of the progress stream.
+        ...(this.contextCompactions > 0
+          ? [
+              `Context: the delegate's own context was checkpointed ${this.contextCompactions} time(s) in memory; earlier history was summarized and every tool record is still in the transcript.`,
+            ]
+          : []),
         text,
       ].join("\n\n")),
       turns: this.turns,
       toolCalls: this.toolCalls,
+      ...(this.contextCompactions > 0
+        ? { contextCompactions: this.contextCompactions }
+        : {}),
       ...(this.usage ? { usage: this.usage } : {}),
       executionUsage: this.executionUsage,
       ...(this.modelFailures.length ? { modelFailures: [...this.modelFailures] } : {}),
@@ -647,23 +970,49 @@ export class SubagentRun {
         const message = event.message as AssistantMessage;
         const content = assistantContent(message.content);
         const stopReason = message.stopReason as string | undefined;
-        const failed = stopReason === "error";
+        const streamFailure = stopReason === "error";
         let classifiedError: ReturnType<typeof classifyAgentError> | undefined;
         let retryAttempt: number | undefined;
-        if (failed) {
+        if (streamFailure) {
           const raw =
             typeof (message as { errorMessage?: unknown }).errorMessage === "string"
               ? ((message as { errorMessage?: string }).errorMessage as string)
               : "provider stream failed";
           classifiedError = classifyProviderError(raw, this.retryState.status);
-          retryAttempt = this.claimProviderRetry(classifiedError, "stream");
-          if (retryAttempt !== undefined) {
-            this.pendingProviderRetry = classifiedError;
-          } else {
-            this.streamError = {
-              code: classifiedError.code,
-              message: classifiedError.message,
+        }
+        // Recover only a rejected request. A successful tool-use reply may
+        // already have effects before the run loop yields; never replay it based
+        // solely on oversized usage reported by a provider.
+        const overflow = streamFailure && (
+          isContextOverflow(message, this.modelContextWindow()) ||
+          classifiedError?.code === "CONTEXT_TOO_LARGE"
+        );
+        const failed = streamFailure || overflow;
+        if (failed) {
+          const failure: ReturnType<typeof classifyAgentError> =
+            classifiedError ?? {
+              code: "CONTEXT_TOO_LARGE",
+              message: "The provider stopped an oversized model context",
+              retriable: false,
             };
+          if (
+            overflow &&
+            this.compactionEnabled &&
+            !this.overflowCompactionAttempted &&
+            !this.runSignal().aborted
+          ) {
+            this.overflowCompactionAttempted = true;
+            this.pendingOverflowCompaction = true;
+          } else {
+            retryAttempt = this.claimProviderRetry(failure, "stream");
+            if (retryAttempt !== undefined) {
+              this.pendingProviderRetry = failure;
+            } else {
+              this.streamError = {
+                code: failure.code,
+                message: failure.message,
+              };
+            }
           }
         }
         const messageUsage = usageFromPi(message.usage);

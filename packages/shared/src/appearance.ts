@@ -5,6 +5,22 @@ export const APPEARANCE_DEFAULT_COLORS = {
   dark: { accent: "#FFFFFF", background: "#181818", foreground: "#FFFFFF" },
 } as const;
 
+/** Slider bounds for a palette's surface-separation strength (see `contrast`). */
+export const APPEARANCE_CONTRAST_MIN = 0;
+export const APPEARANCE_CONTRAST_MAX = 100;
+/** The built-in look: no surface or border amount is rewritten. */
+export const APPEARANCE_CONTRAST_DEFAULT = 50;
+
+export const isAppearanceContrast = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) &&
+  value >= APPEARANCE_CONTRAST_MIN && value <= APPEARANCE_CONTRAST_MAX;
+
+/** Reads the stored slider position; anything unusable means the default. */
+export function resolveAppearanceContrast(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return APPEARANCE_CONTRAST_DEFAULT;
+  return Math.min(APPEARANCE_CONTRAST_MAX, Math.max(APPEARANCE_CONTRAST_MIN, Math.round(value)));
+}
+
 export function normalizeHexColor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const hex = value.trim();
@@ -17,7 +33,7 @@ export function normalizeHexColor(value: unknown): string | undefined {
 
 export function resetModeAppearance(value: AppearanceSettings | undefined, mode: "light" | "dark"): AppearanceSettings {
   const panel = { ...value?.[mode] };
-  for (const key of ["accent", "background", "foreground", "ui", "content", "code"] as const) delete panel[key];
+  for (const key of ["accent", "background", "foreground", "contrast", "ui", "content", "code"] as const) delete panel[key];
   return { ...value, [mode]: panel };
 }
 
@@ -47,6 +63,7 @@ export function isAppearanceSettings(value: unknown): value is AppearanceSetting
       if (font.family !== undefined && !isAppearanceFontFamily(font.family)) return false;
       if (font.weight !== undefined && !isAppearanceFontWeight(font.weight)) return false;
     }
+    if (panel.contrast !== undefined && !isAppearanceContrast(panel.contrast)) return false;
   }
   return true;
 }
@@ -75,6 +92,9 @@ export function normalizeAppearance(value: unknown): AppearanceSettings | undefi
       else delete normalized.weight;
       panel[scope] = normalized;
     }
+    // A corrupt slider position is dropped rather than guessed at; the read path
+    // treats a missing value as the default.
+    if (!isAppearanceContrast(raw.contrast)) delete panel.contrast;
     result[mode] = panel;
   }
   return result;

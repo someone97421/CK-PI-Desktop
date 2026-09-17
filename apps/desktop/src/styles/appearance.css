@@ -39,10 +39,10 @@
 
 /* These literal-color exceptions apply only when a built-in palette is customized. */
 :root[data-appearance-colors] :is(
-  .btn-primary, .copy-btn.primary, .provider-thinking-chip.selected,
+  .provider-thinking-chip.selected,
   .scope-option.is-on .scope-option-check, .provider-model-check.checked,
-  .mcpm-chip.is-active, .mcpm-install, .mcpm-page-btn.is-active,
-  .sklm-chip.is-active, .sklm-install, .sklm-page-btn.is-active
+  .mcpm-chip.is-active, .mcpm-page-btn.is-active,
+  .sklm-chip.is-active, .sklm-page-btn.is-active
 ) {
   color: var(--ds-on-accent);
 }
@@ -180,6 +180,34 @@
 .appearance-weight-menu { padding: 6px; }
 .appearance-weight-menu .settings-font-item { width: 100%; font-size: var(--text-sm-plus); }
 .appearance-weight-menu .settings-font-item:focus-visible { background: var(--ds-bg-hover); outline: none; }
+
+.appearance-contrast {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.appearance-contrast .settings-row-desc { margin: 0; }
+
+.appearance-contrast-slider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.appearance-contrast-slider input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--ds-accent);
+}
+
+.appearance-contrast-value {
+  color: var(--ds-text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5em;
+  text-align: right;
+}
 
 @container (max-width: 400px) {
   .appearance-panel .settings-row { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
