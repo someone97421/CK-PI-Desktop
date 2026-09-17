@@ -13,6 +13,10 @@ export function delegateAgentName(
     const requested = (args as { agent?: unknown }).agent;
     if (typeof requested === "string") return requested;
   }
+  const payload = toolResultPayload(message);
+  if (payload && typeof payload === "object" && typeof (payload as { agent?: unknown }).agent === "string") {
+    return (payload as { agent: string }).agent;
+  }
   return "";
 }
 

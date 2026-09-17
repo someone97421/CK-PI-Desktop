@@ -23,7 +23,7 @@ const SUMMARY_KEYS: Record<ToolAction, string[]> = {
   // `task` brief is a paragraph and belongs in the expanded detail. A lifecycle
   // tool (ADR 0089) carries only delegation ids, which read as bare UUIDs, so
   // it summarizes from the agent names in its own result roster instead (D268).
-  delegate: ["description", "agent"],
+  delegate: ["description", "agent", "instruction"],
   use: [
     "command",
     "cmd",
@@ -66,7 +66,15 @@ function bareToolName(toolName?: string): string {
  * delegation activity items themselves. */
 export function isDelegationStartTool(toolName?: string): boolean {
   const bare = bareToolName(toolName);
-  return bare === "task" || bare === "subagent";
+  return bare === "task" || bare === "subagent" || bare === "taskresume";
+}
+
+/** 同一子代理的多次执行使用独立展示键，控制操作仍使用 delegationId。 */
+export function delegationExecutionKey(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as { executionId?: unknown; delegationId?: unknown };
+  const key = record.executionId ?? record.delegationId;
+  return typeof key === "string" && key ? key : undefined;
 }
 
 /**

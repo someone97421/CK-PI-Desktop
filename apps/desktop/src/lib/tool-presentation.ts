@@ -651,7 +651,7 @@ function resultBlocks(
       // A delegation reads as brief in, report out. The counters that pi hands
       // back (`turns`, `toolCalls`, `usage`) are a footer, and `agent` already
       // labels the row, so neither repeats here.
-      const brief = stringAt(args, "task");
+      const brief = stringAt(args, "task") || stringAt(args, "instruction");
       if (brief !== null) {
         blocks.push(codeBlock("input", brief, "markdown", { label: "task" }));
       }

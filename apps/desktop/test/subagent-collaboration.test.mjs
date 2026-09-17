@@ -82,6 +82,52 @@ test("编辑器保留固定汇报间隔、允许留空并拒绝非法值", async
   assert.equal(old.reportIntervalSteps, "");
 });
 
+test("召回状态查询经过专用只读 IPC，历史卡片不凭落盘快照宣称可以召回", async () => {
+  const handlers = new Map();
+  let available = true;
+  const requests = [];
+  const ipc = await loadSource("../electron/main/ipc/agent-ipc.ts");
+  ipc.registerAgentIpc({ registrar: { handle: (channel, fn) => handlers.set(channel, fn) },
+    getHost: () => null, getAgentHostBridge: () => null,
+    getSidecar: () => ({ call: async (method, params) => {
+      requests.push({ method, ...params });
+      return { delegationId: params.delegationId, execution: 2, status: available ? "completed" : "unavailable", canResume: available };
+    } }),
+  });
+  const { api } = await loadSource("../src/lib/api.ts", {}, { window: { piDesktop: {
+    invoke: async (channel, payload) => ({ ok: true, data: await handlers.get(channel)(payload) }),
+  } } });
+  const jsx = (type, props) => ({ type, props });
+  const state = { activeSessionId: "s", runningSessions: {} };
+  const slots = [];
+  let cursor = 0;
+  let effects = [];
+  const component = await loadSource("../src/features/chat/transcript/SubagentSupervision.tsx", {
+    react: { useState: (initial) => { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], (value) => { slots[i] = value; }]; },
+      useEffect: (fn) => effects.push(fn) },
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+    "react-i18next": { useTranslation: () => ({ t: (key) => key }) },
+    "../../../lib/api": { api },
+    "../../../lib/tool-presentation": { toolResultPayload: (message) => message.toolResult.details },
+    "../../../stores/app-store": { useAppStore: (select) => select(state) },
+    "../../../components/icons": { IconStop: () => null },
+  });
+  const message = { toolResult: { details: { delegationId: "child", canResume: true, collaboration: {
+    execution: 2, reportIntervalSteps: 3, intervalSource: "dispatch", phase: "finished", completedSteps: 4, stepsSinceReport: 0,
+  } } } };
+  const render = () => { cursor = 0; effects = []; return component.SubagentSupervision({ message, running: false }); };
+  assert.doesNotMatch(JSON.stringify(render()), /subagentRecallReady/);
+  for (const effect of effects) effect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(JSON.stringify(render()), /subagentRecallReady/);
+  assert.equal(requests[0].method, "agent.subagentRecallStatus");
+  available = false;
+  for (const effect of effects) effect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.doesNotMatch(JSON.stringify(render()), /subagentRecallReady/);
+  await assert.rejects(() => handlers.get(protocol.IPC.invoke.subagentStop)({ sessionId: "s", delegationId: "child", expectedExecution: 0 }), /expectedExecution/);
+});
+
 test("配置导入兼容旧文件，保留间隔并拒绝字符串或零", async () => {
   const transfer = await loadSource("../electron/main/config-transfer.ts", {}, {}, "\nexport { parseFile };\n");
   const file = (extra = {}) => JSON.stringify({ kind: "this-is-a-agent.config", version: 1, subagents: {

@@ -140,6 +140,7 @@ import {
   SUBAGENT_STOP_TOOL_NAME,
   SUBAGENT_GUIDE_TOOL_NAME,
   SUBAGENT_INSPECT_TOOL_NAME,
+  SUBAGENT_RESUME_TOOL_NAME,
   SUBAGENT_TOOL_NAME,
   SUBAGENT_WAIT_TOOL_NAME,
   type SubagentRunResult,
@@ -352,6 +353,13 @@ export type DelegationStatus =
  * resolves when the delegate settles; `abort` stops the delegate's agent.
  */
 export type DelegationRecord = {
+  execution?: number;
+  parentToolCallIds?: string[];
+  resumeCommands?: Map<string, Record<string, unknown>>;
+  resumeCommandIds?: Set<string>;
+  executionHistory?: Record<string, unknown>[];
+  activeDurationMs?: number;
+  contextReleased?: boolean;
   sessionId?: string;
   parentToolCallId?: string;
   run?: SubagentRun;
@@ -388,6 +396,10 @@ export type DelegationRecord = {
 
 function delegationSummary(record: DelegationRecord): Record<string, unknown> {
   return {
+    execution: record.execution ?? 1,
+    executionId: (record.execution ?? 1) === 1 ? record.delegationId : `${record.delegationId}:${record.execution}`,
+    canResume: record.status === "completed" && !record.stopRequested && !record.contextReleased && record.run?.canResume === true,
+    activeDurationMs: (record.activeDurationMs ?? 0) + (record.status === "running" ? Math.max(0, Date.now() - record.startedAt) : 0),
     sessionId: record.sessionId,
     turnId: record.taskTurnId,
     ...(record.run ? { collaboration: record.run.observation.snapshot() } : {}),
@@ -447,6 +459,7 @@ function formatDelegationHeartbeat(record: DelegationRecord): string {
   const parts = [
     `${record.agentName} (${record.delegationId})`,
     record.status,
+    `execution ${record.execution ?? 1}${record.status === "completed" && !record.stopRequested && record.run?.canResume ? "; context retained, use TaskResume for review fixes" : ""}`,
     `${elapsedSeconds(record)}s`,
   ];
   const turns = record.result?.turns ?? record.turns;
@@ -464,11 +477,11 @@ function formatDelegationHeartbeat(record: DelegationRecord): string {
 }
 
 const DELEGATION_RESUME_PROMPT =
-  "The following subagents have finished. Integrate their reports and continue the user's original task. Call TaskStop only if you have decided a still-running delegate should not continue.";
+  "The following subagents have finished. Review their work. Integrate their reports and continue the user's original task. If a completed delegate needs fixes, use TaskResume with its delegationId and expectedExecution (TaskList shows availability). This retains its context. Never resume user-stopped work. Call TaskStop only to cancel.";
 
 /** Join delegation results into one bounded text block for the model. */
 function formatDelegationResults(
-  results: Array<{ delegationId: string; agent: string; status: string; report: string }>,
+  results: Array<{ delegationId: string; agent: string; status: string; report: string; execution?: number; canResume?: boolean }>,
   note?: string,
 ): { text: string; includedDelegationIds: Set<string> } {
   const parts: string[] = [];
@@ -476,7 +489,7 @@ function formatDelegationResults(
   let total = 0;
   let omitted = 0;
   for (const result of results) {
-    const block = `## ${result.agent} (${result.delegationId}) — ${result.status}\n${result.report}`;
+    const block = `## ${result.agent} (${result.delegationId}) — ${result.status}${result.execution ? ` · execution ${result.execution}` : ""}${result.canResume ? " · context retained; TaskResume available" : ""}\n${result.report}`;
     if (total + block.length > MAX_TASKWAIT_RESULT_CHARS) {
       omitted += 1;
       continue;
@@ -1697,9 +1710,11 @@ Use the Task tool when:
 - Batch sharding: the same bounded job repeated over many independent targets.
 
 Delegation rules:
+- Parallelize independent work only. Before dispatching dependent work, wait for prerequisites to succeed and read their results; a TaskWait progress update is not completion. Review only finished, stable changes.
 - Task returns immediately with a delegation id. Do not sit idle: keep working on your own independent line, then converge with TaskWait (mode="any" + minCompleted to converge early) when you need results, TaskList to check progress, TaskStop to stop.
 - Always fill Task's \`description\` so the user sees what each subagent is doing. Integrate findings and say which subagent produced what.
 - Specify reportIntervalSteps when the user has not fixed it. Progress reports do not pause children; use TaskGuide for corrections at the next tool boundary and TaskInspect for bounded records. Respect explicit user stops and never automatically recreate that work.
+- Review completed work. If fixes are needed, use TaskList to find canResume and execution, then TaskResume with the same delegationId, expectedExecution and review instructions. It retains that child's context in this session runtime; stopped, failed or released contexts cannot resume. Context persistence and restart recovery are not implemented.
 - You may talk to the user while subagents run. Do not TaskStop unless you have decided the work should not continue. The runtime keeps them alive and delivers their reports when they finish — ending your turn does not abort them.
 - Never delegate what you can finish in a couple of tool calls, and never delegate anything that needs the user.`,
             ...(this.subagentModelSummary()
@@ -3173,6 +3188,7 @@ Delegation rules:
             this.buildSubagentStopTool(),
             this.buildSubagentGuideTool(),
             this.buildSubagentInspectTool(),
+            this.buildSubagentResumeTool(),
           ]
         : [];
     const contextTools = this.compactionEnabled
@@ -3271,6 +3287,7 @@ Delegation rules:
       name === SUBAGENT_STOP_TOOL_NAME ||
       name === SUBAGENT_GUIDE_TOOL_NAME ||
       name === SUBAGENT_INSPECT_TOOL_NAME ||
+      name === SUBAGENT_RESUME_TOOL_NAME ||
       (this.mode === "agent"
         ? AGENT_CORE_TOOL_NAMES.has(name)
         : proposalKindForMode(this.mode)
@@ -3783,6 +3800,8 @@ Delegation rules:
           resolveCompletion = resolve;
         });
         const record: DelegationRecord = {
+          execution: 1,
+          parentToolCallIds: [toolCallId],
           sessionId: this.sessionId,
           parentToolCallId: toolCallId,
           delegationId,
@@ -3841,17 +3860,33 @@ Delegation rules:
           resolveToolOutcome: (context) => this.resolveOwnToolOutcome(context),
           signal: abortSignal,
         });
-        void record.run.run()
+        this.watchDelegationExecution(record, record.run.run());
+
+        const label =
+          isRecord(params) && typeof params.description === "string"
+            ? params.description.trim()
+            : "";
+        return {
+          content: [{ type: "text", text: `Delegation ${delegationId} started: ${definition.name} works in the background${label ? ` (${label})` : ""}. Reports every ${reportIntervalSteps} completed tool calls without pausing. Use TaskGuide while running, TaskResume after completion for review fixes, TaskWait for progress/results, TaskStop to cancel.` }],
+          details: delegationSummary(record),
+        };
+      },
+    };
+  }
+
+  private watchDelegationExecution(record: DelegationRecord, pending: Promise<SubagentRunResult>): void {
+    const execution = record.execution ?? 1;
+    void pending
           .then(
-            (result) => this.settleDelegation(record, result),
+            (result) => this.settleDelegation(record, result, execution),
             // SubagentRun.run() settles its own errors into results; this
             // guard only keeps an unexpected rejection from leaving the
             // delegation stuck in "running" forever.
             (error: unknown) => {
               this.settleDelegation(record, {
-                agentName: definition.name,
-                modelId: provider.modelId,
-                thinkingLevel,
+                agentName: record.agentName,
+                modelId: record.modelId,
+                thinkingLevel: record.thinkingLevel,
                 status: "failed",
                 report: "",
                 turns: 0,
@@ -3861,35 +3896,10 @@ Delegation rules:
                   message:
                     error instanceof Error ? error.message : "unknown error",
                 },
-              });
+              }, execution);
             },
           );
 
-        const label =
-          isRecord(params) && typeof params.description === "string"
-            ? params.description.trim()
-            : "";
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Delegation ${delegationId} started: ${definition.name} works in the background${label ? ` (${label})` : ""}. Reports every ${reportIntervalSteps} completed tool calls (${definition.reportIntervalSteps === undefined ? "set at dispatch" : "user-fixed"}), without pausing. Continue independent work; use TaskGuide to correct, TaskWait for progress/results, TaskStop to cancel.`,
-            },
-          ],
-          details: {
-            delegationId,
-            sessionId: this.sessionId,
-            turnId: this.turnId,
-            agent: definition.name,
-            status: "running",
-            startedAt,
-            modelId: provider.modelId,
-            thinkingLevel,
-            collaboration: record.run.observation.snapshot(),
-          },
-        };
-      },
-    };
   }
 
   /** Wrap a delegate's tools so each call carries the definition's permission
@@ -3918,17 +3928,24 @@ Delegation rules:
   private settleDelegation(
     record: DelegationRecord,
     result: SubagentRunResult,
+    execution = record.execution ?? 1,
   ): void {
-    if (record.status !== "running") return;
+    if (record.status !== "running" || execution !== (record.execution ?? 1)) return;
     record.status =
       record.stopRequested && result.status === "aborted"
         ? "stopped"
         : result.status;
     record.result = result;
     record.completedAt = Date.now();
-    if (result.usage) {
-      this.turnSubagentUsage = addUsage(this.turnSubagentUsage, result.usage);
+    record.activeDurationMs = (record.activeDurationMs ?? 0) + Math.max(0, record.completedAt - record.startedAt);
+    const usage = "executionUsage" in result ? result.executionUsage : result.usage;
+    if (usage && record.startedEpoch === this.turnEpoch) {
+      this.turnSubagentUsage = addUsage(this.turnSubagentUsage, usage);
     }
+    const summary = { ...delegationSummary(record), report: result.report, usage, cumulativeUsage: result.usage };
+    (record.executionHistory ??= []).push(summary);
+    if (record.executionHistory.length > 20) record.executionHistory.shift();
+    this.publishSubagentExecution(record, "finished", summary);
     this.publishDelegationSettlement(record);
     record.resolveCompletion();
     this.refreshDelegationWait();
@@ -3959,6 +3976,8 @@ Delegation rules:
       .sort((left, right) => (left.completedAt ?? 0) - (right.completedAt ?? 0));
     const excess = finished.length - MAX_RETAINED_DELEGATIONS;
     for (const record of finished.slice(0, Math.max(0, excess))) {
+      record.contextReleased = true;
+      this.publishDelegationSettlement(record);
       this.delegations.delete(record.delegationId);
     }
   }
@@ -4165,6 +4184,9 @@ Delegation rules:
       const supervision = this.takeSupervision(targets);
       if (settled.length === 0 && !supervision) continue;
       const results = settled.map((record) => ({
+        ...delegationSummary(record),
+        execution: record.execution ?? 1,
+        canResume: this.subagentRecallStatus(record.delegationId).canResume,
         delegationId: record.delegationId,
         agent: record.agentName,
         status: record.status,
@@ -4291,6 +4313,9 @@ Delegation rules:
         // delegates keep their shot: a timeout or early `any` convergence has
         // not consumed it.
         const results = targets.map((record) => ({
+          ...delegationSummary(record),
+          execution: record.execution ?? 1,
+          canResume: this.subagentRecallStatus(record.delegationId).canResume,
           delegationId: record.delegationId,
           agent: record.agentName,
           status: record.status,
@@ -4457,9 +4482,17 @@ Delegation rules:
   }
 
   /** 单独终止一个子任务；不等待可能不支持取消的第三方工具。 */
-  stopSubagent(delegationId: string, source: "user" | "parent" = "user"): Record<string, unknown> {
+  stopSubagent(delegationId: string, source: "user" | "parent" = "user", expectedExecution?: number): Record<string, unknown> {
     const record = this.delegations.get(delegationId);
     if (!record) throw Object.assign(new Error("Subagent not found in this session"), { errorCode: "SUBAGENT_NOT_FOUND" });
+    if (expectedExecution !== undefined && expectedExecution !== (record.execution ?? 1)) throw new Error("Subagent execution changed; refresh before stopping.");
+    // 完成与停止并发时，用户停止仍关闭这份上下文的后续召回入口。
+    if (record.status === "completed") {
+      record.stopRequested = true;
+      record.run?.stop(source);
+      record.abort();
+      this.publishDelegationSettlement(record);
+    }
     if (record.status === "running") {
       record.stopRequested = true;
       record.run?.stop(source);
@@ -4467,6 +4500,78 @@ Delegation rules:
       this.publishDelegationSettlement(record);
     }
     return { ok: true, ...delegationSummary(record) };
+  }
+
+  subagentRecallStatus(delegationId: string) {
+    const record = this.delegations.get(delegationId);
+    const canResume = !this.disposed && record?.status === "completed" && !record.stopRequested && !record.contextReleased && record.run?.canResume === true;
+    return { delegationId, execution: record?.execution ?? (record ? 1 : undefined), status: record?.status ?? "unavailable", canResume,
+      ...(!canResume ? { reason: !record || this.disposed ? "Context released or runtime replaced. Persistent context and restart recovery are not implemented."
+        : record.status === "running" ? "Still running; use TaskGuide." : "Only normally completed, non-stopped executions can resume." } : {}) };
+  }
+
+  private publishSubagentExecution(record: DelegationRecord, phase: "started" | "finished", details: Record<string, unknown>): void {
+    const id = `subagent-execution:${record.delegationId}:${record.execution ?? 1}:${phase}`;
+    const content = JSON.stringify({ ...details, phase });
+    this.onEvent({ sessionId: this.sessionId, turnId: record.taskTurnId, ts: Date.now(),
+      parentToolCallId: record.parentToolCallId, agentName: record.agentName,
+      event: { type: "message_end", message: { id, role: "tool", toolName: "TaskExecution", toolCallId: id,
+        parentToolCallId: record.parentToolCallId, agentName: record.agentName, createdAt: nowIso(),
+        status: "complete", toolStatus: "success", content, toolResult: { content: [{ type: "text", text: content }], details } } } });
+  }
+
+  private buildSubagentResumeTool(): AgentTool {
+    return {
+      name: SUBAGENT_RESUME_TOOL_NAME, label: "Task Resume", executionMode: "sequential",
+      description: "Resume a normally completed subagent in this session with review feedback and its original context. TaskList shows canResume and execution; pass that execution as expectedExecution to reject stale or duplicate requests. Returns immediately. No new delegate is created. Stopped/failed/released contexts cannot resume; persistence and restart recovery are not implemented. Use TaskGuide for a running child.",
+      parameters: Type.Object({ delegationId: Type.String(), instruction: Type.String({ minLength: 1, maxLength: 12_000 }),
+        expectedExecution: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
+      execute: async (toolCallId, params) => {
+        const fail = (text: string) => ({ ...this.subagentToolError(toolCallId, text), isError: true });
+        if (this.disposed || this.runCancelled || this.turnHadError || this.mode !== "agent") return fail("This parent turn cannot resume subagents.");
+        if (!isRecord(params) || typeof params.delegationId !== "string" || typeof params.instruction !== "string" ||
+          !params.instruction.trim() || params.instruction.length > 12_000 || !Number.isSafeInteger(params.expectedExecution) || Number(params.expectedExecution) < 1) return fail("Provide delegationId, instruction (1–12000 characters) and a positive expectedExecution from TaskList.");
+        const record = this.delegations.get(params.delegationId);
+        if (!record?.run) return fail("Subagent context is unavailable or released in this session. Persistent context and restart recovery are not implemented.");
+        const previous = record.resumeCommands?.get(toolCallId);
+        if (previous) {
+          const current = previous.execution === record.execution ? delegationSummary(record)
+            : { ...previous, status: "completed", canResume: false };
+          return { content: [{ type: "text", text: "This recall command was already accepted; it will not execute again." }], details: { ...current, duplicate: true } };
+        }
+        if (record.resumeCommandIds?.has(toolCallId)) return fail("This recall command was already processed; inspect its persisted TaskExecution receipt.");
+        if (params.expectedExecution !== (record.execution ?? 1)) return fail("Stale execution number. Read TaskList before deciding whether further work is needed.");
+        if (!this.subagentRecallStatus(record.delegationId).canResume) return fail("Only a normally completed subagent with retained context can resume. Running children use TaskGuide; stopped/failed children cannot resume.");
+        if (this.runningDelegations().length >= MAX_SUBAGENT_CONCURRENCY) return fail("Subagent concurrency is full; wait for a running execution to finish.");
+        // 以下登记在首个 await 前完成，第二个召回/停止请求会看到新轮次。
+        this.takeSupervision([record]);
+        record.execution = (record.execution ?? 1) + 1;
+        record.status = "running";
+        record.startedEpoch = this.turnEpoch;
+        record.taskTurnId = this.turnId;
+        record.parentToolCallId = toolCallId;
+        (record.parentToolCallIds ??= []).push(toolCallId);
+        record.taskMessage = undefined;
+        record.turns = record.result?.turns ?? record.turns;
+        record.toolCalls = record.result?.toolCalls ?? record.toolCalls;
+        record.result = undefined;
+        record.startedAt = Date.now();
+        record.completedAt = undefined;
+        record.lastActivityAt = record.startedAt;
+        record.lastToolName = undefined;
+        record.lastPhase = "waiting-model";
+        record.reportDelivered = false;
+        record.completion = new Promise<void>((resolve) => { record.resolveCompletion = resolve; });
+        const pending = record.run.resume(params.instruction, this.turnId, toolCallId);
+        const details = delegationSummary(record);
+        (record.resumeCommands ??= new Map()).set(toolCallId, details);
+        (record.resumeCommandIds ??= new Set()).add(toolCallId);
+        if (record.resumeCommands.size > 64) record.resumeCommands.delete(record.resumeCommands.keys().next().value!);
+        this.publishSubagentExecution(record, "started", { ...details, instruction: record.run.observation.safe(params.instruction) });
+        this.watchDelegationExecution(record, pending);
+        return { content: [{ type: "text", text: `Delegation ${record.delegationId} resumed as execution ${record.execution} with its original context. Use TaskWait for the new result; reports continue without pauses.` }], details };
+      },
+    };
   }
 
   private buildSubagentGuideTool(): AgentTool {
@@ -4506,13 +4611,20 @@ Delegation rules:
         const record = isRecord(params) ? this.delegations.get(String(params.delegationId)) : undefined;
         if (!record?.run) return this.subagentToolError(toolCallId, "Subagent records not found in this session.");
         const details = record.run.observation.inspect(params.fromStep as number | undefined, params.limit as number | undefined, params.offset as number | undefined);
+        details.recall = this.subagentRecallStatus(record.delegationId);
+        details.executions = (record.executionHistory ?? []).slice(-4).map((entry) => ({
+          execution: entry.execution, executionId: entry.executionId, status: entry.status,
+          startedAt: entry.startedAt, completedAt: entry.completedAt, usage: entry.usage,
+          report: record.run!.observation.safe(entry.report, 1000),
+        }));
+        details.executionHistoryReference = "Older execution summaries are persisted as TaskExecution records; use history pages.";
         if (params.history || typeof params.toolCallId === "string" || details.historyTruncated) {
           const around = typeof params.toolCallId === "string" ? params.toolCallId : undefined;
           const response = await this.host.call<{ session?: { messages?: UiMessage[]; messageStart?: number; hasMoreBefore?: boolean } }>("session.get", {
             id: this.sessionId, messageLimit: around ? 1 : 20, contentLimit: around ? 256 * 1024 : 2000,
             ...(around ? { messageAround: around } : typeof params.beforeMessage === "number" ? { messageBefore: params.beforeMessage } : {}),
           });
-          const rows = (response.session?.messages ?? []).filter((message) => message.parentToolCallId === record.parentToolCallId &&
+          const rows = (response.session?.messages ?? []).filter((message) => typeof message.parentToolCallId === "string" && (record.parentToolCallIds ?? [record.parentToolCallId]).includes(message.parentToolCallId) &&
             (!around || message.id === around || message.toolCallId === around));
           const offset = typeof params.offset === "number" ? params.offset : 0;
           details.history = rows.map((message) => {
@@ -4534,7 +4646,8 @@ Delegation rules:
     const id = event.kind === "report" ? `subagent-report:${event.report.reportId}`
       : event.kind === "guide" ? `subagent-guide:${event.guide.commandId}` : `subagent-stop:${record.delegationId}`;
     const toolName = event.kind === "report" ? "TaskReport" : event.kind === "guide" ? "TaskGuidance" : "TaskCancellation";
-    const details = { delegationId: record.delegationId, ...event };
+    if (event.kind === "report" && event.report.execution !== undefined && event.report.execution !== (record.execution ?? 1)) return;
+    const details = { delegationId: record.delegationId, execution: record.execution ?? 1, ...event };
     const content = JSON.stringify(details);
     // 子行只进入审计转录，父模型通过有界收件箱接收，避免整份输出重复进入上下文。
     this.onEvent({ sessionId: this.sessionId, turnId: record.taskTurnId, ts: Date.now(),
@@ -6824,12 +6937,12 @@ Delegation rules:
             isError: event.isError,
             ...(toolUsage ? { toolUsage } : {}),
           }, undefined, endedAt);
-          if (activeTool?.toolName === SUBAGENT_TOOL_NAME && isRecord(event.result)) {
+          if ((activeTool?.toolName === SUBAGENT_TOOL_NAME || activeTool?.toolName === SUBAGENT_RESUME_TOOL_NAME) && isRecord(event.result)) {
             const details = event.result.details;
             const record = isRecord(details) && typeof details.delegationId === "string"
               ? this.delegations.get(details.delegationId)
               : undefined;
-            if (record) {
+            if (record && record.parentToolCallId === event.toolCallId && !event.result.isError) {
               record.taskMessage = taskMessageSnapshot({
                 ...activeTool,
                 toolCallId: event.toolCallId,

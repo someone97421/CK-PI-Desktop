@@ -115,6 +115,7 @@ export const SUBAGENT_INHERIT_DENY_TOOLS: readonly string[] = [
   "TaskStop",
   "TaskGuide",
   "TaskInspect",
+  "TaskResume",
   "EnterPlanMode",
   "EnterGoalMode",
   "asktool",

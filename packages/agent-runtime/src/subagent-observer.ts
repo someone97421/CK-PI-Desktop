@@ -54,6 +54,7 @@ export class SubagentObserver {
   private latestReport?: SubagentProgressReport;
   private statement = "";
   private segmentId = 1;
+  private execution = 1;
   private segmentCompleted = 0;
   private started = 0;
   private completed = 0;
@@ -79,6 +80,7 @@ export class SubagentObserver {
 
   snapshot(): SubagentCollaborationSnapshot {
     return {
+      execution: this.execution,
       reportIntervalSteps: this.interval, intervalSource: this.intervalSource,
       segmentId: this.segmentId, segmentCompletedSteps: this.segmentCompleted,
       stepsSinceReport: this.pendingCount, startedSteps: this.started, completedSteps: this.completed,
@@ -91,7 +93,7 @@ export class SubagentObserver {
   begin(toolCallId: string, toolName: string, args: unknown): boolean {
     if (this.seenSteps.has(toolCallId)) return false;
     this.seenSteps.add(toolCallId);
-    this.steps.push({ seq: ++this.started, segmentId: this.segmentId, toolCallId, toolName,
+    this.steps.push({ execution: this.execution, seq: ++this.started, segmentId: this.segmentId, toolCallId, toolName,
       args: this.safe(args), startedAt: Date.now(), status: "running" });
     if (this.steps.length > MAX_STEPS) this.steps.shift();
     this.notify({ kind: "snapshot" });
@@ -126,6 +128,7 @@ export class SubagentObserver {
     if (!this.pendingCount) return;
     const now = Date.now();
     const report: SubagentProgressReport = {
+      execution: this.execution,
       reportId: `${this.delegationId}:${++this.reportSeq}`, reportSeq: this.reportSeq,
       delegationId: this.delegationId, segmentId: this.segmentId,
       fromStep: this.pendingFrom!, toStep: this.pendingTo!, capturedAt: now, generatedAt: now,
@@ -194,9 +197,21 @@ export class SubagentObserver {
     }
   }
 
+  /** 正常完成后的新一轮；仅刷新分段，不重置累计计数和报告序号。 */
+  resume(): void {
+    if (this.phase !== "finished" || this.stopSource) throw new Error("Subagent context is not resumable.");
+    this.execution += 1;
+    this.segmentId += 1;
+    this.segmentCompleted = 0;
+    this.statement = "";
+    this.latestReport = undefined;
+    this.phase = "running";
+    this.notify({ kind: "snapshot" });
+  }
+
   stop(source: NonNullable<SubagentCollaborationSnapshot["stopSource"]>): void {
-    if (this.stopping) return;
-    this.phase = "stopping";
+    if (this.stopSource) return;
+    if (this.phase !== "finished") this.phase = "stopping";
     this.stopSource = source;
     for (const guide of this.guides) if (guide.status === "accepted" || guide.status === "applying") {
       guide.status = "cancelled";

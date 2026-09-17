@@ -64,6 +64,31 @@ function parent(interval?: number) {
 }
 
 describe("subagent continuous collaboration", () => {
+  it("recalls the same context for review fixes and separates new usage from lifetime usage", async () => {
+    const calls: string[] = [];
+    const fixture = child(async (_id, args: any) => { calls.push(args.path); return result; }, 3);
+    const contexts = setStream(fixture.agent, (_context, index) => index === 0 ? reply(["initial"])
+      : index === 2 ? reply(["revision"]) : reply());
+    const first = await fixture.run.run();
+    expect(first.status).toBe("completed");
+    expect(fixture.run.canResume).toBe(true);
+    expect(first.usage?.totalTokens).toBe(6);
+    await Promise.resolve();
+    expect(contexts).toHaveLength(2); // 完成后的等待不请求模型。
+    const second = await fixture.run.resume("Review: fix the edge case", "turn-2", "resume-call");
+    expect(second.status).toBe("completed");
+    expect(JSON.stringify(contexts[2].messages)).toContain("initial");
+    expect(JSON.stringify(contexts[2].messages)).toContain("Review: fix the edge case");
+    expect(calls).toEqual(["initial", "revision"]);
+    expect(second).toMatchObject({ turns: 4, toolCalls: 2, usage: { totalTokens: 12 }, executionUsage: { totalTokens: 6 } });
+    expect(fixture.run.observation.snapshot()).toMatchObject({ execution: 2, segmentId: 2, completedSteps: 2, segmentCompletedSteps: 1 });
+    expect(fixture.events.filter((event) => event.parentToolCallId === "resume-call").every((event) => event.turnId === "turn-2")).toBe(true);
+    expect(fixture.observations.filter((event) => event.kind === "report").map((event) => event.report.execution)).toEqual([1, 2]);
+    fixture.run.stop("user");
+    expect(fixture.run.canResume).toBe(false);
+    expect(() => fixture.run.resume("must not revive", "turn-2", "r3")).toThrow();
+  });
+
   it("reports across several intervals without pausing or spending model calls on summaries", async () => {
     const calls: string[] = [];
     const { run, agent, observations } = child(async (_id, args: any) => { calls.push(args.path); return result; });
@@ -192,6 +217,136 @@ describe("parent supervision connectivity", () => {
       return original.call(this);
     });
   }
+
+  it("recalls across parent turns, rejects stale commands and settles only the new execution", async () => {
+    interceptChildren([]);
+    const fixture = parent(3);
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "implement" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    await record.completion;
+    expect(fixture.runtime.subagentRecallStatus(record.delegationId)).toMatchObject({ canResume: true, execution: 1 });
+    expect(fixture.internal.runningDelegations()).toHaveLength(0);
+    const originalRun = record.run;
+    const firstResult = record.result;
+    const oldCompletion = record.completion;
+    fixture.internal.turnEpoch += 1;
+    fixture.internal.turnId = "review-turn";
+    fixture.internal.turnSubagentUsage = undefined;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fixture.host.call.mockImplementation(async () => { await held; return { ok: true, content: "fixed" }; });
+    const contexts = setStream((record.run as any).agent, (_context, index) => !index ? reply(["fix"]) : reply());
+    const resume = fixture.internal.buildSubagentResumeTool();
+    const params = { delegationId: record.delegationId, expectedExecution: 1, instruction: "Fix review findings" };
+    const accepted = await resume.execute("resume-2", params);
+    expect(accepted.details).toMatchObject({ delegationId: record.delegationId, execution: 2, status: "running", turnId: "review-turn" });
+    expect(record.run).toBe(originalRun);
+    expect(record.completion).not.toBe(oldCompletion);
+    expect((await resume.execute("resume-2", params)).details.duplicate).toBe(true);
+    expect((await resume.execute("another", params)).isError).toBe(true);
+    expect(() => fixture.runtime.stopSubagent(record.delegationId, "user", 1)).toThrow("execution changed");
+    fixture.internal.settleDelegation(record, firstResult, 1);
+    expect(record.status).toBe("running");
+    expect(record.result).toBeUndefined();
+    let delivered = false;
+    const waiting = fixture.internal.buildSubagentWaitTool().execute("wait-2", { delegationIds: [record.delegationId], timeoutSeconds: 1 }).then((value: any) => { delivered = true; return value; });
+    await Promise.resolve();
+    expect(delivered).toBe(false);
+    release();
+    await record.completion;
+    await waiting;
+    expect(contexts[0].messages.filter((message) => message.role === "user")).toHaveLength(2);
+    expect(record.result).toMatchObject({ usage: { totalTokens: 9 }, executionUsage: { totalTokens: 6 } });
+    expect(fixture.internal.turnSubagentUsage.totalTokens).toBe(6);
+    const result2 = await fixture.internal.buildSubagentWaitTool().execute("latest", { delegationIds: [record.delegationId] });
+    expect(result2.details.delegations[0]).toMatchObject({ execution: 2, status: "completed", canResume: true });
+    expect(record.executionHistory).toHaveLength(2);
+    expect(record.parentToolCallIds).toEqual(["task", "resume-2"]);
+    expect(fixture.events.some((event) => event.turnId === "review-turn" && event.event.type === "message_end" && event.event.message.toolName === "TaskExecution")).toBe(true);
+    await fixture.runtime.dispose();
+    expect(fixture.runtime.subagentRecallStatus(record.delegationId).canResume).toBe(false);
+  });
+
+  it("connects actual parent tool dispatch, review, recall and the second result in one conversation", async () => {
+    interceptChildren([]);
+    const fixture = parent(2);
+    expect(fixture.internal.agent.state.tools.some((tool: AgentTool) => tool.name === "TaskResume")).toBe(true);
+    let stage = 0;
+    const call = (name: string, id: string, args: Record<string, unknown>): AssistantMessage => ({ ...reply(), stopReason: "toolUse",
+      content: [{ type: "toolCall", name, id, arguments: args }] });
+    setStream(fixture.internal.agent, () => {
+      const record = [...fixture.internal.delegations.values()][0] as any;
+      switch (stage++) {
+        case 0: return call("Task", "launch", { agent: "explorer", task: "Implement the first pass", description: "First pass" });
+        case 1: return call("TaskWait", "wait-first", { delegationIds: [record.delegationId] });
+        case 2: return call("TaskResume", "review-fix", { delegationId: record.delegationId, expectedExecution: 1, instruction: "Review found an edge case; fix it" });
+        case 3: return call("TaskWait", "wait-revised", { delegationIds: [record.delegationId] });
+        default: return reply();
+      }
+    });
+    await fixture.runtime.prompt("Implement, review and fix", undefined, "parent-review");
+    expect(fixture.internal.delegations.size).toBe(1);
+    const record = [...fixture.internal.delegations.values()][0] as any;
+    expect(record).toMatchObject({ execution: 2, status: "completed", reportDelivered: true });
+    expect(record.executionHistory).toHaveLength(2);
+    expect(record.run.agent.state.messages.filter((message: any) => message.role === "user").map((message: any) => message.content[0].text))
+      .toEqual(["Implement the first pass", "Review found an edge case; fix it"]);
+    const snapshots = fixture.events.filter((event) => event.event.type === "message_end" && event.event.message.toolName === "TaskResume");
+    expect(snapshots.some((event: any) => event.event.message.toolResult.details.status === "completed")).toBe(true);
+    expect(fixture.runtime.getStatus().isRunning).toBe(false);
+    await fixture.runtime.dispose();
+  });
+
+  it("refuses full capacity, stopped, failed, foreign and released contexts without starting work", async () => {
+    interceptChildren([]);
+    const fixture = parent(1);
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "inspect" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    await record.completion;
+    const resume = fixture.internal.buildSubagentResumeTool();
+    const params = { delegationId: record.delegationId, expectedExecution: 1, instruction: "Fix" };
+    for (let i = 0; i < 20; i++) fixture.internal.delegations.set(`busy-${i}`, { status: "running" });
+    expect((await resume.execute("full", params)).details.error).toContain("concurrency");
+    for (let i = 0; i < 20; i++) fixture.internal.delegations.delete(`busy-${i}`);
+    record.status = "failed";
+    expect((await resume.execute("failed", params)).isError).toBe(true);
+    record.status = "completed";
+    fixture.runtime.stopSubagent(record.delegationId, "user", 1);
+    expect((await resume.execute("stopped", params)).isError).toBe(true);
+    expect(record.run.observation.snapshot().stopSource).toBe("user");
+    expect((await resume.execute("foreign", { ...params, delegationId: "other-session" })).details.error).toContain("unavailable");
+    fixture.internal.delegations.delete(record.delegationId);
+    expect((await resume.execute("released", params)).details.error).toContain("recovery");
+    expect(fixture.runtime.subagentRecallStatus(record.delegationId)).toMatchObject({ status: "unavailable", canResume: false });
+    await fixture.runtime.dispose();
+  });
+
+  it("stops a recalled execution and cannot revive it with an accepted duplicate command", async () => {
+    interceptChildren([]);
+    const fixture = parent(2);
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "inspect" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    await record.completion;
+    let release!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fixture.host.call.mockImplementation(async () => { entered(); await held; return { ok: true, content: "finished in-flight" }; });
+    setStream((record.run as any).agent, (_context, index) => !index ? reply(["active", "old-next"]) : reply());
+    const tool = fixture.internal.buildSubagentResumeTool();
+    const params = { delegationId: record.delegationId, expectedExecution: 1, instruction: "Revise" };
+    await tool.execute("recall", params);
+    await started;
+    fixture.runtime.stopSubagent(record.delegationId, "user", 2);
+    release();
+    await record.completion;
+    expect(record.status).toBe("stopped");
+    expect((await tool.execute("recall", params)).details.duplicate).toBe(true);
+    expect((await tool.execute("new-recall", { ...params, expectedExecution: 2 })).isError).toBe(true);
+    expect(record.execution).toBe(2);
+    expect(record.run.canResume).toBe(false);
+    await fixture.runtime.dispose();
+  });
 
   it("requires a dispatch interval when unset, while a user-fixed interval wins", async () => {
     interceptChildren([]);

@@ -62,6 +62,25 @@ function lifecycle(toolName, details) {
   };
 }
 
+test("同一子代理的召回轮次拥有独立状态、时间和详情定位", async () => {
+  const first = task("child", "success", "completed", { executionId: "child", execution: 1, startedAt: 100, completedAt: 200 });
+  const second = task("recall-call", "success", "running", { delegationId: "child", executionId: "child:2", execution: 2, startedAt: 300 });
+  second.message.toolName = "TaskResume";
+  const items = [first, lifecycle("TaskWait", { delegations: [{ delegationId: "child", executionId: "child", status: "completed" }] }), second];
+  assert.equal(isDelegationActivityItem(second), true);
+  const statuses = collectDelegationStatuses(items, { turnLive: true });
+  assert.equal(subagentOutcome(first.message, statuses), "completed");
+  assert.equal(subagentOutcome(second.message, statuses), "running");
+  assert.deepEqual(summarizeSubagentActivity([first, second], statuses), { total: 1, finished: 0, running: 1, issues: 0, warnings: 0 });
+  const timings = collectDelegationTimings(items);
+  assert.equal(timings.get("child").completedAt, 200);
+  assert.equal(timings.get("child:2").startedAt, 300);
+  assert.equal(timings.get("child:2").completedAt, undefined);
+  const { delegationIdForMessage } = await import("../src/lib/subagent-panel.ts");
+  assert.equal(delegationIdForMessage(first.message), "child");
+  assert.equal(delegationIdForMessage(second.message), "child:2");
+});
+
 test("detects exact delegation activities without absorbing ordinary tools", () => {
   assert.equal(isDelegationActivityItem(task("one", "running")), true);
   assert.equal(

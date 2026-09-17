@@ -1,5 +1,6 @@
 /** 子任务旁路监督快照。均为增量附加信息，不改变数据库或既有终态格式。 */
 export type SubagentStep = {
+  execution?: number;
   seq: number;
   segmentId: number;
   toolCallId: string;
@@ -13,6 +14,7 @@ export type SubagentStep = {
 };
 
 export type SubagentProgressReport = {
+  execution?: number;
   reportId: string;
   reportSeq: number;
   delegationId: string;
@@ -40,6 +42,7 @@ export type SubagentGuideReceipt = {
 };
 
 export type SubagentCollaborationSnapshot = {
+  execution?: number;
   reportIntervalSteps: number;
   intervalSource: "definition" | "dispatch";
   segmentId: number;
@@ -57,4 +60,13 @@ export type SubagentStopResult = {
   delegationId: string;
   status: string;
   collaboration?: SubagentCollaborationSnapshot;
+};
+
+/** 仅运行时查询可证明上下文仍在内存；转录快照不能证明可召回。 */
+export type SubagentRecallStatus = {
+  delegationId: string;
+  execution?: number;
+  status: string;
+  canResume: boolean;
+  reason?: string;
 };

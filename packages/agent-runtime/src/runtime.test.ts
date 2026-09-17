@@ -6186,7 +6186,7 @@ describe("DesktopAgentRuntime subagents", () => {
         if (!settlesEarly) await settle();
         const events = onEvent.mock.calls.map(([envelope]) => envelope);
         const snapshots = events.filter((envelope) =>
-          envelope.event.type === "message_end" && envelope.event.message.role === "tool",
+          envelope.event.type === "message_end" && envelope.event.message.toolName === "Task",
         );
         expect(snapshots).toHaveLength(1);
         expect(snapshots[0]).toMatchObject({
@@ -6208,7 +6208,8 @@ describe("DesktopAgentRuntime subagents", () => {
           toolUsage: initialEnd.event.toolUsage,
         });
         expect(internals.delegations.get(sibling.details.delegationId)?.status).toBe("running");
-        const types = events.map((envelope) => envelope.event.type);
+        expect(events.some((envelope) => envelope.event.type === "message_end" && envelope.event.message.toolName === "TaskExecution")).toBe(true);
+        const types = events.filter((envelope) => envelope.event.type !== "message_end" || envelope.event.message.toolName === "Task").map((envelope) => envelope.event.type);
         expect(types.indexOf("tool_end")).toBeLessThan(types.indexOf("message_end"));
       } finally {
         await runtime.dispose();

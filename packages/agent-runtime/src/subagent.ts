@@ -73,6 +73,7 @@ export const SUBAGENT_LIST_TOOL_NAME = "TaskList";
 export const SUBAGENT_STOP_TOOL_NAME = "TaskStop";
 export const SUBAGENT_GUIDE_TOOL_NAME = "TaskGuide";
 export const SUBAGENT_INSPECT_TOOL_NAME = "TaskInspect";
+export const SUBAGENT_RESUME_TOOL_NAME = "TaskResume";
 
 /** Bound the final report; periodic reports have their own bounded snapshots. */
 export const MAX_SUBAGENT_REPORT_CHARS = 12_000;
@@ -92,6 +93,8 @@ export type SubagentRunResult = {
   turns: number;
   toolCalls: number;
   usage?: MessageUsage;
+  /** 本轮新增用量；usage 保留整个子任务累计值。 */
+  executionUsage?: MessageUsage;
   modelFailures?: Array<{ model: string; code: string; message: string }>;
   error?: { code: string; message: string };
 };
@@ -187,7 +190,7 @@ function boundedReport(value: string): string {
 
 export { addUsage };
 
-/** One delegate execution. Instances are single-use. */
+/** 同一内存上下文可执行多轮；正常完成才可被父 Agent 显式召回。 */
 export class SubagentRun {
   readonly observation: SubagentObserver;
   private readonly agent: Agent;
@@ -197,6 +200,9 @@ export class SubagentRun {
   private turns = 0;
   private toolCalls = 0;
   private usage?: MessageUsage;
+  private executionUsage?: MessageUsage;
+  private executing = false;
+  private lastStatus?: SubagentRunStatus;
   private streamError?: { code: string; message: string };
   private pendingProviderRetry?: ReturnType<typeof classifyAgentError>;
   private providerRetryInProgress = false;
@@ -246,7 +252,33 @@ export class SubagentRun {
     this.agent.subscribe((event) => this.handleEvent(event));
   }
 
-  async run(): Promise<SubagentRunResult> {
+  get canResume(): boolean {
+    return !this.executing && this.lastStatus === "completed" && !this.runSignal().aborted;
+  }
+
+  run(): Promise<SubagentRunResult> {
+    if (this.executing || this.lastStatus) throw new Error("Subagent already started; use resume after normal completion.");
+    this.executing = true;
+    return this.execute(this.opts.task);
+  }
+
+  resume(instruction: string, turnId: string | undefined, parentToolCallId: string): Promise<SubagentRunResult> {
+    if (!this.canResume) throw new Error("Subagent is busy, stopped, failed, or its context was released.");
+    if (!instruction.trim() || instruction.length > 12_000) throw new Error("instruction must contain 1–12000 characters.");
+    this.executing = true;
+    this.opts.turnId = turnId;
+    this.opts.parentToolCallId = parentToolCallId;
+    this.executionUsage = undefined;
+    this.lastReportText = "";
+    this.streamError = undefined;
+    this.pendingProviderRetry = undefined;
+    this.providerTransientRetryAttempt = 0;
+    this.providerRateLimitRetryAttempt = 0;
+    this.observation.resume();
+    return this.execute(instruction);
+  }
+
+  private async execute(instruction: string): Promise<SubagentRunResult> {
     const signal = this.runSignal();
     if (signal?.aborted) {
       return this.result("aborted", "The delegated task was aborted before it started.");
@@ -259,7 +291,7 @@ export class SubagentRun {
     signal?.addEventListener("abort", onAbort, { once: true });
     let caughtError: ReturnType<typeof classifyAgentError> | undefined;
     try {
-      await this.agent.prompt(this.opts.task);
+      await this.agent.prompt(instruction);
       await this.agent.waitForIdle();
       while (!signal?.aborted) {
         if (this.pendingProviderRetry) {
@@ -429,6 +461,8 @@ export class SubagentRun {
     report: string,
     error?: { code: string; message: string },
   ): SubagentRunResult {
+    this.executing = false;
+    this.lastStatus = status;
     if (status === "aborted") this.observation.stop("session");
     this.observation.finish(status === "aborted" ? "stopped" : status === "completed" ? "completed" : "failed");
     const name = this.opts.definition.name;
@@ -454,6 +488,7 @@ export class SubagentRun {
       turns: this.turns,
       toolCalls: this.toolCalls,
       ...(this.usage ? { usage: this.usage } : {}),
+      executionUsage: this.executionUsage,
       ...(this.modelFailures.length ? { modelFailures: [...this.modelFailures] } : {}),
       ...(error ? { error } : {}),
     };
@@ -633,6 +668,7 @@ export class SubagentRun {
         }
         const messageUsage = usageFromPi(message.usage);
         this.usage = addUsage(this.usage, messageUsage);
+        this.executionUsage = addUsage(this.executionUsage, messageUsage);
         // The report is the last assistant text; a call-only turn has none and
         // must not clear the text an earlier turn already produced.
         if (content.hasText && content.text.trim() && !failed) {

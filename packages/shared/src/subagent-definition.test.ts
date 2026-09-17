@@ -44,7 +44,7 @@ describe("parseSubagentDefinition", () => {
     for (const value of ["0", "-1", "1.5", "NaN", "9007199254740992"]) {
       expect(parse(document(`reportIntervalSteps: ${value}`)).ok).toBe(false);
     }
-    expect(resolveSubagentToolNames({ tools: [], inheritTools: true }, ["Read", "TaskGuide", "TaskInspect", "TaskStop"]))
+    expect(resolveSubagentToolNames({ tools: [], inheritTools: true }, ["Read", "TaskGuide", "TaskInspect", "TaskStop", "TaskResume"]))
       .toEqual(["Read"]);
   });
   it("reads the document a project would actually write", () => {

@@ -610,7 +610,12 @@ async function handle(method: string, params: any): Promise<unknown> {
     case "agent.subagentStop": {
       const runtime = runtimes.get(String(params.sessionId ?? ""));
       if (!runtime) throw Object.assign(new Error("No active runtime for this subagent"), { errorCode: "SUBAGENT_NOT_FOUND" });
-      return runtime.stopSubagent(String(params.delegationId ?? ""), "user");
+      return runtime.stopSubagent(String(params.delegationId ?? ""), "user", params.expectedExecution);
+    }
+    case "agent.subagentRecallStatus": {
+      const delegationId = String(params.delegationId ?? "");
+      return runtimes.get(String(params.sessionId ?? ""))?.subagentRecallStatus(delegationId)
+        ?? { delegationId, status: "unavailable", canResume: false, reason: "Context released; restart recovery is not implemented." };
     }
     case "agent.abort": {
       const sessionId = String(params.sessionId);

@@ -32,6 +32,7 @@ import {
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
 import { CopyButton } from "./shared";
 import { SubagentSupervision, useSubagentExecution } from "./SubagentSupervision";
+import { delegationExecutionKey } from "../../../lib/tool-display";
 import {
   delegateAgentName,
   delegateModelId,
@@ -45,7 +46,7 @@ import {
 function delegateTaskDescription(message: UiMessage): string {
   const args = message.toolArgs;
   if (!args || typeof args !== "object" || Array.isArray(args)) return "";
-  const task = (args as { task?: unknown }).task;
+  const task = (args as { task?: unknown; instruction?: unknown }).task ?? (args as { instruction?: unknown }).instruction;
   return typeof task === "string" ? task.trim() : "";
 }
 
@@ -170,10 +171,7 @@ export function SubagentDetail({
     payload && typeof payload === "object" && !Array.isArray(payload)
       ? (payload as { delegationId?: unknown; startedAt?: unknown; completedAt?: unknown })
       : undefined;
-  const delegationId =
-    typeof payloadRecord?.delegationId === "string"
-      ? payloadRecord.delegationId
-      : message.toolCallId || message.id;
+  const delegationId = delegationExecutionKey(payloadRecord) ?? (message.toolCallId || message.id);
   const timing = delegationTimings?.get(delegationId);
   const failure = delegationFailures?.get(delegationId);
   const startedAt =

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { SubagentCollaborationSnapshot, UiMessage } from "@pi-desktop/shared";
+import type { SubagentCollaborationSnapshot, SubagentRecallStatus, UiMessage } from "@pi-desktop/shared";
 import { api } from "../../../lib/api";
 import { toolResultPayload } from "../../../lib/tool-presentation";
 import { useAppStore } from "../../../stores/app-store";
@@ -23,18 +23,31 @@ export function useSubagentExecution(message: UiMessage) {
   const status = useAppStore((state) => sessionId ? state.agentStatuses?.[sessionId] : undefined);
   const live = Boolean(sessionRunning && (!details.turnId || !status?.currentTurnId || details.turnId === status.currentTurnId));
   const collaboration = subagentCollaboration(message);
-  return { sessionId, live, phase: collaboration?.phase, collaboration };
+  return { sessionId, live, parentTurnId: status?.currentTurnId, phase: collaboration?.phase, collaboration };
 }
 
 export function SubagentSupervision({ message, running, compact = false }: { message: UiMessage; running: boolean; compact?: boolean }) {
   const { t } = useTranslation();
-  const { sessionId, live } = useSubagentExecution(message);
+  const { sessionId, live, parentTurnId } = useSubagentExecution(message);
   const [requested, setRequested] = useState(false);
   const [error, setError] = useState("");
+  const [recall, setRecall] = useState<SubagentRecallStatus>();
   const payload = toolResultPayload(message);
   const id = payload && typeof payload === "object" ? (payload as { delegationId?: string }).delegationId : undefined;
-  useEffect(() => { setRequested(false); setError(""); }, [id, sessionId]);
   const data = subagentCollaboration(message);
+  const execution = data?.execution;
+  useEffect(() => { setRequested(false); setError(""); }, [id, sessionId, execution]);
+  useEffect(() => {
+    let cancelled = false;
+    setRecall(undefined);
+    if (id && sessionId && !running) {
+      void api.subagentRecallStatus(sessionId, id).then((status) => {
+        if (!cancelled) setRecall(status);
+      }).catch(() => { /* 查询失败不能把历史快照当成可召回的活实例。 */ });
+    }
+    return () => { cancelled = true; };
+  }, [id, sessionId, execution, running, live, parentTurnId, message.toolResult]);
+  const resumable = recall?.canResume && recall.execution === execution;
   const stopping = live && running && (requested || data?.phase === "stopping");
   const canStop = Boolean(id && sessionId && live && running && data?.phase !== "finished");
   if (!id) return null;
@@ -43,6 +56,10 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
       {data ? <span title={t(`chat.subagentIntervalSource.${data.intervalSource}`)}>
         {t("chat.subagentReportProgress", { current: data.stepsSinceReport, interval: data.reportIntervalSteps, total: data.completedSteps })}
       </span> : null}
+      {execution ? <span>{t(running && execution > 1 ? "chat.subagentReworking" : "chat.subagentExecution", { execution })}</span> : null}
+      {!running && execution ? <span title={t("chat.subagentRecallMemoryOnly")}>
+        {t(resumable ? "chat.subagentRecallReady" : "chat.subagentRecallCheck")}
+      </span> : null}
       {!live && running ? <span>{t("chat.subagentHistorical")}</span> : stopping ? <span role="status">{t("chat.subagentStoppingNow")}</span>
         : data?.phase === "guiding" ? <span role="status">{t("chat.subagentGuidingNow")}</span> : null}
       {canStop ? <button type="button" className="subagent-stop-button" disabled={stopping}
@@ -50,7 +67,7 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
           event.stopPropagation();
           if (!sessionId || !id || stopping) return;
           setRequested(true); setError("");
-          try { await api.stopSubagent(sessionId, id); }
+          try { await api.stopSubagent(sessionId, id, execution); }
           catch (failure) { setRequested(false); setError(failure instanceof Error ? failure.message : String(failure)); }
         }}><IconStop size={12} />{t("chat.stopThisSubagent")}</button> : null}
     </div>

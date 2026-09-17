@@ -20,6 +20,7 @@ import {
   getToolSummary,
   getToolSummaryValue,
   isDelegationStartTool,
+  delegationExecutionKey,
 } from "../../../lib/tool-display";
 import {
   buildToolPresentation,
@@ -95,7 +96,7 @@ function toolRowDelegationId(message: UiMessage): string | undefined {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return undefined;
   }
-  const delegationId = (payload as { delegationId?: unknown }).delegationId;
+  const delegationId = delegationExecutionKey(payload);
   return typeof delegationId === "string" ? delegationId : undefined;
 }
 
@@ -257,7 +258,7 @@ export const ToolRow = memo(function ToolRow({
     variant === "topology" ? toolResultPayload(message) : undefined;
   const delegationId =
     delegationPayload && typeof delegationPayload === "object"
-      ? (delegationPayload as { delegationId?: unknown }).delegationId
+      ? delegationExecutionKey(delegationPayload)
       : undefined;
   const panelSelectionId =
     typeof delegationId === "string" && delegationId
