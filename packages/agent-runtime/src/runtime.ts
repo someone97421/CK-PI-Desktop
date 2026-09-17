@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   settledDelegationMessage,
   taskMessageSnapshot,
@@ -489,7 +489,7 @@ function formatDelegationHeartbeat(record: DelegationRecord): string {
 }
 
 const DELEGATION_RESUME_PROMPT =
-  "The following subagents have finished. Review their work. Integrate their reports and continue the user's original task. If a completed delegate needs fixes, use TaskResume with its delegationId and expectedExecution (TaskList shows availability). This retains its context. Never resume user-stopped work. Call TaskStop only to cancel.";
+  "The following subagents have finished. Review their work. Integrate their reports and continue the user's original task. Handle small fixes yourself; use TaskResume for worthwhile follow-up in retained context, with delegationId and expectedExecution from TaskList. Never resume user-stopped work. Call TaskStop only to cancel.";
 
 /** Join delegation results into one bounded text block for the model. */
 function formatDelegationResults(
@@ -1461,7 +1461,13 @@ export class DesktopAgentRuntime {
   private pendingUserMessageId?: string;
   private acceptingSteering = false;
   private steeringContinuation = false;
-  private steeringWaitAbort?: AbortController;
+  private readonly delegationWaitWakeups = new Set<(reason: "steered" | "aborted") => void>();
+  /**
+   * Steering ids this turn already accepted. A retried request (a double click,
+   * or a replay after Main lost the acknowledgement) must not enqueue the same
+   * input twice, and reusing an id with different input is a client bug.
+   */
+  private readonly acceptedSteering = new Map<string, { turnId: string; fingerprint: string }>();
   private pendingSteering = new Map<AgentMessage, string>();
   private pendingOverflow = false;
   private overflowRecoveryAttempted = false;
@@ -1542,30 +1548,27 @@ export class DesktopAgentRuntime {
       // find out whether anything happened. Every clause below is one of those
       // observed failures stated as a hard rule.
       "Collaboration: answer in the same language the user writes in. Before each batch of tool calls, write one short sentence saying what you are about to do in the same assistant message as those calls; never leave the user with no new text for more than one tool batch or 60 seconds of work. Whatever the user asked must be answered in your visible text — your reasoning is not shown to them, so a conclusion that lives only there never reached them. Make the final message self-contained: the outcome, what you changed, and anything still open, without asking the user to re-read intermediate updates. Carry the work through end to end; when you hit a blocker, try to clear it yourself and report what you tried, instead of stopping at analysis or a half-finished change.",
-      // Delegation steering (ADR 0089). The trigger patterns below are the
-      // proactive half of the Task tool's own description: models delegate
-      // when the system prompt names the situations, and keep doing everything
-      // inline when it only says "you may".
+      // 主代理优先；这些场景供判断收益，不是自动派发的流程要求。
       ...(this.subagents.length
         ? [
             `## Delegation
-Work splits into independent pieces — delegate, and keep your context for the synthesis. Subagents run in their own context and report back through TaskWait.
+Default to doing the work yourself, including exploration, implementation, validation and ordinary review. Use subagents when requested or when parallelism, an independent perspective or context isolation offers a clear practical benefit. Multiple files, task size or long command output alone do not justify delegation.
 
-Use the Task tool when:
-- Parallel exploration: two or more independent directions (for example one subagent per subsystem, or backend + frontend + tests). Start one Task per direction in the same assistant message.
-- Adversarial review: after implementing a non-trivial change, delegate a read-only review of it to code-reviewer before you commit.
-- Implementation: a substantial change with a complete, self-contained spec — delegate to fixer, which may write inside the workspace.
-- Context economy: wide searches, long logs, multi-file surveys whose intermediate output you do not need — explorer / test-runner.
-- Batch sharding: the same bounded job repeated over many independent targets.
+Useful cases, not mandatory stages:
+- User-requested delegation: follow the requested scope and number of subagents.
+- Deep parallel exploration: independently investigate complex subsystems, call chains or competing fault hypotheses; handle routine targeted searches yourself.
+- Large independent implementation: substantial modules or generation batches with clear ownership, stable interfaces and non-overlapping changes.
+- Independent judgment: focused reviews, alternative assessments or blind evaluation where a fresh perspective matters; supply necessary facts without imposing your conclusions.
+- Independent validation or experiments: substantial verification, reproduction or diagnosis while you advance other useful work; run ordinary test/build commands yourself.
+- Bulk analysis: large logs, documents, datasets or module surveys whose concise findings are useful without retaining all intermediate material.
 
 Delegation rules:
 - Parallelize independent work only. Before dispatching dependent work, wait for prerequisites to succeed and read their results; a TaskWait progress update is not completion. Review only finished, stable changes.
-- Task returns immediately with a delegation id. Do not sit idle: keep working on your own independent line, then converge with TaskWait (mode="any" + minCompleted to converge early) when you need results, TaskList to check progress, TaskStop to stop.
-- Always fill Task's \`description\` so the user sees what each subagent is doing. Integrate findings and say which subagent produced what.
-- Specify reportIntervalSteps when the user has not fixed it. Progress reports do not pause children; use TaskGuide for corrections at the next tool boundary and TaskInspect for bounded records. Respect explicit user stops and never automatically recreate that work.
-- Review completed work. If fixes are needed, use TaskList to find canResume and execution, then TaskResume with the same delegationId, expectedExecution and review instructions. It retains that child's context in this session runtime; stopped, failed or released contexts cannot resume. Context persistence and restart recovery are not implemented.
-- You may talk to the user while subagents run. Do not TaskStop unless you have decided the work should not continue. The runtime keeps them alive and delivers their reports when they finish — ending your turn does not abort them.
-- Handle simple and small-to-medium tasks yourself when the context is clear. Delegate only substantial work, independently parallelizable work, or independent review; touching multiple files alone is not a reason to delegate. Never delegate work that needs user input.`,
+- Consider total time, token cost, duplicated exploration and integration effort; use few necessary delegates. Do not fragment small tasks, duplicate work or automatically build an exploration/implementation/testing/review pipeline. The main agent owns integration and acceptance.
+- Task returns immediately. Continue useful independent work, or wait with TaskWait when results are needed; do not invent work to stay busy. Give each task a clear scope, expected result and short \`description\`. Keep user decisions with the main agent.
+- Specify reportIntervalSteps unless user-fixed. Reports do not pause children; TaskGuide corrects at a tool boundary, TaskInspect reads records, and TaskList checks status.
+- Handle small review fixes yourself. For worthwhile follow-up in retained context, use TaskResume with the same delegationId and expectedExecution from TaskList; stopped, failed or released contexts cannot resume, including after restart.
+- TaskStop cancels only when intended; ending your response does not stop children. Respect explicit user stops and never automatically recreate that work.`,
             ...(this.subagentModelSummary()
               ? [this.subagentModelSummary()!]
               : []),
@@ -3497,9 +3500,8 @@ Delegation rules:
       name: SUBAGENT_TOOL_NAME,
       label: "Task",
       description: [
-        "Start one subagent in the background and return immediately; you keep working while it runs, then converge with TaskWait when you need its report.",
-        "Use it when the work is separable: parallel exploration of independent directions (one Task per direction in the same assistant message), a substantial implementation with a complete spec (fixer), an adversarial read-only review of a change you just made (code-reviewer), or a wide search / long log / multi-file survey whose intermediate output would otherwise fill this context (explorer, test-runner).",
-        "Handle simple and small-to-medium tasks yourself when the context is clear. Delegate only substantial work, independently parallelizable work, or independent review; touching multiple files alone is not a reason to delegate. Never delegate work that needs user input — a subagent cannot ask a question or propose a plan on your behalf.",
+        "Start one background subagent and return its id immediately. Default to doing work yourself; delegate when requested or when the time, context or independent-judgment benefit outweighs coordination and duplicate work. Apply the system's Delegation guidance; catalog entries describe capabilities, not a requirement to use them.",
+        "Suitable examples include deep parallel investigation, large independent implementation batches, focused independent review, substantial independent validation and bulk material analysis. Routine searches, local or naturally sequential changes, ordinary test/build commands, and touching multiple files alone do not warrant delegation. Keep user decisions with the main agent.",
         "A definition's pinned primary model is locked: Task.model is ignored, including the parent model or another authorized model. Configured fallback models are used only after failure.",
         ...(this.availableSubagentModelKeys().length
           ? [
@@ -3889,6 +3891,7 @@ Delegation rules:
    */
   private terminateParentTurn(): void {
     this.turnHadError = true;
+    for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptingSteering = false;
     this.retainPendingSteering();
     this.abortRunningDelegations();
@@ -4012,14 +4015,9 @@ Delegation rules:
     ) {
       const targets = this.pendingCurrentTurnDelegations();
       this.beginDelegationWait(targets);
-      const waitAbort = new AbortController();
-      this.steeringWaitAbort = waitAbort;
       try {
-        if (!this.pendingSteering.size) {
-          await this.waitForDelegations(targets, targets.length, null, waitAbort.signal);
-        }
+        await this.waitForDelegations(targets, targets.length, null);
       } finally {
-        if (this.steeringWaitAbort === waitAbort) this.steeringWaitAbort = undefined;
         this.endDelegationWait();
       }
       if (this.pendingSteering.size && !this.runCancelled && !this.turnHadError) {
@@ -4087,7 +4085,7 @@ Delegation rules:
       name: SUBAGENT_WAIT_TOOL_NAME,
       label: "Task Wait",
       description:
-        "Wait for one or more subagents started by Task and return their reports. `delegationIds` defaults to every running subagent; use mode \"any\" with `minCompleted` to converge as soon as the first (or first N) finish. Settled delegations return immediately, so re-reading a report by id is cheap. A wait timeout is not a failure: unfinished delegates keep working and the runtime delivers their reports when they finish.",
+        "Wait for one or more subagents started by Task and return their reports. `delegationIds` defaults to every running subagent; use mode \"any\" with `minCompleted` to converge as soon as the first (or first N) finish. Settled delegations return immediately, so re-reading a report by id is cheap. User steering wakes this wait without canceling subagents: process that guidance before waiting again. A wait timeout is not a failure: unfinished delegates keep working and the runtime delivers their reports when they finish.",
       parameters: Type.Object({
         delegationIds: Type.Optional(
           Type.Array(
@@ -4154,9 +4152,9 @@ Delegation rules:
             : Math.min(Math.max(minCompleted, 1), targets.length);
         const deadline = Date.now() + timeoutSeconds * 1000;
         this.beginDelegationWait(targets);
-        let timedOut = false;
+        let outcome: "completed" | "timeout" | "aborted" | "steered";
         try {
-          timedOut = await this.waitForDelegations(
+          outcome = await this.waitForDelegations(
             targets,
             targetCompleted,
             deadline,
@@ -4187,14 +4185,19 @@ Delegation rules:
               ? formatDelegationHeartbeat(record)
               : (record.result?.report ?? `(${record.status} without a report)`),
         }));
-        const note = timedOut
-          ? `Still running after ${timeoutSeconds}s: ${results.filter((r) => r.status !== "running").length}/${targets.length} finished. This is not a failure — unfinished delegates keep working and the runtime will deliver their reports when they finish. Call TaskStop only to cancel.\n${targets
-              .filter((record) => record.status === "running")
-              .map(formatDelegationHeartbeat)
-              .join("\n")}`
-          : mode === "any"
-            ? `Converged after ${results.filter((r) => r.status !== "running").length} of ${targets.length} finished.`
-            : undefined;
+        const note =
+          outcome === "steered"
+            ? "Wait interrupted by user steering. Unfinished subagents are still running; process the user's guidance before waiting again."
+            : outcome === "aborted"
+              ? "The calling run was canceled."
+              : outcome === "timeout"
+                ? `Still running after ${timeoutSeconds}s: ${results.filter((r) => r.status !== "running").length}/${targets.length} finished. This is not a failure — unfinished delegates keep working and the runtime will deliver their reports when they finish. Call TaskStop only to cancel.\n${targets
+                    .filter((record) => record.status === "running")
+                    .map(formatDelegationHeartbeat)
+                    .join("\n")}`
+                : mode === "any"
+                  ? `Converged after ${results.filter((r) => r.status !== "running").length} of ${targets.length} finished.`
+                  : undefined;
         const unknownNote =
           unknownIds.length > 0
             ? `Unknown delegation ids (not found in this session): ${unknownIds.join(", ")}.`
@@ -4217,7 +4220,7 @@ Delegation rules:
             },
           ],
           details: {
-            status: timedOut ? "timeout" : targets.filter((record) => record.status !== "running").length >= targetCompleted ? "completed" : "progress",
+            status: outcome === "completed" ? (targets.filter((record) => record.status !== "running").length >= targetCompleted ? "completed" : "progress") : outcome,
             ...(unknownIds.length ? { unknownIds } : {}),
             delegations: results,
           },
@@ -4227,47 +4230,59 @@ Delegation rules:
   }
 
   /**
-   * Resolve once `targetCompleted` of the targets are settled, or the deadline
-   * passes, or the calling run aborts. Returns true on timeout/abort.
-   * `deadline` null waits until they settle (D328 auto-resume).
+   * passes, the calling run aborts, or user steering wakes this wait without
+   * canceling any subagent. `deadline` null waits until they settle (D328
+   * auto-resume).
    */
   private waitForDelegations(
     targets: DelegationRecord[],
     targetCompleted: number,
     deadline: number | null,
     signal?: AbortSignal,
-  ): Promise<boolean> {
+  ): Promise<"completed" | "timeout" | "aborted" | "steered"> {
     const settledCount = () =>
       targets.filter((record) => record.status !== "running").length;
-    if (settledCount() >= targetCompleted || this.hasSupervision(targets)) return Promise.resolve(false);
-    if (signal?.aborted || this.runCancelled || this.disposed) return Promise.resolve(true);
-    return new Promise<boolean>((resolve) => {
+    if (signal?.aborted || this.runCancelled || this.disposed || this.turnHadError) {
+      return Promise.resolve("aborted");
+    }
+    // Steering must break only this wait: the delegates keep running and the
+    // parent processes the guidance before waiting again.
+    if (this.pendingSteering.size) return Promise.resolve("steered");
+    if (settledCount() >= targetCompleted || this.hasSupervision(targets)) {
+      return Promise.resolve("completed");
+    }
+    return new Promise((resolve) => {
       let done = false;
-      const finish = (timedOut: boolean) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (reason: "completed" | "timeout" | "aborted" | "steered") => {
         if (done) return;
         done = true;
         if (timer !== undefined) clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         this.supervisionWaiters.delete(check);
-        resolve(timedOut);
+        this.delegationWaitWakeups.delete(finish);
+        resolve(reason);
       };
       const check = () => {
-        if (settledCount() >= targetCompleted || this.hasSupervision(targets)) finish(false);
-        else if (this.runCancelled || this.disposed || this.turnHadError) finish(true);
+        if (settledCount() >= targetCompleted || this.hasSupervision(targets)) finish("completed");
+        else if (this.runCancelled || this.disposed || this.turnHadError) finish("aborted");
       };
       for (const record of targets) {
         if (record.status === "running") {
           record.completion.then(check);
         }
       }
-      const onAbort = () => finish(true);
+      const onAbort = () => finish("aborted");
+      this.delegationWaitWakeups.add(finish);
       signal?.addEventListener("abort", onAbort, { once: true });
-      const timer =
+      timer =
         deadline === null
           ? undefined
-          : setTimeout(() => finish(true), Math.max(0, deadline - Date.now()));
+          : setTimeout(() => finish("timeout"), Math.max(0, deadline - Date.now()));
       this.supervisionWaiters.add(check);
-      check();
+      if (signal?.aborted) finish("aborted");
+      else if (this.pendingSteering.size) finish("steered");
+      else check();
     });
   }
 
@@ -7156,11 +7171,30 @@ Delegation rules:
   }
 
   steer(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): { accepted: boolean; turnId: string } {
+    // A retried request with the same identity (double click, or a replay after
+    // Main lost the acknowledgement) is the same input: answer it from the
+    // first acceptance instead of steering the turn twice. Reusing the id with
+    // different input is a client bug and must not silently alter the turn.
+    const fingerprint = createHash("sha256").update(JSON.stringify({
+      input, content: message.content, attachments: message.attachments,
+    })).digest("hex");
+    const previous = this.acceptedSteering.get(message.id);
+    if (previous) {
+      if (previous.turnId !== expectedTurnId || previous.fingerprint !== fingerprint) {
+        throw Object.assign(new Error("Steering message identity was reused with different input"), {
+          errorCode: "INVALID_ARGUMENT",
+        });
+      }
+      return { accepted: true, turnId: previous.turnId };
+    }
     this.steeringContext(expectedTurnId);
     const queued: AgentMessage = { role: "user", content: promptContent(input), timestamp: Date.now() };
     this.pendingSteering.set(queued, message.id);
     this.agent.steer(queued);
-    this.steeringWaitAbort?.abort();
+    this.acceptedSteering.set(message.id, { turnId: expectedTurnId, fingerprint });
+    // A subagent wait wakes up and hands control back, but the delegates keep
+    // running: steering must never cancel a subagent.
+    for (const wake of this.delegationWaitWakeups) wake("steered");
     // Main persists this echo through the same outbox as assistant messages.
     this.emit({ type: "message_start", message });
     this.emit({
@@ -7205,6 +7239,7 @@ Delegation rules:
     this.acceptingSteering = false;
     this.gracefulStopRequested = false;
     this.runCancelled = true;
+    for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.resolvePendingAskTools();
     this.abortRunningDelegations();
     this.turnSubagentUsage = undefined;
@@ -7249,6 +7284,8 @@ Delegation rules:
     this.disposed = true;
     this.acceptingSteering = false;
     this.runCancelled = true;
+    for (const wake of this.delegationWaitWakeups) wake("aborted");
+    this.acceptedSteering.clear();
     this.resolvePendingAskTools();
     this.abortRunningDelegations();
     this.delegationWaitTargets = undefined;

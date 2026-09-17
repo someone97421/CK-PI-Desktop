@@ -14,6 +14,7 @@ import {
   isPendingQueuedPrompt,
   isPromotedQueuedPrompt,
   promoteQueuedPrompt,
+  markQueuedPromptSendPending,
   queuedPromptForSession,
   removeQueuedPrompt,
   reorderQueuedPrompt,
@@ -79,6 +80,7 @@ export function createQueueSlice({
 > {
   const queuedDrafts = new Map<string, ComposerDraftSnapshot>();
   const pendingSubmissions = new Set<string>();
+  const pendingQueueSends = new Map<string, string>();
 
   function toQueuedPrompt(entry: QueuedTurnSummary): QueuedPrompt {
     return {
@@ -92,6 +94,7 @@ export function createQueueSlice({
       createdAt: Date.parse(entry.createdAt) || Date.now(),
       // The Host owns ordering and priority: entries arrive in delivery order.
       ...(entry.priority === undefined ? {} : { priority: entry.priority }),
+      ...(pendingQueueSends.get(entry.sessionId) === entry.id ? { sendPending: true } : {}),
     };
   }
 
@@ -119,13 +122,13 @@ export function createQueueSlice({
     });
   }
 
-  /** Drop one row locally and, unless it is still optimistic, at the Host. */
+  /** Only confirmed Host entries can be detached; pending enqueue rows stay intact. */
   function detachQueuedPrompt(sessionId: string, promptId: string): void {
+    if (promptId.startsWith("pending:")) return;
     set((state) => ({
       queuedPrompts: removeQueuedPrompt(state.queuedPrompts, sessionId, promptId),
     }));
     queuedDrafts.delete(promptId);
-    if (promptId.startsWith("pending:")) return;
     void api.removeQueuedPrompt(promptId).catch((error) => {
       get().showToast(
         error instanceof Error ? error.message : String(error),
@@ -194,20 +197,20 @@ export function createQueueSlice({
 
     removeQueuedPrompt: (promptId) => {
       const sessionId = get().activeSessionId;
-      if (!sessionId) return;
+      if (!sessionId || pendingQueueSends.has(sessionId)) return;
       detachQueuedPrompt(sessionId, promptId);
     },
 
     /** Return one waiting row to the composer as an editable draft. */
     editQueuedPrompt: (promptId) => {
       const sessionId = get().activeSessionId;
-      if (!sessionId) return;
+      if (!sessionId || pendingQueueSends.has(sessionId)) return;
       const item = queuedPromptForSession(
         get().queuedPrompts,
         sessionId,
         promptId,
       );
-      if (!item || isPromotedQueuedPrompt(item)) return;
+      if (!item || isPendingQueuedPrompt(item) || isPromotedQueuedPrompt(item)) return;
       // `item.content` is token-stripped; the row's captured draft is the text
       // and the inline file references the user actually wrote.
       const restored: ComposerPrefill = {
@@ -224,7 +227,7 @@ export function createQueueSlice({
     /** Move one waiting row past its neighbour; promoted rows stay locked. */
     moveQueuedPrompt: async (promptId, direction) => {
       const sessionId = get().activeSessionId;
-      if (!sessionId) return;
+      if (!sessionId || pendingQueueSends.has(sessionId)) return;
       const item = queuedPromptForSession(
         get().queuedPrompts,
         sessionId,
@@ -254,35 +257,82 @@ export function createQueueSlice({
       }
     },
 
+    /**
+     * "Send now": the row is delivered into the turn that is already running
+     * instead of stopping it (fork restore of 6820b56). An idle session keeps
+     * the promotion, so the row starts at the next boundary as the head of the
+     * priority block.
+     */
     sendQueuedNow: async (promptId) => {
       const sessionId = get().activeSessionId;
-      if (!sessionId) return;
+      if (!sessionId || pendingQueueSends.has(sessionId)) return;
       const item = queuedPromptForSession(
         get().queuedPrompts,
         sessionId,
         promptId,
       );
-      if (!item || isPendingQueuedPrompt(item) || isPromotedQueuedPrompt(item)) {
+      if (!item || isPendingQueuedPrompt(item) || item.sendPending === true) {
         return;
       }
+      const state = get();
+      const running = state.runningSessions[sessionId] === true;
+      // The running turn's id is the steering target: without it the input has
+      // no owner, and it must never fall through to a different turn.
+      const expectedTurnId = state.agentStatuses[sessionId]?.currentTurnId;
+      if (
+        state.pendingPlans[sessionId]?.status === "pending" ||
+        (running && !expectedTurnId)
+      ) {
+        get().showToast(i18n.t("chat.steeringUnavailable"), { variant: "info" });
+        return;
+      }
+      pendingQueueSends.set(sessionId, promptId);
       set((state) => ({
-        queuedPrompts: promoteQueuedPrompt(
+        queuedPrompts: markQueuedPromptSendPending(
           state.queuedPrompts,
           sessionId,
           promptId,
+          true,
         ),
       }));
       try {
-        await api.prioritizeQueuedPrompt(promptId);
-        // Send now keeps its graceful stop: the active turn reaches its
-        // boundary before the promoted row starts.
-        if (get().runningSessions[sessionId]) await api.stop(sessionId);
-      } catch (error) {
+        if (running && expectedTurnId) {
+          await api.steerQueuedPrompt({
+            sessionId,
+            queuedTurnId: promptId,
+            expectedTurnId,
+          });
+        } else if (!isPromotedQueuedPrompt(item)) {
+          // Promote so the clicked row is the next turn and the rest of the
+          // promoted block keeps its click order.
+          set((state) => ({
+            queuedPrompts: promoteQueuedPrompt(
+              state.queuedPrompts,
+              sessionId,
+              promptId,
+            ),
+          }));
+          await api.prioritizeQueuedPrompt(promptId);
+        }
+        // A row that the Host already consumed (or already promoted) is
+        // corrected here, so no entry can stay locked on a stale local flag.
         void get().refreshQueuedPrompts(sessionId);
+      } catch (error) {
         get().showToast(
           error instanceof Error ? error.message : String(error),
           { variant: "error" },
         );
+        void get().refreshQueuedPrompts(sessionId);
+      } finally {
+        pendingQueueSends.delete(sessionId);
+        set((state) => ({
+          queuedPrompts: markQueuedPromptSendPending(
+            state.queuedPrompts,
+            sessionId,
+            promptId,
+            false,
+          ),
+        }));
       }
     },
 

@@ -5,6 +5,7 @@ import { api } from "../../../lib/api";
 import { toolResultPayload } from "../../../lib/tool-presentation";
 import { useAppStore } from "../../../stores/app-store";
 import { IconStop } from "../../../components/icons";
+import { TooltipButton } from "../../../components/ui";
 
 export function subagentCollaboration(message: UiMessage): SubagentCollaborationSnapshot | undefined {
   const payload = toolResultPayload(message);
@@ -56,6 +57,7 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
   if (!id) return null;
   return <div className={`subagent-supervision${compact ? " compact" : ""}`}>
     <div className="subagent-supervision-status">
+      <div className="subagent-supervision-status-copy">
       {data ? <span title={`${t(reportInProgress ? "chat.subagentReportProgressHint" : "chat.subagentReportSummaryHint", { interval: data.reportIntervalSteps })} · ${t(`chat.subagentIntervalSource.${data.intervalSource}`)}`}>
         {t(reportInProgress ? "chat.subagentReportProgress" : reportCount !== undefined ? "chat.subagentReportSummary" : "chat.subagentCallSummary",
           { current: data.stepsSinceReport, interval: data.reportIntervalSteps, total: data.completedSteps, reports: reportCount })}
@@ -66,14 +68,16 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
       </span> : null}
       {!live && running ? <span>{t("chat.subagentHistorical")}</span> : stopping ? <span role="status">{t("chat.subagentStoppingNow")}</span>
         : data?.phase === "guiding" ? <span role="status">{t("chat.subagentGuidingNow")}</span> : null}
-      {canStop ? <button type="button" className="subagent-stop-button" disabled={stopping}
+      </div>
+      {canStop ? <TooltipButton type="button" className="subagent-stop-button" disabled={stopping}
+        tooltip={t(stopping ? "chat.subagentStoppingNow" : "chat.stopThisSubagent")}
         aria-label={t("chat.stopThisSubagent")} onClick={async (event) => {
           event.stopPropagation();
           if (!sessionId || !id || stopping) return;
           setRequested(true); setError("");
           try { await api.stopSubagent(sessionId, id, execution); }
           catch (failure) { setRequested(false); setError(failure instanceof Error ? failure.message : String(failure)); }
-        }}><IconStop size={12} />{t("chat.stopThisSubagent")}</button> : null}
+        }}><IconStop size={12} aria-hidden /></TooltipButton> : null}
     </div>
     {!compact && data ? <div className="subagent-supervision-detail">
       <span>{t("chat.subagentSegment", { segment: data.segmentId, steps: data.segmentCompletedSteps })}</span>

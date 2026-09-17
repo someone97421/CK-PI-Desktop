@@ -19,6 +19,7 @@ import type {
   AgentEventEnvelope,
   AgentQueueChangedEvent,
   AgentQueuePushRequest,
+  AgentQueueSteerRequest,
   AskToolResolution,
   QueuedTurnSummary,
   RacpApprovalResult,
@@ -27,8 +28,12 @@ import type {
   UiMessage,
 } from "@pi-desktop/shared";
 import { IPC, isGlobalPermissionMode } from "@pi-desktop/shared";
+import type { QueuedSteeringJournal } from "./queued-steering-receipts";
 
 type IpcInvoke = (channel: string, args: readonly unknown[]) => Promise<unknown>;
+
+// Main-process only: a renderer cannot serialize this token over Electron IPC.
+export const QUEUED_STEERING_DURABILITY = Symbol("queued-steering-durability");
 
 type HostLike = {
   call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T>;
@@ -53,6 +58,11 @@ export type AgentHostBridgeOptions = {
   /** The same signal for an Ask-tool question that was answered. */
   onInputResolved?: (event: { sessionId: string; inputId: string }) => void;
   log: (level: "info" | "warn", message: string, data?: Record<string, unknown>) => void;
+  /**
+   * Durable journal for queue-entry steering. Optional: without it a transfer
+   * is protected only inside the live process.
+   */
+  steeringJournal?: QueuedSteeringJournal;
 };
 
 /** The local desktop: the SSH-paired owner device of its own Host. */
@@ -148,15 +158,24 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
             ...(request.sessionMessageId ? { messageId: request.sessionMessageId } : {}),
             ...(request.attachments ? { attachments: request.attachments } : {}),
           },
-        ])) as { accepted?: boolean } | undefined;
-        return { accepted: result?.accepted !== false };
+          QUEUED_STEERING_DURABILITY,
+          request.queuedTurnId,
+        ])) as { accepted?: boolean; turnId?: string } | undefined;
+        return {
+          accepted: result?.accepted === true,
+          ...(result?.turnId ? { turnId: result.turnId } : {}),
+        };
       } catch (error) {
+        // A queue transfer must be able to tell "the runtime proved it never
+        // accepted this input" (`steeringRejected` releases the entry) from an
+        // unknown outcome (which quarantines it). Swallowing the failure here
+        // would make an unknown result look like a release.
         options.log("warn", "agent host steer failed", {
           sessionId: request.sessionId,
           turnId: request.turnId,
           error: String(error),
         });
-        return { accepted: false };
+        throw error;
       }
     },
     async stop(sessionId: string) {
@@ -176,6 +195,16 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
     },
     async respondInput(resolution: AskToolResolution) {
       await options.invoke(options.channels.askToolResolve, [resolution]);
+    },
+    // Durable side of the queue transfer journal (see `queued-steering-receipts`).
+    async steeringReceipts() {
+      return (await options.steeringJournal?.list()) ?? [];
+    },
+    async settleSteeringReceipt(queuedTurnId: string) {
+      await options.steeringJournal?.settle(queuedTurnId);
+    },
+    async completeSteeringReceipt(queuedTurnId: string) {
+      await options.steeringJournal?.complete(queuedTurnId);
     },
     isBusy(sessionId: string) {
       return options.isSessionBusy?.(sessionId) ?? false;
@@ -315,6 +344,14 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
 
   /** The desktop's queue operations, all under the owner principal. */
   const queue = {
+    /**
+     * "Send now" on one durable queue entry while the session runs: the Host
+     * delivers it into the live turn and removes it only after the runtime
+     * acknowledged the input.
+     */
+    async steer(request: AgentQueueSteerRequest) {
+      return forIpc(() => agentHost.steerQueuedTurn(DESKTOP_PRINCIPAL, request));
+    },
     async push(request: AgentQueuePushRequest): Promise<QueuedTurnSummary> {
       const result = await forIpc(() =>
         agentHost.startTurn(DESKTOP_PRINCIPAL, {

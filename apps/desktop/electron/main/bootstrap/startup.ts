@@ -31,6 +31,7 @@ import type { HostProcess } from "../host-process";
 import type { Logger } from "../logger";
 import type { PluginRuntime } from "../plugin-runtime";
 import { runSessionListProbe } from "../session-list-probe";
+import type { QueuedSteeringJournal } from "../queued-steering-receipts";
 
 type IpcInvoker = (
   channel: string,
@@ -49,6 +50,7 @@ export type StartupDependencies = {
   hasSingleInstanceLock: boolean;
   state: StartupState;
   dataDir: string;
+  queuedSteeringJournal: QueuedSteeringJournal;
   logger: Logger;
   updater: AppUpdaterController;
   modelsDevCatalog: ModelsDevCatalog;
@@ -164,6 +166,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       channels: IPC.invoke,
       getHost,
       isSessionBusy,
+      steeringJournal: deps.queuedSteeringJournal,
       onQueueChange: (event) => {
         sendToRenderer(IPC.event.agentQueueChanged, event);
         // The session's new queue, for the plugins subscribed to that session.

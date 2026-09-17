@@ -162,14 +162,22 @@ export function toWorkspaceRel(
   baseDir?: string | null,
 ): string | null {
   if (!path) return null;
+  // Markdown hrefs routinely carry a stray leading slash before a Windows
+  // drive (`/I:/dir/file.ts`); strip it so the drive-absolute form below and
+  // the `I:/…` form resolve identically. Containment is unchanged: a
+  // drive-absolute token still has to land inside a known root downstream.
+  path = path.replaceAll("\\", "/").replace(/^\/(?=[A-Za-z]:\/)/, "");
   if (path.startsWith("~")) return null;
 
   let rel: string;
-  if (path.startsWith("/")) {
+  if (path.startsWith("/") || /^[A-Za-z]:\//.test(path)) {
     if (!root) return null;
-    const cleanRoot = root.replace(/\/+$/, "");
-    if (path === cleanRoot) return null;
-    if (!path.startsWith(cleanRoot + "/")) return null;
+    const cleanRoot = root.replaceAll("\\", "/").replace(/^\/(?=[A-Za-z]:\/)/, "").replace(/\/+$/, "");
+    const windows = /^[A-Za-z]:\//.test(path) && /^[A-Za-z]:\//.test(cleanRoot);
+    const comparedPath = windows ? path.toLowerCase() : path;
+    const comparedRoot = windows ? cleanRoot.toLowerCase() : cleanRoot;
+    if (comparedPath === comparedRoot) return null;
+    if (!comparedPath.startsWith(comparedRoot + "/")) return null;
     rel = path.slice(cleanRoot.length + 1);
   } else if (isDotRelative(path)) {
     const base = (baseDir ?? "").replaceAll("\\", "/").replace(/\/+$/, "");
@@ -179,6 +187,21 @@ export function toWorkspaceRel(
   }
 
   return normalizeWorkspaceRel(rel);
+}
+
+/**
+ * Whether a markdown href names a local file reference rather than a real
+ * URL. `http(s)` and every other scheme (`mailto:`, `annotation:`, …) stay
+ * URL-like; Windows drive-absolute hrefs (`I:/…`, `/I:/…`) and relative or
+ * POSIX-absolute paths count as file references. In-page `#anchor` hrefs are
+ * neither.
+ */
+export function isLocalFileHref(href: string): boolean {
+  const decoded = safeDecodeUri(String(href ?? "").trim());
+  if (!decoded || decoded.startsWith("#")) return false;
+  if (/^https?:\/\//i.test(decoded)) return false;
+  if (/^\/?[A-Za-z]:[/\\]/.test(decoded)) return true;
+  return !/^[a-z][a-z0-9+.-]*:/i.test(decoded);
 }
 
 export type ChatPreviewTarget =

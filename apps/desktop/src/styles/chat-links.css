@@ -26,6 +26,15 @@
   text-decoration-color: var(--ds-accent);
 }
 
+/* Local file anchors lead with a small inline file icon; it rides the text
+   baseline so wrapped links reflow exactly like plain link text. */
+.chat-file-link-icon {
+  display: inline-block;
+  vertical-align: -0.12em;
+  margin-right: 2px;
+  color: var(--ds-text-muted);
+}
+
 /* Sent-message file node: same .composer-chip surface, button reset + hover. */
 .chat-file-chip {
   border: 0;

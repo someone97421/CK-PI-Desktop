@@ -51,6 +51,7 @@ import {
   shouldShowNativeNotification,
 } from "./notification-policy";
 import { PersistenceOutbox } from "./persistence-outbox";
+import { QueuedSteeringReceipts, createQueuedSteeringJournal } from "./queued-steering-receipts";
 import { InflightCheckpointer } from "./inflight-checkpoint";
 import { AgentSidecar } from "./agent-sidecar";
 import { Logger, ignoreBrokenStdio } from "./logger";
@@ -541,6 +542,12 @@ installMainProcessErrorHandlers({
 
 const persistenceOutbox = new PersistenceOutbox(dataDir, (level, message, data) => {
   logger.app("persistence", level, message, { data });
+});
+const queuedSteeringReceipts = new QueuedSteeringReceipts(dataDir, (level, message, data) => {
+  logger.app("persistence", level, message, { data });
+});
+const queuedSteeringJournal = createQueuedSteeringJournal({
+  receipts: queuedSteeringReceipts, outbox: persistenceOutbox, getHost: () => host,
 });
 const steeringReplies = new Set<string>();
 const scheduledRuntime = createScheduledRuntime({
@@ -1250,6 +1257,7 @@ function registerIpc() {
     isTurnDispatchable,
     sessionProjects,
     persistenceOutbox,
+    queuedSteeringJournal,
     logger,
     plugins,
     sessionCapabilityContext,
@@ -1365,6 +1373,7 @@ const startupState: StartupState = {
 };
 
 registerApplicationStartup({
+  queuedSteeringJournal,
   hasSingleInstanceLock,
   state: startupState,
   dataDir,

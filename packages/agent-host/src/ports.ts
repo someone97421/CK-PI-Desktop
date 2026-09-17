@@ -42,25 +42,61 @@ export type TurnStartRequest = {
 };
 
 /**
- * One more user message for a turn that is already running (`send now` keeps
- * promoted messages adjacent, ADR 0265).
+ * One more user message for a turn that is already running. Ordinary steering
+ * (Alt+Enter) and the durable "send now" transfer both use it; only the
+ * transfer sets `queuedTurnId`.
  */
 export type TurnSteerRequest = {
   sessionId: string;
   /** The runtime id of the running turn that must receive the input. */
   turnId: string;
   content: string;
+  /**
+   * Durable identity of this input. A queue transfer sets it once and reuses it
+   * on every retry, so the runtime can deduplicate a repeated delivery.
+   */
   sessionMessageId?: string;
   attachments?: AgentPromptAttachment[];
+  /** Set for a queue transfer: the durable queue entry this input comes from. */
+  queuedTurnId?: string;
   principal: Principal;
+};
+
+/** Journal state of one queue-entry steering transfer, as Main persists it. */
+export type SteeringReceiptView = {
+  queuedTurnId: string;
+  sessionId: string;
+  state: "pending" | "accepted";
+  /** Set on `accepted`: the runtime turn that took the input. */
+  turnId?: string;
 };
 
 /** The pi runtime as the module drives it. Electron Main adapts its prompt,
  * stop, abort, and asktool paths to this port; nothing here knows about IPC. */
 export interface RuntimePort {
-  /** Inject one more user message into a running turn. Optional: a runtime that
-   * cannot steer delivers a promoted block as consecutive turns instead. */
-  steer?(request: TurnSteerRequest): Promise<{ accepted: boolean }>;
+  /**
+   * Inject one more user message into a running turn. Optional: a runtime that
+   * cannot steer keeps every queue entry as its own turn.
+   * `turnId` in the result is optional: a runtime that reports it lets the
+   * caller prove the input landed in the turn it named.
+   */
+  steer?(request: TurnSteerRequest): Promise<{ accepted: boolean; turnId?: string }>;
+  /**
+   * Durable transfer journal (optional). Main persists one receipt per queue
+   * entry it tried to steer, so a restart can prove whether an input was
+   * delivered instead of replaying it as a normal queued turn.
+   */
+  steeringReceipts?(): Promise<SteeringReceiptView[]>;
+  /**
+   * Re-apply only the durable side effects of one accepted transfer (the
+   * transcript echo). Throws when that write fails; the receipt stays.
+   */
+  settleSteeringReceipt?(queuedTurnId: string): Promise<void>;
+  /**
+   * Drop one receipt: the queue entry is gone (accepted) or the runtime proved
+   * the input was never accepted (rejected).
+   */
+  completeSteeringReceipt?(queuedTurnId: string): Promise<void>;
   prompt(request: TurnStartRequest): Promise<{ turnId: string }>;
   stop(sessionId: string): Promise<{ requested: boolean }>;
   abort(sessionId: string, turnId?: string): Promise<void>;

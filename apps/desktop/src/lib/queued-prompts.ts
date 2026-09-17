@@ -12,6 +12,12 @@ export type QueuedPrompt = {
    * locked until the Host delivers them.
    */
   priority?: number;
+  /**
+   * Renderer-only, never persisted: this row's "send now" request is in
+   * flight. It locks the row only while that request is unanswered, so a
+   * promoted row that never gets delivered cannot stay locked forever.
+   */
+  sendPending?: boolean;
 };
 
 export type QueuedPromptDirection = "up" | "down";
@@ -111,6 +117,29 @@ export function reorderQueuedPrompt(
   next[index] = target;
   next[targetIndex] = item;
   return withSessionQueue(queues, sessionId, next);
+}
+
+/**
+ * Mark one row's "send now" request as in flight (or as settled). This is the
+ * only send-now lock the UI uses: it lasts exactly as long as the request.
+ */
+export function markQueuedPromptSendPending(
+  queues: QueuedPrompts,
+  sessionId: string,
+  promptId: string,
+  pending: boolean,
+): QueuedPrompts {
+  const queue = queues[sessionId];
+  if (!queue) return queues;
+  let changed = false;
+  const next = queue.map((item) => {
+    if (item.id !== promptId || (item.sendPending === true) === pending) return item;
+    changed = true;
+    if (pending) return { ...item, sendPending: true };
+    const { sendPending: _settled, ...rest } = item;
+    return rest;
+  });
+  return changed ? withSessionQueue(queues, sessionId, next) : queues;
 }
 
 export function queuedPromptForSession(

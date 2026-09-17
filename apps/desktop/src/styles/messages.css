@@ -2825,21 +2825,42 @@
 .subagent-supervision-status {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
   gap: 8px;
+}
+.subagent-supervision-status-copy {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.subagent-supervision-status-copy > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .subagent-stop-button {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
   margin-left: auto;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--ds-error);
+  color: #fff;
   cursor: pointer;
+  transition: filter var(--motion-duration-fast) var(--motion-ease-out);
 }
+.subagent-stop-button:hover:not(:disabled) { filter: brightness(1.12); }
+.subagent-stop-button:focus-visible { outline: 2px solid var(--ds-error); outline-offset: 3px; }
 .subagent-stop-button:disabled { cursor: default; opacity: 0.6; }
 .subagent-supervision-detail { display: grid; gap: 6px; }
 .subagent-supervision pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }

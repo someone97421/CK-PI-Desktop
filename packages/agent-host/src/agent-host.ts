@@ -55,6 +55,7 @@ import {
   type RuntimePort,
   type SessionPort,
   type SessionSummary,
+  type SteeringReceiptView,
 } from "./ports.js";
 import { TurnQueue } from "./turn-queue.js";
 
@@ -134,6 +135,14 @@ type SessionState = {
 
 type IdempotencyEntry = { turnId: string; inputHash: string };
 
+/** One queue entry whose steering outcome is still being proven. */
+type SteeringTransfer = {
+  sessionId: string;
+  expectedTurnId: string;
+  messageId: string;
+  accepted?: { accepted: boolean; turnId: string };
+};
+
 const MAX_IDEMPOTENCY_ENTRIES = 2000;
 const MAX_TURNS_PER_SESSION = 200;
 
@@ -145,6 +154,12 @@ const MAX_TURNS_PER_SESSION = 200;
  * the messaging integration are callers of this one object.
  */
 export class AgentHost {
+  // Process-local quarantine: neither the drain nor a repeated request may
+  // replay an input whose runtime acknowledgement or durable deletion is
+  // uncertain. A session with an entry here is paused for queue mutations.
+  private readonly steeringTransfers = new Map<string, SteeringTransfer>();
+  /** Durable transfer journal mirrored from the runtime (see `ports.ts`). */
+  private readonly steeringReceipts = new Map<string, SteeringReceiptView>();
   readonly hub: EventHub;
   readonly queue: TurnQueue;
   readonly approvals: ApprovalBroker;
@@ -559,16 +574,230 @@ export class AgentHost {
   async prioritizeTurn(principal: Principal, turnId: string): Promise<RacpTurn> {
     this.requireRole(principal, "turn/prioritize");
     const state = this.stateForTurn(turnId);
-    const turn = state.turns.get(turnId)!;
-    if (turn.status !== "queued") {
-      throw racpError("CONFLICT", "only a queued turn can be prioritized");
-    }
-    if (!(await this.queue.promote(state.id, turn.id))) {
-      throw racpError("CONFLICT", "the turn is already prioritized");
-    }
-    this.afterQueueMove(state, turn.id);
-    return this.toRacpTurn(state, turn);
+    return this.withAdmission(state.id, async () => {
+      await this.refreshSteeringReceipts();
+      await this.recoverAcceptedTransfers(state.id);
+      this.assertQueueNotTransferring(state.id);
+      const turn = state.turns.get(turnId)!;
+      if (turn.status !== "queued") {
+        throw racpError("CONFLICT", "only a queued turn can be prioritized");
+      }
+      if (!(await this.queue.promote(state.id, turn.id))) {
+        throw racpError("CONFLICT", "the turn is already prioritized");
+      }
+      this.afterQueueMove(state, turn.id);
+      return this.toRacpTurn(state, turn);
+    });
   }
+
+  /**
+   * "Send now" on one durable queue entry while its session is running:
+   * deliver the entry into the turn that is already live instead of stopping
+   * it and waiting for the boundary (fork restore of 6820b56).
+   *
+   * The transfer is quarantined while its outcome is unknown. Neither the
+   * queue drain nor a second request may consume or replay that input, and the
+   * entry is only removed after the runtime acknowledged it, so a failed
+   * delivery keeps the message exactly where it was.
+   */
+  async steerQueuedTurn(
+    principal: Principal,
+    request: { sessionId: string; queuedTurnId: string; expectedTurnId: string },
+  ): Promise<{ accepted: boolean; turnId: string }> {
+    this.requireRole(principal, "turn/prioritize");
+    return this.withAdmission(request.sessionId, async () => {
+      const { sessionId, queuedTurnId, expectedTurnId } = request;
+      const state = this.stateForTurn(queuedTurnId);
+      if (state.id !== sessionId || !expectedTurnId) {
+        throw racpError("INVALID_ARGUMENT", "queue session or target turn mismatch");
+      }
+      // The durable journal is the authority across restarts: a pending
+      // receipt is an unknown outcome, so its input is never re-dispatched.
+      await this.refreshSteeringReceipts();
+      const receipt = this.steeringReceipts.get(queuedTurnId);
+      if (receipt?.state === "pending") {
+        throw racpError("CONFLICT", "Steering outcome is unknown; queue is paused. Do not resend this input.");
+      }
+      if (receipt?.state === "accepted") {
+        // Nothing is steered again: only the durable steps are retried.
+        await this.settleReceipt(receipt);
+        this.completeTransferredTurn(state, queuedTurnId);
+        void this.drain(sessionId);
+        return { accepted: true, turnId: receipt.turnId ?? expectedTurnId };
+      }
+      await this.recoverAcceptedTransfers(sessionId);
+      const previous = this.steeringTransfers.get(queuedTurnId);
+      if (previous && previous.expectedTurnId !== expectedTurnId) {
+        throw racpError("CONFLICT", "queued input already belongs to another turn");
+      }
+      // A previous attempt whose outcome is unknown must not be replayed: the
+      // input may already be inside the turn.
+      if (previous && !previous.accepted) {
+        throw racpError("CONFLICT", "Steering outcome is unknown; queue is paused. Do not resend this input.");
+      }
+      if (!previous) this.assertQueueNotTransferring(sessionId);
+      const record = this.queue.find(queuedTurnId);
+      if (!record || state.turns.get(queuedTurnId)?.status !== "queued") {
+        throw racpError("CONFLICT", "input is no longer queued");
+      }
+      if (record.sessionMessageId) {
+        throw racpError("CONFLICT", "Collaboration deliveries cannot be steered; leave this entry queued.");
+      }
+      if (!this.runtime.steer) {
+        throw racpError("AGENT_UNAVAILABLE", "runtime does not support steering");
+      }
+      const session = await this.requireSession(sessionId);
+      const permissionMode = effectiveRemotePermissionMode({
+        sessionMode: session.permissionMode,
+        policy: this.policy,
+        pairedDevice: principal.pairedDevice ?? false,
+        approverOverride: principal.approverOverride ?? false,
+      });
+      if (record.effectivePermissionMode !== session.permissionMode || permissionMode !== session.permissionMode) {
+        throw racpError("FORBIDDEN", "queued permission mode differs from the active session or caller ceiling");
+      }
+      const transfer: SteeringTransfer =
+        previous ?? { sessionId, expectedTurnId, messageId: globalThis.crypto.randomUUID() };
+      this.steeringTransfers.set(queuedTurnId, transfer);
+      try {
+        if (!transfer.accepted) {
+          const result = await this.runtime.steer({
+            sessionId,
+            turnId: expectedTurnId,
+            content: record.content,
+            // The identity is created once and reused by every retry: Main
+            // journals it, the runtime deduplicates it, and the transcript echo
+            // keeps the same outbox key.
+            sessionMessageId: transfer.messageId,
+            ...(record.attachments ? { attachments: record.attachments } : {}),
+            queuedTurnId,
+            principal: { subject: record.principalSubject, roles: ["controller"] },
+          });
+          if (!result.accepted || (result.turnId !== undefined && result.turnId !== expectedTurnId)) {
+            throw new Error("Unexpected steering acknowledgement");
+          }
+          transfer.accepted = { accepted: true, turnId: result.turnId ?? expectedTurnId };
+          // Main journaled this as accepted before it answered, so the durable
+          // echo and the queue deletion may be retried on their own.
+          this.steeringReceipts.set(queuedTurnId, {
+            queuedTurnId,
+            sessionId,
+            state: "accepted",
+            turnId: transfer.accepted.turnId,
+          });
+        }
+        await this.settleReceipt({
+          queuedTurnId,
+          sessionId,
+          state: "accepted",
+          turnId: transfer.accepted.turnId,
+        });
+      } catch (error) {
+        if (!transfer.accepted && (error as { steeringRejected?: boolean }).steeringRejected) {
+          // The runtime proved the input never landed: release the entry
+          // instead of pausing the queue behind it.
+          this.steeringTransfers.delete(queuedTurnId);
+          this.steeringReceipts.delete(queuedTurnId);
+        } else {
+          throw racpError(
+            "CONFLICT",
+            "Steering transfer is unresolved; the queue is paused and the input is retained. Do not resend it.",
+          );
+        }
+        throw error;
+      }
+      this.steeringTransfers.delete(queuedTurnId);
+      await this.completeReceipt(queuedTurnId);
+      this.steeringReceipts.delete(queuedTurnId);
+      this.completeTransferredTurn(state, queuedTurnId);
+      // queued drain still goes through admission after this transfer finishes.
+
+      void this.drain(sessionId);
+      return transfer.accepted;
+    });
+  }
+
+  /**
+   * Mark one fulfilled queue admission: its input was delivered into the turn
+   * that was already running, so it is `completed`, never a runtime alias.
+   */
+  private completeTransferredTurn(state: SessionState, turnId: string): void {
+    const turn = state.turns.get(turnId);
+    if (!turn || isTerminal(turn.status)) return;
+    turn.status = "completed";
+    turn.queuePosition = undefined;
+    turn.endedAt = new Date(this.clock.now()).toISOString();
+    this.emit(state, "turn.completed", { turn: this.toRacpTurn(state, turn) }, { turnId });
+    this.renumberQueue(state);
+    this.notifyQueue(state.id);
+  }
+
+  /**
+   * Read the durable transfer journal when the runtime keeps one. A read
+   * failure keeps the previous view: dropping it could release a pending input.
+   */
+  private async refreshSteeringReceipts(): Promise<void> {
+    const read = this.runtime.steeringReceipts;
+    if (!read) return;
+    const receipts = await read();
+    this.steeringReceipts.clear();
+    for (const entry of receipts) this.steeringReceipts.set(entry.queuedTurnId, entry);
+  }
+
+  /**
+   * Finish the durable side of one accepted transfer: the echo must be
+   * recoverable before the queue entry disappears. A retry over an entry that
+   * is already gone only retires the receipt.
+   */
+  private async settleReceipt(receipt: SteeringReceiptView): Promise<void> {
+    await this.runtime.settleSteeringReceipt?.(receipt.queuedTurnId);
+    if (this.queue.find(receipt.queuedTurnId)) {
+      await this.queue.remove(receipt.sessionId, receipt.queuedTurnId);
+      this.completeTransferredTurn(this.state(receipt.sessionId), receipt.queuedTurnId);
+    }
+    await this.completeReceipt(receipt.queuedTurnId);
+    this.steeringReceipts.delete(receipt.queuedTurnId);
+    this.steeringTransfers.delete(receipt.queuedTurnId);
+  }
+
+  private async completeReceipt(queuedTurnId: string): Promise<void> {
+    await this.runtime.completeSteeringReceipt?.(queuedTurnId);
+  }
+
+  /**
+   * Retry the durable steps of every accepted transfer of this session, without
+   * steering anything again. A failure keeps the receipt for the next pass.
+   */
+  private async recoverAcceptedTransfers(sessionId: string): Promise<void> {
+    if (!this.runtime.settleSteeringReceipt) return;
+    for (const receipt of [...this.steeringReceipts.values()]) {
+      if (receipt.sessionId !== sessionId || receipt.state !== "accepted") continue;
+      try {
+        await this.settleReceipt(receipt);
+      } catch {
+        // Keep the receipt: only the outbox write or the queue deletion failed.
+      }
+    }
+  }
+
+  /**
+   * True while one queue entry of this session awaits its steering outcome.
+   * A pending receipt counts even after a restart; an accepted one does not,
+   * because its durable steps are retried instead of blocking the queue.
+   */
+  private hasSteeringTransfer(sessionId: string): boolean {
+    if ([...this.steeringTransfers.values()].some((entry) => entry.sessionId === sessionId)) return true;
+    return [...this.steeringReceipts.values()].some(
+      (entry) => entry.sessionId === sessionId,
+    );
+  }
+
+  private assertQueueNotTransferring(sessionId: string): void {
+    if (this.hasSteeringTransfer(sessionId)) {
+      throw racpError("CONFLICT", "Queue is paused for an unresolved steering transfer");
+    }
+  }
+
 
   /**
    * Swap a queued turn with its adjacent plain-queue neighbour. A promoted
@@ -583,13 +812,18 @@ export class AgentHost {
   ): Promise<{ moved: boolean }> {
     this.requireRole(principal, "turn/prioritize");
     const state = this.stateForTurn(turnId);
-    const turn = state.turns.get(turnId)!;
-    if (turn.status !== "queued") {
-      throw racpError("CONFLICT", "only a queued turn can be reordered");
-    }
-    if (!(await this.queue.reorder(state.id, turn.id, direction))) return { moved: false };
-    this.afterQueueMove(state, turn.id);
-    return { moved: true };
+    return this.withAdmission(state.id, async () => {
+      const turn = state.turns.get(turnId)!;
+      await this.refreshSteeringReceipts();
+      await this.recoverAcceptedTransfers(state.id);
+      this.assertQueueNotTransferring(state.id);
+      if (turn.status !== "queued") {
+        throw racpError("CONFLICT", "only a queued turn can be reordered");
+      }
+      if (!(await this.queue.reorder(state.id, turn.id, direction))) return { moved: false };
+      this.afterQueueMove(state, turn.id);
+      return { moved: true };
+    });
   }
 
   /** Publish one queue move and let an idle session drain the new head. */
@@ -801,7 +1035,14 @@ export class AgentHost {
   }
 
   private async drainAdmitted(sessionId: string): Promise<void> {
+      // Accepted transfers are finished before anything is shifted; a pending
+      // one keeps its entry exactly where it is.
+      await this.refreshSteeringReceipts();
+      await this.recoverAcceptedTransfers(sessionId);
       while (true) {
+        // An unresolved steering transfer owns its entry: it must not be
+        // shifted and executed as its own turn before the acknowledgement.
+        if (this.hasSteeringTransfer(sessionId)) return;
         const state = this.state(sessionId);
         if (this.queue.isHeld(sessionId) || this.isOccupied(state)) return;
         const record = await this.queue.shift(sessionId);
@@ -825,11 +1066,10 @@ export class AgentHost {
           state.activeTurnId = turn.id;
           state.status = "running";
           this.renumberQueue(state);
+          // The rest of the priority block is not folded into this turn: it
+          // stays queued and leaves at the next boundary, in click order, as
+          // its own turn. "Send now" on a queued row uses the transfer path.
           this.notifyQueue(sessionId);
-          // The rest of the promoted block joins this turn as user input, so the
-          // messages stay adjacent instead of waiting for their own turns
-          // (ADR 0265). A runtime without steering keeps the previous behavior.
-          void this.deliverPromotedBlock(state, started.turnId);
           return;
         } catch (error) {
           turn.status = "failed";
@@ -867,67 +1107,6 @@ export class AgentHost {
     }
   }
 
-  /**
-   * Deliver the promoted entries that are still queued into the turn that just
-   * started, so "Send now" twice puts both messages in front of the model
-   * together instead of spreading them over two turns (ADR 0265).
-   *
-   * The runtime only accepts input for a turn whose run is live, so a refusal is
-   * retried a bounded number of times. Anything still undelivered stays queued
-   * and leaves at the next boundary as its own turn: the previous behavior is
-   * the fallback, never a lost prompt.
-   */
-  private async deliverPromotedBlock(state: SessionState, runtimeTurnId: string): Promise<void> {
-    const steer = this.runtime.steer?.bind(this.runtime);
-    if (!steer) return;
-    for (let attempt = 0; attempt < PROMOTED_DELIVERY_ATTEMPTS; attempt += 1) {
-      const head = this.queue.peek(state.id);
-      if (!head || head.priority === undefined) return;
-      const active = state.activeTurnId ? state.turns.get(state.activeTurnId) : undefined;
-      if (!active || active.runtimeTurnId !== runtimeTurnId) {
-        // The turn ended (or moved on) while the block was being delivered.
-        return;
-      }
-      let accepted = false;
-      try {
-        ({ accepted } = await steer({
-          sessionId: state.id,
-          turnId: runtimeTurnId,
-          content: head.content,
-          ...(head.sessionMessageId ? { sessionMessageId: head.sessionMessageId } : {}),
-          ...(head.attachments ? { attachments: head.attachments } : {}),
-          principal: { subject: head.principalSubject, roles: ["controller"] },
-        }));
-      } catch {
-        accepted = false;
-      }
-      if (!accepted) {
-        await delay(PROMOTED_DELIVERY_RETRY_MS);
-        continue;
-      }
-      await this.queue.remove(state.id, head.id);
-      this.markDeliveredIntoAnotherTurn(state, head.id);
-      this.renumberQueue(state);
-      this.notifyQueue(state.id);
-    }
-  }
-
-  /**
-   * An injected entry never runs its own turn: its input was delivered into the
-   * turn that was already running, and the transcript rows come from that turn's
-   * steering messages. Its RACP turn is canceled so no client is left believing a
-   * queued turn is still waiting.
-   */
-  private markDeliveredIntoAnotherTurn(state: SessionState, turnId: string): void {
-    const turn = state.turns.get(turnId);
-    // A delivered entry is queued, not active: it never occupied the session, so
-    // the check is "not already terminal" rather than `isActive`.
-    if (!turn || isTerminal(turn.status)) return;
-    turn.status = "canceled";
-    turn.queuePosition = undefined;
-    turn.endedAt = new Date(this.clock.now()).toISOString();
-    this.emit(state, "turn.canceled", { turn: this.toRacpTurn(state, turn) }, { turnId: turn.id });
-  }
 
   /** Keep busy checks and queue writes atomic across concurrent senders. */
   private async withAdmission<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
@@ -943,6 +1122,9 @@ export class AgentHost {
   }
 
   private async cancelQueued(state: SessionState, turn: TurnRecord): Promise<RacpTurn> {
+    await this.refreshSteeringReceipts();
+    await this.recoverAcceptedTransfers(state.id);
+    this.assertQueueNotTransferring(state.id);
     if (turn.status !== "queued") {
       if (turn.status === "canceled") return this.toRacpTurn(state, turn);
       throw racpError("CONFLICT", "only a queued turn can be canceled");
@@ -1314,12 +1496,3 @@ export function hashInput(input: StartTurnParams["input"]): string {
 }
 
 export type { UiMessage };
-
-/** Bounded attempts to fold a promoted entry into the turn that just started. */
-const PROMOTED_DELIVERY_ATTEMPTS = 8;
-/** Gap between those attempts: the runtime accepts input once its run is live. */
-const PROMOTED_DELIVERY_RETRY_MS = 150;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

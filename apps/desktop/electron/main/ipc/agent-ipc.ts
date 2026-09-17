@@ -1,4 +1,4 @@
-import { IPC, ErrorCodes, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest } from "@pi-desktop/shared";
+import { IPC, ErrorCodes, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest } from "@pi-desktop/shared";
 import type { FinishTurn } from "../runtime/plans";
 import { expandSlashInvocation, enhancePromptDraft, summarizeSessionTitle, visionFromModelConfig, type ComposerTemplate, type RuntimeProviderConfig } from "@pi-desktop/agent-runtime";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
@@ -6,7 +6,8 @@ import { appendPromptFallbackPaths, durableUserMessageId, preparePromptAttachmen
 import { executionFromResponse } from "../plan-execution";
 import { resolveSessionMessageInput } from "../session-message-input";
 import type { AgentExtensionBridge } from "../agent-extensions";
-import type { AgentHostBridge } from "../agent-host-bridge";
+import { QUEUED_STEERING_DURABILITY, type AgentHostBridge } from "../agent-host-bridge";
+import type { QueuedSteeringJournal } from "../queued-steering-receipts";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { HostProcess } from "../host-process";
 import type { Logger } from "../logger";
@@ -25,6 +26,8 @@ export type AgentIpcDependencies = {
   cancelSessionTools: (sessionId: string, reason?: string) => void;
   persistenceOutbox: PersistenceOutbox;
   dataDir: string;
+  /** Durable transfer journal for "send now" while the session runs. */
+  queuedSteeringJournal: QueuedSteeringJournal;
   activeTurns: Map<string, string>;
   /** Whether the named turn can still start or steer host work. */
   isTurnDispatchable: (sessionId: string, turnId: string | null | undefined) => boolean;
@@ -68,6 +71,7 @@ export function registerAgentIpc({
   cancelSessionTools,
   persistenceOutbox,
   dataDir,
+  queuedSteeringJournal,
   activeTurns,
   isTurnDispatchable,
   activeTurnUsages,
@@ -202,7 +206,10 @@ export function registerAgentIpc({
     return { title };
   });
 
-  handle(IPC.invoke.agentSteer, async (req: AgentSteerRequest) => {
+  handle(IPC.invoke.agentSteer, async (req: AgentSteerRequest, durability?: unknown, queuedTurnId?: unknown) => {
+    let dispatched = false;
+    const transferId = durability === QUEUED_STEERING_DURABILITY && typeof queuedTurnId === "string" ? queuedTurnId : "";
+    try {
     if (!host || !sidecar) throw new Error("backend unavailable");
     if (
       !req?.sessionId || typeof req.content !== "string" || !req.expectedTurnId ||
@@ -229,7 +236,7 @@ export function registerAgentIpc({
       id: req.sessionId, messageLimit: 1,
     });
     const message: UiMessage = {
-      id: durableUserMessageId(req.messageId, session.session?.messages ?? []),
+      id: transferId && req.messageId ? req.messageId : durableUserMessageId(req.messageId, session.session?.messages ?? []),
       role: "user",
       content: req.content,
       status: "complete",
@@ -239,7 +246,23 @@ export function registerAgentIpc({
     };
     // Revalidate inside the runtime after all file/host IO. A stale target must
     // never turn into a normal prompt or alter the next turn's configuration.
-    return sidecar.call<{ accepted: boolean; turnId: string }>("agent.steer", {
+    if (!isTurnDispatchable(req.sessionId, req.expectedTurnId)) {
+      throw Object.assign(new Error("The target turn has ended"), {
+        errorCode: ErrorCodes.TURN_NOT_FOUND,
+      });
+    }
+    if (durability === QUEUED_STEERING_DURABILITY && transferId) {
+      // The journal must own this entry before the runtime is asked: afterwards
+      // a crash looks like "never tried" and the queue would replay it.
+      await queuedSteeringJournal.begin({
+        queuedTurnId: transferId,
+        sessionId: req.sessionId,
+        messageId: message.id,
+        expectedTurnId: req.expectedTurnId,
+      });
+    }
+    dispatched = true;
+    const result = await sidecar.call<{ accepted: boolean; turnId: string }>("agent.steer", {
       sessionId: req.sessionId, expectedTurnId: req.expectedTurnId, message,
       content: appendPromptFallbackPaths(req.content, prepared),
       attachments: prepared.filter((attachment) => attachment.inlineData).map((attachment) => ({
@@ -247,6 +270,32 @@ export function registerAgentIpc({
         mimeType: attachment.message.mimeType, size: attachment.message.size, data: attachment.inlineData,
       })),
     });
+    if (result.accepted && durability === QUEUED_STEERING_DURABILITY && transferId) {
+      // Accepted is journaled with the prepared echo before the outbox write, so
+      // a failure here can retry only the append and the queue deletion.
+      await queuedSteeringJournal.accept(transferId, { turnId: result.turnId, message });
+      // A queued input is removed from its durable queue entry only after its
+      // echo is recoverable. Event persistence uses the same key, so a replay
+      // after a crash stays idempotent.
+      await persistenceOutbox.enqueue({
+        key: `message:${req.sessionId}:${message.id}`,
+        sessionId: req.sessionId, message, turnId: result.turnId,
+      }, getHost);
+    }
+    // Ordinary steering is accepted by the runtime, not by transcript storage.
+    // Its existing event/outbox path must not turn acceptance into a rejection.
+    return result;
+    } catch (error) {
+      // Only pre-dispatch failures and the runtime's explicit stale-target
+      // rejection prove that nothing was accepted. Transport errors do not.
+      const failure = error as Error & { errorCode?: string; data?: { errorCode?: string }; steeringRejected?: boolean };
+      const rejected = !dispatched || failure.errorCode === ErrorCodes.TURN_NOT_FOUND || failure.data?.errorCode === ErrorCodes.TURN_NOT_FOUND;
+      if (rejected) {
+        if (transferId) await queuedSteeringJournal.reject(transferId);
+        failure.steeringRejected = true;
+      }
+      throw error;
+    }
   });
 
   handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest) => {
@@ -695,6 +744,16 @@ export function registerAgentIpc({
     if (!agentHostBridge) throw new Error("agent host unavailable");
     await agentHostBridge.queue.prioritize(req.turnId);
     return { ok: true };
+  });
+  // "Send now" while the session runs: the named queue entry is delivered into
+  // the turn that is already live instead of stopping it.
+  handle(IPC.invoke.agentQueueSteer, async (req: AgentQueueSteerRequest) => {
+    if (!req?.sessionId || !req.queuedTurnId || !req.expectedTurnId) {
+      throw Object.assign(new Error("Queue entry and target turn required"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+    }
+    rejectNativeAgentOperation(req.sessionId);
+    if (!agentHostBridge) throw new Error("agent host unavailable");
+    return agentHostBridge.queue.steer(req);
   });
 
   handle(

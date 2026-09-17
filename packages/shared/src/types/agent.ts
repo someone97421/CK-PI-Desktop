@@ -61,6 +61,13 @@ export type AgentSteerRequest = Pick<
   expectedTurnId: string;
 };
 
+/** "Send now" on one durable queue entry: deliver it into the named turn. */
+export type AgentQueueSteerRequest = {
+  sessionId: string;
+  queuedTurnId: string;
+  expectedTurnId: string;
+};
+
 export type AgentPromptResponse = {
   accepted: boolean;
   turnId: string;

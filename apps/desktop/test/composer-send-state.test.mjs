@@ -124,30 +124,38 @@ test("running prompts use a removable per-session queue with priority actions", 
   assert.match(composer, /moveQueuedPrompt\(item\.id, "down"\)/);
   assert.match(composer, /editQueuedPrompt\(item\.id\)/);
   assert.match(composer, /sendQueuedNow\(item\.id\)/);
-  // Send now promotes a row into the priority block instead of jumping to the
-  // head, so two promoted rows leave in the order they were clicked.
+  // Idle send-now retains persisted priority order for the next turn.
   assert.match(
     queuedPromptsLib,
     /\.\.\.promoted,\s*\n\s*\{ \.\.\.item, priority: highest \+ 1 \},\s*\n\s*\.\.\.waiting,/,
   );
   assert.match(queuedPromptsLib, /Math\.max\(max, candidate\.priority\)/);
-  // A promoted row is the next turn: move up/down, edit, and remove all lock.
-  assert.match(composer, /data-priority=\{promoted \? "true" : "false"\}/);
+  // Send now while the session runs steers the durable entry into the turn
+  // that is already live; it must never stop that turn (fork restore).
+  assert.match(queueSlice, /api\.steerQueuedPrompt\(\{/);
+  assert.match(
+    queueSlice,
+    /const running = state\.runningSessions\[sessionId\] === true;[\s\S]*?const expectedTurnId = state\.agentStatuses\[sessionId\]\?\.currentTurnId;/,
+  );
+  assert.match(queueSlice, /queuedTurnId: promptId,\s*\n\s*expectedTurnId,/);
+  assert.doesNotMatch(queueSlice, /api\.stop\(/);
+  // Promoted rows remain sendable/removable; edits and moves follow queue rules.
+  assert.match(queuedPromptsLib, /sendPending\?: boolean;/);
+  assert.match(queuedPromptsLib, /export function markQueuedPromptSendPending\(/);
+  assert.match(queueSlice, /markQueuedPromptSendPending\(/);
+  assert.match(composer, /const sendNowLocked = approvalPending \|\| pending;/);
+  assert.match(composer, /const actionLocked = approvalPending \|\| pending;/);
+  assert.match(composer, /const editOrMoveLocked = actionLocked \|\| item\.priority !== undefined;/);
   assert.match(composer, /disabled=\{sendNowLocked\}/);
   assert.match(
     composer,
-    /\{promoted \? t\("chat\.sendNowPending"\) : t\("chat\.sendNow"\)\}/,
+    /\{pending \? t\("chat\.sendNowPending"\) : t\("chat\.sendNow"\)\}/,
   );
-  assert.equal(
-    (composer.match(/disabled=\{promoted\}/g) ?? []).length,
-    8,
-    "four promoted rows set disabled and aria-disabled on move up/down, edit, and remove",
-  );
-  assert.equal(
-    (composer.match(/aria-disabled=\{promoted\}/g) ?? []).length,
-    4,
-    "each locked action carries its own aria-disabled state",
-  );
+  assert.equal((composer.match(/\sdisabled=\{actionLocked\}/g) ?? []).length, 1);
+  assert.equal((composer.match(/\sdisabled=\{editOrMoveLocked\}/g) ?? []).length, 3);
+  assert.match(queueSlice, /function detachQueuedPrompt\([^)]*\)[^{]*\{\s*if \(promptId\.startsWith\("pending:"\)\) return;/);
+  assert.match(queueSlice, /if \(!item \|\| isPendingQueuedPrompt\(item\) \|\| isPromotedQueuedPrompt\(item\)\) return;/);
+  assert.doesNotMatch(composer, /disabled=\{promoted\}/);
   assert.doesNotMatch(composer, /sendNowRequested/);
   assert.doesNotMatch(queuedPromptsLib, /sendNowRequested/);
   assert.doesNotMatch(queuedPromptsLib, /clearQueuedPromptSendNow/);

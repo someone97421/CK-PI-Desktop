@@ -89,7 +89,7 @@ function ensureTooltipGuards() {
 
 type TooltipPosition = { left: number; top: number; bottom: number };
 
-function useTooltip<T extends HTMLElement>(
+export function useTooltip<T extends HTMLElement>(
   label: string,
   disabled: boolean,
   delayMs: number,
@@ -295,7 +295,7 @@ function useTooltip<T extends HTMLElement>(
   };
 }
 
-function PortalTooltip({
+export function PortalTooltip({
   label,
   position,
   className,

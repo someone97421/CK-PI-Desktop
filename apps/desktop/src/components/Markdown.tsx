@@ -32,11 +32,13 @@ import {
   IconCode,
   IconCopy,
   IconExternal,
+  IconFileText,
   IconGlobe,
   IconImage,
   IconWorkflow,
 } from "./icons";
 import { TooltipButton } from "./ui";
+import { cleanChatFileRef, FileRefTarget } from "./FileReference";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import {
@@ -52,6 +54,7 @@ import { useAppStore } from "../stores/app-store";
 import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import {
+  isLocalFileHref,
   remarkChatFileLinks,
   resolvePreviewTarget,
   safeDecodeUri,
@@ -462,7 +465,6 @@ function InlineCode({
     text && !className && !text.includes("\n")
       ? resolvePreviewTarget(text, root, baseDir)
       : null;
-  const fileTitle = usePreviewTitle("file");
   const urlTitle = usePreviewTitle("url");
   if (!target) {
     return (
@@ -471,16 +473,29 @@ function InlineCode({
       </code>
     );
   }
+  if (target.kind === "file") {
+    // The themed tooltip shows the resolved full path; the native title is
+    // gone so the two never stack.
+    return (
+      <FileRefTarget fileRef={text ?? target.path} baseDir={baseDir}>
+        <button
+          type="button"
+          className="chat-code-link"
+          onClick={() => openFileRef(text ?? target.path, baseDir)}
+        >
+          <code className={className} {...rest}>
+            {children}
+          </code>
+        </button>
+      </FileRefTarget>
+    );
+  }
   return (
     <button
       type="button"
       className="chat-code-link"
-      title={target.kind === "file" ? fileTitle : urlTitle}
-      onClick={() =>
-        target.kind === "file"
-          ? openFileRef(text ?? target.path, baseDir)
-          : openUrl(target.url)
-      }
+      title={urlTitle}
+      onClick={() => openUrl(target.url)}
     >
       <code className={className} {...rest}>
         {children}
@@ -638,12 +653,45 @@ function Anchor({
       }
       return;
     }
-    const rel = toWorkspaceRel(safeDecodeUri(href), root, baseDir);
-    if (rel) {
+    if (isLocalFileHref(href)) {
       e.preventDefault();
-      openFileRef(rel, baseDir);
+      const { path } = cleanChatFileRef(href);
+      if (/^\.{1,2}[/\\]/.test(path)) {
+        const anchored = toWorkspaceRel(path, root, baseDir);
+        if (anchored) openFileRef(anchored);
+        else showToast(t("chat.fileRefMissing", { name: path }), { variant: "error" });
+      } else {
+        openFileRef(path);
+      }
     }
   };
+  // Local file references (relative, POSIX-absolute, or Windows `I:/…` /
+  // `/I:/…` hrefs) get the full-path hover tooltip and the file context menu;
+  // URLs and scheme links keep the existing behavior below. The icon stays
+  // inline so wrapped link text reflows unchanged.
+  if (href && isLocalFileHref(href)) {
+    return (
+      <FileRefTarget fileRef={href} baseDir={baseDir}>
+        <a
+          ref={anchorRef}
+          {...rest}
+          title={undefined}
+          href={href}
+          onClick={onClick}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <IconFileText
+            size={13}
+            className="chat-file-link-icon"
+            aria-hidden
+          />
+          {children}
+        </a>
+      </FileRefTarget>
+    );
+  }
+
   return (
     <>
       <a

@@ -800,7 +800,7 @@ export function registerWorkspaceIpc({
 
   handle(IPC.invoke.fsOpen, async (input: { path?: string } = {}) => {
     const workspaceRoot = await optionalWorkspaceRoot();
-    const target = resolveOpenablePath(
+    const target = await resolveRealOpenablePath(
       String(input.path ?? ""),
       workspaceRoot,
       await fsExtraRoots(workspaceRoot),
