@@ -562,6 +562,7 @@ export function registerSessionIpc({
           },
         ]);
       }
+      plugins.publishDesktopEvent({ sessionId: id, kind: "session.changed", payload: { reason: "configured" } });
       return { ...result, session };
     },
   );

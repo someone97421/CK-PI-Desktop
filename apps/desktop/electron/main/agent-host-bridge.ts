@@ -43,6 +43,15 @@ export type AgentHostBridgeOptions = {
   isSessionBusy?: (sessionId: string) => boolean;
   /** Renderer fan-out for queue changes (`agent/event/queueChanged`). */
   onQueueChange?: (event: AgentQueueChangedEvent) => void;
+  /**
+   * One approval (tool, Plan or Goal) was decided, wherever the decision came
+   * from. The state itself stays in the Agent Host; this is only the "re-read
+   * it" signal for the clients that mirror it, so a second device stops
+   * showing an approval that is already gone.
+   */
+  onApprovalResolved?: (event: { sessionId: string; approvalId: string }) => void;
+  /** The same signal for an Ask-tool question that was answered. */
+  onInputResolved?: (event: { sessionId: string; inputId: string }) => void;
   log: (level: "info" | "warn", message: string, data?: Record<string, unknown>) => void;
 };
 
@@ -291,6 +300,19 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
     },
   });
 
+  function sessionOfApproval(approvalId: string): string | undefined {
+    return agentHost.approvals.get(approvalId)?.sessionId;
+  }
+
+  function notifyApprovalResolved(sessionId: string | undefined, approvalId: string): void {
+    if (!sessionId) return;
+    try {
+      options.onApprovalResolved?.({ sessionId, approvalId });
+    } catch (error) {
+      options.log("warn", "approval-resolved notification failed", { sessionId, approvalId, error: String(error) });
+    }
+  }
+
   /** The desktop's queue operations, all under the owner principal. */
   const queue = {
     async push(request: AgentQueuePushRequest): Promise<QueuedTurnSummary> {
@@ -378,7 +400,16 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
       approvalId: string,
       outcome: { decision?: RacpApprovalResult["decision"]; permissionMode?: string },
     ): void {
-      if (resolvingViaModule.has(approvalId)) return;
+      // The session is read before the settle: afterwards the approval is gone
+      // from the pending set, and the notification still has to name it.
+      const sessionId = sessionOfApproval(approvalId);
+      if (resolvingViaModule.has(approvalId)) {
+        // A Remote Agent caller resolved this through the IPC channel; the
+        // module's own bookkeeping already ran, so only the redundant settle is
+        // skipped. Other clients still need the decision.
+        notifyApprovalResolved(sessionId, approvalId);
+        return;
+      }
       const permissionMode = isGlobalPermissionMode(outcome.permissionMode)
         ? (outcome.permissionMode as RacpPermissionMode)
         : undefined;
@@ -389,6 +420,28 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
         });
       } catch (error) {
         options.log("warn", "agent host settle failed", { approvalId, error: String(error) });
+      }
+      notifyApprovalResolved(sessionId, approvalId);
+    },
+    /**
+     * One Ask-tool question was answered (or skipped). The IPC handler that
+     * owns `asktool.resolve` calls this: the answer travels to the sidecar, and
+     * the session-scoped subscribers are told to re-read the pending set so a
+     * second device does not keep asking a question that is gone.
+     */
+    notifyInputResolved(event: { sessionId: string; inputId: string }): void {
+      const sessionId = String(event?.sessionId ?? "").trim();
+      const inputId = String(event?.inputId ?? "").trim();
+      if (!sessionId || !inputId) return;
+      try {
+        agentHost.settleInputExternally(sessionId, inputId);
+        options.onInputResolved?.({ sessionId, inputId });
+      } catch (error) {
+        options.log("warn", "input-resolved notification failed", {
+          sessionId,
+          inputId,
+          error: String(error),
+        });
       }
     },
     /**

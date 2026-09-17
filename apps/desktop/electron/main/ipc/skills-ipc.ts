@@ -293,8 +293,16 @@ export function registerSkillsIpc({
    * page can keep its row and let the user turn it back on; `subagents` is the
    * delegation catalog and never lists one.
    */
-  handle(IPC.invoke.subagentCatalog, async () => {
-    const projectPath = (await optionalWorkspaceRoot()) ?? undefined;
+  handle(IPC.invoke.subagentCatalog, async (input?: { sessionId?: string }) => {
+    let projectPath: string | undefined;
+    if (input?.sessionId) {
+      if (!host) throw new Error("host unavailable");
+      const result = await host.call("session.get", { id: input.sessionId, messageLimit: 1 }) as { session?: { projectPath?: string } };
+      if (!result.session) throw new Error("session not found");
+      projectPath = result.session.projectPath;
+    } else {
+      projectPath = (await optionalWorkspaceRoot()) ?? undefined;
+    }
     const disabled = await disabledBuiltinSubagents();
     const { definitions, builtins, diagnostics } = await loadSubagentDefinitions(
       projectPath,

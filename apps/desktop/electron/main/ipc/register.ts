@@ -247,6 +247,13 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     activeUserSkills,
     pluginActiveInProject,
     loadComposerTemplatesCached,
+    sessionWorkspaceRoot: async (sessionId) => {
+      const host = getHost();
+      if (!host) throw new Error("host unavailable");
+      const result = await host.call("session.get", { id: sessionId, messageLimit: 1 }) as { session?: { projectPath?: string } };
+      if (!result.session) throw new Error("session not found");
+      return result.session.projectPath ?? null;
+    },
   });
   registerWindowIpc({
     registrar,

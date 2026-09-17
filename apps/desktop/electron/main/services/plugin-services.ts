@@ -139,6 +139,12 @@ export function createPluginServices({
         (result as { deleted?: unknown })?.deleted === true);
     if (changed) {
       sendToRenderer(IPC.event.sessionsChanged, { reason: method, pluginId });
+      // Session list changes this plugin just caused, so its own subscriptions
+      // (and any other subscriber of the plugin) learn to re-list.
+      plugins.publishDesktopEvent({
+        kind: "session.changed",
+        payload: { reason: method, pluginId },
+      });
     }
     return result;
   };
@@ -487,6 +493,21 @@ export function createPluginServices({
       plugins.broadcastEvent("session:turnEnded", [payload]);
     } catch (error) {
       logger.app("plugin", "warn", "turnEnded plugin broadcast failed", {
+        sessionId: payload.sessionId,
+        data: String(error),
+      });
+    }
+    // The session-scoped stream for the plugins that subscribed to this
+    // session. Independent of the broadcast above: one goes to every loaded
+    // plugin process, this one only to the subscriber that asked for it.
+    try {
+      plugins.publishDesktopEvent({
+        kind: "agent.turnEnded",
+        sessionId: payload.sessionId,
+        payload,
+      });
+    } catch (error) {
+      logger.app("plugin", "warn", "turnEnded desktop stream failed", {
         sessionId: payload.sessionId,
         data: String(error),
       });

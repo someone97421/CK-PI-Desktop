@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "local.lan-remote-control",
+  "name": "局域网远程控制",
+  "description": "通过局域网浏览器访问这是一个助手的项目和会话。需要桌面配对授权；默认不监听网络。",
+  "version": "0.1.0",
+  "main": "main.cjs",
+  "engines": { "piDesktop": ">=2609.1622.5115" },
+  "permissions": ["ui.panel", "background.service", "desktop.control", "models.list", "clipboard.write"],
+  "activationEvents": ["onStartup", "onCommand:lan-remote-control.open"],
+  "ui": { "panel": "panel/index.html", "width": 840, "height": 760, "title": "局域网远程控制" },
+  "contributes": {
+    "commands": [
+      { "id": "lan-remote-control.open", "title": "局域网远程控制", "keywords": ["手机", "远程", "局域网", "remote", "LAN"], "category": "远程访问" }
+    ],
+    "services": [
+      { "id": "lan-remote-control", "label": "局域网远程控制", "autoRestart": false }
+    ],
+    "settingsDestinations": [
+      { "id": "lan-remote-control", "label": "局域网远程控制", "icon": "plug", "keywords": ["局域网", "手机", "配对", "远程"], "entry": "panel/index.html" }
+    ]
+  }
+}

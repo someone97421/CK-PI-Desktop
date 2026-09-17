@@ -315,6 +315,14 @@ export type PluginHostServices = {
   /** The reviewed desktop operation controller shared with MCP. */
   desktopControl?: McpControlController;
   /**
+   * Live state of one session for `pi.desktop.subscribe` /
+   * `desktop.getSessionSnapshot`. Wired after the Agent Host exists, because
+   * the snapshot is the Agent Host's own resync payload (pending approvals,
+   * pending asks, streaming items, queue). Absent means the snapshot calls
+   * answer `UNSUPPORTED` and a new subscription reports `snapshot: null`.
+   */
+  desktopSessionSnapshot?: (sessionId: string) => Promise<unknown>;
+  /**
    * Blocking, native consent for a plugin-originated dangerous desktop
    * operation (session delete, permission-mode change, tool approval). The
    * controller's `confirm` flag is only the caller's acknowledgement; the
@@ -446,6 +454,9 @@ const HOST_API_ALLOWLIST = new Set([
   "ui.showNativeNotification",
   "desktop.listOperations",
   "desktop.invoke",
+  "desktop.subscribe",
+  "desktop.unsubscribe",
+  "desktop.getSessionSnapshot",
   "workspace.get",
   "fs.readText",
   "fs.stat",
@@ -888,6 +899,35 @@ type BusSubscription = {
 };
 
 /**
+ * One live desktop-event subscription (`pi.desktop.subscribe`). The handler
+ * lives in the plugin process; this side only records which session's events
+ * that plugin asked for, so delivery can be filtered at the sender.
+ */
+type DesktopSubscription = {
+  id: string;
+  pluginId: string;
+  sessionId: string;
+};
+
+/** A plugin may hold at most this many live desktop subscriptions. */
+export const MAX_DESKTOP_SUBSCRIPTIONS_PER_PLUGIN = 16;
+
+/**
+ * One desktop event on its way to session subscribers (`desktop:event`).
+ *
+ * `session.changed` is the one kind that may arrive without a session: a
+ * session list change or an approval decision has no transcript of its own, so
+ * a frame without `sessionId` goes to every live subscription of the plugin
+ * while every other kind is delivered only to subscriptions of that session.
+ */
+export type PluginDesktopEventInput = {
+  kind: "agent.event" | "agent.turnEnded" | "agent.queueChanged" | "session.changed";
+  /** Target session. Required for every kind except the unscoped `session.changed`. */
+  sessionId?: string;
+  payload: unknown;
+};
+
+/**
  * A runtime subscription is allowed when the manifest declared exactly that
  * pattern, or declared a wider one that covers it — narrowing `a.*` down to
  * `a.b` at runtime is fine, widening is not.
@@ -1093,6 +1133,12 @@ export class PluginRuntime {
   private restarts = new Map<string, RestartRecord>();
   private busSubscriptions = new Map<string, BusSubscription>();
   private busRate = new Map<string, { windowStart: number; count: number }>();
+  /**
+   * Live desktop-event subscriptions, keyed by the id the broker handed out.
+   * A plugin's subscriptions are dropped with the plugin: unload, crash and
+   * disable all run `clearContributions`, so nothing survives its process.
+   */
+  private desktopSubscriptions = new Map<string, DesktopSubscription>();
   private readonly toolInvocations = new PluginToolInvocations();
   private completeRate = new Map<string, { windowStart: number; count: number }>();
   /**
@@ -1104,6 +1150,7 @@ export class PluginRuntime {
   /** Cached write ledgers, keyed by plugin id. */
   private writeLedgers = new Map<string, Record<string, number>>();
   private nextBusSubscription = 1;
+  private nextDesktopSubscription = 1;
   /** Plugins being reloaded by the supervisor; their backoff must survive. */
   private restarting = new Set<string>();
   private loaded = new Map<string, LoadedPlugin>();
@@ -1413,6 +1460,60 @@ export class PluginRuntime {
           api: "plugin.event.error",
           ok: false,
           event,
+          message: (error as Error).message,
+          ts: Date.now(),
+        });
+      }
+    }
+  }
+
+  /**
+   * Route one desktop event to the plugin processes that asked for it
+   * (`pi.desktop.subscribe` → `desktop:event`).
+   *
+   * Filtering happens here, at the sender, on every frame: a plugin receives an
+   * event only when it holds `desktop.control`, is still loaded, and has a live
+   * subscription for that session. Nothing is buffered — a plugin that is
+   * loading, crashed or unloaded misses the frame by contract, which is what
+   * `pi.desktop.getSessionSnapshot` exists to recover from. Best-effort and
+   * one-way, exactly like the plugin bus.
+   */
+  publishDesktopEvent(event: PluginDesktopEventInput): void {
+    if (this.desktopSubscriptions.size === 0) return;
+    const sessionId = typeof event.sessionId === "string" ? event.sessionId.trim() : "";
+    const scoped = !!sessionId;
+    if (!scoped && event.kind !== "session.changed") return;
+    const at = new Date().toISOString();
+    for (const subscription of this.desktopSubscriptions.values()) {
+      if (scoped && subscription.sessionId !== sessionId) continue;
+      const target = this.loaded.get(subscription.pluginId);
+      if (!target?.child || target.disposing) continue;
+      // The grant is read on every frame rather than cached on the
+      // subscription: a revoked permission must stop the stream at once.
+      if (!target.permissions.has("desktop.control")) continue;
+      try {
+        target.child.postMessage({
+          t: "event",
+          event: "desktop:event",
+          args: [
+            {
+              subscriptionId: subscription.id,
+              sessionId: scoped ? sessionId : subscription.sessionId,
+              kind: event.kind,
+              at,
+              payload: event.payload ?? null,
+            },
+          ],
+        });
+      } catch (error) {
+        // The subscriber is going away; its subscription dies with the process
+        // and a lost notification is not an error worth failing the publisher.
+        this.services.audit?.({
+          pluginId: subscription.pluginId,
+          api: "plugin.desktop.event.error",
+          ok: false,
+          event: event.kind,
+          sessionId: scoped ? sessionId : undefined,
           message: (error as Error).message,
           ts: Date.now(),
         });
@@ -2737,6 +2838,11 @@ export class PluginRuntime {
       if (subscription.pluginId === pluginId) this.busSubscriptions.delete(id);
     }
     this.busRate.delete(pluginId);
+    // Same for the session subscriptions: a process that is gone must not stay
+    // registered for a stream the host would keep pushing into nothing.
+    for (const [id, subscription] of this.desktopSubscriptions) {
+      if (subscription.pluginId === pluginId) this.desktopSubscriptions.delete(id);
+    }
     // A system-wide accelerator outlives every renderer, so it is released on
     // the same path that clears commands — disable, unload, and crash alike.
     this.services.pluginShortcuts?.releasePlugin(pluginId);
@@ -3475,6 +3581,156 @@ export class PluginRuntime {
       this.auditBus(loaded.manifest.id, "bus.unsubscribe", true, subscription.pattern);
     }
     return { ok: true };
+  }
+
+  /**
+   * Open one session-scoped desktop-event subscription (`pi.desktop.subscribe`).
+   *
+   * Three gates run before a subscription exists: the plugin holds
+   * `desktop.control`; the session id names a session the host actually has
+   * (the snapshot read is the existence check, so a typo cannot open a stream
+   * for a session that may be created later); and the plugin stays under its
+   * subscription cap. Subscribing twice to the same session returns the
+   * existing subscription instead of growing the table, which is what keeps a
+   * retrying caller from exhausting the cap.
+   */
+  private async desktopSubscribe(
+    loaded: LoadedPlugin,
+    rawInput: unknown,
+  ): Promise<{ subscriptionId: string; sessionId: string; snapshot: unknown }> {
+    const pluginId = loaded.manifest.id;
+    this.assertPermission(loaded, "desktop.control");
+    const input =
+      rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+        ? (rawInput as Record<string, unknown>)
+        : {};
+    const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+    if (!sessionId || sessionId.length > 512) {
+      throw apiError("INVALID_ARGUMENT", "desktop.subscribe requires a sessionId");
+    }
+    const capture = this.services.desktopSessionSnapshot;
+    if (!capture) {
+      throw apiError("UNSUPPORTED", "host api not available: desktop.subscribe");
+    }
+    let held = 0;
+    for (const subscription of this.desktopSubscriptions.values()) {
+      if (subscription.pluginId !== pluginId) continue;
+      if (subscription.sessionId === sessionId) {
+        const snapshot = await capture(sessionId);
+        if (this.loaded.get(pluginId) !== loaded || !this.desktopSubscriptions.has(subscription.id)) {
+          throw apiError("NOT_FOUND", "plugin subscription was closed");
+        }
+        this.services.audit?.({
+          pluginId,
+          api: "plugin.desktop.subscribe",
+          ok: true,
+          sessionId,
+          reused: true,
+          ts: Date.now(),
+        });
+        return { subscriptionId: subscription.id, sessionId, snapshot };
+      }
+      held += 1;
+    }
+    if (held >= MAX_DESKTOP_SUBSCRIPTIONS_PER_PLUGIN) {
+      this.services.audit?.({
+        pluginId,
+        api: "plugin.desktop.subscribe",
+        ok: false,
+        errorCode: "LIMIT_EXCEEDED",
+        sessionId,
+        ts: Date.now(),
+      });
+      throw apiError("LIMIT_EXCEEDED", "too many desktop subscriptions");
+    }
+    // Registered before the snapshot is read, on purpose: every event that
+    // arrives from now on is pushed, and the snapshot only has to cover what
+    // came before. A duplicate that overlaps the two is mergeable by id, a
+    // frame lost to a snapshot-then-register order would not be.
+    const id = `dsub${this.nextDesktopSubscription++}`;
+    this.desktopSubscriptions.set(id, { id, pluginId, sessionId });
+    try {
+      const snapshot = await capture(sessionId);
+      if (this.loaded.get(pluginId) !== loaded || !this.desktopSubscriptions.has(id)) {
+        throw apiError("NOT_FOUND", "plugin subscription was closed");
+      }
+      this.services.audit?.({
+        pluginId,
+        api: "plugin.desktop.subscribe",
+        ok: true,
+        sessionId,
+        ts: Date.now(),
+      });
+      return { subscriptionId: id, sessionId, snapshot };
+    } catch (error) {
+      // The session read failed: an unknown session must not leave a
+      // subscription behind that would start delivering if one appeared.
+      this.desktopSubscriptions.delete(id);
+      this.services.audit?.({
+        pluginId,
+        api: "plugin.desktop.subscribe",
+        ok: false,
+        errorCode: pluginCallErrorCode(error),
+        sessionId,
+        ts: Date.now(),
+      });
+      throw error;
+    }
+  }
+
+  private async desktopUnsubscribe(
+    loaded: LoadedPlugin,
+    subscriptionId: unknown,
+  ): Promise<{ ok: true }> {
+    this.assertPermission(loaded, "desktop.control");
+    const id = String(subscriptionId ?? "");
+    const subscription = this.desktopSubscriptions.get(id);
+    // Only the owner may drop a subscription, and dropping twice is fine.
+    if (subscription && subscription.pluginId === loaded.manifest.id) {
+      this.desktopSubscriptions.delete(id);
+      this.services.audit?.({
+        pluginId: subscription.pluginId,
+        api: "plugin.desktop.unsubscribe",
+        ok: true,
+        sessionId: subscription.sessionId,
+        ts: Date.now(),
+      });
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Read one session's live state on demand (`desktop.getSessionSnapshot`).
+   * The same read `subscribe` performs, for a caller that has to re-align
+   * after a gap without dropping its subscription.
+   */
+  private async desktopSessionSnapshot(
+    loaded: LoadedPlugin,
+    rawInput: unknown,
+  ): Promise<unknown> {
+    const pluginId = loaded.manifest.id;
+    this.assertPermission(loaded, "desktop.control");
+    const input =
+      rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)
+        ? (rawInput as Record<string, unknown>)
+        : {};
+    const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+    if (!sessionId || sessionId.length > 512) {
+      throw apiError("INVALID_ARGUMENT", "desktop.getSessionSnapshot requires a sessionId");
+    }
+    const capture = this.services.desktopSessionSnapshot;
+    if (!capture) {
+      throw apiError("UNSUPPORTED", "host api not available: desktop.getSessionSnapshot");
+    }
+    const snapshot = await capture(sessionId);
+    this.services.audit?.({
+      pluginId,
+      api: "plugin.desktop.getSessionSnapshot",
+      ok: true,
+      sessionId,
+      ts: Date.now(),
+    });
+    return snapshot;
   }
 
   /** Rolling publish window per plugin; the first publish opens the window. */
@@ -4621,6 +4877,14 @@ export class PluginRuntime {
             throw error;
           }
         },
+        // Live session events for one session at a time. The subscription only
+        // records the scope; frames are pushed by `publishDesktopEvent` once a
+        // desktop outlet publishes and this plugin is the subscriber.
+        subscribe: async (rawInput: unknown) => this.desktopSubscribe(loaded, rawInput),
+        unsubscribe: async (subscriptionId: unknown) =>
+          this.desktopUnsubscribe(loaded, subscriptionId),
+        getSessionSnapshot: async (rawInput: unknown) =>
+          this.desktopSessionSnapshot(loaded, rawInput),
       },
       fs: {
         readText: async (pathFromRoot: string) => {

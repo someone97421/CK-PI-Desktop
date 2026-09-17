@@ -716,11 +716,13 @@ export function registerAgentIpc({
     const sessionId = String(resolution?.sessionId ?? "").trim();
     const requestId = String(resolution?.requestId ?? "").trim();
     if (!sessionId || !requestId) throw new Error("asktool resolution identity required");
-    return sidecar.call("asktool.resolve", {
+    const result = await sidecar.call("asktool.resolve", {
       ...resolution,
       sessionId,
       requestId,
     });
+    agentHostBridge?.notifyInputResolved({ sessionId, inputId: requestId });
+    return result;
   });
 
   handle(IPC.invoke.plansPending, async (input: { sessionId?: string } = {}) => {

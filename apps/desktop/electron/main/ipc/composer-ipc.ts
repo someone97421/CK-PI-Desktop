@@ -12,6 +12,7 @@ export type ComposerIpcDependencies = {
   plugins: PluginRuntime;
   agentExtensions: AgentExtensionBridge;
   optionalWorkspaceRoot: () => Promise<string | null>;
+  sessionWorkspaceRoot?: (sessionId: string) => Promise<string | null>;
   activeUserSkills: (root?: string) => Promise<Array<{
     id: string;
     name: string;
@@ -122,12 +123,16 @@ export function createComposerCommandService({
 export function registerComposerIpc({
   registrar,
   optionalWorkspaceRoot,
+  sessionWorkspaceRoot,
   ...serviceDependencies
 }: ComposerIpcDependencies): ComposerCommandService {
   const service = createComposerCommandService(serviceDependencies);
-  registrar.handle(IPC.invoke.composerCommands, async () => {
-    const root = await optionalWorkspaceRoot();
-    return { commands: await service.buildComposerCommands(root) };
+  registrar.handle(IPC.invoke.composerCommands, async (input?: { sessionId?: string }) => {
+    const root = input?.sessionId
+      ? await sessionWorkspaceRoot?.(input.sessionId)
+      : await optionalWorkspaceRoot();
+    if (input?.sessionId && root === undefined) throw new Error("session command scope unavailable");
+    return { commands: await service.buildComposerCommands(root ?? null) };
   });
   return service;
 }
