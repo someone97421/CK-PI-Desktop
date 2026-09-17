@@ -14,7 +14,7 @@ npm --prefix plugins/lan-remote-control run check
 npm --prefix plugins/lan-remote-control run pack
 ```
 
-`check` 只编译该插件的入口与网页，并使用仓库现有 plugin-devkit 检查 manifest/资源，不启动服务或运行测试。`pack` 使用同一 devkit 生成 store-only `.piplug`，位于本目录 `dist/`，当前源码对应的插件包随源码一起提交推送。每次编译生成独立 `.build/plugin-*` 目录，避免上次残留资源进入新插件包；这些构建目录和依赖不进入 Git。
+`check` 只编译该插件的入口与网页，并使用仓库现有 plugin-devkit 检查 manifest/资源，不启动服务或运行测试。`pack` 使用同一 devkit 生成 store-only `.piplug`，位于本目录 `dist/`，当前源码对应的插件包随源码一起提交推送。打包成功后自动删除 `dist/` 中的历史插件包。每次编译生成独立 `.build/plugin-*` 目录，成功后删除旧构建目录，只保留最新一份及共用工具；构建失败时保留上一份成功产物。这些构建目录和依赖不进入 Git。
 
 从桌面插件管理页安装 `.piplug`。开发目录加载应指向命令输出的 `.build/plugin-*`，不要直接加载包含未打包浏览器依赖的源码目录。
 

@@ -1,7 +1,8 @@
 import { build } from 'esbuild';
-import { mkdir, mkdtemp, readFile, writeFile, cp, lstat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, cp, lstat, rm } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { retainArtifacts } from '../../../scripts/artifact-retention.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repository = resolve(root, '../..');
@@ -21,56 +22,68 @@ async function copyAssets(source, destination) {
   });
 }
 
-await mkdir(staging, { recursive: true });
-await mkdir(tooling, { recursive: true });
-const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
-await writeFile(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-for (const name of ['web', 'panel']) {
-  await copyAssets(join(root, name), join(staging, name));
-}
-await build({
-  entryPoints: [join(root, 'main.cjs')],
-  outfile: join(staging, 'main.cjs'),
-  bundle: true,
-  platform: 'node',
-  target: 'node22',
-  format: 'cjs',
-  external: ['bufferutil', 'utf-8-validate'],
-  sourcemap: false,
-  legalComments: 'eof',
-});
-for (const name of ['web', 'panel']) {
+let buildSucceeded = false;
+try {
+  await mkdir(staging, { recursive: true });
+  await mkdir(tooling, { recursive: true });
+  const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
+  await writeFile(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  for (const name of ['web', 'panel']) {
+    await copyAssets(join(root, name), join(staging, name));
+  }
   await build({
-    entryPoints: [join(root, name, 'app.js')],
-    outfile: join(staging, name, 'app.js'),
+    entryPoints: [join(root, 'main.cjs')],
+    outfile: join(staging, 'main.cjs'),
     bundle: true,
-    platform: 'browser',
-    target: ['chrome110', 'safari16'],
-    format: 'esm',
+    platform: 'node',
+    target: 'node22',
+    format: 'cjs',
+    external: ['bufferutil', 'utf-8-validate'],
     sourcemap: false,
     legalComments: 'eof',
   });
-}
+  for (const name of ['web', 'panel']) {
+    await build({
+      entryPoints: [join(root, name, 'app.js')],
+      outfile: join(staging, name, 'app.js'),
+      bundle: true,
+      platform: 'browser',
+      target: ['chrome110', 'safari16'],
+      format: 'esm',
+      sourcemap: false,
+      legalComments: 'eof',
+    });
+  }
 
-// Bundle the repository's actual devkit rather than duplicating its installer rules.
-await build({
-  entryPoints: [join(repository, 'packages/plugin-devkit/src/index.ts')],
-  outfile: join(tooling, 'devkit.mjs'),
-  bundle: true,
-  platform: 'node',
-  target: 'node22',
-  format: 'esm',
-  alias: { '@pi-desktop/plugin-sdk': join(repository, 'packages/plugin-sdk/src/index.ts') },
-});
-const { check, pack } = await import(pathToFileURL(join(tooling, 'devkit.mjs')).href);
-const result = await check(staging);
-for (const warning of result.warnings) console.warn(`${warning.code}: ${warning.message}`);
-if (!result.ok) {
-  for (const error of result.errors) console.error(`${error.code}: ${error.message}`);
-  process.exitCode = 1;
-} else if (mode === 'pack') {
-  const artifact = await pack(staging, { outDir: join(root, 'dist') });
-  console.log(`插件包：${artifact.packagePath}\nSHA-256：${artifact.shasum}`);
-} else {
-  console.log(`插件静态打包和 manifest 检查通过：${staging}`);
+  // Bundle the repository's actual devkit rather than duplicating its installer rules.
+  await build({
+    entryPoints: [join(repository, 'packages/plugin-devkit/src/index.ts')],
+    outfile: join(tooling, 'devkit.mjs'),
+    bundle: true,
+    platform: 'node',
+    target: 'node22',
+    format: 'esm',
+    alias: { '@pi-desktop/plugin-sdk': join(repository, 'packages/plugin-sdk/src/index.ts') },
+  });
+  const { check, pack } = await import(pathToFileURL(join(tooling, 'devkit.mjs')).href);
+  const result = await check(staging);
+  for (const warning of result.warnings) console.warn(`${warning.code}: ${warning.message}`);
+  if (!result.ok) {
+    for (const error of result.errors) console.error(`${error.code}: ${error.message}`);
+    process.exitCode = 1;
+  } else if (mode === 'pack') {
+    const artifact = await pack(staging, { outDir: join(root, 'dist') });
+    await retainArtifacts(join(root, 'dist'), [artifact.packagePath], (entry) => (
+      entry.isFile() && entry.name.endsWith('.piplug')
+    ));
+    console.log(`插件包：${artifact.packagePath}\nSHA-256：${artifact.shasum}`);
+  } else {
+    console.log(`插件静态打包和 manifest 检查通过：${staging}`);
+  }
+  if (result.ok) {
+    buildSucceeded = true;
+    await retainArtifacts(buildRoot, [staging], (entry) => entry.isDirectory() && entry.name.startsWith('plugin-'));
+  }
+} finally {
+  if (!buildSucceeded) await rm(staging, { recursive: true, force: true });
 }

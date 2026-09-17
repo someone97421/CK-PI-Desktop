@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { chmodSync } from "node:fs";
+import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { prepareBuild } from "./prepare-build.mjs";
+import { isDesktopArtifact, retainArtifacts } from "./artifact-retention.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(root, "apps/desktop");
@@ -69,13 +71,30 @@ try {
         const cli = require.resolve("electron-builder/cli.js");
         const args = mode === "pack" ? ["--dir", "--publish", "never"]
           : [...(mode.includes(":") ? [`--${mode.split(":")[1]}`] : []), "--publish", "never"];
-        // 重试时可换用独立产物目录，避免清理或覆盖被占用的旧目录。
-        const outputDirectory = process.env.THIS_IS_A_AGENT_OUTPUT_DIR?.trim();
-        if (outputDirectory) args.push(`--config.directories.output=${outputDirectory}`);
+        // 每次生成独立的一整套产物，构建失败时保留上一份成功产物。
+        const releaseRoot = join(desktop, "release");
+        const outputDirectory = resolve(desktop, process.env.THIS_IS_A_AGENT_OUTPUT_DIR?.trim() || "release");
+        await mkdir(outputDirectory, { recursive: true });
+        const staging = await mkdtemp(join(outputDirectory, `.building-${stamp.displayVersion}-`));
+        const completed = join(outputDirectory, basename(staging).replace(/^\.building-/, ""));
+        args.push(`--config.directories.output=${staging}`);
         // Windows 解压后重命名失败时，可显式复用同版本的已解压 Electron。
         const electronDistribution = process.env.THIS_IS_A_AGENT_ELECTRON_DIST?.trim();
         if (electronDistribution) args.push(`--config.electronDist=${electronDistribution}`);
-        await run(process.execPath, [cli, ...args], desktop);
+        try {
+          await run(process.execPath, [cli, ...args], desktop);
+        } catch (error) {
+          await rm(staging, { recursive: true, force: true });
+          throw error;
+        }
+        await rename(staging, completed);
+        await retainArtifacts(outputDirectory, [completed], isDesktopArtifact);
+        // 自定义目录位于 release 内时，同时清理 release 中的其他历史批次。
+        const relativeOutput = relative(releaseRoot, outputDirectory);
+        if (relativeOutput && relativeOutput !== ".." && !relativeOutput.startsWith(`..${sep}`) && !isAbsolute(relativeOutput)) {
+          await retainArtifacts(releaseRoot, [completed], isDesktopArtifact);
+        }
+        console.log(`本次构建产物：${completed}`);
       }
     }
   }
