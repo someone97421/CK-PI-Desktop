@@ -27,6 +27,21 @@ try {
   await mkdir(staging, { recursive: true });
   await mkdir(tooling, { recursive: true });
   const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
+  let versionFiles = [];
+  if (mode === 'pack') {
+    const packagePath = join(root, 'package.json');
+    const lockPath = join(root, 'package-lock.json');
+    const pkg = JSON.parse(await readFile(packagePath, 'utf8'));
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'));
+    const parts = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(manifest.version);
+    if (!parts || [pkg.version, lock.version, lock.packages?.['']?.version].some((version) => version !== manifest.version)) {
+      throw new Error('插件版本必须是同步一致的 major.minor.patch，无法自动递增。');
+    }
+    const nextVersion = `${parts[1]}.${parts[2]}.${BigInt(parts[3]) + 1n}`;
+    manifest.version = pkg.version = lock.version = lock.packages[''].version = nextVersion;
+    versionFiles = [[join(root, 'manifest.json'), manifest], [packagePath, pkg], [lockPath, lock]];
+    console.log(`本次插件打包版本：${nextVersion}`);
+  }
   await writeFile(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   for (const name of ['web', 'panel']) {
     await copyAssets(join(root, name), join(staging, name));
@@ -73,6 +88,10 @@ try {
     process.exitCode = 1;
   } else if (mode === 'pack') {
     const artifact = await pack(staging, { outDir: join(root, 'dist') });
+    // 产物成功生成后才更新源码版本；编译或检查失败不消耗版本号。
+    for (const [path, data] of versionFiles) {
+      await writeFile(path, `${JSON.stringify(data, null, 2)}\n`);
+    }
     await retainArtifacts(join(root, 'dist'), [artifact.packagePath], (entry) => (
       entry.isFile() && entry.name.endsWith('.piplug')
     ));

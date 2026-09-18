@@ -18,9 +18,11 @@ npm --prefix plugins/lan-remote-control run pack
 
 从桌面插件管理页安装 `.piplug`。开发目录加载应指向命令输出的 `.build/plugin-*`，不要直接加载包含未打包浏览器依赖的源码目录。
 
-当前随仓库提供的安装包：[local.lan-remote-control-0.2.0.piplug](./dist/local.lan-remote-control-0.2.0.piplug)。
+当前随仓库提供的安装包位于 [dist/](./dist/)，只保留最近一次成功打包的版本。
 
 插件版本独立于宿主日期版本。manifest 中的最低版本只是基础门槛；完整流式订阅等能力依赖本分支新增的受控宿主 API。旧版或上游原版是否兼容由运行时能力探测决定，不能仅凭版本号推断。
+
+每次执行 `npm --prefix plugins/lan-remote-control run pack` 自动递增插件补丁版本（例如 `0.2.0 → 0.2.1`），产物生成成功后同步 `manifest.json`、`package.json` 和 `package-lock.json`。普通 `build` / `check` 不改变版本；编译或检查失败不递增版本。
 
 ## 使用
 

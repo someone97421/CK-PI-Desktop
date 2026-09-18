@@ -71,6 +71,49 @@ const drafts = new Map(),
   parents = new Map();
 let capabilities = {};
 const positions = new Map();
+// UI 状态独立于流式替换的消息对象，按会话和稳定 ID 保存。
+const disclosureState = new Map();
+const processVisibility = new Map();
+let drawer = null;
+function disclosure(key, label, excerpt, ...children) {
+  const stateKey = `${current}:${key}`;
+  const details = el("details", { className: "remote-process", open: disclosureState.get(stateKey) || false },
+    el("summary", {}, el("span", { className: "remote-process-label", text: label }),
+      el("span", { className: "remote-process-excerpt", text: String(excerpt || "").replace(/\s+/g, " ") })),
+    el("div", { className: "remote-process-body" }, ...children));
+  details.dataset.disclosureKey = stateKey;
+  details.querySelector("summary").addEventListener("click", (event) => {
+    event.preventDefault();
+    details.open = !details.open;
+    disclosureState.set(stateKey, details.open);
+  });
+  details.addEventListener("toggle", () => {
+    if (details.isConnected) disclosureState.set(stateKey, details.open);
+  });
+  return details;
+}
+function closeLibrary() {
+  drawer?.remove();
+}
+function openLibrary() {
+  if (drawer || loginVisible) return;
+  drawer = el("dialog", { className: "remote-drawer", attrs: { "aria-label": "项目与会话" } },
+    el("div", { className: "remote-drawer-heading" }, el("strong", { text: "项目与会话" }),
+      button("返回对话", { iconName: "back", preserveLabel: true, onClick: closeLibrary })), library);
+  drawer.addEventListener("cancel", (event) => { event.preventDefault(); closeLibrary(); });
+  const panel = drawer;
+  const remove = panel.remove.bind(panel);
+  panel.remove = () => {
+    if (drawer === panel) {
+      document.querySelector(".remote-layout")?.prepend(library);
+      drawer = null;
+    }
+    remove();
+  };
+  drawer.addEventListener("click", (event) => { if (event.target === drawer) closeLibrary(); });
+  document.body.append(drawer);
+  drawer.showModal();
+}
 function saveDraft() {
   if (!current) return;
   drafts.set(current, {
@@ -108,6 +151,7 @@ const notice = el("p", {
 const header = el(
   "header",
   { className: "topbar" },
+  button("项目列表", { className: "library-toggle", onClick: openLibrary }),
   el("strong", { text: "这是一个助手 · 远程" }),
   button("退出登录", {
     className: "logout-button",
@@ -126,8 +170,26 @@ const header = el(
 const library = el("aside", { className: "remote-library" }),
   transcript = el("main", { className: "remote-transcript" }),
   composer = el("form", { className: "remote-composer" });
+const chatHeading = el("div", { className: "remote-chat-heading row-actions" });
+const jumpLatest = button("回到最新消息 ↓", { className: "remote-jump", preserveLabel: true,
+  onClick: () => { transcript.scrollTop = transcript.scrollHeight; updateJump(); } });
+jumpLatest.hidden = true;
+function updateJump() {
+  jumpLatest.hidden = !current || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
+}
+transcript.addEventListener("scroll", updateJump, { passive: true });
+function updateViewport() {
+  const viewport = window.visualViewport;
+  if (viewport && viewport.scale !== 1) return;
+  const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
+  document.documentElement.style.setProperty("--rc-visible-height", `${viewport?.height || window.innerHeight}px`);
+  if (atBottom) requestAnimationFrame(() => { transcript.scrollTop = transcript.scrollHeight; });
+}
+window.visualViewport?.addEventListener("resize", updateViewport);
+window.addEventListener("resize", updateViewport);
+updateViewport();
 const input = el("textarea", {
-  attrs: { placeholder: "发送消息…", "aria-label": "消息", rows: 3 },
+  attrs: { placeholder: "发送消息…", "aria-label": "消息", rows: 2 },
 });
 const attachmentList = el("div"),
   annotationList = el("div");
@@ -238,7 +300,7 @@ function layout() {
       "div",
       { className: "remote-layout" },
       library,
-      el("section", { className: "remote-chat" }, transcript, composer),
+      el("section", { className: "remote-chat" }, chatHeading, transcript, jumpLatest, composer),
     ),
   );
   drawRecovery();
@@ -247,6 +309,9 @@ function layout() {
 function showLogin() {
   if (loginVisible) return;
   loginVisible = true;
+  closeLibrary();
+  chatHeading.replaceChildren();
+  jumpLatest.hidden = true;
   root.dataset.authenticated = "false";
   renderVersion++; refreshVersion++;
   current = null; snapshot = null; messages = []; liveTools.clear(); recentEvents.length = 0;
@@ -309,13 +374,15 @@ async function loadLibrary() {
             }),
         }),
       );
-      for (const s of visible)
-        group.append(
-          button(`${s.running ? "● " : ""}${s.title || "新对话"}`, {
-            preserveLabel: true,
-            onClick: () => action(() => openSession(s.id)),
-          }),
-        );
+      for (const s of visible) {
+        const row = button(`${s.running ? "● " : ""}${s.title || "新对话"}`, {
+          preserveLabel: true,
+          onClick: () => action(() => openSession(s.id)),
+        });
+        row.dataset.sessionId = s.id;
+        row.setAttribute("aria-current", s.id === current ? "page" : "false");
+        group.append(row);
+      }
       if (sessions.nextCursor)
         group.append(
           button("加载更多会话", {
@@ -336,15 +403,21 @@ async function loadLibrary() {
         );
       list.append(group);
     }
+    if (!list.childElementCount) list.append(el("p", { className: "connection-banner", text: search.value ? "没有匹配的项目或会话。" : "电脑端尚无可用项目。" }));
   }
   search.addEventListener("input", () => action(draw));
   await draw();
 }
 async function openSession(id) {
+  closeLibrary();
   saveDraft();
   if (current) positions.set(current, transcript.scrollTop);
   socket?.unsubscribe(current);
   current = id;
+  for (const row of library.querySelectorAll("[data-session-id]"))
+    row.setAttribute("aria-current", row.dataset.sessionId === id ? "page" : "false");
+  composer.hidden = false;
+  transcript.replaceChildren(el("p", { className: "connection-banner", text: "正在加载会话…", attrs: { role: "status" } }));
   document.querySelector(".remote-layout").dataset.view = "chat";
   liveTools.clear();
   snapshotRevision = -1;
@@ -362,8 +435,10 @@ async function openSession(id) {
   renderAttachments();
   socket?.subscribe(id);
   await refresh();
-  if (current === id && positions.has(id))
-    transcript.scrollTop = positions.get(id);
+  if (current === id) {
+    transcript.scrollTop = positions.has(id) ? positions.get(id) : transcript.scrollHeight;
+    updateJump();
+  }
 }
 async function refresh() {
   if (!current || !token) return;
@@ -407,18 +482,9 @@ async function refresh() {
 async function drawChat() {
   const version = ++renderVersion;
   const container = document.createDocumentFragment();
-  const scroll = transcript.scrollTop,
-    nearBottom =
-      transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <
-      100;
   const top = el(
     "div",
     { className: "row-actions" },
-    button("项目列表", {
-      onClick: () => {
-        document.querySelector(".remote-layout").dataset.view = "library";
-      },
-    }),
     el("h2", { text: snapshot?.session?.title || "对话" }),
     button("刷新", { onClick: () => action(refresh) }),
   );
@@ -435,7 +501,13 @@ async function drawChat() {
           onClick: () => action(() => openSession(child)),
         }),
       );
-  container.append(top);
+  const processToggle = button(processVisibility.get(current) === false ? "展开过程" : "收起过程", {
+    preserveLabel: true,
+    onClick: () => { processVisibility.set(current, processVisibility.get(current) === false); action(drawChat); },
+  });
+  processToggle.setAttribute("aria-pressed", String(processVisibility.get(current) === false));
+  top.append(processToggle);
+  const showProcess = processVisibility.get(current) !== false;
   if (snapshot?.messages?.hasMoreBefore)
     container.append(
       button("加载更早消息", {
@@ -497,12 +569,14 @@ async function drawChat() {
                   const source = document.getElementById(
                     `message-${a.source?.messageId}`,
                   );
-                  if (source)
-                    source.scrollIntoView({
-                      block: "center",
-                      behavior: "smooth",
-                    });
-                  else
+                  if (source) {
+                    for (let parent = source.parentElement; parent; parent = parent.parentElement)
+                      if (parent.tagName === "DETAILS") {
+                        parent.open = true;
+                        if (parent.dataset.disclosureKey) disclosureState.set(parent.dataset.disclosureKey, true);
+                      }
+                    source.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+                  } else
                     showText(
                       `批注 ${match[1]}`,
                       `${a.text}\n\n${a.annotation || ""}`,
@@ -513,15 +587,8 @@ async function drawChat() {
           }
         } catch {}
     }
-    if (m.thinking)
-      card.append(
-        el(
-          "details",
-          {},
-          el("summary", { text: "思考" }),
-          el("pre", { text: m.thinking }),
-        ),
-      );
+    if (m.thinking && showProcess)
+      card.append(disclosure(`thinking:${m.id}`, "◇ 思考", m.thinking, el("pre", { text: m.thinking })));
     for (const a of m.attachments || [])
       card.append(
         button(a.name || "附件", {
@@ -627,32 +694,48 @@ async function drawChat() {
         }),
       );
     card.append(actions);
-    container.append(card);
+    // 同轮最后一条助手正文保持展开；工具与中间回复可整体收起。
+    const index = messages.indexOf(m);
+    const later = messages.slice(index + 1);
+    const nextUser = later.findIndex((item) => item.role === "user");
+    const remainingTurn = nextUser < 0 ? later : later.slice(0, nextUser);
+    const intermediate = m.role === "assistant" && remainingTurn.some((item) => item.role === "assistant" && item.content);
+    const isProcess = !["user", "assistant"].includes(m.role) || intermediate || (m.role === "assistant" && !m.content && m.thinking);
+    if (!isProcess) container.append(card);
+    else if (showProcess) container.append(disclosure(`message:${m.id}`, intermediate ? "◌ 过程" : "⌘ 工具", m.content || m.thinking || m.role, card));
   }
-  for (const tool of liveTools.values()) {
-    container.append(
-      el(
-        "details",
-        { open: tool.running },
-        el("summary", {
-          text: `${tool.running ? "执行中" : tool.isError ? "失败" : "完成"} · ${tool.toolName || "工具"}`,
-        }),
-        el("pre", { text: JSON.stringify(tool.args || {}, null, 2) }),
-        el("pre", {
-          text: JSON.stringify(
-            tool.result ?? tool.partialResult ?? "",
-            null,
-            2,
-          ),
-        }),
-      ),
-    );
+  if (showProcess) for (const [toolId, tool] of liveTools) {
+    const name = tool.toolName || "工具";
+    const label = /bash|terminal|exec/i.test(name) ? "›_ 终端" : /task|agent/i.test(name) ? "◇ 子代理" : "⌘ 工具";
+    const state = tool.running ? "执行中" : tool.isError ? "失败" : "完成";
+    const detail = disclosure(`tool:${toolId}`, label, `${state} · ${name} · ${JSON.stringify(tool.args || {})}`,
+      el("pre", { text: JSON.stringify(tool.args || {}, null, 2) }),
+      el("pre", { text: JSON.stringify(tool.result ?? tool.partialResult ?? "等待工具输出…", null, 2) }));
+    detail.dataset.error = String(!!tool.isError);
+    if (/task|agent/i.test(name)) detail.lastElementChild.append(button("查看子代理详情", {
+      preserveLabel: true,
+      onClick: () => showText(`${name} · ${state}`, JSON.stringify({ request: tool.args, result: tool.result ?? tool.partialResult ?? "等待工具输出…" }, null, 2)),
+    }));
+    container.append(detail);
   }
   if (version !== renderVersion) return;
+  const scroll = transcript.scrollTop;
+  const nearBottom = transcript.scrollHeight - scroll - transcript.clientHeight < 100;
+  const focusedDisclosure = document.activeElement?.closest("details")?.dataset.disclosureKey;
+  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
+  if (pendingCount) top.append(button(`待处理 ${pendingCount}`, { preserveLabel: true, onClick: () => {
+    transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" });
+  } }));
+  chatHeading.replaceChildren(top);
   transcript.replaceChildren(container);
   renderPending();
+  if (focusedDisclosure) {
+    const matching = [...transcript.querySelectorAll("details")].find((node) => node.dataset.disclosureKey === focusedDisclosure);
+    matching?.querySelector("summary")?.focus({ preventScroll: true });
+  }
   if (nearBottom) transcript.scrollTop = transcript.scrollHeight;
   else transcript.scrollTop = scroll;
+  updateJump();
 }
 function showText(title, text) {
   const dialog = el(
@@ -660,7 +743,7 @@ function showText(title, text) {
     {},
     el("h3", { text: title }),
     el("pre", { text }),
-    button("关闭", { onClick: () => dialog.remove() }),
+    button("返回对话", { iconName: "back", preserveLabel: true, onClick: () => dialog.remove() }),
   );
   document.body.append(dialog);
   dialog.showModal();
@@ -1138,12 +1221,13 @@ async function start() {
   transcript.replaceChildren(el("p", { text: "选择项目或会话开始使用。" }));
   layout();
   library.hidden = false;
-  composer.hidden = false;
+  composer.hidden = true;
   notice.textContent = "已授权 · 正在连接实时事件";
   capabilities = await api.read("capabilities");
   if (!capabilities.events?.subscribe)
     notice.textContent = "宿主缺少实时订阅能力，请安装包含远程接口的版本。";
   await loadLibrary();
+  if (matchMedia("(max-width: 700px)").matches) openLibrary();
   socket?.close?.();
   socket = new EventSocket({
     getToken: () => token,
