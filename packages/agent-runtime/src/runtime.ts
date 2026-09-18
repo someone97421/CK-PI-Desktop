@@ -1603,15 +1603,15 @@ export class DesktopAgentRuntime {
       ...(this.subagents.length
         ? [
             `## Delegation
-Handle quick, tightly scoped work directly. Actively consider subagents for separable work when they can save time, reduce context load or provide a useful independent perspective. A focused investigation, implementation or review can qualify; delegation does not require a large or complex task. When a useful independent subtask is apparent, delegate it early instead of completing it yourself first.
+Handle quick, tightly scoped work directly. Consider subagents for separable work when they can save time or provide a useful independent perspective. A focused investigation, implementation or review can qualify; delegation does not require a large or complex task. When a useful independent subtask is apparent, delegate it early instead of completing it yourself first.
 
 Useful cases, not mandatory stages:
 - User-requested delegation: follow the requested scope and number of subagents.
 - Exploration: delegate a bounded codebase question, call-chain investigation or fault hypothesis when it needs several searches or file reads, especially while you work on another part.
 - Implementation: delegate a self-contained fix, component or module with clear scope and non-overlapping file ownership; medium-sized tasks qualify when the handoff is straightforward.
 - Independent judgment: use focused reviews of finished changes, alternative assessments or blind evaluation when a fresh perspective can catch mistakes or resolve uncertainty; supply necessary facts without imposing your conclusions.
-- Validation or experiments: delegate relevant verification, reproduction or failure diagnosis when it can run independently or keep noisy investigation out of the main context. Follow the user's testing limits.
-- Analysis: delegate logs, documents, datasets or module surveys when a concise report saves context or lets other work proceed.
+- Validation or experiments: delegate relevant verification, reproduction or failure diagnosis when it can run independently. Follow the user's testing limits.
+- Analysis: delegate logs, documents, datasets or module surveys when a concise report lets other work proceed.
 
 Delegation rules:
 - Parallelize independent work only. Before dispatching dependent work, wait for prerequisites to succeed and read their results; a TaskWait progress update is not completion. Review only finished, stable changes.
@@ -3617,7 +3617,7 @@ Delegation rules:
       name: SUBAGENT_TOOL_NAME,
       label: "Task",
       description: [
-        "Start one background subagent and return its id immediately. Delegate separable work when it saves time, reduces context load or adds a useful independent perspective; focused and medium-sized tasks qualify. Delegate useful independent subtasks early. Apply the system's Delegation guidance.",
+        "Start one background subagent and return its id immediately. Delegate separable work when it saves time or adds a useful independent perspective; focused and medium-sized tasks qualify. Delegate useful independent subtasks early. Apply the system's Delegation guidance.",
         "Suitable examples include bounded codebase investigations, self-contained fixes or components, focused review of finished changes, independent verification or diagnosis, and material analysis. Keep trivial lookups and tiny edits local, avoid duplicate work, respect the user's testing limits, and wait for prerequisites before dispatching dependent work. Keep user decisions with the main agent.",
         "A definition's pinned primary model is locked: Task.model is ignored, including the parent model or another authorized model. Configured fallback models are used only after failure.",
         ...(this.availableSubagentModelKeys().length
