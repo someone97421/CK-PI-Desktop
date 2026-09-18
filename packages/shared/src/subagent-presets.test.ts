@@ -15,12 +15,11 @@ import {
 } from "./subagent-presets.js";
 
 describe("SUBAGENT_PRESETS", () => {
-  it("ships the six builtin roles", () => {
+  it("ships the five builtin roles", () => {
     const ids = SUBAGENT_PRESETS.map((preset) => preset.id);
     expect(ids).toEqual([
       "explorer",
       "code-reviewer",
-      "test-runner",
       "worker",
       "fixer",
       "ui-designer",
@@ -56,7 +55,6 @@ describe("SUBAGENT_PRESETS", () => {
     const fixer = findSubagentPreset("fixer");
     const explorer = findSubagentPreset("explorer");
     const reviewer = findSubagentPreset("code-reviewer");
-    const runner = findSubagentPreset("test-runner");
     const designer = findSubagentPreset("ui-designer");
     expect(worker?.tools).toContain("Edit");
     expect(worker?.tools).toContain("Write");
@@ -67,7 +65,6 @@ describe("SUBAGENT_PRESETS", () => {
     expect(designer?.tools).toContain("BrowserPreview");
     expect(explorer?.tools ?? []).not.toContain("Edit");
     expect(reviewer?.tools ?? []).not.toContain("Edit");
-    expect(runner?.tools ?? []).not.toContain("Edit");
   });
 });
 

@@ -2297,8 +2297,6 @@ importConfirm: "Imported extensions run inside the agent process with the same a
       presetExplorerDesc: "Search the codebase and answer where or how questions.",
       presetReviewerName: "Code reviewer",
       presetReviewerDesc: "A second look for correctness, edge cases, and missing tests.",
-      presetTestRunnerName: "Test runner",
-      presetTestRunnerDesc: "Run a test or build command and report what failed.",
       presetWorkerName: "Worker",
       presetWorkerDesc: "Carry out a self-contained feature, module or refactor.",
       presetFixerName: "Fixer",

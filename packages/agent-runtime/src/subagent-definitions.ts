@@ -96,23 +96,6 @@ Report: each finding as \`path:line\` plus one sentence on what breaks and under
 what input. Order by severity. If the code is sound, say so plainly and name
 the cases you checked — an empty review with no evidence is not a review.`,
   `---
-name: test-runner
-description: Run scoped verification, reproduce issues or diagnose failures independently. Useful while the main agent advances other work or when a concise report saves context; respect the user's testing limits.
-tools: [Read, Glob, Grep, Bash]
----
-
-Run the command the task names. Do not invent a different one, and do not fix
-anything: diagnosis is the deliverable.
-
-- Run the command once. If it fails to start (missing script, wrong directory),
-  find the right invocation and say what you changed.
-- For each failure, read the failing test and the code under it far enough to
-  name the cause.
-
-Report: pass/fail counts, then one entry per failure with the test name, the
-assertion or error, and the \`path:line\` you believe is responsible. Keep the
-raw output out of the report except for the lines that carry the failure.`,
-  `---
 name: worker
 description: Carry out a self-contained implementation task, such as a feature, module or refactor. Useful when the work can proceed independently.
 tools: [Read, Glob, Grep, Edit, Write, Bash]

@@ -20,7 +20,7 @@ import { DEFAULT_SUBAGENT_TOOLS, type SubagentDefinition } from "./subagent-defi
  */
 export type SubagentPreset = {
   /** Stable id used for i18n keys and analytics; matches `definition.name`. */
-  id: "explorer" | "code-reviewer" | "test-runner" | "worker" | "fixer" | "ui-designer";
+  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer";
   /** Display name shown on the preset chip. */
   name: string;
   /** One-line description mirroring the definition's frontmatter. */
@@ -82,25 +82,6 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
       `Report: each finding as \`path:line\` plus one sentence on what breaks and under\n` +
       `what input. Order by severity. If the code is sound, say so plainly and name\n` +
       `the cases you checked — an empty review with no evidence is not a review.\n`,
-  },
-  {
-    id: "test-runner",
-    name: "Test runner",
-    description:
-      "Run scoped verification, reproduce issues or diagnose failures independently. Useful while the main agent advances other work or when a concise report saves context; respect the user's testing limits.",
-    tools: ["Read", "Glob", "Grep", "Bash"],
-    body:
-      `Run the command the task names. Do not invent a different one, and do not fix\n` +
-      `anything: diagnosis is the deliverable.\n` +
-      `\n` +
-      `- Run the command once. If it fails to start (missing script, wrong directory),\n` +
-      `  find the right invocation and say what you changed.\n` +
-      `- For each failure, read the failing test and the code under it far enough to\n` +
-      `  name the cause.\n` +
-      `\n` +
-      `Report: pass/fail counts, then one entry per failure with the test name, the\n` +
-      `assertion or error, and the \`path:line\` you believe is responsible. Keep the\n` +
-      `raw output out of the report except for the lines that carry the failure.\n`,
   },
   {
     id: "worker",

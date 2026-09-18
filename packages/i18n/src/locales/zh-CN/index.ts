@@ -2261,8 +2261,6 @@ sklm: {
       presetExplorerDesc: "检索代码库，回答「在哪」和「怎么工作」。",
       presetReviewerName: "代码审查员",
       presetReviewerDesc: "提交前检查正确性、边界情况和缺测。",
-      presetTestRunnerName: "测试执行者",
-      presetTestRunnerDesc: "运行测试或构建，并报告失败原因。",
       presetWorkerName: "实施者",
       presetWorkerDesc: "独立完成功能、模块或重构任务。",
       presetFixerName: "修复者",

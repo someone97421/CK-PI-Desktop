@@ -31,7 +31,6 @@ describe("builtin subagent documents", () => {
     expect(definitions.map((d) => d.name)).toEqual([
       "explorer",
       "code-reviewer",
-      "test-runner",
       "worker",
       "fixer",
       "ui-designer",
@@ -61,7 +60,6 @@ describe("builtin subagent documents", () => {
       DEFAULT_SUBAGENT_IDLE_TIMEOUT_SECONDS,
     );
     expect(explorer.maxDurationSeconds).toBe(21_600);
-    expect(definitions[2].tools).toContain("Bash");
     const designer = definitions.find((definition) => definition.name === "ui-designer")!;
     expect(designer.tools).toContain("BrowserPreview");
     expect("maxTurns" in designer).toBe(false);
@@ -185,10 +183,10 @@ describe("loadSubagentDefinitions", () => {
           filePath: "/home/.agents/subagents/explorer.md",
         },
         {
-          id: "test-runner",
+          id: "worker",
           document:
-            "---\nname: test-runner\ndescription: My runner.\ntools: [Bash]\n---\nRun it.\n",
-          filePath: "/home/.agents/subagents/test-runner.md",
+            "---\nname: worker\ndescription: My worker.\ntools: [Bash]\n---\nRun it.\n",
+          filePath: "/home/.agents/subagents/worker.md",
         },
         {
           id: "note-taker",
@@ -202,8 +200,8 @@ describe("loadSubagentDefinitions", () => {
     expect(diagnostics).toEqual([]);
     const byName = new Map(definitions.map((d) => [d.name, d]));
     expect(byName.get("explorer")!.source).toBe("user");
-    expect(byName.get("test-runner")!.source).toBe("user");
-    expect(byName.get("test-runner")!.filePath).toBe("/home/.agents/subagents/test-runner.md");
+    expect(byName.get("worker")!.source).toBe("user");
+    expect(byName.get("worker")!.filePath).toBe("/home/.agents/subagents/worker.md");
     expect(byName.get("note-taker")!.tools).toEqual(["Read", "Write"]);
     expect(byName.get("code-reviewer")!.source).toBe("builtin");
     expect(definitions.filter((d) => d.name === "explorer")).toHaveLength(1);
