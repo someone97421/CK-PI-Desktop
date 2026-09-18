@@ -71,6 +71,8 @@ let token = readToken(),
   busy = false;
 const drafts = new Map(),
   parents = new Map();
+const uploadJobs = new Set();
+let uploadEpoch = 0;
 let capabilities = {};
 const positions = new Map();
 // UI 状态独立于流式替换的消息对象，按会话和稳定 ID 保存。
@@ -125,6 +127,9 @@ function saveDraft() {
     queuedAttachments,
     omittedQueuedRefs,
   });
+  persistDrafts();
+}
+function persistDrafts() {
   try {
     sessionStorage.setItem(
       "lan-remote-drafts",
@@ -299,7 +304,7 @@ function drawRecovery() {
     }),
     button("已核对，解除未决状态", {
       onClick: () => {
-        if (confirm("仅在核对电脑会话、确认不会重复提交后解除。不会自动重发。"))
+        if (confirm("核对当前会话后解除未决状态？此操作不会重发消息。"))
           action(() => recovery.acknowledge());
       },
     }),
@@ -332,6 +337,12 @@ function layout() {
 }
 function showLogin() {
   if (loginVisible) return;
+  saveDraft();
+  uploadEpoch++;
+  for (const draft of drafts.values()) {
+    draft.uploaded = (draft.uploaded || []).map((attachment) => ({ ...attachment, expired: true }));
+  }
+  persistDrafts();
   loginVisible = true;
   subagentObserver.close();
   chatHeading.replaceChildren();
@@ -740,7 +751,7 @@ function renderPending() {
       { className: "approval-card" },
       el("strong", { text: plan.title || "计划审批" }),
       el("pre", { text: plan.markdown || plan.content || plan.plan || "" }),
-      el("p", { text: "提交决议后仍需电脑确认" }),
+      el("p", { text: "在此批准或拒绝本次操作。" }),
     );
     for (const [label, decision] of [
       ["批准", "approve"],
@@ -771,7 +782,7 @@ function renderPending() {
       "section",
       { className: "approval-card" },
       el("strong", { text: a.summary || a.toolName || "需要确认" }),
-      el("p", { text: "提交后仍需电脑原生确认" }),
+      el("p", { text: "选择处理方式后立即提交。" }),
     );
     for (const decision of a.allowedDecisions || []) {
       box.append(
@@ -799,7 +810,7 @@ function renderPending() {
     const box = el(
       "section",
       { className: "approval-card" },
-      el("strong", { text: "智能体提问（需电脑确认）" }),
+      el("strong", { text: "智能体提问" }),
     );
     const fields = q.questions.map((question, index) => {
       const group = el(
@@ -851,6 +862,11 @@ function renderPending() {
 }
 function renderAttachments() {
   attachmentList.replaceChildren(
+    ...[...uploadJobs].filter((job) => job.sessionId === current).map((job) =>
+      el("span", { className: "attachment-chip", attrs: { role: "status" } },
+        job.error ? `${job.file.name}：${job.error}` : `正在上传 ${job.file.name}…`,
+        job.error ? button("重试上传", { preserveLabel: true, onClick: () => action(() => uploadFile(job)) }) : null,
+        job.error ? button("移除", { onClick: () => { uploadJobs.delete(job); renderAttachments(); } }) : null)),
     ...queuedAttachments
       .filter((a) => !omittedQueuedRefs.includes(a.ref))
       .map((a) =>
@@ -870,8 +886,8 @@ function renderAttachments() {
       el(
         "span",
         { className: "attachment-chip" },
-        a.name,
-        button("预览", {
+        a.expired ? `${a.name}（登录已更换，请移除后重新选择）` : a.name,
+        a.expired ? null : button("预览", {
           onClick: () =>
             action(async () => {
               const blob = await api.fetchAttachmentBlob(a.id);
@@ -936,52 +952,55 @@ const fileInput = el("input", {
     hidden: true,
   },
 });
-fileInput.addEventListener("change", () =>
-  action(async () => {
-    if (!current) throw new Error("请先选择会话");
-    const sessionId = current;
-    for (const file of fileInput.files) {
-      try {
-        const a = await api.upload(file, sessionId);
-        if (current === sessionId) {
-          uploaded.push(a);
-          renderAttachments();
-        } else {
-          const draft = drafts.get(sessionId) || {};
-          draft.uploaded = [...(draft.uploaded || []), a];
-          drafts.set(sessionId, draft);
-        }
-      } catch (error) {
-        report(error);
-        const retry = button(`重试上传 ${file.name}`, {
-          iconName: "retry",
-          onClick: () =>
-            action(async () => {
-              const a = await api.upload(file, sessionId);
-              if (current === sessionId) {
-                uploaded.push(a);
-                renderAttachments();
-              } else {
-                const draft = drafts.get(sessionId) || {};
-                draft.uploaded = [...(draft.uploaded || []), a];
-                drafts.set(sessionId, draft);
-              }
-              retry.remove();
-            }),
-        });
-        notice.after(retry);
-      }
+async function uploadFile(job) {
+  if (job.running) return;
+  job.running = true;
+  job.error = "";
+  renderAttachments();
+  const epoch = uploadEpoch;
+  try {
+    if (loginVisible || !token) throw new Error("请先重新登录，再重试上传。");
+    const attachment = await api.upload(job.file, job.sessionId);
+    if (epoch !== uploadEpoch) throw new Error("登录已更换，请重试上传。");
+    if (current === job.sessionId) {
+      uploaded.push(attachment);
+      saveDraft();
+    } else {
+      const draft = drafts.get(job.sessionId) || {};
+      draft.uploaded = [...(draft.uploaded || []), attachment];
+      drafts.set(job.sessionId, draft);
+      persistDrafts();
     }
-    fileInput.value = "";
-  }),
-);
+    uploadJobs.delete(job);
+  } catch (error) {
+    job.error = describeError(error) || String(error?.message || error);
+  } finally {
+    job.running = false;
+    renderAttachments();
+  }
+}
+fileInput.addEventListener("change", () => {
+  // 原生文件选择器返回后立即快照，允许再次选择同一张图，不跨 await 读取活动 FileList。
+  const files = Array.from(fileInput.files || []);
+  fileInput.value = "";
+  if (!files.length) return;
+  if (!current) { report(new Error("请先选择会话")); return; }
+  const sessionId = current;
+  const jobs = files.map((file) => ({ file, sessionId, error: "", running: false }));
+  for (const job of jobs) uploadJobs.add(job);
+  renderAttachments();
+  void action(async () => { for (const job of jobs) await uploadFile(job); });
+});
 async function modelOptions() {
+  const sessionId = current, navigation = navigationVersion;
   const models = (await api.read("models.list")).items || [];
+  if (!sessionId || current !== sessionId || navigation !== navigationVersion || loginVisible) return;
+  const session = snapshot?.session;
   const dialog = el(
     "dialog",
     {},
     el("h3", { text: "会话模型" }),
-    el("p", { text: "变更模型与思考强度需要电脑确认" }),
+    el("p", { text: "调整后点击应用，立即更新会话设置。" }),
   );
   const select = el("select", { attrs: { "aria-label": "模型" } }),
     thinking = el("select", { attrs: { "aria-label": "思考强度" } }),
@@ -992,7 +1011,7 @@ async function modelOptions() {
       el("option", {
         value,
         text: value,
-        selected: value === snapshot?.session?.mode,
+        selected: value === session?.mode,
       }),
     );
   for (const value of ["inherit", "ask", "accept-edits", "auto"])
@@ -1000,7 +1019,7 @@ async function modelOptions() {
       el("option", {
         value,
         text: value,
-        selected: value === snapshot?.session?.permissionMode,
+        selected: value === session?.permissionMode,
       }),
     );
   for (const m of models)
@@ -1008,7 +1027,7 @@ async function modelOptions() {
       el("option", {
         value: m.key,
         text: m.label,
-        selected: m.key === snapshot?.session?.modelKey,
+        selected: m.key === session?.modelKey,
       }),
     );
   function levels() {
@@ -1019,7 +1038,7 @@ async function modelOptions() {
         el("option", {
           value: x,
           text: x,
-          selected: x === snapshot?.session?.thinkingLevel,
+          selected: x === session?.thinkingLevel,
         }),
       ),
     );
@@ -1030,12 +1049,12 @@ async function modelOptions() {
     select,
     thinking,
     el("label", {}, "工作模式", mode),
-    el("label", {}, "权限模式（需电脑确认）", permission),
+    el("label", {}, "权限模式", permission),
     button("应用", {
       onClick: () =>
         action(async () => {
           await mutate("models.configure", {
-            sessionId: current,
+            sessionId,
             modelKey: select.value,
             thinkingLevel: thinking.value,
             mode: mode.value,
@@ -1161,6 +1180,15 @@ composer.addEventListener("submit", (event) => {
   event.preventDefault();
   action(async () => {
     if (busy || !current) return;
+    const pendingUploads = [...uploadJobs].filter((job) => job.sessionId === current);
+    if (pendingUploads.length) {
+      throw new Error(pendingUploads.some((job) => job.error)
+        ? "附件上传失败，请重试或移除失败附件后发送。"
+        : "附件正在上传，完成后即可发送。");
+    }
+    if (uploaded.some((attachment) => attachment.expired)) {
+      throw new Error("登录已更换，请移除标记失效的附件并重新选择后发送。");
+    }
     busy = true;
     const sendingSession = current;
     const submitted = {
@@ -1182,17 +1210,27 @@ composer.addEventListener("submit", (event) => {
           ? { queuedDraftId, omitQueuedAttachmentRefs: omittedQueuedRefs }
           : {}),
       });
-      drafts.delete(sendingSession);
+      if (current === sendingSession) saveDraft();
+      const remaining = drafts.get(sendingSession);
+      if (remaining) {
+        if (remaining.text === submitted.text) remaining.text = "";
+        const sentIds = new Set(submitted.uploaded.map((attachment) => attachment.id));
+        remaining.uploaded = (remaining.uploaded || []).filter((attachment) => !sentIds.has(attachment.id));
+        remaining.annotations = (remaining.annotations || []).filter((annotation) => !submitted.annotations.includes(annotation));
+        if (remaining.queuedDraftId === submitted.queuedDraftId) {
+          remaining.queuedDraftId = "";
+          remaining.queuedAttachments = [];
+          remaining.omittedQueuedRefs = [];
+        }
+        persistDrafts();
+      }
       if (current !== sendingSession) return;
-      if (input.value === submitted.text) input.value = "";
-      uploaded = uploaded.filter((a) => !submitted.uploaded.includes(a));
-      annotations = annotations.filter(
-        (a) => !submitted.annotations.includes(a),
-      );
-      queuedDraftId = "";
-      queuedAttachments = [];
-      omittedQueuedRefs = [];
-      saveDraft();
+      input.value = remaining?.text || "";
+      uploaded = remaining?.uploaded || [];
+      annotations = remaining?.annotations || [];
+      queuedDraftId = remaining?.queuedDraftId || "";
+      queuedAttachments = remaining?.queuedAttachments || [];
+      omittedQueuedRefs = remaining?.omittedQueuedRefs || [];
       renderAttachments();
       await refresh();
     } finally {

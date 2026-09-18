@@ -856,7 +856,7 @@ export function createSubagentObserver() {
         Number.isSafeInteger(execution) ? el("span", { text: `第 ${execution} 轮执行` }) : null),
       el("p", { className: "subagent-guidance-content", text: guide.instruction }), meta,
       ["accepted", "applying"].includes(guide.status) ? el("p", {
-        className: "subagent-guidance-note", text: "等待安全执行边界；当前正在执行的工具会先完成。",
+        className: "subagent-guidance-note", text: "当前工具完成后将接收引导。",
       }) : null,
       guide.reason ? el("p", { className: "subagent-guidance-note", text: guide.reason }) : null);
   }

@@ -27,7 +27,7 @@
 - `attachments/import` 为 plugin-only 网关：验证字节后写入宿主返回的会话 scratch 目录，不改变数据库格式。
 - 附件读取 ref 必须已出现在该会话历史或队列的索引中。
 - queue.edit 沿用桌面“移出队列并恢复草稿”语义，返回 draft.id、text、attachments。发送时携带 queuedDraftId；omitQueuedAttachmentRefs 可以排除原附件。草稿有数量和时效限制。
-- 所有工具审批、提问回答、计划决议与会话配置仍走宿主原生确认。`confirm:true` 不代表确认已通过。
+- 模型配置、工具审批、提问回答与计划/目标（Plan/Goal）决议以手机端提交直接生效：用户已明确本机局域网密码登录为唯一授权门槛，移除电脑二次确认，不需要桌面再问授权。宿主 plugin-runtime 与适配层直接采纳并执行手机提交的配置变更与审批决议。
 
 ## 事件
 

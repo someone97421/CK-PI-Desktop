@@ -105,6 +105,7 @@ export class RemoteClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error("timeout")), timeoutMs);
     let response;
+    let text;
     try {
       response = await fetch(`${apiOrigin()}${path}`, {
         method,
@@ -115,8 +116,10 @@ export class RemoteClient {
         cache: "no-store",
         redirect: "error",
       });
+      // 超时覆盖响应正文，手机切到后台后正文读取也可能停滞。
+      text = await response.text();
     } catch (error) {
-      const aborted = error && (error.name === "AbortError" || /timeout/i.test(String(error.message || "")));
+      const aborted = controller.signal.aborted || signal?.aborted || (error && (error.name === "AbortError" || /timeout/i.test(String(error.message || ""))));
       throw new ProtocolError(
         aborted ? ErrorCodes.TIMEOUT : ErrorCodes.NETWORK,
         aborted ? "请求超时" : "网络不可达",
@@ -126,7 +129,6 @@ export class RemoteClient {
       clearTimeout(timer);
     }
 
-    const text = await response.text().catch(() => "");
     let payload = null;
     if (text) {
       try {
@@ -272,9 +274,18 @@ export class RemoteClient {
   // --- 附件 ---------------------------------------------------------------
 
   async upload(file, sessionId, { signal } = {}) {
-    const extension = file.name?.split('.').pop()?.toLowerCase();
-    const fallbackTypes = {md:'text/markdown',txt:'text/plain',csv:'text/csv',json:'application/json',pdf:'application/pdf'};
-    const mimeType = file.type || fallbackTypes[extension] || 'application/octet-stream';
+    const extension = /\.([^.]+)$/.exec(file.name || "")?.[1].toLowerCase();
+    const fallbackTypes = {
+      png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", jpe: "image/jpeg",
+      webp: "image/webp", gif: "image/gif",
+      md: "text/markdown", markdown: "text/markdown", txt: "text/plain", text: "text/plain",
+      log: "text/plain", csv: "text/csv", json: "application/json", pdf: "application/pdf",
+    };
+    // 手机文件提供器可能不报告 MIME；最终仍由服务端校验扩展名和内容。
+    const declaredType = (file.type || "").split(";")[0].trim().toLowerCase();
+    const mimeType = (!declaredType || declaredType === "application/octet-stream")
+      ? fallbackTypes[extension] || "application/octet-stream"
+      : declaredType;
     const headers = this.baseHeaders({
       "Content-Type": mimeType,
       [FILENAME_HEADER]: encodeURIComponent(file.name || "file"),
@@ -293,9 +304,9 @@ export class RemoteClient {
     return {
       id,
       name: String(attachment.name || file.name || "附件"),
-      mimeType: String(attachment.mimeType || file.type || "application/octet-stream"),
+      mimeType: String(attachment.mimeType || mimeType),
       size: Number(attachment.size || file.size || 0),
-      kind: String(attachment.kind || (String(file.type).startsWith("image/") ? "image" : "file")),
+      kind: String(attachment.kind || (mimeType.startsWith("image/") ? "image" : "file")),
     };
   }
 

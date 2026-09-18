@@ -1,9 +1,8 @@
 /**
  * DOM 工具：只用 DOM API 构造界面。
  *
- * 硬性约束（安全边界）：远端来的字符串一律走 textContent；本模块不提供任何
- * 「把字符串当 HTML 插入」的入口。唯一插入 HTML 的地方是 markdown.js 里经过
- * DOMPurify 清洗（或本地构造的节点）的结果。
+ * 文本通过 textContent 展示；富文本由 markdown.js 解析与清洗。
+ * 本模块负责表单、弹层与按钮的通用交互。
  */
 
 import { formatBytes, formatRelative, formatTime } from "./protocol.js";
@@ -19,12 +18,6 @@ export { formatBytes, formatRelative, formatTime };
 export function el(tag, props, ...children) {
   const node = document.createElement(tag);
   if (tag === "dialog") enableDialogDismiss(node);
-  if (tag === "select") node.addEventListener("change", () => {
-    // 收起选择器但保留设置面板，让用户仍能点击“应用”。
-    const dialog = node.closest("dialog");
-    if (dialog) dialog.focus({ preventScroll: true });
-    else node.blur();
-  });
   if (props) {
     for (const [key, value] of Object.entries(props)) {
       if (value === undefined || value === null) continue;
@@ -166,7 +159,7 @@ export function button(label, { variant = "ghost", iconName, preserveLabel = fal
   return node;
 }
 
-/** 所有选项、队列、预览弹窗共用：点空白、焦点移出、Esc 均可关闭。 */
+/** 所有弹窗仅由明确的关闭操作退出；原生选择器、文件选择和切后台不代表取消。 */
 function enableDialogDismiss(dialog) {
   dialog.tabIndex = -1;
   const remove = dialog.remove.bind(dialog);
@@ -182,27 +175,13 @@ function enableDialogDismiss(dialog) {
   dialog.addEventListener("close", () => dialog.remove());
   dialog.addEventListener("pointerdown", (event) => {
     const bounds = dialog.getBoundingClientRect();
-    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+    if (event.target === dialog && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) {
       event.preventDefault();
       dialog.remove();
     }
   });
-  dialog.addEventListener("focusout", () => {
-    queueMicrotask(() => {
-      if (dialog.dataset.persistent === "true") return;
-      if (dialog.open && document.hasFocus() && !dialog.contains(document.activeElement)) dialog.remove();
-    });
-  });
 }
 
-function dismissOpenDialogs() {
-  for (const dialog of document.querySelectorAll('dialog[open]:not([data-persistent="true"])')) dialog.remove();
-}
-window.addEventListener("blur", () => {
-  // 原生选择器可能暂时取得系统焦点，允许用户完成选择。
-  if (document.activeElement?.tagName !== "SELECT") dismissOpenDialogs();
-});
-document.addEventListener("visibilitychange", () => { if (document.hidden) dismissOpenDialogs(); });
 
 export function iconButton(name, { title, onClick, className = "", disabled = false } = {}) {
   const node = el("button", {

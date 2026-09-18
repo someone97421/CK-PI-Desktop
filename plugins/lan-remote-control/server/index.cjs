@@ -627,7 +627,7 @@ function createRemoteServer(options = {}) {
     };
     const body = await httpHelpers.readBody(req, { maxBytes: uploadMaxBytes });
     if (!body.ok) {
-      httpHelpers.sendError(res, body.status, body.code, body.message);
+      httpHelpers.sendBodyError(req, res, body);
       return;
     }
     if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
