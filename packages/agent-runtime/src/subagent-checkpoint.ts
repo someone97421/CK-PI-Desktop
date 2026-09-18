@@ -426,7 +426,7 @@ export function encodeAgentMessages(
             if (!part || typeof part !== "object") {
               throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", `Invalid user content part at message ${idx}[${pIdx}]`);
             }
-            const partObj = part as Record<string, unknown>;
+            const partObj = part as unknown as Record<string, unknown>;
             if (partObj.type === "text" && typeof partObj.text === "string") {
               assertKnownKeys(partObj, ["type", "text", "textSignature"], `messages[${idx}].content[${pIdx}]`);
               return {
@@ -495,7 +495,7 @@ export function encodeAgentMessages(
 
         const contentParts: SerializedAssistantContentPart[] = [];
         for (let pIdx = 0; pIdx < a.content.length; pIdx++) {
-          const part = a.content[pIdx] as Record<string, unknown>;
+          const part = a.content[pIdx] as unknown as Record<string, unknown>;
           if (!part || typeof part !== "object") continue;
           if (part.type === "text" && typeof part.text === "string") {
             assertKnownKeys(part, ["type", "text", "textSignature"], `messages[${idx}].content[${pIdx}]`);
@@ -572,7 +572,7 @@ export function encodeAgentMessages(
           content = t.content;
         } else if (Array.isArray(t.content)) {
           content = t.content.map((part, pIdx) => {
-            const partObj = part as Record<string, unknown>;
+            const partObj = part as unknown as Record<string, unknown>;
             if (partObj.type === "text" && typeof partObj.text === "string") {
               assertKnownKeys(partObj, ["type", "text", "textSignature"], `messages[${idx}].content[${pIdx}]`);
               return {
@@ -662,6 +662,10 @@ export function decodeAgentMessages(serialized: readonly SerializedAgentMessage[
           model: raw.model,
           timestamp: raw.timestamp,
           stopReason: (raw.stopReason ?? "stop") as any,
+          usage: {
+            input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
         };
         if (raw.usage) {
           aMsg.usage = {

@@ -69,7 +69,6 @@ import {
   usageFromPi,
 } from "./agent-messages.js";
 import {
-import {
   apiBindingForStyle,
   buildProviderModel,
   createProviderModels,
@@ -452,7 +451,7 @@ export class SubagentRun {
         `Primary model (${opts.provider.id}/${opts.provider.modelId}) does not match checkpoint primary model (${validated.modelBinding.primaryModel.id}/${validated.modelBinding.primaryModel.modelId})`,
       );
     }
-    const primaryEndpointFp = simplePromptFingerprint(sanitizeBaseUrl(opts.provider.baseUrl));
+    const primaryEndpointFp = simplePromptFingerprint(sanitizeBaseUrl(opts.provider.baseUrl ?? ""));
     if (primaryEndpointFp !== validated.modelBinding.primaryModel.endpointFingerprint) {
       throw new SubagentCodecError(
         "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
@@ -515,7 +514,7 @@ export class SubagentRun {
       resolvedActiveProvider = opts.provider;
     }
 
-    const endpointFp = simplePromptFingerprint(sanitizeBaseUrl(resolvedActiveProvider.baseUrl));
+    const endpointFp = simplePromptFingerprint(sanitizeBaseUrl(resolvedActiveProvider.baseUrl ?? ""));
     if (endpointFp !== validated.modelBinding.provider.endpointFingerprint) {
       throw new SubagentCodecError(
         "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
@@ -621,20 +620,20 @@ export class SubagentRun {
         provider: {
           id: this.provider.id,
           name: this.provider.name,
-          baseUrl: sanitizeBaseUrl(this.provider.baseUrl),
+          baseUrl: sanitizeBaseUrl(this.provider.baseUrl ?? ""),
           modelId: this.provider.modelId,
           api: apiBindingForStyle(this.provider.apiStyle).api,
           apiStyle: this.provider.apiStyle,
-          authKind: this.provider.authKind,
+          authKind: this.provider.authKind ?? "",
           supportsReasoning: this.provider.supportsReasoning,
           supportedThinkingLevels: this.provider.supportedThinkingLevels,
-          endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(this.provider.baseUrl)),
+          endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(this.provider.baseUrl ?? "")),
         },
         primaryModel: {
           id: this.primaryProvider.id,
           modelId: this.primaryProvider.modelId,
           api: apiBindingForStyle(this.primaryProvider.apiStyle).api,
-          endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(this.primaryProvider.baseUrl)),
+          endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(this.primaryProvider.baseUrl ?? "")),
         },
         thinkingLevel: this.thinkingLevel,
         fallbackIndex: this.fallbackIndex,
@@ -646,11 +645,11 @@ export class SubagentRun {
             ? {
                 id: f.provider.id,
                 name: f.provider.name,
-                baseUrl: sanitizeBaseUrl(f.provider.baseUrl),
+                baseUrl: sanitizeBaseUrl(f.provider.baseUrl ?? ""),
                 modelId: f.provider.modelId,
                 api: apiBindingForStyle(f.provider.apiStyle).api,
                 authKind: f.provider.authKind,
-                endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(f.provider.baseUrl)),
+                endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(f.provider.baseUrl ?? "")),
               }
             : undefined,
         })),

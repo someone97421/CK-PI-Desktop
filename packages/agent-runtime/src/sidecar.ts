@@ -28,7 +28,7 @@ import {
 import { applyNodeNetworkProxy } from "./node-proxy.js";
 import { NATIVE_PI_SESSION_PREFIX, nativePiService } from "./native-pi-session.js";
 import { SubagentPersistenceClient } from "./subagent-persistence-client.js";
-import type { SubagentDirectoryEntry } from "./subagent-persistence.js";
+import type { SubagentDirectoryEntry, SubagentListReceipt } from "./subagent-persistence.js";
 import {
   formatFileInsert,
   isCommandShellOption,
@@ -638,7 +638,7 @@ async function handle(method: string, params: any): Promise<unknown> {
       let cursor: string | undefined = undefined;
       let entry: SubagentDirectoryEntry | undefined;
       do {
-        const listRes = await client.listEntries({ sessionId, limit: 50, cursor }).catch(() => null);
+        const listRes: SubagentListReceipt | null = await client.listEntries({ sessionId, limit: 50, cursor }).catch(() => null);
         if (!listRes || !Array.isArray(listRes.entries)) break;
         entry = listRes.entries.find((e) => e.delegationId === delegationId);
         if (entry || !listRes.nextCursor) break;
