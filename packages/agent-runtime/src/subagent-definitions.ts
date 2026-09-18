@@ -97,7 +97,7 @@ what input. Order by severity. If the code is sound, say so plainly and name
 the cases you checked — an empty review with no evidence is not a review.`,
   `---
 name: worker
-description: Carry out a self-contained implementation task, such as a feature, module or refactor. Useful when the work can proceed independently.
+description: Carry out a self-contained implementation or execution task with a clear deliverable.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 ---
 
@@ -111,7 +111,7 @@ verification guidance and the user's testing limits.
 Report what changed, any verification performed, and remaining issues.`,
   `---
 name: fixer
-description: Diagnose and fix bugs, regressions or other observed failures. Focus on restoring correct behavior within the delegated scope.
+description: Diagnose a concrete bug, regression or failure and implement a scoped repair.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
 ---
 

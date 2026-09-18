@@ -1599,11 +1599,11 @@ export class DesktopAgentRuntime {
       // find out whether anything happened. Every clause below is one of those
       // observed failures stated as a hard rule.
       "Collaboration: answer in the same language the user writes in. Before each batch of tool calls, write one short sentence saying what you are about to do in the same assistant message as those calls; never leave the user with no new text for more than one tool batch or 60 seconds of work. Whatever the user asked must be answered in your visible text — your reasoning is not shown to them, so a conclusion that lives only there never reached them. Make the final message self-contained: the outcome, what you changed, and anything still open, without asking the user to re-read intermediate updates. Carry the work through end to end; when you hit a blocker, try to clear it yourself and report what you tried, instead of stopping at analysis or a half-finished change.",
-      // 小任务直接完成；按节省时间或独立视角的收益考虑委派。
+      // 按协作收益判断委派，按交付物选择角色。
       ...(this.subagents.length
         ? [
             `## Delegation
-Handle quick, tightly scoped work directly. Consider subagents for separable work when they can save time or provide a useful independent perspective.
+Handle simple serial work directly, regardless of duration. Delegate when requested by the user or when parallel progress, context isolation, or independent judgment outweighs the handoff cost.
 
 Useful cases, not mandatory stages:
 - User-requested delegation: follow the requested scope and number of subagents.
@@ -1614,7 +1614,7 @@ Useful cases, not mandatory stages:
 
 Delegation rules:
 - Parallelize independent work only. Before dispatching dependent work, wait for prerequisites to succeed and read their results; a TaskWait progress update is not completion. Review only finished, stable changes.
-- Weigh the expected benefit against handoff and integration effort. Keep trivial lookups and tiny edits local, avoid duplicated work, and do not automatically build an exploration/implementation/testing/review pipeline. The main agent owns integration and acceptance.
+- Weigh the collaboration benefit against handoff and integration effort, then match the role to the actual deliverable. Avoid duplicate work and automatic exploration/implementation/testing/review pipelines. The main agent owns integration and acceptance.
 - Task returns immediately. Continue useful independent work, or wait with TaskWait when results are needed; do not invent work to stay busy. Give each task a clear scope, expected result and short \`description\`. Keep user decisions with the main agent.
 - Specify reportIntervalSteps unless user-fixed. Reports do not pause children; TaskGuide corrects at a tool boundary, TaskInspect reads records, and TaskList checks status.
 - Handle small review fixes yourself. For worthwhile follow-up in retained context, use TaskResume with the same delegationId and expectedExecution from TaskList; stopped, failed or released contexts cannot resume, including after restart.
@@ -3616,8 +3616,7 @@ Delegation rules:
       name: SUBAGENT_TOOL_NAME,
       label: "Task",
       description: [
-        "Start one background subagent and return its id immediately. Delegate separable work when it saves time or adds a useful independent perspective. Apply the system's Delegation guidance.",
-        "Suitable examples include bounded codebase investigations, self-contained fixes or components, focused review of finished changes, independent verification or diagnosis, and material analysis. Keep trivial lookups and tiny edits local, avoid duplicate work, respect the user's testing limits, and wait for prerequisites before dispatching dependent work. Keep user decisions with the main agent.",
+        "Delegate a scoped task to a suitable subagent and return its id immediately. Follow the system's Delegation guidance for when to delegate and how to choose a role.",
         "A definition's pinned primary model is locked: Task.model is ignored, including the parent model or another authorized model. Configured fallback models are used only after failure.",
         ...(this.availableSubagentModelKeys().length
           ? [
