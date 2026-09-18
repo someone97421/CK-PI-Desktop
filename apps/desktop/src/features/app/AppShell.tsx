@@ -15,6 +15,7 @@ import { ExtensionPromptHost } from "../../components/ExtensionPromptDialog";
 import { ProjectCreateDialog } from "../../components/ProjectCreateDialog";
 import { UpdateBanner } from "../../components/UpdateBanner";
 import { WindowControls } from "../../components/WindowControls";
+import { ClosePromptDialog } from "../../components/ClosePromptDialog";
 import { api } from "../../lib/api";
 import { CollapsedTitlebarActions, RoutePending } from "./chrome";
 import { useAppShellRuntime } from "./useAppShellRuntime";
@@ -307,6 +308,7 @@ export function AppShell() {
     >
       {shell}
       <ProjectCreateDialog />
+      <ClosePromptDialog />
       {splash}
     </div>
   );

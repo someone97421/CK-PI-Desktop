@@ -1141,6 +1141,14 @@ export const api = {
     invoke<{ behavior: CloseBehavior; supported: boolean }>(
       IPC.invoke.closeBehaviorGet,
     ),
+  respondClosePrompt: (id: string, choice: "tray" | "quit" | null) =>
+    invoke<{ accepted: boolean }>(IPC.invoke.closePromptRespond, { id, choice }),
+  onClosePrompt: (listener: (prompt: { id: string; kind: "close" | "quit" }) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.closePrompt, (payload) =>
+      listener(payload as { id: string; kind: "close" | "quit" }),
+    );
+  },
   setCloseBehavior: (behavior: CloseBehavior) =>
     invoke<{ behavior: CloseBehavior }>(IPC.invoke.closeBehaviorSet, {
       behavior,

@@ -21,7 +21,7 @@ export type WorkPanelReservationState = {
 
 export const WORK_PANEL_MIN_WIDTH = 244;
 export const WORK_PANEL_MAX_WIDTH = 720;
-export const WORK_PANEL_CHAT_MIN_WIDTH = 1040;
+export const WORK_PANEL_CHAT_MIN_WIDTH = 640;
 export const WORK_PANEL_CHAT_MAX_WIDTH = 10000;
 
 export const emptyWorkPanelReservationState = (): WorkPanelReservationState => ({

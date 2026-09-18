@@ -3,17 +3,13 @@
 // this only affects a new profile without a saved preference.
 export const WORK_PANEL_MIN_WIDTH = 244;
 export const WORK_PANEL_DEFAULT_WIDTH = 360;
-export const WORK_PANEL_CHAT_MIN_WIDTH = 1040;
+export const WORK_PANEL_CHAT_MIN_WIDTH = 640;
 export const WORK_PANEL_CHAT_MAX_WIDTH = 10000;
 /**
- * Hard MainChat floor for the in-flow three-column shell. The work panel may
- * never take width below it, and the expanded sidebar yields first. The value
- * is derived from the composer toolbar's unfolded row (plus button, mode and
- * permission chips, model/thinking chip, enhance and send buttons) plus its
- * margins: below this width the composer would fold, so it replaces the 515px
- * composer reservation of ADR 0226.
+ * 三栏布局的聊天区域下限，侧栏优先收起，工作面板不能挤占此宽度。
+ * 允许输入栏使用已有的窄屏紧凑布局，避免工具栏展开宽度成为面板硬下限。
  */
-export const MAIN_PANE_MIN_WIDTH = 450;
+export const MAIN_PANE_MIN_WIDTH = 360;
 export const MAIN_PANE_REOPEN_TARGET_WIDTH = MAIN_PANE_MIN_WIDTH + 10;
 /**
  * The regular panel minimum is a presentation affordance. The sidebar reopen

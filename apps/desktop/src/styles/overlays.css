@@ -14,6 +14,39 @@
   system does not own, so it stays a literal and is listed as an explicit
   exemption in scripts/style-surface-tokens.mjs (issue #341).
 */
+.close-prompt-dialog {
+  margin: auto;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  color: var(--ds-text-primary);
+  pointer-events: auto;
+}
+
+.close-prompt-dialog::backdrop {
+  background: var(--ds-scrim);
+}
+
+.close-prompt-dialog h2 {
+  margin: 0 0 12px;
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+
+.close-prompt-dialog p {
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+.close-prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
 .search-overlay {
   position: fixed;
   inset: 0;

@@ -27,6 +27,7 @@ export type WindowIpcDependencies = {
   getWorkPanelChatWidthSetter: () => ((width: number) => number) | null;
   applyCloseBehavior: (behavior: "tray" | "quit") => void;
   getCloseBehavior: () => "ask" | "tray" | "quit";
+  respondClosePrompt: (id: string, choice: "tray" | "quit" | null) => boolean;
   markMenuRendererReady: (window: BrowserWindow) => boolean;
   executeNativeMenuAction: (action: NativeMenuAction) => unknown;
 };
@@ -41,10 +42,19 @@ export function registerWindowIpc({
   getWorkPanelChatWidthSetter,
   applyCloseBehavior,
   getCloseBehavior,
+  respondClosePrompt,
   markMenuRendererReady,
   executeNativeMenuAction,
 }: WindowIpcDependencies): void {
   const { handle, handleWithEvent } = registrar;
+  handleWithEvent(IPC.invoke.closePromptRespond, async (event, input: unknown) => {
+    registrar.assertMainWindowSender(event);
+    const { id, choice } = (input ?? {}) as { id?: unknown; choice?: unknown };
+    if (typeof id !== "string" || (choice !== null && choice !== "tray" && choice !== "quit")) {
+      throw new Error("invalid close prompt response");
+    }
+    return { accepted: respondClosePrompt(id, choice) };
+  });
 
   handle(IPC.invoke.windowSetWorkPanelReservation, async (input: unknown = {}) => {
     const requested = parseWorkPanelReservationWidth(input);

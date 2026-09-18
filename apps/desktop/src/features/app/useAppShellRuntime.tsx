@@ -108,9 +108,7 @@ export function useAppShellRuntime() {
   // The sidebar is a fixed-width column: it only collapses and opens.
   const handleSidebarWidthChange = useCallback(() => {}, []);
   const handleSidebarWidthCommit = useCallback(() => {}, []);
-  // Reopening prefers the right column: the work panel gives up width first so
-  // MainChat keeps the width it already had, and only a would-be breach of the
-  // 450px floor falls back to the 460px reopen target.
+  // 重开侧栏时先压缩右侧面板，保留聊天宽度；不足最小宽度时使用重开目标宽度。
   const reopenSidebar = useCallback(() => {
     if (!sidebarCollapsedRef.current) return;
     if (workPanelOpenRef.current && !workPanelMaximizedRef.current) {

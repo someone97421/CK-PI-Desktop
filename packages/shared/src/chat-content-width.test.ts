@@ -19,8 +19,8 @@ describe("chat content width", () => {
     expect(normalizeChatContentMaxWidth(undefined)).toBeUndefined();
   });
 
-  it("snaps below the drag floor up to 560 and rounds", () => {
-    expect(normalizeChatContentMaxWidth(400)).toBe(MIN_CHAT_CONTENT_MAX_WIDTH);
+  it("snaps below the drag floor up to 360 and rounds", () => {
+    expect(normalizeChatContentMaxWidth(300)).toBe(MIN_CHAT_CONTENT_MAX_WIDTH);
     expect(normalizeChatContentMaxWidth(900.4)).toBe(900);
     expect(resolveChatContentMaxWidth(1200)).toBe(1200);
   });
@@ -28,11 +28,11 @@ describe("chat content width", () => {
   it("compresses to the pane when the sidebar squeezes past the preference", () => {
     expect(clampChatContentMaxWidth(1100, 700)).toBe(700 - 2 * CHAT_CONTENT_WIDTH_GUTTER);
     expect(clampChatContentMaxWidth(760, 1400)).toBe(760);
-    expect(clampChatContentMaxWidth(400, 1400)).toBe(MIN_CHAT_CONTENT_MAX_WIDTH);
+    expect(clampChatContentMaxWidth(300, 1400)).toBe(MIN_CHAT_CONTENT_MAX_WIDTH);
   });
 
   it("lets a tiny pane drop below the drag floor", () => {
-    expect(clampChatContentMaxWidth(760, 500)).toBe(500 - 2 * CHAT_CONTENT_WIDTH_GUTTER);
+    expect(clampChatContentMaxWidth(760, 350)).toBe(350 - 2 * CHAT_CONTENT_WIDTH_GUTTER);
   });
 
   it("mirrors left and right drags onto the same centered width", () => {

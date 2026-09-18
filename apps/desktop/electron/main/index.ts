@@ -197,7 +197,7 @@ if (process.platform === "win32") {
 }
 
 
-const WINDOW_MIN_WIDTH = 1040;
+const WINDOW_MIN_WIDTH = 640;
 const WINDOW_MIN_HEIGHT = 700;
 // Native resize streams can pause briefly while the pointer crosses a display
 // scale boundary. Keep recovery out of that gesture and only run it after the
@@ -969,6 +969,7 @@ const {
   applyCloseBehavior,
   askCloseBehavior,
   confirmQuitDialog,
+  respondClosePrompt,
 } = closeBehaviorRuntime;
 
 const createdLauncher = createLauncher({
@@ -1325,6 +1326,7 @@ function registerIpc() {
     getWorkPanelChatWidthSetter: () => setWorkPanelChatWidthForWindow,
     applyCloseBehavior,
     getCloseBehavior: () => closeBehavior,
+    respondClosePrompt,
     markMenuRendererReady,
     executeNativeMenuAction,
     scheduledRunsBySession,

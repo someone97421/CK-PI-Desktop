@@ -7,7 +7,7 @@
  * preference.
  */
 export const DEFAULT_CHAT_CONTENT_MAX_WIDTH = 760;
-export const MIN_CHAT_CONTENT_MAX_WIDTH = 560;
+export const MIN_CHAT_CONTENT_MAX_WIDTH = 360;
 /** Gutter kept on each side of the pane so handles and the minimap stay usable. */
 export const CHAT_CONTENT_WIDTH_GUTTER = 24;
 

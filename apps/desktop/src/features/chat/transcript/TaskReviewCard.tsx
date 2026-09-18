@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef } from "react";
+import { useEffect, useId, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { ReviewChange, UiMessage } from "@pi-desktop/shared";
 import { reviewChangesFromMessages } from "../../../lib/workspace-review";
@@ -12,6 +12,12 @@ export function TaskReviewCard({ messages }: { messages: UiMessage[] }) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const noteId = useId();
+  const backdropPointerDown = useRef(false);
+  useEffect(() => {
+    const closeOnBlur = () => dialogRef.current?.close();
+    window.addEventListener("blur", closeOnBlur);
+    return () => window.removeEventListener("blur", closeOnBlur);
+  }, []);
   const { files, untracked } = useMemo(() => {
     const entries = reviewChangesFromMessages(messages);
     const grouped = new Map<string, ReviewChange[]>();
@@ -53,7 +59,24 @@ export function TaskReviewCard({ messages }: { messages: UiMessage[] }) {
         </li>)}
       </ul> : null}
       <dialog ref={dialogRef} className="task-review-dialog" aria-labelledby={titleId}
-        aria-describedby={noteId} onClose={() => triggerRef.current?.focus()}>
+        aria-describedby={noteId} onClose={() => {
+          if (document.hasFocus()) triggerRef.current?.focus();
+        }}
+        onPointerDown={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          backdropPointerDown.current = event.target === event.currentTarget && (
+            event.clientX < rect.left || event.clientX > rect.right ||
+            event.clientY < rect.top || event.clientY > rect.bottom
+          );
+        }}
+        onClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (backdropPointerDown.current && event.target === event.currentTarget && (
+            event.clientX < rect.left || event.clientX > rect.right ||
+            event.clientY < rect.top || event.clientY > rect.bottom
+          )) event.currentTarget.close();
+          backdropPointerDown.current = false;
+        }}>
         <header className="task-review-dialog-header">
           <h2 id={titleId}>{t("chat.taskDelivery.review")}</h2>
           <button type="button" autoFocus onClick={() => dialogRef.current?.close()}>

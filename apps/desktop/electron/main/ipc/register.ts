@@ -106,6 +106,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getWorkPanelChatWidthSetter,
     applyCloseBehavior,
     getCloseBehavior,
+    respondClosePrompt,
     markMenuRendererReady,
     executeNativeMenuAction,
     scheduledRunsBySession,
@@ -270,6 +271,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getWorkPanelChatWidthSetter,
     applyCloseBehavior,
     getCloseBehavior,
+    respondClosePrompt,
     markMenuRendererReady,
     executeNativeMenuAction,
   });
