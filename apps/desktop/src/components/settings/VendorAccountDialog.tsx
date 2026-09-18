@@ -16,7 +16,7 @@ import {
 } from "@pi-desktop/shared";
 import { useTranslation } from "react-i18next";
 import { pairsToRecord, recordToPairs } from "../extensions/KeyValueRows";
-import { Button, Field, Input } from "../ui";
+import { Button, Field, Input, portalOverlay } from "../ui";
 import { ProviderHeadersEditor } from "./ProviderHeadersEditor";
 import { useProviderModels } from "./useProviderModels";
 import { ModelSelectionPanes, useModelSelection } from "./ModelSelectionPanes";
@@ -98,7 +98,7 @@ export function VendorAccountDialog({
     });
   };
 
-  return (
+  return portalOverlay(
     <div
       className="overlay vendor-account-overlay"
       role="presentation"

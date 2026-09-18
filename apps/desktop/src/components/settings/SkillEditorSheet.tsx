@@ -7,7 +7,7 @@ import {
   type AgentCapabilityLevel,
   type UserSkillRecord,
 } from "@pi-desktop/shared";
-import { Button, Field, Input, Textarea, TooltipButton, cx } from "../ui";
+import { Button, Field, Input, Textarea, TooltipButton, cx, portalOverlay } from "../ui";
 import { IconFolderOpen, IconX } from "../icons";
 
 /** Hard cap host-core enforces on a skill document. */
@@ -194,7 +194,7 @@ export function SkillEditorSheet({
     setDraft(next);
   };
 
-  return (
+  return portalOverlay(
     <div
       className="overlay ext-sheet-overlay"
       role="presentation"

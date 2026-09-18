@@ -8,6 +8,7 @@ import { TooltipButton } from "./ui";
 import { OnboardingChecklist } from "./OnboardingChecklist";
 import { ResponseAnnotationDialog } from "./ResponseAnnotationDialog";
 import { SessionPane } from "./SessionPane";
+import { ConversationWidthHandles } from "./ConversationWidthHandles";
 import { useAppStore } from "../stores/app-store";
 import { headPermission } from "../lib/pending-permissions";
 import { headAsk } from "../lib/pending-asks";
@@ -130,6 +131,7 @@ export const ChatSurface = memo(function ChatSurface() {
           <span />
         </div>
       ) : null}
+      <ConversationWidthHandles />
       {showEmptyState ? (
         <div
           className="home-main-content"

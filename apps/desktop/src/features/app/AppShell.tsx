@@ -53,6 +53,7 @@ export function AppShell() {
     searchOpen,
     setSearchOpen,
     sidebarCollapsed,
+    sidebarEntering,
     sidebarExiting,
     sidebarWidth,
     handleSidebarWidthChange,
@@ -100,7 +101,7 @@ export function AppShell() {
         <>
           {!sidebarCollapsed || sidebarExiting ? (
             <Sidebar
-              className={sidebarExiting ? "is-exiting" : undefined}
+              className={cx(sidebarEntering && "is-entering", sidebarExiting && "is-exiting")}
               onAnimationEnd={handleSidebarAnimationEnd}
               onToggleSidebar={toggleSidebar}
               sidebarToggleShortcut={sidebarToggleShortcut}

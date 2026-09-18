@@ -250,6 +250,12 @@ export type AppState = {
     folders: string[];
     primaryPath: string;
   }) => Promise<void>;
+  /** Clone a public git remote into a chosen folder, then create its project. */
+  createProjectFromGit: (input: {
+    name: string;
+    url: string;
+    parentPath: string;
+  }) => Promise<void>;
   cloneProject: (url: string) => Promise<ProjectWorkspace | null>;
   /** Re-read the active workspace metadata without changing the visible project. */
   refreshProject: (path: string) => Promise<ProjectWorkspace | null>;

@@ -6,6 +6,7 @@ import {
   APP_NAME,
   IPC,
   isThemeColorScheme,
+  migrateKeybindingOverrides,
   type AppMenuCommand,
   type CloseBehavior,
   type KeybindingOverrides,
@@ -14,6 +15,7 @@ import {
 import { catalogs, resolveLocale } from "@pi-desktop/i18n";
 import { installApplicationMenu } from "../application-menu";
 import { createWindow, type WindowLifecycleState } from "./window";
+import { windowToggleAction } from "./window-visibility";
 import type { BrowserPane } from "../browser-view";
 import type { Logger } from "../logger";
 import type { PluginRuntime } from "../plugin-runtime";
@@ -64,7 +66,7 @@ export type ApplicationLifecycleDependencies = {
   logger: Pick<Logger, "app">;
   refreshReleaseNotes: () => void;
   applyPluginLauncherShortcut: (keybindings?: KeybindingOverrides) => void;
-  applySummonWindowShortcut: (keybindings?: KeybindingOverrides) => void;
+  applyToggleWindowShortcut: (keybindings?: KeybindingOverrides) => void;
   broadcastPluginPanelEvent: (event: string, payload: unknown) => void;
   getHost: () => HostProcess | null;
 };
@@ -97,7 +99,7 @@ export function createApplicationLifecycle({
   logger,
   refreshReleaseNotes,
   applyPluginLauncherShortcut,
-  applySummonWindowShortcut,
+  applyToggleWindowShortcut,
   broadcastPluginPanelEvent,
   getHost,
 }: ApplicationLifecycleDependencies) {
@@ -151,6 +153,21 @@ export function createApplicationLifecycle({
           data: String(error),
         });
       });
+  }
+
+  /**
+   * One press of the merged window shortcut (D438): hide the window the user is
+   * looking at, otherwise bring it back. Hiding is `Window.hide()` and never
+   * the close path, so it raises no close-behaviour prompt, destroys no window,
+   * and quits nothing — the tray (or the same key again) is the way back.
+   */
+  function toggleMainWindow() {
+    const window = state.mainWindow;
+    if (window && !window.isDestroyed() && windowToggleAction(window) === "hide") {
+      window.hide();
+      return;
+    }
+    restoreMainWindow();
   }
 
   function updateTrayMenu(locale = app.getLocale()) {
@@ -307,8 +324,9 @@ export function createApplicationLifecycle({
     action: NativeMenuAction,
     target: BrowserWindow | null = state.mainWindow,
   ) {
-    if (action === "restoreMainWindow") {
-      restoreMainWindow();
+    if (action === "restoreMainWindow" || action === "toggleMainWindow") {
+      if (action === "restoreMainWindow") restoreMainWindow();
+      else toggleMainWindow();
       const window = state.mainWindow;
       return {
         maximized: Boolean(window && !window.isDestroyed() && window.isMaximized()),
@@ -473,12 +491,16 @@ export function createApplicationLifecycle({
         .catch(() => {});
     }
     applyAppThemePreference(settings?.theme);
-    const keybindings =
+    // Persisted keybindings can still carry the retired window ids (D438); the
+    // main process is the only reader when the window never opens, so it folds
+    // them itself instead of relying on a renderer write-back.
+    const keybindings = migrateKeybindingOverrides(
       settings?.keybindings && typeof settings.keybindings === "object"
         ? (settings.keybindings as KeybindingOverrides)
-        : undefined;
+        : undefined,
+    );
     applyPluginLauncherShortcut(keybindings);
-    applySummonWindowShortcut(keybindings);
+    applyToggleWindowShortcut(keybindings);
     const devMode = settings?.developerMode === true;
     const signature = JSON.stringify({ locale, keybindings, devMode });
     if (appState.appliedMenuSettings === signature) return;
@@ -517,13 +539,18 @@ export function createApplicationLifecycle({
     return { theme: appearanceState.appThemePreference, base, locale: appearanceState.updaterLocale, pluginTheme };
   }
 
-  /** Push the current appearance to every open plugin panel, when it changed. */
+  /**
+   * Push the current appearance to every open plugin panel and every loaded
+   * plugin process, when it changed. Plugin-owned UI localizes from this
+   * payload (ADR 0280).
+   */
   function broadcastAppearance(): void {
     const appearance = resolveAppearance();
     const signature = JSON.stringify(appearance);
     if (signature === appearanceState.broadcastAppearanceSignature) return;
     appearanceState.broadcastAppearanceSignature = signature;
     broadcastPluginPanelEvent("appearance:changed", appearance);
+    plugins.broadcastEvent("appearance:changed", [appearance]);
   }
 
   function flushPendingApplicationMenuCommands() {
@@ -543,6 +570,7 @@ export function createApplicationLifecycle({
     applyDevelopmentBranding,
     hasVisibleWindow,
     restoreMainWindow,
+    toggleMainWindow,
     updateTrayMenu,
     createTray,
     resetMenuRendererReady,

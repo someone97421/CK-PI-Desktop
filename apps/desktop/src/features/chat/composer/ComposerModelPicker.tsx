@@ -106,7 +106,7 @@ export function ComposerModelPicker({
               <span className="composer-model-thinking-level">{thinkingLabel}</span>
             </>
           ) : null}
-          <IconChevronDown size={12} aria-hidden="true" />
+          <IconChevronDown size={12} aria-hidden="true" className="composer-model-thinking-chevron" />
         </TooltipButton>
       )}
     >

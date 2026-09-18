@@ -42,6 +42,7 @@ import {
   sidebarSessionStatus,
   type SidebarSessionStatus,
 } from "../lib/sidebar-session-status";
+import { ErrorCodes } from "@pi-desktop/shared";
 import type { SessionSummary } from "@pi-desktop/shared";
 import type {
   ProjectMeta,
@@ -56,6 +57,7 @@ import {
 import { BrandLogo } from "./BrandLogo";
 import { NotificationCenter } from "./NotificationCenter";
 import { ProjectEditDialog } from "./ProjectEditDialog";
+import { useArmedDelete } from "../hooks/use-armed-delete";
 import { ProjectDeleteDialog } from "./ProjectDeleteDialog";
 import { SessionRenameDialog } from "./SessionRenameDialog";
 // Fork: the upstream update channel (GitHub Releases) is disabled, so the
@@ -248,6 +250,7 @@ export function Sidebar({
   const restoreSession = useAppStore((s) => s.restoreSession);
   const renameSession = useAppStore((s) => s.renameSession);
   const deleteSessionAction = useAppStore((s) => s.deleteSession);
+  const deleteProjectAction = useAppStore((s) => s.deleteProject);
   const setSessionSort = useAppStore((s) => s.setSessionSort);
   const moveSessionProject = useAppStore((s) => s.moveSessionProject);
   const setSessionArchiveVisibility = useAppStore((s) => s.setSessionArchiveVisibility);
@@ -269,6 +272,8 @@ export function Sidebar({
   const [renameFor, setRenameFor] = useState<SessionSummary | null>(null);
   const [editProjectFor, setEditProjectFor] = useState<ProjectEntry | null>(null);
   const [deleteProjectFor, setDeleteProjectFor] = useState<ProjectEntry | null>(null);
+  // Which row menu item is armed for its second, confirming click.
+  const { armed: armedDelete, setArmed: setArmedDelete } = useArmedDelete();
   const [projectMenu, setProjectMenu] = useState<string | null>(null);
   const [sectionMenu, setSectionMenu] = useState<"sessions" | "projects" | null>(null);
   const [menuPosition, setMenuPosition] = useState<{
@@ -1160,6 +1165,53 @@ export function Sidebar({
     }
   };
 
+  /**
+   * Two-step delete for one row's menu item. The first click arms the item and
+   * relabels it; only the second click runs the delete, and the arm expires on
+   * its own. The menu stays open between the two clicks.
+   */
+  const requestDeleteSession = (session: SessionSummary) => {
+    if (armedDelete !== session.id) {
+      setArmedDelete(session.id);
+      return;
+    }
+    setArmedDelete(null);
+    void deleteSession(session);
+  };
+
+  /** Menu items of different surfaces never share an armed key. */
+  const projectDeleteKey = (entry: ProjectEntry) => `project:${entry.key}`;
+
+  /**
+   * Two-step delete for a project row that keeps the running-task safety. The
+   * second click deletes an idle project straight away; a project whose turn is
+   * still live opens the dialog that names those sessions and stops them.
+   */
+  const requestDeleteProject = async (entry: ProjectEntry) => {
+    const key = projectDeleteKey(entry);
+    if (armedDelete !== key) {
+      setArmedDelete(key);
+      return;
+    }
+    setArmedDelete(null);
+    closeMenus(false);
+    if (entry.sessions.some((session) => runningSessions[session.id] === true)) {
+      setDeleteProjectFor(entry);
+      return;
+    }
+    try {
+      await deleteProjectAction(entry.path);
+      showToast(t("project.deleted", { name: entry.name }), { variant: "success" });
+    } catch (error) {
+      // The host refuses a project whose task started after this render.
+      reportError(
+        (error as { errorCode?: unknown } | null)?.errorCode === ErrorCodes.CONFLICT
+          ? new Error(t("project.deleteRunningBlocked"))
+          : error,
+      );
+    }
+  };
+
   const openProjectFolder = async (entry: ProjectEntry) => {
     closeMenus(false);
     try {
@@ -1604,9 +1656,10 @@ export function Sidebar({
     return (
       <section
         key={entry.key}
-        className={`sidebar-session-group project-group ${entry.active ? "active" : ""} ${entry.meta.archived ? "archived" : ""} ${dropProjectKey === entry.key ? "is-drop-target" : ""} ${draggingProjectKey === entry.key ? "is-dragging" : ""} ${dropIndicator?.key === entry.key ? (dropIndicator.insertAfter ? "is-drop-after" : "is-drop-before") : ""}`}
+        className={`sidebar-session-group project-group ${entry.meta.archived ? "archived" : ""} ${dropProjectKey === entry.key ? "is-drop-target" : ""} ${draggingProjectKey === entry.key ? "is-dragging" : ""} ${dropIndicator?.key === entry.key ? (dropIndicator.insertAfter ? "is-drop-after" : "is-drop-before") : ""}`}
         aria-labelledby={projectId}
         data-sidebar-project-group={entry.key}
+        data-current-workspace={entry.active ? "true" : undefined}
         onDragOver={(event) => {
           onProjectDropTargetOver(event, entry);
         }}
@@ -1737,10 +1790,15 @@ export function Sidebar({
           className={`sidebar-session-group-body project ${collapsedProject ? "collapsed" : ""}`}
           role="region"
           aria-hidden={collapsedProject}
+          inert={collapsedProject ? true : undefined}
         >
-          {entry.sessions.length > 0 ? renderTimeGroupedSessions(visibleSessions) : (
-            <div className="sidebar-session-empty">{t("nav.noProjectSessions")}</div>
-          )}
+          <div className="sidebar-session-group-clip">
+            <div className="sidebar-session-group-list">
+              {entry.sessions.length > 0 ? renderTimeGroupedSessions(visibleSessions) : (
+                <div className="sidebar-session-empty">{t("nav.noProjectSessions")}</div>
+              )}
+            </div>
+          </div>
         </div>
       </section>
     );
@@ -1917,12 +1975,15 @@ export function Sidebar({
               <button
                 type="button"
                 role="menuitem"
-                className="danger"
+                className={cx("danger", armedDelete === session.id && "is-armed")}
                 data-action="delete-session"
-                onClick={() => void deleteSession(session)}
+                data-armed={armedDelete === session.id ? "true" : undefined}
+                onClick={() => requestDeleteSession(session)}
               >
                 <IconX size={14} />
-                {t("nav.deleteTask", { defaultValue: "Delete" })}
+                {armedDelete === session.id
+                  ? t("nav.deleteTaskConfirm", { defaultValue: "Delete?" })
+                  : t("nav.deleteTask", { defaultValue: "Delete" })}
               </button>
             ) : null}
           </>
@@ -1978,17 +2039,15 @@ export function Sidebar({
             <button
               type="button"
               role="menuitem"
-              className="danger"
+              className={cx("danger", armedDelete === projectDeleteKey(entry) && "is-armed")}
               data-action="delete-project"
-              onClick={() => {
-                // Never refuse silently: the dialog names the running sessions
-                // and asks for an explicit confirmation before it stops them.
-                closeMenus(false);
-                setDeleteProjectFor(entry);
-              }}
+              data-armed={armedDelete === projectDeleteKey(entry) ? "true" : undefined}
+              onClick={() => void requestDeleteProject(entry)}
             >
               <IconTrash size={14} />
-              {t("project.delete", { defaultValue: "Delete project" })}
+              {armedDelete === projectDeleteKey(entry)
+                ? t("project.deleteMenuConfirm", { defaultValue: "Delete?" })
+                : t("project.delete", { defaultValue: "Delete project" })}
             </button>
             {entry.open ? (
               <button
@@ -2009,7 +2068,7 @@ export function Sidebar({
 
   return (
     <aside
-      className={cx("sidebar", className)}
+      className={cx("sidebar", "sidebar-surface", className)}
       data-window-blur={windowFocused ? undefined : "true"}
       onAnimationEnd={onAnimationEnd}
     >

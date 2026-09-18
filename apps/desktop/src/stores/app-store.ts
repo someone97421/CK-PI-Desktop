@@ -37,6 +37,7 @@ import {
   ErrorCodes as SharedErrorCodes,
   initialThinkingLevelForBinding,
   modeForProposalKind,
+  migrateKeybindingOverrides,
   modelIdsMatch,
   normalizeMode,
   normalizeProposalKind,
@@ -541,6 +542,10 @@ export const useAppStore = create<AppState>((set, get) => {
               defaultMode: normalizeMode(
                 (settingsRaw as { defaultMode?: unknown }).defaultMode,
               ),
+              // Persisted keybindings can still name the retired window ids
+              // (D438); every renderer reader sees the folded map, and the next
+              // shortcut save writes that shape back.
+              keybindings: migrateKeybindingOverrides(settingsRaw.keybindings),
             }
           : settingsRaw;
         // First-run default per D003: Agent. Never force-rewrite an existing

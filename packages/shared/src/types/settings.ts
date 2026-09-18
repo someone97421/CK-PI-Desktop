@@ -6,6 +6,7 @@ import type { ContextCompactionSettings } from "./sessions.js";
 import type { Mode } from "./common.js";
 import type { GlobalPermissionMode } from "./permissions.js";
 import type { PluginMarketSource } from "./plugins.js";
+import type { SpeechSettings } from "./speech.js";
 
 export type ThemePreference = "system" | "light" | "dark" | `plugin:${string}`;
 
@@ -49,6 +50,8 @@ export type AppSettings = {
    */
   compactionProviderId?: string;
   compactionModelId?: string;
+  /** Host speech bindings. Absent means voice actions stay disabled. */
+  speech?: SpeechSettings;
   defaultMode: Mode;
   /** Configured command shell for the agent Bash protocol tool. */
   defaultCommandShell?: CommandShellId;
@@ -70,6 +73,8 @@ export type AppSettings = {
    * Absent means 1. Range 0.8–1.5 in 0.025 steps. Window zoom is independent.
    */
   fontScale?: number;
+  /** Transcript presentation only; absent means detailed. Reasoning is retained. */
+  thinkingDisplayMode?: "detailed" | "compact";
   /**
    * @deprecated Unreleased D343 px field. Reads migrate into `fontScale`
    * as `px / 14`; new writes persist `fontScale` instead.
@@ -115,6 +120,12 @@ export type AppSettings = {
    * does not change meaning with this preference.
    */
   contextUsageDisplay?: ContextUsageDisplay;
+  /**
+   * Preferred centered chat band width in CSS px (D439). Absent means 760.
+   * The live band is `min(available pane, this value)` so a squeezed sidebar
+   * or work panel compresses without rewriting the preference.
+   */
+  chatContentMaxWidth?: number;
   onboardingDismissed: boolean;
 };
 

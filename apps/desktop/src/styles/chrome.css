@@ -11,7 +11,8 @@
 :root[data-platform="darwin"],
 :root[data-platform="darwin"] body,
 :root[data-platform="darwin"] #root,
-:root[data-platform="darwin"] .app-shell {
+:root[data-platform="darwin"] .app-shell,
+:root[data-platform="darwin"] .settings-shell {
   background: transparent;
 }
 
@@ -32,8 +33,7 @@
 /*
  * On macOS the splash is glass, so the shell that mounts under it as soon as
  * `ready` flips would bleed through the tint. Hide it until the exit fade,
- * then cross-fade with a transition — not an animation, because `.sidebar`
- * owns `sidebar-in` and swapping animation-name would replay it after boot.
+ * then cross-fade without replaying the dock's explicit toggle animation.
  */
 :root[data-platform="darwin"] .app-shell.is-booting:has(.startup-splash:not(.is-exiting))
   > :not(.startup-splash) {
@@ -187,6 +187,14 @@
   }
 }
 
+.sidebar-surface,
+.sidebar-rail {
+  background-color: var(--ds-bg-sidebar, var(--ds-bg-primary));
+  background-image: var(--ds-bg-sidebar-image, none);
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
 .sidebar {
   width: var(--ds-sidebar-width);
   min-width: 0;
@@ -198,17 +206,9 @@
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  background-color: var(--ds-bg-sidebar, var(--ds-bg-primary));
-  background-image: var(--ds-bg-sidebar-image, none);
-  background-repeat: no-repeat;
-  background-size: cover;
-  /* No seam against the main pane (D297): the sidebar's own surface tone is
-     the only edge cue on every platform, as it already was on macOS glass. */
-  /*
-   * Animate the flex allocation with the dock motion. A transform-only
-   * animation leaves MainChat at its final width before the first frame,
-   * making sidebar collapse feel like a layout jump.
-   */
+}
+
+.sidebar.is-entering {
   animation: sidebar-in var(--motion-duration-normal) var(--motion-ease-out) both;
 }
 
@@ -339,10 +339,6 @@
   flex: 0 0 56px;
   display: flex;
   flex-direction: column;
-  background-color: var(--ds-bg-sidebar, var(--ds-bg-primary));
-  background-image: var(--ds-bg-sidebar-image, none);
-  background-repeat: no-repeat;
-  background-size: cover;
 }
 
 /*
@@ -353,7 +349,7 @@
  * The main pane and titlebars remain opaque `bg-primary`.
  */
 :root[data-platform="darwin"] .startup-splash,
-:root[data-platform="darwin"] .sidebar,
+:root[data-platform="darwin"] .sidebar-surface,
 :root[data-platform="darwin"] .sidebar-rail {
   background-color: var(--ds-sidebar-glass-tint);
   background-image: var(--ds-bg-sidebar-image, none),

@@ -8,6 +8,7 @@ import {
   isPublicIpLiteral,
   PUBLIC_NETWORK_POLICY_ERROR,
   isPublicHostname,
+  isProxyFakeIpAddress,
   isPublicNetworkPolicyFailure,
   publicNetworkRefusalDetail,
   publicNetworkRefusalReason,
@@ -119,8 +120,11 @@ describe("public network address policy", () => {
     expect(publicNetworkRefusalReason({ name: PUBLIC_NETWORK_POLICY_ERROR, reason: "made-up" })).toBeUndefined();
     expect(publicNetworkRefusalDetail({ name: PUBLIC_NETWORK_POLICY_ERROR })).toBeUndefined();
     expect(isPublicNetworkPolicyFailure({ name: PUBLIC_NETWORK_POLICY_ERROR })).toBe(true);
-    // The class travels, the address never does: `benchmark` is a TUN fake-IP
-    // and `private` is a real RFC1918 target, and only the class separates them.
+    // The class and the address both travel: the address is what the user
+    // recognises (`198.18.0.1` is unmistakably a proxy's fake-IP) and the class
+    // is what a machine decides on. `isProxyFakeIpAddress` is the one place that
+    // turns "benchmark" into "a proxy invented this", and it never turns it into
+    // permission — the guard still refuses the address.
     expect(
       publicNetworkRefusalDetail({
         name: PUBLIC_NETWORK_POLICY_ERROR,
@@ -129,7 +133,16 @@ describe("public network address policy", () => {
         address: "198.18.0.4",
         addressKind: "benchmark",
       }),
-    ).toEqual({ reason: "non-public-address", host: "api.github.com", addressKind: "benchmark" });
+    ).toEqual({
+      reason: "non-public-address",
+      host: "api.github.com",
+      address: "198.18.0.4",
+      addressKind: "benchmark",
+    });
+    expect(isProxyFakeIpAddress("benchmark")).toBe(true);
+    expect(isProxyFakeIpAddress("private")).toBe(false);
+    expect(isProxyFakeIpAddress("loopback")).toBe(false);
+    expect(isProxyFakeIpAddress(undefined)).toBe(false);
     // An unknown class is dropped rather than passed through.
     expect(
       publicNetworkRefusalDetail({
@@ -138,6 +151,16 @@ describe("public network address policy", () => {
         addressKind: "made-up",
       }),
     ).toEqual({ reason: "non-public-address" });
+    // Only a well-formed IP literal travels: a refusal must never become a
+    // channel for arbitrary resolver text.
+    expect(
+      publicNetworkRefusalDetail({
+        name: PUBLIC_NETWORK_POLICY_ERROR,
+        reason: "non-public-address",
+        address: "not-an-address",
+        addressKind: "benchmark",
+      }),
+    ).toEqual({ reason: "non-public-address", addressKind: "benchmark" });
     expect(publicNetworkRefusalDetail(new Error("responded 502"))).toBeUndefined();
     expect(publicNetworkRefusalDetail(undefined)).toBeUndefined();
   });
@@ -214,6 +237,7 @@ describe("public network address policy", () => {
     ).toEqual({
       reason: "non-public-address",
       host: "cdn.jsdelivr.net",
+      address: "198.18.0.4",
       addressKind: "benchmark",
       route: "direct",
     });

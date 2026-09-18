@@ -123,7 +123,7 @@ test("assistant turns stay transparent full-width prose", () => {
   );
   assert.match(
     stylesSource,
-    /\.message-row\.assistant[\s\S]*?\.message-col[\s\S]*?width:\s*min\(100%,\s*720px\);/,
+    /\.message-row\.assistant[\s\S]*?\.message-col[\s\S]*?width:\s*min\(100%,\s*var\(--chat-prose-max-width,\s*720px\)\);/,
   );
   // D323: the live parent turn stays transparent; no rail, no reserved
   // inset, no whole-turn tile. The tile belongs only to the delegation card.
@@ -271,9 +271,12 @@ test("editing a user prompt regenerates it and keeps the old branch reachable", 
   );
   assert.match(
     stylesSource,
-    /\.message-edit \{[\s\S]*?background:\s*var\(--ds-bg-composer\);[\s\S]*?box-shadow:\s*none;/,
+    /\.message-edit \{[\s\S]*?background:\s*var\(--ds-tile-deep\);[\s\S]*?box-shadow:\s*none;/,
   );
-  assert.doesNotMatch(stylesSource, /\.message-edit:focus-within/);
+  assert.match(
+    stylesSource,
+    /\.message-edit:focus-within \{[\s\S]*?box-shadow:\s*inset/,
+  );
   assert.match(transcriptSource, /className="icon-btn message-edit-cancel"/);
   assert.match(transcriptSource, /className="send-btn message-edit-submit"/);
 });

@@ -18,11 +18,15 @@
  * host-core binary (target/debug, target/release, or PI_DESKTOP_HOST_BIN).
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
+
+import { Host } from "./e2e/host.mjs";
+import { checkSidebarRowStates } from "./e2e/sidebar-row-states.mjs";
+import { checkSidebarSettings } from "./e2e/sidebar-settings.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, "..");
@@ -50,6 +54,121 @@ function resolveHostBinary() {
     );
   }
   return found;
+}
+
+/**
+ * Seed four retained project groups into the same throwaway data directory the
+ * app will open, using only the host protocol:
+ *
+ *   alpha   five sessions across four date buckets, so the group draws date
+ *           labels as well as rows
+ *   beta    one session, the smallest non-empty group
+ *   gamma   no sessions, the empty group
+ *   delta   ten sessions that the renderer pins, so the Pinned section has more
+ *           rows than its eight-row budget
+ *
+ * `session.import` is the only protocol entry point that accepts a session's own
+ * timestamps, which is what puts rows in the yesterday / this-week / older
+ * buckets. The retained-tab list, the pin set, and the project ordering are
+ * renderer-local, so they are handed to the app through its own persisted
+ * sidebar preferences.
+ *
+ * `tempDirs` receives the project root as soon as it exists, so a failure here
+ * still leaves the caller's clean-up able to remove it.
+ */
+async function seedSidebarProjects(hostBinary, dataDir, tempDirs) {
+  const projectRoot = realpathSync(mkdtempSync(join(tmpdir(), "pi-layout-projects-")));
+  tempDirs.push(projectRoot);
+  const alpha = join(projectRoot, "alpha");
+  const beta = join(projectRoot, "beta");
+  const gamma = join(projectRoot, "gamma");
+  const delta = join(projectRoot, "delta");
+  for (const dir of [alpha, beta, gamma, delta]) mkdirSync(dir, { recursive: true });
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const dayStart = startOfToday.getTime();
+  const stamp = (ms) => new Date(ms).toISOString();
+  // `getTimeGroup` buckets on the calendar day, so these offsets are anchored to
+  // local midnight rather than to the current clock time.
+  const alphaRows = [
+    ["alpha today b", Date.now() - 120_000],
+    ["alpha today a", Date.now() - 60_000],
+    ["alpha yesterday", dayStart - 60_000],
+    ["alpha this week", dayStart - 3 * 86400_000],
+    ["alpha older", dayStart - 20 * 86400_000],
+  ];
+  const betaRows = [["beta today", Date.now() - 60_000]];
+  // Ten rows, so the Pinned section's eight-row budget has to scroll.
+  const deltaRows = Array.from({ length: 10 }, (_, index) => [
+    `delta pinned ${index}`,
+    Date.now() - 60_000 - index * 1_000,
+  ]);
+  const alphaSessionIds = [];
+
+  const host = new Host(hostBinary, dataDir);
+  try {
+    await host.start();
+    await host.call("workspace.set", { path: alpha });
+    const importRow = async (id, title, projectPath, updatedMs) => {
+      const result = await host.call("session.import", {
+        session: {
+          id,
+          title,
+          messageCount: 0,
+          projectPath,
+          modelId: null,
+          providerId: null,
+          mode: "agent",
+          thinkingLevel: "medium",
+          permissionMode: "inherit",
+          createdAt: stamp(updatedMs - 3_600_000),
+          updatedAt: stamp(updatedMs),
+        },
+        messages: [],
+      });
+      if (!result?.imported) {
+        throw new Error(`session.import skipped ${id}: ${JSON.stringify(result)}`);
+      }
+    };
+    for (const [index, [title, updatedMs]] of alphaRows.entries()) {
+      const id = `e2e-fold-alpha-${index}`;
+      await importRow(id, title, alpha, updatedMs);
+      alphaSessionIds.push(id);
+    }
+    await importRow("e2e-fold-beta-0", betaRows[0][0], beta, betaRows[0][1]);
+    await importRow("e2e-state-standalone", "standalone state probe", null, Date.now());
+    const pinnedSessionIds = [];
+    for (const [index, [title, updatedMs]] of deltaRows.entries()) {
+      const id = `e2e-fold-delta-${index}`;
+      await importRow(id, title, delta, updatedMs);
+      pinnedSessionIds.push(id);
+    }
+
+    // The host canonicalizes every project path; read the stored values back so
+    // the renderer's retained-tab list matches exactly.
+    const listed = await host.call("session.list");
+    const rows = listed?.sessions ?? [];
+    const canonical = (sessionId) =>
+      rows.find((session) => session.id === sessionId)?.projectPath ?? null;
+    const paths = {
+      alpha: canonical("e2e-fold-alpha-0"),
+      beta: canonical("e2e-fold-beta-0"),
+      gamma,
+      delta: canonical("e2e-fold-delta-0"),
+    };
+    if (!paths.alpha || !paths.beta || !paths.delta) {
+      throw new Error(`seeded sessions carry no project path: ${JSON.stringify(paths)}`);
+    }
+    return {
+      paths,
+      alphaSessionIds,
+      pinnedSessionIds,
+      keys: [paths.alpha, paths.beta, paths.gamma, paths.delta],
+    };
+  } finally {
+    await host.stop();
+  }
 }
 
 class CdpClient {
@@ -176,6 +295,23 @@ async function main() {
   const hostBinary = resolveHostBinary();
   const dataDir = mkdtempSync(join(tmpdir(), "pi-layout-data-"));
   const profileDir = mkdtempSync(join(tmpdir(), "pi-layout-profile-"));
+  // Every throwaway directory, created before the child exists so a seeding
+  // failure cannot leak one.
+  const tempDirs = [dataDir, profileDir];
+  const removeTempDirs = () => {
+    for (const dir of tempDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    }
+  };
+  let sidebarSeed = null;
+  try {
+    sidebarSeed = await seedSidebarProjects(hostBinary, dataDir, tempDirs);
+  } catch (error) {
+    removeTempDirs();
+    throw error;
+  }
   const child = spawn(
     electronBin,
     [`--remote-debugging-port=${cdpPort}`, `--user-data-dir=${profileDir}`, "."],
@@ -204,19 +340,15 @@ async function main() {
       if (process.platform === "win32" || !child.pid) child.kill("SIGKILL");
       else process.kill(-child.pid, "SIGKILL");
     } catch {}
-    for (const dir of [dataDir, profileDir]) {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {}
-    }
+    removeTempDirs();
   };
 
   const timeout = setTimeout(() => {
-    console.error("FAIL three-column layout — timeout after 180s");
+    console.error("FAIL three-column layout — timeout after 420s");
     console.error(output.slice(-2_000));
     cleanup();
     process.exit(1);
-  }, 180_000);
+  }, 420_000);
 
   try {
     const target = await waitFor(async () => {
@@ -233,6 +365,7 @@ async function main() {
     const cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
     activeCdp = cdp;
     await cdp.send("Runtime.enable");
+    await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 
     const measure = () => cdp.evaluate(MEASURE);
     const rig = async (expression) => {
@@ -300,6 +433,12 @@ async function main() {
       "startup splash cleared",
     );
     await rig(`window.__PI_DESKTOP__.ensureVisualFixtures()`);
+    // The seeded workspace already holds more sessions than the capture fixture
+    // is willing to add, so activate a seeded one: the shell needs an active
+    // session before the work panel can open.
+    await rig(
+      `window.__PI_DESKTOP__.selectSession(${JSON.stringify(sidebarSeed.alphaSessionIds[0])})`,
+    );
     await waitFor(
       () =>
         cdp.evaluate(
@@ -458,21 +597,39 @@ async function main() {
     );
 
     const composer = await cdp.evaluate(`(() => {
+      const stack = document.querySelector(".composer-stack");
       const bar = document.querySelector(".composer-toolbar");
       const left = document.querySelector(".composer-left");
       const right = document.querySelector(".composer-right");
-      if (!bar || !left || !right) return null;
-      return {
+      const modelChip = document.querySelector(".composer-model-thinking-chip");
+      const modelLabel = document.querySelector(".composer-model-thinking-model");
+      if (!stack || !bar || !left || !right || !modelChip || !modelLabel) return null;
+
+      const originalWidth = stack.style.width;
+      const originalTransition = stack.style.transition;
+      stack.style.transition = "none";
+      stack.style.width = "450px";
+      const modelLabelStyles = getComputedStyle(modelLabel);
+      const result = {
         width: Math.round(bar.getBoundingClientRect().width),
         clipped: bar.scrollWidth > bar.clientWidth + 1,
         sameRow:
           Math.round(left.getBoundingClientRect().top) ===
           Math.round(right.getBoundingClientRect().top),
+        modelLabelHidden: modelLabelStyles.display === "none",
+        modelChipWidth: Math.round(modelChip.getBoundingClientRect().width),
       };
+      stack.style.width = originalWidth;
+      stack.style.transition = originalTransition;
+      return result;
     })()`);
     check(
-      composer !== null && composer.clipped === false && composer.sameRow === true,
-      "the composer toolbar stays on one unfolded row at the MainChat floor",
+      composer !== null &&
+        composer.clipped === false &&
+        composer.sameRow === true &&
+        composer.modelLabelHidden === true &&
+        composer.modelChipWidth <= 32,
+      "the composer toolbar stays on one row and collapses the model to its icon at the 450px Composer floor",
       JSON.stringify(composer),
     );
 
@@ -687,6 +844,94 @@ async function main() {
         ),
       "plugin route remains visible after preview mode",
     );
+    // E2E: a plugin modal covers the window chrome. The 46px band is an opaque
+    // absolute row, and the route surface must not hold a stacking context that
+    // leaves the modal's veil underneath it — that is what put the band over
+    // the install consent. The viewport-fixed work-panel toggle sits inside the
+    // band and used to paint over the veil too; it must not any more.
+    // Measure after the entrance: opacity animation still creates a stacking
+    // context while it is in effect, even without a fill.
+    await waitFor(
+      () =>
+        cdp.evaluate(`(() => {
+          const surface = document.querySelector(".route-surface");
+          if (!surface) return false;
+          const animations = surface.getAnimations();
+          return animations.length === 0
+            || animations.every((animation) => animation.playState === "finished");
+        })()`),
+      "plugin route entrance finished",
+    );
+    await cdp.evaluate(`document.querySelector(".plugins-header-menu")?.click?.()`);
+    await waitFor(
+      () =>
+        cdp.evaluate(
+          `!!document.querySelector('[role="menuitem"][data-action="newFromTemplate"]')`,
+        ),
+      "plugins overflow newFromTemplate item",
+    );
+    await cdp.evaluate(
+      `document.querySelector('[role="menuitem"][data-action="newFromTemplate"]')?.click?.()`,
+    );
+    await waitFor(
+      () => cdp.evaluate(`!!document.querySelector(".plugins-modal-backdrop")`),
+      "plugin template modal",
+    );
+    const modalCoverage = await cdp.evaluate(`(() => {
+      const veil = document.querySelector(".plugins-modal-backdrop");
+      if (!veil) return { opened: false };
+      const toggle = document.querySelector(".app-work-panel-toggle");
+      const toggleBox = toggle?.getBoundingClientRect();
+      const toggleStack = toggleBox
+        ? document.elementsFromPoint(
+            toggleBox.left + toggleBox.width / 2,
+            toggleBox.top + toggleBox.height / 2,
+          )
+        : [];
+      // The band opts out of pointer events, so it is made an explicit target
+      // for this one measurement and put back afterwards.
+      const band = document.querySelector(".main-titlebar");
+      const previous = band?.style.pointerEvents ?? "";
+      if (band) band.style.pointerEvents = "auto";
+      const bandBox = band?.getBoundingClientRect();
+      const bandStack = bandBox
+        ? document.elementsFromPoint(
+            bandBox.left + bandBox.width / 2,
+            bandBox.top + bandBox.height / 2,
+          )
+        : [];
+      if (band) band.style.pointerEvents = previous;
+      return {
+        opened: true,
+        veilIsTopmostAtToggle: toggleStack[0] === veil,
+        toggleTopmost: (toggleStack[0]?.className ?? toggleStack[0]?.tagName ?? "").toString().slice(0, 40),
+        bandIsTopmost: bandStack[0] === band,
+        bandTopmost: (bandStack[0]?.className ?? bandStack[0]?.tagName ?? "").toString().slice(0, 40),
+      };
+    })()`);
+    check(
+      modalCoverage.opened === true,
+      "a plugin modal opens over the plugins route",
+      JSON.stringify(modalCoverage),
+    );
+    check(
+      modalCoverage.veilIsTopmostAtToggle === true,
+      "the modal veil covers the work-panel toggle in the titlebar band",
+      JSON.stringify(modalCoverage),
+    );
+    check(
+      modalCoverage.bandIsTopmost === false,
+      "the titlebar band does not paint over the modal veil",
+      JSON.stringify(modalCoverage),
+    );
+    await cdp.evaluate(
+      `document.querySelector('.plugins-modal-backdrop .plugins-modal-actions [data-action="cancel"]')?.click?.()`,
+    );
+    await waitFor(
+      () => cdp.evaluate(`!document.querySelector(".plugins-modal-backdrop")`),
+      "plugin modal closed",
+    );
+    check(true, "the plugin modal closes and leaves the route clean");
     // Once Extensions is active the footer Plugins button reuses the existing
     // Back action, so a second activation returns to the previous destination
     // (E2E-NAV-plugins-button-goes-back).
@@ -1037,6 +1282,462 @@ async function main() {
       check(true, `${route} titlebar new-task action returns to chat (DOM)`);
     }
     await cdp.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(originalTheme)}`);
+
+    // 7. Sidebar project-group fold: one grid row, no fade, no snap.
+    //
+    // Measures the fold as it paints instead of restating the stylesheet.
+    const groupSelector = (key) =>
+      `[data-sidebar-project-group=${JSON.stringify(key)}]`;
+
+    const FOLD_PROBE = (key) => `(() => {
+      const section = document.querySelector(${JSON.stringify(groupSelector(key))});
+      const body = section?.querySelector(".sidebar-session-group-body.project") ?? null;
+      if (!body) return null;
+      const clip = section.querySelector(".sidebar-session-group-clip");
+      const list = section.querySelector(".sidebar-session-group-list");
+      const next = section.nextElementSibling;
+      const rows = body.querySelectorAll("[data-sidebar-session-row]");
+      const lastRow = rows.length > 0
+        ? rows[rows.length - 1]
+        : body.querySelector(".sidebar-session-empty");
+      const style = getComputedStyle(body);
+      const box = body.getBoundingClientRect();
+      return {
+        now: performance.now(),
+        key: section.getAttribute("data-sidebar-project-group"),
+        nextKey: next?.getAttribute("data-sidebar-project-group") ?? null,
+        collapsed: body.classList.contains("collapsed"),
+        inert: body.hasAttribute("inert"),
+        ariaHidden: body.getAttribute("aria-hidden"),
+        display: style.display,
+        gridRows: style.gridTemplateRows,
+        transitionProperty: style.transitionProperty,
+        transitionDuration: style.transitionDuration,
+        height: box.height,
+        bottom: box.bottom,
+        opacity: Number(style.opacity),
+        rows: rows.length,
+        dateHeaders: body.querySelectorAll(".sidebar-time-group-header").length,
+        emptyState: !!body.querySelector(".sidebar-session-empty"),
+        clipMinHeight: clip ? getComputedStyle(clip).minHeight : null,
+        clipOverflowY: clip ? getComputedStyle(clip).overflowY : null,
+        listGap: list ? getComputedStyle(list).rowGap : null,
+        listPadTop: list ? getComputedStyle(list).paddingTop : null,
+        listPadBottom: list ? getComputedStyle(list).paddingBottom : null,
+        // The scroller's own gap between two groups.
+        gapToNext: next
+          ? Math.round((next.getBoundingClientRect().top - box.bottom) * 100) / 100
+          : null,
+        // The 8px tail the rhythm promises: the last row (or the empty state) to
+        // the next group's header, which is the group's own 7px inset plus that
+        // 1px scroller gap.
+        lastRowBottom: lastRow ? lastRow.getBoundingClientRect().bottom : null,
+        contentTail:
+          next && lastRow
+            ? Math.round(
+                (next.getBoundingClientRect().top -
+                  lastRow.getBoundingClientRect().bottom) * 100) / 100
+            : null,
+      };
+    })()`;
+
+    // A trusted pointer click, so the app's own hit testing and the row's click
+    // path both run. The button is scrolled into view and the point is confirmed
+    // to hit it before the press.
+    const toggleProjectGroup = async (key) => {
+      const deadline = Date.now() + 3_000;
+      let target = null;
+      while (Date.now() < deadline) {
+        target = await cdp.evaluate(`(() => {
+          const control = document.querySelector(${JSON.stringify(groupSelector(key) + " .sidebar-session-group-title")});
+          if (!control) return null;
+          control.scrollIntoView({ block: "nearest" });
+          const box = control.getBoundingClientRect();
+          const x = Math.round(box.left + box.width / 2);
+          const y = Math.round(box.top + box.height / 2);
+          const hit = document.elementFromPoint(x, y);
+          return { x, y, hit: !!hit && (hit === control || control.contains(hit)) };
+        })()`);
+        if (target?.hit) break;
+        await delay(100);
+      }
+      if (!target) throw new Error(`sidebar group ${key} has no title control`);
+      if (!target.hit) {
+        throw new Error(`sidebar group ${key} title is not hittable at ${target.x},${target.y}`);
+      }
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: target.x,
+        y: target.y,
+        button: "left",
+        clickCount: 1,
+        buttons: 1,
+      });
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: target.x,
+        y: target.y,
+        button: "left",
+        clickCount: 1,
+        buttons: 0,
+      });
+    };
+
+    // The fold's own transition events are the duration evidence; wall clock
+    // sampled from this side measures the polling loop, not the animation.
+    const startFoldTrace = (key) =>
+      cdp.evaluate(`(() => {
+        const section = document.querySelector(${JSON.stringify(groupSelector(key))});
+        const body = section.querySelector(".sidebar-session-group-body.project");
+        if (window.__piFoldTrace) {
+          body.removeEventListener("transitionrun", window.__piFoldTrace.onRun);
+          body.removeEventListener("transitionend", window.__piFoldTrace.onEnd);
+        }
+        const trace = { start: performance.now(), runs: [], ends: [] };
+        const isFold = (event) => event.propertyName === "grid-template-rows";
+        trace.onRun = (event) => {
+          if (isFold(event)) trace.runs.push(Math.round(performance.now() - trace.start));
+        };
+        trace.onEnd = (event) => {
+          if (!isFold(event)) return;
+          trace.ends.push({
+            // Transition events report seconds.
+            ranMs: Math.round(event.elapsedTime * 1000),
+            atMs: Math.round(performance.now() - trace.start),
+          });
+        };
+        body.addEventListener("transitionrun", trace.onRun);
+        body.addEventListener("transitionend", trace.onEnd);
+        window.__piFoldTrace = trace;
+        return true;
+      })()`);
+
+    // Projected to plain values: the trace holds listeners, which do not survive
+    // the return-by-value boundary.
+    const readFoldTrace = () =>
+      cdp.evaluate(`({ runs: window.__piFoldTrace.runs, ends: window.__piFoldTrace.ends })`);
+
+    // Read from the outside rather than from a page timer: an occluded Electron
+    // window throttles requestAnimationFrame, while `Runtime.evaluate` keeps
+    // resolving the interpolated value for as long as the transition runs.
+    const sampleFold = async (key, steps, togglesAt) => {
+      await startFoldTrace(key);
+      const frames = [];
+      for (let step = 0; step < steps; step += 1) {
+        if (togglesAt.includes(step)) await toggleProjectGroup(key);
+        const frame = await cdp.evaluate(FOLD_PROBE(key));
+        if (!frame) throw new Error(`sidebar group ${key} is not rendered`);
+        frames.push(frame);
+        await delay(8);
+      }
+      return { frames, trace: await readFoldTrace() };
+    };
+
+    await cdp.send("Page.enable");
+    const sidebarPreferences = {
+      sessionMeta: Object.fromEntries(
+        sidebarSeed.pinnedSessionIds.map((id) => [id, { pinned: true }]),
+      ),
+      projectMeta: {
+        [sidebarSeed.paths.alpha]: { order: 0 },
+        [sidebarSeed.paths.beta]: { order: 1 },
+        [sidebarSeed.paths.gamma]: { order: 2 },
+        [sidebarSeed.paths.delta]: { order: 3 },
+      },
+      projectSort: "manual",
+      sessionView: { sort: "recent", archived: false },
+      openProjectPaths: sidebarSeed.keys,
+    };
+    await cdp.evaluate(
+      `window.localStorage.setItem("pi.desktop.sidebarPreferences", ${JSON.stringify(JSON.stringify(sidebarPreferences))})`,
+    );
+    await cdp.send("Page.reload", {});
+    // The retained-tab list is renderer-local and only read at startup, so the
+    // reload is what puts beta and gamma in the sidebar. Poll for the reloaded
+    // document's own DOM and keep the last reading for the failure detail.
+    const reloadDeadline = Date.now() + 90_000;
+    let reloadState = null;
+    while (Date.now() < reloadDeadline) {
+      reloadState = await cdp
+        .evaluate(`(() => ({
+          splash: !!document.querySelector(".startup-splash"),
+          sidebar: !!document.querySelector(".sidebar"),
+          keys: [...document.querySelectorAll("[data-sidebar-project-group]")].map((el) => el.getAttribute("data-sidebar-project-group")),
+        }))()`)
+        .catch((error) => ({ error: String(error.message).slice(0, 160) }));
+      const keys = reloadState.keys ?? [];
+      if (
+        sidebarSeed.keys.every((key) => keys.includes(key)) &&
+        reloadState.splash === false
+      ) {
+        break;
+      }
+      await delay(200);
+    }
+    // The assertion is that the seeded groups are back, not that the sidebar
+    // holds exactly those: the flow above this point can leave a project of its
+    // own, and the fold checks address the seeded groups by key.
+    const reloadedKeys = reloadState?.keys ?? [];
+    check(
+      reloadState?.splash === false &&
+        sidebarSeed.keys.every((key) => reloadedKeys.includes(key)),
+      "the seeded project groups are back after a renderer reload",
+      JSON.stringify(reloadState),
+    );
+    if (reloadState?.sidebar === false) {
+      await clickSidebarToggle();
+    }
+
+    const [alpha, beta, gamma] = await Promise.all(
+      [sidebarSeed.paths.alpha, sidebarSeed.paths.beta, sidebarSeed.paths.gamma].map(
+        (key) => cdp.evaluate(FOLD_PROBE(key)),
+      ),
+    );
+    const betaKey = sidebarSeed.paths.beta;
+
+    check(
+      alpha?.display === "grid" &&
+        alpha.gridRows !== "0px" &&
+        alpha.clipMinHeight === "0px" &&
+        alpha.clipOverflowY === "hidden" &&
+        alpha.listGap === "1px" &&
+        alpha.listPadTop === "2px" &&
+        alpha.listPadBottom === "7px",
+      "a project group folds as a three-layer grid, not a max-height box",
+      JSON.stringify({ alpha, beta, gamma }),
+    );
+    check(
+      alpha?.rows === 5 && alpha.dateHeaders === 3 && alpha.height > 0,
+      "the seeded multi-row group draws its rows and every date label",
+      JSON.stringify(alpha),
+    );
+    check(
+      beta?.rows === 1 && beta.height > 0 && beta.dateHeaders === 0,
+      "a one-row group folds the same way",
+      JSON.stringify(beta),
+    );
+    check(
+      gamma?.rows === 0 && gamma.emptyState === true && gamma.height > 0,
+      "an empty group folds its empty state like any other content",
+      JSON.stringify(gamma),
+    );
+    check(
+      alpha?.opacity === 1 &&
+        alpha.transitionProperty === "grid-template-rows" &&
+        alpha.transitionDuration === "0.2s" &&
+        alpha.inert === false &&
+        alpha.ariaHidden === "false",
+      "the grid transition is the only motion and opacity never animates",
+      JSON.stringify(alpha),
+    );
+    // The 8px tail is measurable only against a following group. The last group
+    // in the list has no neighbour, so it is proven from the group's own geometry
+    // instead — either layout is valid, and neither assertion depends on how many
+    // other projects the run happens to leave behind.
+    const seededTails = [alpha, beta, gamma].map((group) =>
+      group.nextKey
+        ? Math.abs(group.contentTail - 8) < 0.6
+        : group.contentTail === null &&
+          group.listPadBottom === "7px" &&
+          group.clipMinHeight === "0px" &&
+          group.clipOverflowY === "hidden",
+    );
+    check(
+      alpha.nextKey === betaKey &&
+        beta.nextKey === sidebarSeed.paths.gamma &&
+        seededTails.every(Boolean),
+      "the group's 7px inset plus the 1px scroller gap read as an 8px tail, empty state included",
+      JSON.stringify({
+        next: [alpha.nextKey, beta.nextKey, gamma.nextKey],
+        tails: [alpha.contentTail, beta.contentTail, gamma.contentTail],
+        tailsOk: seededTails,
+      }),
+    );
+
+    const listBudgets = await cdp.evaluate(`(() => {
+      const measure = (body) => {
+        if (!body) return null;
+        const rows = [...body.querySelectorAll("[data-sidebar-session-row]")];
+        const box = body.getBoundingClientRect();
+        return {
+          display: getComputedStyle(body).display,
+          maxHeight: parseFloat(getComputedStyle(body).maxHeight),
+          clientHeight: body.clientHeight,
+          scrollHeight: body.scrollHeight,
+          rows: rows.length,
+          rowsInside:
+            rows.filter((row) => row.getBoundingClientRect().bottom <= box.bottom + 0.5)
+              .length,
+        };
+      };
+      const pinned = measure(document.querySelector(".sidebar-session-group-body.pinned"));
+      return {
+        standalone: measure(document.querySelector(".sidebar-session-group-body.standalone")),
+        pinned,
+        // The renderer's budgets are min(233px, 30vh) and a flat 146px.
+        pinnedBudget: Math.min(233, window.innerHeight * 0.3),
+      };
+    })()`);
+    check(
+      listBudgets.standalone?.display === "flex" &&
+        listBudgets.standalone?.maxHeight === 146,
+      "the standalone list keeps its flex column and 146px budget",
+      JSON.stringify(listBudgets.standalone),
+    );
+    check(
+      listBudgets.pinned?.display === "flex" &&
+        listBudgets.pinned.rows === sidebarSeed.pinnedSessionIds.length &&
+        Math.abs(listBudgets.pinned.clientHeight - listBudgets.pinnedBudget) <= 1 &&
+        listBudgets.pinned.scrollHeight > listBudgets.pinned.clientHeight &&
+        listBudgets.pinned.rowsInside === 8,
+      "the seeded pinned list holds eight rows inside its 233px budget and scrolls the rest",
+      JSON.stringify({ pinned: listBudgets.pinned, budget: listBudgets.pinnedBudget }),
+    );
+    const pinnedScrolled = await cdp.evaluate(`(() => {
+      const body = document.querySelector(".sidebar-session-group-body.pinned");
+      if (!body) return null;
+      body.scrollTop = body.scrollHeight;
+      const rows = [...body.querySelectorAll("[data-sidebar-session-row]")];
+      const box = body.getBoundingClientRect();
+      const last = rows[rows.length - 1];
+      return {
+        scrollTop: body.scrollTop,
+        lastRowFullyInside:
+          last.getBoundingClientRect().bottom <= box.bottom + 0.5 &&
+          last.getBoundingClientRect().top >= box.top - 0.5,
+      };
+    })()`);
+    check(
+      pinnedScrolled !== null &&
+        pinnedScrolled.scrollTop > 0 &&
+        pinnedScrolled.lastRowFullyInside === true,
+      "the pinned list scrolls to its last row inside the budget",
+      JSON.stringify(pinnedScrolled),
+    );
+
+    const { frames: collapsedFrames, trace: collapseTrace } = await sampleFold(
+      sidebarSeed.paths.alpha,
+      40,
+      [3],
+    );
+    const restHeight = collapsedFrames[2].height;
+    const settled = collapsedFrames[collapsedFrames.length - 1];
+    const midFrames = collapsedFrames.filter(
+      (frame) => frame.height > 0.5 && frame.height < restHeight - 0.5,
+    );
+    let reversed = false;
+    for (let index = 1; index < collapsedFrames.length; index += 1) {
+      if (collapsedFrames[index].height > collapsedFrames[index - 1].height + 0.75) {
+        reversed = true;
+      }
+    }
+    check(
+      midFrames.length >= 4 && !reversed,
+      "the collapse paints a continuous multi-frame height ramp with no plateau",
+      `mid-frames=${midFrames.length} heights=${collapsedFrames.map((f) => Math.round(f.height)).join(",")}`,
+    );
+    check(
+      Math.abs(restHeight - alpha.height) < 0.6 &&
+        settled.height <= 0.5 &&
+        settled.gridRows === "0px",
+      "the fold reaches its full height and closes completely",
+      `rest=${restHeight} settled=${settled.height}`,
+    );
+    check(
+      collapseTrace.runs.length === 1 &&
+        collapseTrace.ends.length === 1 &&
+        Math.abs(collapseTrace.ends[0].ranMs - 200) <= 10,
+      "the fold is one transition that runs for the declared 200ms",
+      JSON.stringify(collapseTrace),
+    );
+    check(
+      collapsedFrames.every((frame) => frame.opacity === 1),
+      "opacity stays 1 for every frame of the fold — the rows are clipped, not faded",
+      JSON.stringify([...new Set(collapsedFrames.map((f) => f.opacity))]),
+    );
+    check(
+      settled.gapToNext !== null &&
+        Math.abs(settled.gapToNext - 1) < 0.6 &&
+        settled.lastRowBottom !== null &&
+        settled.lastRowBottom > settled.bottom,
+      "the group's own tail leaves with its rows: the folded section is its header plus the 1px scroller gap, and the rows sit past the clipped edge",
+      `gap=${settled.gapToNext} rows ${Math.round(settled.lastRowBottom - settled.bottom)}px past the section`,
+    );
+    check(
+      settled.collapsed === true &&
+        settled.inert === true &&
+        settled.ariaHidden === "true",
+      "the folded group leaves the tab order while its rows stay mounted",
+      JSON.stringify(settled),
+    );
+
+    const { frames: reopenFrames, trace: reopenTrace } = await sampleFold(
+      sidebarSeed.paths.alpha,
+      40,
+      [3],
+    );
+    const reopenedFold = reopenFrames[reopenFrames.length - 1];
+    check(
+      Math.abs(reopenedFold.height - restHeight) < 0.6 &&
+        reopenedFold.collapsed === false &&
+        reopenedFold.inert === false &&
+        Math.abs(reopenedFold.contentTail - 8) < 0.6 &&
+        reopenTrace.ends.length === 1 &&
+        Math.abs(reopenTrace.ends[0].ranMs - 200) <= 10,
+      "expanding restores the same height and the 8px tail in one 200ms transition",
+      JSON.stringify({ reopenedFold, trace: reopenTrace }),
+    );
+
+    // A reversal mid-flight must continue from the frame it is on rather than
+    // restarting or settling on a stale endpoint.
+    const { frames: reversalFrames } = await sampleFold(sidebarSeed.paths.alpha, 46, [3, 9]);
+    const reversalEnd = reversalFrames[reversalFrames.length - 1];
+    const reversalDipped = Math.min(...reversalFrames.map((frame) => frame.height));
+    check(
+      Math.abs(reversalEnd.height - restHeight) < 0.6,
+      "a collapse reversed mid-flight settles back on the open height",
+      `end=${reversalEnd.height} rest=${restHeight} dip=${Math.round(reversalDipped)}`,
+    );
+    check(
+      reversalDipped < restHeight - 0.5 &&
+        !reversalFrames.some((frame) => frame.height > restHeight + 0.75),
+      "the reversed fold turns on the frame it reached and never overshoots",
+      `dip=${Math.round(reversalDipped)} max=${Math.round(Math.max(...reversalFrames.map((f) => f.height)))}`,
+    );
+
+    await cdp.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+    });
+    const { frames: reducedFrames, trace: reducedTrace } = await sampleFold(
+      sidebarSeed.paths.alpha,
+      24,
+      [3],
+    );
+    const reducedSettled = reducedFrames[reducedFrames.length - 1];
+    const reducedMids = reducedFrames.filter(
+      (frame) => frame.height > 0.5 && frame.height < restHeight - 0.5,
+    );
+    check(
+      reducedSettled.height <= 0.5 &&
+        reducedSettled.collapsed === true &&
+        reducedMids.length <= 1 &&
+        reducedTrace.ends.length >= 1 &&
+        reducedTrace.ends[0].ranMs <= 5,
+      "reduced motion keeps the endpoints and drops the travel",
+      JSON.stringify({ mids: reducedMids.length, settled: reducedSettled.height, trace: reducedTrace }),
+    );
+    await cdp.send("Emulation.setEmulatedMedia", { features: [] });
+    await toggleProjectGroup(sidebarSeed.paths.alpha);
+    await waitFor(
+      () => cdp.evaluate(`${FOLD_PROBE(sidebarSeed.paths.alpha)}.collapsed === false`),
+      "the folded group reopens after the reduced-motion probe",
+    );
+    await cdp.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(originalTheme)}`);
+
+    await checkSidebarRowStates({ cdp, check, waitFor, seed: sidebarSeed });
+    await checkSidebarSettings({
+      cdp, check, waitFor, artifactDir: process.env.PI_DESKTOP_LAYOUT_ARTIFACT_DIR,
+    });
 
     const failed = results.filter((entry) => !entry.ok);
     console.log(

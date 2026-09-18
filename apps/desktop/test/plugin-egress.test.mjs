@@ -264,7 +264,9 @@ test("ui.microphone grants audio-only media permission to a panel", async (t) =>
   assert.equal(panels[0].allowMicrophone, true);
   assert.match(panelHostSrc, /mediaTypes/);
   assert.match(panelHostSrc, /type === "audio"/);
-  assert.match(panelHostSrc, /details\.mediaType === "audio"/);
+  assert.match(panelHostSrc, /details\.mediaType !== "video"/);
+  assert.match(panelHostSrc, /askForMediaAccess/);
+
 });
 
 test("the panel session filters requests and refuses device permissions", () => {

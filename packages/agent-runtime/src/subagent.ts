@@ -196,8 +196,6 @@ export type SubagentRunOptions = {
    * Internal checkpoint payload supplied when restoring from persistent snapshot.
    * Direct message and observer state restoration without model execution.
    */
-   * Direct message and observer state restoration without model execution.
-   */
   restoredCheckpoint?: SubagentCheckpoint;
   /** Primary model before fallback was applied, for faithful persistence restore */
   primaryProvider?: RuntimeProviderConfig;
@@ -413,7 +411,6 @@ export class SubagentRun {
     return this.execute(instruction);
   }
 
-  /** Restore an idle SubagentRun from a validated persistent checkpoint. */
   /** Restore an idle SubagentRun from a validated persistent checkpoint. */
   static restore(snapshot: SubagentCheckpoint, opts: SubagentRestoreOptions): SubagentRun {
     const validated = validateCheckpoint(snapshot);

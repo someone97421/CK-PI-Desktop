@@ -87,6 +87,27 @@ test("small archives keep the exact full-parse semantics", async () => {
   );
 });
 
+test("JSONL user text with U+2028/U+2029 still scans as one session", async () => {
+  const title = "hello\u2028world\u2029end";
+  await withArchive(
+    [
+      [
+        "2026/01/unicode.jsonl",
+        [
+          metaLine("uni-1", "/repo", "2026-01-01T00:00:00Z"),
+          responseItem("user", title, "2026-01-01T00:00:01Z"),
+        ].join("\n") + "\n",
+      ],
+    ],
+    async (dir) => {
+      const summaries = await scanCodexSessions(dir);
+      assert.equal(summaries.length, 1);
+      assert.equal(summaries[0].externalId, "uni-1");
+      assert.equal(summaries[0].title, "hello world end");
+    },
+  );
+});
+
 test("old-format headers and item counts are preserved", async () => {
   await withArchive(
     [

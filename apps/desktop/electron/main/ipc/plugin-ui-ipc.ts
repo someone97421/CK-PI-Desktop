@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { IPC, type PluginSettingsDestinationMeta, type PluginViewMeta } from "@pi-desktop/shared";
-import { resolvePluginLocalizedString } from "@pi-desktop/plugin-sdk";
+import { parseNetDomains, resolvePluginLocalizedString } from "@pi-desktop/plugin-sdk";
 import type { BrowserHost } from "../browser-host";
 import { BROWSER_PLUGIN_ID, BROWSER_VIEW_ID } from "../browser-host";
 import type { PluginRuntime } from "../plugin-runtime";
@@ -70,14 +70,21 @@ export function registerPluginUiIpc({
     }
     const htmlPath = resolveInsidePluginRoot(loaded.path, manifest.ui.panel);
     if (!htmlPath) throw new Error("plugin panel must stay inside the plugin");
+    const parsedNet = parseNetDomains(manifest.net?.domains);
     await pluginPanels.open({
       pluginId: id,
       title: resolvePluginLocalizedString(manifest.ui.title, getUpdaterLocale(), manifest.name),
       locale: getUpdaterLocale(),
       theme: getPluginPanelTheme(),
+      shape: manifest.ui.shape,
+      alwaysOnTop: manifest.ui.alwaysOnTop,
+      resizable: manifest.ui.resizable,
       width: manifest.ui.width ?? 480,
       height: manifest.ui.height ?? 360,
       htmlPath,
+      netDomains: parsedNet.ok ? (parsedNet.domains ?? []) : [],
+      allowMicrophone: loaded.permissions.has("ui.microphone"),
+      ...(loaded.development ? { development: true } : {}),
     });
     return { ok: true };
   });

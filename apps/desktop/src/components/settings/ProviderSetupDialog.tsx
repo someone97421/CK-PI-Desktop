@@ -16,7 +16,7 @@ import {
 } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { pairsToRecord, recordToPairs } from "../extensions/KeyValueRows";
-import { Button, Field, Input } from "../ui";
+import { Button, Field, Input, portalOverlay } from "../ui";
 import { ProviderHeadersEditor } from "./ProviderHeadersEditor";
 import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import { useProviderModels } from "./useProviderModels";
@@ -317,7 +317,7 @@ export function ProviderSetupDialog({
     !baseUrlIssue &&
     models.length > 0;
 
-  return (
+  return portalOverlay(
     <div
       className="overlay provider-setup-overlay"
       role="presentation"

@@ -1,3 +1,5 @@
+import { AssistantTurn } from "../../apps/desktop/src/features/chat/transcript/AssistantTurn";
+import { buildTranscriptEntries } from "../../apps/desktop/src/lib/assistant-turns";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createInstance } from "i18next";
@@ -80,7 +82,8 @@ async function settle() {
  * viewport. Only the app's stylesheet is left out, so the geometry comes from
  * inline sizes and the real components' intrinsic height.
  */
-function TranscriptFixture({ messages }: { messages: UiMessage[] }) {
+function TranscriptFixture({ messages, process = false }: { messages: UiMessage[]; process?: boolean }) {
+  const entry = process ? buildTranscriptEntries(messages).entries.find((item) => item.kind === "assistant-turn") : undefined;
   const {
     scrollRef,
     wrapRef,
@@ -114,7 +117,9 @@ function TranscriptFixture({ messages }: { messages: UiMessage[] }) {
         >
           <div ref={contentRef} className="thread-content">
             <div style={{ height: 700 }} />
-            <ToolRow message={messages[1]} />
+            {entry?.kind === "assistant-turn"
+              ? <AssistantTurn entry={entry} isActive={false} />
+              : <ToolRow message={messages[1]} />}
             <div style={{ height: 300 }} />
           </div>
         </div>
@@ -261,8 +266,30 @@ globalThis.transcriptDisclosureProbe = async () => {
       dockExpanded.scrollTop <= dockBefore.scrollTop + 2,
       "expanding the dock re-bottomed the dock scroller",
     );
+    const processContainer = mount(<TranscriptFixture process messages={[
+      message("process-user", "user", "Inspect"),
+      message("progress", "assistant", Array.from({ length: 50 }, (_, i) => `Progress paragraph ${i}.`).join("\n\n")),
+      toolRowMessage("process-tool"),
+      message("final", "assistant", "Finished."),
+    ]} />);
+    const processScroller = processContainer.querySelector<HTMLElement>(".thread-scroll");
+    const processTitle = processContainer.querySelector<HTMLElement>(".turn-process > button");
+    assert(processScroller && processTitle, "process fixture did not render");
+    await settle();
+    const processBefore = geometry(processScroller, processTitle);
+    processTitle.click();
+    await settle();
+    const processExpanded = geometry(processScroller, processTitle);
+    assert(processExpanded.scrollHeight > processBefore.scrollHeight + 100, "process did not expand");
+    assert(Math.abs(processExpanded.titleTop - processBefore.titleTop) < 2, "process expansion moved its title");
+    processTitle.click();
+    await settle();
+    const processCollapsed = geometry(processScroller, processTitle);
+    assert(Math.abs(processCollapsed.titleTop - processBefore.titleTop) < 2, "process collapse moved its title");
+    assert(renderErrors.length === 0, `React render errors: ${renderErrors.map(String).join("; ")}`);
     return {
       ok: true,
+      process: { before: processBefore, expanded: processExpanded, collapsed: processCollapsed },
       transcript: { before, expanded, collapsed },
       dock: { before: dockBefore, expanded: dockExpanded },
     };

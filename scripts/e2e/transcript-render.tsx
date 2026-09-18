@@ -1,3 +1,4 @@
+import { turnProcessProbe } from "./turn-process";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createInstance } from "i18next";
@@ -225,6 +226,7 @@ globalThis.transcriptRenderProbe = async () => {
       changedToolRenders: 1,
       taskLifecycleUpdated: true,
       taskTimingUpdated: true,
+      turnProcess: await turnProcessProbe(),
       textUpdateDurationMs,
     };
   } finally {

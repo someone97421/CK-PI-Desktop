@@ -31,7 +31,8 @@ pub(crate) use repository::{delete_provider_row, provider_owner_plugin};
 
 pub(crate) use catalog::{
     config_model_bindings, config_thinking_levels_override, config_with_model_bindings,
-    normalize_model_bindings, CANONICAL_THINKING_LEVELS, PROVIDER_SELECT,
+    normalize_model_bindings, CANONICAL_THINKING_LEVELS, DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_MAX_TOKENS, PROVIDER_SELECT,
 };
 pub(crate) use credentials::{
     build_provider_config_json, config_headers, config_oauth_account_label,
@@ -44,4 +45,8 @@ pub(crate) use credentials::{
 pub(crate) use validation::{
     config_limit_f64, config_limit_u32, normalize_headers_input, normalize_one_header,
     normalize_thinking_levels, valid_header_key, validate_model_aliases, MAX_HEADERS,
+    MAX_MODEL_ALIAS_CHARS,
 };
+
+#[cfg(test)]
+mod tests;

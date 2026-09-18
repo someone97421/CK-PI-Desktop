@@ -64,7 +64,10 @@ export function registerSkillsIpc({
    * carries no code, as before.
    */
   const refusalCode = (kind: SkillMarketFailureKind): string | undefined => {
-    if (kind === "policy") return ErrorCodes.NETWORK_POLICY_BLOCKED;
+    // Both are refusals the guard decided, so both carry the policy code; the
+    // `kind` beside it is what says which address was judged — the proxy's own
+    // fake-IP placeholder, or the target's actual address.
+    if (kind === "policy" || kind === "fake-ip") return ErrorCodes.NETWORK_POLICY_BLOCKED;
     if (kind === "unresolved") return ErrorCodes.NETWORK_RESOLVE_FAILED;
     return undefined;
   };
@@ -78,6 +81,7 @@ export function registerSkillsIpc({
         ...(detail.host ? { host: detail.host } : {}),
         kind: detail.kind,
         ...(detail.reason ? { reason: detail.reason } : {}),
+        ...(detail.address ? { address: detail.address } : {}),
         ...(detail.addressKind ? { addressKind: detail.addressKind } : {}),
         ...(detail.route ? { route: detail.route } : {}),
       },
@@ -92,7 +96,9 @@ export function registerSkillsIpc({
     const detail = result.failureDetails?.[name];
     if (detail) return detail;
     const kind = result.failureKinds?.[name];
-    return { kind: kind === "policy" || kind === "unresolved" ? kind : "network" };
+    return {
+      kind: kind === "policy" || kind === "fake-ip" || kind === "unresolved" ? kind : "network",
+    };
   };
   let host: HostProcess | null = null;
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {

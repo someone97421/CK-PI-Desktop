@@ -95,7 +95,18 @@ test("macOS application menu routes shell commands and preserves native roles", 
     assert.match(menuSource, new RegExp(`role: "${role}"`));
   }
   assert.match(menuSource, /function nativeAction\(/);
-  for (const action of ["close", "resetZoom", "zoomIn", "zoomOut", "toggleFullScreen"]) {
+  // The File menu's window item is the merged visibility toggle (D438): its
+  // accelerator is the toggle's own binding (D438, rebound by D439) and its
+  // click is that native action.
+  assert.match(menuSource, /accelerator\("toggleWindow"\)/);
+  assert.match(menuSource, /labels\.menu\.toggleWindow/);
+  for (const action of [
+    "toggleMainWindow",
+    "resetZoom",
+    "zoomIn",
+    "zoomOut",
+    "toggleFullScreen",
+  ]) {
     assert.match(menuSource, new RegExp(`"${action}"`));
   }
   assert.match(menuSource, /A plain item keeps the command clickable/);

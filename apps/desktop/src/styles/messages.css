@@ -11,6 +11,14 @@
   /* Skip layout/paint for far-offscreen rows in long transcripts. */
   content-visibility: auto;
   contain-intrinsic-size: auto 140px;
+  /* Paint containment clips descendants to the padding box, which squared off
+     the deliberate bleed of the disclosure row chrome: the activity header
+     pulls its hover fill 3px past the column edge and a run row's head 4px, so
+     the icon can sit on the text's alignment line while the fill keeps its
+     padding, and the focus ring reaches 3.5px beyond its own box. 8px covers
+     the widest of them. .tool-activity-group clips the same chrome and carries
+     the same margin. */
+  overflow-clip-margin: 8px;
 }
 
 .message-row.user {
@@ -45,14 +53,14 @@
 .message-row.assistant .message-col,
 .message-row.system .message-col,
 .message-row.tool .message-col {
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   align-items: flex-start;
 }
 
 /* Decision cards are soft tiles (D297): risk rides in the tint and the risk
    pill rather than a coloured rail. */
 .permission-card {
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   margin: 10px 0;
   padding: 14px 16px;
   border-radius: var(--radius-md);
@@ -60,7 +68,7 @@
 }
 
 .asktool-card {
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   margin: 10px 0;
   padding: 14px 16px;
   border-radius: var(--radius-md);
@@ -256,7 +264,7 @@
 .working-indicator {
   box-sizing: border-box;
   display: flex;
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   align-items: center;
   gap: 7px;
   margin: 2px 0 8px;
@@ -427,7 +435,7 @@
 .planning-state-indicator {
   box-sizing: border-box;
   display: flex;
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   align-items: center;
   gap: 7px;
   margin: 2px 0 8px;
@@ -511,7 +519,7 @@
   --review-change-rail: var(--ds-text-muted);
   position: relative;
   box-sizing: border-box;
-  width: min(calc(100% - 24px), 720px);
+  width: min(calc(100% - 24px), var(--chat-prose-max-width, 720px));
   margin: 0 0 2px 24px;
 }
 
@@ -747,7 +755,7 @@
 }
 
 .turn-outcome-card {
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   margin: 12px 0 8px;
   border-radius: var(--radius-md);
   background: var(--ds-tile);
@@ -1645,26 +1653,33 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Compact composer plate: same surface and radius as the bottom composer,
-   without the floating shadow. The textarea is unboxed; actions sit in a
+/* Compact in-flow editor. Outer composer shadow clips: the row uses
+   content-visibility (paint containment) and has no horizontal padding, and
+   the transcript scroller clips overflow. Separate from the pane with the
+   same 8% mix as a user bubble (`--ds-tile-deep`); focus uses an inset ring
+   so it stays inside the plate. The textarea is unboxed; actions sit in a
    28px footer. */
 .message-edit {
   display: flex;
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   margin: 0;
   flex-direction: column;
   border: 0;
   border-radius: var(--ds-composer-radius, var(--radius-xl));
-  background: var(--ds-bg-composer);
+  background: var(--ds-tile-deep);
   box-shadow: none;
   isolation: isolate;
+}
+
+.message-edit:focus-within {
+  box-shadow: inset 0 0 0 2px color-mix(in oklab, var(--ds-focus) 28%, transparent);
 }
 
 /* A prompt being edited needs typing room, so the user column drops its
    narrow chat-plate clamp for as long as the editor is open. */
 .message-row.user .message-col:has(.message-edit) {
   width: 100%;
-  max-width: min(100%, 720px);
+  max-width: min(100%, var(--chat-prose-max-width, 720px));
 }
 
 .message-row.user .message-bubble:has(.message-edit) {
@@ -1742,7 +1757,7 @@
 }
 
 .message-bubble {
-  max-width: min(100%, 720px);
+  max-width: min(100%, var(--chat-prose-max-width, 720px));
   border-radius: var(--radius-lg-plus);
   padding: 10px 14px;
   line-height: var(--leading-chat);
@@ -1759,7 +1774,7 @@
 }
 
 .message-row.session-message .message-col {
-  width: min(100%, 720px);
+  width: min(100%, var(--chat-prose-max-width, 720px));
   max-width: 100%;
   align-items: stretch;
 }
@@ -2043,6 +2058,10 @@
   /* Skip layout/paint for collapsed groups far offscreen (D247). */
   content-visibility: auto;
   contain-intrinsic-size: auto 40px;
+  /* Clips the same disclosure chrome as .message-row — at the column's left
+     edge, and at its right for a run row's head — so it relaxes its clip by
+     the same amount; with either one left tight the fill is squared off. */
+  overflow-clip-margin: 8px;
 }
 
 .tool-activity-header {
@@ -2087,7 +2106,7 @@
 
 /* Live tail while running: last thought line / current tool, single line. */
 .tool-activity-preview {
-  max-width: min(100%, 720px);
+  max-width: min(100%, var(--chat-prose-max-width, 720px));
   margin: 1px 0 0 26px;
   overflow: hidden;
   color: var(--ds-text-muted);
@@ -2124,6 +2143,12 @@
 .tool-activity-collapse-inner {
   min-height: 0;
   overflow: hidden;
+  /* This scroller's padding box is the clip edge, and overflow-clip-margin
+     does not apply to scroll containers, so a run row's 4px hover-fill
+     overhang is given layout room instead. The negative margin keeps the
+     content box — and therefore every row inside — the size it was. */
+  padding-right: 8px;
+  margin-right: -8px;
 }
 
 .tool-activity-body {
@@ -3276,4 +3301,41 @@
   background: var(--ds-bg-elevated-opaque);
   color: var(--ds-text-muted);
   font-size: var(--text-xs);
+}
+
+/* One disclosure owns the process; tools retain their own detail controls. */
+.turn-process {
+  width: 100%;
+  margin: 0 0 8px;
+  min-width: 0;
+}
+
+.turn-process.open > .tool-activity-header > .tool-activity-caret {
+  transform: rotate(90deg);
+}
+
+.turn-process-body {
+  position: relative;
+  padding-left: 18px;
+}
+
+.turn-process-body[hidden] {
+  display: none;
+}
+
+.turn-process-body > .assistant-turn-fragment {
+  color: var(--ds-text-secondary);
+  margin-block: 8px;
+}
+
+.thinking-compact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-block: 6px;
+}
+
+.turn-process-error {
+  display: inline-flex;
+  color: var(--ds-error);
 }

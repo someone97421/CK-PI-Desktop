@@ -1,8 +1,9 @@
 import { createReadStream } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import os from "node:os";
 import path from "node:path";
+import type { Readable } from "node:stream";
+import { readNdjsonLines } from "@pi-desktop/shared";
 import type {
   ExternalSessionSummary,
   ImportedSession,
@@ -12,6 +13,35 @@ import type {
 import { importedSessionId, toIso, truncateTitle } from "./types";
 
 const SESSIONS_DIR = path.join(os.homedir(), ".codex", "sessions");
+
+function readLfJsonl(
+  stream: Readable,
+  onLine: (line: string) => boolean | void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      reader.close();
+      stream.off("error", onError);
+      stream.off("end", onEnd);
+      if (error !== undefined) reject(error);
+      else resolve();
+    };
+    const onError = (error: Error) => finish(error);
+    const onEnd = () => finish();
+    const reader = readNdjsonLines(stream, (line) => {
+      try {
+        if (onLine(line) === false) finish();
+      } catch (error) {
+        finish(error);
+      }
+    });
+    stream.once("error", onError);
+    stream.once("end", onEnd);
+  });
+}
 
 interface CodexItem {
   type?: string;
@@ -311,16 +341,14 @@ async function scanLargeFile(
       start: headLastNewline === -1 ? 0 : headBytes,
       encoding: "utf8",
     });
-    const lines = createInterface({
-      input: stream,
-      crlfDelay: Infinity,
-    });
-    for await (const line of lines) {
-      applyCodexLine(line, meta);
-      if (meta.firstUserText !== null) break;
+    try {
+      await readLfJsonl(stream, (line) => {
+        applyCodexLine(line, meta);
+        if (meta.firstUserText !== null) return false;
+      });
+    } finally {
+      stream.destroy();
     }
-    lines.close();
-    stream.destroy();
   }
 
   if (meta.startedAt !== null && headBytes < size) {
@@ -346,12 +374,13 @@ async function scanFile(filePath: string): Promise<CodexScanMeta | null> {
       const meta = newScanMeta();
       meta.mtimeMs = stats.mtimeMs;
       const stream = createReadStream(filePath, { encoding: "utf8" });
-      const lines = createInterface({ input: stream, crlfDelay: Infinity });
-      for await (const line of lines) {
-        applyCodexLine(line, meta);
+      try {
+        await readLfJsonl(stream, (line) => {
+          applyCodexLine(line, meta);
+        });
+      } finally {
+        stream.destroy();
       }
-      lines.close();
-      stream.destroy();
       if (!meta.sawItem) return null;
       if (!meta.externalId) meta.externalId = path.basename(filePath, ".jsonl");
       return meta;

@@ -129,7 +129,9 @@ test("sidebar shows a bounded standalone session list before retained projects",
   );
   assert.match(
     globalStyles,
-    /\.sidebar-session-group-body\.standalone\s*\{[\s\S]*?max-height:\s*140px;[\s\S]*?overflow-x:\s*hidden;[\s\S]*?overflow-y:\s*auto;/,
+    // `[^}]*`, not `[\s\S]*?`: the assertion must read this block, not a
+    // `max-height` in some later partial of the concatenated stylesheet.
+    /\.sidebar-session-group-body\.standalone\s*\{[^}]*max-height:\s*146px;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/,
   );
   assert.doesNotMatch(sidebarSource, /data-sidebar-project-group="temporary"/);
 });
@@ -330,14 +332,29 @@ test("a blurred window releases latched row hover and actions", () => {
   assert.match(sidebarSource, /data-window-blur=\{windowFocused \? undefined : "true"\}/);
   assert.match(
     globalStyles,
-    /\.sidebar\[data-window-blur="true"\] \.thread-item:hover:not\(\.active\)\s*\{[^}]*background:\s*transparent;/s,
+    /\.sidebar\[data-window-blur="true"\] \.thread-item:hover:not\(\.active\),\s*\.sidebar\[data-window-blur="true"\] \.project-group:not\(\.is-drop-target\) > \.sidebar-session-group-header:hover\s*\{[^}]*background:\s*transparent;/s,
   );
   assert.match(
     globalStyles,
     /\.sidebar\[data-window-blur="true"\] \.thread-item:hover \.thread-item-more:not\(\[aria-expanded="true"\]\),[\s\S]*?opacity:\s*0;\s*\n\s*pointer-events:\s*none;/,
   );
+});
+
+test("sidebar rows share one hover surface and workspace context never paints selection", () => {
   assert.match(
     globalStyles,
-    /\.sidebar\[data-window-blur="true"\] \.sidebar-session-group-title:not\(\.static\):hover\s*\{[^}]*background:\s*transparent;/s,
+    /\.thread-item,\s*\.sidebar-session-group-header\s*\{[^}]*border-radius:\s*var\(--radius-sm\);[^}]*transition:/,
   );
+  assert.match(
+    globalStyles,
+    /\.thread-item:hover,\s*\.thread-item.active,\s*\.project-group > \.sidebar-session-group-header:hover\s*\{[^}]*background:\s*var\(--ds-bg-hover\);/,
+  );
+  assert.match(globalStyles, /\.thread-item.active\s*\{[^}]*background:\s*var\(--ds-bg-active\);/);
+  assert.match(globalStyles, /\.sidebar-session-group-title\s*\{[^}]*background:\s*transparent;[^}]*color:\s*inherit;/);
+  assert.doesNotMatch(globalStyles, /\.project-group\.active/);
+  assert.doesNotMatch(globalStyles, /\.sidebar-session-group-title\.project-toggle:hover/);
+  assert.match(sidebarSource, /data-current-workspace=\{entry\.active \? "true" : undefined\}/);
+  assert.match(globalStyles, /:focus-visible\s*\{[^}]*outline:\s*1\.5px solid/);
+  assert.match(globalStyles, /\.project-group\.is-drop-target > \.sidebar-session-group-header\s*\{[^}]*outline:[^}]*background:/);
+  assert.match(globalStyles, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.thread-item,\s*\.sidebar-session-group-header\s*\{\s*transition-duration:\s*0\.01ms !important;/);
 });

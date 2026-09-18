@@ -74,6 +74,19 @@ export type PluginManifest = {
     width?: number;
     height?: number;
     title?: PluginLocalizedString | string;
+    /**
+     * Panel placement. `"panel"` (default) keeps the host-owned 46px titlebar
+     * band and its three-control capsule. `"widget"` opens the same sandboxed
+     * page as a transparent, frameless floating surface: no band, no capsule,
+     * a drag map over the whole window, and a host context menu that closes,
+     * minimizes, or pins it. A widget may be smaller than a panel — see
+     * `PLUGIN_PANEL_MIN_SIZE` / `PLUGIN_PANEL_WIDGET_MIN_SIZE` in the host.
+     */
+    shape?: "panel" | "widget";
+    /** Floating widget placement only: keep the surface above other windows. */
+    alwaysOnTop?: boolean;
+    /** Overrides the per-shape default: panels are resizable, widgets are not. */
+    resizable?: boolean;
   };
   contributes?: {
     commands?: Array<{
@@ -149,7 +162,11 @@ export type PluginManifest = {
   activationEvents?: string[];
 };
 
-/** A plugin-provided label. Shell UI may add locales; plugins still ship en + zh-CN. */
+/**
+ * Host-owned chrome labels (`ui.title`, views, destinations, session sources).
+ * Do not use this for plugin-owned copy; read `pi.app.getLocale` instead
+ * (ADR 0280). Shell UI may add locales; plugins still ship en + zh-CN.
+ */
 export type PluginLocalizedString = {
   en: string;
   "zh-CN": string;
@@ -320,7 +337,9 @@ export type PluginSettingOption = {
 
 export type PluginSettingContrib = {
   key: string;
+  /** Author-language label for the generated sheet. Not a locale map (ADR 0280). */
   title: string;
+  /** Author-language help text for the generated sheet. */
   description?: string;
   type: PluginSettingType;
   default?: unknown;
@@ -571,6 +590,42 @@ export type PluginCommand = {
   keywords?: string[];
   category?: string;
   run: () => Promise<void> | void;
+};
+
+export type PluginSpeechRole = "transcribe" | "synthesize";
+
+export type PluginSpeechHandleInput = {
+  protocol: string;
+  role: PluginSpeechRole;
+  modelId: string;
+  voice?: string;
+  format?: string;
+  extra?: Record<string, string>;
+  text?: string;
+  language?: string;
+  audio?: { mimeType: string; data: string };
+};
+
+export type PluginSpeechHandleResult =
+  | { kind: "text"; text: string }
+  | { kind: "audio"; mimeType: string; data: string }
+  | {
+      kind: "http";
+      call: {
+        url: string;
+        method?: "GET" | "POST";
+        headers?: Record<string, string>;
+        body?: unknown;
+        parse: "bytes" | "json-text" | "json-path" | "openai-transcription" | "openai-chat-audio";
+        jsonPath?: string;
+      };
+    };
+
+export type PluginSpeechAdapter = {
+  protocol: string;
+  label: string;
+  roles: PluginSpeechRole[];
+  handle: (input: PluginSpeechHandleInput) => Promise<PluginSpeechHandleResult> | PluginSpeechHandleResult;
 };
 
 export type PluginTool = {
@@ -1066,6 +1121,7 @@ export type PluginThemeSummary = {
 export type PluginHostApi = {
   app: {
     getVersion: () => Promise<string>;
+    /** Active app language. Plugin-owned UI localizes from this (ADR 0280). */
     getLocale: () => Promise<string>;
     getAppearance: () => Promise<PluginAppearance>;
     /**
@@ -1091,6 +1147,10 @@ export type PluginHostApi = {
   commands: {
     register: (command: PluginCommand) => Promise<void>;
     unregister: (id: string) => Promise<void>;
+  };
+  speech: {
+    registerAdapter: (adapter: PluginSpeechAdapter) => Promise<void>;
+    unregisterAdapter: (protocol: string) => Promise<void>;
   };
   ui: {
     openPanel: (opts?: { title?: string }) => Promise<void>;
@@ -1356,6 +1416,7 @@ export const PLUGIN_PERMISSIONS = [
   // what a service may use with no page open.
   "audio.capture.background",
   "audio.playback.background",
+  "speech.adapter.register",
   "keyboard.globalShortcut",
   "net.websocket",
 ] as const;
@@ -1402,7 +1463,13 @@ export function validateManifest(raw: unknown): {
   const i18nError = manifestI18nError((m as Record<string, unknown>).i18n);
   if (i18nError) return { ok: false, error: i18nError };
   const ui = m.ui as
-    | { title?: unknown; panel?: unknown }
+    | {
+        title?: unknown;
+        panel?: unknown;
+        shape?: unknown;
+        alwaysOnTop?: unknown;
+        resizable?: unknown;
+      }
     | null
     | undefined;
   if (ui !== undefined) {
@@ -1417,6 +1484,15 @@ export function validateManifest(raw: unknown): {
       }
       const panelError = relativePathError(ui.panel, "manifest.ui.panel");
       if (panelError) return { ok: false, error: panelError };
+    }
+    if (ui.shape !== undefined && ui.shape !== "panel" && ui.shape !== "widget") {
+      return { ok: false, error: "manifest.ui.shape must be \"panel\" or \"widget\"" };
+    }
+    for (const key of ["alwaysOnTop", "resizable"] as const) {
+      const value = ui[key];
+      if (value !== undefined && typeof value !== "boolean") {
+        return { ok: false, error: `manifest.ui.${key} must be a boolean` };
+      }
     }
   }
   const contributesError = validateContributions(m.contributes);

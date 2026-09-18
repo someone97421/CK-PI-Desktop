@@ -12,6 +12,7 @@ import {
   type RuntimeMatchConfig,
   type RuntimeProviderConfig,
 } from "./runtime.js";
+import { COMPACTION_SUMMARY_MAX_RETRIES } from "./compaction-summary-input.js";
 import type { ProjectInstructions } from "./project-instructions.js";
 import { classifyAgentError } from "./agent-errors.js";
 import {
@@ -98,6 +99,7 @@ import {
   MAX_SUBAGENT_CONCURRENCY,
 } from "@pi-desktop/shared";
 import type {
+  AgentEventEnvelope,
   ContextCompactionRecord,
   ContextCompactionSettings,
   CommandShellOption,
@@ -2883,6 +2885,228 @@ describe("DesktopAgentRuntime thinking configuration", () => {
 });
 
 describe("DesktopAgentRuntime session collaboration provenance", () => {
+  const completionOrigin: SessionMessageOrigin = {
+    messageId: "completion-1", sourceSessionId: "sender", sourceTitle: "Worker",
+    targetSessionId: "session-1", kind: "completion", replyToMessageId: "task-1",
+  };
+  const eventsOf = (onEvent: ReturnType<typeof vi.fn>) =>
+    onEvent.mock.calls.map(([envelope]) => (envelope as AgentEventEnvelope).event);
+  const emptyModelResponse = expect.objectContaining({
+    type: "error", error: expect.objectContaining({ code: "EMPTY_MODEL_RESPONSE" }),
+  });
+
+  it.each([
+    { content: [] },
+    { content: [{ type: "text", text: " \n " }] },
+    { content: [{ type: "thinking", thinking: "Already handled." }] },
+  ])(
+    "accepts a silent completion notice without exempting the following human prompt (%j)", async ({ content }) => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const agent = (runtime as any).agent;
+    const handle = (runtime as any).handleAgentEvent.bind(runtime);
+    const silent = assistantMessage({ content });
+    const respond = async () => {
+      // pi appends the reply to its transcript before notifying listeners.
+      agent.state.messages = [...agent.state.messages, silent];
+      await handle({ type: "agent_start" });
+      await handle({ type: "message_start", message: silent });
+      await handle({ type: "message_end", message: silent });
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    };
+    agent.prompt = vi.fn(respond);
+    agent.continue = vi.fn(respond);
+    agent.waitForIdle = vi.fn(async () => undefined);
+    try {
+      await runtime.prompt({ text: "Task completed", sessionMessage: completionOrigin }, "notice-user", "notice-turn");
+      expect(agent.continue).not.toHaveBeenCalled();
+      const notices = eventsOf(onEvent);
+      expect(notices.filter((event) => event.type === "agent_end")).toHaveLength(1);
+      expect(notices.some((event) => event.type === "error")).toBe(false);
+      expect(notices).toContainEqual(expect.objectContaining({
+        type: "message_end", message: expect.objectContaining({ status: "complete" }),
+      }));
+      // Accepted silence is not resent: neither the runtime entries nor pi's
+      // transcript carry an empty assistant into the next request.
+      expect((runtime as any).fullEntries).toHaveLength(0);
+      expect(agent.state.messages.some((message: { role: string }) => message.role === "assistant")).toBe(false);
+      expect(buildSessionContext((runtime as any).fullEntries).messages).toEqual([]);
+      onEvent.mockClear();
+      await runtime.prompt("Please answer", "human-user", "human-turn");
+      expect(agent.continue).toHaveBeenCalledOnce();
+      expect(eventsOf(onEvent)).toContainEqual(emptyModelResponse);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each(["task", "message", "wrong-session", "unlinked", "text-only", "steered"])(
+    "retains empty-response recovery for %s input", async (kind) => {
+      const onEvent = vi.fn();
+      const runtime = createRuntime({ onEvent });
+      const agent = (runtime as any).agent;
+      const handle = (runtime as any).handleAgentEvent.bind(runtime);
+      const silent = assistantMessage({ content: [] });
+      const respond = async () => {
+        await handle({ type: "agent_start" });
+        await handle({ type: "message_start", message: silent });
+        await handle({ type: "message_end", message: silent });
+        await handle({ type: "turn_end" });
+        await handle({ type: "agent_end", messages: [] });
+      };
+      agent.prompt = vi.fn(async () => {
+        if (kind === "steered") {
+          // Steering that pi injects before the first reply: the reply answers
+          // the user, so the notice exception no longer applies to it.
+          agent.state.isStreaming = true;
+          runtime.steer({ text: "Please answer now" }, "notice-turn", {
+            id: "steering", role: "user", content: "Please answer now",
+            status: "complete", createdAt: new Date().toISOString(),
+          });
+          agent.state.isStreaming = false;
+          const [queued] = [...(runtime as any).pendingSteering.keys()];
+          await handle({ type: "message_start", message: queued });
+          await handle({ type: "message_end", message: queued });
+        }
+        await respond();
+      });
+      agent.continue = vi.fn(respond);
+      agent.waitForIdle = vi.fn(async () => undefined);
+      const origin: SessionMessageOrigin = {
+        ...completionOrigin,
+        targetSessionId: kind === "wrong-session" ? "other-session" : "session-1",
+        kind: kind === "task" || kind === "message" ? kind : "completion",
+      };
+      if (kind === "unlinked") delete origin.replyToMessageId;
+      try {
+        await runtime.prompt(kind === "text-only" ? formatSessionMessage("Task completed", origin)
+          : { text: "Task completed", sessionMessage: origin }, "user", "notice-turn");
+        expect(agent.continue).toHaveBeenCalledOnce();
+        expect(eventsOf(onEvent)).toContainEqual(emptyModelResponse);
+      } finally { await runtime.dispose(); }
+    },
+  );
+
+  it("spends the notice exception on a tool batch so the post-tool reply keeps recovery", async () => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const agent = (runtime as any).agent;
+    const handle = (runtime as any).handleAgentEvent.bind(runtime);
+    const toolBatch = assistantMessage({
+      content: [{ type: "toolCall", id: "call-1", name: "Read", arguments: {} }],
+      stopReason: "toolUse",
+    });
+    const silent = assistantMessage({ content: [] });
+    agent.prompt = vi.fn(async () => {
+      await handle({ type: "agent_start" });
+      await handle({ type: "message_start", message: toolBatch });
+      await handle({ type: "message_end", message: toolBatch });
+      await handle({ type: "message_start", message: silent });
+      await handle({ type: "message_end", message: silent });
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    });
+    agent.continue = vi.fn(async () => {
+      await handle({ type: "agent_start" });
+      await handle({ type: "message_start", message: silent });
+      await handle({ type: "message_end", message: silent });
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    });
+    agent.waitForIdle = vi.fn(async () => undefined);
+    try {
+      await runtime.prompt({ text: "Task completed", sessionMessage: completionOrigin }, "notice-user", "notice-turn");
+      // The model did work and then said nothing about it: D193 applies.
+      expect(agent.continue).toHaveBeenCalledOnce();
+      expect(eventsOf(onEvent)).toContainEqual(emptyModelResponse);
+    } finally { await runtime.dispose(); }
+  });
+
+  it("keeps the notice exception for the retried attempt after a transient stream failure", async () => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const agent = (runtime as any).agent;
+    const handle = (runtime as any).handleAgentEvent.bind(runtime);
+    const failed = assistantMessage({ content: [], stopReason: "error" });
+    (failed as { errorMessage?: string }).errorMessage = "terminated";
+    const silent = assistantMessage({ content: [] });
+    agent.prompt = vi.fn(async () => {
+      agent.state.messages = [{ role: "user", content: "Task completed", timestamp: 1 }, failed];
+      await handle({ type: "message_start", message: failed });
+      await handle({ type: "message_end", message: failed });
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    });
+    agent.continue = vi.fn(async () => {
+      agent.state.messages = [...agent.state.messages, silent];
+      await handle({ type: "agent_start" });
+      await handle({ type: "message_start", message: silent });
+      await handle({ type: "message_end", message: silent });
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    });
+    agent.waitForIdle = vi.fn(async () => undefined);
+    try {
+      await runtime.prompt({ text: "Task completed", sessionMessage: completionOrigin }, "notice-user", "notice-turn");
+      // One provider retry, then the silent notice reply is accepted as-is.
+      expect(agent.continue).toHaveBeenCalledOnce();
+      const events = eventsOf(onEvent);
+      expect(events.some((event) => event.type === "error")).toBe(false);
+      expect(events.filter((event) => event.type === "agent_end")).toHaveLength(1);
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "message_end", message: expect.objectContaining({ status: "complete" }),
+      }));
+      expect(agent.state.messages.some((message: { role: string }) => message.role === "assistant")).toBe(false);
+    } finally { await runtime.dispose(); }
+  });
+
+  it("answers user steering after a silent notice reply with full recovery", async () => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const agent = (runtime as any).agent;
+    const handle = (runtime as any).handleAgentEvent.bind(runtime);
+    const silent = assistantMessage({ content: [] });
+    agent.prompt = vi.fn(async () => {
+      agent.state.messages = [...agent.state.messages, silent];
+      await handle({ type: "agent_start" });
+      await handle({ type: "message_start", message: silent });
+      // The user types while the notice reply streams; pi injects the
+      // steering message after this reply and streams another one.
+      agent.state.isStreaming = true;
+      runtime.steer({ text: "Please answer now" }, "notice-turn", {
+        id: "steering", role: "user", content: "Please answer now",
+        status: "complete", createdAt: new Date().toISOString(),
+      });
+      await handle({ type: "message_end", message: silent });
+      const [queued] = [...(runtime as any).pendingSteering.keys()];
+      agent.state.messages = [...agent.state.messages, queued];
+      await handle({ type: "message_start", message: queued });
+      await handle({ type: "message_end", message: queued });
+      agent.state.messages = [...agent.state.messages, silent];
+      await handle({ type: "message_start", message: silent });
+      await handle({ type: "message_end", message: silent });
+      agent.state.isStreaming = false;
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    });
+    agent.continue = vi.fn(async () => {
+      await handle({ type: "agent_start" });
+      await handle({ type: "message_start", message: silent });
+      await handle({ type: "message_end", message: silent });
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    });
+    agent.waitForIdle = vi.fn(async () => undefined);
+    try {
+      await runtime.prompt({ text: "Task completed", sessionMessage: completionOrigin }, "notice-user", "notice-turn");
+      // The notice reply spent the exception silently; the reply to the user
+      // still gets its one re-run and then the visible error.
+      expect(agent.continue).toHaveBeenCalledOnce();
+      expect(eventsOf(onEvent)).toContainEqual(emptyModelResponse);
+    } finally { await runtime.dispose(); }
+  });
+
   it("frames live input and restored history identically without changing human input", async () => {
     const origin: SessionMessageOrigin = {
       messageId: "delivery-1", sourceSessionId: "sender", sourceTitle: "Coordinator",
@@ -6916,6 +7140,7 @@ describe("DesktopAgentRuntime subagents", () => {
 
     await runtime.dispose();
   });
+
 });
 
 describe("DesktopAgentRuntime deferred tool restore (#225)", () => {
@@ -7094,6 +7319,308 @@ describe("DesktopAgentRuntime compaction request headers", () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.headers).toEqual({ "X-Team": "platform" });
+    await runtime.dispose();
+  });
+});
+
+describe("DesktopAgentRuntime compaction summary retry and sizing (#543, ADR 0282)", () => {
+  /** The shape `prepareCompaction` returns for a single-turn history. */
+  function preparation(messagesToSummarize: unknown[] = [
+    {
+      role: "user",
+      content: [{ type: "text", text: "older task context" }],
+      timestamp: 1,
+    },
+  ]) {
+    return {
+      messagesToSummarize,
+      turnPrefixMessages: [],
+      retainedTail: [],
+      isSplitTurn: false,
+      tokensBefore: 240_000,
+      fileOps: {
+        read: new Set<string>(),
+        edited: new Set<string>(),
+        written: new Set<string>(),
+      },
+      settings: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 },
+    };
+  }
+
+  function providerError(errorMessage: string) {
+    return {
+      ...assistantMessage({ content: [], stopReason: "error" }),
+      errorMessage,
+    };
+  }
+
+  /** Scripted `completeSimple` responses; the recorder returns them in order. */
+  function scriptSummaryRequests(runtime: DesktopAgentRuntime, responses: unknown[]) {
+    const calls: unknown[] = [];
+    (runtime as any).models = {
+      completeSimple: async (_model: unknown, _context: unknown, options: unknown) => {
+        calls.push(options);
+        const next = responses.shift();
+        if (!next) throw new Error("unexpected summary request");
+        return next;
+      },
+    };
+    return calls;
+  }
+
+  function toolResultOf(text: string, index: number) {
+    return {
+      role: "toolResult" as const,
+      toolCallId: `tool-${index}`,
+      toolName: "Read",
+      content: [{ type: "text" as const, text }],
+      isError: false,
+      timestamp: index + 2,
+    };
+  }
+
+  it("retries a transient summary failure and installs the real summary", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createRuntime();
+      const calls = scriptSummaryRequests(runtime, [
+        providerError("503 Service Unavailable"),
+        assistantMessage({ content: [{ type: "text", text: "Older work." }] }),
+      ]);
+
+      const pending = (runtime as any).generateCompaction(
+        preparation(),
+        new AbortController().signal,
+      );
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(calls).toHaveLength(2);
+      expect(result.ok).toBe(true);
+      expect(result.value.summary).toContain("Older work.");
+      await runtime.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry a deterministic provider rejection", async () => {
+    const runtime = createRuntime();
+    const calls = scriptSummaryRequests(runtime, [
+      providerError("Invalid API key"),
+    ]);
+
+    const result = await (runtime as any).generateCompaction(
+      preparation(),
+      new AbortController().signal,
+    );
+
+    expect(calls).toHaveLength(1);
+    expect(result.ok).toBe(false);
+    expect(result.error.code).toBe("summarization_failed");
+    await runtime.dispose();
+  });
+
+  it("gives up after the bounded retry budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createRuntime();
+      const calls = scriptSummaryRequests(
+        runtime,
+        Array.from({ length: COMPACTION_SUMMARY_MAX_RETRIES + 1 }, () =>
+          providerError("upstream connect error or disconnect/reset before headers"),
+        ),
+      );
+
+      const pending = (runtime as any).generateCompaction(
+        preparation(),
+        new AbortController().signal,
+      );
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(calls).toHaveLength(COMPACTION_SUMMARY_MAX_RETRIES + 1);
+      expect(result.ok).toBe(false);
+      expect(result.error.code).toBe("summarization_failed");
+      await runtime.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops retrying when the compaction is aborted during the backoff", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = createRuntime();
+      const calls = scriptSummaryRequests(runtime, [
+        providerError("503 Service Unavailable"),
+        assistantMessage({ content: [{ type: "text", text: "never sent" }] }),
+      ]);
+      const controller = new AbortController();
+
+      const pending = (runtime as any).generateCompaction(
+        preparation(),
+        controller.signal,
+      );
+      await vi.advanceTimersByTimeAsync(500);
+      controller.abort();
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(calls).toHaveLength(1);
+      expect(result.ok).toBe(false);
+      expect(result.error.code).toBe("aborted");
+      await runtime.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sizes the budget guard on the serialized prompt, not the raw tool output", async () => {
+    const runtime = createRuntime();
+    // 128k window: the raw estimate of one 600k-character tool result is
+    // 150k tokens and used to fail the guard outright; pi caps the result at
+    // 2 000 characters when it serializes the prompt, so the request fits.
+    const budget = { hardLimit: 111_616, requestHeadroom: 16_384 };
+    const input = preparation([
+      { role: "user", content: "read the log", timestamp: 1 },
+      toolResultOf("x".repeat(600_000), 0),
+    ]);
+
+    expect((runtime as any).compactionSummaryWouldExceedBudget(input, budget)).toBe(
+      false,
+    );
+    expect((runtime as any).fitSummaryInputToBudget(input, budget)).toBe(input);
+    await runtime.dispose();
+  });
+
+  it("reduces an oversized prompt once before giving up on the summary", async () => {
+    const runtime = createRuntime();
+    // 8k window leaves ~4-6k tokens for the prompt; 15 capped tool results
+    // serialize to ~30k characters and overshoot, the reduced prefixes fit.
+    const budget = { hardLimit: 6_000, requestHeadroom: 2_000 };
+    const input = preparation(
+      Array.from({ length: 15 }, (_, index) => toolResultOf("y".repeat(5_000), index)),
+    );
+
+    expect((runtime as any).compactionSummaryWouldExceedBudget(input, budget)).toBe(true);
+    const fitted = (runtime as any).fitSummaryInputToBudget(input, budget);
+    expect(fitted).toBeDefined();
+    expect(fitted).not.toBe(input);
+    expect(fitted.messagesToSummarize).toHaveLength(15);
+    for (const message of fitted.messagesToSummarize) {
+      expect(message.content[0].text.length).toBeLessThan(600);
+    }
+    // The original preparation is untouched: the checkpoint still files the
+    // complete messages behind its boundary.
+    expect((input.messagesToSummarize[0] as any).content[0].text).toHaveLength(5_000);
+    await runtime.dispose();
+  });
+
+  it("falls back only when even the reduced prompt cannot fit", async () => {
+    const runtime = createRuntime();
+    const budget = { hardLimit: 6_000, requestHeadroom: 2_000 };
+    const userText = preparation(
+      Array.from({ length: 15 }, (_, index) => ({
+        role: "user",
+        content: "u".repeat(5_000),
+        timestamp: index + 1,
+      })),
+    );
+    // User text is never reduced, so there is no second attempt to make.
+    expect((runtime as any).fitSummaryInputToBudget(userText, budget)).toBeUndefined();
+
+    const tooManyResults = preparation(
+      Array.from({ length: 120 }, (_, index) => toolResultOf("z".repeat(5_000), index)),
+    );
+    expect(
+      (runtime as any).fitSummaryInputToBudget(tooManyResults, budget),
+    ).toBeUndefined();
+    await runtime.dispose();
+  });
+
+  it("sends the reduced prompt to the model instead of skipping the summary", async () => {
+    const constrainedProvider: RuntimeProviderConfig = {
+      ...provider,
+      modelConfig: {
+        ...provider.modelConfig!,
+        contextWindow: 32_000,
+        maxTokens: 4_096,
+      },
+    };
+    const host = { call: vi.fn().mockResolvedValue(undefined) };
+    const runtime = createRuntime({ host, provider: constrainedProvider });
+    const resultCount = 60;
+    const toolCalls = Array.from({ length: resultCount }, (_, index) => ({
+      type: "toolCall" as const,
+      id: `tool-${index}`,
+      name: "Read",
+      arguments: { path: `large-${index}.txt` },
+    }));
+    const carrier = {
+      ...assistantMessage({ content: toolCalls, stopReason: "toolUse" }),
+      usage: {
+        ...assistantMessage({ content: [] }).usage,
+        input: 80_000,
+        totalTokens: 80_000,
+      },
+    };
+    const results = Array.from({ length: resultCount }, (_, index) =>
+      toolResultOf("r".repeat(5_000), index),
+    );
+    (runtime as any).fullEntries = [
+      {
+        type: "message",
+        id: "old-user",
+        seq: 0,
+        parentId: null,
+        timestamp: Date.parse("2026-09-18T00:00:00Z"),
+        message: { role: "user", content: "inspect the repository", timestamp: 1 },
+      },
+      {
+        type: "message",
+        id: "carrier",
+        seq: 1,
+        parentId: "old-user",
+        timestamp: Date.parse("2026-09-18T00:00:01Z"),
+        message: carrier,
+      },
+      ...results.map((message, index) => ({
+        type: "message",
+        id: message.toolCallId,
+        seq: index + 2,
+        parentId: index === 0 ? "carrier" : results[index - 1].toolCallId,
+        timestamp: Date.parse("2026-09-18T00:00:02Z") + index,
+        message,
+      })),
+    ];
+    const generate = vi
+      .spyOn(runtime as any, "generateCompaction")
+      .mockResolvedValue({
+        ok: true,
+        value: { summary: "Sixty reads, summarized.", tokensBefore: 80_000 },
+      });
+
+    const build = await (runtime as any).buildCheckpoint(
+      new AbortController().signal,
+      "active_turn",
+    );
+
+    expect(build.ok).toBe(true);
+    expect(generate).toHaveBeenCalledTimes(1);
+    const sent = generate.mock.calls[0]?.[0] as any;
+    const sentResults = sent.messagesToSummarize.filter(
+      (message: any) => message.role === "toolResult",
+    );
+    expect(sentResults).toHaveLength(resultCount);
+    for (const message of sentResults) {
+      expect(message.content[0].text.length).toBeLessThan(600);
+    }
+    // The checkpoint itself still covers every message and carries no
+    // fallback marker: this was a real summary, not retained-tail recovery.
+    expect(build.checkpoint.throughMessageId).toBe(`tool-${resultCount - 1}`);
+    expect(build.checkpoint.summary).toContain("Sixty reads, summarized.");
+    expect(build.checkpoint.details).not.toHaveProperty("fallback");
     await runtime.dispose();
   });
 });

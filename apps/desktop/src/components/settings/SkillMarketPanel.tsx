@@ -29,6 +29,7 @@ import { Field, Input, TooltipButton, cx } from "../ui";
 import { LatestWinsGate } from "../../lib/latest-wins";
 import {
   classifySkillMarketFailure,
+  hasFakeIpFailure,
   hasPolicyFailure,
   hasUnresolvedFailure,
   skillMarketFailureDetail,
@@ -71,7 +72,12 @@ type MarketItem = SkillCatalogEntry & { sourceId?: string };
  * only the source label — a policy refusal is a statement about one address
  * (issue #419). The address itself is never sent.
  */
-type RemoteFailureDetail = { host?: string; reason?: string; addressKind?: string };
+type RemoteFailureDetail = {
+  host?: string;
+  address?: string;
+  reason?: string;
+  addressKind?: string;
+};
 
 type RemoteState = {
   status: "idle" | "loading" | "ready" | "error";
@@ -342,11 +348,13 @@ export function SkillMarketPanel({
 
   // A bare `remoteError` could not tell a policy refusal from a dead host, and
   // one `policy` bucket could not tell an address the guard *judged* from a
-  // resolver that never answered at all. The three now carry different copy,
+  // resolver that never answered — nor the target's own address from the fake-IP
+  // placeholder a local proxy invents for it. The four now carry different copy,
   // and each failure names the host it is about.
   const remoteErrorText = () => {
     if (remote.queryError) return t("settings.sklm.remoteErrorQuery");
     if (hasPolicyFailure(remote.failureKinds)) return t("settings.sklm.remoteErrorPolicy");
+    if (hasFakeIpFailure(remote.failureKinds)) return t("settings.sklm.remoteErrorFakeIp");
     if (hasUnresolvedFailure(remote.failureKinds)) return t("settings.sklm.remoteErrorUnresolved");
     return t("settings.sklm.remoteError");
   };
@@ -361,6 +369,20 @@ export function SkillMarketPanel({
       const host = remote.failureDetails[name]?.host;
       return host ? t("settings.sklm.failureSourceHost", { name, host }) : name;
     });
+
+  /**
+   * A refusal on a proxy-invented address is the one case where the fix is a
+   * setting rather than a source. Naming both the host and the address turns
+   * "the app blocked it" into "your proxy answered 198.18.0.1 for github.com",
+   * which is what lets a user recognise fake-IP mode (issue #419). Falls back to
+   * the plain sentence when the guard reported no address to show.
+   */
+  const fakeIpFailureText = () => {
+    const name = remote.failed.find((entry) => remote.failureKinds[entry] === "fake-ip");
+    const detail = name ? remote.failureDetails[name] : undefined;
+    if (!detail?.host || !detail.address) return t("settings.sklm.fakeIpHintPlain");
+    return t("settings.sklm.fakeIpHint", { host: detail.host, address: detail.address });
+  };
 
   const sourcesSheet = sourcesOpen ? (
     <div
@@ -513,9 +535,11 @@ export function SkillMarketPanel({
                 {t(
                   previewFailure.kind === "policy"
                     ? "settings.sklm.previewPolicyError"
-                    : previewFailure.kind === "unresolved"
-                      ? "settings.sklm.previewResolveError"
-                      : "settings.sklm.previewError",
+                    : previewFailure.kind === "fake-ip"
+                      ? "settings.sklm.previewFakeIpError"
+                      : previewFailure.kind === "unresolved"
+                        ? "settings.sklm.previewResolveError"
+                        : "settings.sklm.previewError",
                 )}
               </p>
             ) : (
@@ -523,6 +547,9 @@ export function SkillMarketPanel({
             )}
             {previewFailure?.kind === "policy" ? (
               <p className="sklm-note">{t("settings.sklm.proxyHint")}</p>
+            ) : null}
+            {previewFailure?.kind === "fake-ip" ? (
+              <p className="sklm-note">{t("settings.sklm.fakeIpHintPlain")}</p>
             ) : null}
             {previewFailure?.kind === "unresolved" ? (
               <p className="sklm-note">{t("settings.sklm.dnsHint")}</p>
@@ -632,6 +659,9 @@ export function SkillMarketPanel({
           {hasPolicyFailure(remote.failureKinds) ? (
             <p className="sklm-status">{t("settings.sklm.proxyHint")}</p>
           ) : null}
+          {hasFakeIpFailure(remote.failureKinds) ? (
+            <p className="sklm-status">{fakeIpFailureText()}</p>
+          ) : null}
           {hasUnresolvedFailure(remote.failureKinds) ? (
             <p className="sklm-status">{t("settings.sklm.dnsHint")}</p>
           ) : null}
@@ -644,6 +674,9 @@ export function SkillMarketPanel({
           </p>
           {hasPolicyFailure(remote.failureKinds) ? (
             <p className="sklm-status">{t("settings.sklm.proxyHint")}</p>
+          ) : null}
+          {hasFakeIpFailure(remote.failureKinds) ? (
+            <p className="sklm-status">{fakeIpFailureText()}</p>
           ) : null}
           {hasUnresolvedFailure(remote.failureKinds) ? (
             <p className="sklm-status">{t("settings.sklm.dnsHint")}</p>

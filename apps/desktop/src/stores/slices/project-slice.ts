@@ -62,6 +62,65 @@ export type ProjectSliceDependencies = StoreAccess & {
 };
 
 /**
+ * Create one logical project group from already-resolved folders and activate
+ * its primary root. The Create project dialog reaches this through a local
+ * folder pick and through a git checkout, so both sources share one project
+ * semantic and one activation path.
+ */
+async function createNamedProjectGroup(
+  {
+    get,
+    set,
+    runtime,
+  }: Pick<ProjectSliceDependencies, "get" | "set" | "runtime">,
+  {
+    name,
+    folders,
+    primaryPath,
+  }: { name: string; folders: string[]; primaryPath?: string },
+): Promise<void> {
+  const normalizedName = name.trim();
+  if (!normalizedName) {
+    throw new Error(i18n.t("errors.projectNameLength"));
+  }
+  const uniqueFolders = folders.filter(
+    (path, index, all) =>
+      Boolean(normalizeProjectPath(path)) &&
+      all.findIndex(
+        (candidate) => normalizeProjectPath(candidate) === normalizeProjectPath(path),
+      ) === index,
+  );
+  if (uniqueFolders.length === 0) {
+    throw new Error(i18n.t("project.createFolderRequired"));
+  }
+  const normalizedPrimary = normalizeProjectPath(primaryPath ?? uniqueFolders[0]);
+  const primary =
+    uniqueFolders.find((path) => normalizeProjectPath(path) === normalizedPrimary) ??
+    uniqueFolders[0];
+  const orderedFolders = [
+    primary,
+    ...uniqueFolders.filter(
+      (path) => normalizeProjectPath(path) !== normalizeProjectPath(primary),
+    ),
+  ];
+  const intent = runtime.beginNavigationIntent();
+  const created = await api.createProjectGroup(normalizedName, orderedFolders);
+  if (!runtime.navigationIntentIsCurrent(intent)) return;
+  const groupPrimary = created.group.primaryPath || primary;
+  const workspace = await get().activateProject(groupPrimary, {
+    navigationIntent: intent,
+  });
+  if (!workspace || !runtime.navigationIntentIsCurrent(intent)) return;
+  // Keep the existing renderer-local metadata in sync so the sidebar can
+  // render the group name immediately; the host group is authoritative on
+  // the next archive refresh and for agent context.
+  get().renameProject(groupPrimary, normalizedName);
+  const onboarding = await api.getOnboarding();
+  if (!runtime.navigationIntentIsCurrent(intent)) return;
+  set({ createProjectDialogOpen: false, onboarding, page: "chat" });
+}
+
+/**
  * Purge renderer-local state for one session whose durable row is already gone
  * (deleted directly, or removed together with its project). This never talks to
  * the host: records and transcripts are deleted before it runs.
@@ -165,6 +224,7 @@ export function createProjectSlice({
   | "openProject"
   | "closeProjectDialog"
   | "createProjectFromFolders"
+  | "createProjectFromGit"
   | "clearProject"
   | "deleteProject"
   | "toggleSessionPinned"
@@ -319,46 +379,19 @@ export function createProjectSlice({
     closeProjectDialog: () => {
       set({ createProjectDialogOpen: false });
     },
-    createProjectFromFolders: async ({ name, folders, primaryPath }) => {
-      const normalizedName = name.trim();
-      if (!normalizedName) {
-        throw new Error(i18n.t("errors.projectNameLength"));
-      }
-      const uniqueFolders = folders.filter(
-        (path, index, all) =>
-          Boolean(normalizeProjectPath(path)) &&
-          all.findIndex(
-            (candidate) => normalizeProjectPath(candidate) === normalizeProjectPath(path),
-          ) === index,
+    createProjectFromFolders: async ({ name, folders, primaryPath }) =>
+      createNamedProjectGroup(
+        { get, set, runtime },
+        { name, folders, primaryPath },
+      ),
+    createProjectFromGit: async ({ name, url, parentPath }) => {
+      // Clone first, then create the project through the same group path, so a
+      // checkout and a folder pick produce identical project semantics.
+      const checkout = await api.cloneProjectInto(url, parentPath);
+      await createNamedProjectGroup(
+        { get, set, runtime },
+        { name, folders: [checkout.path], primaryPath: checkout.path },
       );
-      if (uniqueFolders.length === 0) {
-        throw new Error(i18n.t("project.createFolderRequired"));
-      }
-      const normalizedPrimary = normalizeProjectPath(primaryPath);
-      const primary =
-        uniqueFolders.find((path) => normalizeProjectPath(path) === normalizedPrimary) ??
-        uniqueFolders[0];
-      const orderedFolders = [
-        primary,
-        ...uniqueFolders.filter(
-          (path) => normalizeProjectPath(path) !== normalizeProjectPath(primary),
-        ),
-      ];
-      const intent = runtime.beginNavigationIntent();
-      const created = await api.createProjectGroup(normalizedName, orderedFolders);
-      if (!runtime.navigationIntentIsCurrent(intent)) return;
-      const groupPrimary = created.group.primaryPath || primary;
-      const workspace = await get().activateProject(groupPrimary, {
-        navigationIntent: intent,
-      });
-      if (!workspace || !runtime.navigationIntentIsCurrent(intent)) return;
-      // Keep the existing renderer-local metadata in sync so the sidebar can
-      // render the group name immediately; the host group is authoritative on
-      // the next archive refresh and for agent context.
-      get().renameProject(groupPrimary, normalizedName);
-      const onboarding = await api.getOnboarding();
-      if (!runtime.navigationIntentIsCurrent(intent)) return;
-      set({ createProjectDialogOpen: false, onboarding, page: "chat" });
     },
 
     clearProject: async (opts) => {

@@ -40,6 +40,33 @@ describe("validateManifest", () => {
     ).toMatch(/zh-CN is required/);
   });
 
+  it("validates the floating widget placement fields", () => {
+    expect(validateManifest({ ...base, ui: { shape: "widget" } }).ok).toBe(true);
+    expect(validateManifest({ ...base, ui: { shape: "panel" } }).ok).toBe(true);
+    expect(validateManifest({ ...base, ui: { shape: "orb" } }).error).toMatch(
+      /manifest\.ui\.shape/,
+    );
+    expect(
+      validateManifest({ ...base, ui: { alwaysOnTop: "yes" } }).error,
+    ).toMatch(/manifest\.ui\.alwaysOnTop must be a boolean/);
+    expect(validateManifest({ ...base, ui: { resizable: 1 } }).error).toMatch(
+      /manifest\.ui\.resizable must be a boolean/,
+    );
+    const widget = validateManifest({
+      ...base,
+      ui: {
+        panel: "renderer/index.html",
+        shape: "widget",
+        alwaysOnTop: true,
+        resizable: false,
+      },
+    });
+    expect(widget.ok).toBe(true);
+    expect(widget.manifest?.ui?.shape).toBe("widget");
+    expect(widget.manifest?.ui?.alwaysOnTop).toBe(true);
+    expect(widget.manifest?.ui?.resizable).toBe(false);
+  });
+
   it("accepts the new contribution shapes", () => {
     const result = validateManifest({
       ...base,
@@ -516,6 +543,7 @@ describe("PLUGIN_PERMISSIONS", () => {
       "browser.cdp",
       "audio.capture.background",
       "audio.playback.background",
+      "speech.adapter.register",
       "keyboard.globalShortcut",
       "net.websocket",
     ]) {

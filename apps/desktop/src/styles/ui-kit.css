@@ -144,6 +144,17 @@
   color: var(--ds-warning);
 }
 
+#pi-desktop-overlays {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+#pi-desktop-overlays > .overlay {
+  pointer-events: auto;
+}
+
 .overlay {
   position: fixed;
   inset: 0;

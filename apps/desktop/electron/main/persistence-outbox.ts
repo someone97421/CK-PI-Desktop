@@ -25,6 +25,7 @@ export class PersistenceOutbox {
   private entries: MessageAppend[] = [];
   private flushing: Promise<void> | null = null;
   private persistChain = Promise.resolve();
+  private mutationChain = Promise.resolve();
   private readonly loaded: Promise<void>;
   private onMessagePersisted?: (sessionId: string) => Promise<void> | void;
 
@@ -38,20 +39,35 @@ export class PersistenceOutbox {
   setOnMessagePersisted(callback?: (sessionId: string) => Promise<void> | void): void {
     this.onMessagePersisted = callback;
   }
-  async enqueue(
+  enqueue(entry: MessageAppend, getHost: () => HostProcess | null): Promise<void> {
+    return this.queueMutation(() => this.enqueueEntry(entry, getHost));
+  }
+
+  // 入队等待刷新时仍按调用顺序执行，防止旧快照晚于新快照写入。
+  private queueMutation(action: () => Promise<void>): Promise<void> {
+    const mutation = this.mutationChain.then(action);
+    this.mutationChain = mutation.catch(() => undefined);
+    return mutation;
+  }
+
+  private async enqueueEntry(
     entry: MessageAppend,
     getHost: () => HostProcess | null,
   ): Promise<void> {
     await this.loaded;
     const existing = this.entries.findIndex((item) => item.key === entry.key);
     if (existing >= 0) this.entries[existing] = entry;
-    else if (this.entries.length >= MAX_ENTRIES) {
-      this.logger("error", "session persistence outbox is full", {
-        size: this.entries.length,
-        max: MAX_ENTRIES,
-      });
-      throw new Error("session persistence outbox is full");
-    } else this.entries.push(entry);
+    else {
+      if (this.entries.length >= MAX_ENTRIES) await this.flush(getHost);
+      if (this.entries.length >= MAX_ENTRIES) {
+        this.logger("error", "session persistence outbox is full", {
+          size: this.entries.length,
+          max: MAX_ENTRIES,
+        });
+        throw new Error("session persistence outbox is full");
+      }
+      this.entries.push(entry);
+    }
     await this.persist();
     void this.flush(getHost);
   }
@@ -69,12 +85,14 @@ export class PersistenceOutbox {
    * Drop queued appends for a session that the user deleted so a later
    * host-side stub recreate cannot resurrect it (D318).
    */
-  async dropSession(sessionId: string): Promise<void> {
-    await this.loaded;
-    const next = this.entries.filter((entry) => entry.sessionId !== sessionId);
-    if (next.length === this.entries.length) return;
-    this.entries = next;
-    await this.persist();
+  dropSession(sessionId: string): Promise<void> {
+    return this.queueMutation(async () => {
+      await this.loaded;
+      const next = this.entries.filter((entry) => entry.sessionId !== sessionId);
+      if (next.length === this.entries.length) return;
+      this.entries = next;
+      await this.persist();
+    });
   }
 
   size(): number {
@@ -93,6 +111,7 @@ export class PersistenceOutbox {
           turnId: current.turnId,
         });
       } catch (error) {
+        // host 负责跨会话 ID 隔离；只有成功回执才能确认快照覆盖。
         this.logger("warn", "session persistence flush paused", {
           key: current.key,
           data: String(error),

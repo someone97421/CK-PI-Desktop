@@ -12,7 +12,7 @@ const CODE_FILE_PATTERN =
   /\.(cjs|css|go|java|js|json|jsx|kt|mjs|php|py|rb|rs|sh|sql|svelte|swift|toml|ts|tsx|vue|ya?ml)$/i;
 const ARCHIVE_FILE_PATTERN = /\.(7z|bz2|gz|jar|rar|tar|zip)$/i;
 const SHEET_FILE_PATTERN = /\.(csv|ods|xls|xlsx)$/i;
-const AUDIO_FILE_PATTERN = /\.(flac|m4a|mp3|ogg|wav)$/i;
+const AUDIO_FILE_PATTERN = /\.(flac|m4a|mp3|ogg|wav|webm)$/i;
 const VIDEO_FILE_PATTERN = /\.(avi|mkv|m4v|mov|mp4|webm)$/i;
 
 /** Paste/scratch files keep absolute paths; `@` entries are workspace-relative. */
@@ -257,6 +257,11 @@ function chipSvg(key: string, size = 13): string {
 
 export function isEditableTextReference(reference: ComposerFileReference): boolean {
   return reference.mimeType?.toLowerCase() === "text/plain" || /\.txt$/i.test(reference.name);
+}
+
+export function isComposerAudioReference(reference: ComposerFileReference): boolean {
+  const mime = reference.mimeType?.toLowerCase() ?? "";
+  return mime.startsWith("audio/") || AUDIO_FILE_PATTERN.test(reference.name);
 }
 
 /** Build the atomic inline chip element for one attachment reference. */

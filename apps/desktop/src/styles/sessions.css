@@ -379,6 +379,11 @@
   color: var(--ds-error);
 }
 
+/* An armed delete item names its second click, so the swap stays obvious. */
+.sidebar-row-menu button.danger.is-armed {
+  background: color-mix(in oklab, var(--ds-error) 14%, transparent);
+}
+
 .sidebar-row-menu button svg,
 .sidebar-popover button svg {
   flex: 0 0 auto;
@@ -473,7 +478,9 @@
   align-items: center;
   justify-content: space-between;
   min-height: 24px;
-  padding: 4px 4px 0;
+  /* The label opens a section, so its own top padding carries the 8px
+     section-to-section gap; the list below it supplies the 2px back. */
+  padding: 8px 4px 0;
   border-radius: var(--radius-sm);
 }
 
@@ -591,17 +598,6 @@
 .sidebar-popover-divider {
   height: 6px;
 }
-
-.sidebar-session-group-title.project-toggle {
-  gap: 5px;
-}
-
-.sidebar-session-group-title.project-toggle:hover,
-.sidebar-session-group-title.project-toggle:focus-visible {
-  background: var(--ds-bg-hover);
-  color: var(--ds-text-primary);
-}
-
 
 /* Compact hover card for session rows. Related-session references stay
    real buttons so the card remains usable with a keyboard. */
@@ -880,11 +876,6 @@
   margin-left: 2px;
   border-radius: var(--radius-full);
   background: var(--ds-accent);
-}
-
-.project-group.active > .sidebar-session-group-header {
-  border-radius: var(--radius-sm);
-  background: color-mix(in oklab, var(--ds-accent) 4%, transparent);
 }
 
 .project-menu {

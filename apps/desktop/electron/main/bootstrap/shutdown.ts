@@ -23,7 +23,7 @@ export type ShutdownState = {
   closeBehavior: CloseBehavior;
   tray: Tray | null;
   pluginLauncherAccelerator: string | null;
-  summonWindowAccelerator: string | null;
+  toggleWindowAccelerator: string | null;
 };
 
 export type ShutdownDependencies = {
@@ -124,9 +124,9 @@ export function registerShutdownHandlers({
       globalShortcut.unregister(state.pluginLauncherAccelerator);
       state.pluginLauncherAccelerator = null;
     }
-    if (state.summonWindowAccelerator) {
-      globalShortcut.unregister(state.summonWindowAccelerator);
-      state.summonWindowAccelerator = null;
+    if (state.toggleWindowAccelerator) {
+      globalShortcut.unregister(state.toggleWindowAccelerator);
+      state.toggleWindowAccelerator = null;
     }
     state.shutdownPromise = (async () => {
       // Replies still streaming are stopped through the sidecar first so their

@@ -33,6 +33,7 @@ export const NATIVE_MENU_ACTIONS = [
   "toggleMaximize",
   "close",
   "restoreMainWindow",
+  "toggleMainWindow",
 ] as const;
 
 export type NativeMenuAction = (typeof NATIVE_MENU_ACTIONS)[number];
@@ -70,6 +71,9 @@ export const IPC = {
     agentPrompt: "pi-desktop/agent/prompt",
     agentSteer: "pi-desktop/agent/steer",
     promptEnhance: "pi-desktop/prompt/enhance",
+    speechTranscribe: "pi-desktop/speech/transcribe",
+    speechSynthesize: "pi-desktop/speech/synthesize",
+    speechGetStatus: "pi-desktop/speech/getStatus",
     agentCompact: "pi-desktop/agent/compact",
     agentAbort: "pi-desktop/agent/abort",
     agentStop: "pi-desktop/agent/stop",
@@ -137,6 +141,7 @@ export const IPC = {
     projectGroupInstructionsGet: "pi-desktop/project-group/instructions/get",
     projectGroupInstructionsSave: "pi-desktop/project-group/instructions/save",
     projectClone: "pi-desktop/project/clone",
+    projectCloneCheckout: "pi-desktop/project/cloneCheckout",
     projectGet: "pi-desktop/project/get",
     projectList: "pi-desktop/project/list",
     projectSet: "pi-desktop/project/set",
@@ -179,7 +184,15 @@ export const IPC = {
     extensionsCommandRun: "pi-desktop/extensions/commands/run",
     extensionsUiRespond: "pi-desktop/extensions/ui/respond",
     pluginLoadDev: "pi-desktop/plugin/loadDev",
+    /**
+     * The answer to a development plugin's permission review. Loading a folder
+     * is a two-step: `pluginLoadDev` returns the declaration, and this commits
+     * the permissions the user accepted.
+     */
+    pluginLoadDevConfirm: "pi-desktop/plugin/loadDevConfirm",
     pluginReload: "pi-desktop/plugin/reload",
+    /** Commits a reviewed widening for an already-loaded development plugin. */
+    pluginReloadConfirm: "pi-desktop/plugin/reloadConfirm",
     pluginCreateFromTemplate: "pi-desktop/plugin/createFromTemplate",
     pluginInstallFromPath: "pi-desktop/plugin/installFromPath",
     pluginInstallFromPackage: "pi-desktop/plugin/installFromPackage",
@@ -245,6 +258,7 @@ export const IPC = {
     marketInstall: "pi-desktop/market/install",
     marketCheckUpdates: "pi-desktop/market/checkUpdates",
     marketApplyUpdates: "pi-desktop/market/applyUpdates",
+    marketCancelInstall: "pi-desktop/market/cancelInstall",
     commandPaletteSearch: "pi-desktop/commandPalette/search",
     commandPaletteExecute: "pi-desktop/commandPalette/execute",
     logOpenFolder: "pi-desktop/log/openFolder",
@@ -283,6 +297,8 @@ export const IPC = {
   },
   event: {
     pluginChanged: "pi-desktop/event/pluginChanged",
+    /** Progress of an install or update, while it is still running. */
+    pluginInstallProgress: "pi-desktop/plugin/event/installProgress",
     /** Host-originated app settings mutation (e.g. plugin `app.setTheme`). */
     settingsChanged: "pi-desktop/app/event/settingsChanged",
     extensionsUiPrompt: "pi-desktop/extensions/event/uiPrompt",

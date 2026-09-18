@@ -20,6 +20,7 @@ import {
 } from "@pi-desktop/shared";
 import { useOpenChatFileRef, useOpenPreviewTarget } from "../../../hooks/use-preview-target";
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
+import { isThinkingActive, resolveThinkingDisplayMode } from "../../../lib/turn-process";
 import { messageThinking as thinkingText } from "../../../lib/assistant-turns";
 import { useReferencedImageDataUrl } from "../../../lib/use-referenced-image-data-url";
 import { isHtmlFilePath, splitChatText } from "../../../lib/chat-links";
@@ -551,6 +552,21 @@ export const ThinkingRow = memo(function ThinkingRow({
     onUserInteraction?.();
     collapseDisclosure();
   }, [collapseDisclosure, onUserInteraction]);
+  const compact = useAppStore(
+    (state) => resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode) === "compact",
+  );
+  if (compact) {
+    return isThinkingActive(message, streaming) ? (
+      <div className="tool-row thinking thinking-compact" role="status">
+        <span className="tool-row-icon" aria-hidden>
+          <IconSparkles size={15} />
+        </span>
+        <span className="tool-row-name running">
+          {t("chat.thinking", { defaultValue: "Thinking" })}
+        </span>
+      </div>
+    ) : null;
+  }
   const text = thinkingText(message);
   const summary = text.replace(/\s+/g, " ").trim();
   return (

@@ -78,7 +78,7 @@ function isDelegationStartActivity(item: AssistantActivityItem): boolean {
   return item.kind === "tool" && isDelegationStartTool(item.message.toolName);
 }
 
-/** Delegate rows grouped by the `Task` call that produced them. */
+/** Delegate rows grouped by the call that produced them. */
 function collectSubagentRuns(
   messages: readonly UiMessage[],
 ): Map<string, SubagentRun> {
@@ -395,7 +395,8 @@ function reuseTranscriptEntry(
         previous.mark.throughMessageId === next.mark.throughMessageId &&
         previous.mark.generation === next.mark.generation &&
         previous.mark.summaryTokens === next.mark.summaryTokens &&
-        previous.mark.summarized === next.mark.summarized)
+        previous.mark.summarized === next.mark.summarized &&
+        previous.mark.fallback === next.mark.fallback)
       ? previous
       : next;
   }

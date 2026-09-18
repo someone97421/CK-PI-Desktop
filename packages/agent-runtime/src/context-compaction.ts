@@ -31,6 +31,10 @@ import {
 } from "./provider-binding.js";
 import { clampThinkingLevel } from "./thinking-level.js";
 
+import {
+  COMPACTION_SUMMARY_RETRY_POLICY,
+  estimateSummaryPromptTokens,
+} from "./compaction-summary-input.js";
 /**
  * Tokens held back from the context window for the summary prompt and the
  * model's own output. Compaction thresholds are derived from the active model's
@@ -453,7 +457,13 @@ export function prepareLinearCheckpointPreparation(input: {
  * retained-tail checkpoint instead of sending an oversized prompt.
  */
 export function compactionSummaryWouldExceedBudget(
-  preparation: Pick<ShapedPreparation, "messagesToSummarize" | "previousSummary">,
+  preparation: Pick<
+    CompactionPreparation,
+    "messagesToSummarize" | "previousSummary"
+  > & {
+    turnPrefixMessages?: readonly AgentMessage[];
+    isSplitTurn?: boolean;
+  },
   budget: Pick<ContextBudget, "hardLimit" | "requestHeadroom">,
   summaryModel: Pick<Model<Api>, "contextWindow" | "maxTokens">,
 ): boolean {
@@ -472,16 +482,14 @@ export function compactionSummaryWouldExceedBudget(
     1,
     contextWindow - modelOutputBudget - COMPACTION_SUMMARY_PROMPT_SAFETY_TOKENS,
   );
-  // The summary covers the whole boundary range, so its input is the context
-  // that tripped the hard limit.
-  const historyTokens = preparation.messagesToSummarize.reduce(
-    (total, message) => total + estimateTokens(message),
-    0,
+  return (
+    estimateSummaryPromptTokens({
+      messagesToSummarize: preparation.messagesToSummarize as AgentMessage[],
+      turnPrefixMessages: (preparation.turnPrefixMessages as AgentMessage[]) ?? [],
+      isSplitTurn: Boolean(preparation.isSplitTurn),
+      previousSummary: preparation.previousSummary,
+    }) >= summaryInputLimit
   );
-  const previousSummaryTokens = preparation.previousSummary
-    ? Math.ceil(preparation.previousSummary.length / 4)
-    : 0;
-  return historyTokens + previousSummaryTokens >= summaryInputLimit;
 }
 
 /**
@@ -611,7 +619,7 @@ export async function generateCompactionSummary(input: {
     input.model,
     undefined,
     input.thinkingLevel,
-    undefined,
+    COMPACTION_SUMMARY_RETRY_POLICY,
     undefined,
     withAbortSignal(input.signal, BACKGROUND_CONTEXT),
   );

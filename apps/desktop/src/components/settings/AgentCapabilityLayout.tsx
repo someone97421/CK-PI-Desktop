@@ -27,9 +27,6 @@ export type AgentProjectOption = {
 /** Which level the workbench is currently showing. */
 export type CapabilityFilter = "all" | "global" | "project";
 
-/** How long an armed delete stays armed before it disarms itself. */
-const DELETE_CONFIRM_MS = 3200;
-
 export function projectDisplayName(path: string, fallback?: string): string {
   if (fallback?.trim()) return fallback.trim();
   const parts = path.replaceAll("\\", "/").split("/").filter(Boolean);
@@ -103,19 +100,11 @@ export function useAgentProjects() {
 }
 
 /**
- * A delete that needs two clicks. The first click arms the action and the
- * caller relabels it; the arm expires on its own so a row never stays one
- * stray click away from losing a file.
+ * The two-click delete every capability row uses. The arm-and-expire rule is
+ * shared with the session and project rows, so the settings pages re-export it
+ * from the layout they already share instead of keeping a second copy.
  */
-export function useArmedDelete() {
-  const [armed, setArmed] = useState<string | null>(null);
-  useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(null), DELETE_CONFIRM_MS);
-    return () => clearTimeout(timer);
-  }, [armed]);
-  return { armed, setArmed };
-}
+export { useArmedDelete } from "../../hooks/use-armed-delete";
 
 /** Case-insensitive substring match across whichever fields a row exposes. */
 export function matchesCapabilitySearch(

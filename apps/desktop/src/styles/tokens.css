@@ -36,7 +36,8 @@
   --accent-900: #303030;
 
   --ds-bg-primary: var(--gray-900);
-  --ds-bg-sidebar: var(--ds-bg-under); /* Codex surface-under / sideBar */
+  --ds-settings-rail-bg: var(--ds-bg-under);
+  --ds-bg-sidebar: var(--ds-settings-rail-bg, var(--ds-bg-under));
   /*
    * Optional paint layer for the sidebar surface (gradients / images).
    * `--ds-bg-sidebar` stays a color so color-mix, borders, and macOS glass
@@ -111,8 +112,7 @@
   --ds-on-accent: var(--gray-900);
   /* Focus rings / resize affordances. Tied to the accent so themes stay monochrome. */
   --ds-focus: var(--ds-accent);
-  /* Settings rail and shared inset searches keep their built-in surface tones. */
-  --ds-settings-rail-bg: #000000;
+  /* Settings fields and shared inset searches keep their built-in tones. */
   --ds-settings-field-bg: #212121;
   --ds-settings-nav-active: color-mix(in oklab, var(--gray-0) 10%, transparent);
   --ds-field-inset-bg: color-mix(in oklab, var(--ds-text-primary) 5%, transparent);
@@ -215,7 +215,8 @@
   color-scheme: light;
   /* Codex electron-light */
   --ds-bg-primary: #ffffff;
-  --ds-bg-sidebar: #f3f3f3;
+  --ds-settings-rail-bg: #f3f3f3;
+  --ds-bg-sidebar: var(--ds-settings-rail-bg, #f3f3f3);
   --ds-bg-secondary: #f9f9f9;
   --ds-bg-tertiary: #f3f3f3;
   --ds-bg-inset: #ededed;
@@ -251,7 +252,6 @@
   /* Solid-accent ink inverts with the accent: white on the near-black pill. */
   --ds-on-accent: #ffffff;
   --ds-focus: var(--ds-accent);
-  --ds-settings-rail-bg: #f4f4f4;
   --ds-settings-field-bg: #ffffff;
   --ds-settings-nav-active: color-mix(in oklab, #1a1c1f 12%, #ffffff);
   --ds-field-inset-bg: #f3f3f3;

@@ -489,7 +489,7 @@ fn startup_reconciliation_removes_a_row_whose_plugin_is_gone() {
     secrets.set(&key_ref, "sk-demo").unwrap();
     // No plugin is registered in this data directory, so the row has no owner
     // to answer for it.
-    let plugins = PluginManager::new(dir.path(), None);
+    let plugins = PluginManager::new(dir.path(), MarketChannel::Official, None);
     assert_eq!(
         crate::plugins::reconcile_all(&db, &secrets, &plugins).unwrap(),
         1

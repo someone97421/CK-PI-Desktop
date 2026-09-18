@@ -108,6 +108,8 @@ export function prepareMacDevelopmentBundle({
         "--force",
         "--sign",
         "-",
+        "--identifier",
+        DEV_BUNDLE_ID,
         stagingBundle,
       ]);
     }

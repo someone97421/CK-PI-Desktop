@@ -275,5 +275,6 @@ test("host panel events reach docked views as well as detached windows", () => {
   assert.match(mainSource, /broadcastPluginPanelEvent\("appearance:changed"/);
   assert.match(mainSource, /broadcastPluginPanelEvent\("workspace:changed"/);
   assert.match(mainSource, /plugins\.broadcastEvent\("workspace:changed"/);
+  assert.match(mainSource, /plugins\.broadcastEvent\("appearance:changed"/);
   assert.match(mainSource, /function setCurrentWorkspacePath/);
 });

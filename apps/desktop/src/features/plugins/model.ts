@@ -64,6 +64,7 @@ export const PERMISSION_RISK: Record<string, RiskTier> = {
   // live audio stream sit at the top tier with the other outbound paths.
   "net.websocket": "high",
   "audio.capture.background": "high",
+  "speech.adapter.register": "high",
   "audio.playback.background": "medium",
   "keyboard.globalShortcut": "medium",
   "bus.publish": "medium",

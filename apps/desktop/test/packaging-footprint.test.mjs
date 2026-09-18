@@ -182,6 +182,10 @@ test("packaging keeps only shipped locales and excludes non-runtime artifacts", 
     ),
     "third-party license and notice files must remain packageable",
   );
+  // The agent-runtime dist-bundle mapping must remain a directory copy: the
+  // bundle emits dist-bundle/package.json with "type":"module" so the ESM
+  // sidecar.js loads in packaged installs (issue #507). Contract tests live
+  // in agent-runtime-bundle-package.test.mjs.
   assert.deepEqual(packageJson.build.extraResources, [
     {
       from: "build/icon.png",

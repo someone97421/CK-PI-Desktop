@@ -71,6 +71,10 @@ describe("Plan protocol contracts", () => {
     }
     expect(IPC.invoke.projectClone).toBe("pi-desktop/project/clone");
     expect(IPC_WHITELIST.has(IPC.invoke.projectClone)).toBe(true);
+    expect(IPC.invoke.speechTranscribe).toBe("pi-desktop/speech/transcribe");
+    expect(IPC_WHITELIST.has(IPC.invoke.speechTranscribe)).toBe(true);
+    expect(IPC_WHITELIST.has(IPC.invoke.speechSynthesize)).toBe(true);
+    expect(IPC_WHITELIST.has(IPC.invoke.speechGetStatus)).toBe(true);
   });
 
   it("exposes the vendor-account OAuth channels through the preload whitelist", () => {

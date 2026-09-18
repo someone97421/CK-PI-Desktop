@@ -37,6 +37,8 @@
 
 .composer-model-thinking {
   position: relative;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 /* Permission-mode chip menu (D115): anchored left above the mode chips. */

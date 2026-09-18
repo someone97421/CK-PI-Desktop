@@ -10,13 +10,13 @@
  *  PI_DESKTOP_HOST_BIN (optional)
  */
 import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PROTOCOL_VERSION } from "../packages/shared/dist/protocol.js";
+import { readNdjsonLines } from "../packages/shared/dist/ndjson.js";
 import {
   loadDevelopmentPlugin,
   resolvePluginExecution,
@@ -84,8 +84,7 @@ class Host {
       // keep quiet unless debugging
       if (process.env.DEBUG_HOST) process.stderr.write(b);
     });
-    const rl = createInterface({ input: this.child.stdout });
-    rl.on("line", (line) => {
+    readNdjsonLines(this.child.stdout, (line) => {
       if (process.env.DEBUG_HOST) console.error(`[e2e host stdout] ${line}`);
       let msg;
       try {

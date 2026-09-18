@@ -27,10 +27,49 @@ const rpcTimeoutSource = await readFile(
   new URL("../../../packages/shared/src/rpc-timeouts.ts", import.meta.url),
   "utf8",
 );
+const agentSidecarEntrySource = await readFile(
+  new URL("../../../packages/agent-runtime/src/sidecar.ts", import.meta.url),
+  "utf8",
+);
+const e2eHostSource = await readFile(
+  new URL("../../../scripts/e2e/host.mjs", import.meta.url),
+  "utf8",
+);
+const e2eSmokeSource = await readFile(
+  new URL("../../../scripts/e2e-smoke.mjs", import.meta.url),
+  "utf8",
+);
+const codexImporterSource = await readFile(
+  new URL("../electron/main/importers/codex.ts", import.meta.url),
+  "utf8",
+);
 const apiSource = await readFile(
   new URL("../src/lib/api.ts", import.meta.url),
   "utf8",
 );
+
+test("stdio RPC readers split frames on LF only", () => {
+  for (const [name, source] of [
+    ["host-process", hostSource],
+    ["agent-sidecar", sidecarSource],
+    ["runtime sidecar", agentSidecarEntrySource],
+    ["e2e host harness", e2eHostSource],
+    ["e2e smoke host", e2eSmokeSource],
+    ["codex importer", codexImporterSource],
+  ]) {
+    assert.match(source, /readNdjsonLines/, `${name} must use LF NDJSON framing`);
+    assert.doesNotMatch(
+      source,
+      /from ["']node:readline["']/,
+      `${name} must not use readline`,
+    );
+    assert.doesNotMatch(
+      source,
+      /createInterface/,
+      `${name} must not call createInterface`,
+    );
+  }
+});
 
 test("sidecar detaches host listeners and gates every child write", () => {
   assert.match(sidecarSource, /private closeTransport\(error: Error\)/);

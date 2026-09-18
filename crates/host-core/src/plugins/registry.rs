@@ -23,8 +23,15 @@ pub struct PluginManager {
     /// build stops shipping must stop being protected immediately, whatever the
     /// row that survives it looks like.
     pub(crate) bundled_ids: BTreeSet<String>,
-    /// Catalog URL pinned by app settings; `None` keeps the official default.
-    pub(crate) market_source: Option<String>,
+    /// Catalog channel pinned by app settings, and the URL for `custom`.
+    pub(crate) market_channel: MarketChannel,
+    pub(crate) market_custom_url: Option<String>,
+    /// Cancel token of the install currently running, when one is.
+    ///
+    /// The renderer's cancel action flips it and the download loop reads it.
+    /// Only one install runs at a time — the RPC that starts one holds the
+    /// state lock — so a single slot is enough.
+    pub(crate) install_cancel: Option<CancelToken>,
     /// Locale a row's display fields are resolved against.
     ///
     /// The desktop shell owns the app language — `settings.language`, or the
@@ -34,17 +41,23 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    /// Build a manager against a specific catalog source.
+    /// Build a manager against a specific catalog channel.
     ///
-    /// The source is applied before the first catalog fetch so a mirror
-    /// configured in settings is honoured on the very first launch, not only
-    /// after an explicit refresh.
-    pub fn new(data_dir: &Path, market_source: Option<String>) -> Self {
+    /// The channel is applied before the first catalog fetch so a non-default
+    /// source configured in settings is honoured on the very first launch, not
+    /// only after an explicit refresh.
+    pub fn new(
+        data_dir: &Path,
+        market_channel: MarketChannel,
+        market_custom_url: Option<String>,
+    ) -> Self {
         let mut mgr = Self {
             data_dir: data_dir.to_path_buf(),
             runtime: Vec::new(),
             bundled_ids: BTreeSet::new(),
-            market_source,
+            market_channel,
+            market_custom_url,
+            install_cancel: None,
             locale: "en".into(),
         };
         let _ = mgr.ensure_dirs();
@@ -289,9 +302,26 @@ impl PluginManager {
     }
 
     pub fn load_dev(&mut self, plugin_path: &str) -> Result<PluginSummary> {
+        self.load_dev_with_permissions(plugin_path, None)
+    }
+
+    pub fn load_dev_with_permissions(
+        &mut self,
+        plugin_path: &str,
+        granted_permissions: Option<Vec<String>>,
+    ) -> Result<PluginSummary> {
         let path = PathBuf::from(plugin_path);
         let manifest = Self::read_manifest(&path)?;
         let now = Utc::now().to_rfc3339();
+        let permissions = match granted_permissions {
+            Some(granted) => manifest
+                .permissions
+                .iter()
+                .filter(|p| granted.contains(p))
+                .cloned()
+                .collect(),
+            None => manifest.permissions.clone(),
+        };
         let summary = PluginSummary {
             id: manifest.id.clone(),
             name: manifest.name.clone(),
@@ -302,7 +332,7 @@ impl PluginManager {
             bundled: false,
             status: "ready".into(),
             error_message: None,
-            permissions: manifest.permissions.clone(),
+            permissions,
             path: Some(path.to_string_lossy().to_string()),
             capabilities: derive_capabilities(&manifest),
             description: manifest.description.clone(),

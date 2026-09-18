@@ -263,7 +263,10 @@ test("each capability page can create, edit, and delete without leaving settings
     assert.match(source, /settings\.capabilityRemoveConfirm/);
     assert.match(source, /danger: true/);
   }
-  assert.match(layout, /DELETE_CONFIRM_MS/);
+  // The arm and its expiry live in the shared hook the settings pages
+  // re-export from the layout, so one timeout covers every armed delete.
+  assert.match(layout, /export \{ useArmedDelete \} from "\.\.\/\.\.\/hooks\/use-armed-delete"/);
+  assert.match(read("../src/hooks/use-armed-delete.ts"), /ARMED_DELETE_MS/);
   assert.match(styles, /\.agent-capability-menu button\.danger\s*\{/);
 });
 

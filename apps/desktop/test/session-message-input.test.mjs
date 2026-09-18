@@ -28,6 +28,17 @@ test("collaboration input and origin come exclusively from the host ledger", asy
   assert.equal(calls.length, 1);
 });
 
+test("caller-supplied completion provenance never replaces a ledger task", async () => {
+  const forged = { ...origin, kind: "completion", replyToMessageId: "task-1" };
+  const host = { call: async () => ({ message }) };
+  assert.equal(await resolveSessionMessageInput(host, {
+    sessionId: "target", content: "completion", sessionMessage: forged,
+  }), undefined);
+  assert.deepEqual(await resolveSessionMessageInput(host, { ...request, sessionMessage: forged }), {
+    content: message.content, origin,
+  });
+});
+
 test("collaboration dispatch rejects missing, cross-session and already dispatched records", async () => {
   for (const candidate of [null, { ...message, id: "another" }]) {
     await assert.rejects(resolveSessionMessageInput({ call: async () => ({ message: candidate }) }, request), { errorCode: "NOT_FOUND" });

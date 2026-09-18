@@ -106,6 +106,12 @@ export type ContextCompactionMark = ContextCompactionStatus & {
   throughMessageId: string;
   /** False when the window rolled over without asking for a summary. */
   summarized: boolean;
+  /**
+   * Present when summary generation failed and the checkpoint carries only a
+   * recovery notice plus a retained tail; the row must not present that
+   * notice as a summary.
+   */
+  fallback?: ContextCompactionFallback;
 };
 
 export type ContextCompactionReason = "manual" | "threshold" | "overflow";

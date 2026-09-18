@@ -391,6 +391,28 @@ export function registerWorkspaceIpc({
     });
     return { workspace, canceled: false };
   });
+
+  handle(
+    IPC.invoke.projectCloneCheckout,
+    async (input: { url?: unknown; parentPath?: unknown } = {}) => {
+      const url = typeof input.url === "string" ? input.url.trim() : "";
+      const parentPath =
+        typeof input.parentPath === "string" ? input.parentPath.trim() : "";
+      if (!url || !parentPath) {
+        throw Object.assign(
+          new Error("repository URL and parent folder required"),
+          { errorCode: ErrorCodes.INVALID_ARGUMENT },
+        );
+      }
+      // Clone only. The renderer still creates the logical project group, so
+      // the active host workspace stays untouched until activation.
+      const dest = await cloneGitRepository({ url, parentPath });
+      return {
+        path: dest,
+        name: dest.split(/[\\/]/).filter(Boolean).at(-1) || dest,
+      };
+    },
+  );
   handle(IPC.invoke.projectSet, async (path: string) => {
     if (!host) throw new Error("host unavailable");
     setCurrentWorkspacePath(path);

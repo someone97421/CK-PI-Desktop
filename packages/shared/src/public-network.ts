@@ -257,7 +257,14 @@ export type PublicNetworkRefusalDetail = {
   reason: PublicNetworkRefusalReason;
   /** The hostname the guard was classifying, when it got that far. */
   host?: string;
-  /** The class of the address that failed the policy, never the address. */
+  /**
+   * The address that failed the policy, validated as an IP literal before it is
+   * carried. It is the local resolver's answer for `host`, not the user's input
+   * and not a URL component, and it is the single most diagnostic field a
+   * refusal has: `198.18.0.1` reads as a proxy's fake-IP at a glance.
+   */
+  address?: string;
+  /** That address's class, which is what separates a proxy artifact from a target. */
   addressKind?: PublicNetworkAddressKind;
   /**
    * The route that hop was judged on, when the guard could read one. `direct`
@@ -286,30 +293,61 @@ const PUBLIC_NETWORK_ADDRESS_KINDS: ReadonlyArray<PublicNetworkAddressKind> = [
 const PUBLIC_NETWORK_ROUTES: ReadonlyArray<PublicNetworkRoute> = ["direct", "proxied", "unknown"];
 
 /**
- * What a refusal says about itself: why, which host, which class of address
- * failed, and which route the guard judged that hop on. Callers that must
- * explain a block — the skill market's classifier and its diagnostics — read
- * this instead of parsing the message. `addressKind` travels without the
- * address: the class is what separates a resolver artifact (`benchmark`, a TUN
- * fake-IP) from a real private target (`private`, RFC1918), and it is not a
- * secret.
+ * The address classes a local proxy hands back for a name it means to resolve
+ * itself, instead of the target's own address. `benchmark` is RFC 2544's
+ * `198.18.0.0/15`, which Clash, Mihomo, sing-box and Surge all ship as their
+ * default fake-IP pool — and `2001:2::/48` in IPv6.
+ *
+ * A caller uses this to explain a block correctly, never to lift one: an address
+ * in this class still fails `isPublicIpLiteral`, and the guard still refuses it
+ * unless the route says this app dials a proxy instead of that address
+ * (ADR 0272, issue #419).
+ */
+export function isProxyFakeIpAddress(kind: PublicNetworkAddressKind | undefined): boolean {
+  return kind === "benchmark";
+}
+
+/**
+ * What a refusal says about itself: why, which host, which address it resolved
+ * to, which class that address fell into, and which route the guard judged that
+ * hop on. Callers that must explain a block — the skill market's classifier and
+ * its diagnostics — read this instead of parsing the message.
+ *
+ * The address and its class travel together: the address is what the user
+ * recognises (`198.18.0.1` is unmistakably a proxy's fake-IP) and the class is
+ * what a machine decides on; `route` is what decides whether that fake-IP class
+ * was tolerated or refused (ADR 0272). Neither the address nor the class is a
+ * secret — both are the local resolver's answer for a hostname the user supplied
+ * — and neither is a URL, a path, a query or a credential.
  */
 export function publicNetworkRefusalDetail(error: unknown): PublicNetworkRefusalDetail | undefined {
   const reason = publicNetworkRefusalReason(error);
   if (!reason) return undefined;
-  const source = error as { host?: unknown; addressKind?: unknown; route?: unknown };
+  const source = error as {
+    host?: unknown;
+    address?: unknown;
+    addressKind?: unknown;
+    route?: unknown;
+  };
   const host = typeof source.host === "string" && source.host ? source.host : undefined;
   const addressKind = PUBLIC_NETWORK_ADDRESS_KINDS.includes(
     source.addressKind as PublicNetworkAddressKind,
   )
     ? (source.addressKind as PublicNetworkAddressKind)
     : undefined;
+  // Only a well-formed IP literal travels: a refusal must never be a channel for
+  // putting arbitrary resolver text into a log line or a settings page.
+  const address =
+    typeof source.address === "string" && classifyIpLiteral(source.address) !== "invalid"
+      ? source.address
+      : undefined;
   const route = PUBLIC_NETWORK_ROUTES.includes(source.route as PublicNetworkRoute)
     ? (source.route as PublicNetworkRoute)
     : undefined;
   return {
     reason,
     ...(host ? { host } : {}),
+    ...(address ? { address } : {}),
     ...(addressKind ? { addressKind } : {}),
     ...(route ? { route } : {}),
   };

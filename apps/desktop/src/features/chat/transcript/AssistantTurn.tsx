@@ -25,6 +25,7 @@ import {
   collectDelegationStatuses,
   collectDelegationTimings,
 } from "../../../lib/subagent-topology";
+import { projectTurnProcess } from "../../../lib/turn-process";
 import { useAppStore } from "../../../stores/app-store";
 import { TranscriptReadOnlyContext } from "./context";
 import { selectionMarkdownWithinRow } from "../../../lib/selection-quote";
@@ -42,6 +43,7 @@ import { activityItemsEqual, ActivityGroup } from "./ActivityGroup";
 import { MessageRow } from "./MessageRow";
 import { TaskProcessDrawer } from "./TaskProcessDrawer";
 import { TaskReviewCard } from "./TaskReviewCard";
+import { TurnProcess } from "./TurnProcess";
 
 type AssistantTurnProps = {
   entry: AssistantTurnEntry;
@@ -95,7 +97,8 @@ export function compactionMarksEqual(
     previous.throughMessageId === next.throughMessageId &&
     previous.generation === next.generation &&
     previous.summaryTokens === next.summaryTokens &&
-    previous.summarized === next.summarized
+    previous.summarized === next.summarized &&
+    previous.fallback === next.fallback
   );
 }
 
@@ -304,7 +307,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   );
   statusesRef.current = turnDelegationStatuses;
   timingsRef.current = turnDelegationTimings;
-
+  const isPlainHistory = !task;
+  const turnProcessActive = isPlainHistory && isActive;
+  const { process, responses } = isPlainHistory
+    ? projectTurnProcess(entry)
+    : { process: [], responses: [] };
   const renderPart = (part: AssistantTurnEntry["parts"][number], index: number) => {
     if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
     if (part.kind === "activity") return (
@@ -317,6 +324,7 @@ export const AssistantTurn = memo(function AssistantTurn({
           ? runtimeActivity : undefined}
         turnDelegationStatuses={turnDelegationStatuses}
         turnDelegationTimings={turnDelegationTimings}
+        embedded={Boolean(settledTask) || isPlainHistory}
       />
     );
     if (part.message.role !== "assistant") return (
@@ -350,11 +358,22 @@ export const AssistantTurn = memo(function AssistantTurn({
     >
       <div className="message-col">
         {settledTask ? (
-          <TaskProcessDrawer key={settledTask.id} task={settledTask}>
-            {entry.parts.map((part, index) => part === finalPart ? null : renderPart(part, index))}
-          </TaskProcessDrawer>
-        ) : entry.parts.map(renderPart)}
-        {settledTask && finalPart ? renderPart(finalPart, entry.parts.indexOf(finalPart)) : null}
+          <>
+            <TaskProcessDrawer key={settledTask.id} task={settledTask}>
+              {entry.parts.map((part, index) => part === finalPart ? null : renderPart(part, index))}
+            </TaskProcessDrawer>
+            {finalPart ? renderPart(finalPart, entry.parts.indexOf(finalPart)) : null}
+          </>
+        ) : isPlainHistory ? (
+          <>
+            <TurnProcess processParts={process} turnParts={entry.parts} isActive={turnProcessActive}>
+              {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}
+            </TurnProcess>
+            {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}
+          </>
+        ) : (
+          entry.parts.map(renderPart)
+        )}
         {!task && !isActive && metaMessage ? (
           <MessageMeta
             modelId={modelId}
@@ -444,11 +463,13 @@ export function CompactionRow({ mark }: { mark: ContextCompactionMark }) {
         {t("chat.compactionRow", { times: mark.generation })}
       </span>
       <span className="transcript-compaction-detail">
-        {mark.summarized
-          ? t("chat.compactionRowSummary", {
-              tokens: formatCompactTokenCount(mark.summaryTokens),
-            })
-          : t("chat.compactionRowNoSummary")}
+        {mark.fallback
+          ? t("chat.compactionRowSummaryFailed")
+          : mark.summarized
+            ? t("chat.compactionRowSummary", {
+                tokens: formatCompactTokenCount(mark.summaryTokens),
+              })
+            : t("chat.compactionRowNoSummary")}
       </span>
     </div>
   );

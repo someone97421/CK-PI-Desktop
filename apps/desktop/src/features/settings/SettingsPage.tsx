@@ -34,6 +34,7 @@ import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
 import { KeyboardShortcutsSection } from "../../components/settings/KeyboardShortcutsSection";
 import { ConfigTransferSection } from "../../components/settings/ConfigTransferSection";
 import { AppearancePanels } from "../../components/settings/AppearancePanels";
+import { ThinkingDisplayModeRow } from "../../components/settings/ThinkingDisplayModeRow";
 import { FontSizeRow } from "../../components/settings/FontSizeRow";
 import { LanguageRow } from "../../components/settings/LanguageRow";
 import { SettingsMenuSelect } from "../../components/settings/SettingsMenuSelect";
@@ -56,6 +57,7 @@ import {
   ImportSection,
   UpdatesRow,
 } from "./agent-sections";
+import { VoiceSettingsCard } from "./voice-settings";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginSettingsDestination } from "../../components/settings/PluginSettingsDestination";
 
@@ -227,7 +229,7 @@ export function SettingsPage() {
   return (
     <div className="settings-shell settings-shell-full">
       <div className="settings-titlebar" aria-hidden="true" />
-      <aside className="settings-nav" aria-label={t("settings.title")}>
+      <aside className="settings-nav sidebar-surface" aria-label={t("settings.title")}>
         <div className="settings-nav-top drag">
           <div className="settings-search-wrap no-drag">
             <IconSearch size={14} />
@@ -300,6 +302,7 @@ export function SettingsPage() {
 
       <div className="settings-content">
         <div className="settings-content-inner">
+          <div className="settings-content-enter">
           <h1 className="settings-section-title">{activeExtension?.label ?? t(activeTitleKey)}</h1>
 
           {activeExtension ? (
@@ -369,6 +372,8 @@ export function SettingsPage() {
                 </SettingsRow>
               </SettingsCard>
 
+              <VoiceSettingsCard settings={settings} saveSettings={saveSettings} />
+
               <SettingsCard title={t("settings.defaultsTitle")}>
                 <SettingsRow title={t("settings.mode")} description={t("settings.modeDesc")}>
                   <div
@@ -398,6 +403,7 @@ export function SettingsPage() {
                 </SettingsRow>
                 <CommandShellRow settings={settings} saveSettings={saveSettings} />
                 <LinkOpenTargetRow settings={settings} saveSettings={saveSettings} />
+                <ThinkingDisplayModeRow settings={settings} saveSettings={saveSettings} />
                 <ContextUsageDisplayRow
                   settings={settings}
                   saveSettings={saveSettings}
@@ -490,6 +496,7 @@ export function SettingsPage() {
           )}
           </>}
 
+          </div>
         </div>
       </div>
     </div>

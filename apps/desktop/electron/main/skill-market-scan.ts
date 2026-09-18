@@ -6,6 +6,7 @@
  */
 import {
   PUBLIC_NETWORK_POLICY_ERROR,
+  isProxyFakeIpAddress,
   isSafeSkillSourceUrl,
   publicNetworkRefusalDetail,
   sanitizeSkillCatalogId,
@@ -24,12 +25,15 @@ export type CatalogRequest = (url: string, kind: "json" | "text") => Promise<unk
 
 /**
  * Why a source failed. `policy` means the guard judged an address (or the URL
- * itself) and refused it. `unresolved` means the local resolver produced no
- * answer at all, so nothing was judged — an environment condition that a proxy
- * or a working resolver fixes, and that must never be reported as an
- * address-check block (issue #419). `network` is everything else.
+ * itself) and refused it, and the address is the target's own. `fake-ip` is a
+ * refusal of an address the *local proxy* invented for the name — Clash's
+ * `198.18.0.0/15`, refused exactly as any other non-public address, but a
+ * condition of the local network rather than a fact about the source.
+ * `unresolved` means the local resolver produced no answer at all, so nothing
+ * was judged — also an environment condition, and likewise never an
+ * address-check block. `network` is everything else (issue #419).
  */
-export type SkillMarketFailureKind = "policy" | "unresolved" | "network";
+export type SkillMarketFailureKind = "policy" | "fake-ip" | "unresolved" | "network";
 
 /** Everything the panel and the log may say about one failed source. */
 export type SkillMarketFailureDetail = {
@@ -43,10 +47,18 @@ export type SkillMarketFailureDetail = {
   /** The guard's structured reason, when a guard refusal produced this. */
   reason?: PublicNetworkRefusalReason;
   /**
-   * The class of the address that failed a policy check — `benchmark` for a TUN
-   * fake-IP, `private` for RFC1918, `loopback` for a redirect to localhost. The
-   * class is what tells a resolver artifact apart from a real private target.
-   * The address itself is deliberately not carried.
+   * The address the guard resolved `host` to, when a policy check judged one.
+   * This is the local resolver's answer — not user input, not a URL component —
+   * and it is the most diagnostic field a refusal has: `198.18.0.1` reads as a
+   * proxy in fake-IP mode at a glance, which is exactly the case issue #419 is
+   * about. Only a well-formed IP literal is carried (see
+   * `publicNetworkRefusalDetail`).
+   */
+  address?: string;
+  /**
+   * The class of that address — `benchmark` for a TUN fake-IP, `private` for
+   * RFC1918, `loopback` for a redirect to localhost. The class is what a caller
+   * decides on; the address is what the user recognises.
    */
   addressKind?: PublicNetworkAddressKind;
   /**
@@ -99,7 +111,14 @@ export function classifySkillMarketFailure(error: unknown): SkillMarketFailureKi
   // cannot name its reason is still a refusal, so it stays `policy`.
   const refusal = publicNetworkRefusalDetail(error);
   if (!refusal) return "network";
-  return refusal.reason === "resolve-failed" ? "unresolved" : "policy";
+  if (refusal.reason === "resolve-failed") return "unresolved";
+  // A fake-IP answer is refused like any other non-public address, but the
+  // address is the *proxy's* placeholder for the name rather than the target's
+  // own, so it gets its own cause and its own advice (issue #419).
+  if (refusal.reason === "non-public-address" && isProxyFakeIpAddress(refusal.addressKind)) {
+    return "fake-ip";
+  }
+  return "policy";
 }
 
 /**
@@ -139,6 +158,7 @@ export function skillMarketFailureDetail(
     ...(host ? { host } : {}),
     kind: classifySkillMarketFailure(error),
     ...(refusal ? { reason: refusal.reason } : {}),
+    ...(refusal?.address ? { address: refusal.address } : {}),
     ...(refusal?.addressKind ? { addressKind: refusal.addressKind } : {}),
     ...(refusal?.route ? { route: refusal.route } : {}),
   };
@@ -148,7 +168,8 @@ export function skillMarketFailureDetail(
 const FAILURE_RANK: Record<SkillMarketFailureKind, number> = {
   network: 0,
   unresolved: 1,
-  policy: 2,
+  "fake-ip": 2,
+  policy: 3,
 };
 
 const SKILL_CATEGORY_KEYWORDS: ReadonlyArray<readonly [SkillCatalogCategory, string[]]> = [
@@ -319,6 +340,7 @@ export function createSkillMarketAggregator(request: CatalogRequest) {
           kind: classifySkillMarketFailure(result.reason),
           ...(host ? { host } : {}),
           ...(refusal ? { reason: refusal.reason } : {}),
+          ...(refusal?.address ? { address: refusal.address } : {}),
           ...(refusal?.addressKind ? { addressKind: refusal.addressKind } : {}),
           ...(refusal?.route ? { route: refusal.route } : {}),
         });

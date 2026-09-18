@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type AnimationEvent as ReactAnimationEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useSidebarTransition } from "./useSidebarTransition";
 import { useTranslation } from "react-i18next";
 import {
   KEYBOARD_SHORTCUTS,
@@ -69,7 +70,10 @@ export function useAppShellRuntime() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth] = useState(() => loadSidebarWidth());
-  const [sidebarExiting, setSidebarExiting] = useState(false);
+  const { sidebarEntering, sidebarExiting, handleSidebarAnimationEnd } = useSidebarTransition(
+    sidebarCollapsed,
+    ready && page !== "settings",
+  );
   const [shellWidth, setShellWidth] = useState(0);
   const appShellRef = useRef<HTMLDivElement>(null);
   const sidebarCollapsedRef = useRef(sidebarCollapsed);
@@ -143,33 +147,6 @@ export function useAppShellRuntime() {
     autoCollapsedSidebarRef.current = true;
     setSidebarCollapsed(true);
   }, []);
-  // Keep the exit flag in sync with the collapsed state so collapsing plays
-  // the sidebar-out keyframe and expanding cancels it (mirrors the work-panel
-  // mount-then-animate-then-unmount machine).
-  //
-  // This is adjusted during render, not in an effect. An effect runs after the
-  // commit, so the collapsing render would evaluate `!collapsed || exiting` as
-  // `false || false` and unmount the dock outright; the effect then remounts it
-  // with `is-exiting`. That paints one frame with no dock at all — the whole
-  // sidebar blinks out and back before the collapse keyframe even starts.
-  const prevSidebarCollapsed = useRef(sidebarCollapsed);
-  if (prevSidebarCollapsed.current !== sidebarCollapsed) {
-    prevSidebarCollapsed.current = sidebarCollapsed;
-    setSidebarExiting(sidebarCollapsed);
-  }
-  const handleSidebarAnimationEnd = (event: ReactAnimationEvent<HTMLElement>) => {
-    if (event.target !== event.currentTarget) return;
-    if (!sidebarExiting) return;
-    if (!event.animationName.startsWith("sidebar-out")) return;
-    setSidebarExiting(false);
-  };
-
-  // Fallback in case animationend is skipped (e.g. display:none mid-flight).
-  useEffect(() => {
-    if (!sidebarExiting) return;
-    const timer = window.setTimeout(() => setSidebarExiting(false), 240);
-    return () => window.clearTimeout(timer);
-  }, [sidebarExiting]);
   const [presentedWorkPanelOpen, setPresentedWorkPanelOpen] = useState(false);
   const [workPanelMaximized, setWorkPanelMaximized] = useState(false);
   const [workPanelExiting, setWorkPanelExiting] = useState(false);
@@ -738,8 +715,11 @@ export function useAppShellRuntime() {
           case "abort":
             void abort();
             break;
-          case "closeWindow":
-            void api.windowControl("close");
+          case "toggleWindow":
+            // The same native action the menu item runs (D438): hide the window
+            // the user is looking at, or bring it back. The window's own close
+            // button stays the only path into the close behaviour.
+            void api.nativeMenuAction("toggleMainWindow");
             break;
           case "resetZoom":
           case "zoomIn":
@@ -866,6 +846,7 @@ export function useAppShellRuntime() {
     setSearchOpen,
     sidebarCollapsed,
     setSidebarCollapsed,
+    sidebarEntering,
     sidebarExiting,
     sidebarWidth,
     handleSidebarWidthChange,

@@ -23,6 +23,40 @@ export type ChangelogEntry = {
 
 const enEntries: ChangelogEntry[] = [
   {
+    version: "0.15.0",
+    date: "2026-09-17",
+    highlights: [
+      "Reorder, edit, lock, and promote queued prompts so a later message can run next.",
+      "Clone a git repository from the create-project dialog.",
+      "Drag the conversation content width inside the chat column.",
+      "Show skill-market install failures with a retry instead of a dead button.",
+      "Show plugin-declared providers as native rows, including API keys and trusted custom agents.",
+      "Add plugin real-time connections, global shortcuts, capability permissions, and an official channel with backups.",
+      "Let plugins register theme variables, theme assets, and a transparent floating widget.",
+      "Delete a project together with its owned sessions, after a second-click confirm.",
+      "Give subagents an ordered model fallback list, resume a settled one from the same Task card, and switch shipped builtins from Settings.",
+      "Open file references from tool rows, keep the reading position when expanding details, and paint Plan approval hover as an opaque plate.",
+    ],
+  },
+
+  {
+    version: "0.14.9",
+    date: "2026-09-17",
+    highlights: [
+      "Reorder, edit, lock, and promote queued prompts so a later message can run next.",
+      "Clone a git repository from the create-project dialog.",
+      "Drag the conversation content width inside the chat column.",
+      "Show skill-market install failures with a retry instead of a dead button.",
+      "Show plugin-declared providers as native rows, including API keys and trusted custom agents.",
+      "Add plugin real-time connections, global shortcuts, capability permissions, and an official channel with backups.",
+      "Let plugins register theme variables, theme assets, and a transparent floating widget.",
+      "Delete a project together with its owned sessions, after a second-click confirm.",
+      "Give subagents an ordered model fallback list, and switch shipped builtins from Settings.",
+      "Open file references from tool rows, keep the reading position when expanding details, and paint Plan approval hover as an opaque plate.",
+    ],
+  },
+
+  {
     version: "0.14.8",
     date: "2026-09-14",
     highlights: [
@@ -752,6 +786,41 @@ const enEntries: ChangelogEntry[] = [
 ];
 
 const zhCNEntries: ChangelogEntry[] = [
+  {
+    version: "0.15.0",
+    date: "2026-09-17",
+    highlights: [
+      "排队消息支持调整顺序、编辑、锁定，以及提升为下一条立即发送。",
+      "创建项目时可直接克隆 Git 仓库。",
+      "可在对话列内拖动正文宽度。",
+      "技能市场安装失败会显示原因并支持重试，而不再是失效按钮。",
+      "插件声明的提供商显示为原生行，可填写 API 密钥，并支持受信任的自定义 Agent。",
+      "插件可申请实时连接、全局快捷键和能力权限，并支持带备份的官方渠道安装。",
+      "插件可注册主题变量、主题资源，以及透明浮动小组件。",
+      "删除项目时一并删除其拥有的会话，并需二次点击确认。",
+      "子智能体支持按顺序回退的模型列表，已结束的可在同一 Task 卡片上继续，并可在设置中开关内置子智能体。",
+      "工具行中的文件引用会打开对应视图，展开详情时保持阅读位置；Plan 审批悬停使用不透明底板。",
+    ],
+  },
+
+  {
+    version: "0.14.9",
+    date: "2026-09-17",
+    highlights: [
+      "排队消息支持调整顺序、编辑、锁定，以及提升为下一条立即发送。",
+      "创建项目时可直接克隆 Git 仓库。",
+      "可在对话列内拖动正文宽度。",
+      "技能市场安装失败会显示原因并支持重试，而不再是失效按钮。",
+      "插件声明的提供商显示为原生行，可填写 API 密钥，并支持受信任的自定义 Agent。",
+      "插件可申请实时连接、全局快捷键和能力权限，并支持带备份的官方渠道安装。",
+      "插件可注册主题变量、主题资源，以及透明浮动小组件。",
+      "删除项目时一并删除其拥有的会话，并需二次点击确认。",
+      "子智能体支持按顺序回退的模型列表，并可在设置中开关随应用提供的内置子智能体。",
+      "工具行中的文件引用会打开对应视图，展开详情时保持阅读位置；Plan 审批悬停使用不透明底板。",
+    ],
+  },
+
+
   {
     version: "0.14.8",
     date: "2026-09-14",

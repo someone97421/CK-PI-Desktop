@@ -238,6 +238,18 @@ pub struct PluginUiMeta {
     pub height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<Value>,
+    /// `"panel"` (default) or `"widget"`. A widget is a transparent, frameless
+    /// floating surface: no 46px host titlebar band, no window-control capsule,
+    /// a drag map over the whole window, and a host context menu (close,
+    /// minimize, always on top).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    /// Widget placement only: keep the floating surface above other windows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub always_on_top: Option<bool>,
+    /// Overrides the per-shape default (panels are resizable, widgets are not).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resizable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

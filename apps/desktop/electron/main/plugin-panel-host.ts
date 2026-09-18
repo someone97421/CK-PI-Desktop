@@ -1,10 +1,14 @@
-import { BrowserWindow, ipcMain, session } from "electron";
+import { BrowserWindow, ipcMain, Menu, session, systemPreferences } from "electron";
 import { pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
+import { catalogs, resolveLocale } from "@pi-desktop/i18n";
 import { isNetUrlAllowed, THEME_ASSET_SCHEME } from "@pi-desktop/plugin-sdk";
 import { builtinWindowBackground } from "@pi-desktop/shared";
 import {
   isPluginPanelWindowControlAction,
+  PLUGIN_PANEL_MIN_SIZE,
+  PLUGIN_PANEL_WIDGET_MIN_SIZE,
+  PLUGIN_PANEL_WIDGET_ARGUMENT,
   PLUGIN_PANEL_WINDOW_CONTROL_CHANNEL,
   PLUGIN_PANEL_WINDOW_STATE_CHANNEL,
   PLUGIN_PANEL_LOCALE_ARGUMENT_PREFIX,
@@ -20,6 +24,18 @@ export type PluginPanelOpenRequest = {
   width: number;
   height: number;
   htmlPath: string;
+  /**
+   * `"panel"` (default) keeps the 46px host drag band and its three-control
+   * capsule. `"widget"` opens the same sandboxed page as a transparent floating
+   * surface with neither, so a plugin can be a small orb the user keeps on
+   * screen. The plugin surface itself is unchanged: same preload bridge, same
+   * partition, same egress policy.
+   */
+  shape?: "panel" | "widget";
+  /** Floating widget placement only: keep the surface above other windows. */
+  alwaysOnTop?: boolean;
+  /** Overrides the per-shape default: panels are resizable, widgets are not. */
+  resizable?: boolean;
   /**
    * Egress allowlist from `manifest.net.domains`. A panel is a full web page:
    * `sandbox: true` removes Node, not the network, so without this the panel is
@@ -104,6 +120,7 @@ export function applyPluginEgressPolicy(
   });
   // A panel is denied device access by default. The only opt-in is an
   // audio-only media request for a plugin that declared ui.microphone.
+
   ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
     const mediaTypes =
       permission === "media" && "mediaTypes" in details ? details.mediaTypes : undefined;
@@ -111,10 +128,27 @@ export function applyPluginEgressPolicy(
       Array.isArray(mediaTypes) && mediaTypes.length > 0 && mediaTypes.every((type) => type === "audio");
     callback(input.allowMicrophone === true && audioOnly);
   });
-  ses.setPermissionCheckHandler((_contents, permission, _origin, details) =>
-    permission === "media" && input.allowMicrophone === true && details.mediaType === "audio",
-  );
+  ses.setPermissionCheckHandler((_contents, permission, _origin, details) => {
+    if (permission !== "media" || input.allowMicrophone !== true) return false;
+    // Chromium probes with "unknown" (or an empty mediaType) before the
+    // request. Denying that fails getUserMedia even when the following
+    // request is audio-only.
+    return details.mediaType !== "video";
+  });
+
 }
+
+/** macOS TCC: a sandboxed file:// panel often never prompts on its own. */
+async function ensureOsMicrophone(allowMicrophone?: boolean): Promise<void> {
+  if (!allowMicrophone || process.platform !== "darwin") return;
+  try {
+    if (systemPreferences.getMediaAccessStatus("microphone") === "granted") return;
+    await systemPreferences.askForMediaAccess("microphone");
+  } catch {
+    // Headless tests have no TCC surface.
+  }
+}
+
 
 /** Persisted session partition shared by a plugin's panel window and views. */
 export function pluginSessionPartition(pluginId: string): string {
@@ -127,6 +161,7 @@ export function pluginSessionPartition(pluginId: string): string {
  */
 export class PluginPanelHost {
   private windows = new Map<string, BrowserWindow>();
+  private pendingOpens = new Map<string, { token: { canceled: boolean }; promise: Promise<void> }>();
   private bridge: BridgeHandler;
   private onBlockedRequest?: PluginPanelBlockedRequest;
   private handlerReady = false;
@@ -141,6 +176,12 @@ export class PluginPanelHost {
   private senderResolvers: Array<(senderId: number) => string | null> = [];
   /** Observer for failures of the fire-and-forget legacy sync bridge. */
   private onBridgeError?: (pluginId: string, channel: string, error: unknown) => void;
+  /**
+   * Locale per floating-widget web contents. Presence in this map is also what
+   * makes a window a widget for `showWidgetMenu`, so a panel never gets a
+   * context menu it did not ask for.
+   */
+  private widgetLocales = new Map<number, string>();
 
   constructor(
     bridge: BridgeHandler,
@@ -299,10 +340,53 @@ export class PluginPanelHost {
         if (window.isMaximized()) window.unmaximize();
         else window.maximize();
         break;
+      case "contextMenu":
+        this.showWidgetMenu(window);
+        break;
       case "close":
         window.close();
         break;
     }
+  }
+
+  /**
+   * A floating widget has no capsule, so its own context menu opens the host's
+   * window menu instead. Without it the only way out of a widget would be a
+   * plugin-authored close button, and a plugin that never added one would leave
+   * a window the user cannot dismiss.
+   *
+   * Only a widget is registered in `widgetLocales`; a panel or docked view that
+   * asks for this action gets nothing, because panels keep the capsule.
+   */
+  private showWidgetMenu(window: BrowserWindow): void {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+    const locale = this.widgetLocales.get(window.webContents.id);
+    if (locale === undefined) return;
+    const labels = catalogs[resolveLocale(locale)].pluginPanelWidget;
+    const menu = Menu.buildFromTemplate([
+      {
+        label: labels.alwaysOnTop,
+        type: "checkbox",
+        checked: window.isAlwaysOnTop(),
+        click: (item) => {
+          if (!window.isDestroyed()) window.setAlwaysOnTop(item.checked);
+        },
+      },
+      { type: "separator" },
+      {
+        label: labels.minimize,
+        click: () => {
+          if (!window.isDestroyed()) window.minimize();
+        },
+      },
+      {
+        label: labels.close,
+        click: () => {
+          if (!window.isDestroyed()) window.close();
+        },
+      },
+    ]);
+    menu.popup({ window });
   }
 
   /**
@@ -323,89 +407,166 @@ export class PluginPanelHost {
   }
 
   async open(request: PluginPanelOpenRequest): Promise<void> {
-    const existing = this.windows.get(request.pluginId);
-    if (existing && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore();
-      existing.show();
-      existing.focus();
-      return;
-    }
+    const pending = this.pendingOpens.get(request.pluginId);
+    // 同一轮打开共享结果；权限策略由创建者负责，旧等待者不能重新应用旧授权。
+    if (pending) return pending.promise;
 
-    const partition = pluginSessionPartition(request.pluginId);
-    const ses = session.fromPartition(partition, { cache: true });
-    this.applyEgressPolicy(ses, request);
+    const token = { canceled: false };
+    const promise = (async () => {
+      const existing = this.windows.get(request.pluginId);
+      if (existing && !existing.isDestroyed()) {
+        this.applyEgressPolicy(existing.webContents.session, request);
+        await ensureOsMicrophone(request.allowMicrophone);
+        if (token.canceled) return;
+        if (!existing.isDestroyed()) {
+          if (existing.isMinimized()) existing.restore();
+          existing.show();
+          existing.focus();
+        }
+        return;
+      }
 
-    const win = new BrowserWindow({
-      width: Math.max(360, request.width || 480),
-      height: Math.max(280, request.height || 360),
-      title: request.title,
-      show: false,
-      autoHideMenuBar: true,
-      // The host theme is only a fallback; the preload samples the actual
-      // plugin page colors after it has loaded and paints the chrome from them.
-      backgroundColor: builtinWindowBackground(request.theme),
-      // Every platform uses the same frameless surface. The preload owns the
-      // only visible window controls: a fixed three-button capsule.
-      frame: false,
-      webPreferences: {
-        session: ses,
-        preload: join(__dirname, "../preload/plugin-panel.js"),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        webviewTag: false,
-        additionalArguments: [
-          `${PLUGIN_PANEL_LOCALE_ARGUMENT_PREFIX}${encodeURIComponent(request.locale)}`,
-          `--pi-plugin-panel-theme=${request.theme}`,
-          ...(request.development
-            ? ["--pi-plugin-panel-development=1"]
-            : []),
-        ],
-      },
-    });
-    // A panel owns its visible surface; do not add a native application menu
-    // to the window around the plugin's own UI.
-    win.setMenu(null);
+      const partition = pluginSessionPartition(request.pluginId);
+      const ses = session.fromPartition(partition, { cache: true });
+      this.applyEgressPolicy(ses, request);
+      await ensureOsMicrophone(request.allowMicrophone);
+      if (token.canceled) return;
 
-    // A panel gets exactly one web contents. `window.open` would otherwise mint
-    // a chromeless window outside the egress policy applied above.
-    win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-
-    const sendWindowState = () => {
-      if (win.isDestroyed() || win.webContents.isDestroyed()) return;
-      win.webContents.send(PLUGIN_PANEL_WINDOW_STATE_CHANNEL, {
-        maximized: win.isMaximized(),
+      const widget = request.shape === "widget";
+      const minSize = widget ? PLUGIN_PANEL_WIDGET_MIN_SIZE : PLUGIN_PANEL_MIN_SIZE;
+      const win = new BrowserWindow({
+        width: Math.max(minSize.width, request.width || (widget ? 220 : 480)),
+        height: Math.max(minSize.height, request.height || (widget ? 220 : 360)),
+        title: request.title,
+        show: false,
+        autoHideMenuBar: true,
+        // The host theme is only a fallback; the preload samples the actual
+        // plugin page colors after it has loaded and paints the chrome from them.
+        backgroundColor: widget ? "#00000000" : builtinWindowBackground(request.theme),
+        // Every platform uses the same frameless surface. A panel's visible window
+        // controls are the preload's three-button capsule; a floating widget has
+        // no chrome of its own — the plugin draws its silhouette edge to edge.
+        frame: false,
+        transparent: widget,
+        // A transparent window would otherwise carry a rectangular native shadow
+        // around an orb that is round; a widget draws its own glow instead.
+        hasShadow: !widget,
+        resizable: request.resizable ?? !widget,
+        alwaysOnTop: widget && request.alwaysOnTop === true,
+        // A floating widget is a desktop companion, not a taskbar entry, and it
+        // has no capsule to restore from a maximized state.
+        skipTaskbar: widget,
+        maximizable: !widget,
+        ...(widget ? { fullscreenable: false } : {}),
+        webPreferences: {
+          session: ses,
+          preload: join(__dirname, "../preload/plugin-panel.js"),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          webviewTag: false,
+          additionalArguments: [
+            `${PLUGIN_PANEL_LOCALE_ARGUMENT_PREFIX}${encodeURIComponent(request.locale)}`,
+            `--pi-plugin-panel-theme=${request.theme}`,
+            ...(widget ? [PLUGIN_PANEL_WIDGET_ARGUMENT] : []),
+            ...(request.development
+              ? ["--pi-plugin-panel-development=1"]
+              : []),
+          ],
+        },
       });
-    };
-    win.on("maximize", sendWindowState);
-    win.on("unmaximize", sendWindowState);
-    win.webContents.on("did-finish-load", sendWindowState);
+      // A panel owns its visible surface; do not add a native application menu
+      // to the window around the plugin's own UI.
+      win.setMenu(null);
 
-    // `closed` fires after the native window is gone. Copy the contents id
-    // while the window is still alive; reading `webContents` later throws
-    // "Object has been destroyed" and surfaces an uncaught main-process dialog.
-    const webContentsId = win.webContents.id;
-    win.on("closed", () => {
-      this.pendingDrops.delete(webContentsId);
-      this.windows.delete(request.pluginId);
-    });
+      // A panel gets exactly one web contents. `window.open` would otherwise mint
+      // a chromeless window outside the egress policy applied above.
+      win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 
-    this.windows.set(request.pluginId, win);
-    await win.loadURL(pathToFileURL(request.htmlPath).toString());
-    win.show();
+      const sendWindowState = () => {
+        if (win.isDestroyed() || win.webContents.isDestroyed()) return;
+        win.webContents.send(PLUGIN_PANEL_WINDOW_STATE_CHANNEL, {
+          maximized: win.isMaximized(),
+        });
+      };
+      win.on("maximize", sendWindowState);
+      win.on("unmaximize", sendWindowState);
+      win.webContents.on("did-finish-load", sendWindowState);
+
+      // `closed` fires after the native window is gone. Copy the contents id
+      // while the window is still alive; reading `webContents` later throws
+      // "Object has been destroyed" and surfaces an uncaught main-process dialog.
+      const webContentsId = win.webContents.id;
+      if (widget) this.widgetLocales.set(webContentsId, request.locale);
+      win.on("closed", () => {
+        this.pendingDrops.delete(webContentsId);
+        this.widgetLocales.delete(webContentsId);
+        if (this.windows.get(request.pluginId) === win) {
+          this.windows.delete(request.pluginId);
+        }
+      });
+
+      if (token.canceled) {
+        if (!win.isDestroyed()) win.destroy();
+        return;
+      }
+
+      this.windows.set(request.pluginId, win);
+
+      try {
+        await win.loadURL(pathToFileURL(request.htmlPath).toString());
+      } catch (err) {
+        if (token.canceled || win.isDestroyed()) return;
+        throw err;
+      }
+
+      if (token.canceled) {
+        if (!win.isDestroyed()) win.destroy();
+        if (this.windows.get(request.pluginId) === win) {
+          this.windows.delete(request.pluginId);
+        }
+        return;
+      }
+
+      if (!win.isDestroyed()) {
+        win.show();
+      }
+    })();
+
+    this.pendingOpens.set(request.pluginId, { token, promise });
+    try {
+      await promise;
+    } finally {
+      if (this.pendingOpens.get(request.pluginId)?.token === token) {
+        this.pendingOpens.delete(request.pluginId);
+      }
+    }
   }
 
   async close(pluginId: string): Promise<void> {
+    const pending = this.pendingOpens.get(pluginId);
+    if (pending) {
+      pending.token.canceled = true;
+      this.pendingOpens.delete(pluginId);
+    }
     const win = this.windows.get(pluginId);
     if (!win || win.isDestroyed()) {
-      this.windows.delete(pluginId);
+      if (this.windows.get(pluginId) === win) {
+        this.windows.delete(pluginId);
+      }
       return;
     }
     win.close();
-    this.windows.delete(pluginId);
+    if (this.windows.get(pluginId) === win) {
+      this.windows.delete(pluginId);
+    }
   }
 
   async closeAll(): Promise<void> {
+    for (const pending of this.pendingOpens.values()) {
+      pending.token.canceled = true;
+    }
+    this.pendingOpens.clear();
     for (const pluginId of [...this.windows.keys()]) {
       await this.close(pluginId);
     }

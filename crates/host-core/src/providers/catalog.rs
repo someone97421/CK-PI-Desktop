@@ -11,8 +11,8 @@ pub(crate) const CANONICAL_THINKING_LEVELS: &[&str] =
 /// row always falls back to the documented rule instead of a third state no
 /// reader understands.
 const CONTEXT_WINDOW_SOURCES: &[&str] = &["catalog", "user"];
-const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
-const DEFAULT_MAX_TOKENS: u32 = 8_192;
+pub(crate) const DEFAULT_CONTEXT_WINDOW: u32 = 128_000;
+pub(crate) const DEFAULT_MAX_TOKENS: u32 = 8_192;
 
 fn normalize_context_window_source(value: Option<&str>) -> Option<String> {
     let trimmed = value?.trim().to_ascii_lowercase();

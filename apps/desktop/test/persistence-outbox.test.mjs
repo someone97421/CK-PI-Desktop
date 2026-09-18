@@ -72,3 +72,60 @@ test("deleting a session drops its queued outbox entries (D318)", async () => {
     ["keep"],
   );
 });
+
+function mockHost(handler) {
+  return {
+    isAvailable: () => true,
+    call: async (method, params) => handler(method, params),
+  };
+}
+
+test("消息 ID 冲突须等待 host 成功回执后才能确认覆盖", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const acknowledged = [];
+  const outbox = new PersistenceOutbox(dir, silent);
+  outbox.setOnMessagePersisted((sessionId) => { acknowledged.push(sessionId); });
+  let fail = true;
+  const host = mockHost(async () => {
+    if (fail) throw new Error("UNIQUE constraint failed: messages.id");
+  });
+  const getHost = () => host;
+  try {
+    await outbox.enqueue(
+      { key: "message:s1:call_421522", sessionId: "s1", message: { id: "call_421522" } },
+      getHost,
+    );
+    await outbox.enqueue(
+      { key: "message:s2:assistant-1", sessionId: "s2", message: { id: "assistant-1" } },
+      getHost,
+    );
+    await outbox.flush(getHost);
+    assert.equal(outbox.size(), 2);
+    assert.deepEqual(acknowledged, []);
+    fail = false;
+    await outbox.flush(getHost);
+    assert.equal(outbox.size(), 0);
+    assert.deepEqual(acknowledged, ["s1", "s2"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("non-unique flush errors still pause the outbox", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const outbox = new PersistenceOutbox(dir, silent);
+  const host = mockHost(async () => {
+    throw new Error("session not found");
+  });
+  const getHost = () => host;
+  await outbox.enqueue(
+    { key: "message:s1:a", sessionId: "s1", message: { id: "a" } },
+    getHost,
+  );
+  await outbox.enqueue(
+    { key: "message:s2:b", sessionId: "s2", message: { id: "b" } },
+    getHost,
+  );
+  await outbox.flush(getHost);
+  assert.equal(outbox.size(), 2);
+});

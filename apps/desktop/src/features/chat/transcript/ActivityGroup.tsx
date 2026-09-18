@@ -53,6 +53,8 @@ import {
 import { SubagentTopology } from "./SubagentDetail";
 import { ToolRow } from "./ToolRow";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
+import { useAppStore } from "../../../stores/app-store";
+import { resolveThinkingDisplayMode } from "../../../lib/turn-process";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -145,6 +147,7 @@ export function runActivityLabel(
 
 type ActivityGroupProps = {
   items: ActivityItem[];
+  embedded?: boolean;
   isActive: boolean;
   endedAt?: string;
   /** Current runtime wait phase, when the group owns the live turn tail. */
@@ -174,6 +177,7 @@ function activityGroupPropsEqual(
   next: ActivityGroupProps,
 ) {
   if (
+    previous.embedded !== next.embedded ||
     previous.isActive !== next.isActive ||
     previous.endedAt !== next.endedAt ||
     previous.runtimeActivity !== next.runtimeActivity ||
@@ -199,12 +203,16 @@ function activityGroupPropsEqual(
 
 export const ActivityGroup = memo(function ActivityGroup({
   items,
+  embedded = false,
   isActive,
   endedAt,
   runtimeActivity,
   turnDelegationStatuses,
   turnDelegationTimings,
 }: ActivityGroupProps) {
+  const compact = useAppStore(
+    (state) => resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode) === "compact",
+  );
   const { t } = useTranslation();
   const detailsId = useId();
   const delegateItems = items.filter(isDelegationActivityItem);
@@ -302,7 +310,9 @@ export const ActivityGroup = memo(function ActivityGroup({
     ? runActivityLabel(runtimeActivity, t as Translate)
     : "";
   const currentDetail =
-    live && !runtimeStatus && lastItem ? activityItemDetail(lastItem) : "";
+    live && !runtimeStatus && lastItem && !(compact && lastItem.kind === "thinking")
+      ? activityItemDetail(lastItem)
+      : "";
   const tail = live && !open ? currentDetail : "";
 
   useEffect(() => {
@@ -350,6 +360,11 @@ export const ActivityGroup = memo(function ActivityGroup({
       );
     });
   };
+
+  if (compact && onlyThinking && !thinkingNow) return null;
+  if (embedded && !hasSubagentTopology) {
+    return <div className="turn-process-activity">{renderActivityItems()}</div>;
+  }
 
   return (
     <div

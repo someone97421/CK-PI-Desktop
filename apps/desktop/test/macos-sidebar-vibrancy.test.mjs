@@ -99,7 +99,7 @@ test("native theme source maps preferences and only resets vibrancy on change", 
 test("the macOS startup splash shares the sidebar glass tint and sheen", () => {
   const macGlassBlock =
     stylesSource.match(
-      /:root\[data-platform="darwin"\] \.startup-splash,\n:root\[data-platform="darwin"\] \.sidebar,\n:root\[data-platform="darwin"\] \.sidebar-rail\s*\{[^}]*\}/,
+      /:root\[data-platform="darwin"\] \.startup-splash,\n:root\[data-platform="darwin"\] \.sidebar-surface,\n:root\[data-platform="darwin"\] \.sidebar-rail\s*\{[^}]*\}/,
     )?.[0] ?? "";
   assert.match(macGlassBlock, /background-color:\s*var\(--ds-sidebar-glass-tint\)/);
   assert.match(macGlassBlock, /var\(--ds-sidebar-glass-sheen-top\)/);
@@ -113,10 +113,6 @@ test("the macOS startup splash shares the sidebar glass tint and sheen", () => {
   assert.match(baseSplashBlock, /background:\s*var\(--ds-bg-primary\)/);
   assert.doesNotMatch(baseSplashBlock, /glass/);
 
-  // The shell mounts under the splash once `ready` flips; behind glass it must
-  // stay hidden until the exit fade, then cross-fade in rather than bleed
-  // through the tint. A transition, not an animation: `.sidebar` owns its
-  // `sidebar-in` mount animation and swapping animation-name would replay it.
   assert.match(
     stylesSource,
     /:root\[data-platform="darwin"\] \.app-shell\.is-booting:has\(\.startup-splash:not\(\.is-exiting\)\)\s*>\s*:not\(\.startup-splash\)\s*\{\s*visibility:\s*hidden;/,
@@ -130,7 +126,7 @@ test("the macOS startup splash shares the sidebar glass tint and sheen", () => {
 test("only macOS sidebar and splash surfaces receive the translucent glass treatment", () => {
   const macGlassBlock =
     stylesSource.match(
-      /:root\[data-platform="darwin"\] \.startup-splash,\n:root\[data-platform="darwin"\] \.sidebar,\n:root\[data-platform="darwin"\] \.sidebar-rail\s*\{[^}]*\}/,
+      /:root\[data-platform="darwin"\] \.startup-splash,\n:root\[data-platform="darwin"\] \.sidebar-surface,\n:root\[data-platform="darwin"\] \.sidebar-rail\s*\{[^}]*\}/,
     )?.[0] ?? "";
   assert.match(macGlassBlock, /background-color:\s*var\(--ds-sidebar-glass-tint\)/);
   // Sheen, not a flat tint — this is what keeps the material reading as glass.
@@ -145,7 +141,7 @@ test("only macOS sidebar and splash surfaces receive the translucent glass treat
 
   const macAncestorBlock =
     stylesSource.match(
-      /:root\[data-platform="darwin"\],\n:root\[data-platform="darwin"\] body,\n:root\[data-platform="darwin"\] #root,\n:root\[data-platform="darwin"\] \.app-shell\s*\{[^}]*\}/,
+      /:root\[data-platform="darwin"\],\n:root\[data-platform="darwin"\] body,\n:root\[data-platform="darwin"\] #root,\n:root\[data-platform="darwin"\] \.app-shell,\n:root\[data-platform="darwin"\] \.settings-shell\s*\{[^}]*\}/,
     )?.[0] ?? "";
   assert.match(macAncestorBlock, /background:\s*transparent/);
 

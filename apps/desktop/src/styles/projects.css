@@ -512,6 +512,11 @@
   background: color-mix(in oklab, var(--ds-error) 12%, transparent);
 }
 
+/* An armed delete item names its second click, so the swap stays obvious. */
+.projects-menu button.danger.is-armed {
+  background: color-mix(in oklab, var(--ds-error) 14%, transparent);
+}
+
 /* Menu sections are separated by space, not a rule (D297). */
 .projects-menu-sep {
   height: 6px;

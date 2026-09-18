@@ -48,7 +48,7 @@ test("sidebar hover does not paint a full-height resize rail", () => {
   );
 });
 
-test("the chat reserves one row for unsqueezed composer controls", () => {
+test("the chat reserves one row for shrinking composer controls", () => {
   assert.match(
     globalStyles,
     /\.main-pane\s*\{[\s\S]*?min-width:\s*var\(--ds-main-pane-min-width, 450px\);/,
@@ -59,7 +59,11 @@ test("the chat reserves one row for unsqueezed composer controls", () => {
   );
   assert.match(
     globalStyles,
-    /\.composer-left,\s*\.composer-right\s*\{[\s\S]*?flex:\s*0 0 auto;/,
+    /\.composer-left,\s*\.composer-right\s*\{[\s\S]*?min-width:\s*0;[\s\S]*?flex:\s*0 1 auto;/,
+  );
+  assert.doesNotMatch(
+    globalStyles,
+    /\.composer-left,\s*\.composer-right\s*\{[^}]*flex:\s*0 0 auto;/,
   );
   assert.match(
     globalStyles,

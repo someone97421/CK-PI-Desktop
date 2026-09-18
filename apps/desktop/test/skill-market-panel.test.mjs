@@ -128,6 +128,31 @@ test("a resolver with no answer is explained as that, not as an address check", 
   assert.match(panel, /failureDetails: current\.failureDetails/);
 });
 
+test("a proxy fake-IP gets its own copy and names the address it came from", () => {
+  // Issue #419, third round: Clash's `198.18.0.0/15` is refused as a non-public
+  // address, but it is the proxy's placeholder for the name, not the target's
+  // own address. The panel must say so — and name both the host and the address,
+  // because `198.18.0.1` is what a user recognises as fake-IP mode.
+  assert.match(
+    panel,
+    /if \(hasFakeIpFailure\(remote\.failureKinds\)\) return t\("settings\.sklm\.remoteErrorFakeIp"\)/,
+  );
+  assert.match(panel, /previewFailure\.kind === "fake-ip"/);
+  assert.match(panel, /settings\.sklm\.previewFakeIpError/);
+  assert.match(panel, /settings\.sklm\.fakeIpHint/);
+  assert.match(panel, /settings\.sklm\.fakeIpHintPlain/);
+  // The hint names what actually happened: which host, and which address the
+  // local proxy answered with.
+  assert.match(panel, /const fakeIpFailureText = \(\) => \{/);
+  assert.match(
+    panel,
+    /t\("settings\.sklm\.fakeIpHint", \{ host: detail\.host, address: detail\.address \}\)/,
+  );
+  assert.match(panel, /remote\.failureKinds\[entry\] === "fake-ip"/);
+  // The address has to survive the state type, or the hint above cannot read it.
+  assert.match(panel, /address\?: string/);
+});
+
 test("every shipped locale carries the new skill market strings", async () => {
   const { readFile } = await import("node:fs/promises");
   const ids = ["en", "zh-CN"];
@@ -135,12 +160,16 @@ test("every shipped locale carries the new skill market strings", async () => {
     "previewError",
     "previewPolicyError",
     "previewResolveError",
+    "previewFakeIpError",
     "proxyHint",
     "dnsHint",
+    "fakeIpHint",
+    "fakeIpHintPlain",
     "failureDetail",
     "retryPreview",
     "remoteErrorPolicy",
     "remoteErrorUnresolved",
+    "remoteErrorFakeIp",
     "remoteErrorQuery",
     "remotePartial",
     "failureSourceHost",

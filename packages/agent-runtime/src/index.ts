@@ -24,3 +24,4 @@ export type { AuthenticatedProxyRelay } from "./authenticated-proxy-relay.js";
 export * from "./subagent-checkpoint.js";
 export * from "./subagent-persistence.js";
 export * from "./subagent-persistence-client.js";
+export * from "./speech/index.js";
