@@ -171,7 +171,7 @@ const header = el(
 );
 const transcript = el("main", { className: "remote-transcript" }),
   composer = el("form", { className: "remote-composer" });
-const chatHeading = el("div", { className: "remote-chat-heading row-actions" });
+const chatHeading = el("div", { className: "remote-chat-heading" });
 const jumpLatest = button("回到最新消息 ↓", { className: "remote-jump", preserveLabel: true,
   onClick: () => { transcript.scrollTop = transcript.scrollHeight; updateJump(); } });
 jumpLatest.hidden = true;
@@ -438,7 +438,6 @@ async function drawChat() {
   const top = el(
     "div",
     { className: "row-actions" },
-    el("h2", { text: snapshot?.session?.title || "对话" }),
     button("刷新", { onClick: () => action(refresh) }),
   );
   if (parents.has(current))
@@ -711,7 +710,8 @@ async function drawChat() {
   if (pendingCount) top.append(button(`待处理 ${pendingCount}`, { preserveLabel: true, onClick: () => {
     transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" });
   } }));
-  chatHeading.replaceChildren(top);
+  const title = snapshot?.session?.title || "对话";
+  chatHeading.replaceChildren(el("h2", { text: title, attrs: { title } }), top);
   transcript.replaceChildren(container);
   renderPending();
   if (focusedDisclosure) {
@@ -1051,40 +1051,42 @@ async function modelOptions() {
   dialog.showModal();
 }
 async function commands() {
-  const r = await api.read("commands.list", { sessionId: current });
-  const dialog = el("dialog", {}, el("h3", { text: "命令与技能" }));
+  const sessionId = current;
+  const navigation = navigationVersion;
+  const r = await api.read("commands.list", { sessionId });
+  if (current !== sessionId || navigation !== navigationVersion || loginVisible) return;
+  // 触屏焦点切换不代表取消选择，防止 focusout/blur 在 click 前移除按钮。
+  const dialog = el("dialog", { className: "remote-command-picker", dataset: { persistent: "true" }, attrs: { "aria-label": "命令与技能" } },
+    el("div", { className: "remote-command-heading" }, el("h3", { text: "命令与技能" }),
+      iconButton("close", { title: "关闭", onClick: () => dialog.remove() })),
+    el("p", { className: "connection-banner", text: "选择后插入输入框，补充要求后发送。" }));
+  function insert(text) {
+    if (current !== sessionId || navigation !== navigationVersion || loginVisible) { dialog.remove(); return; }
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    const separator = start > 0 && !/\s/.test(input.value[start - 1]) ? " " : "";
+    dialog.remove();
+    input.setRangeText(`${separator}${text}`, start, end, "end");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    saveDraft();
+    input.focus({ preventScroll: true });
+  }
   for (const c of r.items || [])
-    dialog.append(
-      button(
-        `/${c.name} · ${c.title || c.description || ""}${c.supported === false ? "（桌面专属）" : ""}`,
-        {
-          preserveLabel: true,
-          disabled: c.supported === false,
-          onClick: () => {
-            input.value += `/${c.name} `;
-            dialog.remove();
-            input.focus();
-          },
-        },
-      ),
-    );
-  const agents = await api.read("subagents.list", { sessionId: current });
+    dialog.append(button(
+      `/${c.name} · ${c.title || c.description || ""}${c.supported === false ? "（桌面专属）" : ""}`,
+      { preserveLabel: true, disabled: c.supported === false, onClick: () => insert(`/${c.name} `) },
+    ));
+  const agents = await api.read("subagents.list", { sessionId });
+  if (current !== sessionId || navigation !== navigationVersion || loginVisible) return;
   dialog.append(
     el("h3", { text: "子智能体委派建议" }),
     el("p", { text: "选择后插入委派请求，由当前智能体按工具权限执行。" }),
   );
   for (const agent of agents.items || [])
-    dialog.append(
-      button(agent.name, {
-        preserveLabel: true,
-        onClick: () => {
-          input.value += `${input.value ? "\n" : ""}请使用 ${agent.name} 子智能体处理以下任务：`;
-          dialog.remove();
-          input.focus();
-        },
-      }),
-    );
-  dialog.append(button("关闭", { onClick: () => dialog.remove() }));
+    dialog.append(button(agent.name, {
+      preserveLabel: true,
+      onClick: () => insert(`请使用 ${agent.name} 子智能体处理以下任务：`),
+    }));
   document.body.append(dialog);
   dialog.showModal();
 }

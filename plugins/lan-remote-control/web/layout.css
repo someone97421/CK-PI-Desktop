@@ -12,8 +12,8 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .connection-banner:empty { display: none; }
 .remote-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 0; overflow: hidden; }
 .remote-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; min-height: 0; min-width: 0; overflow: hidden; }
-.remote-chat-heading { padding: 8px 16px; border-bottom: 1px solid var(--ds-border-default); flex-wrap: wrap; }
-.remote-chat-heading h2 { flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.remote-chat-heading { display: flex; flex-direction: column; align-items: stretch; min-width: 0; gap: 2px; padding: 6px 16px; border-bottom: 1px solid var(--ds-border-default); }
+.remote-chat-heading h2 { min-width: 0; width: 100%; font-size: 14px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .remote-transcript { min-height: 0; overflow: auto; padding: 12px 20px; overscroll-behavior: contain; overflow-anchor: none; }
 .remote-message { max-width: 880px; margin: 16px auto; padding: 12px 0; overflow-wrap: anywhere; }
 .remote-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
@@ -64,7 +64,8 @@ dialog label select { width: 100%; margin-top: 6px; }
 }
 /* 显式轨道防止隐藏“回到最新”按钮后，输入区落到错误的网格行。 */
 .remote-chat-heading { grid-row: 1; }
-.remote-chat-heading > .row-actions { width: 100%; min-width: 0; flex-wrap: wrap; }
+.remote-chat-heading > .row-actions { width: 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; }
+.remote-chat-heading > .row-actions > button { flex: none; }
 .remote-transcript { grid-row: 2; }
 .remote-jump { grid-row: 3; }
 .remote-composer { grid-row: 4; max-height: 45dvh; }
@@ -90,9 +91,13 @@ dialog label select { width: 100%; margin-top: 6px; }
   .remote-task-process > summary .remote-process-excerpt { font-size: 10px; }
   .remote-process-body { padding: 0 8px 6px; }
   .remote-chat-heading { gap: 4px; padding: 3px 10px; }
-  .remote-chat-heading > .row-actions { width: auto; margin-left: auto; gap: 2px; }
+  .remote-chat-heading > .row-actions { gap: 2px; }
   .remote-chat-heading h2 { font-size: 13px; }
   .remote-jump { min-height: 26px; margin: 0; padding: 3px 8px; font-size: 11px; }
   .remote-composer { padding-top: 6px; max-height: calc(var(--rc-visible-height, 100dvh) * .45); overscroll-behavior: contain; }
   .remote-composer textarea { height: 60px; min-height: 44px; max-height: calc(var(--rc-visible-height, 100dvh) * .2); padding: 8px 10px; resize: none; font-size: 16px; }
 }
+.remote-command-picker { overscroll-behavior: contain; }
+.remote-command-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: -16px; background: var(--ds-bg-secondary); z-index: 1; padding: 4px 0; }
+.remote-command-picker > .btn { display: flex; width: 100%; margin: 4px 0; justify-content: flex-start; text-align: left; white-space: normal; overflow-wrap: anywhere; min-height: 44px; }
+.remote-command-picker > .connection-banner { padding: 4px 0 10px; }
