@@ -184,10 +184,13 @@ function updateViewport() {
   if (viewport && viewport.scale !== 1) return;
   const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
   document.documentElement.style.setProperty("--rc-visible-height", `${viewport?.height || window.innerHeight}px`);
+  document.documentElement.style.setProperty("--rc-visible-top", `${viewport?.offsetTop || 0}px`);
   if (atBottom) requestAnimationFrame(() => { transcript.scrollTop = transcript.scrollHeight; });
 }
 window.visualViewport?.addEventListener("resize", updateViewport);
+window.visualViewport?.addEventListener("scroll", updateViewport, { passive: true });
 window.addEventListener("resize", updateViewport);
+window.addEventListener("pageshow", updateViewport);
 updateViewport();
 const input = el("textarea", {
   attrs: { placeholder: "发送消息…", "aria-label": "消息", rows: 2 },
@@ -560,10 +563,10 @@ async function drawChat() {
     const card = el(
       "article",
       { className: `remote-message ${m.role}` },
-      el("small", {
-        text:
-          m.role === "user" ? "你" : m.role === "assistant" ? "助手" : m.role,
-      }),
+      el("div", { className: "remote-message-heading" },
+        el("small", {
+          text: m.role === "user" ? "你" : m.role === "assistant" ? "助手" : m.role,
+        })),
     );
     card.id = `message-${m.id}`;
     card.append(
@@ -719,7 +722,7 @@ async function drawChat() {
             }),
         }),
       );
-    card.append(actions);
+    card.querySelector(".remote-message-heading").append(actions);
     cards.set(m.id, card);
   }
   for (const entry of timeline.entries) {
