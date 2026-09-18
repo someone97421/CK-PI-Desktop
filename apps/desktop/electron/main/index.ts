@@ -4,11 +4,14 @@ import {
   ipcMain,
   nativeTheme,
   screen,
+  safeStorage,
   Tray,
 } from "electron";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { configureApplicationIdentity } from "./application-identity";
+import { SubagentSnapshotStore } from "./runtime/subagent-snapshot-store";
+import { createSubagentSessionAuthority } from "./runtime/subagent-session-authority";
 import {
   applyNetworkProxyFromAppSettings,
   currentNetworkProxy,
@@ -1162,8 +1165,25 @@ const eventPersistence = createEventPersistence({
 });
 const { persistAgentEvent } = eventPersistence;
 
+const subagentSnapshots = new SubagentSnapshotStore({
+  dataDir,
+  protector: safeStorage,
+  sessionAuthority: createSubagentSessionAuthority(dataDir, () => host),
+  deliverEvent: async (envelope) => {
+    if (!host || envelope.event.type !== "message_end" || envelope.event.message.role !== "tool" ||
+        envelope.event.message.toolName !== "TaskExecution") throw new Error("Invalid durable subagent event");
+    const message = { ...envelope.event.message,
+      parentToolCallId: envelope.parentToolCallId ?? envelope.event.message.parentToolCallId,
+      agentName: envelope.agentName ?? envelope.event.message.agentName };
+    await host.call("session.appendMessage", { sessionId: envelope.sessionId, message, turnId: envelope.turnId });
+    emitAgentEvent(envelope);
+  },
+});
+persistenceOutbox.setOnMessagePersisted((sessionId) => subagentSnapshots.recordCoverage(sessionId));
+
 const sidecarRuntime = createSidecarRuntime({
   runtimeState,
+  subagentSnapshots,
   steeringReplies,
   logger,
   sendToRenderer,
@@ -1257,6 +1277,7 @@ function registerIpc() {
     isTurnDispatchable,
     sessionProjects,
     persistenceOutbox,
+    subagentSnapshots,
     queuedSteeringJournal,
     logger,
     plugins,
@@ -1468,6 +1489,7 @@ registerShutdownHandlers({
   getMcpControl: () => mcpControl,
   activeTurns,
   persistenceOutbox,
+  closeSubagentSnapshots: () => subagentSnapshots.closeOwner(),
   inflightCheckpointer,
   pluginPanels,
   plugins,

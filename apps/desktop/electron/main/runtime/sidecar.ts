@@ -21,9 +21,12 @@ import type { PluginRuntime } from "../plugin-runtime";
 import type { UserMcpRuntime } from "../user-mcp";
 import type { RuntimeState } from "./context";
 import type { FinishTurn } from "./plans";
+import type { SubagentSnapshotStore } from "./subagent-snapshot-store";
+import { dispatchSubagentPersistence } from "./subagent-snapshot-rpc";
 
 export type SidecarRuntimeDependencies = {
   runtimeState: RuntimeState;
+  subagentSnapshots: SubagentSnapshotStore;
   steeringReplies: Set<string>;
   logger: Logger;
   sendToRenderer: (channel: string, payload: unknown) => void;
@@ -59,6 +62,7 @@ export type SidecarRuntimeDependencies = {
 
 export function createSidecarRuntime({
   runtimeState,
+  subagentSnapshots,
   steeringReplies,
   logger,
   sendToRenderer,
@@ -258,6 +262,9 @@ export function createSidecarRuntime({
   });
   s.onExit(({ code, signal, intentional, stderrTail }) => {
     if (runtimeState.sidecar !== s) return;
+    if (!isQuitting()) void subagentSnapshots.ownerLost().catch(() => {
+      logger.app("runtime", "warn", "subagent snapshot owner loss remains unconfirmed");
+    });
     logger.flushChild("agent");
     const interruptedToolCalls = [...activeToolCalls.values()];
     activeToolCalls.clear();
@@ -318,9 +325,17 @@ export function createSidecarRuntime({
   });
   };
   const startSidecar = async (): Promise<void> => {
+  await subagentSnapshots.initialize();
 
   const s = new AgentSidecar((text) => logger.child("agent", text));
   wireSidecar(s);
+  s.setSubagentPersistenceHandler(async (params) => {
+    if (runtimeState.sidecar !== s) throw new Error("Stale subagent persistence owner");
+    if (isQuitting() && !["commitSnapshot", "failExecution", "revokeExecution", "confirmEvents"].includes(String(params.operation))) {
+      throw new Error("Subagent persistence is draining");
+    }
+    return dispatchSubagentPersistence(subagentSnapshots, params);
+  });
   s.setProjectInstructionResolver(async ({ projectPath, path }) => {
     // The root is registered by Electron main from the host-owned session
     // record. The sidecar can provide a target path, never an arbitrary root.

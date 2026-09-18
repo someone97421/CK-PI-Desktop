@@ -21,3 +21,6 @@ export * from "./stream-coalescer.js";
 export * from "./extensions/index.js";
 export { startAuthenticatedProxyRelay } from "./authenticated-proxy-relay.js";
 export type { AuthenticatedProxyRelay } from "./authenticated-proxy-relay.js";
+export * from "./subagent-checkpoint.js";
+export * from "./subagent-persistence.js";
+export * from "./subagent-persistence-client.js";

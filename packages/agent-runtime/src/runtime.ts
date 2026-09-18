@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import {
   settledDelegationMessage,
   taskMessageSnapshot,
@@ -39,8 +40,10 @@ import {
   type UserMessage,
 } from "@earendil-works/pi-ai";
 import {
+  APP_VERSION,
   DEFAULT_COMMAND_TIMEOUT_MS,
   OAUTH_AUTH_KIND,
+  subagentCanMutate,
   type TrustedExtensionCommand,
   type TrustedExtensionDiagnostic,
   type TrustedExtensionSpec,
@@ -141,6 +144,19 @@ import {
   SUBAGENT_WAIT_TOOL_NAME,
   type SubagentRunResult,
 } from "./subagent.js";
+import { SubagentPersistenceClient } from "./subagent-persistence-client.js";
+import {
+  computeToolsFingerprint,
+  sanitizeBaseUrl,
+  simplePromptFingerprint,
+} from "./subagent-checkpoint.js";
+import type {
+  SubagentBeginReceipt,
+  SubagentCommitReceipt,
+  SubagentDirectoryEntry,
+  SubagentPersistenceState,
+  SubagentRecallStatus,
+} from "./subagent-persistence.js";
 import type { SubagentObservation } from "./subagent-observer.js";
 import {
   composeModeSystemPrompt,
@@ -404,13 +420,36 @@ export type DelegationRecord = {
    * `TaskWait` result or the resume-after-idle prompt. Auto-delivery is a
    * single shot per record. */
   reportDelivered: boolean;
+  persistenceState?: SubagentPersistenceState;
+  durableRevision?: number;
+  durableGeneration?: number;
+  source?: "memory" | "disk";
+  isColdDisk?: boolean;
+  diskEntry?: SubagentDirectoryEntry;
+  taskInstruction?: string;
+  resumingLock?: boolean;
+  settling?: boolean;
+  pendingBegin?: Promise<SubagentBeginReceipt>;
+  stopPersistence?: Promise<void>;
+  interruptionReceipt?: Promise<void>;
 };
+
+export function delegationExecutionId(delegationId: string, execution = 1): string {
+  return execution === 1 ? delegationId : `${delegationId}:${execution}`;
+}
+
+function normalizePath(p: string): string {
+  return process.platform === "win32" ? p.toLowerCase() : p;
+}
 
 function delegationSummary(record: DelegationRecord): Record<string, unknown> {
   return {
     execution: record.execution ?? 1,
-    executionId: (record.execution ?? 1) === 1 ? record.delegationId : `${record.delegationId}:${record.execution}`,
-    canResume: record.status === "completed" && !record.stopRequested && !record.contextReleased && record.run?.canResume === true,
+    executionId: delegationExecutionId(record.delegationId, record.execution ?? 1),
+    canResume: (!record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested) &&
+      (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? record.persistenceState === "durable-ready" : false)),
+    persistenceState: record.persistenceState ?? (record.isColdDisk ? "durable-ready" : "memory-only"),
+    source: record.source ?? (record.isColdDisk ? "disk" : "memory"),
     activeDurationMs: (record.activeDurationMs ?? 0) + (record.status === "running" ? Math.max(0, Date.now() - record.startedAt) : 0),
     sessionId: record.sessionId,
     turnId: record.taskTurnId,
@@ -1320,6 +1359,7 @@ export class DesktopAgentRuntime {
    * returns; `TaskWait`/`TaskList`/`TaskStop` drive it afterwards.
    */
   private delegations = new Map<string, DelegationRecord>();
+  readonly persistenceClient: SubagentPersistenceClient;
   private supervisionInbox = new Map<string, { delegationId: string; epoch: number; text: string; priority: number;
     reportRange?: { first: number; last: number; fromStep: number; toStep: number } }>();
   private supervisionWaiters = new Set<() => void>();
@@ -1499,6 +1539,7 @@ export class DesktopAgentRuntime {
     this.provider = opts.provider;
     this.thinkingLevel = clampThinkingLevel(opts.provider, opts.thinkingLevel);
     this.host = opts.host;
+    this.persistenceClient = new SubagentPersistenceClient(opts.host, opts.sessionId);
     this.hostCloseUnsubscribe = this.host.onClose?.(() => {
       this.cleanupActiveToolProgress();
     });
@@ -1728,6 +1769,72 @@ Delegation rules:
         this.logEventHandlerFailure(event, error);
       }),
     );
+  }
+
+  async initSubagentPersistence(): Promise<void> {
+    await this.persistenceClient.claimSession().catch(() => null);
+    if (!this.persistenceClient.supported) return;
+    const entries: SubagentDirectoryEntry[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.persistenceClient.listEntries({ sessionId: this.sessionId, limit: 100, cursor }).catch(() => null);
+      if (!page) break;
+      entries.push(...page.entries);
+      if (!page.nextCursor || page.nextCursor === cursor) break;
+      cursor = page.nextCursor;
+    } while (entries.length < 10_000);
+    const listRes = { entries };
+    if (listRes && Array.isArray(listRes.entries)) {
+      for (const entry of listRes.entries) {
+        if (!this.delegations.has(entry.delegationId)) {
+          let resolveComp: () => void = () => {};
+          const comp = new Promise<void>((res) => { resolveComp = res; });
+          const coldRecord: DelegationRecord = {
+            delegationId: entry.delegationId,
+            execution: entry.execution,
+            sessionId: entry.sessionId,
+            agentName: entry.agentName ?? "subagent",
+            modelId: entry.modelId ?? "",
+            thinkingLevel: "off",
+            status: entry.status === "completed" ? "completed" : entry.status === "revoked" ? "stopped" : "failed",
+            startedAt: entry.updatedAt,
+            completedAt: entry.updatedAt,
+            turns: entry.lastResult?.turns ?? 0,
+            toolCalls: entry.lastResult?.toolCalls ?? 0,
+            result: entry.lastResult ? {
+              agentName: entry.agentName ?? "subagent",
+              modelId: entry.modelId ?? "",
+              thinkingLevel: "off",
+              status: entry.status === "completed" ? "completed" : "failed",
+              report: entry.lastResult.report,
+              turns: entry.lastResult.turns,
+              toolCalls: entry.lastResult.toolCalls,
+              usage: entry.lastResult.usage,
+              executionUsage: entry.lastResult.executionUsage,
+              error: entry.lastResult.error,
+            } : undefined,
+            completion: comp,
+            resolveCompletion: resolveComp,
+            abort: () => {},
+            stopRequested: entry.status === "revoked",
+            startedEpoch: this.turnEpoch,
+            reportDelivered: true,
+            parentToolCallId: entry.parentToolCallId,
+            taskTurnId: entry.parentTurnId,
+            persistenceState: entry.persistenceState,
+            durableRevision: entry.revision,
+            durableGeneration: entry.snapshotGeneration,
+            source: "disk",
+            isColdDisk: true,
+            diskEntry: entry,
+            activeDurationMs: 0,
+            lastActivityAt: entry.updatedAt,
+          };
+          this.delegations.set(entry.delegationId, coldRecord);
+          resolveComp();
+        }
+      }
+    }
   }
 
   private logEventHandlerFailure(event: AgentEvent, error: unknown): void {
@@ -2786,7 +2893,7 @@ Delegation rules:
           failureKey !== undefined &&
           typeof result.errorCode === "string" &&
           RECOVERABLE_MUTATION_ERROR_CODES.has(result.errorCode)
-            ? `${failureKey} ${result.errorCode}`
+            ? `${failureKey}${String.fromCharCode(0)}${result.errorCode}`
             : undefined;
         const grantedRecoveryGrace =
           graceKey !== undefined && !this.mutationRecoveryGraces.has(graceKey);
@@ -2816,7 +2923,7 @@ Delegation rules:
           if (succeededKey !== undefined) {
             this.mutationFailureCounts.delete(succeededKey);
             for (const key of this.mutationRecoveryGraces) {
-              if (key.startsWith(`${succeededKey} `)) {
+              if (key.startsWith(`${succeededKey}${String.fromCharCode(0)}`)) {
                 this.mutationRecoveryGraces.delete(key);
               }
             }
@@ -3541,6 +3648,7 @@ Delegation rules:
       // here so the intent survives a tool built outside that path.
       executionMode: "parallel",
       execute: async (toolCallId, params) => {
+        const dispatchEpoch = this.turnEpoch;
         const requested = isRecord(params) ? String(params.agent ?? "") : "";
         const definition = this.subagents.find(
           (candidate) => candidate.name === normalizeSubagentName(requested),
@@ -3634,6 +3742,9 @@ Delegation rules:
         // immediately with a delegation id, and TaskWait converges later.
         const delegationId = randomUUID();
         const controller = new AbortController();
+        if (this.disposed || this.runCancelled || this.turnHadError || this.turnEpoch !== dispatchEpoch) {
+          return this.subagentToolError(toolCallId, "Parent turn changed while preparing delegation.");
+        }
         const thinkingLevel: SubagentThinkingLevel =
           definition.thinkingLevel === "omit"
             ? "omit"
@@ -3650,6 +3761,7 @@ Delegation rules:
         const completion = new Promise<void>((resolve) => {
           resolveCompletion = resolve;
         });
+
         const record: DelegationRecord = {
           execution: 1,
           parentToolCallIds: [toolCallId],
@@ -3672,8 +3784,42 @@ Delegation rules:
           lastPhase: "waiting-model",
           startedEpoch: this.turnEpoch,
           reportDelivered: false,
+          persistenceState: "memory-only",
+          durableRevision: 0,
+          durableGeneration: 0,
+          source: "memory",
+          taskInstruction: task,
         };
         this.delegations.set(delegationId, record);
+        // 先登记名额与取消句柄，开始回执等待期间的停止也必须可见。
+        try {
+          record.pendingBegin = this.persistenceClient.beginExecution({
+            sessionId: this.sessionId, delegationId, expectedRevision: 0, expectedExecution: 0,
+            nextExecution: 1, executionId: delegationId,
+            instanceGeneration: this.persistenceClient.instanceGeneration,
+            commandId: `${this.sessionId}:${record.taskTurnId ?? ""}:${toolCallId}`,
+            commandDigest: simplePromptFingerprint(`1:${task}`),
+            parentTurnId: record.taskTurnId, parentToolCallId: toolCallId, instructionPayload: task,
+          });
+          const receipt = await record.pendingBegin;
+          record.durableRevision = receipt.revision;
+          record.persistenceState = this.persistenceClient.isMemoryOnly(delegationId) ? "memory-only" : "saving";
+          if (receipt.isDuplicate || record.stopRequested || abortSignal.aborted || this.disposed ||
+              this.runCancelled || this.turnHadError || record.startedEpoch !== this.turnEpoch) {
+            if (record.interruptionReceipt) await record.interruptionReceipt;
+            else await this.stopSubagentAsync(delegationId, "parent");
+            record.status = "stopped";
+            resolveCompletion();
+            return this.subagentToolError(toolCallId, "Delegation was cancelled before execution began.");
+          }
+        } catch (error) {
+          record.status = record.stopRequested ? "stopped" : "failed";
+          record.persistenceState = "persistence-error";
+          resolveCompletion();
+          return this.subagentToolError(toolCallId, `Failed to register subagent execution: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          record.pendingBegin = undefined;
+        }
         const scopedTools = this.scopeDelegateTools(tools, definition);
         record.run = new SubagentRun({
           delegationId,
@@ -3743,7 +3889,7 @@ Delegation rules:
             // guard only keeps an unexpected rejection from leaving the
             // delegation stuck in "running" forever.
             (error: unknown) => {
-              this.settleDelegation(record, {
+              return this.settleDelegation(record, {
                 agentName: record.agentName,
                 modelId: record.modelId,
                 thinkingLevel: record.thinkingLevel,
@@ -3758,7 +3904,12 @@ Delegation rules:
                 },
               }, execution);
             },
-          );
+          ).catch(() => {
+            if ((record.execution ?? 1) !== execution) return;
+            record.settling = false;
+            record.persistenceState = "persistence-error";
+            record.resolveCompletion();
+          });
 
   }
 
@@ -3785,16 +3936,15 @@ Delegation rules:
   }
 
   /** Records a settled run and wakes every TaskWait waiting on it. */
-  private settleDelegation(
+  private async settleDelegation(
     record: DelegationRecord,
     result: SubagentRunResult,
     execution = record.execution ?? 1,
-  ): void {
-    if (record.status !== "running" || execution !== (record.execution ?? 1)) return;
-    record.status =
-      record.stopRequested && result.status === "aborted"
-        ? "stopped"
-        : result.status;
+  ): Promise<void> {
+    if (record.status !== "running" || record.settling || execution !== (record.execution ?? 1)) return;
+    record.settling = true;
+    const resolveExecution = record.resolveCompletion;
+    record.status = record.interruptionReceipt ? "failed" : record.stopRequested ? "stopped" : result.status;
     record.result = result;
     record.completedAt = Date.now();
     record.activeDurationMs = (record.activeDurationMs ?? 0) + Math.max(0, record.completedAt - record.startedAt);
@@ -3805,9 +3955,110 @@ Delegation rules:
     const summary = { ...delegationSummary(record), report: result.report, usage, cumulativeUsage: result.usage };
     (record.executionHistory ??= []).push(summary);
     if (record.executionHistory.length > 20) record.executionHistory.shift();
+    if (record.status === "completed" && this.persistenceClient.isMemoryOnly(record.delegationId)) {
+      this.persistenceClient.completeMemoryExecution(record.delegationId, execution);
+      record.persistenceState = "memory-only";
+    }
+
+    if (record.interruptionReceipt) {
+      await record.interruptionReceipt;
+    } else if (record.status === "completed" && record.run && !this.persistenceClient.isMemoryOnly(record.delegationId)) {
+      try {
+        record.persistenceState = "saving";
+        let realProjectPath = "";
+        if (this.projectPath) {
+          try {
+            realProjectPath = realpathSync(this.projectPath);
+          } catch {
+            realProjectPath = this.projectPath;
+          }
+        }
+        const targetGen = (record.durableGeneration ?? 0) + 1;
+        const checkpoint = record.run.exportSnapshot({
+          projectRealPath: realProjectPath,
+          executionId: delegationExecutionId(record.delegationId, execution),
+          generation: targetGen,
+          appVersion: APP_VERSION,
+        });
+        const deliveryId = `subagent-execution:${record.delegationId}:${execution}:finished`;
+        const envelope: AgentEventEnvelope = {
+          sessionId: this.sessionId,
+          turnId: record.taskTurnId,
+          ts: Date.now(),
+          parentToolCallId: record.parentToolCallId,
+          agentName: record.agentName,
+          event: {
+            type: "message_end",
+            message: {
+              id: deliveryId,
+              role: "tool",
+              toolName: "TaskExecution",
+              toolCallId: deliveryId,
+              parentToolCallId: record.parentToolCallId,
+              agentName: record.agentName,
+              createdAt: nowIso(),
+              status: "complete",
+              toolStatus: "success",
+              content: JSON.stringify({ ...delegationSummary(record), report: result.report, phase: "finished" }),
+              toolResult: {
+                content: [{ type: "text", text: result.report }],
+                details: delegationSummary(record),
+              },
+            },
+          },
+        };
+        const commitReceipt = await this.persistenceClient.commitSnapshot({
+          sessionId: this.sessionId,
+          delegationId: record.delegationId,
+          expectedRevision: record.durableRevision ?? 0,
+          expectedExecution: execution,
+          executionId: delegationExecutionId(record.delegationId, execution),
+          instanceGeneration: this.persistenceClient.instanceGeneration,
+          targetGeneration: targetGen,
+          checkpoint,
+          pendingDeliveries: [
+            {
+              deliveryId,
+              eventKind: "result",
+              envelope,
+              createdAt: Date.now(),
+            },
+          ],
+        });
+        if (!record.stopRequested && record.execution === execution) {
+          record.durableRevision = commitReceipt.revision;
+          record.durableGeneration = commitReceipt.durableReady ? commitReceipt.snapshotGeneration : 0;
+          record.persistenceState = commitReceipt.durableReady ? "durable-ready" : "memory-only";
+        }
+      } catch (commitErr) {
+        if (!record.stopRequested) record.persistenceState = "persistence-error";
+      }
+    } else if (record.status === "failed" && !record.stopRequested) {
+      await this.persistenceClient.failExecution({
+        sessionId: this.sessionId,
+        delegationId: record.delegationId,
+        expectedRevision: record.durableRevision ?? 0,
+        expectedExecution: execution,
+        executionId: delegationExecutionId(record.delegationId, execution),
+        instanceGeneration: this.persistenceClient.instanceGeneration,
+        status: "failed",
+        error: {
+          code: result.error?.code ?? "SUBAGENT_FAILED",
+          message: result.error?.message ?? "Subagent failed",
+        },
+      }).catch(() => undefined);
+      record.persistenceState = "failed";
+    }
+    if (!record.interruptionReceipt && (record.stopRequested || record.status === "stopped" || record.status === "aborted")) {
+      try { await this.stopSubagentAsync(record.delegationId, "parent", execution); }
+      catch { record.persistenceState = "persistence-error"; }
+      record.status = "stopped";
+    }
+
     this.publishSubagentExecution(record, "finished", summary);
     this.publishDelegationSettlement(record);
-    record.resolveCompletion();
+    record.settling = false;
+    resolveExecution();
     this.refreshDelegationWait();
     this.pruneFinishedDelegations();
   }
@@ -3832,13 +4083,18 @@ Delegation rules:
    * Finished records are dropped oldest-first; running ones never are. */
   private pruneFinishedDelegations(): void {
     const finished = [...this.delegations.values()]
-      .filter((record) => record.status !== "running")
+      .filter((record) => record.status !== "running" && !record.isColdDisk && !record.settling && !record.resumingLock)
       .sort((left, right) => (left.completedAt ?? 0) - (right.completedAt ?? 0));
     const excess = finished.length - MAX_RETAINED_DELEGATIONS;
     for (const record of finished.slice(0, Math.max(0, excess))) {
-      record.contextReleased = true;
+      record.contextReleased = !record.durableGeneration;
       this.publishDelegationSettlement(record);
-      this.delegations.delete(record.delegationId);
+      if (record.durableGeneration && record.durableGeneration > 0) {
+        record.isColdDisk = true;
+        record.run = undefined;
+      } else {
+        this.delegations.delete(record.delegationId);
+      }
     }
   }
 
@@ -3850,9 +4106,11 @@ Delegation rules:
 
   /** Abort every running delegation (user Stop, dispose, parent fatal error). */
   private abortRunningDelegations(): void {
-    for (const record of this.runningDelegations()) {
-      record.run?.stop("session");
-      record.abort();
+    for (const record of [...this.delegations.values()].filter((item) => item.status === "running" || item.settling)) {
+      void this.stopSubagentAsync(record.delegationId, "parent").catch(() => {
+        record.persistenceState = "persistence-error";
+        this.publishDelegationSettlement(record);
+      });
     }
     this.supervisionInbox.clear();
     this.supervisionMessages.clear();
@@ -4293,12 +4551,16 @@ Delegation rules:
       label: "Task List",
       description:
         "List the subagents started by Task in this session with their status. Use it to check progress without waiting, or before TaskStop to choose what to stop.",
-      parameters: Type.Object({}),
+      parameters: Type.Object({
+        offset: Type.Optional(Type.Integer({ minimum: 0 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+      }),
       executionMode: "sequential",
-      execute: async () => {
-        const delegations = [...this.delegations.values()].sort(
-          (left, right) => left.startedAt - right.startedAt,
-        );
+      execute: async (_toolCallId, params) => {
+        const all = [...this.delegations.values()].sort((left, right) => left.startedAt - right.startedAt);
+        const offset = isRecord(params) && Number.isSafeInteger(params.offset) ? Math.max(0, Number(params.offset)) : 0;
+        const limit = isRecord(params) && Number.isSafeInteger(params.limit) ? Math.max(1, Math.min(100, Number(params.limit))) : 100;
+        const delegations = all.slice(offset, offset + limit);
         const text =
           delegations.length === 0
             ? "No subagents have been started in this session."
@@ -4307,7 +4569,8 @@ Delegation rules:
                 .join("\n");
         return {
           content: [{ type: "text", text }],
-          details: { delegations: delegations.map(delegationSummary) },
+          details: { delegations: delegations.map(delegationSummary), total: all.length,
+            ...(offset + limit < all.length ? { nextOffset: offset + limit } : {}) },
         };
       },
     };
@@ -4339,9 +4602,9 @@ Delegation rules:
               .map((id) => this.delegations.get(id))
               .filter((record): record is DelegationRecord => record !== undefined)
           : this.runningDelegations();
-        for (const record of targets) {
-          this.stopSubagent(record.delegationId, "parent");
-        }
+        const receipts = await Promise.allSettled(targets.map((record) => this.stopSubagentAsync(record.delegationId, "parent")));
+        const failures = receipts.filter((receipt) => receipt.status === "rejected");
+        if (failures.length) return this.subagentToolError(_toolCallId, `${failures.length} cancellation receipt(s) failed; local cancellation was requested but durable revocation is unconfirmed.`);
         const text =
           targets.length === 0
             ? "No matching running subagents to stop."
@@ -4354,33 +4617,124 @@ Delegation rules:
     };
   }
 
-  /** 单独终止一个子任务；不等待可能不支持取消的第三方工具。 */
-  stopSubagent(delegationId: string, source: "user" | "parent" = "user", expectedExecution?: number): Record<string, unknown> {
+  /** 单独终止一个子任务；不等待可能不支持取消的第三方工具。支持持久撤销。 */
+  async stopSubagentAsync(delegationId: string, source: "user" | "parent" = "user", expectedExecution?: number): Promise<Record<string, unknown>> {
     const record = this.delegations.get(delegationId);
-    if (!record) throw Object.assign(new Error("Subagent not found in this session"), { errorCode: "SUBAGENT_NOT_FOUND" });
-    if (expectedExecution !== undefined && expectedExecution !== (record.execution ?? 1)) throw new Error("Subagent execution changed; refresh before stopping.");
-    // 完成与停止并发时，用户停止仍关闭这份上下文的后续召回入口。
-    if (record.status === "completed") {
-      record.stopRequested = true;
-      record.run?.stop(source);
-      record.abort();
-      this.publishDelegationSettlement(record);
+    if (!record) {
+      const receipt = await this.persistenceClient.revokeExecution({
+        sessionId: this.sessionId, delegationId, expectedExecution,
+        reason: `Subagent stopped by ${source}`, source,
+      });
+      return { ok: true, ...receipt, source: "disk", canResume: false, persistenceState: "revoked" };
     }
-    if (record.status === "running") {
-      record.stopRequested = true;
-      record.run?.stop(source);
-      record.abort();
-      this.publishDelegationSettlement(record);
+    if (expectedExecution !== undefined && expectedExecution !== (record.execution ?? 1)) {
+      throw new Error("Subagent execution changed; refresh before stopping.");
     }
+    record.stopRequested = true;
+    record.run?.stop(source);
+    record.abort();
+    if (record.status !== "running") record.status = "stopped";
+    if (!record.stopPersistence) {
+      record.stopPersistence = (async () => {
+        const accepted = await record.pendingBegin;
+        const receipt = await this.persistenceClient.revokeExecution({
+          sessionId: this.sessionId, delegationId,
+          expectedExecution: accepted?.execution ?? record.execution ?? 1,
+          instanceGeneration: this.persistenceClient.instanceGeneration,
+          reason: `Subagent stopped by ${source}`, source,
+        });
+        record.durableRevision = receipt.revision;
+        record.persistenceState = this.persistenceClient.isMemoryOnly(delegationId) ? "memory-only" : "revoked";
+      })();
+    }
+    try { await record.stopPersistence; }
+    catch (error) {
+      record.persistenceState = "persistence-error";
+      record.stopPersistence = undefined;
+      this.publishDelegationSettlement(record);
+      throw error;
+    }
+    this.publishDelegationSettlement(record);
     return { ok: true, ...delegationSummary(record) };
   }
 
-  subagentRecallStatus(delegationId: string) {
+  stopSubagent(delegationId: string, source: "user" | "parent" = "user", expectedExecution?: number): Promise<Record<string, unknown>> {
+    return this.stopSubagentAsync(delegationId, source, expectedExecution);
+  }
+
+  subagentRecallStatus(delegationId: string): SubagentRecallStatus {
     const record = this.delegations.get(delegationId);
-    const canResume = !this.disposed && record?.status === "completed" && !record.stopRequested && !record.contextReleased && record.run?.canResume === true;
-    return { delegationId, execution: record?.execution ?? (record ? 1 : undefined), status: record?.status ?? "unavailable", canResume,
-      ...(!canResume ? { reason: !record || this.disposed ? "Context released or runtime replaced. Persistent context and restart recovery are not implemented."
-        : record.status === "running" ? "Still running; use TaskGuide." : "Only normally completed, non-stopped executions can resume." } : {}) };
+    if (!record) {
+      return {
+        delegationId,
+        status: "unavailable",
+        canResume: false,
+        source: "disk",
+        persistenceState: "pending-validation",
+        reason: "Subagent not found in this session.",
+      };
+    }
+    const isCompleted = !this.disposed && !record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested;
+    let canResume = false;
+    const source: "memory" | "disk" = record.isColdDisk ? "disk" : "memory";
+    const persistenceState: SubagentPersistenceState = record.persistenceState ?? (this.persistenceClient.available ? "durable-ready" : "memory-only");
+
+    if (record.isColdDisk) {
+      canResume = isCompleted && record.persistenceState === "durable-ready";
+    } else {
+      canResume = !this.disposed && isCompleted && !record.contextReleased && record.run?.canResume === true;
+    }
+
+    let reason: string | undefined;
+    if (!canResume) {
+      if (this.disposed) reason = "Session runtime is disposed.";
+      else if (record.status === "running") reason = "Still running; use TaskGuide.";
+      else if (record.stopRequested || record.status === "stopped" || record.persistenceState === "revoked") reason = "Subagent was stopped/revoked.";
+      else if (record.status === "failed" || record.persistenceState === "failed") reason = "Subagent execution failed.";
+      else if (record.contextReleased && !record.durableGeneration) reason = "Context released; persistent snapshot unavailable.";
+      else reason = "Only normally completed executions with valid snapshots can resume.";
+    }
+
+    return {
+      delegationId,
+      execution: record.execution,
+      status: record.status,
+      canResume,
+      source,
+      persistenceState,
+      ...(reason ? { reason } : {}),
+      ...(record.durableGeneration ? { snapshotVersion: record.durableGeneration } : {}),
+    };
+  }
+
+  async subagentRecallStatusAsync(delegationId: string): Promise<SubagentRecallStatus> {
+    const syncStatus = this.subagentRecallStatus(delegationId);
+    if (syncStatus.status !== "unavailable") return syncStatus;
+    if (!this.persistenceClient.supported) return syncStatus;
+    try {
+      let cursor: string | undefined;
+      do {
+      const listRes = await this.persistenceClient.listEntries({ sessionId: this.sessionId, limit: 100, cursor });
+      const entry = listRes.entries.find((e) => e.delegationId === delegationId);
+      if (entry) {
+        return {
+          delegationId,
+          execution: entry.execution,
+          status: entry.status,
+          canResume: entry.canResume,
+          source: "disk",
+          persistenceState: entry.persistenceState,
+          reason: entry.reason,
+          snapshotVersion: entry.snapshotGeneration,
+        };
+      }
+      if (!listRes.nextCursor || listRes.nextCursor === cursor) break;
+      cursor = listRes.nextCursor;
+      } while (cursor);
+    } catch {
+      // Fallback to syncStatus
+    }
+    return syncStatus;
   }
 
   private publishSubagentExecution(record: DelegationRecord, phase: "started" | "finished", details: Record<string, unknown>): void {
@@ -4396,7 +4750,7 @@ Delegation rules:
   private buildSubagentResumeTool(): AgentTool {
     return {
       name: SUBAGENT_RESUME_TOOL_NAME, label: "Task Resume", executionMode: "sequential",
-      description: "Resume a normally completed subagent in this session with review feedback and its original context. TaskList shows canResume and execution; pass that execution as expectedExecution to reject stale or duplicate requests. Returns immediately. No new delegate is created. Stopped/failed/released contexts cannot resume; persistence and restart recovery are not implemented. Use TaskGuide for a running child.",
+      description: "Resume a normally completed subagent in this session with review feedback and its original context. TaskList shows canResume and execution; pass that execution as expectedExecution to reject stale or duplicate requests. Returns immediately. No new delegate is created. Stopped/failed/released contexts cannot resume. Use TaskGuide for a running child.",
       parameters: Type.Object({ delegationId: Type.String(), instruction: Type.String({ minLength: 1, maxLength: 12_000 }),
         expectedExecution: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
       execute: async (toolCallId, params) => {
@@ -4405,44 +4759,234 @@ Delegation rules:
         if (!isRecord(params) || typeof params.delegationId !== "string" || typeof params.instruction !== "string" ||
           !params.instruction.trim() || params.instruction.length > 12_000 || !Number.isSafeInteger(params.expectedExecution) || Number(params.expectedExecution) < 1) return fail("Provide delegationId, instruction (1–12000 characters) and a positive expectedExecution from TaskList.");
         const record = this.delegations.get(params.delegationId);
-        if (!record?.run) return fail("Subagent context is unavailable or released in this session. Persistent context and restart recovery are not implemented.");
+        if (!record) return fail("Subagent context is unavailable or released in this session.");
+
+        const commandDigest = simplePromptFingerprint(`${params.expectedExecution}:${params.instruction}`);
+
+        // 1. Check duplicate command FIRST before stale check
         const previous = record.resumeCommands?.get(toolCallId);
         if (previous) {
+          if (previous.digest && previous.digest !== commandDigest) {
+            return fail(`Conflicting arguments for recall command '${toolCallId}'.`);
+          }
           const current = previous.execution === record.execution ? delegationSummary(record)
             : { ...previous, status: "completed", canResume: false };
           return { content: [{ type: "text", text: "This recall command was already accepted; it will not execute again." }], details: { ...current, duplicate: true } };
         }
         if (record.resumeCommandIds?.has(toolCallId)) return fail("This recall command was already processed; inspect its persisted TaskExecution receipt.");
-        if (params.expectedExecution !== (record.execution ?? 1)) return fail("Stale execution number. Read TaskList before deciding whether further work is needed.");
-        if (!this.subagentRecallStatus(record.delegationId).canResume) return fail("Only a normally completed subagent with retained context can resume. Running children use TaskGuide; stopped/failed children cannot resume.");
+
+        // 2. Stale execution check
+        if (params.expectedExecution !== (record.execution ?? 1)) {
+          if (!this.persistenceClient.isMemoryOnly(record.delegationId) && Number(params.expectedExecution) < (record.execution ?? 1)) {
+            try {
+              const receipt = await this.persistenceClient.beginExecution({
+                sessionId: this.sessionId, delegationId: record.delegationId,
+                expectedRevision: record.durableRevision ?? 0, expectedExecution: Number(params.expectedExecution),
+                nextExecution: Number(params.expectedExecution) + 1,
+                executionId: delegationExecutionId(record.delegationId, Number(params.expectedExecution) + 1),
+                instanceGeneration: this.persistenceClient.instanceGeneration,
+                commandId: `${this.sessionId}:${this.turnId ?? ""}:${toolCallId}`, commandDigest,
+                parentTurnId: this.turnId, parentToolCallId: toolCallId, instructionPayload: params.instruction,
+              });
+              if (receipt.isDuplicate) return { content: [{ type: "text", text: "This recall command was already accepted; it will not execute again." }], details: { ...receipt, duplicate: true } };
+            } catch { /* 非重复命令继续按旧轮次拒绝。 */ }
+          }
+          return fail("Stale execution number. Read TaskList before deciding whether further work is needed.");
+        }
+
+        // 3. CanResume check
+        const coldCandidate = record.isColdDisk && record.status === "completed" && !record.stopRequested &&
+          (record.persistenceState === "pending-validation" || record.persistenceState === "durable-ready");
+        if (!coldCandidate && !this.subagentRecallStatus(record.delegationId).canResume) return fail("Only normally completed contexts can resume; saving/stopped/failed contexts cannot resume.");
+
+        // 4. Concurrency check
         if (this.runningDelegations().length >= MAX_SUBAGENT_CONCURRENCY) return fail("Subagent concurrency is full; wait for a running execution to finish.");
-        // 以下登记在首个 await 前完成，第二个召回/停止请求会看到新轮次。
-        this.takeSupervision([record]);
-        record.execution = (record.execution ?? 1) + 1;
+
+        // 5. Reserve task lock & concurrency slot BEFORE any await
+        if (record.resumingLock) return fail("Subagent is already being resumed.");
+        record.resumingLock = true;
+        const previousStatus = record.status;
         record.status = "running";
-        record.startedEpoch = this.turnEpoch;
-        record.taskTurnId = this.turnId;
-        record.parentToolCallId = toolCallId;
-        (record.parentToolCallIds ??= []).push(toolCallId);
-        record.taskMessage = undefined;
-        record.turns = record.result?.turns ?? record.turns;
-        record.toolCalls = record.result?.toolCalls ?? record.toolCalls;
-        record.result = undefined;
-        record.startedAt = Date.now();
-        record.completedAt = undefined;
-        record.lastActivityAt = record.startedAt;
-        record.lastToolName = undefined;
-        record.lastPhase = "waiting-model";
-        record.reportDelivered = false;
-        record.completion = new Promise<void>((resolve) => { record.resolveCompletion = resolve; });
-        const pending = record.run.resume(params.instruction, this.turnId, toolCallId);
-        const details = delegationSummary(record);
-        (record.resumeCommands ??= new Map()).set(toolCallId, details);
-        (record.resumeCommandIds ??= new Set()).add(toolCallId);
-        if (record.resumeCommands.size > 64) record.resumeCommands.delete(record.resumeCommands.keys().next().value!);
-        this.publishSubagentExecution(record, "started", { ...details, instruction: record.run.observation.safe(params.instruction) });
-        this.watchDelegationExecution(record, pending);
-        return { content: [{ type: "text", text: `Delegation ${record.delegationId} resumed as execution ${record.execution} with its original context. Use TaskWait for the new result; reports continue without pauses.` }], details };
+        const nextExecution = (record.execution ?? 1) + 1;
+        const resumeEpoch = this.turnEpoch;
+
+        try {
+          // Cold restore from persistent disk snapshot if memory instance is absent
+          if (record.isColdDisk && !record.run) {
+            const loadRes = await this.persistenceClient.loadSnapshot({
+              sessionId: this.sessionId,
+              delegationId: record.delegationId,
+              generation: record.durableGeneration,
+            });
+            const cp = loadRes.checkpoint;
+
+            // Project real path check
+            let currentRealProjectPath = "";
+            if (this.projectPath) {
+              try { currentRealProjectPath = realpathSync(this.projectPath); } catch { currentRealProjectPath = this.projectPath; }
+            }
+            if (normalizePath(currentRealProjectPath) !== normalizePath(cp.header.projectRealPath)) {
+              throw new Error(`Project real path mismatch: expected '${cp.header.projectRealPath}', got '${currentRealProjectPath}'`);
+            }
+
+            const definition = this.subagents.find((s) => s.name === cp.config.definition.name);
+            if (!definition) {
+              throw new Error(`Subagent definition '${cp.config.definition.name}' is not configured in this session.`);
+            }
+
+            if (
+              definition.name !== cp.config.definition.name ||
+              definition.description !== cp.config.definition.description ||
+              definition.prompt !== cp.config.definition.prompt ||
+              definition.permission !== cp.config.definition.permission
+            ) {
+              throw new Error(`Subagent definition configuration mismatch for '${cp.config.definition.name}'`);
+            }
+
+            const primary = cp.modelBinding.primaryModel ?? cp.modelBinding.provider;
+            let provider = [this.provider, ...Object.values(this.subagentProviders), ...Object.values(this.subagentOverrideProviders)]
+              .find((candidate) => candidate?.id === primary.id && candidate.modelId === primary.modelId);
+            if (!provider && !definition.model) provider = await this.resolveSubagentModel(`${primary.id}/${primary.modelId}`);
+            if (!provider) {
+              throw new Error(`Provider for subagent '${definition.name}' is not available in this session.`);
+            }
+
+            const declaredToolNames = resolveSubagentToolNames(
+              definition,
+              [...this.toolCatalog.keys()],
+            );
+            const tools = declaredToolNames
+              .map((name) => this.toolCatalog.get(name))
+              .filter((tool): tool is AgentTool => tool !== undefined);
+            const scopedTools = this.scopeDelegateTools(tools, definition);
+
+            const currentCanMutate = subagentCanMutate(definition, declaredToolNames);
+            if (currentCanMutate !== cp.config.permissions.subagentCanMutate) {
+              throw new Error("Subagent mutation permission mismatch with checkpoint");
+            }
+
+            const thinkingLevel: SubagentThinkingLevel =
+              definition.thinkingLevel === "omit"
+                ? "omit"
+                : clampThinkingLevel(provider, definition.thinkingLevel ?? this.thinkingLevel);
+
+            const fallbackModels = (definition.fallbackModels ?? []).map((pin) => ({
+              key: subagentModelKey(pin),
+              provider: this.subagentProviders[subagentModelKey(pin)],
+            }));
+
+            const restoredRun = SubagentRun.restore(cp, {
+              sessionId: this.sessionId,
+              parentToolCallId: toolCallId,
+              turnId: this.turnId,
+              definition,
+              provider,
+              thinkingLevel,
+              fallbackModels,
+              systemPrompt: composeSubagentSystemPrompt({
+                definition,
+                guidance: this.subagentGuidance(definition),
+                toolNames: declaredToolNames,
+              }),
+              tools: scopedTools,
+              onEvent: (envelope) => {
+                this.noteDelegationActivity(record, envelope);
+                this.onEvent(envelope);
+              },
+              onObservation: (event) => this.onSubagentObservation(record, event),
+              resolveToolOutcome: (context) => this.resolveOwnToolOutcome(context),
+            });
+
+            if (record.stopRequested || this.disposed || this.runCancelled || this.turnEpoch !== resumeEpoch) {
+              restoredRun.stop("session");
+              throw new Error("Recall cancelled while restoring context.");
+            }
+            record.run = restoredRun;
+            record.isColdDisk = false;
+            record.source = "memory";
+            record.contextReleased = false;
+            record.durableRevision = loadRes.control.revision;
+            record.durableGeneration = loadRes.control.snapshotGeneration;
+            if (loadRes.control.status !== "completed") throw new Error("Snapshot is no longer completed.");
+            record.persistenceState = "durable-ready";
+          }
+
+          if (!record.run) throw new Error("Subagent context is unavailable or released in this session.");
+          if (record.stopRequested || this.disposed || this.runCancelled || this.turnHadError || this.turnEpoch !== resumeEpoch) {
+            throw new Error("Recall cancelled before execution registration.");
+          }
+
+          // CAS begin gate
+          const isMemoryContinuation = Boolean(record.run?.canResume && record.persistenceState === "persistence-error" && !record.isColdDisk);
+          record.pendingBegin = this.persistenceClient.beginExecution({
+            sessionId: this.sessionId,
+            delegationId: record.delegationId,
+            expectedRevision: record.durableRevision ?? 0,
+            expectedExecution: record.execution ?? 1,
+            nextExecution,
+            executionId: delegationExecutionId(record.delegationId, nextExecution),
+            instanceGeneration: this.persistenceClient.instanceGeneration,
+            commandId: `${this.sessionId}:${this.turnId ?? ""}:${toolCallId}`,
+            commandDigest,
+            parentTurnId: this.turnId,
+            parentToolCallId: toolCallId,
+            instructionPayload: params.instruction,
+            ...(isMemoryContinuation ? { memoryContinuation: true } : {}),
+          });
+          const beginReceipt = await record.pendingBegin;
+          if (record.stopRequested || this.disposed || this.runCancelled || this.turnHadError || this.turnEpoch !== resumeEpoch) {
+            record.execution = beginReceipt.execution;
+            if (record.interruptionReceipt) await record.interruptionReceipt;
+            else await this.stopSubagentAsync(record.delegationId, "parent");
+            throw new Error("Recall cancelled before model execution.");
+          }
+
+          if (beginReceipt.isDuplicate) {
+            record.status = previousStatus;
+            return {
+              content: [{ type: "text", text: "This recall command was already processed; duplicate command detected." }],
+              details: { ...delegationSummary(record), duplicate: true },
+            };
+          }
+
+          this.takeSupervision([record]);
+          record.durableRevision = beginReceipt.revision;
+          record.execution = nextExecution;
+          record.status = "running";
+          record.persistenceState = this.persistenceClient.isMemoryOnly(record.delegationId) ? "memory-only" : "saving";
+          record.startedEpoch = this.turnEpoch;
+          record.taskTurnId = this.turnId;
+          record.parentToolCallId = toolCallId;
+          (record.parentToolCallIds ??= []).push(toolCallId);
+          record.taskMessage = undefined;
+          record.turns = record.result?.turns ?? record.turns;
+          record.toolCalls = record.result?.toolCalls ?? record.toolCalls;
+          record.result = undefined;
+          record.startedAt = Date.now();
+          record.completedAt = undefined;
+          record.lastActivityAt = record.startedAt;
+          record.lastToolName = undefined;
+          record.lastPhase = "waiting-model";
+          record.reportDelivered = false;
+          record.completion = new Promise<void>((resolve) => { record.resolveCompletion = resolve; });
+
+          const resumeInstruction = `[Resumed Context Note: Earlier execution was checkpointed and restored. Please re-read any workspace files before modifying them.]\n\n${params.instruction}`;
+          const pending = record.run.resume(resumeInstruction, this.turnId, toolCallId);
+          const details = delegationSummary(record);
+          (record.resumeCommands ??= new Map()).set(toolCallId, { ...details, digest: commandDigest });
+          (record.resumeCommandIds ??= new Set()).add(toolCallId);
+          if (record.resumeCommands.size > 64) record.resumeCommands.delete(record.resumeCommands.keys().next().value!);
+          this.publishSubagentExecution(record, "started", { ...details, instruction: record.run.observation.safe(params.instruction) });
+          this.watchDelegationExecution(record, pending);
+          return { content: [{ type: "text", text: `Delegation ${record.delegationId} resumed as execution ${record.execution} with its original context. Use TaskWait for the new result; reports continue without pauses.` }], details };
+        } catch (err) {
+          record.status = record.stopRequested ? "stopped" : record.execution === nextExecution ? "failed" : previousStatus;
+          if (record.execution === nextExecution) record.resolveCompletion();
+          return fail(`Failed to resume subagent: ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          record.resumingLock = false;
+          record.pendingBegin = undefined;
+        }
       },
     };
   }
@@ -4482,6 +5026,26 @@ Delegation rules:
       execute: async (toolCallId, params) => {
         if (!isRecord(params)) return this.subagentToolError(toolCallId, "Invalid inspection parameters.");
         const record = isRecord(params) ? this.delegations.get(String(params.delegationId)) : undefined;
+        if (!record) return this.subagentToolError(toolCallId, "Subagent records not found in this session.");
+        if (record.isColdDisk && !record.run) {
+          const recall = this.subagentRecallStatus(record.delegationId);
+          const details: Record<string, unknown> = {
+            delegationId: record.delegationId,
+            execution: record.execution,
+            status: record.status,
+            agent: record.agentName,
+            modelId: record.modelId,
+            recall,
+            persistenceState: record.persistenceState,
+            source: "disk",
+            lastReportSummary: record.result?.report ?? record.diskEntry?.lastReportSummary,
+            turns: record.turns,
+            toolCalls: record.toolCalls,
+            updatedAt: record.completedAt ?? record.startedAt,
+            recordReference: "Full tool records are retained in the session transcript under toolCallId.",
+          };
+          return { content: [{ type: "text", text: JSON.stringify(details) }], details };
+        }
         if (!record?.run) return this.subagentToolError(toolCallId, "Subagent records not found in this session.");
         const details = record.run.observation.inspect(params.fromStep as number | undefined, params.limit as number | undefined, params.offset as number | undefined);
         details.recall = this.subagentRecallStatus(record.delegationId);
@@ -7287,7 +7851,26 @@ Delegation rules:
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptedSteering.clear();
     this.resolvePendingAskTools();
-    this.abortRunningDelegations();
+    const interrupted = this.runningDelegations().filter((record) => !record.stopRequested);
+    for (const record of interrupted) {
+      record.run?.stop("session");
+      record.abort();
+      record.interruptionReceipt = (async () => {
+        const accepted = await record.pendingBegin;
+        await this.persistenceClient.failExecution({
+          sessionId: this.sessionId, delegationId: record.delegationId,
+          expectedRevision: accepted?.revision ?? record.durableRevision ?? 0,
+          expectedExecution: accepted?.execution ?? record.execution ?? 1,
+          executionId: accepted?.executionId ?? delegationExecutionId(record.delegationId, record.execution ?? 1),
+          instanceGeneration: this.persistenceClient.instanceGeneration, status: "interrupted",
+          error: { code: "RUNTIME_DISPOSED", message: "Runtime context was released before execution settled." },
+        });
+        if (!record.stopRequested) record.persistenceState = "interrupted";
+      })().catch(() => {
+        if (!record.stopRequested) record.persistenceState = "persistence-error";
+      });
+    }
+    await Promise.all(interrupted.map((record) => record.interruptionReceipt));
     this.delegationWaitTargets = undefined;
     this.pathInstructionClaims.clear();
     this.failedHostToolCalls.clear();

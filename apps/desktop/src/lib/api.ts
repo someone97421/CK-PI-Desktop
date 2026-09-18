@@ -22,6 +22,7 @@ import type {
   AgentStopResponse,
   SubagentStopResult,
   SubagentRecallStatus,
+  SubagentPersistenceSettings,
   AgentQueueChangedEvent,
   AgentQueuePushRequest,
   QueuedTurnSummary,
@@ -658,6 +659,12 @@ export const api = {
     invoke<SubagentStopResult>(IPC.invoke.subagentStop, { sessionId, delegationId, expectedExecution }),
   subagentRecallStatus: (sessionId: string, delegationId: string) =>
     invoke<SubagentRecallStatus>(IPC.invoke.subagentRecallStatus, { sessionId, delegationId }),
+  getSubagentPersistenceSettings: () =>
+    invoke<SubagentPersistenceSettings>(IPC.invoke.subagentPersistenceGet),
+  setSubagentPersistenceEnabled: (enabled: boolean) =>
+    invoke<SubagentPersistenceSettings>(IPC.invoke.subagentPersistenceSet, { enabled }),
+  clearSubagentSnapshots: () =>
+    invoke<{ cleared: number }>(IPC.invoke.subagentPersistenceClear),
   queuePrompt: (req: AgentQueuePushRequest) =>
     invoke<QueuedTurnSummary>(IPC.invoke.agentQueuePush, req),
   listQueuedPrompts: (sessionId: string) =>

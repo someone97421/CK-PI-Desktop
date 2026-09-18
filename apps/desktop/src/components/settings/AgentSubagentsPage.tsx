@@ -27,6 +27,7 @@ import {
   subagentPresetCopyKey,
   type SubagentDraft,
 } from "./SubagentEditorSheet";
+import { SubagentPersistenceSection } from "./SubagentPersistenceSection";
 import {
   EMPTY_SUBAGENT_PAGE,
   fetchSubagentPageData,
@@ -455,6 +456,7 @@ export function AgentSubagentsPage() {
           </>
         )}
       </CapabilityPanel>
+      <SubagentPersistenceSection />
 
       {editor ? (
         <SubagentEditorSheet

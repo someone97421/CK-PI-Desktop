@@ -34,6 +34,7 @@ export type ShutdownDependencies = {
   getMcpControl: () => McpControlServer | null;
   activeTurns: Map<string, string>;
   persistenceOutbox: PersistenceOutbox;
+  closeSubagentSnapshots: () => Promise<void>;
   inflightCheckpointer: InflightCheckpointer;
   pluginPanels: Pick<PluginPanelHost, "closeAll">;
   plugins: Pick<PluginRuntime, "disposeAll">;
@@ -55,6 +56,7 @@ export function registerShutdownHandlers({
   getMcpControl,
   activeTurns,
   persistenceOutbox,
+  closeSubagentSnapshots,
   inflightCheckpointer,
   pluginPanels,
   plugins,
@@ -137,6 +139,11 @@ export function registerShutdownHandlers({
         persistenceOutbox,
         logger,
       });
+      try {
+        await closeSubagentSnapshots();
+      } catch {
+        logger.app("lifecycle", "warn", "subagent persistence shutdown unconfirmed; dirty marker retained");
+      }
       const hostShutdown = getHost()?.dispose();
       const mcpShutdown = getMcpControl()?.stop();
       const pluginPanelShutdown = pluginPanels.closeAll();

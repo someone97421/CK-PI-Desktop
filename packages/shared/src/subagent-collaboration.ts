@@ -62,11 +62,29 @@ export type SubagentStopResult = {
   collaboration?: SubagentCollaborationSnapshot;
 };
 
-/** 仅运行时查询可证明上下文仍在内存；转录快照不能证明可召回。 */
+/** 可召回资格来自当前运行时或已通过兼容检查的持久控制记录。 */
+export type SubagentPersistenceState =
+  | "memory-only" | "saving" | "durable-ready" | "pending-validation"
+  | "blocked" | "revoked" | "interrupted" | "failed" | "unavailable"
+  | "persistence-error" | "cleaned";
+
 export type SubagentRecallStatus = {
   delegationId: string;
   execution?: number;
   status: string;
   canResume: boolean;
+  source?: "memory" | "disk";
+  persistenceState?: SubagentPersistenceState;
   reason?: string;
+  snapshotVersion?: number;
+};
+
+export type SubagentPersistenceSettings = {
+  enabled: boolean;
+  available: boolean;
+  reason?: string;
+  retentionDays: number;
+  maxSessionSnapshots: number;
+  maxSnapshotBytes: number;
+  maxTotalBytes: number;
 };

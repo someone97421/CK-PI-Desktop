@@ -29,6 +29,7 @@ import type { PluginRuntime } from "../plugin-runtime";
 import { readSessionCollaboration } from "../services/session-collaboration";
 import { searchSessionsAcrossSources } from "../services/session-search";
 import type { IpcRegistrar } from "./types";
+import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 
 type RuntimeSession = {
   id?: string;
@@ -99,6 +100,7 @@ export type SessionIpcDependencies = {
   activeTurns: ReadonlyMap<string, string>;
   sessionProjects: Map<string, string | null>;
   persistenceOutbox: PersistenceOutbox;
+  subagentSnapshots: SubagentSnapshotStore;
   logger: Pick<Logger, "app">;
   plugins: Pick<PluginRuntime, "broadcastEvent" | "publishDesktopEvent">;
   sessionCapabilityContext: () => Promise<{ providers: any; defaults: any }>;
@@ -115,6 +117,7 @@ export function registerSessionIpc({
   activeTurns,
   sessionProjects,
   persistenceOutbox,
+  subagentSnapshots,
   logger,
   plugins,
   sessionCapabilityContext,
@@ -329,20 +332,24 @@ export function registerSessionIpc({
       });
     }
     if (!host) throw new Error("host unavailable");
-    const res = await host.call("session.delete", { id });
-    await persistenceOutbox.dropSession(id);
-    // Drop the session's pi-agent so a later session with the same id (or a
-    // stale runtime) can't answer with this session's context.
-    if (sidecar) {
-      sidecar.clearProjectInstructionRoot(id);
-      sidecar.clearVendorAuthBindings(id);
-      await sidecar
-        .call("agent.disposeSession", { sessionId: id })
-        .catch(() => undefined);
+    const release = await acquireSessionOperation(id);
+    try {
+      await subagentSnapshots.closeSession(id);
+      // 即便后续删除失败，也保持封闭；迟到保存不能重新开放这个会话。
+      if (sidecar) {
+        sidecar.clearProjectInstructionRoot(id);
+        sidecar.clearVendorAuthBindings(id);
+        await sidecar.call("agent.disposeSession", { sessionId: id });
+      }
+      const res = await host.call("session.delete", { id });
+      await persistenceOutbox.dropSession(id);
+      await subagentSnapshots.deleteSession(id);
+      sessionProjects.delete(id);
+      logger.app("session", "info", "session deleted", { sessionId: id });
+      return res;
+    } finally {
+      release();
     }
-    sessionProjects.delete(id);
-    logger.app("session", "info", "session deleted", { sessionId: id });
-    return res;
   });
   handle(IPC.invoke.sessionRename, async (id: string, title: string) => {
     if (id.startsWith("native-pi:")) {

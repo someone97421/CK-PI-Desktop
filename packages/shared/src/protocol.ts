@@ -75,6 +75,9 @@ export const IPC = {
     agentStop: "pi-desktop/agent/stop",
     subagentStop: "pi-desktop/agent/subagent/stop",
     subagentRecallStatus: "pi-desktop/agent/subagent/recall-status",
+    subagentPersistenceGet: "agent:subagent-persistence:get",
+    subagentPersistenceSet: "agent:subagent-persistence:set",
+    subagentPersistenceClear: "agent:subagent-persistence:clear",
     agentQueuePush: "pi-desktop/agent/queue/push",
     agentQueueList: "pi-desktop/agent/queue/list",
     agentQueueRemove: "pi-desktop/agent/queue/remove",
@@ -302,9 +305,15 @@ export const IPC = {
     providersOauth: "pi-desktop/providers/oauth/event",
     updatesState: "pi-desktop/updates/event/state",
   },
+  agent: {
+    subagentPersistenceGet: "agent:subagent-persistence:get",
+    subagentPersistenceSet: "agent:subagent-persistence:set",
+    subagentPersistenceClear: "agent:subagent-persistence:clear",
+  },
 } as const;
 
 export const IPC_WHITELIST = new Set<string>([
   ...Object.values(IPC.invoke),
   ...Object.values(IPC.event),
+  ...Object.values(IPC.agent),
 ]);

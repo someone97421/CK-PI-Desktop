@@ -6,6 +6,7 @@ import {
   type SubagentProgressReport,
   type SubagentStep,
 } from "@pi-desktop/shared";
+import type { SubagentObserverSnapshot } from "./subagent-checkpoint.js";
 
 const MAX_STEPS = 256;
 const MAX_GUIDES = 64;
@@ -245,5 +246,70 @@ export class SubagentObserver {
       nextStep: selected.at(-1)?.seq !== undefined && selected.at(-1)!.seq < this.started ? selected.at(-1)!.seq + 1 : null,
       guides: this.guides.slice(-4).map((guide) => ({ ...guide })),
     };
+  }
+
+  exportState(): SubagentObserverSnapshot {
+    return {
+      execution: this.execution,
+      interval: this.interval,
+      intervalSource: this.intervalSource,
+      segmentId: this.segmentId,
+      segmentCompleted: this.segmentCompleted,
+      started: this.started,
+      completed: this.completed,
+      pendingCount: this.pendingCount,
+      pendingErrors: this.pendingErrors,
+      pendingFrom: this.pendingFrom,
+      pendingTo: this.pendingTo,
+      reportSeq: this.reportSeq,
+      latestReport: this.latestReport ? { ...this.latestReport } : undefined,
+      statement: this.statement,
+      phase: "finished",
+      stopSource: this.stopSource,
+      guides: this.guides.map((g) => ({ ...g })),
+      steps: this.steps.map((s) => ({ ...s })),
+      seenSteps: Array.from(this.seenSteps),
+      seenGuides: Array.from(this.seenGuides),
+    };
+  }
+
+  static restore(
+    delegationId: string,
+    snapshot: SubagentObserverSnapshot,
+    notify: (event: SubagentObservation) => void,
+    secrets: readonly string[] = [],
+  ): SubagentObserver {
+    const observer = new SubagentObserver(
+      delegationId,
+      snapshot.interval,
+      snapshot.intervalSource,
+      notify,
+      secrets,
+    );
+    observer.execution = snapshot.execution;
+    observer.segmentId = snapshot.segmentId;
+    observer.segmentCompleted = snapshot.segmentCompleted;
+    observer.started = snapshot.started;
+    observer.completed = snapshot.completed;
+    observer.pendingCount = snapshot.pendingCount;
+    observer.pendingErrors = snapshot.pendingErrors;
+    observer.pendingFrom = snapshot.pendingFrom;
+    observer.pendingTo = snapshot.pendingTo;
+    observer.reportSeq = snapshot.reportSeq;
+    observer.latestReport = snapshot.latestReport ? { ...snapshot.latestReport } : undefined;
+    observer.statement = snapshot.statement ?? "";
+    observer.phase = "finished";
+    observer.stopSource = snapshot.stopSource;
+    for (const guide of snapshot.guides) {
+      observer.guides.push({ ...guide });
+    }
+    observer.steps = snapshot.steps.map((s) => ({ ...s }));
+    for (const stepId of snapshot.seenSteps) {
+      observer.seenSteps.add(stepId);
+    }
+    for (const guideId of snapshot.seenGuides) {
+      observer.seenGuides.add(guideId);
+    }
+    return observer;
   }
 }

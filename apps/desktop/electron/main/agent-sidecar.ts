@@ -67,6 +67,7 @@ const HOST_PROXY_ALLOWED = new Set([
   "project.instructions.resolve",
   "provider.resolveAuth",
   "provider.resolveSubagentModel",
+  "subagent.persistence",
   "app.health",
   // Trusted extensions (D387): answered by main, plus the session methods
   // the ExtensionAPI reaches (spec 16 §10.1).
@@ -139,6 +140,12 @@ export class AgentSidecar {
   // ask for auth it is already using, and a session that never bound an OAuth
   // row can ask for nothing at all.
   private vendorAuthBindings = new Map<string, Set<string>>();
+  private snapshotSessions = new Set<string>();
+  private snapshotHandler?: (params: Record<string, unknown>) => Promise<unknown>;
+
+  setSubagentPersistenceHandler(handler: (params: Record<string, unknown>) => Promise<unknown>): void {
+    this.snapshotHandler = handler;
+  }
 
   constructor(onStderr?: StderrHandler) {
     const entry = resolveSidecarEntry();
@@ -296,6 +303,7 @@ export class AgentSidecar {
   setProjectInstructionRoot(sessionId: string, projectPath?: string): void {
     const id = sessionId.trim();
     if (!id) return;
+    this.snapshotSessions.add(id);
     const root = projectPath?.trim();
     if (root) this.projectInstructionRoots.set(id, root);
     else this.projectInstructionRoots.delete(id);
@@ -303,6 +311,7 @@ export class AgentSidecar {
 
   clearProjectInstructionRoot(sessionId: string): void {
     this.projectInstructionRoots.delete(sessionId.trim());
+    this.snapshotSessions.delete(sessionId.trim());
   }
 
   setVendorAuthResolver(resolver: VendorAuthResolver): void {
@@ -440,6 +449,16 @@ export class AgentSidecar {
           );
         }
         const params = (msg.params?.params ?? {}) as Record<string, unknown>;
+        if (method === "subagent.persistence") {
+          if (this.closed || this.disposed || !this.snapshotHandler) throw new Error("Subagent persistence unavailable");
+          if (params.operation !== "capabilities" &&
+              (typeof params.sessionId !== "string" || !this.snapshotSessions.has(params.sessionId))) {
+            throw new Error("Subagent persistence session is not bound to this sidecar");
+          }
+          const result = await this.snapshotHandler(params);
+          this.writeToChild(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }) + "\n");
+          return;
+        }
         const requestedToolName = String(params.toolName ?? "");
         const planLocalTool =
           requestedToolName === "Skill" ||

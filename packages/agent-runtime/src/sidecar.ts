@@ -28,6 +28,8 @@ import {
 } from "./sidecar-config.js";
 import { applyNodeNetworkProxy } from "./node-proxy.js";
 import { NATIVE_PI_SESSION_PREFIX, nativePiService } from "./native-pi-session.js";
+import { SubagentPersistenceClient } from "./subagent-persistence-client.js";
+import type { SubagentDirectoryEntry } from "./subagent-persistence.js";
 import {
   formatFileInsert,
   isCommandShellOption,
@@ -430,6 +432,7 @@ async function runtimeFor(
   runtimes.set(sessionId, runtime);
   // Load failures are diagnostics, never a failed prompt (spec 16 §4.4).
   await runtime.loadTrustedExtensions().catch(() => undefined);
+  await runtime.initSubagentPersistence().catch(() => undefined);
   if (provider.extensionAgentKey) {
     const activated = await runtime.activateTrustedExtensionAgent(
       provider.extensionAgentKey,
@@ -608,14 +611,60 @@ async function handle(method: string, params: any): Promise<unknown> {
       return { accepted: true };
     }
     case "agent.subagentStop": {
-      const runtime = runtimes.get(String(params.sessionId ?? ""));
-      if (!runtime) throw Object.assign(new Error("No active runtime for this subagent"), { errorCode: "SUBAGENT_NOT_FOUND" });
-      return runtime.stopSubagent(String(params.delegationId ?? ""), "user", params.expectedExecution);
+      const sessionId = String(params.sessionId ?? "");
+      const runtime = runtimes.get(sessionId);
+      if (!runtime) {
+        const delegationId = String(params.delegationId ?? "");
+        const client = new SubagentPersistenceClient(hostProxy, sessionId);
+        const revokeReceipt = await client.revokeExecution({
+          sessionId,
+          delegationId,
+          expectedExecution: typeof params.expectedExecution === "number" ? params.expectedExecution : undefined,
+          reason: "User stopped subagent without active runtime",
+          source: "user",
+        });
+        return { ok: true, delegationId, status: "stopped", execution: revokeReceipt.execution };
+      }
+      return await runtime.stopSubagentAsync(String(params.delegationId ?? ""), "user", params.expectedExecution);
     }
     case "agent.subagentRecallStatus": {
+      const sessionId = String(params.sessionId ?? "");
       const delegationId = String(params.delegationId ?? "");
-      return runtimes.get(String(params.sessionId ?? ""))?.subagentRecallStatus(delegationId)
-        ?? { delegationId, status: "unavailable", canResume: false, reason: "Context released; restart recovery is not implemented." };
+      const runtime = runtimes.get(sessionId);
+      if (runtime) {
+        return await runtime.subagentRecallStatusAsync(delegationId);
+      }
+      const client = new SubagentPersistenceClient(hostProxy, sessionId);
+      let cursor: string | undefined = undefined;
+      let entry: SubagentDirectoryEntry | undefined;
+      do {
+        const listRes = await client.listEntries({ sessionId, limit: 50, cursor }).catch(() => null);
+        if (!listRes || !Array.isArray(listRes.entries)) break;
+        entry = listRes.entries.find((e) => e.delegationId === delegationId);
+        if (entry || !listRes.nextCursor) break;
+        cursor = listRes.nextCursor;
+      } while (cursor);
+
+      if (entry) {
+        return {
+          delegationId,
+          execution: entry.execution,
+          status: entry.status,
+          canResume: entry.canResume,
+          source: "disk",
+          persistenceState: entry.persistenceState,
+          reason: entry.reason,
+          snapshotVersion: entry.snapshotGeneration,
+        };
+      }
+      return {
+        delegationId,
+        status: "unavailable",
+        canResume: false,
+        source: "disk",
+        persistenceState: "pending-validation",
+        reason: "Subagent record not found on disk or runtime.",
+      };
     }
     case "agent.abort": {
       const sessionId = String(params.sessionId);

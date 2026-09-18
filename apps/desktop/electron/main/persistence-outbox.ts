@@ -26,6 +26,7 @@ export class PersistenceOutbox {
   private flushing: Promise<void> | null = null;
   private persistChain = Promise.resolve();
   private readonly loaded: Promise<void>;
+  private onMessagePersisted?: (sessionId: string) => Promise<void> | void;
 
   constructor(dataDir: string, logger: OutboxLogger) {
     this.path = join(dataDir, "session-message-outbox.json");
@@ -34,6 +35,9 @@ export class PersistenceOutbox {
     this.loaded = this.load();
   }
 
+  setOnMessagePersisted(callback?: (sessionId: string) => Promise<void> | void): void {
+    this.onMessagePersisted = callback;
+  }
   async enqueue(
     entry: MessageAppend,
     getHost: () => HostProcess | null,
@@ -94,6 +98,14 @@ export class PersistenceOutbox {
           data: String(error),
         });
         return;
+      }
+      try {
+        await this.onMessagePersisted?.(current.sessionId);
+      } catch (callbackError) {
+        this.logger("warn", "outbox onMessagePersisted callback failed", {
+          sessionId: current.sessionId,
+          data: String(callbackError),
+        });
       }
       // A newer snapshot may have replaced this key while the host wrote it.
       // Only remove the exact entry acknowledged by that write.

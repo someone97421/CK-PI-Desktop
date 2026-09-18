@@ -3,6 +3,7 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 import { err, ErrorCodes, IPC, ok, type Result } from "@pi-desktop/shared";
 import type { AgentHostBridge } from "../agent-host-bridge";
 import type { AgentSidecar } from "../agent-sidecar";
+import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 import type { HostProcess } from "../host-process";
 import { registerAgentExtensionIpc } from "../agent-extensions-ipc";
 import { registerAgentIpc } from "./agent-ipc";
@@ -32,6 +33,7 @@ export type RegisterIpcDependencies = {
   getMainWindow: () => BrowserWindow | null;
   getHost: () => HostProcess | null;
   getSidecar: () => AgentSidecar | null;
+  subagentSnapshots: SubagentSnapshotStore;
   getAgentHostBridge: () => AgentHostBridge | null;
   getNotificationViewingSessionId: () => string | null;
   setNotificationViewingSessionId: (sessionId: string | null) => void;
@@ -195,6 +197,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     sendToRenderer,
   });
   registerSessionIpc({
+    subagentSnapshots: dependencies.subagentSnapshots,
     registrar,
     getHost,
     getSidecar,
@@ -312,6 +315,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     },
   });
   registerAgentIpc({
+    subagentSnapshots: dependencies.subagentSnapshots,
     registrar,
     getHost,
     getSidecar,

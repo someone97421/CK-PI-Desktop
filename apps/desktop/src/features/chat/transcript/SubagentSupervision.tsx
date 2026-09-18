@@ -51,6 +51,17 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
   const resumable = recall?.canResume && recall.execution === execution;
   const stopping = live && running && (requested || data?.phase === "stopping");
   const canStop = Boolean(id && sessionId && live && running && data?.phase !== "finished");
+  const canRevokeRecall = Boolean(
+    !running &&
+      id &&
+      sessionId &&
+      recall?.source === "disk" &&
+      execution !== undefined && recall.execution === execution &&
+      (recall?.status === "completed" || recall?.persistenceState === "durable-ready" || resumable) &&
+      recall?.persistenceState !== "revoked" &&
+      recall?.status !== "aborted" &&
+      recall?.status !== "stopped",
+  );
   const reportInProgress = live && running && !stopping && data?.phase !== "finished";
   // 旧快照或无工具调用的召回轮次可能没有最近汇报，不能据此把累计汇报数写成 0。
   const reportCount = data?.latestReport?.reportSeq ?? (data?.completedSteps === 0 ? 0 : undefined);
@@ -63,9 +74,28 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
           { current: data.stepsSinceReport, interval: data.reportIntervalSteps, total: data.completedSteps, reports: reportCount })}
       </span> : null}
       {execution ? <span>{t(running && execution > 1 ? "chat.subagentReworking" : "chat.subagentExecution", { execution })}</span> : null}
-      {!running && execution ? <span title={t("chat.subagentRecallMemoryOnly")}>
-        {t(resumable ? "chat.subagentRecallReady" : "chat.subagentRecallCheck")}
-      </span> : null}
+      {!running && (execution || recall) ? (() => {
+        const stateText = recall?.persistenceState
+          ? t(`chat.subagentPersistenceState.${recall.persistenceState}`)
+          : t(resumable ? "chat.subagentRecallReady" : "chat.subagentRecallCheck");
+        const badges = [stateText];
+        if (recall?.source && recall.persistenceState !== "memory-only" && recall.persistenceState !== "durable-ready") {
+          badges.push(t(recall.source === "disk" ? "chat.subagentSourceDisk" : "chat.subagentSourceMemory"));
+        }
+        if (recall?.snapshotVersion !== undefined) {
+          badges.push(t("chat.subagentSnapshotVersion", { version: recall.snapshotVersion }));
+        }
+        const tooltip = recall?.reason
+          ? (recall.snapshotVersion !== undefined
+              ? `${t("chat.subagentSnapshotVersion", { version: recall.snapshotVersion })} · ${recall.reason}`
+              : recall.reason)
+          : (recall?.source === "memory" ? t("chat.subagentRecallMemoryOnly") : undefined);
+        return (
+          <span title={tooltip}>
+            {badges.join(" · ")}
+          </span>
+        );
+      })() : null}
       {!live && running ? <span>{t("chat.subagentHistorical")}</span> : stopping ? <span role="status">{t("chat.subagentStoppingNow")}</span>
         : data?.phase === "guiding" ? <span role="status">{t("chat.subagentGuidingNow")}</span> : null}
       </div>
@@ -78,11 +108,28 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
           try { await api.stopSubagent(sessionId, id, execution); }
           catch (failure) { setRequested(false); setError(failure instanceof Error ? failure.message : String(failure)); }
         }}><IconStop size={12} aria-hidden /></TooltipButton> : null}
+      {canRevokeRecall ? <TooltipButton type="button" className="subagent-stop-button" disabled={requested}
+        tooltip={t(requested ? "chat.subagentRevokingNow" : "chat.subagentRevokeRecallTooltip")}
+        aria-label={t("chat.subagentRevokeRecall")} onClick={async (event) => {
+          event.stopPropagation();
+          if (!sessionId || !id || requested) return;
+          setRequested(true); setError("");
+          try {
+            await api.stopSubagent(sessionId, id, execution);
+            const updated = await api.subagentRecallStatus(sessionId, id);
+            setRecall(updated);
+          } catch (failure) {
+            setError(failure instanceof Error ? failure.message : String(failure));
+          } finally {
+            setRequested(false);
+          }
+        }}><IconStop size={12} aria-hidden /></TooltipButton> : null}
     </div>
     {!compact && data ? <div className="subagent-supervision-detail">
       <span>{t("chat.subagentSegment", { segment: data.segmentId, steps: data.segmentCompletedSteps })}</span>
       <span>{t(`chat.subagentIntervalSource.${data.intervalSource}`)}</span>
       {data.stopSource ? <span>{t(`chat.subagentStopSource.${data.stopSource}`)}</span> : null}
+      {recall?.reason ? <span title={recall.reason}>{recall.reason}</span> : null}
       {data.latestGuide ? <div>
         <strong>{t(`chat.subagentGuideState.${data.latestGuide.status}`)}</strong>
         <p className="selectable">{data.latestGuide.instruction}</p>

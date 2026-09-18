@@ -50,6 +50,18 @@ import {
   type SubagentGuideReceipt,
 } from "@pi-desktop/shared";
 import { SubagentObserver, type SubagentObservation } from "./subagent-observer.js";
+import {
+  SUBAGENT_CHECKPOINT_FORMAT_VERSION,
+  SUBAGENT_CONTEXT_CODEC_VERSION,
+  computeToolsFingerprint,
+  decodeAgentMessages,
+  encodeAgentMessages,
+  sanitizeBaseUrl,
+  simplePromptFingerprint,
+  SubagentCodecError,
+  validateCheckpoint,
+  type SubagentCheckpoint,
+} from "./subagent-checkpoint.js";
 import { classifyAgentError } from "./agent-errors.js";
 import {
   assistantContent,
@@ -57,6 +69,8 @@ import {
   usageFromPi,
 } from "./agent-messages.js";
 import {
+import {
+  apiBindingForStyle,
   buildProviderModel,
   createProviderModels,
   DEFAULT_CONTEXT_WINDOW,
@@ -178,6 +192,19 @@ export type SubagentRunOptions = {
   compactionProvider?: RuntimeProviderConfig;
   /** The session's automatic-compaction setting; false disables checkpoints. */
   compactionEnabled?: boolean;
+  /**
+   * Internal checkpoint payload supplied when restoring from persistent snapshot.
+   * Direct message and observer state restoration without model execution.
+   */
+   * Direct message and observer state restoration without model execution.
+   */
+  restoredCheckpoint?: SubagentCheckpoint;
+  /** Primary model before fallback was applied, for faithful persistence restore */
+  primaryProvider?: RuntimeProviderConfig;
+};
+
+export type SubagentRestoreOptions = Omit<SubagentRunOptions, "task" | "delegationId"> & {
+  delegationId?: string;
 };
 
 /**
@@ -259,6 +286,7 @@ export class SubagentRun {
   private provider: RuntimeProviderConfig;
   private thinkingLevel: SubagentThinkingLevel;
   private fallbackIndex = 0;
+  private readonly primaryProvider: RuntimeProviderConfig;
   private readonly attemptedModels = new Set<string>();
   private readonly modelFailures: NonNullable<SubagentRunResult["modelFailures"]> = [];
   private readonly retryState: SubagentProviderRetryState = {
@@ -283,17 +311,59 @@ export class SubagentRun {
 
   constructor(opts: SubagentRunOptions) {
     this.opts = opts;
-    this.observation = new SubagentObserver(
-      opts.delegationId ?? opts.parentToolCallId,
-      opts.definition.reportIntervalSteps ?? opts.reportIntervalSteps!,
-      opts.definition.reportIntervalSteps === undefined ? "dispatch" : "definition",
-      (event) => opts.onObservation?.(event),
-      [opts.provider, ...(opts.fallbackModels ?? []).flatMap((entry) => entry.provider ? [entry.provider] : [])]
-        .flatMap((provider) => [provider.apiKey ?? "", ...Object.entries(provider.headers ?? {}).filter(([key]) => /authorization|key|token|cookie/i.test(key)).map(([, value]) => String(value))]),
-    );
+    this.primaryProvider = opts.primaryProvider ?? opts.provider;
+    const secrets = [opts.provider, ...(opts.fallbackModels ?? []).flatMap((entry) => entry.provider ? [entry.provider] : [])]
+      .flatMap((provider) => [provider.apiKey ?? "", ...Object.entries(provider.headers ?? {}).filter(([key]) => /authorization|key|token|cookie/i.test(key)).map(([, value]) => String(value))]);
+
+    if (opts.restoredCheckpoint) {
+      this.observation = SubagentObserver.restore(
+        opts.delegationId ?? opts.parentToolCallId,
+        opts.restoredCheckpoint.observer,
+        (event) => opts.onObservation?.(event),
+        secrets,
+      );
+    } else {
+      this.observation = new SubagentObserver(
+        opts.delegationId ?? opts.parentToolCallId,
+        opts.definition.reportIntervalSteps ?? opts.reportIntervalSteps!,
+        opts.definition.reportIntervalSteps === undefined ? "dispatch" : "definition",
+        (event) => opts.onObservation?.(event),
+        secrets,
+      );
+    }
     this.provider = opts.provider;
     this.thinkingLevel = opts.thinkingLevel;
-    this.attemptedModels.add(`${opts.provider.id}/${opts.provider.modelId}`);
+    let initialMessages: AgentMessage[] = [];
+
+    if (opts.restoredCheckpoint) {
+      const cp = opts.restoredCheckpoint;
+      initialMessages = decodeAgentMessages(cp.messages);
+      const summaryIdx = cp.compaction.summaryMessageIndex;
+      if (summaryIdx !== undefined && initialMessages[summaryIdx]) {
+        this.summaryMessage = initialMessages[summaryIdx];
+      } else if (initialMessages[0]?.role === "compactionSummary") {
+        this.summaryMessage = initialMessages[0];
+      }
+      this.checkpointSummary = cp.compaction.checkpointSummary;
+      this.checkpointTokensBefore = cp.compaction.checkpointTokensBefore;
+      this.contextCompactions = cp.compaction.contextCompactions;
+      this.turns = cp.usage.turns;
+      this.toolCalls = cp.usage.toolCalls;
+      this.usage = cp.usage.usage ? { ...cp.usage.usage } : undefined;
+      this.executionUsage = cp.usage.executionUsage ? { ...cp.usage.executionUsage } : undefined;
+      this.lastReportText = cp.usage.lastReportText;
+      this.lastStatus = "completed";
+      this.executing = false;
+      this.thinkingLevel = cp.modelBinding.thinkingLevel;
+      this.fallbackIndex = cp.modelBinding.fallbackIndex;
+      for (const m of cp.modelBinding.attemptedModels) {
+        this.attemptedModels.add(m);
+      }
+      this.modelFailures.push(...cp.modelBinding.modelFailures);
+    } else {
+      this.attemptedModels.add(`${opts.provider.id}/${opts.provider.modelId}`);
+    }
+
     const binding = this.modelBinding();
     this.agent = new Agent({
       streamFn: binding.streamFn,
@@ -310,7 +380,7 @@ export class SubagentRun {
         model: binding.model,
         tools: opts.tools,
         thinkingLevel: binding.agentThinkingLevel,
-        messages: [],
+        messages: initialMessages,
       },
       toolExecution: "sequential",
     });
@@ -341,6 +411,277 @@ export class SubagentRun {
     this.providerRateLimitRetryAttempt = 0;
     this.observation.resume();
     return this.execute(instruction);
+  }
+
+  /** Restore an idle SubagentRun from a validated persistent checkpoint. */
+  /** Restore an idle SubagentRun from a validated persistent checkpoint. */
+  static restore(snapshot: SubagentCheckpoint, opts: SubagentRestoreOptions): SubagentRun {
+    const validated = validateCheckpoint(snapshot);
+
+    if (opts.sessionId !== validated.header.sessionId) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        `Session mismatch: expected '${validated.header.sessionId}', got '${opts.sessionId}'`,
+      );
+    }
+
+    if (
+      opts.definition.name !== validated.config.definition.name ||
+      opts.definition.description !== validated.config.definition.description ||
+      opts.definition.prompt !== validated.config.definition.prompt ||
+      opts.definition.permission !== validated.config.definition.permission
+    ) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        `Subagent definition configuration mismatch for '${validated.config.definition.name}'`,
+      );
+    }
+
+    const currentCanMutate = subagentCanMutate(opts.definition, opts.tools.map((t) => t.name));
+    if (currentCanMutate !== validated.config.permissions.subagentCanMutate) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        "Subagent mutation permission mismatch with checkpoint",
+      );
+    }
+
+    // Verify primary model configuration matches checkpoint
+    if (
+      opts.provider.id !== validated.modelBinding.primaryModel.id ||
+      opts.provider.modelId !== validated.modelBinding.primaryModel.modelId
+    ) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        `Primary model (${opts.provider.id}/${opts.provider.modelId}) does not match checkpoint primary model (${validated.modelBinding.primaryModel.id}/${validated.modelBinding.primaryModel.modelId})`,
+      );
+    }
+    const primaryEndpointFp = simplePromptFingerprint(sanitizeBaseUrl(opts.provider.baseUrl));
+    if (primaryEndpointFp !== validated.modelBinding.primaryModel.endpointFingerprint) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        "Primary model endpoint fingerprint mismatch with checkpoint",
+      );
+    }
+    const primaryWireApi = apiBindingForStyle(opts.provider.apiStyle).api;
+    if (primaryWireApi !== validated.modelBinding.primaryModel.api) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        `Primary model wire API mismatch: expected '${validated.modelBinding.primaryModel.api}', got '${primaryWireApi}'`,
+      );
+    }
+
+    const currentPromptFingerprint = simplePromptFingerprint(opts.systemPrompt);
+    if (currentPromptFingerprint !== validated.config.systemPromptFingerprint) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        "System prompt fingerprint mismatch with persistent checkpoint",
+      );
+    }
+
+    const currentToolsFingerprint = computeToolsFingerprint(opts.tools);
+    if (currentToolsFingerprint !== validated.config.toolsFingerprint) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        "Tools schema fingerprint mismatch with persistent checkpoint",
+      );
+    }
+
+    let resolvedActiveProvider: RuntimeProviderConfig;
+    if (validated.modelBinding.fallbackIndex > 0) {
+      const fallbackEntry = opts.fallbackModels?.[validated.modelBinding.fallbackIndex - 1];
+      if (!fallbackEntry?.provider) {
+        throw new SubagentCodecError(
+          "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+          `Active fallback model at index ${validated.modelBinding.fallbackIndex - 1} is not configured in restore options`,
+        );
+      }
+      if (
+        fallbackEntry.provider.id !== validated.modelBinding.provider.id ||
+        fallbackEntry.provider.modelId !== validated.modelBinding.provider.modelId
+      ) {
+        throw new SubagentCodecError(
+          "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+          `Active fallback model (${fallbackEntry.provider.id}/${fallbackEntry.provider.modelId}) does not match checkpoint completed model (${validated.modelBinding.provider.id}/${validated.modelBinding.provider.modelId})`,
+        );
+      }
+      resolvedActiveProvider = fallbackEntry.provider;
+    } else {
+      if (
+        opts.provider.id !== validated.modelBinding.provider.id ||
+        opts.provider.modelId !== validated.modelBinding.provider.modelId
+      ) {
+        throw new SubagentCodecError(
+          "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+          `Primary provider (${opts.provider.id}/${opts.provider.modelId}) does not match checkpoint completed model (${validated.modelBinding.provider.id}/${validated.modelBinding.provider.modelId})`,
+        );
+      }
+      resolvedActiveProvider = opts.provider;
+    }
+
+    const endpointFp = simplePromptFingerprint(sanitizeBaseUrl(resolvedActiveProvider.baseUrl));
+    if (endpointFp !== validated.modelBinding.provider.endpointFingerprint) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        "Active provider endpoint fingerprint mismatch with persistent checkpoint",
+      );
+    }
+
+    const wireApi = apiBindingForStyle(resolvedActiveProvider.apiStyle).api;
+    if (wireApi !== validated.modelBinding.provider.api) {
+      throw new SubagentCodecError(
+        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
+        `Active provider wire API '${wireApi}' does not match checkpoint api '${validated.modelBinding.provider.api}'`,
+      );
+    }
+
+    return new SubagentRun({
+      ...opts,
+      provider: resolvedActiveProvider,
+      primaryProvider: opts.provider,
+      task: validated.config.task,
+      delegationId: validated.header.delegationId,
+      restoredCheckpoint: validated,
+    });
+  }
+
+  /** Export current idle and completed state to an immutable checkpoint snapshot. */
+  exportSnapshot(options: {
+    projectRealPath: string;
+    executionId: string;
+    generation: number;
+    appVersion?: string;
+  }): SubagentCheckpoint {
+    if (this.executing || this.lastStatus !== "completed") {
+      throw new Error("Cannot export snapshot: subagent must be idle and completed.");
+    }
+    if (this.runSignal().aborted) {
+      throw new Error("Cannot export snapshot: subagent execution was aborted.");
+    }
+    if (this.observation.hasGuides) {
+      throw new Error("Cannot export snapshot: subagent has pending unapplied guides.");
+    }
+    if (this.pendingProviderRetry) {
+      throw new Error("Cannot export snapshot: subagent has pending provider retries.");
+    }
+
+    const validBindings: Array<{ providerId: string; modelId: string; api?: string }> = [
+      {
+        providerId: this.primaryProvider.id,
+        modelId: this.primaryProvider.modelId,
+        api: apiBindingForStyle(this.primaryProvider.apiStyle).api,
+      },
+      {
+        providerId: this.provider.id,
+        modelId: this.provider.modelId,
+        api: apiBindingForStyle(this.provider.apiStyle).api,
+      },
+      ...(this.opts.fallbackModels ?? []).filter((f) => f.provider).map((f) => ({
+        providerId: f.provider!.id,
+        modelId: f.provider!.modelId,
+        api: apiBindingForStyle(f.provider!.apiStyle).api,
+      })),
+    ];
+
+    const encodedMessages = encodeAgentMessages(this.agent.state.messages, validBindings);
+    const summaryIndex = this.summaryMessage
+      ? this.agent.state.messages.indexOf(this.summaryMessage)
+      : undefined;
+
+    const delegationId = this.opts.delegationId ?? this.opts.parentToolCallId;
+    const observerSnapshot = this.observation.exportState();
+    const firstStepStart = observerSnapshot.steps[0]?.startedAt;
+    const lastStepEnd = observerSnapshot.steps.at(-1)?.endedAt ?? Date.now();
+    const activityDurationMs = (firstStepStart && lastStepEnd >= firstStepStart)
+      ? (lastStepEnd - firstStepStart)
+      : 0;
+
+    const checkpoint: SubagentCheckpoint = {
+      header: {
+        formatVersion: SUBAGENT_CHECKPOINT_FORMAT_VERSION,
+        contextCodecVersion: SUBAGENT_CONTEXT_CODEC_VERSION,
+        sessionId: this.opts.sessionId,
+        delegationId,
+        projectRealPath: options.projectRealPath,
+        createdAt: this.agent.state.messages[0]?.timestamp ?? Date.now(),
+        savedAt: Date.now(),
+        appVersion: options.appVersion,
+      },
+      execution: {
+        execution: this.observation.snapshot().execution ?? 1,
+        executionId: options.executionId,
+        generation: options.generation,
+        lastStatus: "completed",
+        parentTurnId: this.opts.turnId,
+        parentToolCallId: this.opts.parentToolCallId,
+      },
+      compaction: {
+        checkpointSummary: this.checkpointSummary,
+        checkpointTokensBefore: this.checkpointTokensBefore,
+        contextCompactions: this.contextCompactions,
+        summaryMessageIndex: summaryIndex !== undefined && summaryIndex >= 0 ? summaryIndex : undefined,
+      },
+      modelBinding: {
+        provider: {
+          id: this.provider.id,
+          name: this.provider.name,
+          baseUrl: sanitizeBaseUrl(this.provider.baseUrl),
+          modelId: this.provider.modelId,
+          api: apiBindingForStyle(this.provider.apiStyle).api,
+          apiStyle: this.provider.apiStyle,
+          authKind: this.provider.authKind,
+          supportsReasoning: this.provider.supportsReasoning,
+          supportedThinkingLevels: this.provider.supportedThinkingLevels,
+          endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(this.provider.baseUrl)),
+        },
+        primaryModel: {
+          id: this.primaryProvider.id,
+          modelId: this.primaryProvider.modelId,
+          api: apiBindingForStyle(this.primaryProvider.apiStyle).api,
+          endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(this.primaryProvider.baseUrl)),
+        },
+        thinkingLevel: this.thinkingLevel,
+        fallbackIndex: this.fallbackIndex,
+        attemptedModels: Array.from(this.attemptedModels),
+        modelFailures: [...this.modelFailures],
+        fallbackModels: this.opts.fallbackModels?.map((f) => ({
+          key: f.key,
+          provider: f.provider
+            ? {
+                id: f.provider.id,
+                name: f.provider.name,
+                baseUrl: sanitizeBaseUrl(f.provider.baseUrl),
+                modelId: f.provider.modelId,
+                api: apiBindingForStyle(f.provider.apiStyle).api,
+                authKind: f.provider.authKind,
+                endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(f.provider.baseUrl)),
+              }
+            : undefined,
+        })),
+      },
+      config: {
+        task: this.opts.task,
+        definition: { ...this.opts.definition },
+        systemPrompt: this.opts.systemPrompt,
+        systemPromptFingerprint: simplePromptFingerprint(this.opts.systemPrompt),
+        toolNames: this.opts.tools.map((t) => t.name),
+        toolsFingerprint: computeToolsFingerprint(this.opts.tools),
+        permissions: {
+          subagentCanMutate: subagentCanMutate(this.opts.definition, this.opts.tools.map((t) => t.name)),
+        },
+      },
+      usage: {
+        turns: this.turns,
+        toolCalls: this.toolCalls,
+        usage: this.usage ? { ...this.usage } : undefined,
+        executionUsage: this.executionUsage ? { ...this.executionUsage } : undefined,
+        lastReportText: this.lastReportText,
+        activityDurationMs,
+      },
+      observer: observerSnapshot,
+      messages: encodedMessages,
+    };
+
+    return validateCheckpoint(checkpoint);
   }
 
   private async execute(instruction: string): Promise<SubagentRunResult> {

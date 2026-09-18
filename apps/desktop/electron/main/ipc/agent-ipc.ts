@@ -14,6 +14,7 @@ import type { Logger } from "../logger";
 import type { PersistenceOutbox } from "../persistence-outbox";
 import type { ComposerCommandService } from "./composer-ipc";
 import type { IpcRegistrar } from "./types";
+import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 
 export type AgentIpcDependencies = {
   registrar: IpcRegistrar;
@@ -26,6 +27,7 @@ export type AgentIpcDependencies = {
   cancelSessionTools: (sessionId: string, reason?: string) => void;
   persistenceOutbox: PersistenceOutbox;
   dataDir: string;
+  subagentSnapshots: SubagentSnapshotStore;
   /** Durable transfer journal for "send now" while the session runs. */
   queuedSteeringJournal: QueuedSteeringJournal;
   activeTurns: Map<string, string>;
@@ -71,6 +73,7 @@ export function registerAgentIpc({
   cancelSessionTools,
   persistenceOutbox,
   dataDir,
+  subagentSnapshots,
   queuedSteeringJournal,
   activeTurns,
   isTurnDispatchable,
@@ -646,20 +649,50 @@ export function registerAgentIpc({
     return result;
   });
 
+  handle(IPC.invoke.subagentPersistenceGet, async () => subagentSnapshots.getSettings());
+  handle(IPC.invoke.subagentPersistenceSet, async (req: { enabled: boolean }) => {
+    if (!req || typeof req.enabled !== "boolean") throw new Error("enabled must be a boolean");
+    return subagentSnapshots.setEnabled(req.enabled);
+  });
+  handle(IPC.invoke.subagentPersistenceClear, async () => subagentSnapshots.clearSnapshots());
+
   handle(IPC.invoke.subagentRecallStatus, async (req: { sessionId: string; delegationId: string }) => {
     if (!req || typeof req.sessionId !== "string" || !req.sessionId.trim() ||
       typeof req.delegationId !== "string" || !req.delegationId.trim()) throw new Error("sessionId and delegationId are required");
-    return sidecar ? sidecar.call("agent.subagentRecallStatus", req)
-      : { delegationId: req.delegationId, status: "unavailable", canResume: false };
+    if (sidecar) {
+      try {
+        const live = await sidecar.call<{ status: string }>("agent.subagentRecallStatus", req);
+        if (live.status !== "unavailable") return live;
+      } catch {
+        // 只读查询可回退到主进程目录；磁盘结果仍须通过恢复资格校验。
+      }
+    }
+    return subagentSnapshots.readRecallStatus(req.sessionId, req.delegationId);
   });
 
   handle(IPC.invoke.subagentStop, async (req: { sessionId: string; delegationId: string; expectedExecution?: number }) => {
-    if (!sidecar) throw new Error("sidecar unavailable");
     if (!req || typeof req.sessionId !== "string" || !req.sessionId.trim() ||
       typeof req.delegationId !== "string" || !req.delegationId.trim()) throw new Error("sessionId and delegationId are required");
     if (req.expectedExecution !== undefined && (!Number.isSafeInteger(req.expectedExecution) || req.expectedExecution < 1)) throw new Error("expectedExecution must be a positive safe integer");
-    // 不调用 cancelSessionTools/finishTurn：这次只停止指定子任务。
-    return sidecar.call("agent.subagentStop", { sessionId: req.sessionId, delegationId: req.delegationId, expectedExecution: req.expectedExecution });
+    let queryFailed = false;
+    if (sidecar) {
+      let live: { status: string } | undefined;
+      try { live = await sidecar.call<{ status: string }>("agent.subagentRecallStatus", req); }
+      catch { queryFailed = true; }
+      if (live && live.status !== "unavailable") return sidecar.call("agent.subagentStop", req);
+    }
+    const before = await subagentSnapshots.readRecallStatus(req.sessionId, req.delegationId);
+    const cancellation = queryFailed && sidecar
+      ? sidecar.call("agent.subagentStop", req).then(() => true, () => false)
+      : Promise.resolve(true);
+    const receipt = await subagentSnapshots.revokeExecution({ sessionId: req.sessionId,
+      delegationId: req.delegationId, expectedExecution: req.expectedExecution,
+      source: "user", reason: "用户撤销子代理召回" });
+    const localCancellationConfirmed = await cancellation;
+    if (!localCancellationConfirmed && before.status === "running") {
+      throw new Error("召回已持久撤销，但运行进程未确认取消；当前工具可能仍在收尾。");
+    }
+    return { ok: true, ...receipt, canResume: false, persistenceState: "revoked", localCancellationConfirmed };
   });
 
   handle(IPC.invoke.agentAbort, async (req: { sessionId: string; turnId?: string }) => {

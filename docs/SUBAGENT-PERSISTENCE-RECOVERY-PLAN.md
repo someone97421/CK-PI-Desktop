@@ -1,6 +1,6 @@
 # 子代理上下文持久化与恢复方案
 
-状态：待评审方案，尚未实现。本文只提出设计，不代表批准变更公共接口、持久化格式或默认行为。
+状态：本轮代码实现已完成；用户明确要求仅实现代码，不执行构建、测试、类型检查或运行服务。故障注入、真实重启及桌面专项验收尚未执行，不能据此宣称已验证可用。自动保存初始关闭，设置页允许显式开启。
 
 关联：[协作实现记录第 13 节](./SUBAGENT-COLLABORATION-IMPLEMENTATION.md#13-完成后召回第一版2026-09-17)、[协作决策记录](./SUBAGENT-COLLABORATION-DECISIONS.md)。
 
@@ -208,6 +208,17 @@ TaskList 合并内存与磁盘轻量目录并按 delegationId 去重；列表有
 - 旧执行结算/审计重投幂等；当前父轮次只统计新用量，不把历史用量重复计入。
 
 实施完成后再更新原实现记录第 13.4 节的缺口状态，并明确实际通过的验证与剩余限制。
+
+### 本轮代码落点与验证边界
+
+- `subagent-checkpoint.ts`、`subagent.ts`、`subagent-observer.ts`：有效消息白名单、绑定指纹、摘要引用和观察状态的导出与 idle 恢复。
+- `subagent-persistence.ts`、`subagent-persistence-client.ts`：版本化内部端口、执行 CAS、撤销回执及 Sidecar 能力探测。
+- 桌面 `subagent-snapshot-files.ts`、`subagent-snapshot-store.ts`：系统安全存储保护的数据密钥、认证加密、原子 generation/control、代次隔离、配额和待交付事件。
+- `runtime.ts`、`sidecar.ts`：执行前控制门、完成快照、冷目录查询、显式 TaskResume 和停止路径。
+- 主进程 IPC、退出流程、持久化 outbox 与会话 authority：会话归属及覆盖水位、稳定消息 ID 补投、删除前封闭和退出收束。
+- 子代理设置页及监督卡片：开关、清理、配额、恢复来源及持久化状态；简中和 English 文案同步。
+
+本轮只进行源码阅读与修改，没有执行本节验收场景；既有内存召回的历史测试结果不构成本次持久化验收。运行中断不自动续跑，旧历史没有快照时不能恢复，配置不兼容或安全状态不明确时保守拒绝恢复。
 
 ## 13. 建议确认的产品取舍
 
