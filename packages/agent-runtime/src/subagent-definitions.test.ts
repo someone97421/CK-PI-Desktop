@@ -24,7 +24,7 @@ import {
 } from "./model-capabilities.js";
 
 describe("builtin subagent documents", () => {
-  it("parse into read-only delegates plus a write-capable fixer", async () => {
+  it("parses builtin roles with their declared tools", async () => {
     const { definitions, diagnostics } = await loadSubagentDefinitions(null);
 
     expect(diagnostics).toEqual([]);
@@ -32,6 +32,7 @@ describe("builtin subagent documents", () => {
       "explorer",
       "code-reviewer",
       "test-runner",
+      "worker",
       "fixer",
       "ui-designer",
     ]);
@@ -45,16 +46,12 @@ describe("builtin subagent documents", () => {
       expect(definition.description.length).toBeGreaterThan(20);
       expect(definition.prompt.length).toBeGreaterThan(50);
     }
-    // Only `fixer` and `ui-designer` may write to the workspace; every other
-    // builtin is read-only (the shell delegate reads and runs commands, which
-    // is a permission prompt, not an edit). Builtins inherit the parent
-    // session's permission mode unless they explicitly opt into a narrower
-    // scope.
+    // 实施、修复和界面角色声明文件编辑工具，并沿用父会话权限。
     const mutating = definitions.filter(
       (definition) =>
         definition.tools.includes("Write") || definition.tools.includes("Edit"),
     );
-    expect(mutating.map((d) => d.name)).toEqual(["fixer", "ui-designer"]);
+    expect(mutating.map((d) => d.name)).toEqual(["worker", "fixer", "ui-designer"]);
     expect(mutating[0]?.permission ?? "inherit").toBe("inherit");
     const explorer = definitions.find((definition) => definition.name === "explorer")!;
     expect(explorer.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
@@ -70,6 +67,13 @@ describe("builtin subagent documents", () => {
     expect("maxTurns" in designer).toBe(false);
     expect(designer.description).toBe(findSubagentPreset("ui-designer")?.description);
     expect(designer.prompt).toBe(findSubagentPreset("ui-designer")?.body.trim());
+    for (const name of ["worker", "fixer"]) {
+      const definition = definitions.find((item) => item.name === name)!;
+      const preset = findSubagentPreset(name)!;
+      expect(definition.description).toBe(preset.description);
+      expect(definition.prompt).toBe(preset.body.trim());
+      expect(definition.tools).toEqual(preset.tools);
+    }
   });
 });
 

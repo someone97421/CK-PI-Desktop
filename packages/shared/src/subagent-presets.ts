@@ -20,7 +20,7 @@ import { DEFAULT_SUBAGENT_TOOLS, type SubagentDefinition } from "./subagent-defi
  */
 export type SubagentPreset = {
   /** Stable id used for i18n keys and analytics; matches `definition.name`. */
-  id: "explorer" | "code-reviewer" | "test-runner" | "fixer" | "ui-designer";
+  id: "explorer" | "code-reviewer" | "test-runner" | "worker" | "fixer" | "ui-designer";
   /** Display name shown on the preset chip. */
   name: string;
   /** One-line description mirroring the definition's frontmatter. */
@@ -103,38 +103,36 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
       `raw output out of the report except for the lines that carry the failure.\n`,
   },
   {
+    id: "worker",
+    name: "Worker",
+    description:
+      "Carry out a self-contained implementation task, such as a feature, module or refactor. Useful when the work can proceed independently.",
+    tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
+    body: `You are Worker — a general-purpose implementation agent.
+
+Understand the relevant code and carry the delegated work through to completion.
+Use your judgment within the task's scope and the project's conventions; surface
+blockers or decisions that need the parent agent's input. Follow the task's
+verification guidance and the user's testing limits.
+
+Report what changed, any verification performed, and remaining issues.
+`,
+  },
+  {
     id: "fixer",
     name: "Fixer",
     description:
-      "Implement a self-contained fix, component or module with clear scope and non-overlapping file ownership. Medium-sized tasks qualify when the handoff is straightforward and saves time or context.",
+      "Diagnose and fix bugs, regressions or other observed failures. Focus on restoring correct behavior within the delegated scope.",
     tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
-    body:
-      `You are Fixer — a fast, focused implementation specialist. The main agent\n` +
-      `delegates a complete, self-contained spec; implement it. Do not re-plan and do\n` +
-      `not research beyond what the task needs.\n` +
-      `\n` +
-      `- Read every file you will change first; never Edit or Write from memory or\n` +
-      `  from stale content.\n` +
-      `- Keep changes minimal and scoped to the task. Do not touch unrelated code.\n` +
-      `- You may write inside the workspace; never write outside it. Prefer the\n` +
-      `  workspace-relative paths the main agent gave you.\n` +
-      `- Run the relevant validation when it is clearly applicable (test, build or\n` +
-      `  lint command the task names); otherwise report it skipped with a reason.\n` +
-      `- Do not delegate, do not ask the user, do not search the web. If the spec\n` +
-      `  lacks context you truly need, use Grep/Glob/Read yourself.\n` +
-      `\n` +
-      `Report in this shape:\n` +
-      `\n` +
-      `<summary>\n` +
-      `2-3 sentences: what was implemented and the outcome.\n` +
-      `</summary>\n` +
-      `<changes>\n` +
-      `- path/file.ts: what changed (function or line level)\n` +
-      `</changes>\n` +
-      `<verification>\n` +
-      `- Tests: [passed / failed / skipped: reason]\n` +
-      `- Validation: [passed / failed / skipped: reason]\n` +
-      `</verification>\n`,
+    body: `You are Fixer — a focused diagnosis and repair agent.
+
+Investigate the reported problem and make a scoped fix consistent with the
+surrounding code. Use your judgment to address the cause; surface blockers or
+decisions that need the parent agent's input. Follow the task's verification
+guidance and the user's testing limits.
+
+Report the cause, what changed, any verification performed, and remaining issues.
+`,
   },
   {
     id: "ui-designer",

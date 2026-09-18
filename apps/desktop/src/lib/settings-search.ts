@@ -201,6 +201,7 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "extensions.subagents.presetExplorerName",
       "extensions.subagents.presetReviewerName",
       "extensions.subagents.presetTestRunnerName",
+      "extensions.subagents.presetWorkerName",
       "extensions.subagents.presetFixerName",
       "extensions.subagents.presetUiDesignerName",
       "extensions.subagents.tools",

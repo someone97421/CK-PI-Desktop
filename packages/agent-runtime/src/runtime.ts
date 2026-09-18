@@ -1608,7 +1608,7 @@ Handle quick, tightly scoped work directly. Consider subagents for separable wor
 Useful cases, not mandatory stages:
 - User-requested delegation: follow the requested scope and number of subagents.
 - Exploration: delegate a bounded codebase question, call-chain investigation or fault hypothesis when it needs several searches or file reads, especially while you work on another part.
-- Implementation: delegate a self-contained fix, component or module with clear scope and non-overlapping file ownership; medium-sized tasks qualify when the handoff is straightforward.
+- Implementation: worker suits self-contained features, modules and refactors; fixer focuses on bugs and regressions. Choose based on the task and available definitions.
 - Independent judgment: use focused reviews of finished changes, alternative assessments or blind evaluation when a fresh perspective can catch mistakes or resolve uncertainty; supply necessary facts without imposing your conclusions.
 - Validation or experiments: delegate relevant verification, reproduction or failure diagnosis when it can run independently. Follow the user's testing limits.
 - Analysis: delegate logs, documents, datasets or module surveys when a concise report lets other work proceed.
