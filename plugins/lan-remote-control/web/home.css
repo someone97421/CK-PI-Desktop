@@ -1,0 +1,59 @@
+/* 两页导航的项目首页，沿用参考图的灰阶卡片和展开列表。 */
+.remote-home { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 20px max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.remote-home > * { max-width: 820px; margin-left: auto; margin-right: auto; }
+#app[data-page="home"] .topbar { padding: calc(12px + env(safe-area-inset-top)) 16px 4px; background: var(--ds-bg-secondary); border: 0; }
+#app[data-page="home"] .topbar > strong { font-size: 18px; font-weight: 600; }
+#app[data-page="home"] > .connection-banner { padding: 0 16px 16px; background: var(--ds-bg-secondary); color: var(--ds-text-muted); font-size: 14px; }
+.remote-home-intro { border: 1px solid var(--ds-border-strong); border-radius: 10px; padding: 16px; background: var(--ds-bg-secondary); color: var(--ds-text-muted); font-size: 14px; line-height: 1.7; margin-bottom: 20px; }
+.remote-home-heading { display: flex; align-items: center; gap: 6px; }
+.remote-home-heading h1 { flex: 1; min-width: 0; font-size: 16px; font-weight: 600; }
+.remote-home-tools { display: flex; gap: 2px; flex: none; }
+.remote-home .icon-btn { width: 36px; height: 36px; min-height: 36px; color: var(--ds-text-secondary); }
+.remote-home-count { margin-top: 6px; margin-bottom: 18px; font-size: 14px; color: var(--ds-text-muted); }
+.remote-home-list { display: grid; gap: 12px; }
+.remote-home-project { min-width: 0; border: 1px solid var(--ds-border-strong); background: var(--ds-bg-secondary); border-radius: 12px; overflow: hidden; }
+.remote-home-project-header { display: flex; align-items: center; gap: 8px; padding: 16px 12px; }
+.remote-home-project-toggle { min-width: 0; display: flex; flex: 1; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: inherit; text-align: left; }
+.remote-home-project-toggle > svg { flex: none; color: var(--ds-text-muted); }
+.remote-home-project-icon { display: grid; place-items: center; width: 40px; height: 44px; flex: none; background: var(--ds-bg-tertiary); border-radius: 10px; color: var(--ds-text-secondary); }
+.remote-home-project-info { display: grid; gap: 6px; min-width: 0; flex: 1; }
+.remote-home-project-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.remote-home-project-title strong { min-width: 0; overflow-wrap: anywhere; font-size: 16px; font-weight: 550; }
+.remote-home-badge { flex: none; border: 1px solid var(--ds-border-strong); border-radius: 20px; padding: 0 7px; color: var(--ds-text-muted); font-size: 11px; line-height: 18px; }
+.remote-home-project-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ds-text-muted); font-family: var(--font-mono); font-size: 12px; }
+.remote-home-project-time { color: var(--ds-text-muted); font-size: 12px; }
+.remote-home-project-count { flex: none; font-size: 12px; color: var(--ds-text-muted); }
+.remote-home .remote-home-add { border: 1px solid var(--ds-border-strong); border-radius: 9px; flex: none; }
+.remote-home-sessions { border-top: 1px solid var(--ds-border-default); padding: 6px 0; }
+.remote-home-session { width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px 20px 14px 62px; border: 0; background: none; text-align: left; }
+.remote-home-session:hover, .remote-home-project-toggle:hover { background: var(--ds-tile-hover); }
+.remote-home-session-main { display: grid; gap: 7px; flex: 1; min-width: 0; font-size: 16px; overflow-wrap: anywhere; }
+.remote-home-session-main small { color: var(--ds-text-muted); font-size: 12px; }
+.remote-home-status { flex: none; border-radius: 20px; padding: 3px 9px; background: var(--ds-bg-tertiary); color: var(--ds-text-secondary); font-size: 11px; }
+.remote-home-status.is-running { color: var(--ds-success); background: color-mix(in srgb, var(--ds-success) 14%, transparent); }
+.remote-home-empty { color: var(--ds-text-muted); padding: 18px; font-size: 13px; }
+.remote-home-more { margin: 4px 16px; font-size: 13px; }
+.remote-home-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+.remote-home-filters input { grid-column: 1 / -1; }
+.remote-home-filters input, .remote-home-filters select { min-width: 0; width: 100%; min-height: 40px; border-radius: 8px; border: 1px solid var(--ds-border-strong); padding: 8px 10px; background: var(--ds-bg-secondary); color: inherit; font-size: 16px; }
+.remote-home-filters small { grid-column: 1 / -1; color: var(--ds-text-muted); font-size: 11px; }
+.remote-message-menu { width: min(360px, 94vw); }
+.remote-message-menu-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.remote-message-menu > .row-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.remote-message-menu .btn { min-height: 44px; justify-content: flex-start; margin: 0; }
+.remote-message-heading .remote-message-more { width: 28px; height: 28px; min-height: 28px; }
+.remote-message-heading .remote-message-more svg { width: 16px; height: 16px; }
+@media (max-width: 700px) {
+  .remote-home { padding-top: 14px; }
+  .remote-home-heading h1 { font-size: 15px; }
+  .remote-home-tools .icon-btn { width: 30px; }
+  .remote-message-menu { inset: auto 0 0; margin: 0 auto; width: 100%; max-width: 100%; border-radius: 16px 16px 0 0; padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+}
+@media (max-width: 380px) {
+  .remote-home-project-header { gap: 6px; padding: 12px 10px; }
+  .remote-home-project-toggle { gap: 7px; }
+  .remote-home-project-icon { width: 30px; height: 36px; }
+  .remote-home-project-title strong { font-size: 14px; }
+  .remote-home-project-count { font-size: 11px; }
+  .remote-home-session { padding-left: 48px; }
+}

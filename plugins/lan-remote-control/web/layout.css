@@ -1,20 +1,16 @@
 /* 沿用宿主灰阶、字体与圆角；视口只由消息区滚动，输入区保持底部。 */
 [hidden] { display: none !important; }
-#app[data-authenticated="false"] .logout-button,
-#app[data-authenticated="false"] .library-toggle { display: none; }
+#app[data-authenticated="false"] .logout-button { display: none; }
+#app:not([data-page="chat"]) .home-back { display: none; }
+#app[data-page="home"] .remote-chat,
+#app:not([data-page="home"]) .remote-home { display: none; }
 html, body { overflow: hidden; overscroll-behavior: none; }
 #app { position: fixed; top: var(--rc-visible-top, 0px); left: 0; right: 0; height: var(--rc-visible-height, 100dvh); min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 #app .topbar { flex: none; gap: 8px; }
 .topbar > strong { min-width: 0; flex: 1; overflow-wrap: anywhere; font-size: 14px; }
 .connection-banner { flex: none; padding: 4px 16px; color: var(--ds-text-secondary); margin: 0; font-size: 12px; }
 .connection-banner:empty { display: none; }
-.remote-layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 0; overflow: hidden; }
-.remote-library { overflow: auto; padding: 16px; border-right: 1px solid var(--ds-border-default); }
-.remote-library input { width: 100%; padding: 12px; border: 1px solid var(--ds-border-default); border-radius: 8px; background: var(--ds-bg-secondary); color: inherit; }
-.remote-project { margin: 20px 0; }
-.remote-project h3 { font-size: 13px; color: var(--ds-text-muted); margin-bottom: 8px; }
-.remote-project button { display: flex; width: 100%; text-align: left; margin: 4px 0; white-space: normal; overflow-wrap: anywhere; }
-.remote-project button[aria-current="page"] { background: var(--ds-bg-tertiary); border-color: var(--ds-border-strong); }
+.remote-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1 1 0; min-height: 0; overflow: hidden; }
 .remote-chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; min-height: 0; min-width: 0; overflow: hidden; }
 .remote-chat-heading { padding: 8px 16px; border-bottom: 1px solid var(--ds-border-default); flex-wrap: wrap; }
 .remote-chat-heading h2 { flex: 1; min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
@@ -24,7 +20,7 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .remote-message-heading > small { color: var(--ds-text-muted); }
 .remote-message.user { background: var(--ds-bg-tertiary); margin-left: 12%; padding: 12px 16px; border-radius: 16px; }
 .remote-message pre, .remote-process pre { overflow: auto; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
-.remote-message .remote-message-heading > .row-actions { gap: 2px; flex-wrap: nowrap; margin: 0; }
+.remote-message-more { flex: none; color: var(--ds-text-muted); }
 .remote-process { max-width: 880px; margin: 8px auto; border: 1px solid var(--ds-border-default); border-radius: 8px; background: var(--ds-tile); min-width: 0; }
 .remote-process > summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; list-style: none; font-size: 12px; color: var(--ds-text-secondary); }
 .remote-process > summary::-webkit-details-marker { display: none; }
@@ -49,17 +45,10 @@ dialog pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 dialog select { padding: 10px; background: var(--ds-bg-tertiary); color: inherit; }
 dialog > select, dialog > label { display: block; width: 100%; margin: 10px 0; }
 dialog label select { width: 100%; margin-top: 6px; }
-.remote-drawer { position: fixed; inset: 0 auto 0 0; margin: 0; width: min(88vw, 360px); max-width: none; height: var(--rc-visible-height, 100dvh); max-height: none; padding: 0; border-radius: 0 16px 16px 0; }
-.remote-drawer[open] { display: flex; flex-direction: column; animation: drawer-enter 180ms var(--motion-ease); }
-.remote-drawer .remote-library { flex: 1; min-height: 0; border: 0; }
-.remote-drawer-heading { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--ds-border-default); }
 .login-form { max-width: 420px; margin: 8dvh auto 0; display: grid; gap: 16px; }
 .login-form label { display: grid; gap: 8px; }
 .login-form input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--ds-border-default); border-radius: 10px; background: var(--ds-bg-secondary); color: inherit; font: inherit; }
-@keyframes drawer-enter { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: translateX(0); } }
 @media (max-width: 700px) {
-  .remote-layout { grid-template-columns: minmax(0, 1fr); }
-  .remote-layout > .remote-library { display: none; }
   .remote-transcript { padding: 8px 12px; }
   .remote-chat-heading { padding: 4px 12px; }
   .btn-icon-action { width: 40px; min-width: 40px; height: 40px; padding: 10px; gap: 0; flex: none; }
@@ -67,11 +56,10 @@ dialog label select { width: 100%; margin-top: 6px; }
   .btn-icon-action svg { width: 18px; height: 18px; }
   button { min-height: 40px; }
   .topbar { gap: 4px !important; }
-  dialog:not(.remote-drawer) { width: 94vw; padding: 16px; }
+  dialog { width: 94vw; padding: 16px; }
   fieldset label { display: flex; gap: 8px; padding: 8px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .remote-drawer[open] { animation: none; }
   .remote-process > summary::after { transition: none; }
 }
 /* 显式轨道防止隐藏“回到最新”按钮后，输入区落到错误的网格行。 */
@@ -80,20 +68,12 @@ dialog label select { width: 100%; margin-top: 6px; }
 .remote-transcript { grid-row: 2; }
 .remote-jump { grid-row: 3; }
 .remote-composer { grid-row: 4; max-height: 45dvh; }
-#app[data-authenticated="false"] .remote-layout { grid-template-columns: minmax(0, 1fr); }
 .remote-task-process { border: 0; border-bottom: 1px solid var(--ds-border-default); border-radius: 0; background: transparent; }
 .remote-task-process > summary { padding: 12px 0; min-height: 44px; flex-wrap: wrap; }
 .remote-task-process > summary .remote-process-label { font-weight: 400; font-size: 14px; }
 .remote-task-process > summary .remote-process-excerpt { font-size: 11px; color: var(--ds-text-muted); }
 .remote-task-process > .remote-process-body { padding: 0 0 12px; }
 .remote-task-process .remote-message + .remote-message { border-top: 1px solid var(--ds-border-default); }
-.remote-drawer .remote-library { overscroll-behavior: contain; touch-action: pan-y; }
-.remote-drawer-heading { flex: none; }
-@media (max-width: 700px) {
-  .remote-library input { font-size: 16px; }
-  .remote-drawer { width: min(92vw, 380px); overflow: hidden; }
-  .remote-task-process > summary { column-gap: 6px; }
-}
 /* 手机以单行消息头和细过程条减少垂直占用。 */
 @media (max-width: 700px) {
   #app .topbar { min-height: 40px; padding-top: calc(2px + env(safe-area-inset-top)); padding-bottom: 2px; }
@@ -103,8 +83,6 @@ dialog label select { width: 100%; margin-top: 6px; }
   .remote-message.user { margin-left: 8%; padding: 6px 10px; border-radius: 10px; }
   .remote-message-heading { min-height: 28px; margin-bottom: 2px; }
   .remote-message-heading > small { font-size: 11px; }
-  .remote-message-heading .btn-icon-action { width: 28px; min-width: 28px; height: 28px; min-height: 28px; padding: 6px; }
-  .remote-message-heading .btn-icon-action svg { width: 14px; height: 14px; }
   .remote-process { margin: 4px auto; border-radius: 6px; }
   .remote-process > summary { min-height: 28px; padding: 4px 8px; gap: 5px; font-size: 11px; line-height: 18px; }
   .remote-task-process > summary { flex-wrap: nowrap; padding: 4px 0; }

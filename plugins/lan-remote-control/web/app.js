@@ -1,5 +1,6 @@
 import { createLoginView } from "./views/connect.js";
-import { el, button, copyText } from "./dom.js";
+import { el, button, copyText, iconButton } from "./dom.js";
+import { createProjectHome } from "./home.js";
 import { RemoteClient, EventSocket } from "./transport.js";
 import { uuid, TOKEN_STORAGE_KEY, describeError } from "./protocol.js";
 import { renderMarkdown } from "./markdown.js";
@@ -58,7 +59,6 @@ let loginVisible = false;
 let token = readToken(),
   current = null,
   snapshot = null,
-  projects = [],
   messages = [],
   uploaded = [],
   annotations = [],
@@ -75,8 +75,8 @@ let capabilities = {};
 const positions = new Map();
 // UI 状态独立于流式替换的消息对象，按会话和稳定 ID 保存。
 const disclosureState = new Map();
+let navigationVersion = 0;
 const processVisibility = new Map();
-let drawer = null;
 function disclosure(key, label, excerpt, ...children) {
   const stateKey = `${current}:${key}`;
   const details = el("details", { className: "remote-process", open: disclosureState.get(stateKey) || false },
@@ -94,26 +94,26 @@ function disclosure(key, label, excerpt, ...children) {
   });
   return details;
 }
-function closeLibrary() {
-  drawer?.remove();
+function setPage(page) {
+  navigationVersion++;
+  root.dataset.page = page;
+  header.querySelector("strong").textContent = page === "chat" ? "任务会话" : "这是一个助手 · 远程控制";
 }
-function openLibrary() {
-  if (drawer || loginVisible) return;
-  drawer = el("dialog", { className: "remote-drawer", dataset: { persistent: "true" }, attrs: { "aria-label": "项目与会话" } },
-    el("div", { className: "remote-drawer-heading" }, el("strong", { text: "项目与会话" }),
-      button("返回对话", { iconName: "back", preserveLabel: true, onClick: closeLibrary })), library);
-  drawer.addEventListener("cancel", (event) => { event.preventDefault(); closeLibrary(); });
-  const panel = drawer;
-  const remove = panel.remove.bind(panel);
-  panel.remove = () => {
-    if (drawer === panel) {
-      document.querySelector(".remote-layout")?.prepend(library);
-      drawer = null;
-    }
-    remove();
-  };
-  document.body.append(drawer);
-  drawer.showModal();
+function showHome({ reload = true } = {}) {
+  if (loginVisible) return;
+  saveDraft();
+  if (current) positions.set(current, transcript.scrollTop);
+  socket?.unsubscribe(current);
+  subagentObserver.close();
+  for (const dialog of document.querySelectorAll("dialog")) dialog.remove();
+  renderVersion++; refreshVersion++;
+  current = null; snapshot = null; messages = []; liveTools.clear(); recentEvents.length = 0;
+  setPage("home");
+  if (reload) void home.load();
+}
+function backHome() {
+  if (history.state?.remotePage === "chat") history.back();
+  else showHome();
 }
 function saveDraft() {
   if (!current) return;
@@ -152,7 +152,7 @@ const notice = el("p", {
 const header = el(
   "header",
   { className: "topbar" },
-  button("项目列表", { className: "library-toggle", onClick: openLibrary }),
+  button("返回项目与对话", { iconName: "back", className: "home-back", onClick: backHome }),
   el("strong", { text: "这是一个助手 · 远程" }),
   button("退出登录", {
     className: "logout-button",
@@ -165,11 +165,11 @@ const header = el(
     onClick: () => {
       document.documentElement.dataset.theme =
         document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      try { localStorage.setItem("lan-remote-theme", document.documentElement.dataset.theme); } catch {}
     },
   }),
 );
-const library = el("aside", { className: "remote-library" }),
-  transcript = el("main", { className: "remote-transcript" }),
+const transcript = el("main", { className: "remote-transcript" }),
   composer = el("form", { className: "remote-composer" });
 const chatHeading = el("div", { className: "remote-chat-heading row-actions" });
 const jumpLatest = button("回到最新消息 ↓", { className: "remote-jump", preserveLabel: true,
@@ -220,6 +220,26 @@ async function action(fn) {
     return undefined;
   }
 }
+const home = createProjectHome({
+  read: (...args) => api.read(...args),
+  openSession,
+  createSession: async (projectId) => {
+    const version = navigationVersion;
+    const result = await mutate("sessions.create", { projectId });
+    if (version === navigationVersion && !loginVisible) await openSession(result.session.id);
+  },
+  report,
+});
+window.addEventListener("popstate", (event) => {
+  if (loginVisible) return;
+  if (event.state?.remotePage === "chat" && event.state.sessionId)
+    action(() => openSession(event.state.sessionId, { navigate: false }));
+  else showHome();
+});
+try {
+  const theme = localStorage.getItem("lan-remote-theme");
+  if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+} catch {}
 const recoveryPanel = el("section", { className: "connection-banner" });
 const recovery = createMutationRecovery({
   api,
@@ -303,7 +323,7 @@ function layout() {
     el(
       "div",
       { className: "remote-layout" },
-      library,
+      home.root,
       el("section", { className: "remote-chat" }, chatHeading, transcript, jumpLatest, composer),
     ),
   );
@@ -313,7 +333,6 @@ function layout() {
 function showLogin() {
   if (loginVisible) return;
   loginVisible = true;
-  closeLibrary();
   subagentObserver.close();
   chatHeading.replaceChildren();
   jumpLatest.hidden = true;
@@ -323,8 +342,8 @@ function showLogin() {
   socket?.close?.();
   for (const dialog of document.querySelectorAll("dialog")) dialog.remove();
   layout();
-  document.querySelector(".remote-layout").dataset.view = "chat";
-  library.replaceChildren(); library.hidden = true; composer.hidden = true;
+  setPage("login");
+  home.reset(); composer.hidden = true;
   recoveryPanel.hidden = true;
   history.replaceState(null, "", location.pathname);
   transcript.replaceChildren(createLoginView({
@@ -333,100 +352,24 @@ function showLogin() {
     onError: report,
   }));
 }
-async function loadLibrary() {
-  const p = await api.read("projects.list");
-  projects = p.items || [];
-  const search = el("input", {
-      attrs: { placeholder: "搜索项目或会话", "aria-label": "搜索" },
-    }),
-    list = el("div");
-  library.replaceChildren(
-    search,
-    button("刷新", { onClick: () => action(loadLibrary) }),
-    list,
-  );
-  let drawing = 0;
-  const cache = new Map();
-  async function draw() {
-    const version = ++drawing;
-    list.replaceChildren();
-    for (const project of projects) {
-      const group = el("section", { className: "remote-project" });
-      let sessions = cache.get(project.id);
-      if (!sessions) {
-        sessions = await api.read("sessions.list", {
-          projectId: project.id,
-          limit: 100,
-        });
-        cache.set(project.id, sessions);
-      }
-      if (version !== drawing) return;
-      const needle = search.value.toLowerCase();
-      const visible = (sessions.items || []).filter((s) =>
-        `${project.name} ${s.title}`.toLowerCase().includes(needle),
-      );
-      if (needle && !visible.length) continue;
-      group.append(
-        el("h3", { text: project.name }),
-        button("＋ 新对话", {
-          onClick: () =>
-            action(async () => {
-              const r = await mutate("sessions.create", {
-                projectId: project.id,
-              });
-              await openSession(r.session.id);
-              await loadLibrary();
-            }),
-        }),
-      );
-      for (const s of visible) {
-        const row = button(`${s.running ? "● " : ""}${s.title || "新对话"}`, {
-          preserveLabel: true,
-          onClick: () => action(() => openSession(s.id)),
-        });
-        row.dataset.sessionId = s.id;
-        row.setAttribute("aria-current", s.id === current ? "page" : "false");
-        group.append(row);
-      }
-      if (sessions.nextCursor)
-        group.append(
-          button("加载更多会话", {
-            onClick: () =>
-              action(async () => {
-                const page = await api.read("sessions.list", {
-                  projectId: project.id,
-                  cursor: sessions.nextCursor,
-                  limit: 100,
-                });
-                cache.set(project.id, {
-                  items: [...sessions.items, ...page.items],
-                  nextCursor: page.nextCursor,
-                });
-                await draw();
-              }),
-          }),
-        );
-      list.append(group);
-    }
-    if (!list.childElementCount) list.append(el("p", { className: "connection-banner", text: search.value ? "没有匹配的项目或会话。" : "电脑端尚无可用项目。" }));
-  }
-  search.addEventListener("input", () => action(draw));
-  await draw();
-}
-async function openSession(id) {
+async function openSession(id, { navigate = true } = {}) {
+  if (loginVisible || !token) return;
   renderVersion++;
-  closeLibrary();
   subagentObserver.close();
   saveDraft();
   if (current) positions.set(current, transcript.scrollTop);
   socket?.unsubscribe(current);
   current = id;
-  for (const row of library.querySelectorAll("[data-session-id]"))
-    row.setAttribute("aria-current", row.dataset.sessionId === id ? "page" : "false");
+  if (navigate) {
+    const state = { remotePage: "chat", sessionId: id };
+    if (root.dataset.page === "home") history.pushState(state, "", location.pathname);
+    else history.replaceState(state, "", location.pathname);
+  }
+  setPage("chat");
   composer.hidden = false;
   transcript.replaceChildren(el("p", { className: "connection-banner", text: "正在加载会话…", attrs: { role: "status" } }));
-  document.querySelector(".remote-layout").dataset.view = "chat";
   liveTools.clear();
+  chatHeading.replaceChildren();
   snapshotRevision = -1;
   recentEvents.length = 0;
   snapshot = null;
@@ -678,6 +621,7 @@ async function drawChat() {
           onClick: () =>
             action(async () => {
               const parent = current;
+              const version = navigationVersion;
               const r = await mutate("sessions.fork", {
                 sessionId: parent,
                 throughMessageId: m.id,
@@ -688,7 +632,7 @@ async function drawChat() {
                 "lan-remote-parents",
                 JSON.stringify([...parents]),
               );
-              await openSession(r.session.id);
+              if (version === navigationVersion && !loginVisible) await openSession(r.session.id);
             }),
         }),
       );
@@ -722,7 +666,22 @@ async function drawChat() {
             }),
         }),
       );
-    card.querySelector(".remote-message-heading").append(actions);
+    // 先解除模态 inert，再让按钮处理复制或将焦点交给输入框。
+    actions.addEventListener("click", (event) => {
+      if (event.target.closest("button")) actions.closest("dialog")?.remove();
+    }, { capture: true });
+    for (const item of actions.children) item.classList.remove("btn-icon-action");
+    card.querySelector(".remote-message-heading").append(iconButton("more", {
+      title: "消息操作",
+      className: "remote-message-more",
+      onClick: () => {
+        const dialog = el("dialog", { className: "remote-message-menu", attrs: { "aria-label": "消息操作" } },
+          el("div", { className: "remote-message-menu-heading" }, el("strong", { text: "消息操作" }),
+            iconButton("close", { title: "关闭", onClick: () => dialog.remove() })), actions);
+        document.body.append(dialog);
+        dialog.showModal();
+      },
+    }));
     cards.set(m.id, card);
   }
   for (const entry of timeline.entries) {
@@ -1246,14 +1205,17 @@ async function start() {
   recoveryPanel.hidden = false;
   transcript.replaceChildren(el("p", { text: "选择项目或会话开始使用。" }));
   layout();
-  library.hidden = false;
+  setPage("home");
   composer.hidden = true;
   notice.textContent = "已授权 · 正在连接实时事件";
   capabilities = await api.read("capabilities");
   if (!capabilities.events?.subscribe)
     notice.textContent = "宿主缺少实时订阅能力，请安装包含远程接口的版本。";
-  await loadLibrary();
-  if (matchMedia("(max-width: 700px)").matches) openLibrary();
+  if (loginVisible) return;
+  history.replaceState({ remotePage: "home" }, "", location.pathname);
+  showHome({ reload: false });
+  await home.load();
+  if (loginVisible) return;
   socket?.close?.();
   socket = new EventSocket({
     getToken: () => token,
@@ -1267,7 +1229,7 @@ async function start() {
     },
     onEvent,
     onError: report,
-    onResync: () => action(refresh),
+    onResync: () => { if (!loginVisible) action(() => current ? refresh() : home.load()); },
     onFrame: (frame) => {
       if (frame.type === "subscribed") action(refresh);
     },
@@ -1275,7 +1237,7 @@ async function start() {
   socket.connect();
 }
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && current) action(refresh);
+  if (!document.hidden && !loginVisible) action(() => current ? refresh() : home.load());
 });
 if (token) action(start);
 else showLogin();

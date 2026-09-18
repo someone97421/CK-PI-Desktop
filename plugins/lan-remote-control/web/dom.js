@@ -83,6 +83,8 @@ export function withClass(tag, className, ...children) {
 
 /** 只允许静态图标表；path 数据是本文件内的常量，不含远端内容。 */
 const ICON_PATHS = {
+  folder: "M3 7V5h6l2 2h10v13H3zM3 10h18",
+  filter: "M4 7h6M14 7h6M4 17h10M18 17h2M10 4v6M14 14v6",
   theme: "M20 13a8 8 0 01-9-9 8 8 0 109 9z",
   model: "M8 3v3M16 3v3M8 18v3M16 18v3M3 8h3M3 16h3M18 8h3M18 16h3M6 6h12v12H6zM10 10h4v4h-4z",
   commands: "M4 6l6 6-6 6M13 18h7",

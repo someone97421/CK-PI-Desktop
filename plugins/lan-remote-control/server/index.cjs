@@ -978,6 +978,19 @@ function createRemoteServer(options = {}) {
         throw fail("ADDRESS_UNAVAILABLE", `refusing to serve non-private address ${addressInfo.address}`);
       }
 
+      // 监听建立后必须自己接住 'error'：否则一个未捕获的 error 事件会直接杀掉
+      // 插件进程。'close' 若不是 stop() 引起的，按“意外停止”记录，交给上层按
+      // 开启意图重新监听（见 noteUnexpectedStop）。
+      server.on("error", (error) => {
+        log(`listener error: ${error?.message ?? error}`);
+        if (state.phase !== "running") return;
+        state.lastError = { code: "LISTEN_ERROR", message: String(error?.message ?? error) };
+        if (server.listening === false) noteUnexpectedStop("LISTENER_CLOSED", "listener closed after an error");
+      });
+      server.once("close", () => {
+        if (state.phase === "running") noteUnexpectedStop("LISTENER_CLOSED", "listener closed unexpectedly");
+      });
+
       state.httpServer = server;
       state.wss = new WebSocketServer({
         noServer: true,
@@ -1044,6 +1057,57 @@ function createRemoteServer(options = {}) {
       }
     }
     state.sockets.clear();
+  }
+
+  /**
+   * 监听在非 stop() 的情况下消失（套接字被关闭或致命错误）。
+   *
+   * 只做“止血”：标记 stopped、记录原因、断开连接、关掉监听与定时器，并把
+   * generation 前推使在途请求/设备会话失效。暂存的附件与 mutation 结果不动，
+   * 便于随后的自动恢复继续服务同一批设备。上层凭 running === false 与
+   * LISTENER_CLOSED 原因按开启意图重新监听。
+   */
+  function noteUnexpectedStop(code, message) {
+    if (state.phase !== "running") return;
+    state.phase = "stopped";
+    state.lastError = { code: String(code), message: String(message || code) };
+    generation += 1;
+    clearTimers();
+    const server = state.httpServer;
+    const wss = state.wss;
+    state.httpServer = null;
+    state.wss = null;
+    for (const conn of [...state.connections]) {
+      try {
+        conn.ws.terminate();
+      } catch {
+        /* already gone */
+      }
+    }
+    state.connections.clear();
+    try {
+      wss?.close();
+    } catch {
+      /* already closed */
+    }
+    try {
+      server?.close();
+    } catch {
+      /* already closed */
+    }
+    for (const socket of [...state.sockets]) {
+      try {
+        socket.destroy();
+      } catch {
+        /* already gone */
+      }
+    }
+    state.sockets.clear();
+    state.address = null;
+    state.port = null;
+    state.startedAt = null;
+    void subscriptionPool.clear().catch((error) => log(`unsubscribe failed: ${error?.message ?? error}`));
+    log(`listener stopped unexpectedly: ${code} ${state.lastError.message}`);
   }
 
   async function stop() {
