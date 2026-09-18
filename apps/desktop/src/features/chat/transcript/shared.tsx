@@ -555,8 +555,22 @@ export const ThinkingRow = memo(function ThinkingRow({
   const compact = useAppStore(
     (state) => resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode) === "compact",
   );
+  const text = thinkingText(message);
+  const thinkingActive = isThinkingActive(message, streaming);
+  const proseRef = useRef<HTMLDivElement>(null);
+  const followThinkingRef = useRef(true);
+  useLayoutEffect(() => {
+    if (!open) {
+      followThinkingRef.current = true;
+      return;
+    }
+    const prose = proseRef.current;
+    if (prose && thinkingActive && followThinkingRef.current) {
+      prose.scrollTop = prose.scrollHeight;
+    }
+  }, [text, open, thinkingActive, compact]);
   if (compact) {
-    return isThinkingActive(message, streaming) ? (
+    return thinkingActive ? (
       <div className="tool-row thinking thinking-compact" role="status">
         <span className="tool-row-icon" aria-hidden>
           <IconSparkles size={15} />
@@ -567,7 +581,6 @@ export const ThinkingRow = memo(function ThinkingRow({
       </div>
     ) : null;
   }
-  const text = thinkingText(message);
   const summary = text.replace(/\s+/g, " ").trim();
   return (
     <div className={`tool-row thinking ${open ? "open" : ""}`}>
@@ -582,7 +595,7 @@ export const ThinkingRow = memo(function ThinkingRow({
         <span className="tool-row-icon">
           <IconSparkles size={15} aria-hidden />
         </span>
-        <span className={`tool-row-name ${streaming ? "running" : ""}`}>
+        <span className={`tool-row-name ${thinkingActive ? "running" : ""}`}>
           {t("chat.thinking", { defaultValue: "Thinking" })}
         </span>
         <span className="tool-row-summary">{summary}</span>
@@ -596,7 +609,27 @@ export const ThinkingRow = memo(function ThinkingRow({
             label={t("chat.thinkingHide")}
             onCollapse={collapseRow}
           />
-          <div className="prose-chat thinking-prose">
+          <div
+            ref={proseRef}
+            className="prose-chat thinking-prose thinking-scroll"
+            role="region"
+            data-scroll-owner="thinking"
+            onWheel={(event) => {
+              if (event.deltaY < 0) followThinkingRef.current = false;
+            }}
+            onKeyDown={(event) => {
+              if (["ArrowUp", "PageUp", "Home"].includes(event.key)) {
+                followThinkingRef.current = false;
+              }
+            }}
+            aria-label={t("chat.thinking")}
+            tabIndex={0}
+            onScroll={(event) => {
+              const prose = event.currentTarget;
+              followThinkingRef.current =
+                prose.scrollHeight - prose.scrollTop - prose.clientHeight <= 8;
+            }}
+          >
             <Markdown source={text} renderDiagrams={false} />
           </div>
         </div>

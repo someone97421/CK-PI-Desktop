@@ -575,6 +575,7 @@ export const en = {
     thinkingFor: "Thinking · {{time}}",
     thoughtFor: "Thought for {{time}}",
     waitingForModel: "Waiting for model",
+    outputtingResponse: "Writing response…",
     startingTurn: "Starting…",
     preparingNextRequest: "Preparing next request…",
     compactingContext: "Compacting context…",

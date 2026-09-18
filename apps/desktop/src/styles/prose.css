@@ -722,6 +722,19 @@
   line-height: var(--leading-chat);
 }
 
+.thinking-scroll {
+  max-height: min(320px, 40vh);
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.thinking-scroll:focus-visible {
+  outline: 2px solid var(--ds-text-secondary);
+  outline-offset: 2px;
+}
+
 :root[data-theme="light"] .thinking-prose {
   color: color-mix(in oklab, var(--ds-text-primary) 58%, transparent);
 }

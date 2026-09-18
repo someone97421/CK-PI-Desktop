@@ -12,6 +12,7 @@ import type { PendingPermission } from "../../../lib/pending-permissions";
 import { TRANSCRIPT_SKELETON_ROWS } from "../../../lib/transcript-settle";
 import {
   PlanningIndicator,
+  OutputActivityIndicator,
   RunActivityIndicator,
   WorkingIndicator,
 } from "./ActivityGroup";
@@ -23,6 +24,7 @@ import { useTranscriptScroll } from "./hooks/useTranscriptScroll";
 import type { TranscriptSearchTarget } from "../../../lib/transcript-reading";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
 import { DisclosureAnchorContext } from "../../../lib/disclosure-anchor-context";
+import { isTurnThinking } from "../../../lib/turn-process";
 
 export const ChatTranscript = memo(function ChatTranscript({
   sessionId,
@@ -137,15 +139,22 @@ export const ChatTranscript = memo(function ChatTranscript({
     Boolean((lastTurnPart.message.content || "").trim());
   const specializedActivity = agentActivity;
   const hasSpecializedActivity = specializedActivity !== undefined;
+  const assistantIsThinking = lastEntry?.kind === "assistant-turn" &&
+    isTurnThinking(lastEntry.parts, transcriptRunning);
+  const showOutputActivity =
+    transcriptRunning &&
+    !pendingPermission &&
+    !askPending &&
+    !approvalPending &&
+    !hasSpecializedActivity &&
+    (assistantIsAnswering || assistantIsThinking);
   const showRunActivity =
     transcriptRunning &&
     !pendingPermission &&
     !askPending &&
     !approvalPending &&
-    !assistantIsAnswering &&
     hasSpecializedActivity;
-  // Show immediate feedback after send, then let the concrete activity row
-  // (thinking/tool/answer) take over so the transcript never duplicates state.
+  // Before concrete activity arrives, show immediate feedback after send.
   const showWorking =
     transcriptRunning &&
     !pendingPermission &&
@@ -265,6 +274,9 @@ export const ChatTranscript = memo(function ChatTranscript({
           ) : null}
           {runtimeStatusLane ? (
             <div className="transcript-runtime-status">
+              {showOutputActivity ? (
+                <OutputActivityIndicator thinking={assistantIsThinking} />
+              ) : null}
               {showRunActivity && specializedActivity ? (
                 <RunActivityIndicator activity={specializedActivity} />
               ) : null}
