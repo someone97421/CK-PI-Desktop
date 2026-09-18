@@ -8,14 +8,20 @@ export function mergeSnapshot(previous, response, { reset = false } = {}) {
     ...(response.snapshot?.activeItems || []),
   ]) {
     const content = item.content;
-    if (content?.role && content.id) rows.set(content.id, content);
+    if (content?.role && content.id) rows.set(content.id, {
+      ...rows.get(content.id),
+      ...(item.parentToolCallId ? { parentToolCallId: item.parentToolCallId } : {}),
+      ...(item.agentName ? { agentName: item.agentName } : {}),
+      ...content,
+    });
     else if (
       item.itemType === "tool" ||
       item.type === "tool" ||
       content?.toolCallId
     ) {
       const id = content?.toolCallId || item.id;
-      tools.set(id, { ...content, id, running: item.status === "streaming" });
+      tools.set(id, { createdAt: item.createdAt, parentToolCallId: item.parentToolCallId,
+        agentName: item.agentName, ...content, id, running: item.status === "streaming" });
     }
   }
   return { messages: [...rows.values()], tools };

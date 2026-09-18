@@ -5,8 +5,13 @@ export function mergeLiveEvent(messages, tools, frame) {
   const envelope = event?.payload;
   const raw = envelope?.event || envelope;
   if (event?.kind !== "agent.event" || !raw?.type) return false;
+  const metadata = {
+    ...(envelope?.parentToolCallId ? { parentToolCallId: envelope.parentToolCallId } : {}),
+    ...(envelope?.agentName ? { agentName: envelope.agentName } : {}),
+  };
   const upsert = (message) => {
     if (!message?.id) return;
+    message = { ...metadata, ...message };
     const index = messages.findIndex((item) => item.id === message.id);
     if (index < 0) messages.push(message);
     else messages[index] = { ...messages[index], ...message };
@@ -43,7 +48,12 @@ export function mergeLiveEvent(messages, tools, frame) {
     case "tool_update":
     case "tool_end": {
       const tool = tools.get(raw.toolCallId) || { id: raw.toolCallId };
-      Object.assign(tool, raw, { running: raw.type !== "tool_end" });
+      const latest = [...messages].reverse().find((m) => !m.parentToolCallId);
+      Object.assign(tool, {
+        createdAt: tool.createdAt || new Date(envelope?.ts || Date.now()).toISOString(),
+        taskId: tool.taskId || latest?.taskId || latest?.task?.id,
+        ...metadata,
+      }, raw, { running: raw.type !== "tool_end" });
       tools.set(raw.toolCallId, tool);
       return true;
     }

@@ -80,6 +80,7 @@ import type {
   PlanningState,
   Risk,
   SubagentDefinition,
+  SubagentGuideReceipt,
   SubagentRunStatus,
   SubagentThinkingLevel,
   ThinkingLevel,
@@ -157,7 +158,7 @@ import type {
   SubagentPersistenceState,
   SubagentRecallStatus,
 } from "./subagent-persistence.js";
-import type { SubagentObservation } from "./subagent-observer.js";
+import { redactSubagentData, type SubagentObservation } from "./subagent-observer.js";
 import {
   composeModeSystemPrompt,
   DEFAULT_RUNTIME_SYSTEM_PROMPT,
@@ -4999,18 +5000,32 @@ Delegation rules:
   private buildSubagentGuideTool(): AgentTool {
     return {
       name: SUBAGENT_GUIDE_TOOL_NAME, label: "Task Guide", executionMode: "sequential",
-      description: "Correct a running subagent after its current tool ends. Remaining calls from its old plan are skipped. It keeps its context and resumes automatically. Returns accepted, not necessarily applied; query TaskList. Reporting continues without periodic pauses.",
+      description: "Correct a running subagent immediately: the instruction is queued into its current turn (the same mechanism as the user's immediate send) and enters its context at the next safe point, so the running tool is never killed and the remaining calls of its old plan are skipped. It keeps its context and continues on its own. Returns accepted, not necessarily applied; query TaskList. Reporting continues without periodic pauses.",
       parameters: Type.Object({
         delegationId: Type.String(), instruction: Type.String({ minLength: 1, maxLength: 12_000 }),
         reportIntervalSteps: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
       }),
       execute: async (toolCallId, params) => {
         if (!isRecord(params)) return this.subagentToolError(toolCallId, "Invalid guidance parameters.");
-        const record = isRecord(params) ? this.delegations.get(String(params.delegationId)) : undefined;
-        if (!record?.run || record.status !== "running" || record.startedEpoch !== this.turnEpoch) {
-          return this.subagentToolError(toolCallId, "No active subagent with that id belongs to this turn.");
+        const delegationId = String(params.delegationId);
+        const record = this.delegations.get(delegationId);
+        const instruction = String(params.instruction ?? "");
+        // 已结束、越轮次或不属于本会话的目标：返回明确的未应用回执，绝不自动重启它。
+        const refusal = !record ? "No subagent with that id exists in this session."
+          : record.startedEpoch !== this.turnEpoch ? "That subagent belongs to an earlier parent turn."
+          : record.status !== "running" ? `That subagent is ${record.status}.` : undefined;
+        if (!record?.run || refusal) {
+          const receipt: SubagentGuideReceipt = {
+            execution: record?.execution ?? 1, delegationId, commandId: toolCallId,
+            instruction: record?.run?.observation.safe(instruction, 12_000) ?? redactSubagentData(instruction).slice(0, 12_000),
+            status: "rejected", receivedAt: Date.now(), reason: `${refusal ?? "That subagent has no active run."} Guidance was not applied.`,
+          };
+          // 已知目标的拒绝也进入其观测时间线；未知目标不能伪造子任务归属。
+          if (record) this.onSubagentObservation(record, { kind: "guide", guide: receipt });
+          this.failedHostToolCalls.add(toolCallId);
+          return { content: [{ type: "text", text: JSON.stringify(receipt) }], details: { error: receipt.reason, guide: receipt }, isError: true };
         }
-        const receipt = record.run.guide(String(params.instruction ?? ""), params.reportIntervalSteps as number | undefined, toolCallId);
+        const receipt = record.run.guide(instruction, params.reportIntervalSteps as number | undefined, toolCallId);
         if (receipt.status === "rejected") this.failedHostToolCalls.add(toolCallId);
         return { content: [{ type: "text", text: JSON.stringify(receipt) }], details: { guide: receipt }, isError: receipt.status === "rejected" };
       },
@@ -5096,7 +5111,9 @@ Delegation rules:
       parentToolCallId: record.parentToolCallId, agentName: record.agentName,
       event: { type: "message_end", message: { id, role: "tool", toolName, toolCallId: id,
         parentToolCallId: record.parentToolCallId, agentName: record.agentName,
-        createdAt: nowIso(), status: "complete", toolStatus: "success", content,
+        // 同一 commandId 的状态更新必须保持同一 createdAt，界面上的时间位置才不随状态跳动。
+        createdAt: event.kind === "guide" ? new Date(event.guide.receivedAt).toISOString() : nowIso(),
+        status: "complete", toolStatus: "success", content,
         toolResult: { content: [{ type: "text", text: content }], details } } },
     });
     if (this.disposed || this.runCancelled || this.turnHadError || record.startedEpoch !== this.turnEpoch) return;

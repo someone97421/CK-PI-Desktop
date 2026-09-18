@@ -79,3 +79,16 @@ dialog label select { width: 100%; margin-top: 6px; }
 .remote-jump { grid-row: 3; }
 .remote-composer { grid-row: 4; max-height: 45dvh; }
 #app[data-authenticated="false"] .remote-layout { grid-template-columns: minmax(0, 1fr); }
+.remote-task-process { border: 0; border-bottom: 1px solid var(--ds-border-default); border-radius: 0; background: transparent; }
+.remote-task-process > summary { padding: 12px 0; min-height: 44px; flex-wrap: wrap; }
+.remote-task-process > summary .remote-process-label { font-weight: 400; font-size: 14px; }
+.remote-task-process > summary .remote-process-excerpt { font-size: 11px; color: var(--ds-text-muted); }
+.remote-task-process > .remote-process-body { padding: 0 0 12px; }
+.remote-task-process .remote-message + .remote-message { border-top: 1px solid var(--ds-border-default); }
+.remote-drawer .remote-library { overscroll-behavior: contain; touch-action: pan-y; }
+.remote-drawer-heading { flex: none; }
+@media (max-width: 700px) {
+  .remote-library input { font-size: 16px; }
+  .remote-drawer { width: min(92vw, 380px); overflow: hidden; }
+  .remote-task-process > summary { column-gap: 6px; }
+}

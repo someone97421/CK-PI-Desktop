@@ -535,6 +535,10 @@ export const zhCN = {
     subagentIntervalSource: { definition: "汇报间隔由用户设置", dispatch: "汇报间隔由主智能体指定" },
     subagentStopSource: { user: "用户主动终止", parent: "主智能体请求终止", session: "会话停止或已结束" },
     subagentGuideState: { accepted: "引导已接收", applying: "正在应用引导", applied: "引导已生效", cancelled: "引导已取消", rejected: "引导被拒绝" },
+    subagentGuidanceSender: "主代理 → 子代理",
+    subagentGuidanceReceivedAt: "{{time}} 已接收",
+    subagentGuidanceAppliedAt: "{{time}} 已应用",
+    subagentGuidancePending: "等待安全执行边界；当前正在执行的工具会先完成。",
     subagentStepStatus: { running: "执行中", success: "成功", error: "失败", aborted: "已取消" },
     subagentStatus: {
       running: "运行中",

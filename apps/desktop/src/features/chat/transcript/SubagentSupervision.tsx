@@ -130,10 +130,9 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
       <span>{t(`chat.subagentIntervalSource.${data.intervalSource}`)}</span>
       {data.stopSource ? <span>{t(`chat.subagentStopSource.${data.stopSource}`)}</span> : null}
       {recall?.reason ? <span title={recall.reason}>{recall.reason}</span> : null}
-      {data.latestGuide ? <div>
-        <strong>{t(`chat.subagentGuideState.${data.latestGuide.status}`)}</strong>
-        <p className="selectable">{data.latestGuide.instruction}</p>
-      </div> : null}
+      {data.latestGuide ? <span title={data.latestGuide.instruction}>
+        {t(`chat.subagentGuideState.${data.latestGuide.status}`)}
+      </span> : null}
       {data.latestReport ? <details>
         <summary>{t("chat.subagentLatestReport", { seq: data.latestReport.reportSeq, from: data.latestReport.fromStep, to: data.latestReport.toStep })}</summary>
         <p>{new Date(data.latestReport.capturedAt).toLocaleString()} · {data.latestReport.summary}</p>

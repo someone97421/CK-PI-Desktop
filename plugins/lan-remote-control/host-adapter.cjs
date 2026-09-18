@@ -108,6 +108,10 @@ function message(m) {
       "steering",
       "command",
       "tool",
+      "taskId", "task", "parentToolCallId", "agentName",
+      "toolName", "toolCallId", "toolStatus", "toolArgs", "toolResult",
+      "toolDurationMs", "toolCompletedAt", "isError", "usage", "toolUsage",
+      "modelId", "providerId", "error",
     ]),
     attachments: (m.attachments || []).map(attachment),
   };

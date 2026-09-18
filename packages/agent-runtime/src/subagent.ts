@@ -370,8 +370,8 @@ export class SubagentRun {
       transformContext: (messages, signal) => this.prepareRequestContext(messages, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
       beforeToolCall: async (context) => this.beforeToolCall(context),
-      // 收束原回复的工具结果后让出循环；引导在同一实例上以新输入继续。
-      shouldStopAfterTurn: () => this.observation.hasGuides,
+      // 引导不再结束本轮：TaskGuide 立即 steer 进当前轮，文本在下一个安全点注入子上下文，
+      // 本轮尚未开始的旧工具由 beforeToolCall 跳过。
       initialState: {
         systemPrompt: opts.systemPrompt,
         model: binding.model,
@@ -380,6 +380,8 @@ export class SubagentRun {
         messages: initialMessages,
       },
       toolExecution: "sequential",
+      // 同一安全点的多批指导一次注入，避免第二批又等一个轮次边界。
+      steeringMode: "all",
     });
     this.agent.subscribe((event) => this.handleEvent(event));
   }
@@ -692,6 +694,8 @@ export class SubagentRun {
     this.contextFailure = undefined;
     const onAbort = () => {
       this.observation.stop("session");
+      // 停止优先：未注入的指导不再进入子上下文（回执已由 observation.stop 作废）。
+      this.agent.clearSteeringQueue();
       this.runAbortController.abort();
       this.agent.abort();
     };
@@ -720,12 +724,16 @@ export class SubagentRun {
           await this.agent.continue();
           await this.agent.waitForIdle();
         } else if (!this.streamError && this.observation.hasGuides) {
-          const instruction = this.observation.applyGuides();
-          if (instruction && !signal.aborted) {
-            // prompt 在工具结果之后追加指令，不清空上下文也不重放工具。
-            await this.agent.prompt(instruction);
-            await this.agent.waitForIdle();
+          // 兜底路径：指导在本轮循环的空档（最后一次 steering 轮询之后）到达。
+          // 仍然只走 steer + continue，绝不重发 prompt，也不重放工具结果。
+          this.steerAcceptedGuides();
+          if (signal.aborted || !this.agent.hasQueuedMessages()) {
+            // 队列已空且无法再送达：明确作废，不空转、不谎报已应用。
+            this.observation.cancelUndeliverableGuides("The guidance could not be delivered to the subagent's context.");
+            break;
           }
+          await this.agent.continue();
+          await this.agent.waitForIdle();
         } else {
           break;
         }
@@ -1113,6 +1121,8 @@ export class SubagentRun {
   ): SubagentRunResult {
     this.executing = false;
     this.lastStatus = status;
+    // 本轮结束：队列里残留的未注入指导不得跨执行泄漏到下一次召回。
+    this.agent.clearSteeringQueue();
     if (status === "aborted") this.observation.stop("session");
     this.observation.finish(status === "aborted" ? "stopped" : status === "completed" ? "completed" : "failed");
     const name = this.opts.definition.name;
@@ -1167,12 +1177,37 @@ export class SubagentRun {
     };
   }
 
+  /**
+   * TaskGuide 的入口。受理后立即把指导文本以 steer 排入子代理当前轮（与用户“立即发送”
+   * 复用同一底层机制），不再等本轮结束后另发 prompt。返回的是本次命令的受理回执；
+   * applying/applied/cancelled 的后续状态通过 observation 事件回执。
+   */
   guide(instruction: string, interval?: number, commandId?: string): SubagentGuideReceipt {
-    return this.observation.guide(instruction, interval, commandId);
+    const receipt = this.observation.guide(instruction, interval, commandId);
+    if (receipt.status !== "accepted") return receipt;
+    if (this.executing) this.steerAcceptedGuides();
+    return receipt;
+  }
+
+  /**
+   * 把已受理的指导排入子代理当前轮：文本在下一个轮次边界注入模型上下文，
+   * 正在运行的工具不被强杀，本轮剩余的旧工具由 beforeToolCall 跳过。
+   * 未运行（尚未开始或已在空档）时保持 accepted，由运行循环兜底送达。
+   */
+  private steerAcceptedGuides(): boolean {
+    if (this.observation.stopping || this.runSignal().aborted) return false;
+    const text = this.observation.applyGuides();
+    if (!text) return false;
+    const message: AgentMessage = { role: "user", content: [{ type: "text", text }], timestamp: Date.now() };
+    this.observation.bindSteeredMessage(message);
+    this.agent.steer(message);
+    return true;
   }
 
   stop(source: NonNullable<SubagentCollaborationSnapshot["stopSource"]>): void {
     this.observation.stop(source);
+    // 停止优先：已排队但未注入的指导不再进入子上下文。
+    this.agent.clearSteeringQueue();
     this.runAbortController.abort();
     this.agent.abort();
   }
@@ -1240,7 +1275,9 @@ export class SubagentRun {
         break;
       case "message_start": {
         if (event.message.role === "user") {
-          this.observation.guidesApplied();
+          // 只有本运行以 steer 排入的指导消息才回执 applied（对象身份匹配）；
+          // 父级任务/召回指令不改任何回执。指导行本身不进转录，只留 TaskGuidance 伪行。
+          this.observation.noteInjectedMessage(event.message);
           break;
         }
         if (event.message.role !== "assistant") break;

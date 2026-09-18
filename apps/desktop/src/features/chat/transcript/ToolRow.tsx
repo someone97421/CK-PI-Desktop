@@ -1,6 +1,7 @@
 import { SubagentSupervision, useSubagentExecution } from "./SubagentSupervision";
+import { subagentGuidance } from "../../../lib/subagent-guidance";
+import { SubagentGuidanceMessage } from "./SubagentGuidanceMessage";
 import {
-  Fragment,
   memo,
   useCallback,
   useEffect,
@@ -578,6 +579,14 @@ export const SubagentRunRows = memo(function SubagentRunRows({
   );
 });
 
+function SubagentToolMessage({ message }: { message: UiMessage }) {
+  const guide = subagentGuidance(message);
+  return guide ? <SubagentGuidanceMessage guide={guide} messageId={message.id} /> : <>
+    <ToolRow message={message} />
+    <ReviewChangeCard message={message} />
+  </>;
+}
+
 /**
  * Nested follow-scroll for one expanded delegate (D302). Mounted only once
  * the run has rows, so the first layout pins to the latest output instead of
@@ -627,10 +636,7 @@ function SubagentRunFollow({
           <div ref={contentRef}>
             {items.map((item) =>
               item.kind === "tool" ? (
-                <Fragment key={item.message.id}>
-                  <ToolRow message={item.message} />
-                  <ReviewChangeCard message={item.message} />
-                </Fragment>
+                <SubagentToolMessage key={item.message.id} message={item.message} />
               ) : item.kind === "thinking" ? (
                 <ThinkingRow
                   key={`thinking-${item.message.id}`}

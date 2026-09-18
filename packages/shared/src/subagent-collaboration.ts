@@ -30,12 +30,20 @@ export type SubagentProgressReport = {
   statement?: string;
 };
 
+/**
+ * 指导回执。状态含义：accepted 已受理并入队待送达；applying 已排入子代理当前轮
+ * （底层 steer），等待下一个安全点注入；applied 文本已进入子上下文；cancelled
+ * 因停止/结束/无法送达而作废；rejected 未受理（已结束、越权、越轮次或参数非法）。
+ */
 export type SubagentGuideReceipt = {
+  /** 指导归属的子任务执行序号（旧回执可能缺失）。 */
+  execution?: number;
   delegationId: string;
   commandId: string;
   instruction: string;
   reportIntervalSteps?: number;
   status: "accepted" | "applying" | "applied" | "cancelled" | "rejected";
+  /** 受理时间；同一 commandId 的后续状态更新保持不变。 */
   receivedAt: number;
   appliedAt?: number;
   reason?: string;

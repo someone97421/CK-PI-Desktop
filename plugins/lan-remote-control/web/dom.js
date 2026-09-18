@@ -187,13 +187,14 @@ function enableDialogDismiss(dialog) {
   });
   dialog.addEventListener("focusout", () => {
     queueMicrotask(() => {
+      if (dialog.dataset.persistent === "true") return;
       if (dialog.open && document.hasFocus() && !dialog.contains(document.activeElement)) dialog.remove();
     });
   });
 }
 
 function dismissOpenDialogs() {
-  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.remove();
+  for (const dialog of document.querySelectorAll('dialog[open]:not([data-persistent="true"])')) dialog.remove();
 }
 window.addEventListener("blur", () => {
   // 原生选择器可能暂时取得系统焦点，允许用户完成选择。

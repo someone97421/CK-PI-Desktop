@@ -537,6 +537,10 @@ export const en = {
     subagentIntervalSource: { definition: "Report interval set by the user", dispatch: "Report interval set by the main agent" },
     subagentStopSource: { user: "Stopped by the user", parent: "Stop requested by the main agent", session: "Session stopped or ended" },
     subagentGuideState: { accepted: "Guidance accepted", applying: "Applying guidance", applied: "Guidance applied", cancelled: "Guidance cancelled", rejected: "Guidance rejected" },
+    subagentGuidanceSender: "Parent agent → Subagent",
+    subagentGuidanceReceivedAt: "Received {{time}}",
+    subagentGuidanceAppliedAt: "Applied {{time}}",
+    subagentGuidancePending: "Waiting for a safe execution boundary; any tool already running will finish first.",
     subagentStepStatus: { running: "Running", success: "Succeeded", error: "Failed", aborted: "Cancelled" },
     subagentStatus: {
       running: "Running",

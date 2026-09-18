@@ -11,6 +11,10 @@ import {
 import { mergeLiveEvent } from "./live.js";
 import { mergeSnapshot, assertQueueDraftAvailable } from "./recovery.js";
 import { createMutationRecovery } from "./mutation-recovery.js";
+import { buildProcessTimeline, processSummary } from "./process.js";
+import { createSubagentObserver } from "./subagents.js";
+
+const subagentObserver = createSubagentObserver();
 
 const liveTools = new Map();
 const recentEvents = [];
@@ -30,12 +34,10 @@ function onEvent(frame) {
   const wrapper = frame.event;
   if (wrapper.sessionId !== current) return;
   const event = wrapper.event || wrapper;
-  const raw = event.payload?.event;
   const revision = event.payload?.hostRevision;
   if (Number.isFinite(revision) && revision <= snapshotRevision) return;
   recentEvents.push(wrapper);
   if (recentEvents.length > 2000) recentEvents.shift();
-  if (raw?.message?.parentToolCallId || raw?.parentToolCallId) return;
   eventVersion++;
   if (mergeLiveEvent(messages, liveTools, wrapper)) action(drawChat);
   else scheduleRefresh();
@@ -97,7 +99,7 @@ function closeLibrary() {
 }
 function openLibrary() {
   if (drawer || loginVisible) return;
-  drawer = el("dialog", { className: "remote-drawer", attrs: { "aria-label": "项目与会话" } },
+  drawer = el("dialog", { className: "remote-drawer", dataset: { persistent: "true" }, attrs: { "aria-label": "项目与会话" } },
     el("div", { className: "remote-drawer-heading" }, el("strong", { text: "项目与会话" }),
       button("返回对话", { iconName: "back", preserveLabel: true, onClick: closeLibrary })), library);
   drawer.addEventListener("cancel", (event) => { event.preventDefault(); closeLibrary(); });
@@ -110,7 +112,6 @@ function openLibrary() {
     }
     remove();
   };
-  drawer.addEventListener("click", (event) => { if (event.target === drawer) closeLibrary(); });
   document.body.append(drawer);
   drawer.showModal();
 }
@@ -310,6 +311,7 @@ function showLogin() {
   if (loginVisible) return;
   loginVisible = true;
   closeLibrary();
+  subagentObserver.close();
   chatHeading.replaceChildren();
   jumpLatest.hidden = true;
   root.dataset.authenticated = "false";
@@ -409,7 +411,9 @@ async function loadLibrary() {
   await draw();
 }
 async function openSession(id) {
+  renderVersion++;
   closeLibrary();
+  subagentObserver.close();
   saveDraft();
   if (current) positions.set(current, transcript.scrollTop);
   socket?.unsubscribe(current);
@@ -480,8 +484,11 @@ async function refresh() {
   await drawChat();
 }
 async function drawChat() {
+  const renderedSession = current;
   const version = ++renderVersion;
   const container = document.createDocumentFragment();
+  const timeline = buildProcessTimeline(messages, liveTools);
+  const cards = new Map();
   const top = el(
     "div",
     { className: "row-actions" },
@@ -501,13 +508,17 @@ async function drawChat() {
           onClick: () => action(() => openSession(child)),
         }),
       );
-  const processToggle = button(processVisibility.get(current) === false ? "展开过程" : "收起过程", {
+  const processToggle = button(processVisibility.get(current) ? "收起过程" : "展开过程", {
     preserveLabel: true,
-    onClick: () => { processVisibility.set(current, processVisibility.get(current) === false); action(drawChat); },
+    onClick: () => {
+      const open = !processVisibility.get(current);
+      processVisibility.set(current, open);
+      for (const entry of timeline.entries) if (entry.rows) disclosureState.set(`${current}:task:${entry.key}`, open);
+      action(drawChat);
+    },
   });
-  processToggle.setAttribute("aria-pressed", String(processVisibility.get(current) === false));
+  processToggle.setAttribute("aria-pressed", String(!!processVisibility.get(current)));
   top.append(processToggle);
-  const showProcess = processVisibility.get(current) !== false;
   if (snapshot?.messages?.hasMoreBefore)
     container.append(
       button("加载更早消息", {
@@ -530,7 +541,22 @@ async function drawChat() {
           }),
       }),
     );
-  for (const m of messages) {
+  for (const m of timeline.rows) {
+    if (m.role === "tool") {
+      const name = m.toolName || "工具";
+      const label = /bash|terminal|exec/i.test(name) ? "›_ 终端" : /^Task|agent/i.test(name) ? "◇ 子代理" : "⌘ 工具";
+      const state = m.toolStatus === "running" ? "执行中" : m.isError || m.toolStatus === "error" ? "失败" : "完成";
+      const detail = disclosure(`tool:${m.toolCallId || m.id}`, label, `${state} · ${name} · ${JSON.stringify(m.toolArgs || {})}`,
+        el("pre", { text: JSON.stringify(m.toolArgs || {}, null, 2) }),
+        el("pre", { text: typeof m.toolResult === "string" ? m.toolResult : JSON.stringify(m.toolResult ?? m.content ?? "等待工具输出…", null, 2) }));
+      detail.id = `message-${m.id}`;
+      detail.dataset.error = String(!!m.isError || m.toolStatus === "error");
+      if (/^Task|agent/i.test(name)) detail.lastElementChild.append(button("观测子代理", {
+        preserveLabel: true, onClick: () => subagentObserver.open(m.toolCallId || m.id),
+      }));
+      cards.set(m.id, detail);
+      continue;
+    }
     const card = el(
       "article",
       { className: `remote-message ${m.role}` },
@@ -548,8 +574,8 @@ async function drawChat() {
       ),
     );
     if (m.role === "assistant") {
-      const prior = messages
-        .slice(0, messages.indexOf(m))
+      const prior = timeline.rows
+        .slice(0, timeline.rows.indexOf(m))
         .reverse()
         .find((x) => x.role === "user");
       const block = prior?.content?.match(
@@ -587,7 +613,7 @@ async function drawChat() {
           }
         } catch {}
     }
-    if (m.thinking && showProcess)
+    if (m.thinking)
       card.append(disclosure(`thinking:${m.id}`, "◇ 思考", m.thinking, el("pre", { text: m.thinking })));
     for (const a of m.attachments || [])
       card.append(
@@ -694,31 +720,28 @@ async function drawChat() {
         }),
       );
     card.append(actions);
-    // 同轮最后一条助手正文保持展开；工具与中间回复可整体收起。
-    const index = messages.indexOf(m);
-    const later = messages.slice(index + 1);
-    const nextUser = later.findIndex((item) => item.role === "user");
-    const remainingTurn = nextUser < 0 ? later : later.slice(0, nextUser);
-    const intermediate = m.role === "assistant" && remainingTurn.some((item) => item.role === "assistant" && item.content);
-    const isProcess = !["user", "assistant"].includes(m.role) || intermediate || (m.role === "assistant" && !m.content && m.thinking);
-    if (!isProcess) container.append(card);
-    else if (showProcess) container.append(disclosure(`message:${m.id}`, intermediate ? "◌ 过程" : "⌘ 工具", m.content || m.thinking || m.role, card));
+    cards.set(m.id, card);
   }
-  if (showProcess) for (const [toolId, tool] of liveTools) {
-    const name = tool.toolName || "工具";
-    const label = /bash|terminal|exec/i.test(name) ? "›_ 终端" : /task|agent/i.test(name) ? "◇ 子代理" : "⌘ 工具";
-    const state = tool.running ? "执行中" : tool.isError ? "失败" : "完成";
-    const detail = disclosure(`tool:${toolId}`, label, `${state} · ${name} · ${JSON.stringify(tool.args || {})}`,
-      el("pre", { text: JSON.stringify(tool.args || {}, null, 2) }),
-      el("pre", { text: JSON.stringify(tool.result ?? tool.partialResult ?? "等待工具输出…", null, 2) }));
-    detail.dataset.error = String(!!tool.isError);
-    if (/task|agent/i.test(name)) detail.lastElementChild.append(button("查看子代理详情", {
-      preserveLabel: true,
-      onClick: () => showText(`${name} · ${state}`, JSON.stringify({ request: tool.args, result: tool.result ?? tool.partialResult ?? "等待工具输出…" }, null, 2)),
-    }));
-    container.append(detail);
+  for (const entry of timeline.entries) {
+    if (entry.message) { container.append(cards.get(entry.message.id)); continue; }
+    const process = entry.rows.filter((m) => m.id !== entry.finalId).map((m) => cards.get(m.id));
+    const finalCard = entry.finalId ? cards.get(entry.finalId) : null;
+    const thinking = finalCard?.querySelector(".remote-process");
+    if (thinking) process.push(thinking);
+    if (process.length || entry.task) {
+      const summary = processSummary(entry.task);
+      const detail = disclosure(`task:${entry.key}`, summary.label, summary.detail,
+        ...(summary.breakdown ? [el("p", { className: "connection-banner", text: summary.breakdown })] : []),
+        ...process);
+      detail.classList.add("remote-task-process");
+      detail.dataset.error = String(entry.task?.status === "failed");
+      container.append(detail);
+    }
+    if (finalCard) container.append(finalCard);
   }
-  if (version !== renderVersion) return;
+  if (version !== renderVersion || current !== renderedSession) return;
+  subagentObserver.update(current, messages, liveTools);
+  top.append(button(subagentObserver.buttonLabel(), { iconName: "sidechat", preserveLabel: true, onClick: () => subagentObserver.open() }));
   const scroll = transcript.scrollTop;
   const nearBottom = transcript.scrollHeight - scroll - transcript.clientHeight < 100;
   const focusedDisclosure = document.activeElement?.closest("details")?.dataset.disclosureKey;

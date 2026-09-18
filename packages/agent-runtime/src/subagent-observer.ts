@@ -61,6 +61,10 @@ export class SubagentObserver {
   private completed = 0;
   private phase: SubagentCollaborationSnapshot["phase"] = "running";
   private stopSource?: SubagentCollaborationSnapshot["stopSource"];
+  /** 最近一次 applyGuides() 转入 applying、尚未绑定 steering 消息的指导。 */
+  private unboundGuideIds: string[] = [];
+  /** 已排入子代理轮次队列、等待注入子上下文的指导消息（按对象身份精确回执）。 */
+  private readonly steeredGuides = new Map<object, string[]>();
 
   constructor(
     readonly delegationId: string,
@@ -76,7 +80,13 @@ export class SubagentObserver {
     return clip(redactSubagentData(value, this.secrets), limit);
   }
 
-  get hasGuides(): boolean { return this.guides.some((guide) => guide.status === "accepted"); }
+  /**
+   * 仍有待送达或待注入的指导（accepted 或 applying）。运行中它让尚未开始的旧工具跳过，
+   * 并让快照导出拒绝；送达（applied）后不再阻塞。
+   */
+  get hasGuides(): boolean {
+    return this.guides.some((guide) => guide.status === "accepted" || guide.status === "applying");
+  }
   get stopping(): boolean { return this.phase === "stopping" || this.phase === "finished"; }
 
   snapshot(): SubagentCollaborationSnapshot {
@@ -155,8 +165,9 @@ export class SubagentObserver {
     else if (!instruction.trim() || instruction.length > 12_000) reason = "instruction must contain 1–12000 characters.";
     else if (interval !== undefined && !isReportIntervalSteps(interval)) reason = "reportIntervalSteps must be a positive safe integer.";
     else if (interval !== undefined && this.intervalSource === "definition" && interval !== this.interval) reason = "The user's fixed report interval cannot be overridden.";
-    else if (this.guides.filter((entry) => entry.status === "accepted").length >= 16) reason = "Too many pending guides; wait for application before sending more.";
+    else if (this.guides.filter((entry) => entry.status === "accepted" || entry.status === "applying").length >= 16) reason = "Too many pending guides; wait for delivery before sending more.";
     const receipt: SubagentGuideReceipt = {
+      execution: this.execution,
       delegationId: this.delegationId, commandId, instruction: this.safe(instruction, 12_000),
       ...(interval !== undefined ? { reportIntervalSteps: interval } : {}),
       receivedAt: Date.now(), status: reason ? "rejected" : "accepted", ...(reason ? { reason } : {}),
@@ -173,29 +184,77 @@ export class SubagentObserver {
     return { ...receipt };
   }
 
+  /**
+   * 把 accepted 指导转入 applying 并组成注入文本。调用方应立刻把该文本以 steer 排入
+   * 子代理当前轮（与用户“立即发送”同构），并调用 bindSteeredMessage 绑定实际消息。
+   * 分段的关闭、报告边界与 reportIntervalSteps 生效都推迟到文本真正注入子上下文时，
+   * 所以“applying”只表示已排队，不表示模型已经看到。
+   */
   applyGuides(): string | undefined {
     if (this.stopping) return undefined;
     const guides = this.guides.filter((entry) => entry.status === "accepted");
     if (!guides.length) return undefined;
-    this.flush("guide");
     for (const guide of guides) {
       guide.status = "applying";
       this.notify({ kind: "guide", guide: { ...guide } });
+    }
+    this.unboundGuideIds = guides.map((guide) => guide.commandId);
+    return guides.map((guide) => `[Parent guidance ${guide.commandId}]\n${guide.instruction}`).join("\n\n");
+  }
+
+  /** 把最近一次 applyGuides() 的指导批次绑定到实际排入子代理轮次队列的消息对象。 */
+  bindSteeredMessage(message: object): void {
+    if (!this.unboundGuideIds.length) return;
+    this.steeredGuides.set(message, this.unboundGuideIds);
+    this.unboundGuideIds = [];
+  }
+
+  /**
+   * 指导文本注入子上下文时回执 applied。只认本运行排入的消息对象（身份匹配）：
+   * 其他用户行（父级任务、召回指令）不改变任何回执，避免把所有 applying 误标成已应用。
+   */
+  noteInjectedMessage(message: object): void {
+    const commandIds = this.steeredGuides.get(message);
+    if (!commandIds) return;
+    this.steeredGuides.delete(message);
+    this.deliverGuides(commandIds);
+  }
+
+  /** 兼容入口：无法关联具体消息时按 applying 批次回执 applied。 */
+  guidesApplied(): void {
+    this.deliverGuides();
+  }
+
+  /** 排入队列的指导无法送达时明确作废，不空转也不谎报已应用。 */
+  cancelUndeliverableGuides(reason: string): void {
+    this.unboundGuideIds = [];
+    this.steeredGuides.clear();
+    for (const guide of this.guides) if (guide.status === "applying") {
+      guide.status = "cancelled";
+      guide.reason = reason;
+      this.notify({ kind: "guide", guide: { ...guide } });
+    }
+  }
+
+  /**
+   * 指导送达：关闭上一分段并回执 applied。报告边界与模型实际换指令的时刻一致，
+   * 因此当前运行中的工具仍计入上一分段。
+   */
+  private deliverGuides(commandIds?: readonly string[]): void {
+    const pending = this.guides.filter((guide) => guide.status === "applying" &&
+      (!commandIds || commandIds.includes(guide.commandId)));
+    if (!pending.length) return;
+    this.flush("guide");
+    for (const guide of pending) {
+      guide.status = "applied";
+      guide.appliedAt = Date.now();
       if (guide.reportIntervalSteps !== undefined) this.interval = guide.reportIntervalSteps;
+      this.notify({ kind: "guide", guide: { ...guide } });
     }
     this.segmentId += 1;
     this.segmentCompleted = 0;
     this.statement = "";
-    this.phase = "running";
-    return guides.map((guide) => `[Parent guidance ${guide.commandId}]\n${guide.instruction}`).join("\n\n");
-  }
-
-  guidesApplied(): void {
-    for (const guide of this.guides.filter((entry) => entry.status === "applying")) {
-      guide.status = "applied";
-      guide.appliedAt = Date.now();
-      this.notify({ kind: "guide", guide: { ...guide } });
-    }
+    this.phase = this.hasGuides ? "guiding" : "running";
   }
 
   /** 正常完成后的新一轮；仅刷新分段，不重置累计计数和报告序号。 */
@@ -214,6 +273,8 @@ export class SubagentObserver {
     if (this.stopSource) return;
     if (this.phase !== "finished") this.phase = "stopping";
     this.stopSource = source;
+    this.unboundGuideIds = [];
+    this.steeredGuides.clear();
     for (const guide of this.guides) if (guide.status === "accepted" || guide.status === "applying") {
       guide.status = "cancelled";
       guide.reason = "Stopping takes precedence over guidance.";
@@ -223,6 +284,8 @@ export class SubagentObserver {
   }
 
   finish(reason: "completed" | "stopped" | "failed"): void {
+    this.unboundGuideIds = [];
+    this.steeredGuides.clear();
     this.flush(reason);
     for (const guide of this.guides) if (guide.status === "accepted" || guide.status === "applying") {
       guide.status = "cancelled";
