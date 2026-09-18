@@ -1183,6 +1183,7 @@ persistenceOutbox.setOnMessagePersisted((sessionId) => subagentSnapshots.recordC
 
 const sidecarRuntime = createSidecarRuntime({
   runtimeState,
+  taskTranscript: sessionCoordination.taskTranscript,
   subagentSnapshots,
   steeringReplies,
   logger,
@@ -1213,6 +1214,15 @@ const sidecarRuntime = createSidecarRuntime({
 });
 emitAgentEvent = sidecarRuntime.emitAgentEvent;
 const { wireSidecar, startSidecar } = sidecarRuntime;
+sessionCoordination.taskTranscript.setPublisher(async (sessionId, turnId, message, echo) => {
+  if (echo) emitAgentEvent({ sessionId, turnId, ts: Date.now(), event: { type: "message_end", message, taskSummary: true } });
+  try {
+    await persistenceOutbox.enqueue({ key: `message:${sessionId}:${message.id}`, sessionId, turnId, message }, () => host);
+  } catch (error) {
+    logger.app("persistence", "warn", "task summary enqueue failed", { sessionId, data: String(error) });
+    throw error;
+  }
+});
 
 const { wireHost, startHost } = createHostRuntime({
   runtimeState,
@@ -1490,6 +1500,10 @@ registerShutdownHandlers({
   activeTurns,
   persistenceOutbox,
   closeSubagentSnapshots: () => subagentSnapshots.closeOwner(),
+  flushTaskSummaries: async () => {
+    await sessionCoordination.taskTranscript.flush();
+    await persistenceOutbox.flush(() => host);
+  },
   inflightCheckpointer,
   pluginPanels,
   plugins,

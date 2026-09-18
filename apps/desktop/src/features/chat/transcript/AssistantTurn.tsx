@@ -40,6 +40,8 @@ import {
 } from "./shared";
 import { activityItemsEqual, ActivityGroup } from "./ActivityGroup";
 import { MessageRow } from "./MessageRow";
+import { TaskProcessDrawer } from "./TaskProcessDrawer";
+import { TaskReviewCard } from "./TaskReviewCard";
 
 type AssistantTurnProps = {
   entry: AssistantTurnEntry;
@@ -55,6 +57,9 @@ function assistantTurnPropsEqual(
     previous.isActive !== next.isActive ||
     previous.runtimeActivity !== next.runtimeActivity ||
     previous.entry.anchorId !== next.entry.anchorId ||
+    previous.entry.task !== next.entry.task ||
+    previous.entry.sourceMessages !== next.entry.sourceMessages ||
+    previous.entry.finalMessageId !== next.entry.finalMessageId ||
     previous.entry.parts.length !== next.entry.parts.length
   ) {
     return false;
@@ -62,6 +67,9 @@ function assistantTurnPropsEqual(
   return previous.entry.parts.every((part, index) => {
     const nextPart = next.entry.parts[index];
     if (part.kind !== nextPart.kind) return false;
+    if (part.kind === "compaction" && nextPart.kind === "compaction") {
+      return compactionMarksEqual(part.mark, nextPart.mark);
+    }
     if (part.kind === "message" && nextPart.kind === "message") {
       return part.message === nextPart.message;
     }
@@ -230,10 +238,17 @@ export const AssistantTurn = memo(function AssistantTurn({
     s.activeSessionId ? s.runningSessions[s.activeSessionId] === true : false,
   );
   const messages = assistantTurnMessages(entry);
-  const content = assistantTurnContent(entry);
-  const actionMessage = [...messages]
+  const task = entry.task;
+  const settledTask = task && task.status !== "running" ? task : undefined;
+  const finalPart = task?.status === "completed" && entry.finalMessageId
+    ? entry.parts.find((part) => part.kind === "message"
+      && part.message.role === "assistant" && part.message.id === entry.finalMessageId)
+    : undefined;
+  const finalMessage = finalPart?.kind === "message" ? finalPart.message : undefined;
+  const content = task ? finalMessage?.content ?? "" : assistantTurnContent(entry);
+  const actionMessage = task ? finalMessage : [...messages]
     .reverse()
-    .find((message) => (message.content || "").trim());
+    .find((message) => message.role === "assistant" && (message.content || "").trim());
   const metaMessage = [...messages]
     .reverse()
     .find(
@@ -251,9 +266,10 @@ export const AssistantTurn = memo(function AssistantTurn({
   const responseOutputTokens = assistantTurnResponseOutputTokens(entry);
   const modelId = metaMessage?.modelId ?? latestUsageMessage?.modelId;
   const hasError = messages.some((message) => Boolean(message.error));
-  const complete =
-    !isActive && !hasError && Boolean(content) && Boolean(actionMessage);
-  const streaming =
+  const complete = task
+    ? task.status === "completed" && Boolean(content) && Boolean(actionMessage)
+    : !isActive && !hasError && Boolean(content) && Boolean(actionMessage);
+  const streaming = !settledTask &&
     isActive && messages.some((message) => message.status === "streaming");
 
   // Collect delegation statuses across ALL activity parts of this turn so that
@@ -267,8 +283,8 @@ export const AssistantTurn = memo(function AssistantTurn({
   );
   const rawDelegationStatuses = useMemo(
     () =>
-      collectDelegationStatuses(turnAllActivityItems, { turnLive: isActive }),
-    [turnAllActivityItems, isActive],
+      collectDelegationStatuses(turnAllActivityItems, { turnLive: isActive && !settledTask }),
+    [turnAllActivityItems, isActive, settledTask],
   );
   const rawDelegationTimings = useMemo(
     () => collectDelegationTimings(turnAllActivityItems),
@@ -289,6 +305,41 @@ export const AssistantTurn = memo(function AssistantTurn({
   statusesRef.current = turnDelegationStatuses;
   timingsRef.current = turnDelegationTimings;
 
+  const renderPart = (part: AssistantTurnEntry["parts"][number], index: number) => {
+    if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
+    if (part.kind === "activity") return (
+      <ActivityGroup
+        key={`activity-${part.items[0]?.message.id ?? index}`}
+        items={part.items}
+        endedAt={part.endedAt}
+        isActive={!settledTask && isActive && index === entry.parts.length - 1}
+        runtimeActivity={!settledTask && isActive && index === entry.parts.length - 1
+          ? runtimeActivity : undefined}
+        turnDelegationStatuses={turnDelegationStatuses}
+        turnDelegationTimings={turnDelegationTimings}
+      />
+    );
+    if (part.message.role !== "assistant") return (
+      <div className="task-steering-message" key={part.message.id}>
+        {part.message.role === "user" && part.message.steering
+          ? <p className="task-steering-label">{t("chat.taskDelivery.steering")}</p> : null}
+        <MessageRow message={part.message} isRunning={!settledTask && isActive} />
+      </div>
+    );
+    return (
+      <div
+        className={`message-bubble assistant-turn-fragment${
+          !settledTask && isActive && part.message.status === "streaming" ? " streaming" : ""
+        }`}
+        data-message-id={part.message.id}
+        key={part.message.id}
+      >
+        {part.message.content ? <div className="prose-chat"><Markdown source={part.message.content} /></div> : null}
+        {part.message.error ? <AssistantErrorMessage message={part.message} /> : null}
+      </div>
+    );
+  };
+
   return (
     <div
       className={`message-row assistant assistant-turn${streaming ? " streaming" : ""}`}
@@ -298,43 +349,13 @@ export const AssistantTurn = memo(function AssistantTurn({
       aria-label={t("chat.assistantMessage")}
     >
       <div className="message-col">
-        {entry.parts.map((part, index) =>
-          part.kind === "activity" ? (
-            <ActivityGroup
-              key={`activity-${part.items[0].message.id}`}
-              items={part.items}
-              endedAt={part.endedAt}
-              isActive={isActive && index === entry.parts.length - 1}
-              runtimeActivity={
-                isActive && index === entry.parts.length - 1
-                  ? runtimeActivity
-                  : undefined
-              }
-              turnDelegationStatuses={turnDelegationStatuses}
-              turnDelegationTimings={turnDelegationTimings}
-            />
-          ) : (
-            <div
-              className={`message-bubble assistant-turn-fragment${
-                isActive && part.message.status === "streaming"
-                  ? " streaming"
-                  : ""
-              }`}
-              data-message-id={part.message.id}
-              key={part.message.id}
-            >
-              {part.message.content ? (
-                <div className="prose-chat">
-                  <Markdown source={part.message.content} />
-                </div>
-              ) : null}
-              {part.message.error ? (
-                <AssistantErrorMessage message={part.message} />
-              ) : null}
-            </div>
-          ),
-        )}
-        {!isActive && metaMessage ? (
+        {settledTask ? (
+          <TaskProcessDrawer key={settledTask.id} task={settledTask}>
+            {entry.parts.map((part, index) => part === finalPart ? null : renderPart(part, index))}
+          </TaskProcessDrawer>
+        ) : entry.parts.map(renderPart)}
+        {settledTask && finalPart ? renderPart(finalPart, entry.parts.indexOf(finalPart)) : null}
+        {!task && !isActive && metaMessage ? (
           <MessageMeta
             modelId={modelId}
             usage={usage}
@@ -352,6 +373,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 className="copy-btn icon"
                 tooltip={t("chat.forkResponse")}
                 ariaLabel={t("chat.forkResponse")}
+                disabled={sessionRunning}
                 onClick={() => void forkAssistantMessage(actionMessage.id)}
               >
                 <IconBranch size={13} />
@@ -403,6 +425,7 @@ export const AssistantTurn = memo(function AssistantTurn({
             ) : null}
           </div>
         ) : null}
+        {settledTask ? <TaskReviewCard messages={entry.sourceMessages ?? messages} /> : null}
       </div>
     </div>
   );

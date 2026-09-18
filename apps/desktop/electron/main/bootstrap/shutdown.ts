@@ -35,6 +35,7 @@ export type ShutdownDependencies = {
   activeTurns: Map<string, string>;
   persistenceOutbox: PersistenceOutbox;
   closeSubagentSnapshots: () => Promise<void>;
+  flushTaskSummaries?: () => Promise<void>;
   inflightCheckpointer: InflightCheckpointer;
   pluginPanels: Pick<PluginPanelHost, "closeAll">;
   plugins: Pick<PluginRuntime, "disposeAll">;
@@ -57,6 +58,7 @@ export function registerShutdownHandlers({
   activeTurns,
   persistenceOutbox,
   closeSubagentSnapshots,
+  flushTaskSummaries,
   inflightCheckpointer,
   pluginPanels,
   plugins,
@@ -143,6 +145,11 @@ export function registerShutdownHandlers({
         await closeSubagentSnapshots();
       } catch {
         logger.app("lifecycle", "warn", "subagent persistence shutdown unconfirmed; dirty marker retained");
+      }
+      try {
+        await flushTaskSummaries?.();
+      } catch (error) {
+        logger.app("lifecycle", "warn", "task summary shutdown persistence failed", { data: String(error) });
       }
       const hostShutdown = getHost()?.dispose();
       const mcpShutdown = getMcpControl()?.stop();

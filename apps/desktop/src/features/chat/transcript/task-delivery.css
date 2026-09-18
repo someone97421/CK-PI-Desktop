@@ -1,0 +1,217 @@
+/* 任务交付沿用聊天的语义主题、字体与圆角，间距采用 4/8px 节奏。 */
+.task-process-drawer,
+.task-process-content,
+.task-review-card,
+.task-steering-message {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.task-process-drawer {
+  margin-block: 8px 16px;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.task-process-summary,
+.task-review-snapshot > summary {
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.task-process-summary:hover,
+.task-review-snapshot > summary:hover,
+.task-review-card button:hover:not(:disabled) {
+  background: var(--ds-bg-hover);
+  color: var(--ds-text-primary);
+}
+
+.task-process-summary:active,
+.task-review-snapshot > summary:active,
+.task-review-card button:active:not(:disabled) {
+  background: var(--ds-bg-active);
+}
+
+.task-process-summary:focus-visible,
+.task-review-snapshot > summary:focus-visible,
+.task-review-card button:focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
+.task-process-usage,
+.task-review-note,
+.task-steering-label {
+  margin: 8px 0;
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+
+.task-process-content {
+  padding: 8px 0 8px 12px;
+  border-inline-start: 1px solid var(--ds-border-default);
+}
+
+.task-process-content .message-row {
+  padding-inline: 0;
+}
+
+.task-process-content .message-col,
+.task-steering-message .message-col {
+  min-width: 0;
+}
+
+.task-review-card {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  background: var(--ds-tile);
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.task-review-heading,
+.task-review-dialog-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.task-review-heading > svg {
+  flex: 0 0 auto;
+}
+
+.task-review-open,
+.task-review-dialog-header button {
+  margin-inline-start: auto;
+}
+
+.task-review-card button {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  color: var(--ds-text-primary);
+  background: var(--ds-bg-secondary);
+  font-size: var(--text-xs-plus);
+  cursor: pointer;
+}
+
+.task-review-card button:disabled {
+  color: var(--ds-text-muted);
+  cursor: default;
+  opacity: 0.65;
+}
+
+.task-review-files {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-review-files > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.task-review-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs-plus);
+  line-height: var(--leading-body);
+}
+
+.task-review-dialog {
+  width: min(960px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--ds-border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--ds-text-primary);
+  background: var(--ds-bg-primary);
+  font-size: var(--text-sm);
+}
+
+.task-review-dialog::backdrop {
+  background: color-mix(in oklab, var(--ds-bg-inset) 65%, transparent);
+}
+
+.task-review-dialog-header h2 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-medium);
+}
+
+.task-review-evidence {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+
+.task-review-evidence h3 {
+  margin: 12px 0 8px;
+  font-weight: var(--font-weight-medium);
+}
+
+.task-review-snapshot {
+  min-width: 0;
+  margin-block: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--ds-tile);
+}
+
+.task-review-snapshot .diff-counts {
+  display: inline-flex;
+  gap: 8px;
+  margin-inline-start: 12px;
+}
+
+.task-review-dialog .diff-line {
+  display: flex;
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+.task-review-dialog .diff-line-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-review-dialog .diff-line-sign {
+  flex: 0 0 24px;
+}
+
+.task-process-drawer[open] > .task-process-content,
+.task-review-dialog[open] {
+  animation: task-delivery-reveal 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes task-delivery-reveal {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-process-drawer[open] > .task-process-content,
+  .task-review-dialog[open] {
+    animation: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .task-review-card { padding: 12px; }
+  .task-review-dialog { padding: 12px; }
+  .task-review-files > li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+}

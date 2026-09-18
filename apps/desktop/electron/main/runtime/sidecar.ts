@@ -23,9 +23,11 @@ import type { RuntimeState } from "./context";
 import type { FinishTurn } from "./plans";
 import type { SubagentSnapshotStore } from "./subagent-snapshot-store";
 import { dispatchSubagentPersistence } from "./subagent-snapshot-rpc";
+import type { TaskTranscript } from "./task-transcript";
 
 export type SidecarRuntimeDependencies = {
   runtimeState: RuntimeState;
+  taskTranscript: TaskTranscript;
   subagentSnapshots: SubagentSnapshotStore;
   steeringReplies: Set<string>;
   logger: Logger;
@@ -62,6 +64,7 @@ export type SidecarRuntimeDependencies = {
 
 export function createSidecarRuntime({
   runtimeState,
+  taskTranscript,
   subagentSnapshots,
   steeringReplies,
   logger,
@@ -99,6 +102,7 @@ export function createSidecarRuntime({
     // the current turn's state in Agent Host or the renderer. Persistence is a
     // separate call, so dropping it here still archives it as history.
     if (isStaleTerminalEvent(envelope)) return;
+    taskTranscript.observe(envelope);
     runtimeState.agentHostBridge?.ingest(envelope);
     sendToRenderer(IPC.event.agentMessage, envelope);
     // The live half of the plugin stream. Delivery is filtered inside the

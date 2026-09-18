@@ -139,6 +139,27 @@ pub struct MessageAttachment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MessageTask {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<MessageUsage>,
+    #[serde(default)]
+    pub usage_incomplete: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_duration: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_message_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UiMessage {
     pub id: String,
     pub role: String,
@@ -204,6 +225,10 @@ pub struct UiMessage {
     /// Subagent definition name that produced the row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<MessageTask>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -326,6 +351,14 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
     }
     if let Some(agent) = &message.agent_name {
         meta_obj.insert("agentName".into(), json!(agent));
+    }
+    if let Some(task_id) = &message.task_id {
+        meta_obj.insert("taskId".into(), json!(task_id));
+    }
+    if let Some(task) = &message.task {
+        if let Ok(val) = serde_json::to_value(task) {
+            meta_obj.insert("task".into(), val);
+        }
     }
     let meta = if meta_obj.is_empty() {
         None
@@ -457,6 +490,13 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
         .get("agentName")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let task_id = meta
+        .get("taskId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let task = meta
+        .get("task")
+        .and_then(|v| serde_json::from_value::<MessageTask>(v.clone()).ok());
     let thinking = blocks
         .iter()
         .filter_map(|b| {
@@ -536,6 +576,8 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             is_error,
             parent_tool_call_id,
             agent_name,
+            task_id: task_id.clone(),
+            task: task.clone(),
         }
     } else {
         let content = blocks
@@ -575,6 +617,8 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             is_error,
             parent_tool_call_id,
             agent_name,
+            task_id,
+            task,
         }
     }
 }
@@ -1299,6 +1343,146 @@ pub fn invalidate_transcript_layout(session_id: &str) {
     }
 }
 
+fn load_task_projection(
+    db: &Database,
+    session_id: &str,
+    turn_id: &str,
+    layout: &transcripts::TranscriptLayout,
+) -> Result<Option<MessageTask>> {
+    let task_summary = layout.task_summaries.get(turn_id);
+
+    let row: Option<(String, i64, Option<i64>, Option<String>)> = db
+        .conn()
+        .query_row(
+            "SELECT status, started_at, ended_at, usage_json FROM turns WHERE id = ?1 AND session_id = ?2",
+            params![turn_id, session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()?;
+
+    // Without transcript summary, do not force-synthesize full statistics for legacy messages
+    if task_summary.is_none() && row.is_none() {
+        return Ok(None);
+    }
+    if task_summary.is_none() {
+        return Ok(None);
+    }
+
+    let (db_status_mapped, started_at_db, ended_at_db, db_usage) = match row {
+        Some((s, started, ended, u)) => {
+            let status = match s.as_str() {
+                "aborted" | "interrupted" => "aborted",
+                "error" | "failed" => "failed",
+                "completed" => "completed",
+                _ => {
+                    if ended.is_some() {
+                        "completed"
+                    } else {
+                        "running"
+                    }
+                }
+            };
+            let usage: Option<MessageUsage> =
+                u.as_deref().and_then(|str_val| serde_json::from_str(str_val).ok());
+            (Some(status), Some(started), ended, usage)
+        }
+        None => (None, None, None, None),
+    };
+
+    // Aborted/error from DB takes precedence; DB running does not overwrite transcript terminal
+    let summary_status = task_summary
+        .and_then(|t| t.get("status").and_then(Value::as_str))
+        .unwrap_or("running");
+
+    let effective_status = match db_status_mapped {
+        Some("aborted") => "aborted".to_string(),
+        Some("failed") => "failed".to_string(),
+        Some("completed") => {
+            if summary_status == "aborted" || summary_status == "failed" {
+                summary_status.to_string()
+            } else {
+                "completed".to_string()
+            }
+        }
+        _ => {
+            if summary_status != "running" {
+                summary_status.to_string()
+            } else {
+                "running".to_string()
+            }
+        }
+    };
+
+    let summary_usage: Option<MessageUsage> = task_summary
+        .and_then(|t| t.get("usage"))
+        .and_then(|u| serde_json::from_value(u.clone()).ok());
+
+    let mut usage_incomplete = task_summary
+        .and_then(|t| t.get("usageIncomplete").and_then(Value::as_bool))
+        .unwrap_or(effective_status != "completed" || summary_usage.is_none());
+
+    let final_usage = match (summary_usage, db_usage) {
+        (Some(sum_u), Some(db_u)) => {
+            if db_u.total_tokens > sum_u.total_tokens {
+                usage_incomplete = true;
+                Some(db_u)
+            } else {
+                Some(sum_u)
+            }
+        }
+        (Some(sum_u), None) => Some(sum_u),
+        (None, Some(db_u)) => {
+            usage_incomplete = true;
+            Some(db_u)
+        }
+        (None, None) => None,
+    };
+
+    if effective_status != "completed" || final_usage.is_none() {
+        usage_incomplete = true;
+    }
+
+    let summary_started = task_summary
+        .and_then(|t| t.get("startedAt").and_then(Value::as_str))
+        .map(str::to_string);
+
+    let (started_at, estimated_duration) = if let Some(started) = summary_started {
+        (
+            Some(started),
+            task_summary.and_then(|t| t.get("estimatedDuration").and_then(Value::as_bool)),
+        )
+    } else if let Some(started_ms) = started_at_db {
+        (Some(ms_to_ts(started_ms)), Some(true))
+    } else {
+        (None, None)
+    };
+
+    let summary_ended = task_summary
+        .and_then(|t| t.get("endedAt").and_then(Value::as_str))
+        .map(str::to_string);
+    let ended_at = summary_ended.or_else(|| ended_at_db.map(ms_to_ts));
+
+    let final_message_id = if effective_status == "completed" {
+        task_summary
+            .and_then(|t| t.get("finalMessageId").and_then(Value::as_str))
+            .map(str::to_string)
+    } else {
+        None
+    };
+
+    Ok(Some(MessageTask {
+        id: turn_id.to_string(),
+        revision: task_summary.and_then(|t| t.get("revision").and_then(Value::as_u64)),
+        status: effective_status,
+        started_at,
+        ended_at,
+        usage: final_usage,
+        usage_incomplete,
+        estimated_duration,
+        final_message_id,
+    }))
+}
+
 pub fn get_session(db: &Database, id: &str) -> Result<Option<SessionDetail>> {
     get_session_with_options(db, id, SessionReadOptions::default())
 }
@@ -1322,16 +1506,11 @@ pub fn get_session_with_options(
         return Ok(None);
     };
 
+    let layout = session_layout(db, id)?;
+    let total = layout.message_count();
     let (records, compactions, message_start, has_more_before, message_end, has_more_after) =
         if let Some(raw_limit) = options.message_limit.filter(|limit| *limit > 0) {
             let limit = raw_limit.min(1_000) as usize;
-            // Window coordinates are physical transcript lines, so they must be
-            // clamped against the file layout rather than against `last_seq`.
-            // The index counter is a deduplicated logical count: a retried
-            // append leaves two lines with one id, and mixing the two spaces
-            // silently dropped the newest messages of a long session.
-            let layout = session_layout(db, id)?;
-            let total = layout.message_count();
             let before = if let Some(message_id) = options.message_around.as_deref() {
                 let Some(position) =
                     transcripts::find_message_position(db.data_dir(), id, &layout, message_id)?
@@ -1376,7 +1555,7 @@ pub fn get_session_with_options(
     // renderer window may additionally request a display cap so a single
     // pasted or tool-produced multi-megabyte message never crosses the UI IPC
     // boundary. The uncapped path remains lossless for model reconstruction.
-    let messages: Vec<UiMessage> = match options.content_limit {
+    let mut messages: Vec<UiMessage> = match options.content_limit {
         Some(limit) => records
             .into_iter()
             .map(|record| {
@@ -1395,6 +1574,26 @@ pub fn get_session_with_options(
             .collect(),
         None => records.into_iter().map(record_to_ui).collect(),
     };
+    let mut task_by_id: std::collections::HashMap<String, MessageTask> =
+        std::collections::HashMap::new();
+    let mut window_task_ids = std::collections::HashSet::new();
+    for msg in &messages {
+        if let Some(task_id) = &msg.task_id {
+            window_task_ids.insert(task_id.clone());
+        }
+    }
+    for task_id in &window_task_ids {
+        if let Ok(Some(proj)) = load_task_projection(db, id, task_id, &layout) {
+            task_by_id.insert(task_id.clone(), proj);
+        }
+    }
+    for msg in &mut messages {
+        if let Some(task_id) = &msg.task_id {
+            if let Some(auth_task) = task_by_id.get(task_id) {
+                msg.task = Some(auth_task.clone());
+            }
+        }
+    }
     let parent_call_id = options.message_around.as_deref().and_then(|target| {
         messages
             .iter()
@@ -1403,7 +1602,7 @@ pub fn get_session_with_options(
     });
     let navigation_parent = match parent_call_id {
         Some(call_id) => {
-            transcripts::read_tool_call(db.data_dir(), id, &session_layout(db, id)?, call_id)?.map(
+            transcripts::read_tool_call(db.data_dir(), id, &layout, call_id)?.map(
                 |record| match options.content_limit {
                     Some(limit) => record_to_ui_for_display(record, limit),
                     None => record_to_ui(record),
@@ -3369,6 +3568,8 @@ mod tests {
             parent_tool_call_id: None,
             agent_name: None,
             session_message: None,
+            task_id: None,
+            task: None,
         }
     }
 
@@ -3867,6 +4068,8 @@ mod tests {
             parent_tool_call_id: None,
             agent_name: None,
             session_message: None,
+            task_id: None,
+            task: None,
         };
         append_message(&db, &session.id, &tool, None).unwrap();
         // Host recovery may replay the Electron persistence outbox; a message
@@ -4214,6 +4417,8 @@ mod tests {
             parent_tool_call_id: None,
             agent_name: None,
             session_message: None,
+            task_id: None,
+            task: None,
         };
         append_message(&db, &session.id, &assistant, None).unwrap();
 

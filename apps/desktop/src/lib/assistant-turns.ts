@@ -36,6 +36,7 @@ export type SubagentRun = {
 
 export type AssistantTurnPart =
   | { kind: "message"; message: UiMessage }
+  | { kind: "compaction"; mark: ContextCompactionMark }
   | {
       kind: "activity";
       items: AssistantActivityItem[];
@@ -47,6 +48,9 @@ export type AssistantTurnEntry = {
   id: string;
   anchorId?: string;
   parts: AssistantTurnPart[];
+  task?: UiMessage["task"];
+  sourceMessages?: UiMessage[];
+  finalMessageId?: string;
 };
 
 export type TranscriptEntry =
@@ -133,9 +137,44 @@ export function buildTranscriptEntries(
     else anchored.set(mark.throughMessageId, [mark]);
   }
   const entries: TranscriptEntry[] = [];
+  const taskRoots = new Map<string, UiMessage>();
+  for (const message of messages) {
+    if (!message.task) continue;
+    const previous = taskRoots.get(message.task.id)?.task;
+    if (!previous || (previous.status === "running" && message.task.status !== "running")
+      || (previous.status === message.task.status && (message.task.revision ?? 0) >= (previous.revision ?? 0))) {
+      taskRoots.set(message.task.id, message);
+    }
+  }
+  const taskTurns = new Map<string, AssistantTurnEntry>();
+  const taskSources = new Map<string, UiMessage[]>();
+  for (const message of messages) {
+    const taskId = message.taskId ?? message.task?.id;
+    if (!taskId) continue;
+    const source = taskSources.get(taskId) ?? [];
+    source.push(message);
+    taskSources.set(taskId, source);
+  }
   let turn: AssistantTurnEntry | undefined;
 
   const ensureTurn = (message: UiMessage) => {
+    const taskId = message.taskId ?? message.task?.id;
+    const root = taskId ? taskRoots.get(taskId) : undefined;
+    if (root?.task) {
+      const existing = taskTurns.get(root.task.id);
+      if (existing) return (turn = existing);
+      turn = {
+        kind: "assistant-turn",
+        id: `task:${root.task.id}`,
+        task: root.task,
+        sourceMessages: taskSources.get(root.task.id) ?? [],
+        parts: [],
+      };
+      taskTurns.set(root.task.id, turn);
+      entries.push(turn);
+      return turn;
+    }
+    if (turn?.task) turn = undefined;
     if (turn) return turn;
     turn = {
       kind: "assistant-turn",
@@ -163,9 +202,14 @@ export function buildTranscriptEntries(
   };
 
   const appendMessage = (message: UiMessage) => {
+    if (message.role === "user" && message.steering && message.taskId && taskRoots.has(message.taskId)) {
+      ensureTurn(message).parts.push({ kind: "message", message });
+      return;
+    }
     if (message.role === "user" || message.role === "system") {
       turn = undefined;
       entries.push({ kind: "message", message });
+      if (message.role === "user" && message.task) ensureTurn(message);
       return;
     }
 
@@ -196,6 +240,11 @@ export function buildTranscriptEntries(
     appendMessage(message);
     const marks = anchored.get(message.id);
     if (!marks) continue;
+    const currentTask = taskTurns.get(message.taskId ?? message.task?.id ?? "");
+    if (currentTask) {
+      for (const mark of marks) currentTask.parts.push({ kind: "compaction", mark });
+      continue;
+    }
     // The row is a divider, so whatever turn it lands inside ends there and the
     // next assistant fragment opens a new one.
     turn = undefined;
@@ -204,6 +253,19 @@ export function buildTranscriptEntries(
 
   for (const entry of entries) {
     if (entry.kind !== "assistant-turn") continue;
+    if (entry.task?.status === "completed") {
+      // A terminal status alone does not turn narration preceding a tool into
+      // a final delivery. Only the last main-agent output can be that answer.
+      const last = entry.task.finalMessageId
+        ? entry.sourceMessages?.find((message) => message.id === entry.task?.finalMessageId)
+        : entry.sourceMessages?.filter((message) =>
+          !message.parentToolCallId && (message.role === "assistant" || message.role === "tool"),
+        ).at(-1);
+      if (last?.role === "assistant" && last.status === "complete" && !last.error && last.content?.trim()) {
+        entry.finalMessageId = last.id;
+        entry.anchorId = last.id;
+      }
+    }
     for (let index = 0; index < entry.parts.length; index += 1) {
       const part = entry.parts[index];
       const next = entry.parts[index + 1];
@@ -292,6 +354,9 @@ function reuseTurnPart(
   next: AssistantTurnPart,
 ): AssistantTurnPart {
   if (!previous || previous.kind !== next.kind) return next;
+  if (previous.kind === "compaction" && next.kind === "compaction") {
+    return previous.mark === next.mark ? previous : next;
+  }
   if (previous.kind === "message" && next.kind === "message") {
     return previous.message === next.message ? previous : next;
   }
@@ -341,6 +406,10 @@ function reuseTranscriptEntry(
     );
     if (
       previous.anchorId === next.anchorId &&
+      previous.task === next.task &&
+      previous.finalMessageId === next.finalMessageId &&
+      previous.sourceMessages?.length === next.sourceMessages?.length &&
+      (next.sourceMessages ?? []).every((message, index) => message === previous.sourceMessages?.[index]) &&
       parts.length === previous.parts.length &&
       parts.every((part, index) => part === previous.parts[index])
     ) {
@@ -412,6 +481,11 @@ export function assistantTurnTools(entry: AssistantTurnEntry): UiMessage[] {
 export function assistantTurnResponseDuration(
   entry: AssistantTurnEntry,
 ): number | undefined {
+  if (entry.task) {
+    const start = Date.parse(entry.task.startedAt ?? "");
+    const end = Date.parse(entry.task.endedAt ?? "");
+    return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : undefined;
+  }
   const durations = assistantTurnMessages(entry).flatMap((message) =>
     typeof message.responseDurationMs === "number" &&
     Number.isFinite(message.responseDurationMs) &&
@@ -457,6 +531,7 @@ export function assistantTurnContent(entry: AssistantTurnEntry): string {
 export function assistantTurnUsage(
   entry: AssistantTurnEntry,
 ): MessageUsage | undefined {
+  if (entry.task) return entry.task.usage;
   const usages = assistantTurnMessages(entry).flatMap((message) =>
     message.usage ? [message.usage] : [],
   );

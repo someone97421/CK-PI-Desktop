@@ -493,14 +493,18 @@ export function createEventsSlice({
             );
           }
           break;
-        case "agent_end":
+        case "agent_end": {
           set({ isRunning: false });
           void get().refreshSessions();
           void triggerAutoTitleSummarization(envelope.sessionId);
           break;
+        }
         case "turn_end":
           break;
         case "message_start":
+          if (envelope.turnId && !event.message.taskId) {
+            event.message.taskId = envelope.turnId;
+          }
           set((state) =>
             state.messages.some((message) => message.id === event.message.id)
               ? state
@@ -527,9 +531,10 @@ export function createEventsSlice({
           });
           break;
         case "message_end":
-          set((state) => ({
-            messages: projectMessageEnd(state.messages, event),
-          }));
+          if (envelope.turnId && !event.message.taskId) {
+            event.message.taskId = envelope.turnId;
+          }
+          set((state) => ({ messages: projectMessageEnd(state.messages, event) }));
           break;
         case "tool_start":
           set((state) => ({
@@ -538,6 +543,7 @@ export function createEventsSlice({
               {
                 id: event.toolCallId,
                 role: "tool",
+                ...(envelope.turnId ? { taskId: envelope.turnId } : {}),
                 content: "",
                 createdAt: new Date(envelope.ts).toISOString(),
                 toolCallId: event.toolCallId,
@@ -582,6 +588,7 @@ export function createEventsSlice({
             const completed = {
               id: event.toolCallId,
               role: "tool" as const,
+              ...(envelope.turnId ? { taskId: envelope.turnId } : {}),
               content:
                 typeof event.result === "string"
                   ? event.result
@@ -612,6 +619,7 @@ export function createEventsSlice({
                           ...message,
                           ...completed,
                           toolName: message.toolName ?? completed.toolName,
+                          ...(completed.taskId || message.taskId ? { taskId: completed.taskId ?? message.taskId } : {}),
                           toolArgs: message.toolArgs ?? completed.toolArgs,
                           createdAt: message.createdAt || completed.createdAt,
                         }

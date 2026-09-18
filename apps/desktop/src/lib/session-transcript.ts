@@ -56,6 +56,14 @@ export function projectMessageEnd(
   messages: UiMessage[],
   event: Extract<AgentEvent, { type: "message_end" }>,
 ): UiMessage[] {
+  if (event.taskSummary && event.message.task) {
+    const task = event.message.task;
+    return messages.map((message) =>
+      (message.taskId ?? message.task?.id) === task.id
+        && (message.task?.revision ?? 0) <= (task.revision ?? 0)
+        ? { ...message, task } : message,
+    );
+  }
   let next = messages;
   const replacesMessageId = event.replacesMessageId;
   if (replacesMessageId && replacesMessageId !== event.message.id) {

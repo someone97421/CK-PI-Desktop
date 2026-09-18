@@ -112,6 +112,7 @@ const {
   peekAbortReason,
   clearAbortReason,
   releaseTurnClaims,
+  taskTranscript,
 } = coordination;
 /** The Agent Host turn state for one settled turn. */
 function hostTurnStatus(
@@ -184,7 +185,10 @@ function finishTurn(
   // start while this one unwinds, and everything keyed by the session alone is
   // then its data.
   const reason = peekAbortReason(id, turnId) ?? status;
-  const turnUsage = activeTurnUsages.get(id);
+  const taskStatus = reason === "aborted" ? "aborted" : reason === "error" ? "failed" : "completed";
+  const taskPersistence = taskTranscript.finish(id, turnId, taskStatus)
+    .then(() => null, (error: unknown) => error instanceof Error ? error : new Error(String(error)));
+  const turnUsage = taskTranscript.usage(id, turnId) ?? activeTurnUsages.get(id);
   activeTurnUsages.delete(id);
   const runId = scheduledRunsBySession.get(id);
   if (runId) scheduledRunsBySession.delete(id);
@@ -195,6 +199,12 @@ function finishTurn(
   const recoverInflight = options.recoverInflight === true;
 
   const runFinalization = async (): Promise<void> => {
+    const taskPersistenceError = await taskPersistence;
+    if (taskPersistenceError) {
+      logger.app("persistence", "warn", "task summary remains pending; settling execution independently", {
+        sessionId: id, data: String(taskPersistenceError),
+      });
+    }
     try {
       if (runtimeState.host) {
         try {

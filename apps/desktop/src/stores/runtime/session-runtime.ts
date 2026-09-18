@@ -288,6 +288,7 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
         next = upsertLiveSessionMessage(current, {
           id: event.toolCallId,
           role: "tool",
+          ...(envelope.turnId ? { taskId: envelope.turnId } : {}),
           content: "",
           createdAt: new Date(envelope.ts).toISOString(),
           toolCallId: event.toolCallId,
@@ -325,6 +326,7 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
         const completed: UiMessage = {
           id: event.toolCallId,
           role: "tool",
+          ...(envelope.turnId ? { taskId: envelope.turnId } : {}),
           content:
             typeof event.result === "string"
               ? event.result

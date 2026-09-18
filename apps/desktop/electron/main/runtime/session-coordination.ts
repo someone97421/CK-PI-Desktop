@@ -7,6 +7,7 @@ import {
 import {
   shouldCreateTaskNotification as shouldCreateTaskNotificationPolicy,
 } from "../notification-policy";
+import { TaskTranscript } from "./task-transcript";
 
 /**
  * Terminal state of one host turn. `aborted` is reserved for a turn the host
@@ -22,7 +23,9 @@ export type TurnEndedPayload = {
   reason: TurnEndReason;
 };
 
+
 export type SessionCoordinationDependencies = {
+
   activeTurns: Map<string, string>;
   getMainWindow: () => BrowserWindow | null;
   getViewingSessionId: () => string | null;
@@ -57,6 +60,7 @@ export function createSessionCoordination({
    * the frozen record already owns the turn.
    */
   const pendingAbortReasons = new Map<string, TurnEndReason>();
+  const taskTranscript = new TaskTranscript(activeTurns);
 
   async function acquireSessionOperation(sessionId: string): Promise<() => void> {
     const id = sessionId.trim();
@@ -266,5 +270,6 @@ export function createSessionCoordination({
     isTurnDispatchable,
     isSessionBusy,
     isStaleTerminalEvent,
+    taskTranscript,
   };
 }

@@ -67,7 +67,8 @@ function subagentTagged(message: UiMessage, envelope: AgentEventEnvelope): UiMes
 
 function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined {
   const event = envelope.event;
-  const turnId = activeTurns.get(envelope.sessionId);
+  const turnId = envelope.turnId;
+  const taskId = envelope.turnId ?? ("message" in event ? event.message.taskId : undefined);
   const executionId = (() => {
     const candidate = approvedExecutionIdsBySession.get(envelope.sessionId);
     if (!candidate) return undefined;
@@ -253,7 +254,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
     }
   }
   if (event.type === "message_end" && event.message.role === "assistant") {
-    if (!envelope.parentToolCallId && event.message.usage) {
+    if (!envelope.parentToolCallId && event.message.usage && turnId === activeTurns.get(envelope.sessionId)) {
       addActiveTurnUsage(envelope.sessionId, event.message.usage);
     }
     // Checkpoint the finished snapshot before the outbox append (D327).
@@ -287,8 +288,11 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
         {
           key: `message:${envelope.sessionId}:${event.message.id}`,
           sessionId: envelope.sessionId,
-          message: subagentTagged(event.message, envelope),
-          turnId,
+          message: {
+            ...subagentTagged(event.message, envelope),
+            ...(taskId ? { taskId } : {}),
+          },
+          turnId: envelope.turnId ?? turnId,
         },
         () => runtimeState.host,
       )
@@ -307,7 +311,10 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
         {
           key: `message:${envelope.sessionId}:${event.message.id}`,
           sessionId: envelope.sessionId,
-          message: subagentTagged(event.message, envelope),
+          message: {
+            ...subagentTagged(event.message, envelope),
+            ...(taskId ? { taskId } : {}),
+          },
           turnId: envelope.turnId ?? turnId,
         },
         () => runtimeState.host,
@@ -326,6 +333,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
     const message: UiMessage = {
       id: event.toolCallId,
       role: "tool",
+      ...(taskId || started?.turnId ? { taskId: taskId ?? started.turnId } : {}),
       content:
         typeof event.result === "string"
           ? event.result

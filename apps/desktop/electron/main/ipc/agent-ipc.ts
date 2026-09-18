@@ -531,6 +531,7 @@ export function registerAgentIpc({
       ),
 
       role: "user" as const,
+      taskId: durableTurnId,
       content: promptContent,
       ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
       createdAt: new Date().toISOString(),
@@ -568,11 +569,13 @@ export function registerAgentIpc({
     }
     emitAgentEvent({
       sessionId: req.sessionId,
+      turnId: durableTurnId,
       ts: Date.now(),
       event: { type: "message_start", message: userMessage },
     } satisfies AgentEventEnvelope);
     emitAgentEvent({
       sessionId: req.sessionId,
+      turnId: durableTurnId,
       ts: Date.now(),
       event: { type: "message_end", message: userMessage },
     } satisfies AgentEventEnvelope);

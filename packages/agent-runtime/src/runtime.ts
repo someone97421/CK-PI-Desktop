@@ -7830,7 +7830,7 @@ Delegation rules:
         this.agent.state.isStreaming ||
         this.compactionInProgress ||
         this.agentActivity !== undefined ||
-        (!this.turnHadError && this.runningDelegations().length > 0),
+        this.keepTurnOpenForDelegates(),
       currentTurnId: this.turnId,
       modelId: this.provider.modelId,
       pendingToolConfirmations: 0,

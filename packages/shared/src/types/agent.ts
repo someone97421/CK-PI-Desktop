@@ -233,7 +233,7 @@ export type AgentEvent =
       resetText?: boolean;
       resetThinking?: boolean;
     }
-  | { type: "message_end"; message: UiMessage; precedingAssistant?: UiMessage; replacesMessageId?: string }
+  | { type: "message_end"; message: UiMessage; precedingAssistant?: UiMessage; replacesMessageId?: string; taskSummary?: boolean }
   | { type: "user_message_persisted"; optimisticMessageId: string; message: UiMessage }
   | { type: "tool_start"; toolCallId: string; toolName: string; args: unknown }
   | { type: "tool_update"; toolCallId: string; partialResult?: unknown }

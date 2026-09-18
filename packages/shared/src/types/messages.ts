@@ -65,10 +65,29 @@ export type ToolTokenUsage = {
   estimated: true;
 };
 
+export type TaskStatus = "running" | "completed" | "aborted" | "failed";
+
+export interface MessageTask {
+  id: string;
+  /** Monotonic presentation snapshot revision within this task. */
+  revision?: number;
+  status: TaskStatus;
+  startedAt?: string;
+  endedAt?: string;
+  usage?: MessageUsage;
+  usageIncomplete: boolean;
+  estimatedDuration?: boolean;
+  finalMessageId?: string;
+}
+
 export type UiMessage = {
   id: string;
   role: UiMessageRole;
   content: string;
+  /** Task identifier associated with this turn/message. */
+  taskId?: string;
+  /** Presentation task summary; history pages may project it onto every task message. */
+  task?: MessageTask;
   /** Authenticated agent-to-agent provenance; never inferred from message text. */
   sessionMessage?: SessionMessageOrigin;
   /** Files or images associated with a user turn, kept separate from text. */

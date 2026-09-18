@@ -122,6 +122,8 @@ pub struct TranscriptLayout {
     pub compaction_offsets: Vec<u64>,
     /// Byte length of the file prefix this layout describes.
     pub file_len: u64,
+    /// Latest task summary by taskId.
+    pub task_summaries: std::collections::HashMap<String, serde_json::Value>,
 }
 
 impl TranscriptLayout {
@@ -315,6 +317,72 @@ pub fn refresh_layout(
 }
 
 /// Scan from `layout.file_len` to the end of the file, appending offsets.
+#[derive(Deserialize)]
+struct MessageTaskMetaProbe {
+    #[serde(default)]
+    meta: Option<TaskMetaProbe>,
+}
+
+#[derive(Deserialize)]
+struct TaskMetaProbe {
+    #[serde(rename = "taskId", default)]
+    task_id: Option<String>,
+    #[serde(default)]
+    task: Option<serde_json::Value>,
+}
+
+fn is_terminal_task_status(status: Option<&str>) -> bool {
+    matches!(
+        status,
+        Some("completed" | "aborted" | "failed" | "error" | "interrupted")
+    )
+}
+
+fn extract_task_summary(
+    line: &str,
+    summaries: &mut std::collections::HashMap<String, serde_json::Value>,
+) {
+    if !line.contains("\"task\"") && !line.contains("\"taskId\"") {
+        return;
+    }
+    let Ok(parsed) = serde_json::from_str::<MessageTaskMetaProbe>(line) else {
+        return;
+    };
+    let Some(meta) = parsed.meta else {
+        return;
+    };
+    let Some(task_val) = meta.task else {
+        return;
+    };
+    let task_id = match meta.task_id.as_deref() {
+        Some(id) if !id.is_empty() => id,
+        _ => match task_val.get("id").and_then(Value::as_str) {
+            Some(id) if !id.is_empty() => id,
+            _ => return,
+        },
+    };
+
+    let new_status = task_val.get("status").and_then(Value::as_str);
+    let new_is_terminal = is_terminal_task_status(new_status);
+
+    if let Some(existing) = summaries.get_mut(task_id) {
+        let existing_status = existing.get("status").and_then(Value::as_str);
+        let existing_is_terminal = is_terminal_task_status(existing_status);
+
+        if existing_is_terminal && !new_is_terminal {
+            return;
+        }
+        let old_revision = existing.get("revision").and_then(Value::as_u64).unwrap_or(0);
+        let new_revision = task_val.get("revision").and_then(Value::as_u64).unwrap_or(0);
+        if existing_is_terminal == new_is_terminal && new_revision < old_revision {
+            return;
+        }
+        *existing = task_val;
+    } else {
+        summaries.insert(task_id.to_string(), task_val);
+    }
+}
+
 fn scan_layout(path: &Path, mut layout: TranscriptLayout) -> Result<TranscriptLayout> {
     let mut file = match File::open(path) {
         Ok(file) => file,
@@ -343,7 +411,10 @@ fn scan_layout(path: &Path, mut layout: TranscriptLayout) -> Result<TranscriptLa
             break;
         }
         match sniff_line_kind(line.trim_end()) {
-            Some("message") => layout.message_offsets.push(offset),
+            Some("message") => {
+                layout.message_offsets.push(offset);
+                extract_task_summary(&line, &mut layout.task_summaries);
+            }
             Some("compaction") => layout.compaction_offsets.push(offset),
             _ => {}
         }
