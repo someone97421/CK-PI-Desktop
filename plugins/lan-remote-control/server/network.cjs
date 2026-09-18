@@ -3,9 +3,8 @@
 /**
  * LAN interface selection.
  *
- * The remote-control server binds exactly one private IPv4 address; 0.0.0.0
- * (or ::) would put the panel on every interface the machine happens to have,
- * including public ones, so the choice is always explicit and re-validated.
+ * 服务逐个绑定 listLanAddresses 返回的本机私网 IPv4，不使用 0.0.0.0 或 ::，
+ * 避免同时暴露机器上的公网网卡。每个监听建立后再次核对实际绑定地址。
  */
 
 const os = require("node:os");
