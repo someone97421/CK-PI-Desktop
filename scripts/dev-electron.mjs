@@ -94,7 +94,7 @@ export function prepareMacDevelopmentBundle({
 
     const plistPath = join(contents, "Info.plist");
     setPlistString(plistPath, "CFBundleDisplayName", DISPLAY_NAME);
-    setPlistString(plistPath, "CFBundleName", DISPLAY_NAME);
+    setPlistString(plistPath, "CFBundleName", APP_NAME);
     setPlistString(plistPath, "CFBundleExecutable", APP_NAME);
     setPlistString(plistPath, "CFBundleIdentifier", DEV_BUNDLE_ID);
     setPlistString(plistPath, "CFBundleIconFile", "icon.icns");
