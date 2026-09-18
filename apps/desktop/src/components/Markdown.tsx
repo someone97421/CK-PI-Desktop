@@ -56,6 +56,7 @@ import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import {
   isLocalFileHref,
   remarkChatFileLinks,
+  rehypeWindowsFileLinks,
   resolvePreviewTarget,
   safeDecodeUri,
   toWorkspaceRel,
@@ -973,7 +974,7 @@ const sanitizeSchema = {
   ],
 };
 
-const rehypePlugins = [rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeKatex] as Options["rehypePlugins"];
+const rehypePlugins = [rehypeRaw, rehypeWindowsFileLinks, [rehypeSanitize, sanitizeSchema], rehypeKatex] as Options["rehypePlugins"];
 
 /* ---------- block splitting ---------- */
 

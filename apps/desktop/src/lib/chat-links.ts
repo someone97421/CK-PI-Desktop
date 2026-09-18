@@ -380,3 +380,32 @@ export function remarkChatFileLinks(
     };
   };
 }
+
+type FileLinkHastNode = {
+  type: string;
+  tagName?: string;
+  properties?: { href?: unknown };
+  children?: FileLinkHastNode[];
+};
+
+/**
+ * Windows 盘符不是 URL 协议。先转成现有文件引用支持的 /C:/… 形式，
+ * 避免 sanitizer 和 ReactMarkdown 的 URL 过滤器将 href 清空。
+ * 在 rehypeRaw 之后、sanitize 之前执行，覆盖表格和 HTML 中的链接；
+ * 其他协议仍走原有过滤，文件访问仍由宿主检查路径权限。
+ */
+export function rehypeWindowsFileLinks() {
+  return (tree: FileLinkHastNode) => {
+    function walk(node: FileLinkHastNode) {
+      if (node.type === "element" && node.tagName === "a"
+        && typeof node.properties?.href === "string") {
+        const href = node.properties.href.trim();
+        if (/^\/?[A-Za-z]:(?:[/\\]|%5c)/i.test(href)) {
+          node.properties.href = `/${href.replaceAll("\\", "/").replace(/^\//, "")}`;
+        }
+      }
+      for (const child of node.children ?? []) walk(child);
+    }
+    walk(tree);
+  };
+}

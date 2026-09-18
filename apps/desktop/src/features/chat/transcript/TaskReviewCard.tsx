@@ -50,7 +50,6 @@ export function TaskReviewCard({ messages }: { messages: UiMessage[] }) {
           {t("chat.taskDelivery.review")}
         </button>
       </div>
-      <p className="task-review-note">{t("chat.taskDelivery.scope")}</p>
       {untracked ? <p className="task-review-note">{t("chat.taskDelivery.missingEvidence")}</p> : null}
       {files.length ? <ul className="task-review-files">
         {files.map(([path, changes]) => <li key={path}>
