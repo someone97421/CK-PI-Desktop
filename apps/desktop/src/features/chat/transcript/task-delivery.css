@@ -94,8 +94,7 @@
   font-size: var(--text-sm);
 }
 
-.task-review-heading,
-.task-review-dialog-header {
+.task-review-heading {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -106,8 +105,7 @@
   flex: 0 0 auto;
 }
 
-.task-review-open,
-.task-review-dialog-header button {
+.task-review-open {
   margin-inline-start: auto;
 }
 
@@ -149,72 +147,7 @@
   line-height: var(--leading-body);
 }
 
-.task-review-dialog {
-  width: min(960px, calc(100vw - 32px));
-  max-width: calc(100vw - 32px);
-  max-height: calc(100dvh - 48px);
-  margin: auto;
-  padding: 20px;
-  overflow: auto;
-  border: 1px solid var(--ds-border-strong);
-  border-radius: var(--radius-lg);
-  color: var(--ds-text-primary);
-  background: var(--ds-bg-primary);
-  font-size: var(--text-sm);
-}
-
-.task-review-dialog::backdrop {
-  background: color-mix(in oklab, var(--ds-bg-inset) 65%, transparent);
-}
-
-.task-review-dialog-header h2 {
-  margin: 0;
-  font-size: var(--text-base);
-  font-weight: var(--font-weight-medium);
-}
-
-.task-review-evidence {
-  display: grid;
-  gap: 20px;
-  min-width: 0;
-}
-
-.task-review-evidence h3 {
-  margin: 12px 0 8px;
-  font-weight: var(--font-weight-medium);
-}
-
-.task-review-snapshot {
-  min-width: 0;
-  margin-block: 8px;
-  border-radius: var(--radius-sm);
-  background: var(--ds-tile);
-}
-
-.task-review-snapshot .diff-counts {
-  display: inline-flex;
-  gap: 8px;
-  margin-inline-start: 12px;
-}
-
-.task-review-dialog .diff-line {
-  display: flex;
-  min-width: 0;
-  white-space: pre-wrap;
-}
-
-.task-review-dialog .diff-line-text {
-  min-width: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.task-review-dialog .diff-line-sign {
-  flex: 0 0 24px;
-}
-
-.task-process-drawer[open] > .task-process-content,
-.task-review-dialog[open] {
+.task-process-drawer[open] > .task-process-content {
   animation: task-delivery-reveal 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -224,14 +157,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task-process-drawer[open] > .task-process-content,
-  .task-review-dialog[open] {
+  .task-process-drawer[open] > .task-process-content {
     animation: none;
   }
 }
 
 @media (max-width: 480px) {
   .task-review-card { padding: 12px; }
-  .task-review-dialog { padding: 12px; }
   .task-review-files > li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 }

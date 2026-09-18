@@ -18,6 +18,8 @@ export type WorkPanelTab = {
   location?: string;
   /** Stored attachment mimeType for extension-less `attachments/<sha256>` images. */
   mimeType?: string;
+  /** 仅用于当前渲染会话的审阅筛选，不写入持久化设置。 */
+  reviewScope?: { messageIds: string[]; showAll?: boolean };
 };
 
 export type WorkPanelTabsState = {

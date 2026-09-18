@@ -1741,6 +1741,11 @@ sklm: {
       title: "No resource open",
     },
     review: {
+      scope: "Review scope",
+      taskScope: "This task",
+      sessionScope: "All session changes",
+      noTaskChanges: "No changes for this task in the currently loaded messages",
+      snapshotNote: "Snapshots are grouped by file. Line counts total individual operations, not net changes.",
       noWorkspace: "Open a project to see changes",
       clean: "No uncommitted changes in this project",
       noRepo: "This project isn't a Git repository",

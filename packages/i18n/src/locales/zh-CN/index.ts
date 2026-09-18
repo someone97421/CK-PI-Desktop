@@ -1723,6 +1723,11 @@ sklm: {
       title: "还没有打开的资源",
     },
     review: {
+      scope: "审阅范围",
+      taskScope: "本轮任务",
+      sessionScope: "全部会话改动",
+      noTaskChanges: "当前已加载的消息中没有本轮任务的改动记录",
+      snapshotNote: "按文件展示逐次修改快照；增删行数为操作累计，不代表净变化。",
       noWorkspace: "打开项目后即可查看改动",
       clean: "当前项目没有未提交的改动",
       noRepo: "当前项目还不是 Git 仓库",

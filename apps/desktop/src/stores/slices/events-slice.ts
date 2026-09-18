@@ -26,10 +26,6 @@ import {
   mergePlanCheckpoint,
 } from "../../lib/plan-mode-state";
 import { formatToolValue } from "../../lib/tool-display";
-import {
-  shouldOpenReviewArtifact,
-  toolWorkPanelTab,
-} from "../../lib/work-panel-tabs";
 import type { AppState } from "../app-state";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import type { StoreAccess } from "./types";
@@ -363,7 +359,6 @@ export function createEventsSlice({
           ...(envelope.agentName ? { agentName: envelope.agentName } : {}),
         });
       } else if (event.type === "tool_end") {
-        const toolName = runtime.getToolStart(event.toolCallId)?.toolName;
         set((state) => {
           const pendingPermissions = removePermissionForToolCall(
             state.pendingPermissions,
@@ -380,18 +375,6 @@ export function createEventsSlice({
             ? {}
             : { pendingPermissions, pendingAsks };
         });
-        if (
-          shouldOpenReviewArtifact({
-            toolName,
-            isError: event.isError,
-            result: event.result,
-          })
-        ) {
-          get().openWorkPanelTabForSession(
-            envelope.sessionId,
-            toolWorkPanelTab("review"),
-          );
-        }
       }
 
       if (event.type === "compaction_end" && event.ok && event.mark) {
