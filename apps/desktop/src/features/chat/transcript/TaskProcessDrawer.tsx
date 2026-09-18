@@ -2,6 +2,7 @@ import { useId, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { formatCompactTokenCount } from "@pi-desktop/shared";
 import type { AssistantTurnEntry } from "../../../lib/assistant-turns";
+import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
 import "./task-delivery.css";
 
 /** 只使用持久化的任务边界；旧历史不在视图层猜测结束时间。 */
@@ -11,6 +12,7 @@ export function TaskProcessDrawer({ task, children }: {
 }) {
   const { t } = useTranslation();
   const usageId = useId();
+  const holdDisclosurePosition = useDisclosureAnchorNotifier();
   const start = task.startedAt ? Date.parse(task.startedAt) : NaN;
   const end = task.endedAt ? Date.parse(task.endedAt) : NaN;
   const seconds = Number.isFinite(start) && Number.isFinite(end) && end >= start
@@ -36,7 +38,12 @@ export function TaskProcessDrawer({ task, children }: {
 
   return (
     <details className="task-process-drawer">
-      <summary className="task-process-summary" title={details} aria-describedby={usageId}>
+      <summary
+        className="task-process-summary"
+        title={details}
+        aria-describedby={usageId}
+        onClick={(event) => holdDisclosurePosition?.(event.currentTarget)}
+      >
         <span>
           {task.estimatedDuration ? "≈ " : ""}{duration}
           {" · "}{usage ? `${formatCompactTokenCount(usage.totalTokens)} tokens` : t("chat.taskDelivery.tokensUnknown")}

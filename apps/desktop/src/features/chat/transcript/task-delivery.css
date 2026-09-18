@@ -7,6 +7,13 @@
   max-width: 100%;
 }
 
+.task-process-drawer,
+.task-review-card {
+  width: 100%;
+  align-self: stretch;
+  box-sizing: border-box;
+}
+
 .task-process-drawer {
   margin-block: 8px 16px;
   color: var(--ds-text-secondary);
@@ -19,6 +26,19 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   overflow-wrap: anywhere;
+}
+
+.task-process-summary {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  letter-spacing: 0.02em;
+}
+
+.task-process-summary > span {
+  padding-inline-start: 6px;
 }
 
 .task-process-summary:hover,
