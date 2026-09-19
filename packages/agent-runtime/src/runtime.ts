@@ -3844,6 +3844,8 @@ Delegation rules:
         } catch (error) {
           record.status = record.stopRequested ? "stopped" : "failed";
           record.persistenceState = "persistence-error";
+          // 注册失败已由本次 Task 结果同步返回，不再作为后台完成报告补发。
+          record.reportDelivered = true;
           resolveCompletion();
           return this.subagentToolError(toolCallId, `Failed to register subagent execution: ${error instanceof Error ? error.message : String(error)}`);
         } finally {

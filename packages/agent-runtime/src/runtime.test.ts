@@ -6941,6 +6941,35 @@ describe("DesktopAgentRuntime subagents", () => {
     await runtime.dispose();
   });
 
+  it("does not replay a registration failure already returned by Task", async () => {
+    const runtime = createRuntime({ subagents: [explorer] });
+    const internal = runtime as any;
+    const begin = vi.spyOn(internal.persistenceClient, "beginExecution")
+      .mockRejectedValue(new Error("转录正在变化，请在保存完成后重新校验。"));
+    const prompt = vi.fn(async () => undefined);
+    internal.agent.prompt = prompt;
+    internal.agent.waitForIdle = vi.fn(async () => undefined);
+    const callsBefore = subagentRuns.calls.length;
+    try {
+      const result = await taskTool(runtime).execute("task-registration-failure", {
+        agent: "explorer",
+        task: "Find it.",
+      });
+      expect(result.content[0].text).toContain("Failed to register subagent execution");
+      expect(result.content[0].text).toContain("转录正在变化");
+      expect(subagentRuns.calls).toHaveLength(callsBefore);
+      expect([...internal.delegations.values()]).toEqual([
+        expect.objectContaining({ status: "failed", persistenceState: "persistence-error" }),
+      ]);
+      expect(internal.keepTurnOpenForDelegates()).toBe(false);
+      await internal.resumeAfterDelegations();
+      expect(prompt).not.toHaveBeenCalled();
+    } finally {
+      begin.mockRestore();
+      await runtime.dispose();
+    }
+  });
+
   it("does not replay a report that TaskWait already returned", async () => {
     const runtime = createRuntime({ subagents: [explorer] });
     subagentRuns.calls.length = 0;
