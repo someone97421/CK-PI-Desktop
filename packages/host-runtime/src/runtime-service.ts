@@ -377,7 +377,6 @@ export class RuntimeService implements RuntimePort {
         ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
         attachments: [],
         userMessageId: userMessage.id,
-        userMessageId: userMessage.id,
         // No per-turn `permissionMode` override here: the sidecar stub does
         // not enforce it and host-core has no per-turn parameter, so a
         // mismatched ceiling is refused in assertPerTurnPermissionMode before
