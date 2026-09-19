@@ -31,6 +31,15 @@ export type SubagentPreset = {
   body: string;
 };
 
+/** 内置子代理每完成多少次工具调用回报一次进度。 */
+export const BUILTIN_SUBAGENT_REPORT_INTERVALS: Readonly<Record<SubagentPreset["id"], number>> = {
+  explorer: 32,
+  "code-reviewer": 32,
+  worker: 64,
+  fixer: 64,
+  "ui-designer": 64,
+};
+
 /**
  * Built-in presets. Keep in lockstep with `BUILTIN_SUBAGENT_DOCUMENTS` in
  * `agent-runtime/src/subagent-definitions.ts` so a user picking "explorer" in
@@ -193,6 +202,7 @@ export function fallbackBuiltinDefinitions(): SubagentDefinition[] {
     description: preset.description,
     prompt: preset.body,
     tools: [...preset.tools],
+    reportIntervalSteps: BUILTIN_SUBAGENT_REPORT_INTERVALS[preset.id],
     source: "builtin",
   }));
 }

@@ -17,6 +17,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  BUILTIN_SUBAGENT_REPORT_INTERVALS,
   mergeSubagentDefinitions,
   parseSubagentDefinition,
   subagentModelKey,
@@ -57,6 +58,7 @@ export const BUILTIN_SUBAGENT_DOCUMENTS: readonly string[] = [
 name: explorer
 description: Investigate a bounded codebase question, subsystem, call chain or fault hypothesis and return concise evidence. Useful when several searches or file reads can be handled independently or save the main agent context.
 tools: [Read, Glob, Grep, Bash]
+reportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS.explorer}
 ---
 
 You are Explorer — a fast codebase navigation specialist.
@@ -82,6 +84,7 @@ than a guess.
 name: code-reviewer
 description: Focused read-only review of finished changes for defects, edge cases and missing coverage. Use when a fresh perspective can catch mistakes or resolve uncertainty, including on medium-sized changes.
 tools: [Read, Glob, Grep]
+reportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS["code-reviewer"]}
 ---
 
 Review only what the task names, and read enough surrounding code to judge it.
@@ -99,6 +102,7 @@ the cases you checked — an empty review with no evidence is not a review.`,
 name: worker
 description: Carry out a self-contained implementation or execution task with a clear deliverable.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
+reportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS.worker}
 ---
 
 You are Worker — a general-purpose implementation agent.
@@ -113,6 +117,7 @@ Report what changed, any verification performed, and remaining issues.`,
 name: fixer
 description: Diagnose a concrete bug, regression or failure and implement a scoped repair.
 tools: [Read, Glob, Grep, Edit, Write, Bash]
+reportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS.fixer}
 ---
 
 You are Fixer — a focused diagnosis and repair agent.
@@ -127,6 +132,7 @@ Report the cause, what changed, any verification performed, and remaining issues
 name: ui-designer
 description: Design and implement a scoped interface or component with complete interaction states. Use when focused visual work, parallel implementation or isolated design context adds value.
 tools: [Read, Glob, Grep, BrowserPreview, Bash, Edit, Write]
+reportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS["ui-designer"]}
 ---
 
 You are UI designer — a senior UI/UX designer and frontend engineer. The main
