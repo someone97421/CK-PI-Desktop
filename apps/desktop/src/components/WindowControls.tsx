@@ -1,17 +1,14 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
-import { IconClose, IconCopy, IconMinus, IconSquare } from "./icons";
 import { TooltipButton } from "./ui";
 
 /**
  * Renderer-drawn window controls for Windows/Linux (D-frameless chrome).
  *
  * macOS keeps native inset traffic lights; other platforms run a frameless
- * window, so minimize/maximize/close live here — flat Codex-style glyph
- * buttons pinned to the top-right of the 46px titlebar band. The main shell
- * can contain the controls in the conversation pane while Settings keeps them
- * fixed to the full window.
+ * window. Controls sit at the shell level so work-panel stacking contexts
+ * cannot cover them; each button has a square hit target in the titlebar.
  */
 export function WindowControls({
   contained = false,
@@ -52,7 +49,9 @@ export function WindowControls({
         ariaLabel={t("window.minimize", "Minimize")}
         onClick={() => void api.windowControl("minimize")}
       >
-        <IconMinus size={12} strokeWidth={1.5} aria-hidden />
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
+          <path d="M1 6h10" />
+        </svg>
       </TooltipButton>
       <TooltipButton
         type="button"
@@ -73,11 +72,13 @@ export function WindowControls({
           )
         }
       >
-        {maximized ? (
-          <IconCopy size={11} strokeWidth={1.4} aria-hidden />
-        ) : (
-          <IconSquare size={10} strokeWidth={1.4} aria-hidden />
-        )}
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
+          {maximized ? (
+            <><path d="M4 3V1.5h6.5V8H9" /><rect x="1.5" y="4" width="6.5" height="6.5" rx=".5" /></>
+          ) : (
+            <rect x="1.5" y="1.5" width="9" height="9" rx=".5" />
+          )}
+        </svg>
       </TooltipButton>
       <TooltipButton
         type="button"
@@ -86,7 +87,9 @@ export function WindowControls({
         ariaLabel={t("window.close", "Close")}
         onClick={() => void api.windowControl("close")}
       >
-        <IconClose size={12} strokeWidth={1.5} aria-hidden />
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2" aria-hidden>
+          <path d="m2 2 8 8m0-8-8 8" />
+        </svg>
       </TooltipButton>
     </div>
   );

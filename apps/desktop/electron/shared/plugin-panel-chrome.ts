@@ -96,3 +96,95 @@ export function isPluginPanelWindowControlAction(
     )
   );
 }
+
+/**
+ * Root-node opt-out of the host's native drag regions.
+ *
+ * A plugin page that moves its own window (through
+ * `pluginBridge.widget.setBounds`) marks `document.documentElement` or
+ * `document.body` with this attribute in its HTML: the preload then installs
+ * no drag band and no drag segment map, so every pixel keeps delivering real
+ * pointer events instead of being swallowed by `-webkit-app-region: drag`.
+ */
+export const PLUGIN_PANEL_NO_DRAG_ATTRIBUTE = "data-pi-plugin-no-drag";
+
+/**
+ * Bridge channel behind `pluginBridge.widget.invoke`: the host-side window
+ * control a plugin's own surfaces may use — geometry, click-through,
+ * always-on-top and extra widget instances.
+ *
+ * The invoker is identified by its own web contents, never by a payload field,
+ * so no widget action can name another plugin's window, and the page a new
+ * widget loads is the plugin's own verified `ui.panel` entry rather than a URL
+ * the page picked.
+ */
+export const PLUGIN_WIDGET_INVOKE_CHANNEL = "pi-plugin-widget-invoke";
+
+export const PLUGIN_WIDGET_ACTIONS = [
+  "getState",
+  "setBounds",
+  "setIgnoreMouse",
+  "open",
+  "close",
+  "setAlwaysOnTop",
+] as const;
+
+export type PluginWidgetAction = (typeof PLUGIN_WIDGET_ACTIONS)[number];
+
+export function isPluginWidgetAction(value: unknown): value is PluginWidgetAction {
+  return (
+    typeof value === "string" &&
+    PLUGIN_WIDGET_ACTIONS.includes(value as PluginWidgetAction)
+  );
+}
+
+/**
+ * Widget id of a plugin's primary surface: the `ui.panel` entry the host opened
+ * for it, whether that entry runs in a panel or in a floating widget.
+ * `widget.open` refuses this id — it names a window that already exists.
+ */
+export const PLUGIN_PANEL_PRIMARY_WIDGET_ID = "panel";
+
+/** Charset and length of a widget id. One id is one window of one plugin. */
+export const PLUGIN_WIDGET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** Sent to every live window of a plugin when one of its widgets opens. */
+export const PLUGIN_WIDGET_OPENED_EVENT = "widget:opened";
+/** Sent to the remaining windows of a plugin when one of its widgets closes. */
+export const PLUGIN_WIDGET_CLOSED_EVENT = "widget:closed";
+
+/** Window geometry in DIP, the unit both `screen` and `BrowserWindow` report. */
+export type PluginWidgetBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+/** One display as `widget.getState` reports it. */
+export type PluginWidgetDisplay = {
+  /** Platform display id, stringified: it is an opaque handle, not a rank. */
+  id: string;
+  bounds: PluginWidgetBounds;
+  workArea: PluginWidgetBounds;
+  scaleFactor: number;
+};
+
+/** Answer of `widget.getState`: the calling window, the screens, the cursor. */
+export type PluginWidgetState = {
+  id: string;
+  bounds: PluginWidgetBounds;
+  displays: PluginWidgetDisplay[];
+  cursor: { x: number; y: number };
+};
+
+/**
+ * Payload of `widget.open`. `query` is appended to the plugin's own entry page
+ * as URL search parameters; nothing here can point the window at another page.
+ */
+export type PluginWidgetOpenInput = {
+  id: string;
+  query?: Record<string, string>;
+  width?: number;
+  height?: number;
+};

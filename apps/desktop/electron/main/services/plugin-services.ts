@@ -12,11 +12,13 @@ import {
   type ThinkingLevel,
   type UiMessage,
 } from "@pi-desktop/shared";
-import type {
-  PluginCompleteResult,
-  PluginNativeNotificationInput,
-  PluginNativeNotificationResult,
-  PluginNotificationPermission,
+import {
+  parseNetDomains,
+  resolvePluginLocalizedString,
+  type PluginCompleteResult,
+  type PluginNativeNotificationInput,
+  type PluginNativeNotificationResult,
+  type PluginNotificationPermission,
 } from "@pi-desktop/plugin-sdk";
 import {
   asPluginThinkingLevel,
@@ -32,7 +34,7 @@ import {
 import { createFsConsentService } from "../plugin-fs-consent";
 import { pluginWorkspaceInfo } from "../workspace-roots";
 import { createDesktopConsentService } from "../plugin-desktop-consent";
-import { PluginRuntime } from "../plugin-runtime";
+import { PluginRuntime, resolveInsidePlugin } from "../plugin-runtime";
 import { createSpeechService } from "./speech-service";
 import { PluginShortcutRegistry } from "../plugin-shortcut-registry";
 import { PluginWebSocketRegistry } from "../plugin-websocket";
@@ -574,6 +576,39 @@ export function createPluginServices({
     });
   });
   pluginPanels.addSenderResolver((senderId) => pluginViews.pluginIdForSender(senderId));
+  /**
+   * The verified entry for a plugin's extra widget windows: the panel the
+   * manifest declares, resolved inside the plugin directory under the same
+   * `ui.panel` grant the host opens panels with. A page can ask for a widget
+   * but never choose the URL that widget loads.
+   */
+  pluginPanels.setWidgetEntryResolver((pluginId) => {
+    const loaded = plugins.getLoaded(pluginId);
+    if (!loaded || !loaded.permissions.has("ui.panel")) return null;
+    const panel = loaded.manifest.ui?.panel;
+    if (!panel) return null;
+    const htmlPath = resolveInsidePlugin(loaded.path, panel);
+    if (!htmlPath) return null;
+    const parsedNet = parseNetDomains(loaded.manifest.net?.domains);
+    return {
+      pluginId,
+      title: resolvePluginLocalizedString(
+        loaded.manifest.ui?.title,
+        getUpdaterLocale(),
+        loaded.manifest.name,
+      ),
+      locale: getUpdaterLocale(),
+      theme: getPluginPanelTheme(),
+      width: loaded.manifest.ui?.width ?? 480,
+      height: loaded.manifest.ui?.height ?? 360,
+      htmlPath,
+      shape: "widget",
+      alwaysOnTop: loaded.manifest.ui?.alwaysOnTop,
+      netDomains: parsedNet.ok ? (parsedNet.domains ?? []) : [],
+      allowMicrophone: loaded.permissions.has("ui.microphone"),
+      ...(loaded.development ? { development: true } : {}),
+    };
+  });
   const browserHost = new BrowserHost({
     pane: browserPane,
     isPluginLoaded: (pluginId) => Boolean(plugins.getLoaded(pluginId)),

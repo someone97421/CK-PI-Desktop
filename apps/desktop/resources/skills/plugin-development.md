@@ -109,6 +109,19 @@ The panel receives `window.pluginBridge`, not `pi`. Use the fixed bridge channel
 Arbitrary Electron IPC and
 general custom panel RPC are not exposed.
 
+A panel opened with `"shape": "widget"` is a transparent floating surface with no drag band
+and no window controls. Its page may drive its own window through
+`pluginBridge.widget.invoke(action, payload)` with `getState`, `setBounds`, `setIgnoreMouse`,
+`setAlwaysOnTop`, `open({ id, query })` and `close({ id })`. `open` mints another window on
+the same plugin entry page (the `id` names it, a repeat shows the existing window) and the
+host refuses URLs, other plugins' windows, and the reserved id `panel` — the id
+`widget.getState()` reports for the plugin's primary surface. Coordinates are DIP, sizes are
+floored at 120 and kept on a display, and `widget:opened` / `widget:closed` events arrive
+through `pluginBridge.on`. Mark `document.documentElement` (or `body`) with
+`data-pi-plugin-no-drag` to disable the host's native drag regions and keep every pointer
+event; handling `contextmenu` with `preventDefault()` likewise keeps the host's widget menu
+out of the way.
+
 ## Permissions
 
 Every permission is declared in the manifest and granted at install time; an undeclared call

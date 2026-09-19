@@ -5,16 +5,42 @@ import {
   PLUGIN_PANEL_CHROME_VERSION,
   PLUGIN_PANEL_CHROME_PAINT_THROUGH_VERSION,
   PLUGIN_PANEL_EMBEDDED_ARGUMENT,
+  PLUGIN_PANEL_NO_DRAG_ATTRIBUTE,
   PLUGIN_PANEL_WIDGET_ARGUMENT,
   PLUGIN_PANEL_LOCALE_ARGUMENT_PREFIX,
   PLUGIN_PANEL_WINDOW_CONTROL_CHANNEL,
   PLUGIN_PANEL_WINDOW_STATE_CHANNEL,
+  PLUGIN_WIDGET_INVOKE_CHANNEL,
   type PluginPanelWindowControlAction,
   type PluginPanelTheme,
 } from "../shared/plugin-panel-chrome";
 // Bundled into the preload like everything else here, so the panel reads the
 // built-in window palette from the same table main and the panel host use.
 import { builtinWindowBackground } from "@pi-desktop/shared/theme";
+
+/** Host events (`appearance:changed`, `widget:opened`, …) on the panel channel. */
+function subscribeHostEvent(
+  event: string,
+  handler: (...args: unknown[]) => void,
+): () => void {
+  const wrapped = (_evt: Electron.IpcRendererEvent, ...args: unknown[]) => handler(...args);
+  const channel = `pi-plugin-panel-event:${event}`;
+  ipcRenderer.on(channel, wrapped);
+  return () => ipcRenderer.removeListener(channel, wrapped);
+}
+
+/**
+ * The window control this plugin's own surfaces may use. It is scoped by the
+ * host to the calling web contents, so no argument can address another plugin's
+ * window, and `open` always loads this plugin's own verified entry page.
+ */
+type PluginWidgetBridge = {
+  invoke: <T = unknown>(
+    action: string,
+    payload?: Record<string, unknown>,
+  ) => Promise<T>;
+  on: (event: string, handler: (...args: unknown[]) => void) => () => void;
+};
 
 const bridge = {
   invoke: async (channel: string, payload?: Record<string, unknown>) => {
@@ -24,11 +50,7 @@ const bridge = {
   send: (channel: string, payload?: Record<string, unknown>) => {
     return ipcRenderer.sendSync("pi-plugin-panel-bridge", channel, payload ?? {});
   },
-  on: (event: string, handler: (...args: unknown[]) => void) => {
-    const wrapped = (_evt: Electron.IpcRendererEvent, ...args: unknown[]) => handler(...args);
-    ipcRenderer.on(`pi-plugin-panel-event:${event}`, wrapped);
-    return () => ipcRenderer.removeListener(`pi-plugin-panel-event:${event}`, wrapped);
-  },
+  on: subscribeHostEvent,
   /** Resolve a real dropped File without exposing Node or Electron to the page. */
   getDroppedFilePath: (file: File): string | null => {
     try {
@@ -37,6 +59,16 @@ const bridge = {
       return null;
     }
   },
+  widget: {
+    invoke: <T = unknown>(action: string, payload?: Record<string, unknown>) =>
+      ipcRenderer.invoke(
+        PLUGIN_WIDGET_INVOKE_CHANNEL,
+        action,
+        payload ?? {},
+      ) as Promise<T>,
+    on: (event: string, handler: (...args: unknown[]) => void) =>
+      subscribeHostEvent(event, handler),
+  } satisfies PluginWidgetBridge,
 };
 
 contextBridge.exposeInMainWorld("pluginBridge", bridge);
@@ -451,6 +483,22 @@ function publishPanelShape(): void {
   document.documentElement?.setAttribute("data-pi-plugin-panel-shape", shape);
 }
 
+/**
+ * True when the page keeps every pointer event for itself.
+ *
+ * A plugin that moves and sizes its own window through
+ * `pluginBridge.widget.setBounds` marks `document.documentElement` or
+ * `document.body` with `data-pi-plugin-no-drag` in its HTML. The host then
+ * installs no drag band and no drag segment map at all: a native drag region
+ * swallows the very pointer events the page needs for its own hit testing.
+ */
+function pageOwnsWindowDrag(): boolean {
+  for (const element of [document.documentElement, document.body]) {
+    if (element?.hasAttribute(PLUGIN_PANEL_NO_DRAG_ATTRIBUTE)) return true;
+  }
+  return false;
+}
+
 function chromeLabels(input = panelLocale()): ChromeLabels {
   const locale = input.replaceAll("_", "-").toLowerCase();
   const traditionalChinese =
@@ -626,17 +674,25 @@ function installPanelChrome(): void {
     const shadow = host.attachShadow({ mode: "closed" });
     shadow.append(style, chrome);
     document.documentElement.append(host);
-    installWidgetDragMap(dragRegion);
+    const pageOwnsDrag = pageOwnsWindowDrag();
+    if (!pageOwnsDrag) installWidgetDragMap(dragRegion);
     // The capsule is the panel's only close affordance; a widget has none, so
-    // the host owns an equivalent menu behind the surface's context menu.
+    // the host owns an equivalent menu behind the surface's context menu. The
+    // page keeps the gesture if it handles it: the check runs after every
+    // listener of this dispatch, so a capture or bubble `preventDefault()` wins.
     window.addEventListener("contextmenu", (event) => {
-      event.preventDefault();
-      void ipcRenderer
-        .invoke(PLUGIN_PANEL_WINDOW_CONTROL_CHANNEL, "contextMenu")
-        .catch(() => {
-          // Closing destroys the sender before the invocation resolves.
-        });
+      queueMicrotask(() => {
+        if (event.defaultPrevented) return;
+        void ipcRenderer
+          .invoke(PLUGIN_PANEL_WINDOW_CONTROL_CHANNEL, "contextMenu")
+          .catch(() => {
+            // Closing destroys the sender before the invocation resolves.
+          });
+      });
     });
+    // A floating widget publishes nothing else: no band and no capsule, whatever
+    // the page decided about drag. The plugin owns every pixel and moves itself
+    // through `pluginBridge.widget.setBounds`.
     return;
   }
 
@@ -957,7 +1013,15 @@ function installPanelChrome(): void {
   chrome.append(controls);
   shadow.append(style, chrome);
   document.documentElement.append(host);
-  if (chromeMode === "paint-through") {
+  if (pageOwnsWindowDrag()) {
+    // The page keeps the whole surface: no drag band over its content, so the
+    // reserved 46px strip delivers pointer events like the rest of the page.
+    // The capsule stays — it is the panel's only close affordance and carries
+    // its own `no-drag`.
+    dragRegion.style.setProperty("-webkit-app-region", "no-drag");
+    dragRegion.style.setProperty("app-region", "no-drag");
+    dragRegion.style.setProperty("pointer-events", "none");
+  } else if (chromeMode === "paint-through") {
     installPaintThroughDragMap(dragRegion);
   }
 }

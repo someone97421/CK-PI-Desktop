@@ -996,7 +996,9 @@
   width: var(--ds-window-controls-width);
   height: var(--ds-toolbar-height);
   box-sizing: border-box;
-  padding-left: 8px;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 0 8px;
   /* Paint a separate full hit band so page content cannot show through the
    * controls and panel actions cannot read as part of the same button group. */
   background: var(--ds-bg-primary);
@@ -1022,13 +1024,16 @@
   app-region: no-drag;
   pointer-events: auto;
   display: inline-flex;
-  height: 100%;
-  min-width: 0;
-  flex: 1 1 0;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+  border: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 0;
-  color: color-mix(in oklab, var(--ds-text-primary) 55%, transparent);
+  border-radius: 6px;
+  color: color-mix(in oklab, var(--ds-text-primary) 70%, transparent);
   background: transparent;
   transition: background var(--motion-duration-fast) var(--motion-ease-out), color var(--motion-duration-fast) var(--motion-ease-out);
 }
@@ -1036,6 +1041,19 @@
 .window-control-btn:hover {
   color: var(--ds-text-primary);
   background: var(--ds-bg-hover);
+}
+
+.window-control-btn:focus-visible {
+  outline: 2px solid var(--ds-text-primary);
+  outline-offset: -2px;
+}
+
+.window-control-btn:active {
+  background: color-mix(in oklab, var(--ds-text-primary) 16%, transparent);
+}
+
+.window-control-btn svg {
+  flex: none;
 }
 
 .window-control-btn.window-control-close:hover {

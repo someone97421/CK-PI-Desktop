@@ -1627,7 +1627,7 @@ export class DesktopAgentRuntime {
       ...(this.subagents.length
         ? [
             `## Delegation
-Handle simple serial work directly, regardless of duration. Delegate when requested by the user or when parallel progress, context isolation, or independent judgment outweighs the handoff cost.
+Handle simple serial tasks directly. Delegate only when requested by the user or when the concrete benefits of parallel progress, context isolation, or independent judgment outweigh the handoff and acceptance costs. Base this decision on the actual benefits for the current task.
 
 Useful cases, not mandatory stages:
 - User-requested delegation: follow the requested scope and number of subagents.

@@ -12,6 +12,7 @@
 | F002 | 技能面板支持只读「扩展路径」 | 已实现，已验证 | 本节明细 |
 | F003 | 品牌改名为「这是一个助手」并替换全部图标 | 已实现，已验证 | 本节明细 |
 | F004 | provider 设置的导入 / 导出（模型界面） | 已实现，已验证 | 本节明细 |
+| F005 | 插件多 widget 窗口与 `pluginBridge.widget` 窗口控制 | 已实现，构建通过 | 本节明细 |
 
 ## 明细
 
@@ -130,3 +131,22 @@
   未跑 E2E / 未做真实 UI 联调。
 - **已知取舍**：导出文件含明文密钥，需自行保管；导入只按 name 匹配，同名不同厂商
   的行会被覆盖；已禁用状态会被一并导出并在导入时恢复（未单独测）。
+
+### F005 — 插件多 widget 窗口与 `pluginBridge.widget` 窗口控制
+
+- **决定**：插件页面新增 `window.pluginBridge.widget.invoke(action, payload)`（通道
+  `pi-plugin-widget-invoke`）：`getState`（自身窗口 id、DIP 边界、屏幕、光标）、
+  `setBounds`（下限 120、按每块真实屏幕至少 48 DIP 可见夹取并在候选中取距请求最近者、
+  支持负坐标）、`setIgnoreMouse`、`setAlwaysOnTop`、
+  `open({id,query?,width?,height?})`（为该插件再开一个 widget 窗口，仍加载
+  `manifest.ui.panel` 的同一入口页面，`query` 走 URL 参数，同 id 重复 open 只显示已有
+  窗口）、`close({id?})`（默认当前窗）。插件自身主窗口的 widget id 固定为 `panel`。
+- **边界**：需要既有 `ui.panel` 授权；新窗口与宿主 widget 同构（同一分区、同一 egress
+  策略、同一 preload）；插件不能指定 URL，也不能访问其他插件的窗口。`widget:opened` /
+  `widget:closed` 事件经 `pluginBridge.on` 发给该插件全部窗口；卸载/关闭插件时主窗口与
+  全部 widget 一起清理，尚在等待创建窗口的 open 会被取消。根节点带
+  `data-pi-plugin-no-drag` 时宿主不装拖拽映射；页面在 capture 或 bubble 阶段
+  `preventDefault()` 可抑制宿主右键菜单。
+- **影响面**：`electron/shared/plugin-panel-chrome.ts`、`electron/main/plugin-panel-host.ts`、
+  `electron/preload/plugin-panel.ts`、`electron/main/services/plugin-services.ts`。
+- **验证**：Windows x64 正式构建 `20260919-123928` 通过，安装版与便携版已生成；已静态审读窗口归属与生命周期处理，未运行宿主专项测试，桌面多窗口交互尚未完成全面实机验证。
