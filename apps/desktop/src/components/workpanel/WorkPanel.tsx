@@ -499,7 +499,7 @@ export function WorkPanel({
       />
       <div className="work-panel-main">
         <header className="work-panel-header">
-          <div className="work-panel-tab-strip-wrap no-drag">
+          <div className="work-panel-tab-strip-wrap">
             {subagentPanel ? (
               <div className="work-panel-subagent-heading" aria-label={t("panel.subagent")}>
                 <IconBot size={15} />
@@ -522,7 +522,7 @@ export function WorkPanel({
                         ) ?? TAB_ICONS.plugin
                       : TAB_ICONS[tab.kind];
                   return (
-                    <div className={cx("work-panel-tab", selected && "active")} key={tab.id}>
+                    <div className={cx("work-panel-tab no-drag", selected && "active")} key={tab.id}>
                       <button
                         ref={(node) => {
                           tabButtonRefs.current[tab.id] = node;
