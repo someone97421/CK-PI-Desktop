@@ -1,0 +1,14 @@
+{
+  "name": "cua-driver",
+  "version": "0.28.2",
+  "platform": "windows-x64",
+  "license": "MIT",
+  "repository": "https://github.com/trycua/cua",
+  "source": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.28.2/cua-driver-rs-0.28.2-windows-x86_64.zip",
+  "archiveSha256": "3c1fcf10ff9513b94e4af78ad6a216ab62aa95b2c9a3b70dfbdba9f04e021533",
+  "files": {
+    "cua-driver.exe": "dbbd52d75759900155fbf3d5f0a13c759a12d06ef17338b88b3f2b8b9c1ef8dc",
+    "cua-driver-uia.exe": "2aa7bde5774c12771b994ba5500e1b948e90a3129fd1182a486e462606bde7f8",
+    "cua-cursor-theme.exe": "5b1d9421217edbdeafa4b2b77029217b0ba0e6e3fc449d5afdf87fccfd85637d"
+  }
+}

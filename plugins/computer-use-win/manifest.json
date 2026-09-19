@@ -1,0 +1,345 @@
+{
+  "schemaVersion": 1,
+  "id": "cn.star.computer-use",
+  "name": "Computer Use（Win 版）",
+  "version": "0.3.2",
+  "description": "Windows x64 桌面控制，内置运行环境，导入即可使用；支持后台 UI Automation、允许列表和急停。",
+  "author": "TheFlareStar",
+  "license": "MPL-2.0",
+  "i18n": {
+    "en": {
+      "name": "Computer Use (Windows)",
+      "description": "Windows x64 desktop automation with bundled runtime, background UI Automation, allowlist and emergency stop.",
+      "safetyNotes": "Runs the bundled cua-driver MCP runtime to capture windows and send mouse/keyboard input. Existing tool permissions, denylist and optional allowlist apply. Screenshots are returned to the agent; this plugin does not upload them."
+    },
+    "zh-CN": {
+      "name": "Computer Use（Win 版）",
+      "description": "Windows x64 桌面控制，内置运行环境，导入即可使用；支持后台 UI Automation、允许列表和急停。",
+      "safetyNotes": "插件会启动包内 cua-driver MCP，可截取窗口并发送键鼠。保留工具权限、内置拒绝列表和可选允许列表。截图回给智能体，本插件不主动上传。"
+    }
+  },
+  "safetyNotes": "Runs the bundled cua-driver MCP runtime to capture windows and send mouse/keyboard input. Existing tool permissions, denylist and optional allowlist apply. Screenshots are returned to the agent; this plugin does not upload them.",
+  "main": "main.js",
+  "ui": {
+    "panel": "renderer/index.html",
+    "title": {
+      "en": "Computer Use (Windows)",
+      "zh-CN": "Computer Use（Win 版）"
+    },
+    "width": 760,
+    "height": 820
+  },
+  "contributes": {
+    "commands": [
+      {
+        "id": "computer-use.open",
+        "title": "Computer Use（Win 版）: 打开面板",
+        "keywords": [
+          "computer use",
+          "cua",
+          "desktop",
+          "ocu",
+          "自动化",
+          "桌面"
+        ],
+        "category": "Productivity"
+      }
+    ],
+    "agentTools": [
+      {
+        "name": "list_apps",
+        "description": "List running desktop apps cua-driver can target. Default is running windows only (fast). Pass include_installed=true to also list installed-but-not-running apps.",
+        "risk": "low",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "include_installed": { "type": "boolean" }
+          }
+        }
+      },
+      {
+        "name": "list_windows",
+        "description": "List top-level windows (pid, window_id, title, on-screen). Optional app filter.",
+        "risk": "low",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "on_screen_only": { "type": "boolean" }
+          }
+        }
+      },
+      {
+        "name": "launch_app",
+        "description": "Launch an installed app without requiring it to already be running.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "path": { "type": "string" },
+            "launch_path": { "type": "string" }
+          }
+        }
+      },
+      {
+        "name": "get_app_state",
+        "description": "Observe a window, wait for an AX predicate, or read an exact UIA control value with read_value. Independent image/tree versions; refresh AX before element_index reuse. read_value is read-only and cannot combine with wait_for.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "include_screenshot": { "type": "boolean" },
+            "include_tree": { "type": "boolean" },
+            "query": { "type": "string" },
+            "refresh": { "type": "boolean" },
+            "read_value": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "automation_id": { "type": "string" },
+                "role": { "type": "string" }
+              },
+              "anyOf": [{ "required": ["name"] }, { "required": ["automation_id"] }],
+              "additionalProperties": false
+            },
+            "wait_for": {
+              "type": "object",
+              "properties": {
+                "kind": { "type": "string", "enum": ["text_present", "text_absent", "value_equals", "value_changed"] },
+                "text": { "type": "string" },
+                "name": { "type": "string" },
+                "role": { "type": "string" },
+                "value": { "type": "string" },
+                "baseline": { "type": "string" }
+              },
+              "required": ["kind"],
+              "additionalProperties": false
+            },
+            "wait_timeout_ms": { "type": "integer", "minimum": 0, "maximum": 30000 },
+            "poll_interval_ms": { "type": "integer", "minimum": 100, "maximum": 5000 },
+            "max_tree_depth": { "type": "integer", "minimum": 1 },
+            "max_tree_nodes": { "type": "integer", "minimum": 1 },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app"]
+        }
+      },
+      {
+        "name": "click",
+        "description": "Click a fresh element_index or screenshot-local x,y once. Right-click chooses foreground before delivery and preserves the right button. No replay for unknown effects. Only valid left-click pixel hits upgrade to AX; returns structured delivery/UI-change/goal evidence.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "element_index": { "type": "string" },
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+            "click_count": { "type": "integer" },
+            "mouse_button": { "type": "string", "enum": ["left", "right", "middle"] },
+            "observe": { "type": "boolean" },
+            "delivery_mode": { "type": "string", "enum": ["background", "foreground"] },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app"]
+        }
+      },
+      {
+        "name": "perform_secondary_action",
+        "description": "Invoke a named accessibility action on an element from the latest get_app_state.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "element_index": { "type": "string" },
+            "action": { "type": "string" },
+            "value": { "type": "string" },
+            "observe": { "type": "boolean" }
+          },
+          "required": ["app", "element_index", "action"]
+        }
+      },
+      {
+        "name": "scroll",
+        "description": "Scroll a window or element. Background by default.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "element_index": { "type": "string" },
+            "direction": { "type": "string" },
+            "pages": { "type": "number" },
+            "observe": { "type": "boolean" },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app", "direction"]
+        }
+      },
+      {
+        "name": "drag",
+        "description": "Drag between screenshot coordinates in an app window.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "from_x": { "type": "number" },
+            "from_y": { "type": "number" },
+            "to_x": { "type": "number" },
+            "to_y": { "type": "number" },
+            "observe": { "type": "boolean" },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app", "from_x", "from_y", "to_x", "to_y"]
+        }
+      },
+      {
+        "name": "type_text",
+        "description": "Type literal text into the target app (background). XAML/UWP fields need a Document/edit index; the plugin picks one from the last snapshot if omitted. Unverified results include a focus_state probe (GetGUIThreadInfo).",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "element_index": { "type": "string" },
+            "text": { "type": "string" },
+            "observe": { "type": "boolean" },
+            "delivery_mode": { "type": "string", "enum": ["background", "foreground"] },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app", "text"]
+        }
+      },
+      {
+        "name": "press_key",
+        "description": "Press one host-OS chord. Windows navigation preserves focus via guarded native delivery. Escape handles editor/dropdown/menu evidence (title-bar system menu excluded as window chrome) and reports cancellation separately from transport; partial absence proves nothing. Menu remains guarded. No replay; paste_text sets clipboard. delivery_mode=foreground answers the driver's background-unavailable escalation hint.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "element_index": { "type": "string" },
+            "key": { "type": "string" },
+            "observe": { "type": "boolean" },
+            "delivery_mode": { "type": "string", "enum": ["background", "foreground"] },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app", "key"]
+        }
+      },
+      {
+        "name": "paste_text",
+        "description": "Set clipboard and paste once into the currently focused target control. Windows Ctrl+V / macOS Command+v; no caret movement, no replay on partial or unknown delivery. Verify the outcome before another paste.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "element_index": { "type": "string", "description": "Legacy compatibility only; select the destination before pasting." },
+            "text": { "type": "string" },
+            "observe": { "type": "boolean" },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app", "text"]
+        }
+      },
+      {
+        "name": "set_value",
+        "description": "Replace the value of a settable accessibility element from the latest get_app_state.",
+        "risk": "high",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "app": { "type": "string" },
+            "window_id": { "type": "number" },
+            "element_index": { "type": "string" },
+            "value": { "type": "string" },
+            "observe": { "type": "boolean" },
+            "region_x": { "type": "number" },
+            "region_y": { "type": "number" },
+            "region_width": { "type": "number" },
+            "region_height": { "type": "number" }
+          },
+          "required": ["app", "element_index", "value"]
+        }
+      },
+      {
+        "name": "stop_computer_use",
+        "description": "Stop the local Computer Use runtime immediately. Further GUI actions need a panel restart.",
+        "risk": "low",
+        "schema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    ],
+    "skills": [
+      "skills/computer-use.md"
+    ],
+    "settings": [
+      {
+        "key": "enabled",
+        "title": "Enable Computer Use",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "autoStart",
+        "title": "Start runtime when the plugin loads",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "allowlist",
+        "title": "Allowed apps (comma or newline; empty = all except denylist)",
+        "type": "string",
+        "default": ""
+      }
+    ]
+  },
+  "permissions": [
+    "ui.panel",
+    "agent.tool.register",
+    "agent.prompt.inject"
+  ],
+  "engines": {
+    "piDesktop": ">=0.14.0"
+  },
+  "activationEvents": [
+    "onCommand:computer-use.open",
+    "onStartup"
+  ]
+}

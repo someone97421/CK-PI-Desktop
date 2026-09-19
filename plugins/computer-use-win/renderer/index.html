@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      v3: host paints a transparent 46px drag band and the window-control
+      capsule. Page content may paint through that band. Sticky/fixed surfaces
+      use top: 0 and height/padding of --pi-plugin-titlebar-height. Reserve
+      ~104px on the right so controls stay clickable.
+    -->
+    <meta name="pi-plugin-chrome" content="v3" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data:; font-src 'self' file:; connect-src 'none';" />
+    <title>Computer Use</title>
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <header class="titlebar">
+      <h1>Computer Use</h1>
+      <span class="badge">Windows 版</span>
+      <div class="spacer"></div>
+      <span class="status" id="status"><span class="dot"></span><span id="statusText">…</span></span>
+    </header>
+
+    <div class="scroller">
+      <div class="lede">
+        <p class="sub">后端是随插件包内置的 <code>cua-driver</code>（trycua/cua）。默认后台 UIA，不抢焦点。真正键鼠操作时主屏约 18% 高度会显示青绿无底字；按 <kbd>Esc</kbd> 可强行打断。急停会立刻杀掉 MCP 子进程。</p>
+      </div>
+
+      <section class="card alert" id="alert" hidden>
+        <p class="alert-title" id="alertTitle"></p>
+        <p class="sub" id="alertText"></p>
+        <div class="actions" id="alertActions" hidden>
+          <button type="button" class="primary" id="repair">修复并启动</button>
+        </div>
+      </section>
+
+      <h2>控制</h2>
+      <section class="card">
+        <div class="actions">
+          <button type="button" class="primary" id="start">启动</button>
+          <button type="button" class="danger" id="stop">急停</button>
+          <button type="button" id="refresh">刷新</button>
+        </div>
+        <p class="hint" id="controlHint"></p>
+      </section>
+
+      <h2>最近一帧</h2>
+      <section class="card">
+        <p class="meta" id="frameMeta">还没有截图。Agent 调用 get_app_state 后会出现在这里。</p>
+        <img id="frame" alt="last screenshot" hidden />
+        <pre class="tree" id="tree" hidden></pre>
+      </section>
+
+      <details class="section" id="settingsSection">
+        <summary>设置</summary>
+        <section class="card">
+          <p class="sub">空 = 除内置拒绝外全部可操作。每行或逗号分隔应用名，例如 <code>Notepad</code>。</p>
+          <textarea id="allowlist" rows="4" placeholder="Notepad&#10;Code"></textarea>
+          <div class="actions">
+            <button type="button" class="primary" id="saveAllowlist">保存允许列表</button>
+          </div>
+          <p class="hint">内置拒绝：密码管理器、终端、锁屏、Windows 安全中心、PI-Desktop、ChatGPT、Codex。</p>
+        </section>
+      </details>
+
+      <details class="section" id="diagnosticsSection">
+        <summary>诊断</summary>
+        <section class="card">
+          <p class="meta" id="diagMeta">—</p>
+          <div class="actions">
+            <button type="button" id="doctor">运行 Doctor</button>
+          </div>
+          <p class="hint" id="logCaption" hidden></p>
+          <pre id="log" hidden></pre>
+        </section>
+      </details>
+    </div>
+    <script src="./panel.js"></script>
+  </body>
+</html>

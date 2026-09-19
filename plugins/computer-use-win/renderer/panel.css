@@ -1,0 +1,251 @@
+:root {
+  color-scheme: dark;
+  --bg: #181818;
+  --surface: #212121;
+  --fg: #f4f4f5;
+  --muted: color-mix(in oklab, #ffffff 52%, transparent);
+  --faint: color-mix(in oklab, #ffffff 38%, transparent);
+  --border: color-mix(in oklab, #ffffff 10%, transparent);
+  --accent: #86efac;
+  --danger: #f87171;
+  --ok: #86efac;
+  --warn: #fbbf24;
+  --capsule: 104px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+:root[data-base="light"] {
+  color-scheme: light;
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --fg: #1a1c1f;
+  --muted: #5d5d5d;
+  --faint: #8a8a8a;
+  --border: color-mix(in oklab, #1a1c1f 10%, transparent);
+  --accent: #15803d;
+  --danger: #b91c1c;
+  --ok: #15803d;
+  --warn: #b45309;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  overflow: hidden;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+[hidden] { display: none !important; }
+
+.titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--pi-plugin-titlebar-height, 46px);
+  padding: 0 12px;
+  padding-right: calc(var(--capsule) + 12px);
+  -webkit-app-region: drag;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--bg) 88%, transparent);
+}
+.titlebar h1 {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.titlebar .badge {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.titlebar .spacer { flex: 1; }
+.titlebar .status { -webkit-app-region: no-drag; }
+
+.scroller {
+  height: calc(100dvh - var(--pi-plugin-titlebar-height, 46px));
+  overflow: auto;
+  padding: 16px 16px 28px;
+}
+
+.lede {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+h2 {
+  margin: 18px 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sub, .hint, .meta { color: var(--muted); margin: 0; }
+.hint { font-size: 12px; color: var(--faint); }
+.meta { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin: 0 0 8px;
+}
+.actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+}
+.actions button {
+  position: static;
+  flex: 0 0 auto;
+}
+
+details.section { margin: 18px 0 8px; }
+details.section > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+details.section > summary::-webkit-details-marker { display: none; }
+details.section > summary::before {
+  content: "▸";
+  font-size: 10px;
+  line-height: 1;
+}
+details.section[open] > summary::before { content: "▾"; }
+details.section > summary:hover { color: var(--fg); }
+details.section > summary:focus-visible {
+  outline: 1px solid color-mix(in oklab, var(--accent) 50%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+details.section > .card { margin-top: 8px; }
+
+.card.alert { border-color: color-mix(in oklab, var(--danger) 45%, var(--border)); }
+.card.alert[data-tone="warn"] { border-color: color-mix(in oklab, var(--warn) 45%, var(--border)); }
+.card.alert[data-tone="error"] { border-color: color-mix(in oklab, var(--danger) 55%, var(--border)); }
+.alert-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+#controlHint { min-height: 1.4em; }
+
+button {
+  -webkit-app-region: no-drag;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  border-radius: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.3;
+  transition: transform 160ms var(--ease-out), filter 160ms var(--ease-out);
+}
+button:hover { filter: brightness(1.08); }
+button:active { transform: scale(0.97); }
+button.primary {
+  background: var(--accent);
+  color: #052e16;
+  border-color: transparent;
+}
+:root[data-base="light"] button.primary { color: #fff; }
+button.danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: transparent;
+}
+button:disabled { opacity: 0.5; cursor: default; filter: none; transform: none; }
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status[data-state="running"] .dot { background: var(--ok); }
+.status[data-state="error"] .dot { background: var(--danger); }
+.status[data-state="stopped"] .dot { background: var(--faint); }
+.status[data-state="starting"] .dot { background: var(--warn); }
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  padding: 8px 10px;
+  font: inherit;
+}
+textarea:focus {
+  outline: 1px solid color-mix(in oklab, var(--accent) 50%, transparent);
+}
+#meta {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+img {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  font: 12px/1.4 ui-monospace, Consolas, monospace;
+}
+code { font-family: ui-monospace, Consolas, monospace; }
