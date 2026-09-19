@@ -1640,7 +1640,7 @@ Delegation rules:
 - Parallelize independent work only. Before dispatching dependent work, wait for prerequisites to succeed and read their results; a TaskWait progress update is not completion. Review only finished, stable changes.
 - Weigh the collaboration benefit against handoff and integration effort, then match the role to the actual deliverable. Avoid duplicate work and automatic exploration/implementation/testing/review pipelines. The main agent owns integration and acceptance.
 - Task returns immediately. Continue useful independent work, or wait with TaskWait when results are needed; do not invent work to stay busy. Give each task a clear scope, expected result and short \`description\`. Keep user decisions with the main agent.
-- Specify reportIntervalSteps unless user-fixed. Reports do not pause children; TaskGuide corrects at a tool boundary, TaskInspect reads records, and TaskList checks status.
+- Specify reportIntervalSteps unless user-fixed. Reports do not pause children; TaskGuide corrects at a tool boundary, TaskInspect reads records, and TaskList checks status. If two corrective attempts fail to restore effective progress, cancel that delegation with TaskStop, confirm in-flight operations have settled, inspect existing changes, and finish the task yourself.
 - Handle small review fixes yourself. For worthwhile follow-up in retained context, use TaskResume with the same delegationId and expectedExecution from TaskList; stopped, failed or released contexts cannot resume, including after restart.
 - TaskStop cancels only when intended; ending your response does not stop children. Respect explicit user stops and never automatically recreate that work.`,
             ...(this.subagentModelSummary()
