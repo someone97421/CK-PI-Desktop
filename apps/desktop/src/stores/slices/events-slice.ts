@@ -359,6 +359,9 @@ export function createEventsSlice({
           ...(envelope.agentName ? { agentName: envelope.agentName } : {}),
         });
       } else if (event.type === "tool_end") {
+        // A tool result never opens or activates a work-panel tab: Review is a
+        // user-opened surface (panel toggle or New launcher), so an agent edit
+        // cannot reveal the panel even in its own session.
         set((state) => {
           const pendingPermissions = removePermissionForToolCall(
             state.pendingPermissions,

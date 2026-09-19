@@ -12,6 +12,7 @@ import {
 import type { HostProcess } from "../host-process";
 import type { Logger } from "../logger";
 import type { WindowLifecycleState } from "./window";
+import { suppressLinuxFramelessSystemMenu } from "../frameless-system-menu";
 
 export type LauncherState = {
   creationPromise: Promise<BrowserWindow> | null;
@@ -103,6 +104,7 @@ export function createLauncher({
         },
       });
       state.pluginLauncherWindow = window;
+      suppressLinuxFramelessSystemMenu(window);
 
       if (process.platform === "darwin") {
         // Join every Space and float above this app's own fullscreen window, but

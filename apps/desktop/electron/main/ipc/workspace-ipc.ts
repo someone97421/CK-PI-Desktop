@@ -25,7 +25,7 @@ import {
   consumeComposerPickerSelection,
   rememberComposerPickerSelection,
 } from "../composer-picker";
-import { collectWorkspaceDiff } from "../git-diff";
+import { collectWorkspaceDiff } from "@pi-desktop/host-runtime";
 import { parseAllowedExternalUrl } from "../safe-open-external";
 import {
   isAttachmentBlobRef,
@@ -34,7 +34,7 @@ import {
   readOpenableImage,
   resolveOpenablePath,
   resolveRealOpenablePath,
-} from "../fs-panel";
+} from "@pi-desktop/host-runtime";
 import { resolveChatFileRef } from "../chat-ref-resolve";
 import { getWorkspaceFileIndex } from "../fs-index";
 import {

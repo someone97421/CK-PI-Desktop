@@ -164,7 +164,10 @@ export function useComposerSubmit({
       }
       const typed = error as Error & { code?: string };
       setEnhancementError({
-        message: typed.message || t("chat.enhancementFailed"),
+        message:
+          typed.code === "TIMEOUT"
+            ? t("chat.enhancementTimeout")
+            : typed.message || t("chat.enhancementFailed"),
         code: typed.code || "PROMPT_ENHANCEMENT_FAILED",
       });
     } finally {

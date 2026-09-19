@@ -402,6 +402,13 @@ test("work panel separator exposes internal panel width resizing", () => {
   assert.match(panelSource, /onPointerCancel=\{onPanelResizeCancel\}/);
   assert.match(panelSource, /onLostPointerCapture=\{onPanelResizeCancel\}/);
   assert.match(panelSource, /onKeyDown=\{onPanelResizeKeyDown\}/);
+  assert.match(panelSource, /onDoubleClick=\{onPanelResizeReset\}/);
+  assert.match(
+    panelSource,
+    /if \(drag\) finishPanelResize\(event\.currentTarget, drag\.pointerId, true\)/,
+  );
+  assert.match(panelSource, /workPanelResetWidth\(panelMinimum, layout\.maxPanelWidth\)/);
+  assert.match(panelSource, /workPanelWidthBounds\(/);
   assert.match(panelSource, /data-work-panel-resizing/);
   assert.match(globalStyles, /\.work-panel-resize \{[^}]*width:\s*10px;/s);
   assert.match(globalStyles, /touch-action:\s*none/);
@@ -422,8 +429,13 @@ test("work panel separator exposes internal panel width resizing", () => {
 test("Electron enforces the responsive shell minimum", () => {
   assert.match(mainSource, /const WINDOW_MIN_WIDTH = 1040/);
   assert.match(mainSource, /const WINDOW_MIN_HEIGHT = 700/);
-  assert.match(mainSource, /minWidth:\s*windowMinWidth/);
-  assert.match(mainSource, /minHeight:\s*windowMinHeight/);
+  // The window creation clamps the minimum to fit the current work area, so
+  // the props are the clamped `initialMin*` values, both derived from
+  // `windowMin*` via `Math.min(windowMin*, restoreWorkArea.*)`.
+  assert.match(mainSource, /minWidth:\s*initialMinWidth/);
+  assert.match(mainSource, /minHeight:\s*initialMinHeight/);
+  assert.match(mainSource, /initialMinWidth = Math\.min\(windowMinWidth/);
+  assert.match(mainSource, /initialMinHeight = Math\.min\(windowMinHeight/);
 });
 
 test("built-in terminal is absent while the work panel keeps its other surfaces", () => {
@@ -436,30 +448,17 @@ test("built-in terminal is absent while the work panel keeps its other surfaces"
   assert.doesNotMatch(transcriptSource, /openTerminal|terminalArtifact|chat\.openTerminal/);
 });
 
-test("workspace artifacts attach review to their originating session", () => {
-  const artifactIndex = storeSource.indexOf("shouldOpenReviewArtifact({");
-  const openReviewMatch = storeSource.match(
-    /get\(\)\.openWorkPanelTabForSession\(\s*envelope\.sessionId,\s*toolWorkPanelTab\("review"\),?\s*\)/,
-  );
-  const openReviewIndex = openReviewMatch?.index ?? -1;
-  const gateIndex = storeSource.indexOf(
-    "if (envelope.sessionId !== get().activeSessionId)",
-  );
-  assert.ok(artifactIndex > -1, "workspace artifact gate exists");
-  assert.ok(openReviewIndex > artifactIndex, "review artifact records its session tab");
-  assert.ok(gateIndex > -1, "cross-session gate exists");
-  assert.ok(
-    openReviewIndex < gateIndex,
-    "background artifacts must be recorded before the cross-session early-return",
-  );
-  assert.match(
-    storeSource,
-    /shouldOpenReviewArtifact\(\{[\s\S]*toolName,[\s\S]*isError:\s*event\.isError,[\s\S]*result:\s*event\.result/s,
-  );
+test("tool results never open the Review tab on their own", () => {
+  // Review opens only from an explicit user action: the viewport toggle
+  // reveals the retained context and the `+` launcher lists its row. A
+  // successful Write/Edit may not record, activate, or reveal a tab for any
+  // session, visible or background.
+  assert.doesNotMatch(storeSource, /shouldOpenReviewArtifact/);
   assert.doesNotMatch(
-    storeSource.match(/shouldOpenReviewArtifact\(\{[\s\S]*?\}\)/)?.[0] ?? "",
-    /activeSessionId|sessionId/,
+    storeSource,
+    /openWorkPanelTabForSession\([\s\S]{0,120}toolWorkPanelTab\("review"\)/,
   );
+  assert.match(storeSource, /openWorkPanelTabForSession:/);
 });
 
 test("work panel context is retained by session instead of cleared on selection", () => {

@@ -61,6 +61,39 @@
   cursor: default;
 }
 
+/* A password field with a reveal control: the toggle rides inside the field's
+   own row so the two read as one control (PasswordInput). */
+.password-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Room for the toggle, which is positioned over the well's trailing edge. */
+.password-input .field-input {
+  padding-right: 34px;
+}
+
+.password-input-toggle {
+  position: absolute;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ds-control-size);
+  height: var(--ds-control-size);
+  border-radius: var(--radius-sm);
+  color: var(--ds-text-secondary);
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-out),
+    color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.password-input-toggle:hover:not(:disabled) {
+  background: var(--ds-bg-hover);
+  color: var(--ds-text-primary);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;

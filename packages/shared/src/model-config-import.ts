@@ -565,10 +565,13 @@ function parseCcSwitchProvider(
     );
   }
   if (appType === "pi") {
-    return retagCcSwitch(
-      row,
-      parsePiModelConfig({ providers: { [row.id]: row.settingsConfig } }, env),
-    );
+    // Pi providers have an authoritative native config (`~/.pi/agent/models.json`).
+    // CC Switch only stores a one-shot v18 migration snapshot of that file; models
+    // added afterwards never make it back in, and our dedupe key ignores `models`
+    // coverage. Trusting the snapshot silently drops the newer entries and lands
+    // pi providers under the "CC Switch" group with a renamed label. Let the `pi`
+    // scanner own these rows so the source of truth wins. See issue #588.
+    return [];
   }
   if (appType === "codex" || appType === "grokbuild") {
     return parseCcSwitchTomlApp(row, env, appType === "codex" ? "responses" : "chat_completions");

@@ -1124,17 +1124,17 @@ async function main() {
     const e2eChromeSidebar = await cdp.evaluate(e2eChromeProbe);
     check(
       e2eChromeSidebar.sidebarWidth === null || e2eChromeSidebar.sidebarWidth === 275,
-      "sidebar stays at its fixed width",
+      "sidebar defaults to 275px when no preference is stored",
       JSON.stringify(e2eChromeSidebar),
     );
     check(
-      e2eChromeSidebar.handleVisible === false,
-      "the sidebar edge is no longer a resize affordance",
+      e2eChromeSidebar.sidebarWidth === null || e2eChromeSidebar.handleVisible === true,
+      "the expanded sidebar edge is a resize affordance",
       JSON.stringify(e2eChromeSidebar),
     );
     check(
       e2eChromeSidebar.storedWidth === null,
-      "sidebar width is no longer persisted",
+      "no sidebar width preference is stored at launch",
       JSON.stringify(e2eChromeSidebar),
     );
 

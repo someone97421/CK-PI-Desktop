@@ -1137,13 +1137,35 @@ describe("DesktopAgentRuntime configuration matching", () => {
     });
     expect(lastExecute()).toMatchObject({ args: { path: "src/canonical.ts" } });
 
+    // Extra path spellings weaker models reach for (issue #454): every one of
+    // these folds onto `path` so the model does not silently fall back to Bash
+    // when its tokenizer prefers a non-canonical argument name.
+    for (const alias of ["filepath", "filePath", "filename", "fileName", "file"]) {
+      await tool("Read").execute(`read-${alias}`, {
+        [alias]: `src/${alias}.ts`,
+      });
+      expect(lastExecute()).toMatchObject({
+        toolName: "Read",
+        args: { path: `src/${alias}.ts` },
+      });
+      const seen = lastExecute().args as Record<string, unknown>;
+      expect(seen[alias]).toBeUndefined();
+    }
+
     // Neither spelling present still fails, and before any host execution.
+    // The message now names the accepted aliases and shows a minimal example
+    // so the next call can self-correct instead of falling back to shell.
     await expect(
       tool("Read").execute("read-missing", { limit: 5 }),
-    ).rejects.toMatchObject({ errorCode: "INVALID_ARGUMENT" });
+    ).rejects.toMatchObject({
+      errorCode: "INVALID_ARGUMENT",
+      message: expect.stringMatching(
+        /`path` is required.*(file_path|filepath).*Example.*"path"/s,
+      ),
+    });
     expect(
       host.call.mock.calls.filter((call: unknown[]) => call[0] === "tools.execute"),
-    ).toHaveLength(3);
+    ).toHaveLength(3 + 5);
 
     await runtime.dispose();
   });

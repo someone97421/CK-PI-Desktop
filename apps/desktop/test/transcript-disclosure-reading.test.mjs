@@ -127,13 +127,15 @@ test("real input, a new turn and every navigation drop the held position", () =>
 test("follow records the position the scroller actually reached", () => {
   // The intended target minus a fractional device pixel ratio was enough to
   // make the next scroll event look like the reader scrolling up.
+  // The auto follow may also record the last laid-out offset beside it, so the
+  // guarded body may be a block; the assignment still has to live in one place.
   assert.match(
     transcript,
-    /if \(behavior === "auto"\) lastScrollTopRef\.current = el\.scrollTop;/,
+    /if \(behavior === "auto"\) \{?\s*lastScrollTopRef\.current = el\.scrollTop;/,
   );
   assert.equal(
     transcript.match(
-      /if \(behavior === "auto"\) lastScrollTopRef\.current = el\.scrollTop;/g,
+      /if \(behavior === "auto"\) \{?\s*lastScrollTopRef\.current = el\.scrollTop;/g,
     )?.length,
     1,
   );

@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const sidecarSource = await readFile(
-  new URL("../electron/main/agent-sidecar.ts", import.meta.url),
+  new URL("../../../packages/host-runtime/src/agent-sidecar.ts", import.meta.url),
   "utf8",
 );
 const runtimeSidecarSource = await readFile(
@@ -12,7 +12,7 @@ const runtimeSidecarSource = await readFile(
   "utf8",
 );
 const hostSource = await readFile(
-  new URL("../electron/main/host-process.ts", import.meta.url),
+  new URL("../../../packages/host-runtime/src/host-process.ts", import.meta.url),
   "utf8",
 );
 const mainSource = await readMainSource();
@@ -227,7 +227,7 @@ test("app quit waits for one idempotent teardown before allowing the follow-up q
   assert.match(shutdownSource, /await hostShutdown/);
   assert.match(
     shutdownSource,
-    /await Promise\.allSettled\(\[\s*pluginPanelShutdown,\s*pluginShutdown,\s*sidecarShutdown,\s*mcpShutdown,\s*\]\)/,
+    /await Promise\.allSettled\(\[\s*pluginPanelShutdown,\s*pluginShutdown,\s*sidecarShutdown,\s*mcpShutdown,\s*remoteHostsShutdown,\s*\]\)/,
   );
   const releaseQuit = shutdownSource.match(
     /const releaseQuit = \(\) => \{[\s\S]*?shutdownComplete = true;[\s\S]*?app\.quit\(\);[\s\S]*?\};/,

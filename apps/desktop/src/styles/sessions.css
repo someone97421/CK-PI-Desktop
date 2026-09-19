@@ -5,64 +5,162 @@
   sidebar-threads.css.
 */
 
-/* Session import (settings) */
-.import-toolbar {
+/* -------------------------------------------------------------------------
+ * Settings > Import. One workbench per kind — sessions, model configuration,
+ * skills, MCP servers: a segmented kind switcher, one toolbar (select-all with
+ * both counts, kind options, rescan, import selected), then one list panel
+ * whose group headers are quiet label lines and whose rows are individual
+ * tiles. The rhythm matches the agent capability destinations.
+ */
+
+.import-page {
   display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/*
+  Kind switcher. The shared `.settings-segment` already carries both theme
+  pairs and the raised active pill; only the page-scale pills are local.
+  Compound selectors on purpose: providers.css defines `.settings-segment-item`
+  further down the cascade, so a bare `.import-segment-btn` would lose to it.
+*/
+.settings-segment.import-segment {
+  align-self: flex-start;
+  max-width: 100%;
   flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px 6px;
 }
 
-.import-select-all {
+.settings-segment-item.import-segment-btn {
+  padding: 5px 12px;
+  font-size: var(--text-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+/* Tab panels stay mounted so a scan result survives a switch. */
+.import-view {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  color: var(--ds-text-primary);
-  font-size: var(--text-md);
+  min-width: 0;
+  flex-direction: column;
 }
 
-.import-toolbar-actions,
-.import-group-by {
+.import-view[hidden] {
+  display: none;
+}
+
+.import-workbench {
   display: flex;
-  align-items: center;
-}
-
-.import-toolbar-actions {
+  min-width: 0;
+  flex-direction: column;
   gap: 10px;
 }
 
-.import-group-by {
+/* One action row per kind: both counts on the left, options and actions right. */
+.import-toolbar {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 0 1px;
+}
+
+.import-select-all {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.import-count {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ds-text-primary);
+  font-size: var(--text-sm);
+}
+
+.import-count-selected {
+  color: var(--ds-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.import-count-selected::before {
+  color: var(--ds-text-faint);
+  content: "· ";
+}
+
+.import-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/*
+  The shared `.btn` runs a step larger than the selects beside it, so give it
+  toolbar geometry here rather than resizing every other page. `min-height`
+  instead of `height` so a wrapped label grows the button instead of spilling
+  out of it.
+*/
+.import-toolbar-actions > .btn {
+  min-height: 28px;
+  padding: 4px 11px;
+  font-size: var(--text-sm);
+}
+
+.import-option {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
   gap: 7px;
+}
+
+.import-option-label {
   color: var(--ds-text-muted);
   font-size: var(--text-sm);
   white-space: nowrap;
 }
 
-.import-group-select .settings-menu-select-trigger {
+.import-option-select .settings-menu-select-trigger {
   height: 28px;
+}
+
+/* Import mode leaves the one-line toolbar alone but stays readable. */
+.import-hint {
+  margin: -4px 1px 0;
+  max-width: 92ch;
+  color: var(--ds-text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-body);
+}
+
+/* D297: the list dissolves into the page — each row is its own tile. */
+.settings-panel.import-panel {
+  gap: 6px;
+  background: transparent;
+  overflow: visible;
 }
 
 .import-groups {
   display: flex;
+  min-width: 0;
   flex-direction: column;
+  gap: 12px;
 }
 
-/* Groups are separated by space; each header is a soft band, not a rule. */
-.import-group + .import-group {
-  margin-top: 6px;
-}
-
+/* Quiet label line above its rows: which source, where it lives, how many. */
 .import-group-header {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
-  margin: 0 6px;
-  border-radius: var(--radius-sm);
-  padding: 8px 8px;
-  background: var(--ds-tile);
+  padding: 0 10px 6px;
 }
 
 .import-group-toggle {
@@ -79,6 +177,11 @@
   text-align: left;
 }
 
+.import-group-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ds-accent) 22%, transparent);
+}
+
 .import-group-chevron {
   display: inline-flex;
   flex-shrink: 0;
@@ -92,42 +195,78 @@
 }
 
 .import-group-name {
-  flex-shrink: 0;
-  color: var(--ds-text-primary);
-  font-size: var(--text-md-plus);
+  flex: 0 0 auto;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-2xs);
   font-weight: var(--font-weight-strong);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .import-group-path {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--ds-text-muted);
   font-family: var(--font-mono);
-  font-size: var(--text-xs-plus);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .import-group-count {
-  margin-left: auto;
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  border-radius: var(--radius-full);
+  background: color-mix(in oklab, var(--ds-text-primary) 8%, transparent);
+  padding: 1px 7px;
   color: var(--ds-text-muted);
-  font-size: var(--text-sm);
+  font-size: var(--text-3xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--leading-normal);
 }
 
+.import-group-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* One candidate: checkbox, identity, badge. */
 .import-row {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 10px;
-  margin: 0 6px;
-  border-radius: var(--radius-sm);
-  padding: 8px 8px 8px 28px;
+  border-radius: var(--radius-md);
+  background: var(--ds-tile);
+  padding: 6px 10px;
   cursor: pointer;
   transition: background var(--motion-duration-fast) var(--motion-ease-out);
 }
 
 .import-row:hover {
   background: var(--ds-tile-hover);
+}
+
+/* Selection is tonal, never a color: the checkbox already says which rows. */
+.import-row:has(input:checked) {
+  background: var(--ds-tile-deep);
+}
+
+.import-row:has(input:focus-visible),
+.import-group-header > input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ds-accent) 22%, transparent);
+}
+
+.import-row > input[type="checkbox"],
+.import-group-header > input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
 }
 
 .import-row-main {
@@ -140,15 +279,62 @@
 
 .import-row-title {
   overflow: hidden;
+  color: var(--ds-text-primary);
+  font-size: var(--text-md);
+  font-weight: var(--font-weight-medium);
+  line-height: var(--leading-compact);
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ds-text-primary);
-  font-size: var(--text-md-plus);
 }
 
 .import-row-meta {
+  overflow: hidden;
   color: var(--ds-text-muted);
-  font-size: var(--text-xs-plus);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pre-scan state: what the scan reads, then the action that starts it. */
+.import-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  border-radius: var(--radius-lg);
+  background: var(--ds-tile);
+  padding: 26px 20px;
+  text-align: center;
+}
+
+.import-idle-glyph {
+  display: inline-flex;
+  color: var(--ds-text-faint);
+}
+
+.import-idle-copy {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+.import-idle-note {
+  margin: 0;
+  color: var(--ds-text-faint);
+  font-size: var(--text-2xs);
+}
+
+/* A scan that found nothing keeps its action in the toolbar above. */
+.import-empty {
+  margin: 0;
+  border-radius: var(--radius-lg);
+  background: var(--ds-tile);
+  padding: 16px 14px;
+  color: var(--ds-text-muted);
+  font-size: var(--text-sm);
 }
 
 /* Sidebar session management controls */
@@ -495,7 +681,9 @@
 /* CJK has no case and wide tracking splits glyphs unnaturally. */
 :lang(zh-CN) .sidebar-list-label,
 :lang(zh-CN) .dest-section-label,
-:lang(zh-CN) .shortcut-group-label {
+:lang(zh-CN) .shortcut-group-label,
+:lang(zh-CN) .import-group-name,
+:lang(zh-TW) .import-group-name {
   letter-spacing: var(--tracking-normal);
   text-transform: none;
 }

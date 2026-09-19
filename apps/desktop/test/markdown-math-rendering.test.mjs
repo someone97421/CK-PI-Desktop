@@ -81,6 +81,33 @@ test("TeX bracket math renders through the production Markdown pipeline", async 
     // Escaped and unmatched markers stay literal.
     assert.doesNotMatch(render("\\\\(escaped\\\\)"), /katex/);
     assert.doesNotMatch(render("text \\(unmatched"), /katex/);
+
+    // Issue #541: display math whose body puts `=`, `-`, `+` or `*` on their
+    // own lines used to be shredded by marked's block lexer (setext headings /
+    // list markers), which left `\[` and `\]` in different blocks so the
+    // delimiters escaped through as literal `[` / `]` and the equation body
+    // rendered as prose. All four markers must now stay inside one math node.
+    const setextEquals = render(
+      "\\[\n\\mathbf{a}\n=\n\\frac{\\partial\\mathbf{u}}{\\partial t}\n\\]",
+    );
+    assert.match(setextEquals, /katex-display/);
+    assert.doesNotMatch(setextEquals, /<h[1-6][ >]/);
+    assert.doesNotMatch(setextEquals, /\\\[|\\\]/);
+
+    const setextDash = render("\\[\nx\n-\ny\n\\]");
+    assert.match(setextDash, /katex-display/);
+    assert.doesNotMatch(setextDash, /<h[1-6][ >]/);
+
+    const listPlus = render(
+      "\\[\n\\boxed{\na\n+\nb\n+\nc\n}\n\\]",
+    );
+    assert.match(listPlus, /katex-display/);
+    assert.doesNotMatch(listPlus, /<(ul|ol|li)[ >]/);
+    assert.doesNotMatch(listPlus, /\\\[|\\\]/);
+
+    const listStar = render("\\[\n*\na\n\\]");
+    assert.match(listStar, /katex-display/);
+    assert.doesNotMatch(listStar, /<(ul|ol|li)[ >]/);
   } finally {
     globalThis.document = originalDocument;
     await server.close();

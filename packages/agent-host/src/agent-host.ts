@@ -92,7 +92,13 @@ export type StartTurnParams = {
   sessionId: string;
   idempotencyKey?: string;
   admission?: RacpTurnAdmission;
-  input: { text: string; attachments?: AgentPromptAttachment[]; sessionMessageId?: string };
+  input: {
+    text: string;
+    attachments?: AgentPromptAttachment[];
+    sessionMessageId?: string;
+    /** Client-chosen id for the durable user row (D288). */
+    userMessageId?: string;
+  };
   context: RacpRequestContext;
 };
 
@@ -485,6 +491,7 @@ export class AgentHost {
         principalSubject: principal.subject,
         content: params.input.text,
         ...(params.input.sessionMessageId ? { sessionMessageId: params.input.sessionMessageId } : {}),
+        ...(params.input.userMessageId ? { userMessageId: params.input.userMessageId } : {}),
         ...(params.input.attachments ? { attachments: params.input.attachments } : {}),
         effectivePermissionMode,
         ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -506,6 +513,7 @@ export class AgentHost {
         sessionId: state.id,
         content: params.input.text,
         ...(params.input.sessionMessageId ? { sessionMessageId: params.input.sessionMessageId } : {}),
+        ...(params.input.userMessageId ? { userMessageId: params.input.userMessageId } : {}),
         ...(params.input.attachments ? { attachments: params.input.attachments } : {}),
         effectivePermissionMode,
         ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -929,6 +937,13 @@ export class AgentHost {
     return this.approvals.list(sessionId);
   }
 
+  /** The RACP view of a session the caller already fetched: its durable summary plus live state. */
+  describeSession(summary: SessionSummary): RacpSession {
+    const state = this.state(summary.id);
+    state.permissionMode = summary.permissionMode;
+    return this.toRacpSession(summary, state);
+  }
+
   queuedTurns(sessionId: string): RacpTurn[] {
     return this.queueEntries(sessionId).map((entry) => entry.turn);
   }
@@ -1053,6 +1068,7 @@ export class AgentHost {
             sessionId,
             content: record.content,
             ...(record.sessionMessageId ? { sessionMessageId: record.sessionMessageId } : {}),
+            ...(record.userMessageId ? { userMessageId: record.userMessageId } : {}),
             ...(record.attachments ? { attachments: record.attachments } : {}),
             effectivePermissionMode: record.effectivePermissionMode,
             ...(record.idempotencyKey ? { idempotencyKey: record.idempotencyKey } : {}),

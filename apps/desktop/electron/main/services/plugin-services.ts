@@ -6,6 +6,7 @@ import {
   type ActivationScope,
   type AppSettings,
   type BrowserState,
+  type McpServerStatus,
   type ModelBinding,
   type ShortcutPlatform,
   type ThinkingLevel,
@@ -40,8 +41,10 @@ import { UserMcpRuntime } from "../user-mcp";
 import {
   MCP_CALL_TIMEOUT_MS,
   MCP_CONNECT_TIMEOUT_MS,
+  MCP_TOOL_DISCOVERY_TIMEOUT_MS,
   McpServerClient,
 } from "../plugin-mcp";
+import { McpOAuthManager } from "../mcp-oauth";
 import { PluginPanelHost } from "../plugin-panel-host";
 import { PluginViewHost } from "../plugin-view-host";
 import { BrowserPane } from "../browser-view";
@@ -343,6 +346,13 @@ export function createPluginServices({
     project: {
       create: (pluginId, input) => callPluginProjectHost(pluginId, input),
     },
+    // Read-only usage facts: the same host-owned session transport, no
+    // mutation, so no `sessionsChanged` fan-out (callPluginSessionHost only
+    // announces the mutating methods).
+    usage: {
+      listTurns: (pluginId, input) =>
+        callPluginSessionHost("plugin.usage.listTurns", pluginId, input),
+    },
     complete: async (input): Promise<PluginCompleteResult> => {
       if (!getHost()) {
         throw Object.assign(new Error("host unavailable"), { code: "UNSUPPORTED" });
@@ -420,7 +430,6 @@ export function createPluginServices({
       // surface. Drop it; the renderer re-opens it on the pluginChanged event if
       // the tab is still active and the plugin came back.
       pluginViews.closePlugin(pluginId);
-      pluginSettingsViews.closePlugin(pluginId);
       if (pluginId === BROWSER_PLUGIN_ID) browserHost.disposeGuest();
       sendToRenderer(IPC.event.pluginChanged,{ reason: "crash", pluginId });
     },
@@ -448,15 +457,41 @@ export function createPluginServices({
       });
       // Views were loaded from the previous revision of the plugin's files.
       pluginViews.closePlugin(pluginId);
-      pluginSettingsViews.closePlugin(pluginId);
       if (pluginId === BROWSER_PLUGIN_ID) browserHost.disposeGuest();
       sendToRenderer(IPC.event.pluginChanged,{ reason: "reload", pluginId });
     },
   });
-  const userMcp = new UserMcpRuntime({
+  let userMcp: UserMcpRuntime;
+  const mcpOAuth: McpOAuthManager = new McpOAuthManager({
+    call: async (method, params) => {
+      const h = getHost();
+      if (!h) throw new Error("host unavailable");
+      return h.call(method, params);
+    },
+    emit: (event) => sendToRenderer(IPC.event.mcpOauth, event),
+    openExternal: (url) => safeOpenExternal(url),
+    log: (level, message, data) => logger.app("plugin", level, message, { data }),
+    onAuthorized: async (serverId, record): Promise<McpServerStatus> => {
+      const existed = userMcp.listRecords().some((item) => item.id === serverId);
+      if (record && !existed) {
+        userMcp.setRecords([...userMcp.listRecords(), record]);
+      }
+      userMcp.invalidate(serverId);
+      const status: McpServerStatus = await userMcp.test(serverId);
+      if (!existed) {
+        userMcp.invalidate(serverId);
+        userMcp.setRecords(userMcp.listRecords().filter((item) => item.id !== serverId));
+      }
+      sendToRenderer(IPC.event.pluginChanged, { reason: "mcp", pluginId: serverId });
+      return status;
+    },
+  });
+  userMcp = new UserMcpRuntime({
     createClient: (config) => new McpServerClient(config),
+    oauth: mcpOAuth,
     connectTimeoutMs: MCP_CONNECT_TIMEOUT_MS,
     callTimeoutMs: MCP_CALL_TIMEOUT_MS,
+    discoveryTimeoutMs: MCP_TOOL_DISCOVERY_TIMEOUT_MS,
     audit: (entry) => logger.app("plugin", "info", "mcp.api", entry),
     log: (level, message, data) => logger.app("plugin", level, message, { data }),
   });
@@ -538,17 +573,7 @@ export function createPluginServices({
       data: { api: "view.egress", ok: false, url, ts: Date.now() },
     });
   });
-  // Settings extensions use the same sandboxed preload and egress policy as
-  // work-panel views, but have their own visible surface and lifecycle.
-  const pluginSettingsViews = new PluginViewHost(({ pluginId, url }) => {
-    logger.app("plugin", "warn", "plugin.api", {
-      pluginId,
-      code: "PERMISSION_DENIED",
-      data: { api: "settings.egress", ok: false, url, ts: Date.now() },
-    });
-  });
   pluginPanels.addSenderResolver((senderId) => pluginViews.pluginIdForSender(senderId));
-  pluginPanels.addSenderResolver((senderId) => pluginSettingsViews.pluginIdForSender(senderId));
   const browserHost = new BrowserHost({
     pane: browserPane,
     isPluginLoaded: (pluginId) => Boolean(plugins.getLoaded(pluginId)),
@@ -622,13 +647,13 @@ export function createPluginServices({
   return {
     plugins,
     userMcp,
+    mcpOAuth,
     pluginScopes,
     sessionProjects,
     emitBrowserState,
     announceTurnEnded,
     pluginPanels,
     pluginViews,
-    pluginSettingsViews,
     browserHost,
     browserPane,
     speech,

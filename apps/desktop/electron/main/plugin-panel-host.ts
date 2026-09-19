@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { catalogs, resolveLocale } from "@pi-desktop/i18n";
 import { isNetUrlAllowed, THEME_ASSET_SCHEME } from "@pi-desktop/plugin-sdk";
 import { builtinWindowBackground } from "@pi-desktop/shared";
+import { suppressLinuxFramelessSystemMenu } from "./frameless-system-menu";
 import {
   isPluginPanelWindowControlAction,
   PLUGIN_PANEL_MIN_SIZE,
@@ -478,6 +479,7 @@ export class PluginPanelHost {
       // A panel owns its visible surface; do not add a native application menu
       // to the window around the plugin's own UI.
       win.setMenu(null);
+      suppressLinuxFramelessSystemMenu(win);
 
       // A panel gets exactly one web contents. `window.open` would otherwise mint
       // a chromeless window outside the egress policy applied above.

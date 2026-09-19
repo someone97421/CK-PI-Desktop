@@ -18,6 +18,15 @@ import { ScopeControl } from "./ScopeControl";
 import { KeyValueRows, pairsToRecord, recordToPairs, type KeyValuePair } from "./KeyValueRows";
 
 /**
+ * Tool names shown beside a test result.
+ *
+ * A server may advertise thousands of tools, and the joined list is one line of
+ * muted text under a count that already carries the total, so only the head of
+ * the list is worth rendering.
+ */
+const MCP_TEST_TOOL_NAME_LIMIT = 24;
+
+/**
  * Create/edit sheet for one user-owned MCP server.
  *
  * The transport choice comes first because it decides what the rest of the form
@@ -471,7 +480,10 @@ export function McpEditorSheet({
                     : status.message || t("extensions.mcp.testFailed")}
               </span>
               {status.state === "ready" && status.toolNames?.length ? (
-                <span className="ext-test-tools">{status.toolNames.join(" · ")}</span>
+                <span className="ext-test-tools">
+                  {status.toolNames.slice(0, MCP_TEST_TOOL_NAME_LIMIT).join(" · ")}
+                  {status.toolNames.length > MCP_TEST_TOOL_NAME_LIMIT ? " …" : ""}
+                </span>
               ) : null}
             </div>
           ) : null}

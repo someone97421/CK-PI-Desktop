@@ -21,7 +21,6 @@ export type PluginIpcDependencies = {
   agentExtensions: AgentExtensionBridge;
   browserHost: BrowserHost;
   pluginViews: PluginViewHost;
-  pluginSettingsViews: PluginViewHost;
   pluginScopes: Map<string, ActivationScope>;
   rememberPluginScopes: (list: any[]) => void;
   sendToRenderer: (channel: string, payload?: unknown) => void;
@@ -36,7 +35,6 @@ export function registerPluginIpc({
   agentExtensions,
   browserHost,
   pluginViews,
-  pluginSettingsViews,
   pluginScopes,
   rememberPluginScopes,
   sendToRenderer,
@@ -346,7 +344,6 @@ export function registerPluginIpc({
   handle(IPC.invoke.pluginDisable, async (id: string) => {
     if (!host) throw new Error("host unavailable");
     pluginViews.closePlugin(id);
-    pluginSettingsViews.closePlugin(id);
     if (id === BROWSER_PLUGIN_ID) browserHost.disposeGuest();
     await plugins.unload(id);
     logger.app("plugin", "info", "plugin disabled", { pluginId: id });
@@ -358,7 +355,6 @@ export function registerPluginIpc({
   handle(IPC.invoke.pluginUninstall, async (id: string) => {
     if (!host) throw new Error("host unavailable");
     pluginViews.closePlugin(id);
-    pluginSettingsViews.closePlugin(id);
     await plugins.unload(id);
     logger.app("plugin", "info", "plugin uninstalled", { pluginId: id });
     const res = await host.call("plugins.uninstall", { id });

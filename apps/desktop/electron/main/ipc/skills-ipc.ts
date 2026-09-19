@@ -158,22 +158,45 @@ export function registerSkillsIpc({
     return res;
   });
 
-  /** Import exactly one markdown file into the selected capability directory. */
-  handle(IPC.invoke.skillImport, async (query: Partial<AgentCapabilityQuery> = {}) => {
-    if (!host) throw new Error("host unavailable");
-    const picked = await dialog.showOpenDialog({
-      title: "Import skill",
-      properties: ["openFile"],
-      filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
-    });
-    if (picked.canceled || !picked.filePaths[0]) return { canceled: true };
-    const res = await host.call("skills.import", {
-      path: picked.filePaths[0],
-      ...query,
-    });
-    sendToRenderer(IPC.event.pluginChanged,{ reason: "skill" });
-    return res;
-  });
+  /**
+   * Import exactly one Skill from a native picker. The default single-file
+   * picker is kept so existing callers keep working; a caller may also ask for
+   * a directory picker (Claude-style `<name>/SKILL.md` skills) or pass
+   * `mode: "link"` for a symlink import instead of a copy. The value is
+   * forwarded to `skills.import` intact so host-core still owns the policy.
+   */
+  handle(
+    IPC.invoke.skillImport,
+    async (
+      query: Partial<AgentCapabilityQuery> & {
+        sourceKind?: "file" | "dir";
+        mode?: "copy" | "link";
+      } = {},
+    ) => {
+      if (!host) throw new Error("host unavailable");
+      const { sourceKind, mode, ...rest } = query;
+      const picked =
+        sourceKind === "dir"
+          ? await dialog.showOpenDialog({
+              title: "Import skill",
+              properties: ["openDirectory"],
+            })
+          : await dialog.showOpenDialog({
+              title: "Import skill",
+              properties: ["openFile"],
+              filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+            });
+      if (picked.canceled || !picked.filePaths[0]) return { canceled: true };
+      const res = await host.call("skills.import", {
+        path: picked.filePaths[0],
+        ...(sourceKind === "dir" ? { shape: "dir" } : {}),
+        ...(mode ? { mode } : {}),
+        ...rest,
+      });
+      sendToRenderer(IPC.event.pluginChanged, { reason: "skill" });
+      return res;
+    },
+  );
 
   handle(
     IPC.invoke.skillUpdate,

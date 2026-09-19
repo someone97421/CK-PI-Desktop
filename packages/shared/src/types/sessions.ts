@@ -5,7 +5,17 @@ import type { PermissionMode } from "./permissions.js";
 import type { UiMessage } from "./messages.js";
 import type { PlanningState } from "./plans.js";
 
-export type SessionSource = "desktop" | "pi-native";
+/**
+ * Which authority owns a session's transcript.
+ *
+ * - `desktop`: this desktop's own host-core (the default; older hosts omit the
+ *   field and it is normalized to `desktop`).
+ * - `pi-native`: an imported Pi CLI session, read-mostly.
+ * - `remote`: a session that lives on a paired remote `pi-host` and is driven
+ *   over RACP-WS. The renderer treats it exactly like a `desktop` session apart
+ *   from a display badge; the local/remote split is resolved in Electron main.
+ */
+export type SessionSource = "desktop" | "pi-native" | "remote";
 
 export type SessionCapabilities = {
   canPrompt: boolean;

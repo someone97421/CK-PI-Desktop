@@ -1,21 +1,21 @@
-import { lazy, Suspense, type CSSProperties, type ReactNode } from "react";
-import { TooltipButton, cx } from "../../components/ui";
+import { type CSSProperties, lazy, type ReactNode, Suspense } from "react";
+import { ChatSurface } from "../../components/ChatSurface";
+import { ConversationTopbar } from "../../components/ConversationTopbar";
+import { ExtensionPromptHost } from "../../components/ExtensionPromptDialog";
 import {
   IconNewSession,
   IconPanel,
   IconPanelOpen,
 } from "../../components/icons";
-import { Sidebar } from "../../components/Sidebar";
-import { ConversationTopbar } from "../../components/ConversationTopbar";
-import { WorkPanel } from "../../components/workpanel/WorkPanel";
-import { ChatSurface } from "../../components/ChatSurface";
-import { SearchDialog } from "../../components/SearchDialog";
-import { ToastHost } from "../../components/Toast";
-import { ExtensionPromptHost } from "../../components/ExtensionPromptDialog";
 import { ProjectCreateDialog } from "../../components/ProjectCreateDialog";
+import { SearchDialog } from "../../components/SearchDialog";
+import { Sidebar } from "../../components/Sidebar";
+import { ToastHost } from "../../components/Toast";
 import { UpdateBanner } from "../../components/UpdateBanner";
+import { cx, TooltipButton } from "../../components/ui";
 import { WindowControls } from "../../components/WindowControls";
 import { ClosePromptDialog } from "../../components/ClosePromptDialog";
+import { WorkPanel } from "../../components/workpanel/WorkPanel";
 import { api } from "../../lib/api";
 import { CollapsedTitlebarActions, RoutePending } from "./chrome";
 import { useAppShellRuntime } from "./useAppShellRuntime";
@@ -306,6 +306,7 @@ export function AppShell() {
       )}
       style={{ "--ds-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
+      <div className="app-scenic-backdrop" aria-hidden />
       {shell}
       <ProjectCreateDialog />
       <ClosePromptDialog />

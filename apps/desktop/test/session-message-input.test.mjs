@@ -4,7 +4,7 @@ import test from "node:test";
 import { IPC } from "@pi-desktop/shared";
 
 register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
-const { resolveSessionMessageInput } = await import("../electron/main/session-message-input.ts");
+const { resolveSessionMessageInput } = await import("../../../packages/host-runtime/src/session-message-input.ts");
 const { registerAgentIpc } = await import("../electron/main/ipc/agent-ipc.ts");
 
 const message = {

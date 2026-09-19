@@ -14,10 +14,16 @@ export type SessionMessageInput = {
   origin: SessionMessageOrigin;
 };
 
+/** The subset of a prompt request the ledger lookup needs. */
+export type SessionMessagePromptRequest = Pick<
+  AgentPromptRequest,
+  "sessionId" | "sessionMessageId" | "attachments" | "messageId" | "truncateBefore" | "truncateFromMessageId"
+>;
+
 /** Resolve provenance and content only from the host ledger, never a caller. */
 export async function resolveSessionMessageInput(
   host: CollaborationHost,
-  request: AgentPromptRequest,
+  request: SessionMessagePromptRequest,
 ): Promise<SessionMessageInput | undefined> {
   if (request.sessionMessageId === undefined) return undefined;
   const messageId = typeof request.sessionMessageId === "string"

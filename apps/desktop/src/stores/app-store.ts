@@ -101,11 +101,7 @@ import {
 import { settleStoppedAssistantMetrics } from "../lib/context-usage";
 import { formatToolValue } from "../lib/tool-display";
 import { withReviewChangeState } from "../lib/workspace-review";
-import {
-  fileWorkPanelTab,
-  shouldOpenReviewArtifact,
-  toolWorkPanelTab,
-} from "../lib/work-panel-tabs";
+import { fileWorkPanelTab } from "../lib/work-panel-tabs";
 import {
   clearSessionPermissions,
   enqueuePermission,

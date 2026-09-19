@@ -15,7 +15,7 @@ const nodeProxy = await readFile(
   "utf8",
 );
 const hostProcess = await readFile(
-  new URL("../electron/main/host-process.ts", import.meta.url),
+  new URL("../../../packages/host-runtime/src/host-process.ts", import.meta.url),
   "utf8",
 );
 const hostProxy = await readFile(

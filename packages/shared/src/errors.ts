@@ -171,6 +171,31 @@ export const ErrorCodes = {
   APPROVAL_STALE: "APPROVAL_STALE",
   PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
   RATE_LIMITED: "RATE_LIMITED",
+  /**
+   * Remote Host connection codes (D448 / ADR 0284). The desktop adapter and
+   * the `pi-host` bootstrap classify a remote failure by these, never by
+   * matching message text.
+   */
+  /** The transport to a paired Host dropped; the Host itself may still be running. */
+  HOST_DISCONNECTED: "HOST_DISCONNECTED",
+  /** Installing or starting `pi-host` over the bootstrap channel failed. */
+  HOST_BOOTSTRAP_FAILED: "HOST_BOOTSTRAP_FAILED",
+  /** The paired Host runs a different release than this client. */
+  HOST_VERSION_MISMATCH: "HOST_VERSION_MISMATCH",
+  /** The device credential was refused by the Host. */
+  REMOTE_AUTH_FAILED: "REMOTE_AUTH_FAILED",
+  /** The RACP connection could not be established. */
+  REMOTE_CONNECTION_FAILED: "REMOTE_CONNECTION_FAILED",
+  /** The transport's port forward could not be set up. */
+  REMOTE_FORWARD_FAILED: "REMOTE_FORWARD_FAILED",
+  /** A Host-side path does not exist. */
+  REMOTE_PATH_NOT_FOUND: "REMOTE_PATH_NOT_FOUND",
+  /** A Host-side path is outside what the principal may reach. */
+  REMOTE_PATH_FORBIDDEN: "REMOTE_PATH_FORBIDDEN",
+  PAIRING_FAILED: "PAIRING_FAILED",
+  PAIRING_TOKEN_EXPIRED: "PAIRING_TOKEN_EXPIRED",
+  /** The Host does not advertise the capability the operation needs. */
+  CAPABILITY_UNAVAILABLE: "CAPABILITY_UNAVAILABLE",
   // Host-core RPC detail codes (spec 06 §7, 08 §3.1/§3.6). Electron surfaces
   // them unchanged through `AppError.code`.
   INVALID_PARAMS: "INVALID_PARAMS",

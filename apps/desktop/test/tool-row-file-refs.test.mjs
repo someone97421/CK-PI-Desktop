@@ -73,6 +73,7 @@ const { useOpenPreviewTarget } = loadModule("../src/hooks/use-preview-target.ts"
     },
   },
   "../lib/chat-links": loadModule("../src/lib/chat-links.ts", {}),
+  "../lib/open-http-url": { openHttpUrl: (...args) => calls.urls.push(args) },
   "../lib/work-panel-tabs": workPanelTabs,
 });
 

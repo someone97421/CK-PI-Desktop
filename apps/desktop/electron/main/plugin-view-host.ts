@@ -364,7 +364,6 @@ export class PluginViewHost {
         ],
       },
     });
-
     const wc = view.webContents;
     // A docked view gets exactly one web contents. `window.open` would mint a
     // chromeless window outside the egress policy applied above.

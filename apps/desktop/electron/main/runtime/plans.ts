@@ -1,5 +1,5 @@
 import { ErrorCodes, IPC, type AgentEventEnvelope, type AppNotification, type PlanExecution, type PlanExecutionFinishStatus, type UiMessage } from "@pi-desktop/shared";
-import { executionFromResponse, executionListFromResponse, planExecutionFromUnknown } from "../plan-execution";
+import { executionFromResponse, executionListFromResponse, planExecutionFromUnknown } from "@pi-desktop/host-runtime";
 import type { RuntimeState } from "./context";
 import type {
   SessionCoordination,

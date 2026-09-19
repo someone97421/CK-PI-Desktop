@@ -19,6 +19,33 @@ const MAX_DESCRIPTION_CHARS: usize = 400;
 const SKILL_KIND: &str = "skills";
 /// Documents read from a user-configured extra path; never written by host-core.
 const LINKED_SOURCE: &str = "linked";
+const LINKED_IMPORT_SOURCE: &str = "linked-import";
+
+// 只识别技能目录内部的链接，不能把技能目录本身或外部扩展根当成可解除的导入。
+fn imported_skill_link(path: &Path, directory: &Path) -> Option<PathBuf> {
+    let relative = path.strip_prefix(directory).ok()?;
+    let mut current = directory.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(segment) = component else {
+            return None;
+        };
+        current.push(segment);
+        if fs::symlink_metadata(&current).ok()?.file_type().is_symlink() {
+            return Some(current);
+        }
+    }
+    None
+}
+
+fn remove_imported_skill_link(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    if path.is_dir() {
+        fs::remove_dir(path)?;
+        return Ok(());
+    }
+    fs::remove_file(path)?;
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +83,48 @@ pub struct UserSkillInput {
     /// instead of writing activation scope into a skill document.
     #[allow(dead_code)]
     pub scope: Option<ActivationScope>,
+    /// Import mode: `"copy"` (default) keeps a private byte-for-byte replica so
+    /// deleting or moving the source does not break the skill; `"link"` places
+    /// a symlink so an external editor's updates are picked up on the next
+    /// scan. Ignored by `create` and `update`.
+    pub mode: Option<String>,
+    /// Optional shape hint for `import`. When absent, a directory source is
+    /// treated as the `<name>/SKILL.md` convention and a regular file is
+    /// treated as `<id>.md`. A caller that pre-scanned the candidate can pass
+    /// `"dir"` to require the SKILL.md convention.
+    pub shape: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportMode {
+    Copy,
+    Link,
+}
+
+impl ImportMode {
+    fn parse(value: Option<&str>) -> Result<Self> {
+        match value.map(str::trim).unwrap_or("copy") {
+            "" | "copy" => Ok(Self::Copy),
+            "link" | "symlink" => Ok(Self::Link),
+            other => bail!("SKILL_INVALID: unknown import mode `{other}`"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportShape {
+    File,
+    Dir,
+}
+
+impl ImportShape {
+    fn parse(value: &str) -> Result<Self> {
+        match value.trim() {
+            "file" => Ok(Self::File),
+            "dir" | "directory" => Ok(Self::Dir),
+            other => bail!("SKILL_INVALID: unknown import shape `{other}`"),
+        }
+    }
 }
 
 pub struct UserSkillRegistry {
@@ -64,6 +133,81 @@ pub struct UserSkillRegistry {
     /// Test seam: replaces the resolved global skills directory so the suite
     /// never reads the developer's real `~/.agents/skills`.
     global_skills_dir: Option<PathBuf>,
+}
+
+/// Place a single skill file at `target`, either as a copy or a symlink.
+///
+/// Copy: `fs::copy` — a private byte replica so a moved or deleted source does
+/// not break the skill.
+/// Link: `symlink` (unix) / `symlink_file` (windows). On platforms or file
+/// systems that reject symlinks the caller receives the OS error and must
+/// decide whether to retry with `"copy"`.
+fn place_file(source: &Path, target: &Path, mode: ImportMode) -> Result<()> {
+    if target.exists() {
+        bail!(
+            "SKILL_INVALID: destination already exists: {}",
+            target.display()
+        );
+    }
+    match mode {
+        ImportMode::Copy => {
+            fs::copy(source, target)
+                .with_context(|| format!("copy {} to {}", source.display(), target.display()))?;
+        }
+        ImportMode::Link => symlink_path(source, target)?,
+    }
+    Ok(())
+}
+
+/// Place a skill directory (Anthropic `<name>/SKILL.md` shape) at `target_dir`.
+///
+/// Copy: recursive copy so the destination owns every byte, including resources
+/// beside `SKILL.md`.
+/// Link: one symlink at the root pointing at the source directory. External
+/// edits are picked up on the next scan; the caller is responsible for warning
+/// the user that a source rename or deletion silently invalidates the skill.
+fn place_dir(source_dir: &Path, target_dir: &Path, mode: ImportMode) -> Result<()> {
+    if target_dir.exists() {
+        bail!(
+            "SKILL_INVALID: destination already exists: {}",
+            target_dir.display()
+        );
+    }
+    match mode {
+        ImportMode::Copy => copy_directory_tree(source_dir, target_dir, false)?,
+        ImportMode::Link => symlink_path(source_dir, target_dir)?,
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn symlink_path(source: &Path, target: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(source, target)
+        .with_context(|| format!("symlink {} -> {}", target.display(), source.display()))
+}
+
+#[cfg(windows)]
+fn symlink_path(source: &Path, target: &Path) -> Result<()> {
+    // Directory vs file must be picked at link time on Windows; falling back to
+    // `symlink_file` for a directory would produce a link that resolves to a
+    // regular file entry.
+    let result = if source.is_dir() {
+        std::os::windows::fs::symlink_dir(source, target)
+    } else {
+        std::os::windows::fs::symlink_file(source, target)
+    };
+    result.with_context(|| {
+        format!(
+            "symlink {} -> {} (Windows may require Developer Mode or elevation)",
+            target.display(),
+            source.display()
+        )
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn symlink_path(_source: &Path, _target: &Path) -> Result<()> {
+    bail!("SKILL_INVALID: symlink import is not supported on this platform")
 }
 
 fn clip(value: &str, max_chars: usize) -> String {
@@ -371,7 +515,7 @@ impl UserSkillRegistry {
         let Some(source) = self.find(id, Some(from.level), from.project_path.as_deref())? else {
             bail!("SKILL_INVALID: unknown skill \"{id}\"");
         };
-        if source.source == LINKED_SOURCE {
+        if source.source == LINKED_SOURCE || source.source == LINKED_IMPORT_SOURCE {
             bail!("SKILL_READONLY: a skill from an extra path cannot be moved here");
         }
         if from.same_directory(to) {
@@ -591,7 +735,13 @@ impl UserSkillRegistry {
                 description,
                 enabled,
                 scope,
-                source: if linked { LINKED_SOURCE } else { "imported" }.into(),
+                source: if linked {
+                    LINKED_SOURCE
+                } else if imported_skill_link(&path, &directory).is_some() {
+                    LINKED_IMPORT_SOURCE
+                } else {
+                    "imported"
+                }.into(),
                 path: path.to_string_lossy().to_string(),
                 size_bytes: raw.len() as u64,
                 created_at: updated_at.clone(),
@@ -710,15 +860,74 @@ impl UserSkillRegistry {
             .ok_or_else(|| anyhow::anyhow!("SKILL_INVALID: created skill was not found"))
     }
 
-    /// Import exactly one file and preserve its bytes. The native dialog is also
-    /// single-file; this guard prevents a caller from turning import into a
-    /// directory copy.
+    /// Import a Markdown skill from an external location. `input.shape` picks
+    /// between the single-file (`<id>.md`) form and the Anthropic-style
+    /// directory form (`<name>/SKILL.md` plus resources); when absent, a
+    /// directory source is treated as `"dir"` and a regular file as `"file"`.
+    /// `input.mode` chooses between `"copy"` (default, byte-for-byte replica)
+    /// and `"link"` (symlink so external edits are picked up on next scan).
+    /// The catalog cap and the per-document byte cap are enforced up front so a
+    /// batch import never leaves partial state.
     pub fn import(&mut self, source: &str, input: UserSkillInput) -> Result<UserSkillRecord> {
         let source_path = PathBuf::from(source);
-        if !source_path.is_file() {
-            bail!("SKILL_INVALID: import requires one file");
+        let mode = ImportMode::parse(input.mode.as_deref())?;
+        let shape = match input.shape.as_deref() {
+            Some(value) => ImportShape::parse(value)?,
+            None => {
+                if source_path.is_dir() {
+                    ImportShape::Dir
+                } else if source_path.is_file() {
+                    ImportShape::File
+                } else {
+                    bail!("SKILL_INVALID: import source does not exist");
+                }
+            }
+        };
+        let (level, project_path) = level_and_project(&input)?;
+        let existing = self.list(level, project_path.as_deref())?;
+        if existing.len() >= MAX_SKILLS {
+            bail!("SKILL_INVALID: at most {MAX_SKILLS} skills");
         }
-        let raw = fs::read_to_string(&source_path)
+        let directory = capability_dir(level, project_path.as_deref(), "skills")?;
+        fs::create_dir_all(&directory)?;
+
+        match shape {
+            ImportShape::File => self.import_file(
+                &source_path,
+                &input,
+                level,
+                project_path.as_deref(),
+                mode,
+                &directory,
+                &existing,
+            ),
+            ImportShape::Dir => self.import_dir(
+                &source_path,
+                &input,
+                level,
+                project_path.as_deref(),
+                mode,
+                &directory,
+                &existing,
+            ),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn import_file(
+        &mut self,
+        source_path: &Path,
+        input: &UserSkillInput,
+        level: CapabilityLevel,
+        project_path: Option<&str>,
+        mode: ImportMode,
+        directory: &Path,
+        existing: &[UserSkillRecord],
+    ) -> Result<UserSkillRecord> {
+        if !source_path.is_file() {
+            bail!("SKILL_INVALID: import file source does not exist");
+        }
+        let raw = fs::read_to_string(source_path)
             .with_context(|| format!("read {}", source_path.display()))?;
         if raw.len() > MAX_SKILL_BYTES {
             bail!("SKILL_INVALID: document exceeds {MAX_SKILL_BYTES} bytes");
@@ -727,38 +936,116 @@ impl UserSkillRegistry {
         if body.trim().is_empty() {
             bail!("SKILL_INVALID: document is empty");
         }
-        let fallback = path_stem_for_id(&source_path);
+        let fallback = path_stem_for_id(source_path);
         let name = clip(
             front.get("name").map(String::as_str).unwrap_or(&fallback),
             MAX_NAME_CHARS,
         );
+        if name.is_empty() {
+            bail!("SKILL_INVALID: the file needs a name");
+        }
         let id = input
             .id
             .as_deref()
             .filter(|value| valid_id(value))
             .map(str::to_string)
-            .unwrap_or_else(|| capability_id(&name, &source_path, 64));
+            .unwrap_or_else(|| capability_id(&name, source_path, 64));
         if !valid_id(&id) {
             bail!("SKILL_INVALID: the file needs a name or a valid id");
         }
-        let (level, project_path) = level_and_project(&input)?;
-        if self
-            .list(level, project_path.as_deref())?
+        if existing
             .iter()
             .any(|record| record.id == id || record.name.eq_ignore_ascii_case(&name))
         {
             bail!("SKILL_INVALID: a skill with this name already exists at this level");
         }
-        let directory = capability_dir(level, project_path.as_deref(), "skills")?;
-        fs::create_dir_all(&directory)?;
         let target = directory.join(format!("{id}.md"));
-        fs::copy(&source_path, &target)
-            .with_context(|| format!("copy {} to {}", source_path.display(), target.display()))?;
-        if input.enabled == Some(false) {
-            self.state
-                .set_enabled(SKILL_KIND, level, &id, project_path.as_deref(), false)?;
+        place_file(source_path, &target, mode)?;
+        self.finish_import(&id, level, project_path, input.enabled)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn import_dir(
+        &mut self,
+        source_dir: &Path,
+        input: &UserSkillInput,
+        level: CapabilityLevel,
+        project_path: Option<&str>,
+        mode: ImportMode,
+        directory: &Path,
+        existing: &[UserSkillRecord],
+    ) -> Result<UserSkillRecord> {
+        if !source_dir.is_dir() {
+            bail!("SKILL_INVALID: import directory source does not exist");
         }
-        self.find(&id, Some(level), project_path.as_deref())?
+        let skill_file = source_dir.join("SKILL.md");
+        if !skill_file.is_file() {
+            bail!("SKILL_INVALID: directory import needs a SKILL.md at the root");
+        }
+        let raw = fs::read_to_string(&skill_file)
+            .with_context(|| format!("read {}", skill_file.display()))?;
+        if raw.len() > MAX_SKILL_BYTES {
+            bail!("SKILL_INVALID: SKILL.md exceeds {MAX_SKILL_BYTES} bytes");
+        }
+        let (front, body) = parse_front_matter(&raw);
+        if body.trim().is_empty() {
+            bail!("SKILL_INVALID: SKILL.md is empty");
+        }
+        // Directory name is the natural fallback id; file stem "SKILL" is not.
+        let dir_name = source_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let name = clip(
+            front.get("name").map(String::as_str).unwrap_or(dir_name),
+            MAX_NAME_CHARS,
+        );
+        if name.is_empty() {
+            bail!("SKILL_INVALID: SKILL.md needs a name");
+        }
+        let id = input
+            .id
+            .as_deref()
+            .filter(|value| valid_id(value))
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                // Prefer the directory basename so nested resources keep their
+                // relative paths intact under `<capability_dir>/skills/<id>/`.
+                let fallback_path = source_dir.join(format!("{name}"));
+                capability_id(&name, &fallback_path, 64)
+            });
+        if !valid_id(&id) {
+            bail!("SKILL_INVALID: the directory needs a name or a valid id");
+        }
+        if existing
+            .iter()
+            .any(|record| record.id == id || record.name.eq_ignore_ascii_case(&name))
+        {
+            bail!("SKILL_INVALID: a skill with this name already exists at this level");
+        }
+        let target_dir = directory.join(&id);
+        if target_dir.exists() {
+            bail!(
+                "SKILL_INVALID: destination already exists: {}",
+                target_dir.display()
+            );
+        }
+        place_dir(source_dir, &target_dir, mode)?;
+        self.finish_import(&id, level, project_path, input.enabled)
+    }
+
+    fn finish_import(
+        &mut self,
+        id: &str,
+        level: CapabilityLevel,
+        project_path: Option<&str>,
+        enabled: Option<bool>,
+    ) -> Result<UserSkillRecord> {
+        if enabled == Some(false) {
+            self.state
+                .set_enabled(SKILL_KIND, level, id, project_path, false)?;
+        }
+        self.find(id, Some(level), project_path)?
             .ok_or_else(|| anyhow::anyhow!("SKILL_INVALID: imported skill was not found"))
     }
 
@@ -772,7 +1059,7 @@ impl UserSkillRegistry {
         let Some(record) = record else {
             return Ok(None);
         };
-        if record.source == LINKED_SOURCE {
+        if record.source == LINKED_SOURCE || record.source == LINKED_IMPORT_SOURCE {
             bail!("SKILL_READONLY: a skill from an extra path cannot be edited here");
         }
         let raw = fs::read_to_string(&record.path)?;
@@ -843,13 +1130,20 @@ impl UserSkillRegistry {
         if record.source == LINKED_SOURCE {
             bail!("SKILL_READONLY: a skill from an extra path cannot be removed here");
         }
-        fs::remove_file(&record.path).ok();
         let level = record
             .level
             .as_deref()
             .map(|value| CapabilityLevel::parse(Some(value)))
             .transpose()?
             .unwrap_or(CapabilityLevel::Global);
+        if record.source == LINKED_IMPORT_SOURCE {
+            let directory = self.skills_directory(level, record.project_path.as_deref())?;
+            let link = imported_skill_link(Path::new(&record.path), &directory)
+                .ok_or_else(|| anyhow::anyhow!("SKILL_READONLY: imported link is no longer available"))?;
+            remove_imported_skill_link(&link)?;
+        } else {
+            fs::remove_file(&record.path)?;
+        }
         let _ = self.find(id, Some(level), record.project_path.as_deref())?;
         Ok(true)
     }
@@ -922,6 +1216,106 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn imports_a_directory_with_skill_md_in_copy_mode() {
+        let app = tempdir().unwrap();
+        let source_dir = app.path().join("incoming/example-skill");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("SKILL.md"), "---\nname: Example\ndescription: Anthropic-style skill\n---\n\nBody.\n").unwrap();
+        fs::write(source_dir.join("resource.txt"), "extra\n").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path());
+        let record = registry.import(source_dir.to_str().unwrap(), input("Ignored", "project", Some(app.path().to_str().unwrap()))).unwrap();
+        let normalized_project = crate::agent_capabilities::normalize_project_path(app.path().to_str().unwrap());
+        let expected_root = crate::agent_capabilities::capability_dir(CapabilityLevel::Project, Some(&normalized_project), "skills").unwrap().join("example");
+        assert!(expected_root.is_dir());
+        assert!(expected_root.join("SKILL.md").is_file());
+        assert!(expected_root.join("resource.txt").is_file());
+        assert_eq!(record.name, "Example");
+        assert_eq!(record.path, expected_root.join("SKILL.md").to_string_lossy());
+        assert!(source_dir.join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn imports_a_directory_with_skill_md_in_link_mode() {
+        let app = tempdir().unwrap();
+        let source_dir = app.path().join("incoming/linked-skill");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("SKILL.md"), "---\nname: Linked\n---\n\nBody.\n").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path());
+        let mut payload = input("Ignored", "project", Some(app.path().to_str().unwrap()));
+        payload.mode = Some("link".into());
+        let record = registry.import(source_dir.to_str().unwrap(), payload).unwrap();
+        let normalized_project = crate::agent_capabilities::normalize_project_path(app.path().to_str().unwrap());
+        let expected_root = crate::agent_capabilities::capability_dir(CapabilityLevel::Project, Some(&normalized_project), "skills").unwrap().join("linked");
+        assert!(fs::symlink_metadata(&expected_root).unwrap().file_type().is_symlink());
+        assert!(expected_root.join("SKILL.md").is_file());
+        assert_eq!(record.name, "Linked");
+        assert_eq!(record.source, LINKED_IMPORT_SOURCE);
+        let original = fs::read(source_dir.join("SKILL.md")).unwrap();
+        let error = registry.update(&record.id, input("Changed", "project", Some(app.path().to_str().unwrap()))).unwrap_err();
+        assert!(error.to_string().contains("SKILL_READONLY"));
+        assert_eq!(fs::read(source_dir.join("SKILL.md")).unwrap(), original);
+        assert!(registry.remove(&record.id, Some(CapabilityLevel::Project), Some(app.path().to_str().unwrap())).unwrap());
+        assert!(!expected_root.exists());
+        assert_eq!(fs::read(source_dir.join("SKILL.md")).unwrap(), original);
+    }
+
+    #[test]
+    fn imports_a_file_in_link_mode() {
+        let app = tempdir().unwrap();
+        let source = app.path().join("incoming/notes.md");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "---\nname: Notes\ndescription: linked file\n---\n\nBody.\n").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path());
+        let mut payload = input("Ignored", "project", Some(app.path().to_str().unwrap()));
+        payload.mode = Some("link".into());
+        let record = registry.import(source.to_str().unwrap(), payload).unwrap();
+        let normalized_project = crate::agent_capabilities::normalize_project_path(app.path().to_str().unwrap());
+        let expected = crate::agent_capabilities::capability_dir(CapabilityLevel::Project, Some(&normalized_project), "skills").unwrap().join("notes.md");
+        assert!(fs::symlink_metadata(&expected).unwrap().file_type().is_symlink());
+        assert_eq!(record.name, "Notes");
+        assert_eq!(record.source, LINKED_IMPORT_SOURCE);
+        let original = fs::read(&source).unwrap();
+        assert!(registry.remove(&record.id, Some(CapabilityLevel::Project), Some(app.path().to_str().unwrap())).unwrap());
+        assert!(!expected.exists());
+        assert_eq!(fs::read(&source).unwrap(), original);
+    }
+
+    #[test]
+    fn directory_import_without_skill_md_is_rejected() {
+        let app = tempdir().unwrap();
+        let source_dir = app.path().join("incoming/no-skill");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::write(source_dir.join("readme.md"), "just docs\n").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path());
+        let err = registry.import(source_dir.to_str().unwrap(), input("Ignored", "project", Some(app.path().to_str().unwrap()))).unwrap_err().to_string();
+        assert!(err.contains("SKILL_INVALID") && err.contains("SKILL.md"), "err = {err}");
+    }
+
+    #[test]
+    fn unknown_import_mode_is_rejected() {
+        let app = tempdir().unwrap();
+        let source = app.path().join("incoming.md");
+        fs::write(&source, "---\nname: Any\n---\n\nBody.\n").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path());
+        let mut payload = input("Ignored", "project", Some(app.path().to_str().unwrap()));
+        payload.mode = Some("teleport".into());
+        let err = registry.import(source.to_str().unwrap(), payload).unwrap_err().to_string();
+        assert!(err.contains("unknown import mode"), "err = {err}");
+    }
+
+    #[test]
+    fn shape_dir_requires_a_directory_source() {
+        let app = tempdir().unwrap();
+        let source = app.path().join("incoming.md");
+        fs::write(&source, "---\nname: X\n---\n\nBody.\n").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path());
+        let mut payload = input("Ignored", "project", Some(app.path().to_str().unwrap()));
+        payload.shape = Some("dir".into());
+        let err = registry.import(source.to_str().unwrap(), payload).unwrap_err().to_string();
+        assert!(err.contains("SKILL_INVALID") && err.contains("directory"), "err = {err}");
+    }
+
 
     #[test]
     fn imports_one_file_into_the_selected_agents_directory() {

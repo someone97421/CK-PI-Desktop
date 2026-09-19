@@ -50,6 +50,14 @@ const GLOBAL_SKILLS_PATH = "~/.agents/skills";
 function projectSkillsPath(projectPath: string | null): string {
   return projectPath ? `${projectPath}/.agents/skills` : "<project-root>/.agents/skills";
 }
+/**
+ * Host-core marks a skill imported with `mode: "link"` as `linked-import`: the
+ * row lives inside a managed skills directory as a symlink, so its document
+ * belongs to another directory while the row itself is ours to unlink.
+ */
+function isImportedLink(skill: UserSkillRecord): boolean {
+  return skill.source === "linked-import";
+}
 
 type SkillEditorState = {
   draft: SkillDraft;
@@ -286,9 +294,13 @@ export function AgentSkillsPage() {
     try {
       await api.removeUserSkill(skill.id, levelQuery(level));
       await load();
-      showToast(t("settings.capabilityDeleted", { name: skill.name || skill.id }), {
-        variant: "success",
-      });
+      showToast(
+        t(
+          isImportedLink(skill) ? "settings.skillUnlinkImportDone" : "settings.capabilityDeleted",
+          { name: skill.name || skill.id },
+        ),
+        { variant: "success" },
+      );
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
@@ -297,15 +309,19 @@ export function AgentSkillsPage() {
     }
   };
 
-  const importSkill = async (level: AgentCapabilityLevel = targetLevel) => {
+  const importSkill = async (
+    level: AgentCapabilityLevel = targetLevel,
+    sourceKind: "file" | "dir" = "file",
+  ) => {
     if (level === "project" && !selectedProjectPath) {
       showToast(t("settings.selectProjectFirst"), { variant: "error" });
       return;
     }
-    setBusyId("import");
+    setBusyId(sourceKind === "dir" ? "import-dir" : "import");
     try {
       const result = await api.importUserSkill({
         level,
+        sourceKind,
         ...(level === "project" && selectedProjectPath
           ? { projectPath: selectedProjectPath }
           : {}),
@@ -365,7 +381,9 @@ export function AgentSkillsPage() {
    * toast reports the new name instead of pretending the id survived.
    */
   const move = async (skill: UserSkillRecord, level: AgentCapabilityLevel) => {
-    if (skill.source === "linked") return;
+    // Both link flavours are documents the app does not own: an extra-path
+    // reference and a symlink placed inside a managed skills directory.
+    if (skill.source === "linked" || isImportedLink(skill)) return;
     const to: AgentCapabilityLevel = level === "global" ? "project" : "global";
     const target = moveTarget[to];
     if (!target) {
@@ -405,9 +423,13 @@ export function AgentSkillsPage() {
     const name = skill.name || skill.id;
     const busy = busyId === key;
     const isArmed = armed === key;
-    // A linked document belongs to the agent that owns its directory, so the
-    // menu never offers to delete it and the row never opens the editor.
+    // Both link flavours live outside this app's ownership, so neither opens
+    // the editor and neither can move. An extra-path (`linked`) document is
+    // read-only wholesale; a `linked-import` row is a symlink inside a managed
+    // skills directory, so the row itself may still be unlinked.
     const linked = skill.source === "linked";
+    const linkedImport = isImportedLink(skill);
+    const linkOnly = linked || linkedImport;
     const items: CapabilityMenuItem[] = [
       {
         key: "reveal",
@@ -422,7 +444,7 @@ export function AgentSkillsPage() {
        * A move needs a destination, so a global row offers it only while the
        * picker names a project; a project row always has Global to go back to.
        */
-      ...(!linked && moveTarget[level === "global" ? "project" : "global"]
+      ...(!linkOnly && moveTarget[level === "global" ? "project" : "global"]
         ? [
             {
               key: "move",
@@ -446,7 +468,13 @@ export function AgentSkillsPage() {
         : [
             {
               key: "remove",
-              label: isArmed ? t("settings.capabilityRemoveConfirm") : t("extensions.skills.remove"),
+              label: isArmed
+                ? linkedImport
+                  ? t("settings.skillUnlinkImportConfirm")
+                  : t("settings.capabilityRemoveConfirm")
+                : linkedImport
+                  ? t("settings.skillUnlinkImport")
+                  : t("extensions.skills.remove"),
               icon: <IconTrash size={14} />,
               danger: true,
               onSelect: () => {
@@ -476,6 +504,10 @@ export function AgentSkillsPage() {
             </span>
             {linked ? (
               <span className="agent-capability-badge">{t("settings.skillRootsBadge")}</span>
+            ) : linkedImport ? (
+              <span className="agent-capability-badge">
+                {t("settings.importAgentScanModeLink")}
+              </span>
             ) : skill.source === "imported" ? (
               <span className="agent-capability-badge">{t("settings.imported")}</span>
             ) : null}
@@ -484,7 +516,7 @@ export function AgentSkillsPage() {
         description={skill.description || t("settings.noCapabilityDescription")}
         actions={
           <>
-            {linked ? null : (
+            {linkOnly ? null : (
               <TooltipButton
                 type="button"
                 className="settings-icon-button"
@@ -525,18 +557,32 @@ export function AgentSkillsPage() {
       ? t("settings.capabilityCreateInProject")
       : t("settings.capabilityCreateInGlobal");
   const importButton = (level: AgentCapabilityLevel) => (
-    <CapabilityButton
-      busy={busyId === "import"}
-      title={
-        level === "project"
-          ? t("settings.capabilityImportToProject")
-          : t("settings.capabilityImportToGlobal")
-      }
-      onClick={() => void importSkill(level)}
-    >
-      <IconDownload size={14} />
-      {t("settings.importSkill")}
-    </CapabilityButton>
+    <>
+      <CapabilityButton
+        busy={busyId === "import"}
+        title={
+          level === "project"
+            ? t("settings.capabilityImportToProject")
+            : t("settings.capabilityImportToGlobal")
+        }
+        onClick={() => void importSkill(level, "file")}
+      >
+        <IconDownload size={14} />
+        {t("settings.importSkillFile")}
+      </CapabilityButton>
+      <CapabilityButton
+        busy={busyId === "import-dir"}
+        title={
+          level === "project"
+            ? t("settings.capabilityImportToProject")
+            : t("settings.capabilityImportToGlobal")
+        }
+        onClick={() => void importSkill(level, "dir")}
+      >
+        <IconDownload size={14} />
+        {t("settings.importSkillDir")}
+      </CapabilityButton>
+    </>
   );
 
   const marketButton = (

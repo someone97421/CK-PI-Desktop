@@ -96,12 +96,26 @@ export type McpServerStatus = {
   toolNames?: string[];
   message?: string;
   updatedAt: number;
+  hasOauth?: boolean;
+  authRequired?: boolean;
 };
 
 /** A user MCP server plus whatever the runtime knows about its connection. */
 export type McpServerView = McpServerRecord & {
   status?: McpServerStatus;
 };
+
+/** Progress of one MCP OAuth login attempt, pushed to the renderer. */
+export type McpOAuthLoginEvent = {
+  loginId: string;
+  serverId: string;
+} & (
+  | { kind: "authUrl"; url: string; instructions?: string; opened: boolean }
+  | { kind: "progress"; message: string }
+  | { kind: "done"; status: McpServerStatus }
+  | { kind: "error"; message: string }
+  | { kind: "cancelled" }
+);
 
 /**
  * A skill document the user owns, stored under `~/.agents/skills` or a
@@ -124,9 +138,10 @@ export type UserSkillRecord = {
   /**
    * `created` writes a template; `imported` copies an existing document;
    * `linked` is read live from a user-configured extra path and is never
-   * written by host-core.
+   * written by host-core. `linked-import` is an imported symlink: its source
+   * is read-only, and removing the record only unlinks the local entry.
    */
-  source: "created" | "imported" | "linked";
+  source: "created" | "imported" | "linked" | "linked-import";
   /** Absolute path of the document, for opening it in the editor. */
   path: string;
   /** Bytes of the document, so the list can flag one that grew past the cap. */

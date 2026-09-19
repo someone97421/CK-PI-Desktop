@@ -1,16 +1,17 @@
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { chmodSync } from "node:fs";
-import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { chmodSync, existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { prepareBuild } from "./prepare-build.mjs";
-import { isDesktopArtifact, retainArtifacts } from "./artifact-retention.mjs";
+import { isDesktopArtifact, isPiHostArtifact, retainArtifacts } from "./artifact-retention.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(root, "apps/desktop");
 const mode = process.argv[2];
-const modes = new Set(["dev", "desktop", "pack", "dist", "dist:win", "dist:mac", "dist:linux", "all", "js", "host", "host:dev", "runtime"]);
+const modes = new Set(["dev", "desktop", "pack", "dist", "dist:win", "dist:mac", "dist:linux", "all", "js", "host", "host:dev", "runtime", "pi-host"]);
 if (!modes.has(mode)) throw new Error(`未知构建入口：${mode}`);
 const stamp = prepareBuild();
 console.log(`这是一个助手 · ${stamp.displayVersion}`);
@@ -53,6 +54,42 @@ try {
   } else if (mode === "runtime") {
     await pnpm(["run", "build:deps"], desktop);
     await pnpm(["-C", "../../packages/agent-runtime", "bundle"], desktop);
+  } else if (mode === "pi-host") {
+    // pi-host 远控主机包：JS 与 sidecar 在本机构建。linux-x64 目标在本机
+    // （Linux x64）构建时随本入口同步 cargo 编译当前 stamp 版本的
+    // host-core；其他主机必须经 THIS_IS_A_AGENT_PI_HOST_CORE 提供交叉
+    // 构建产物，bundle.mjs 会再校验 ELF x64，防止装错平台二进制。
+    await pnpm(["--filter", "@pi-desktop/pi-host^...", "build"]);
+    await pnpm(["--filter", "@pi-desktop/agent-runtime", "bundle"]);
+    await pnpm(["--filter", "@pi-desktop/pi-host", "build"]);
+    const nativeLinuxX64 = process.platform === "linux" && process.arch === "x64";
+    if (nativeLinuxX64 && !process.env.THIS_IS_A_AGENT_PI_HOST_CORE?.trim()) {
+      await run("cargo", ["build", "--release", "-p", "host-core"]);
+    }
+    const hostCoreRaw = process.env.THIS_IS_A_AGENT_PI_HOST_CORE?.trim()
+      || (nativeLinuxX64 ? join(root, "target/release/pi-desktop-host-core") : "");
+    const hostCore = hostCoreRaw ? resolve(hostCoreRaw) : "";
+    if (!hostCore || !existsSync(hostCore)) {
+      throw new Error(`缺少 linux-x64 host-core 二进制：${hostCore || "未指定"}；请通过 THIS_IS_A_AGENT_PI_HOST_CORE 提供交叉构建产物`);
+    }
+    const bundleName = `pi-host-${stamp.version}-linux-x64`;
+    const outputDirectory = resolve(root, process.env.THIS_IS_A_AGENT_OUTPUT_DIR?.trim() || join(root, "release"));
+    await mkdir(outputDirectory, { recursive: true });
+    const staging = await mkdtemp(join(outputDirectory, `.building-pi-host-${stamp.displayVersion}-`));
+    const completed = join(outputDirectory, basename(staging).replace(/^\.building-/, ""));
+    try {
+      await run(process.execPath, [join(root, "apps/pi-host/scripts/bundle.mjs"),
+        "--host-core", hostCore, "--platform", "linux", "--arch", "x64", "--out", join(staging, bundleName)], root);
+      await run("tar", ["-czf", join(staging, `${bundleName}.tar.gz`), "-C", staging, bundleName], root);
+      const digest = createHash("sha256").update(await readFile(join(staging, `${bundleName}.tar.gz`))).digest("hex");
+      await writeFile(join(staging, `${bundleName}.tar.gz.sha256`), `${digest}  ${bundleName}.tar.gz\n`);
+    } catch (error) {
+      await rm(staging, { recursive: true, force: true });
+      throw error;
+    }
+    await rename(staging, completed);
+    await retainArtifacts(outputDirectory, [completed], isPiHostArtifact);
+    console.log(`本次 pi-host 产物：${completed}`);
   } else {
     await pnpm(["run", "build:deps"], desktop);
     if (mode === "dev") {

@@ -12,6 +12,8 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 
+import { IconEye, IconEyeOff } from "./icons";
+
 export function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -535,6 +537,40 @@ export function Input({
       autoCapitalize={autoCapitalize}
       {...props}
     />
+  );
+}
+
+export function PasswordInput({
+  showLabel,
+  hideLabel,
+  className,
+  disabled,
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & {
+  /** Localized `aria-label` for the reveal control; the caller passes `t(...)`. */
+  showLabel: string;
+  hideLabel: string;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <span className="password-input">
+      <Input
+        {...props}
+        className={className}
+        disabled={disabled}
+        type={revealed ? "text" : "password"}
+      />
+      <button
+        type="button"
+        className="password-input-toggle"
+        aria-label={revealed ? hideLabel : showLabel}
+        aria-pressed={revealed}
+        disabled={disabled}
+        onClick={() => setRevealed((current) => !current)}
+      >
+        {revealed ? <IconEyeOff /> : <IconEye />}
+      </button>
+    </span>
   );
 }
 

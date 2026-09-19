@@ -64,7 +64,7 @@ test("a tool row and a tool result row open a file where the message body does",
   assert.match(hook, /const openFileRef = useOpenChatFileRef\(\);/);
   assert.match(
     hook,
-    /target\.kind === "file" \? openFileRef\(target\.path\) : openUrl\(target\.url\)/,
+    /target\.kind === "file" \? openFileRef\(target\.path\) : openHttpUrl\(target\.url\)/,
   );
   assert.doesNotMatch(hook, /openFile\(target\.path\)/);
   // Both surfaces still call that opener, and neither reaches the host viewer's

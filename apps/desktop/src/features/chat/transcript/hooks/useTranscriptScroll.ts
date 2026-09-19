@@ -31,10 +31,13 @@ import {
   TRANSCRIPT_WINDOW_MIN,
 } from "../../../../lib/transcript-window";
 import {
+  HISTORY_REVEAL_THRESHOLD_PX,
+  isHistoryRevealPosition,
   isRecentScrollGesture,
   isScrollGestureInput,
   reduceTranscriptScroll,
   SCROLL_OWNER_ATTRIBUTE,
+  transcriptHasLayout,
   TRANSCRIPT_SCROLL_ROUNDING_TOLERANCE_PX,
   type ScrollInputType,
 } from "../../../../lib/transcript-scroll";
@@ -46,8 +49,6 @@ import { useTranscriptSearchFocus } from "../../../../hooks/use-transcript-searc
 import { useAppStore } from "../../../../stores/app-store";
 import type { ResponseAnnotation } from "../../../../lib/response-annotations";
 import { annotationRange, annotationRow } from "../../../../lib/response-annotation-anchor";
-
-const HISTORY_REVEAL_THRESHOLD_PX = 120;
 
 type UseTranscriptScrollOptions = {
   sessionId: string | undefined;
@@ -86,6 +87,10 @@ export function useTranscriptScroll({
   const historyBoundaryRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const lastScrollTopRef = useRef(0);
+  // Last offset sampled while the scroller had a real layout box. A hidden
+  // pane's `content-visibility: hidden` box reports `scrollTop === 0`, so the
+  // hide transition must restore this rather than the collapsed value.
+  const lastLaidOutScrollTopRef = useRef(0);
   const lastScrollGestureAtRef = useRef(-Infinity);
   const wasRunningRef = useRef(isRunning);
   const followFrameRef = useRef(0);
@@ -106,7 +111,7 @@ export function useTranscriptScroll({
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || !transcriptHasLayout(el)) return;
     const targetTop = Math.max(0, el.scrollHeight - el.clientHeight);
     el.scrollTo({ top: targetTop, behavior });
     // `scrollTo({ behavior: "auto" })` is synchronous. Record the position the
@@ -114,7 +119,10 @@ export function useTranscriptScroll({
     // fractional device pixel ratio the browser lands a fraction of a pixel
     // away (asked 841, got 840.909), and the intended value would make the
     // following native scroll event read as the user scrolling up.
-    if (behavior === "auto") lastScrollTopRef.current = el.scrollTop;
+    if (behavior === "auto") {
+      lastScrollTopRef.current = el.scrollTop;
+      lastLaidOutScrollTopRef.current = el.scrollTop;
+    }
   }, []);
 
   const cancelFollowScroll = useCallback(() => {
@@ -134,6 +142,7 @@ export function useTranscriptScroll({
   }, [cancelFollowScroll]);
   const recordScrollPosition = useCallback((top: number) => {
     lastScrollTopRef.current = top;
+    lastLaidOutScrollTopRef.current = top;
   }, []);
   const {
     notifier: disclosureAnchorNotifier,
@@ -216,7 +225,9 @@ export function useTranscriptScroll({
     if (becameHidden) {
       releaseDisclosureAnchor();
       cancelFollowScroll();
-      retainedScrollTopRef.current = el.scrollTop;
+      // Do not read `el.scrollTop` here: the hide CSS has already skipped
+      // rendering, so the box reports 0. Restore the last laid-out offset.
+      retainedScrollTopRef.current = lastLaidOutScrollTopRef.current;
       return;
     }
     if (!becameVisible) return;
@@ -228,6 +239,7 @@ export function useTranscriptScroll({
     if (retained === null) return;
     el.scrollTop = retained;
     lastScrollTopRef.current = retained;
+    lastLaidOutScrollTopRef.current = retained;
   }, [cancelFollowScroll, paneVisible, releaseDisclosureAnchor, scrollToBottom]);
 
   // A hidden pane must not chase its stream: its scroller has no visible
@@ -315,6 +327,7 @@ export function useTranscriptScroll({
     if (delta <= 0) return;
     el.scrollTop += delta;
     lastScrollTopRef.current = el.scrollTop;
+    if (transcriptHasLayout(el)) lastLaidOutScrollTopRef.current = el.scrollTop;
   }, [messages.length, windowSize]);
 
 
@@ -324,7 +337,23 @@ export function useTranscriptScroll({
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (el.scrollTop <= HISTORY_REVEAL_THRESHOLD_PX) reachTop();
+    // A real gesture is never stale noise: the reader's own input took the
+    // scroller to the near-top band, and this event is the last one that
+    // position produces. Suppressing history continuation here would strand an
+    // overflowing transcript at the top until some other scroll event or the
+    // minimap control arrived (D269). Only an offset this event did not produce
+    // — a collapsed box, or a pinned scroller still about to be restored to the
+    // bottom — is read as "not at the top".
+    const gesturing = isRecentScrollGesture(
+      performance.now(),
+      lastScrollGestureAtRef.current,
+    );
+    if (
+      paneVisibleRef.current &&
+      isHistoryRevealPosition(el, pinnedRef.current && !gesturing)
+    ) {
+      reachTop();
+    }
     if (readingWindow) {
       pinnedRef.current = false;
       lastScrollTopRef.current = el.scrollTop;
@@ -341,10 +370,8 @@ export function useTranscriptScroll({
     // device pixel ratio leaves behind on programmatic corrections; anything a
     // gesture produced is compared exactly, so a one-pixel scroll still
     // unpins.
-    const gesturing = isRecentScrollGesture(
-      performance.now(),
-      lastScrollGestureAtRef.current,
-    );
+    // `gesturing` was read above, before the history-reveal question: a real
+    // gesture is what makes a near-top offset the reader's own position.
     const transition = reduceTranscriptScroll({
       previousScrollTop: lastScrollTopRef.current,
       scrollTop: el.scrollTop,
@@ -494,7 +521,9 @@ export function useTranscriptScroll({
   const boundedFirstCommitRef = useRef(false);
   useEffect(() => {
     if (!hydrationBounded) {
-      firstCommitRef.current = false;
+      // An empty first paint must not spend this gate: revalidation can still
+      // land a long transcript that needs the bounded expand and re-bottom.
+      if (allHistoryEntries.length > 0) firstCommitRef.current = false;
       return;
     }
     boundedFirstCommitRef.current = true;
@@ -505,7 +534,7 @@ export function useTranscriptScroll({
     return () => cancelAnimationFrame(frame);
     // `hydrationTick` is a dependency so a pane whose expansion is still queued
     // re-evaluates instead of holding a stale frame.
-  }, [hydrationBounded, hydrationTick]);
+  }, [allHistoryEntries.length, hydrationBounded, hydrationTick]);
 
   // Settle veil (D287). A bounded first commit means the transcript is long
   // enough for its geometry to keep moving for several frames after mount: the
@@ -677,7 +706,7 @@ export function useTranscriptScroll({
   const revealEarlierHistory = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    if (el.scrollTop <= HISTORY_REVEAL_THRESHOLD_PX) {
+    if (isHistoryRevealPosition(el)) {
       reachTop();
       return;
     }
@@ -727,7 +756,7 @@ export function useTranscriptScroll({
       frame = requestAnimationFrame(() => {
         if (
           scrollRef.current !== root ||
-          root.scrollTop > HISTORY_REVEAL_THRESHOLD_PX
+          !isHistoryRevealPosition(root, pinnedRef.current)
         ) {
           return;
         }

@@ -41,6 +41,7 @@ import { TooltipButton } from "./ui";
 import { cleanChatFileRef, FileRefTarget } from "./FileReference";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
+import { openHttpUrl } from "../lib/open-http-url";
 import {
   rehypeSourcePositions,
   sourcePositionProps,
@@ -459,7 +460,6 @@ function InlineCode({
 }: ComponentProps<"code"> & { node?: unknown }) {
   const root = useAppStore((s) => s.workspace?.path);
   const baseDir = useContext(MarkdownBaseDirContext);
-  const openUrl = useAppStore((s) => s.openUrlInWorkPanel);
   const openFileRef = useOpenChatFileRef();
   const text = typeof children === "string" ? children : null;
   const target =
@@ -496,7 +496,7 @@ function InlineCode({
       type="button"
       className="chat-code-link"
       title={urlTitle}
-      onClick={() => openUrl(target.url)}
+      onClick={() => openHttpUrl(target.url)}
     >
       <code className={className} {...rest}>
         {children}
@@ -552,7 +552,6 @@ function Anchor({
   const openFileRef = useOpenChatFileRef();
   const openUrl = useAppStore((s) => s.openUrlInWorkPanel);
   const showToast = useAppStore((s) => s.showToast);
-  const linkOpenTarget = useAppStore((s) => s.settings?.linkOpenTarget ?? "workpanel");
 
   const annotationIndex = annotationMarkerIndexFromHref(href);
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
@@ -640,18 +639,15 @@ function Anchor({
     return <AnnotationMarker index={annotationIndex} />;
   }
 
-  // Plain click previews in the work panel (or external browser based on setting).
-  // Modified clicks fall through to _blank, which main routes to shell.openExternal.
+  // Plain click follows Settings → AI → Link open destination (work panel by
+  // default); modifier clicks fall through to _blank, which main routes to
+  // shell.openExternal.
   const onClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     if (!href) return;
     if (/^https?:\/\//i.test(href)) {
       e.preventDefault();
-      if (linkOpenTarget === "external") {
-        void api.browserOpenExternal(href);
-      } else {
-        openUrl(href);
-      }
+      openHttpUrl(href);
       return;
     }
     if (isLocalFileHref(href)) {
@@ -771,7 +767,6 @@ function MarkdownImage({
   const root = useAppStore((s) => s.workspace?.path);
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
-  const openUrl = useAppStore((s) => s.openUrlInWorkPanel);
   const fileTitle = usePreviewTitle("file");
   const urlTitle = usePreviewTitle("url");
   const source = typeof src === "string" ? src : "";
@@ -794,7 +789,7 @@ function MarkdownImage({
         alt={alt ?? ""}
         className="chat-image-remote"
         title={urlTitle}
-        onClick={() => openUrl(source)}
+        onClick={() => openHttpUrl(source)}
       />
     );
   }
@@ -1035,12 +1030,14 @@ function useBlocks(source: string): string[] {
 
 const Block = memo(function MarkdownBlock({
   raw,
+  originalRaw,
   sourceOffset,
   renderDiagrams,
   workspaceRoot,
   baseDir,
 }: {
   raw: string;
+  originalRaw: string;
   sourceOffset: number;
   renderDiagrams: boolean;
   workspaceRoot?: string | null;
@@ -1053,14 +1050,16 @@ const Block = memo(function MarkdownBlock({
     }),
     [raw, renderDiagrams],
   );
-  const normalized = useMemo(() => normalizeLatexMathDelimiters(raw), [raw]);
   const remarkPlugins = useMemo(
     () => [
       ...staticRemarkPlugins,
-      remarkLatexBracketDisplay(raw),
+      // `originalRaw` still carries the TeX `\[ … \]` delimiters so the
+      // bracket-display plugin can promote them to display math after
+      // remark-math parses the pre-normalized `$$ … $$` form.
+      remarkLatexBracketDisplay(originalRaw),
       remarkChatFileLinks(workspaceRoot, baseDir),
     ],
-    [raw, workspaceRoot, baseDir],
+    [originalRaw, workspaceRoot, baseDir],
   );
   const positionedRehypePlugins = useMemo(
     () => [...rehypePlugins!, [rehypeSourcePositions, { offset: sourceOffset }]] as Options["rehypePlugins"],
@@ -1073,7 +1072,7 @@ const Block = memo(function MarkdownBlock({
         rehypePlugins={positionedRehypePlugins}
         components={markdownComponents}
       >
-        {normalized}
+        {raw}
       </ReactMarkdown>
     </MarkdownBlockContext.Provider>
   );
@@ -1090,17 +1089,32 @@ export const Markdown = memo(function Markdown({
   baseDir?: string;
 }) {
   const workspaceRoot = useAppStore((s) => s.workspace?.path);
-  const blocks = useBlocks(source);
+  // Normalize once at the source level: marked's block lexer runs on the raw
+  // text and would otherwise split `\[ … \]` display math whose body puts a
+  // lone `=`/`-` (setext underline) or `+`/`*` (list marker) on its own line,
+  // stranding `\[` and `\]` in different blocks so the delimiters escape as
+  // literal `[`/`]`. The normalizer both rewrites the delimiters to `$$` and
+  // flattens newlines inside every paired region, keeping the whole formula
+  // inside a single markdown block. The rewrite is length-preserving, so we
+  // can still slice the original text at the same offsets for downstream
+  // plugins that need the pre-normalized delimiters.
+  const normalizedSource = useMemo(
+    () => normalizeLatexMathDelimiters(source),
+    [source],
+  );
+  const blocks = useBlocks(normalizedSource);
   let sourceOffset = 0;
   return (
     <MarkdownBaseDirContext.Provider value={baseDir ?? ""}>
       {blocks.map((raw, i) => {
         const start = sourceOffset;
         sourceOffset = start + raw.length;
+        const originalRaw = source.slice(start, start + raw.length);
         return (
           <Block
             key={i}
             raw={raw}
+            originalRaw={originalRaw}
             sourceOffset={start}
             renderDiagrams={renderDiagrams}
             workspaceRoot={workspaceRoot}

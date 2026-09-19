@@ -990,7 +990,7 @@
   position: fixed;
   top: 0;
   right: 0;
-  z-index: 200; /* above titlebar (10) and work panel chrome */
+  z-index: 1000; /* above every renderer surface and draggable titlebar */
   display: flex;
   align-items: center;
   width: var(--ds-window-controls-width);
@@ -1007,6 +1007,14 @@
  * viewport-fixed position must not follow MainPane while the work panel reflows. */
 .window-controls.window-controls-in-pane {
   position: fixed;
+  isolation: isolate;
+}
+
+/* Electron resolves app-region hit testing across siblings. The controls must
+ * be a later compositor layer than Settings, plugin content, or a work-panel
+ * drag header. */
+.app-shell > .window-controls {
+  z-index: 1100;
 }
 
 .window-control-btn {

@@ -138,15 +138,27 @@ export type PluginViewMeta = {
   order: number;
 };
 
-/** A host-resolved, sandboxed plugin Settings destination. */
-export type PluginSettingsDestinationMeta = {
+/** A data-only scenic Settings destination rendered by the host React tree. */
+export type PluginScenicThemesDestinationMeta = {
   pluginId: string;
   destinationId: string;
   ref: string;
   label: string;
+  description: string;
   pluginName: string;
-  icon: "sliders" | "sparkles" | "palette" | "plug" | "settings";
+  icon: "palette";
   keywords: string[];
+  themes: PluginScenicThemeCardMeta[];
+};
+
+/** One host-validated preview card belonging to a scenic destination. */
+export type PluginScenicThemeCardMeta = {
+  themeId: string;
+  label: string;
+  description: string;
+  previewUrl: string;
+  blur: number;
+  blurDefault: number;
 };
 
 /**

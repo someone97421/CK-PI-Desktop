@@ -35,9 +35,11 @@
     "@earendil-works/pi-ai": "0.85.1",
     "@pi-desktop/agent-host": "workspace:*",
     "@pi-desktop/agent-runtime": "workspace:*",
+    "@pi-desktop/host-runtime": "workspace:*",
     "@pi-desktop/i18n": "workspace:*",
     "@pi-desktop/plugin-devkit": "workspace:*",
     "@pi-desktop/plugin-sdk": "workspace:*",
+    "@pi-desktop/racp": "workspace:*",
     "@pi-desktop/shared": "workspace:*",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
@@ -136,6 +138,16 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSLocalNetworkUsageDescription": "this-is-a-agent needs local network access so agents can reach OpenAI-compatible providers, Ollama, and other AI endpoints running on your LAN. / 这是一个助手需要本地网络访问权限，以便助手请求同一局域网中的 OpenAI 兼容服务、Ollama 等本地 AI 端点。",
+        "NSMicrophoneUsageDescription": "this-is-a-agent plugins may use the microphone after you grant them audio access. / 在你授权后，这是一个助手的插件可以使用麦克风。",
+        "NSBonjourServices": [
+          "_http._tcp",
+          "_https._tcp"
+        ],
+        "CFBundleDisplayName": "这是一个助手",
+        "CFBundleName": "这是一个助手"
+      },
       "extraResources": [
         {
           "from": "../../target/release/pi-desktop-host-core",
@@ -150,10 +162,6 @@
         "this-is-a-agent-macOS-open.command",
         "this-is-a-agent-macOS-opening-help.txt"
       ],
-      "extendInfo": {
-        "CFBundleDisplayName": "这是一个助手",
-        "CFBundleName": "这是一个助手"
-      },
       "bundleVersion": "2609.1717.3147"
     },
     "dmg": {

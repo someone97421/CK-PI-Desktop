@@ -25,15 +25,18 @@ import { IconCheck, IconChevronDown, IconSearch } from "../icons";
 
 /**
  * Searchable font row shared by the appearance scopes. The parent maps the
- * selected stack into its mode/scope; an empty stack selects that scope's
- * default. Installed font enumeration is cached across all six rows.
+ * selected stack into its mode/scope and supplies that scope's default label;
+ * an empty stack selects the scope's default. Installed font enumeration is
+ * cached across all six rows. The closed trigger and the search haystack fall
+ * back to `settings.fontSystemDefault` so the English catalog label in
+ * `fonts.ts` never reaches the UI.
  */
 export function FontFamilyRow({
   settings,
   saveSettings,
   title,
   description,
-  defaultLabel,
+  defaultLabel: defaultLabelProp,
   defaultFamily,
   weightControl,
 }: {
@@ -162,17 +165,25 @@ export function FontFamilyRow({
   const selectedValue = settings.fontFamily ?? "";
   const selectedOption =
     options.find((option) => option.value === selectedValue) ?? null;
+  // The parent-supplied scope default wins over the catalog's English label.
+  const defaultLabel = defaultLabelProp ?? t("settings.fontSystemDefault");
   const selectedLabel =
-    selectedValue ? selectedOption?.label ?? readableFontFamily(selectedValue) : defaultLabel ?? t("settings.fontSystemDefault");
+    selectedOption?.group === "default" || selectedValue === ""
+      ? defaultLabel
+      : selectedOption?.label ?? readableFontFamily(selectedValue);
   const selectedFamily = selectedOption?.family ?? readableFontFamily(selectedValue);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return options;
-    return options.filter((option) =>
-      option.label.toLowerCase().includes(needle),
-    );
-  }, [options, query]);
+    return options.filter((option) => {
+      const haystack =
+        option.group === "default"
+          ? `${defaultLabel} ${option.label}`.toLowerCase()
+          : option.label.toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [defaultLabel, options, query]);
 
   const groupLabel = useCallback((group: string) => {
     if (group === "bundled") return t("settings.fontBundled");
@@ -413,7 +424,7 @@ export function FontFamilyRow({
                           >
                             <span className="settings-font-item-label">
                               {row.option.group === "default"
-                                ? defaultLabel ?? t("settings.fontSystemDefault")
+                                ? defaultLabel
                                 : row.option.label}
                             </span>
                             {row.option.license ? (

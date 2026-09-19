@@ -157,6 +157,26 @@ export const IPC = {
     askToolResolve: "pi-desktop/agent/askTool/resolve",
     plansPending: "pi-desktop/plans/pending",
     plansResolve: "pi-desktop/plans/resolve",
+    /**
+     * List every paired remote `pi-host` this desktop knows, redacted so no
+     * device token reaches the renderer. See ADR 0286 (R2b pairing UX).
+     */
+    remoteHostList: "pi-desktop/remoteHost/list",
+    /**
+     * Pair with a `pi-host` at `url` using a single-use `pairingToken`, mint
+     * a device token, persist it encrypted, and open the live connection.
+     */
+    remoteHostPair: "pi-desktop/remoteHost/pair",
+    /** Close the live connection for `hostKey` and drop its persisted record. */
+    remoteHostRemove: "pi-desktop/remoteHost/remove",
+    /**
+     * Install and pair a `pi-host` on a machine the user reaches over SSH:
+     * upload the bootstrap script, download and verify the published bundle
+     * there, start the host, forward its loopback port, and exchange the
+     * pairing token (spec §5.2). 支持现有 SSH 密钥或用户输入的密码；
+     * 主进程加密保存密码，返回结果不包含凭据。
+     */
+    remoteHostBootstrap: "pi-desktop/remoteHost/bootstrap",
     providersList: "pi-desktop/providers/list",
     providersCreate: "pi-desktop/providers/create",
     providersUpdate: "pi-desktop/providers/update",
@@ -207,7 +227,8 @@ export const IPC = {
     pluginLauncherToggle: "pi-desktop/pluginLauncher/toggle",
     pluginLauncherDismiss: "pi-desktop/pluginLauncher/dismiss",
     pluginThemes: "pi-desktop/plugin/themes",
-    pluginSettingsDestinations: "pi-desktop/plugin/settings/destinations",
+    pluginScenicThemesDestinations: "pi-desktop/plugin/scenicThemes/destinations",
+    pluginScenicThemesSetBlur: "pi-desktop/plugin/scenicThemes/setBlur",
     pluginServices: "pi-desktop/plugin/services",
     pluginRemoteAccessStatus: "pi-desktop/plugin/remoteAccessStatus",
     pluginViews: "pi-desktop/plugin/views",
@@ -215,9 +236,6 @@ export const IPC = {
     pluginViewClose: "pi-desktop/plugin/view/close",
     pluginViewSetBounds: "pi-desktop/plugin/view/setBounds",
     pluginViewSetVisible: "pi-desktop/plugin/view/setVisible",
-    pluginSettingsViewOpen: "pi-desktop/plugin/settings/view/open",
-    pluginSettingsViewSetBounds: "pi-desktop/plugin/settings/view/setBounds",
-    pluginSettingsViewSetVisible: "pi-desktop/plugin/settings/view/setVisible",
     mcpList: "pi-desktop/mcp/list",
     mcpUpsert: "pi-desktop/mcp/upsert",
     mcpRemove: "pi-desktop/mcp/remove",
@@ -225,11 +243,17 @@ export const IPC = {
     mcpSetScope: "pi-desktop/mcp/setScope",
     mcpTransfer: "pi-desktop/mcp/transfer",
     mcpTest: "pi-desktop/mcp/test",
+    mcpOauthStart: "pi-desktop/mcp/oauth/start",
+    mcpOauthCancel: "pi-desktop/mcp/oauth/cancel",
     mcpImport: "pi-desktop/mcp/import",
+    mcpImportScan: "pi-desktop/mcp/importScan",
+    mcpImportRun: "pi-desktop/mcp/importRun",
     mcpMarketSearch: "pi-desktop/mcp/market/search",
     skillList: "pi-desktop/skill/list",
     skillCreate: "pi-desktop/skill/create",
     skillImport: "pi-desktop/skill/import",
+    skillImportScan: "pi-desktop/skill/importScan",
+    skillImportRun: "pi-desktop/skill/importRun",
     skillMarketSearch: "pi-desktop/skill/market/search",
     skillMarketFetch: "pi-desktop/skill/market/fetch",
     skillUpdate: "pi-desktop/skill/update",
@@ -321,6 +345,7 @@ export const IPC = {
     notificationActivated: "pi-desktop/notification/event/activated",
     plansChanged: "pi-desktop/plans/event/changed",
     providersOauth: "pi-desktop/providers/oauth/event",
+    mcpOauth: "pi-desktop/mcp/oauth/event",
     updatesState: "pi-desktop/updates/event/state",
   },
   agent: {

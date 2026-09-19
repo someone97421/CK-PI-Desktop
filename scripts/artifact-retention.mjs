@@ -41,3 +41,9 @@ export function isDesktopArtifact(entry) {
     || /^(?:latest(?:-[a-z0-9-]+)?|builder-debug|builder-effective-config)\.ya?ml$/.test(entry.name)
   );
 }
+export function isPiHostArtifact(entry) {
+  if (entry.isDirectory()) {
+    return /^pi-host-\d{8}-\d{6}(?:-[A-Za-z0-9]+)?$/.test(entry.name);
+  }
+  return entry.isFile() && /^pi-host-.*\.tar\.gz(?:\.sha256)?$/.test(entry.name);
+}

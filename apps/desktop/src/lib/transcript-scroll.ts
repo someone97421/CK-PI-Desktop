@@ -12,6 +12,47 @@ export const TRANSCRIPT_REPIN_THRESHOLD_PX = 48;
  */
 export const TRANSCRIPT_SCROLL_ROUNDING_TOLERANCE_PX = 1;
 
+/**
+ * Near-top band that grows the mounted window or fetches an older page (D269).
+ * Shared by the scroll handler and the history-boundary observer so the two
+ * triggers cannot drift apart.
+ */
+export const HISTORY_REVEAL_THRESHOLD_PX = 120;
+
+export type TranscriptScrollerGeometry = {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+};
+
+/** A scroller that has not been measured yet, or is skipped by `content-visibility`. */
+export function transcriptHasLayout(
+  geometry: Pick<TranscriptScrollerGeometry, "scrollHeight" | "clientHeight">,
+): boolean {
+  return geometry.clientHeight > 0 && geometry.scrollHeight > 0;
+}
+
+/**
+ * Whether the visible top should grow or page earlier history (D269).
+ *
+ * A collapsed box reports `scrollTop === 0` and must not be treated as "the
+ * user is reading the top". A pinned overflowing transcript is at (or about
+ * to be restored to) the bottom; a stale zero offset there must not page the
+ * conversation back to its start. An underfilled pinned tail still advances:
+ * it does not overflow, so the top boundary is genuinely in view. Callers pass
+ * `pinned` only for an offset their own event did not produce: a real gesture
+ * is the reader's position, not stale noise, and must still continue history.
+ */
+export function isHistoryRevealPosition(
+  geometry: TranscriptScrollerGeometry,
+  pinned = false,
+): boolean {
+  if (!transcriptHasLayout(geometry)) return false;
+  const overflows = geometry.scrollHeight > geometry.clientHeight + 1;
+  if (pinned && overflows) return false;
+  return geometry.scrollTop <= HISTORY_REVEAL_THRESHOLD_PX;
+}
+
 export type TranscriptScrollInput = {
   previousScrollTop: number;
   scrollTop: number;

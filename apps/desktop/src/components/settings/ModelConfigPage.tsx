@@ -43,6 +43,7 @@ import {
 } from "./default-model";
 import { copyProviderConfiguration, type ProviderCopyDraft } from "./provider-copy";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
+import { EnhancementModelCard } from "./EnhancementModelCard";
 import { VendorAccountsSection } from "./VendorAccountsSection";
 
 const DELETE_CONFIRM_MS = 3000;
@@ -219,6 +220,7 @@ export function ModelConfigPage() {
     );
   }, [defaultModelOptionsList, defaultModelQuery]);
 
+
   if (!settings) return null;
 
   const defaultProvider =
@@ -243,6 +245,7 @@ export function ModelConfigPage() {
     compactionProvider !== null &&
     providerReady(compactionProvider) &&
     providerOffersModel(compactionProvider, compactionModelId);
+
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
     setBusyId(provider.id);
@@ -690,6 +693,8 @@ export function ModelConfigPage() {
           </div>
         </div>
       </section>
+
+      <EnhancementModelCard />
 
       <section className="settings-card-block">
         <div className="model-config-section-head">

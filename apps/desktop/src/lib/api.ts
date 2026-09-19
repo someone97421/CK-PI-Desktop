@@ -58,6 +58,7 @@ import type {
   McpServerInput,
   McpServerRecord,
   McpServerStatus,
+  McpOAuthLoginEvent,
   OnboardingState,
   OAuthLoginEvent,
   OAuthRespondInput,
@@ -68,7 +69,7 @@ import type {
   PluginSettingDefinition,
   PluginServiceStatus,
   PluginViewMeta,
-  PluginSettingsDestinationMeta,
+  PluginScenicThemesDestinationMeta,
   PluginTheme,
   MarketPluginSummary,
   MarketPluginDetail,
@@ -108,6 +109,11 @@ import type {
   PlanResolutionResult,
   PlanningStateEvent,
   PlansPendingResult,
+  RemoteHostBootstrapRequest,
+  RemoteHostBootstrapResult,
+  RemoteHostPairRequest,
+  RemoteHostPairResult,
+  RemoteHostSummary,
   UpdateState,
   WindowControlAction,
   CloseBehavior,
@@ -168,6 +174,130 @@ export interface ImportRunResult {
   imported: number;
   skipped: number;
   failed: number;
+}
+
+// --- External skill / MCP scan-and-import ---------------------------------
+// Renderer-side mirrors of the electron-main scanner output so the panel does
+// not have to import from `electron/`. Keep the field names in sync with
+// `apps/desktop/electron/main/importers/agent-*-scan.ts`.
+
+export type ExternalSkillSourceKind =
+  | "claude-user"
+  | "claude-project"
+  | "pi-user"
+  | "pi-project";
+
+export interface ExternalSkillCandidate {
+  source: ExternalSkillSourceKind;
+  sourcePath: string;
+  rootDir?: string;
+  shape: "file" | "dir";
+  id: string;
+  name: string;
+  description: string;
+  bytes: number;
+  warnings: string[];
+}
+
+export interface ExternalSkillSourceReport {
+  kind: ExternalSkillSourceKind | "error";
+  path: string;
+  exists: boolean;
+  error?: string;
+  count: number;
+}
+
+export interface ExternalSkillScanResult {
+  candidates: ExternalSkillCandidate[];
+  sources: ExternalSkillSourceReport[];
+}
+
+export interface ExternalSkillImportItem {
+  source: ExternalSkillSourceKind;
+  sourcePath: string;
+  shape: "file" | "dir";
+  rootDir?: string;
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface ExternalSkillImportPayload {
+  level: "global" | "project";
+  projectPath?: string;
+  mode?: "copy" | "link";
+  items: ExternalSkillImportItem[];
+}
+
+export interface ExternalSkillImportRunResult {
+  imported: Array<{ item: ExternalSkillImportItem; skill: UserSkillRecord }>;
+  skipped: Array<{ item: ExternalSkillImportItem; reason: string }>;
+  failed: Array<{ item: ExternalSkillImportItem; error: string }>;
+}
+
+export type ExternalMcpSourceKind =
+  | "claude-desktop"
+  | "claude-code"
+  | "cursor-global"
+  | "cursor-project"
+  | "codex"
+  | "opencode"
+  | "chatgpt-desktop";
+
+export interface ExternalMcpCandidate {
+  source: ExternalMcpSourceKind;
+  sourcePath: string;
+  id: string;
+  rawKey: string;
+  label?: string;
+  description?: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+  warnings: string[];
+}
+
+export interface ExternalMcpSourceReport {
+  kind: ExternalMcpSourceKind | "error";
+  path: string;
+  exists: boolean;
+  error?: string;
+  count: number;
+}
+
+export interface ExternalMcpScanResult {
+  candidates: ExternalMcpCandidate[];
+  sources: ExternalMcpSourceReport[];
+}
+
+export interface ExternalMcpImportItem {
+  source: ExternalMcpSourceKind;
+  sourcePath: string;
+  id: string;
+  rawKey: string;
+  label?: string;
+  description?: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+}
+
+export interface ExternalMcpImportPayload {
+  items: ExternalMcpImportItem[];
+}
+
+export interface ExternalMcpImportRunResult {
+  imported: Array<{ item: ExternalMcpImportItem; server: McpServerRecord }>;
+  skipped: Array<{ item: ExternalMcpImportItem; reason: string }>;
+  failed: Array<{ item: ExternalMcpImportItem; error: string }>;
 }
 
 declare global {
@@ -827,12 +957,31 @@ export const api = {
   /** Force one handshake and report what happened, for the editor's test button. */
   testMcpServer: (id: string, query?: Partial<AgentCapabilityQuery>) =>
     invoke<{ status: McpServerStatus }>(IPC.invoke.mcpTest, { id, ...query }),
+  /** Launch browser-based OAuth 2.1 authorization flow for an HTTP MCP server. */
+  startMcpOAuth: (id: string, query?: Partial<AgentCapabilityQuery>) =>
+    invoke<{ ok: boolean; loginId: string }>(IPC.invoke.mcpOauthStart, { id, ...query }),
+  cancelMcpOAuth: (payload: { loginId?: string; id?: string }) =>
+    invoke<{ ok: boolean }>(IPC.invoke.mcpOauthCancel, payload),
   /** Accept a pasted `mcpServers` block; bad entries are reported, not fatal. */
   importMcpServers: (text: string) =>
     invoke<{
       imported: McpServerRecord[];
       failed: Array<{ id: string; reason: string }>;
     }>(IPC.invoke.mcpImport, { text }),
+  /**
+   * Scan third-party AI-tool config files for MCP server definitions. The
+   * scanner never throws; a source that failed to read is reported with an
+   * `error` on its row and a zero count.
+   */
+  scanExternalMcp: (query?: { projectPath?: string }) =>
+    invoke<ExternalMcpScanResult>(IPC.invoke.mcpImportScan, query ?? {}),
+  /**
+   * Import each candidate through `mcp.upsert` one at a time; a `disabled`
+   * item is turned off with `mcp.setEnabled` after it is written. One failure
+   * never aborts the batch.
+   */
+  runExternalMcpImport: (payload: ExternalMcpImportPayload) =>
+    invoke<ExternalMcpImportRunResult>(IPC.invoke.mcpImportRun, payload),
   /** Query the configured market sources; `failedSources` names dead ones. */
   searchMcpMarketRegistry: (query: string, sources: MarketSource[], options?: { more?: boolean }) =>
     invoke<{ entries: McpCatalogEntry[]; failedSources?: string[]; exhausted?: boolean }>(
@@ -875,9 +1024,30 @@ export const api = {
     invoke<{ skills: UserSkillRecord[] }>(IPC.invoke.skillList, query),
   createUserSkill: (skill: UserSkillInput) =>
     invoke<{ skill: UserSkillRecord }>(IPC.invoke.skillCreate, skill),
-  /** Opens a native picker for one file; `canceled` when the user backed out. */
-  importUserSkill: (query?: AgentCapabilityQuery) =>
-    invoke<{ canceled?: boolean; skill?: UserSkillRecord }>(IPC.invoke.skillImport, query),
+  /**
+   * Opens a native picker for one file or (when `sourceKind === "dir"`) a
+   * folder; `canceled` when the user backed out. `mode: "link"` swaps copy
+   * for a symlink import.
+   */
+  importUserSkill: (
+    query?: AgentCapabilityQuery & {
+      sourceKind?: "file" | "dir";
+      mode?: "copy" | "link";
+    },
+  ) => invoke<{ canceled?: boolean; skill?: UserSkillRecord }>(IPC.invoke.skillImport, query),
+  /**
+   * Scan third-party AI-tool skill directories. The scanner never throws;
+   * a source that failed to read is reported with an `error` on its row.
+   */
+  scanExternalSkills: (query?: { projectPath?: string }) =>
+    invoke<ExternalSkillScanResult>(IPC.invoke.skillImportScan, query ?? {}),
+  /**
+   * Import each candidate through `skills.import` one at a time. `mode`
+   * defaults to `"copy"`; a `dir` shape sends its `rootDir` as the source
+   * path so host-core knows it is a `<name>/SKILL.md` skill.
+   */
+  runExternalSkillsImport: (payload: ExternalSkillImportPayload) =>
+    invoke<ExternalSkillImportRunResult>(IPC.invoke.skillImportRun, payload),
   updateUserSkill: (id: string, skill: Omit<UserSkillInput, "id">) =>
     invoke<{ skill: UserSkillRecord }>(IPC.invoke.skillUpdate, { id, ...skill }),
   /** The record plus the document body, for the editor. */
@@ -964,7 +1134,8 @@ export const api = {
   togglePluginLauncher: () => invoke(IPC.invoke.pluginLauncherToggle),
   dismissPluginLauncher: () => invoke(IPC.invoke.pluginLauncherDismiss),
   listPluginThemes: () => invoke<PluginTheme[]>(IPC.invoke.pluginThemes),
-  listPluginSettingsDestinations: () => invoke<PluginSettingsDestinationMeta[]>(IPC.invoke.pluginSettingsDestinations),
+  listPluginScenicThemesDestinations: () => invoke<PluginScenicThemesDestinationMeta[]>(IPC.invoke.pluginScenicThemesDestinations),
+  setPluginScenicThemeBlur: (pluginId: string, themeId: string, blur: number) => invoke(IPC.invoke.pluginScenicThemesSetBlur, { pluginId, themeId, blur }),
   listPluginServices: () => invoke<PluginServiceStatus[]>(IPC.invoke.pluginServices),
   getRemoteAccessStatus: () => invoke<{ available: boolean; running: boolean; failed?: boolean }>(IPC.invoke.pluginRemoteAccessStatus),
   /**
@@ -998,12 +1169,6 @@ export const api = {
       visible,
       sessionId,
     }),
-  pluginSettingsViewOpen: (pluginId: string, destinationId: string) =>
-    invoke(IPC.invoke.pluginSettingsViewOpen, { pluginId, destinationId }),
-  pluginSettingsViewSetBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
-    invoke(IPC.invoke.pluginSettingsViewSetBounds, bounds),
-  pluginSettingsViewSetVisible: (pluginId: string, destinationId: string, visible: boolean) =>
-    invoke(IPC.invoke.pluginSettingsViewSetVisible, { pluginId, destinationId, visible }),
   marketRefresh: (force = true) =>
     invoke<{
       providerId: string;
@@ -1237,6 +1402,12 @@ export const api = {
       listener(payload as OAuthLoginEvent),
     );
   },
+  onMcpOAuth: (listener: (event: McpOAuthLoginEvent) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.mcpOauth, (payload) =>
+      listener(payload as McpOAuthLoginEvent),
+    );
+  },
   onExtensionPrompt: (listener: (prompt: TrustedExtensionUiPrompt) => void) => {
     if (!window.piDesktop?.on) return () => undefined;
     return window.piDesktop.on(IPC.event.extensionsUiPrompt, (payload) =>
@@ -1269,6 +1440,24 @@ export const api = {
       listener((payload as { notification: AppNotification }).notification),
     );
   },
+
+  // --- Remote hosts (R2b pairing UX) -----------------------------------------
+  /** Paired remote `pi-host` list, redacted so no device token reaches here. */
+  listRemoteHosts: () =>
+    invoke<{ hosts: RemoteHostSummary[] }>(IPC.invoke.remoteHostList),
+  /** Exchange `ppt1.` pairing token for a durable device token and connect. */
+  pairRemoteHost: (request: RemoteHostPairRequest) =>
+    invoke<RemoteHostPairResult>(IPC.invoke.remoteHostPair, request),
+  /**
+   * Install and pair a `pi-host` over SSH on a machine the user already
+   * reaches, then bring it online (spec §5.2). Credentials come from the
+   * user's own SSH configuration and agent.
+   */
+  bootstrapRemoteHost: (request: RemoteHostBootstrapRequest) =>
+    invoke<RemoteHostBootstrapResult>(IPC.invoke.remoteHostBootstrap, request),
+  /** Close and drop a paired host by its stable routing key. */
+  removeRemoteHost: (hostKey: string) =>
+    invoke<{ ok: true }>(IPC.invoke.remoteHostRemove, { hostKey }),
   onSessionsChanged: (
     listener: (event: {
       reason?: string;

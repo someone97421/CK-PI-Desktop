@@ -32,7 +32,7 @@ export function prepareBuild(timestamp = process.env.THIS_IS_A_AGENT_BUILD_TIME)
   if (branding.sharedDataDirectory !== ".pi-desktop") throw new Error("共用业务目录是已确认边界，迁移需要另行设计");
   const stamp = buildStamp(timestamp);
   process.env.THIS_IS_A_AGENT_BUILD_TIME = stamp.builtAt;
-  const manifests = ["package.json", "apps/desktop/package.json", ...readdirSync(join(root, "packages"), { withFileTypes: true })
+  const manifests = ["package.json", "apps/desktop/package.json", "apps/pi-host/package.json", ...readdirSync(join(root, "packages"), { withFileTypes: true })
     .filter((entry) => entry.isDirectory()).map((entry) => `packages/${entry.name}/package.json`)];
   for (const relative of manifests) {
     const path = join(root, relative);

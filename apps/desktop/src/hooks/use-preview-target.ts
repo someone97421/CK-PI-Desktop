@@ -3,10 +3,11 @@ import { useTranslation } from "react-i18next";
 import { useAppStore } from "../stores/app-store";
 import { api } from "../lib/api";
 import { isHtmlFilePath, toWorkspaceRel, type ChatPreviewTarget } from "../lib/chat-links";
+import { openHttpUrl } from "../lib/open-http-url";
 import { FILE_MANAGER_PLUGIN_TAB, fileManagerPluginTab } from "../lib/work-panel-tabs";
 
 /**
- * Open one target the transcript named, in the work panel.
+ * Open one target the transcript named.
  *
  * A file never opens its own path directly. It goes through the same
  * completion the message body uses (`useOpenChatFileRef`, ADR 0262), so the
@@ -15,15 +16,15 @@ import { FILE_MANAGER_PLUGIN_TAB, fileManagerPluginTab } from "../lib/work-panel
  * a project file exactly like a chat chip, and fall back the same way when the
  * view, the file, or the reference is not there. One opener for the whole
  * transcript is also what keeps a shorthand honest — a click opens the file
- * that matched, or reports that nothing did. URLs keep the embedded browser.
+ * that matched, or reports that nothing did. HTTP(S) URLs follow the Link
+ * open destination setting.
  */
 export function useOpenPreviewTarget() {
   const openFileRef = useOpenChatFileRef();
-  const openUrl = useAppStore((s) => s.openUrlInWorkPanel);
   return useCallback(
     (target: ChatPreviewTarget) =>
-      target.kind === "file" ? openFileRef(target.path) : openUrl(target.url),
-    [openFileRef, openUrl],
+      target.kind === "file" ? openFileRef(target.path) : openHttpUrl(target.url),
+    [openFileRef],
   );
 }
 

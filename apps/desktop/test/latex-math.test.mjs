@@ -15,7 +15,7 @@ test("normalizes TeX math delimiters without changing source length", () => {
     [String.raw`before \(a+b\) after`, "before $$a+b$$ after"],
     [String.raw`\[
 a+b
-\]`, "$$\na+b\n$$"],
+\]`, "$$ a+b $$"],
   ]) {
     const normalized = normalizeLatexMathDelimiters(source);
     assert.equal(normalized, expected);

@@ -202,7 +202,7 @@ test("a revealed pane restores its own scroll position in the layout phase", () 
     /useLayoutEffect\(\(\) => \{([\s\S]*?)\n  \}, \[cancelFollowScroll, paneVisible, releaseDisclosureAnchor, scrollToBottom\]\);/,
   )?.[1];
   assert.ok(revealEffect, "the reveal must restore position in a layout effect");
-  assert.match(revealEffect, /retainedScrollTopRef\.current = el\.scrollTop/);
+  assert.match(revealEffect, /retainedScrollTopRef\.current = lastLaidOutScrollTopRef\.current/);
   assert.match(revealEffect, /if \(pinnedRef\.current\) \{\s*scrollToBottom\(\);/);
   assert.match(revealEffect, /el\.scrollTop = retained/);
   assert.match(revealEffect, /lastScrollTopRef\.current = retained/);
@@ -294,6 +294,11 @@ test("first-commit hydration expands without moving the transcript", () => {
     transcript,
     /boundedFirstCommitRef\.current = true;\n\s*const frame = requestAnimationFrame/,
     "the flag is armed in the same effect that queues the expansion",
+  );
+  assert.match(
+    transcript,
+    /if \(allHistoryEntries\.length > 0\) firstCommitRef\.current = false/,
+    "an empty first paint must not spend the first-commit gate",
   );
 });
 

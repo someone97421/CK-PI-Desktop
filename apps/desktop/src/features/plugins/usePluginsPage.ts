@@ -43,7 +43,6 @@ export function usePluginsPage() {
   const settings = useAppStore((s) => s.settings);
   const refreshPlugins = useAppStore((s) => s.refreshPlugins);
   const showToast = useAppStore((s) => s.showToast);
-  const openUrlInWorkPanel = useAppStore((s) => s.openUrlInWorkPanel);
   const activateProject = useAppStore((s) => s.activateProject);
   /**
    * The folder open in this window. Scoping something to "this project" is only
@@ -662,7 +661,6 @@ export function usePluginsPage() {
     settings,
     refreshPlugins,
     showToast,
-    openUrlInWorkPanel,
     activateProject,
     currentProjectPath,
     tab,

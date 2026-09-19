@@ -8,6 +8,35 @@
   background: var(--ds-bg-primary);
 }
 
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .app-shell.settings-mode,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-shell,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-shell-full,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-content,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-content-inner,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-titlebar {
+  background: transparent !important;
+}
+
+/* Scenic plugin themes own the image canvas. Keep the host Settings page as
+ * transparent compositing surfaces so the single root scenic layer remains
+ * visible beneath it; ordinary themes never match this attribute. */
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .app-shell.settings-mode,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-shell,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-shell-full,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-content,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-content-inner,
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-titlebar {
+  background: transparent !important;
+}
+
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-shell-full .settings-nav.sidebar-surface {
+  background: color-mix(in oklab, var(--ds-bg-sidebar) 72%, transparent);
+}
+
+:root[data-plugin-theme^="plugin:io.github.akshayxkill.nexus-scenic-themes:"] .settings-panel {
+  background: color-mix(in oklab, var(--ds-bg-elevated) 72%, transparent);
+}
+
 .settings-shell,
 .settings-shell-full {
   position: relative;
@@ -16,6 +45,65 @@
   min-height: 0;
   width: 100%;
   background: var(--ds-bg-primary);
+}
+
+.plugin-scenic-themes-destination {
+  display: grid;
+  gap: 18px;
+  background: transparent;
+}
+
+.plugin-scenic-themes-description {
+  margin: -8px 0 0;
+  color: var(--ds-text-muted);
+}
+
+.plugin-scenic-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.plugin-scenic-theme-card {
+  position: relative;
+  min-height: 178px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ds-border) 84%, transparent);
+  border-radius: var(--radius-md-plus);
+  background: color-mix(in srgb, var(--ds-bg-elevated) 76%, transparent);
+  box-shadow: 0 12px 28px color-mix(in srgb, #000 24%, transparent);
+  color: var(--ds-text-primary);
+  cursor: pointer;
+  isolation: isolate;
+  text-align: left;
+}
+
+.plugin-scenic-theme-card:hover { border-color: var(--ds-accent); }
+.plugin-scenic-theme-card:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: 3px; }
+.plugin-scenic-theme-card.active { border-color: var(--ds-accent); box-shadow: 0 0 0 1px var(--ds-accent), 0 12px 28px color-mix(in srgb, #000 30%, transparent); }
+.plugin-scenic-theme-card > img { position: absolute; z-index: -2; width: 100%; height: 100%; inset: 0; object-fit: cover; }
+.plugin-scenic-theme-card-shade { position: absolute; z-index: -1; inset: 0; background: linear-gradient(180deg, transparent 18%, color-mix(in srgb, #000 72%, transparent) 100%); }
+.plugin-scenic-theme-card-content { position: absolute; right: 16px; bottom: 15px; left: 16px; display: grid; gap: 3px; }
+.plugin-scenic-theme-card-title { font-weight: 650; font-size: 15px; text-shadow: 0 1px 7px #000; }
+.plugin-scenic-theme-card-description { color: color-mix(in srgb, #fff 78%, transparent); font-size: 12px; text-shadow: 0 1px 5px #000; }
+.plugin-scenic-theme-card-check { position: absolute; top: 12px; right: 12px; display: grid; width: 24px; height: 24px; place-items: center; border-radius: 50%; background: var(--ds-accent); color: var(--ds-accent-foreground); font-weight: 700; }
+
+.plugin-scenic-blur-control { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px; border: 1px solid color-mix(in srgb, var(--ds-border) 84%, transparent); border-radius: var(--radius-md-plus); background: color-mix(in srgb, var(--ds-bg-elevated) 82%, transparent); box-shadow: 0 10px 24px color-mix(in srgb, #000 16%, transparent); }
+.plugin-scenic-blur-copy { display: grid; gap: 3px; }
+.plugin-scenic-blur-label { font-weight: 600; }
+.plugin-scenic-blur-help { color: var(--ds-text-muted); font-size: 12px; }
+.plugin-scenic-blur-actions { display: flex; align-items: center; gap: 12px; min-width: min(100%, 360px); }
+.plugin-scenic-blur-actions input { flex: 1; min-width: 110px; }
+.plugin-scenic-blur-actions output { min-width: 34px; color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 720px) {
+  .plugin-scenic-theme-grid { grid-template-columns: 1fr; }
+  .plugin-scenic-blur-control { align-items: stretch; flex-direction: column; }
+  .plugin-scenic-blur-actions { min-width: 0; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .plugin-scenic-theme-card, .plugin-scenic-blur-control { background: var(--ds-bg-elevated); }
 }
 
 /* The band spans the content column only. Spanning the full window width
@@ -220,9 +308,13 @@
   margin: 0;
 }
 
-/* The renderer owns this measured hole; the sandboxed WebContentsView paints
-   only here, never over the rail, titlebar, or native window controls. */
+/* The renderer owns this sandboxed iframe. It stays in normal Settings flow,
+   so it cannot cover the titlebar, native controls, rail, or resize edges. */
 .plugin-settings-destination {
+  display: block;
+  box-sizing: border-box;
+  border: 0;
+  background: transparent;
   min-height: min(720px, calc(100vh - 150px));
   width: 100%;
 }
@@ -349,6 +441,67 @@
   padding: 12px 14px 14px;
 }
 
+/*
+  Remote hosts: the SSH install is a real form (label + field cells), not a row
+  list, so it keeps the rhythm of `.settings-form-grid` and lays its fields out
+  in a two-column grid instead of five stacked full-width rows.
+*/
+.settings-remote-host-form {
+  display: grid;
+  gap: 12px;
+  padding: 12px 14px 14px;
+}
+
+/* Label + host. The port only needs room for five digits, so the user row
+   trades its second column for a narrow one. */
+.settings-remote-host-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-remote-host-form-row.is-narrow-port {
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.4fr);
+}
+
+/* Authentication mode: label, the shared segmented control, and its note.
+   The segment keeps its paint from `.settings-segment` and only takes its
+   position from here. */
+.settings-remote-host-form-auth {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+/* The install action sits right; its hint stays with it on the left. */
+.settings-remote-host-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Paired-host row: the status pill and the remove action need a gap, which the
+   row's control column does not have by default. */
+.settings-row-control:has(> .settings-remote-host-status) {
+  gap: 10px;
+}
+
+.settings-remote-host-status {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Same breakpoint as the other two-column grid in this sheet
+   (`.plugin-scenic-theme-grid`): one field per row before the columns pinch. */
+@media (max-width: 720px) {
+  .settings-remote-host-form-row,
+  .settings-remote-host-form-row.is-narrow-port {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .settings-row {
   display: flex;
   align-items: center;
@@ -388,23 +541,13 @@
   justify-content: flex-end;
 }
 
-.settings-row:has(.settings-speech-fields) .settings-row-control {
-  max-width: 280px;
-  align-items: stretch;
-}
-
-.settings-speech-fields {
-  display: flex;
-  flex-direction: column;
+/*
+  A toggle paired with an icon action (prompt enhancement). The control column
+  has no gap of its own, so the two would otherwise touch.
+*/
+.settings-row-control:has(> .settings-toggle + .settings-icon-button) {
   gap: 8px;
-  min-width: 180px;
-  width: 100%;
 }
-
-.settings-speech-lead {
-  padding: 12px 16px 0;
-}
-
 .settings-row-control .field-input {
   width: 100%;
   min-width: 140px;
@@ -702,6 +845,23 @@
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--ds-accent) 24%, transparent);
 }
 
+/*
+  A disabled switch still reads as a switch: dimmed, not restyled, and the
+  cursor says why clicking does nothing.
+*/
+.settings-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-toggle:disabled:hover {
+  background: var(--ds-switch-track-off);
+}
+
+.settings-toggle.on:disabled:hover {
+  background: var(--ds-accent);
+}
+
 .settings-toggle.is-busy .settings-toggle-thumb {
   animation: settings-toggle-pending 900ms ease-in-out infinite alternate;
 }
@@ -760,46 +920,10 @@
   font-size: var(--text-sm-plus);
 }
 
-/* Global UI font picker (Appearance card). Pill trigger mirrors the
-   shared settings select; the menu portals to document.body as a fixed
-   floating layer so the settings card's overflow cannot clip it. */
-.settings-font {
-  position: relative;
-}
-
-.settings-font-trigger {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 200px;
-  max-width: 280px;
-  height: 30px;
-  padding: 0 12px;
-  border-radius: var(--radius-full);
-  background: var(--ds-raised);
-  box-shadow: var(--ds-raised-shadow);
-  color: var(--ds-text-primary);
-  font-size: var(--text-sm-plus);
-}
-
-.settings-font-trigger:hover {
-  background: var(--ds-bg-hover);
-}
-
-.settings-font-trigger-label {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: left;
-}
-
-.settings-font-trigger > svg {
-  flex: 0 0 auto;
-  color: var(--ds-text-muted);
-}
-
+/* Global UI font picker (Appearance card). The closed pill shares the
+   language / theme trigger definition below; the menu portals to
+   document.body as a fixed floating layer so the settings card's overflow
+   cannot clip it. */
 .settings-font-menu {
   position: fixed;
   z-index: 60;
@@ -926,15 +1050,15 @@
   text-align: center;
 }
 
-/* Language and theme pickers (Appearance) plus the short-list menu selects on
-   the remaining tabs. Pill trigger matches the font picker; the closed control
-   hugs the current label (capped by the row) so a short value does not stretch
-   the column. The menu is an AnchoredMenu so the settings card cannot clip it,
-   and one definition here means a design change reaches every Settings picker
-   together. */
+/* Appearance pickers (language, theme, font) plus the short-list menu selects
+   on the remaining tabs. The closed control hugs the current label (capped by
+   the row) so a short value does not stretch the column. Language and theme
+   menus are AnchoredMenu; the font menu portals itself. One definition here
+   means a design change reaches every Settings picker together. */
 .settings-language-anchor,
 .settings-theme-anchor,
-.settings-menu-select-anchor {
+.settings-menu-select-anchor,
+.settings-font {
   position: relative;
   width: max-content;
   max-width: 100%;
@@ -947,7 +1071,8 @@
 
 .settings-language-trigger,
 .settings-theme-trigger,
-.settings-menu-select-trigger {
+.settings-menu-select-trigger,
+.settings-font-trigger {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -970,7 +1095,8 @@
 
 .settings-language-trigger:hover,
 .settings-theme-trigger:hover,
-.settings-menu-select-trigger:hover {
+.settings-menu-select-trigger:hover,
+.settings-font-trigger:hover {
   background: var(--ds-bg-hover);
 }
 
@@ -982,7 +1108,8 @@
 
 .settings-language-trigger-label,
 .settings-theme-trigger-label,
-.settings-menu-select-trigger-label {
+.settings-menu-select-trigger-label,
+.settings-font-trigger-label {
   min-width: 0;
   flex: 0 1 auto;
   overflow: hidden;
@@ -997,7 +1124,8 @@
 
 .settings-language-trigger > svg,
 .settings-theme-trigger > svg,
-.settings-menu-select-trigger > svg {
+.settings-menu-select-trigger > svg,
+.settings-font-trigger > svg {
   flex: 0 0 auto;
   color: var(--ds-text-muted);
 }
@@ -1706,6 +1834,16 @@
   .agent-capability-row-actions .agent-capability-menu-wrap {
     opacity: 1;
   }
+}
+
+.agent-capability-row-actions > .settings-icon-button.is-action-highlight {
+  opacity: 1;
+  color: var(--ds-accent);
+}
+
+.agent-capability-row-actions > .settings-icon-button.is-action-highlight:hover:not(:disabled) {
+  color: var(--ds-accent);
+  background: color-mix(in oklab, var(--ds-accent) 14%, transparent);
 }
 
 .agent-capability-row.menu-open {

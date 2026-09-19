@@ -30,6 +30,8 @@ import {
   Copy,
   Dot,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileDiff,
   FileSpreadsheet,
   FileText,
@@ -243,6 +245,9 @@ export const IconStar = icon(Star);
 export const IconCircleCheck = icon(CircleCheck);
 export const IconCircleAlert = icon(CircleAlert);
 export const IconTriangleAlert = icon(TriangleAlert);
+/* Password field reveal toggle (see PasswordInput). */
+export const IconEye = icon(Eye);
+export const IconEyeOff = icon(EyeOff);
 
 export function IconStop({ size = 16, style, ...props }: IconProps) {
   return (

@@ -16,6 +16,7 @@ export type SettingsTabId =
   | "subagents"
   | "import"
   | "projects"
+  | "remoteHosts"
   | "about";
 
 export type SettingsNavGroupId =
@@ -88,9 +89,6 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.permissionModeAcceptEdits",
       "settings.permissionModeAuto",
       "settings.defaultsTitle",
-      "settings.speechTitle",
-      "settings.speechTranscribe",
-      "settings.speechSynthesize",
       "settings.mode",
       "settings.commandShell",
       "settings.linkOpenTarget",
@@ -101,6 +99,11 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.contextUsageDisplay",
       "settings.contextUsageDisplayRemaining",
       "settings.contextUsageDisplayUsed",
+      "settings.promptEnhancementTitle",
+      "settings.promptEnhancementDesc",
+      "settings.promptEnhancementCustomTemplate",
+      "settings.promptEnhancementEdit",
+      "settings.promptEnhancementUserTemplate",
       "settings.largePasteThreshold",
     ],
   },
@@ -133,6 +136,10 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     titleKey: "settings.configuration",
     group: "agent",
     keywordKeys: [
+      "settings.promptEnhancementModelTitle",
+      "settings.promptEnhancementModel",
+      "settings.promptEnhancementModelFollow",
+      "settings.promptEnhancementThinking",
       "settings.providers",
       "settings.models",
       "settings.defaultModel",
@@ -232,6 +239,25 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "project.archive",
       "project.restore",
       "project.delete",
+    ],
+  },
+  {
+    id: "remoteHosts",
+    labelKey: "settings.nav.remoteHosts",
+    titleKey: "settings.remoteHosts.title",
+    group: "system",
+    keywordKeys: [
+      "settings.remoteHosts.title",
+      "settings.remoteHosts.pairTitle",
+      "settings.remoteHosts.pair",
+      "settings.remoteHosts.fieldUrl",
+      "settings.remoteHosts.fieldPairingToken",
+      "settings.remoteHosts.sshTitle",
+      "settings.remoteHosts.sshHost",
+      "settings.remoteHosts.sshAuthMode",
+      "settings.remoteHosts.sshPassword",
+      "settings.remoteHosts.statusOnline",
+      "settings.remoteHosts.statusOffline",
     ],
   },
   {

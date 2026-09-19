@@ -35,6 +35,8 @@ export type TurnStartRequest = {
   sessionId: string;
   content: string;
   sessionMessageId?: string;
+  /** Client-chosen id for the durable user row (D288); the runtime mints one otherwise. */
+  userMessageId?: string;
   attachments?: AgentPromptAttachment[];
   effectivePermissionMode: RacpPermissionMode;
   idempotencyKey?: string;
@@ -112,6 +114,8 @@ export type QueuedTurnRecord = {
   principalSubject: string;
   content: string;
   sessionMessageId?: string;
+  /** Client-chosen id for the durable user row (D288). */
+  userMessageId?: string;
   attachments?: AgentPromptAttachment[];
   effectivePermissionMode: RacpPermissionMode;
   idempotencyKey?: string;

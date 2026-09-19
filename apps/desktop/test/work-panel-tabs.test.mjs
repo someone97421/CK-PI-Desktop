@@ -15,7 +15,6 @@ const {
   pluginWorkPanelTab,
   replaceWorkPanelTabState,
   sanitizeWorkPanelTabsState,
-  shouldOpenReviewArtifact,
   switchWorkPanelContextState,
   toolWorkPanelTab,
 } = await import("../src/lib/work-panel-tabs.ts");
@@ -138,26 +137,6 @@ test("only plugin views are launchable tools", () => {
   assert.equal(isToolWorkPanelTab(pluginWorkPanelTab("pi.file-manager", "manager")), true);
   assert.equal(isKnownWorkPanelTab({ id: "browser", kind: "browser" }), false);
   assert.equal(isKnownWorkPanelTab(newWorkPanelTab()), true);
-});
-
-test("review artifacts are recognized independently of the visible session", () => {
-  const base = {
-    toolName: "Write",
-    isError: false,
-    result: { details: { root: "workspace" } },
-  };
-
-  assert.equal(shouldOpenReviewArtifact(base), true);
-  assert.equal(shouldOpenReviewArtifact({ ...base, toolName: "Edit" }), true);
-  assert.equal(shouldOpenReviewArtifact({ ...base, toolName: "Bash" }), false);
-  assert.equal(shouldOpenReviewArtifact({ ...base, isError: true }), false);
-  assert.equal(
-    shouldOpenReviewArtifact({
-      ...base,
-      result: { details: { root: "scratch" } },
-    }),
-    false,
-  );
 });
 
 test("empty work panel context has no visible or retained resource state", () => {
