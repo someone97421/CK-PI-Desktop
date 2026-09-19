@@ -11,6 +11,9 @@ build() {
     ldflags="$ldflags -H windowsgui"
   fi
   CGO_ENABLED=0 GOOS="$1" GOARCH="$2" go build -trimpath -ldflags="$ldflags" -o "../vendor/$3" .
+  if [ "$1" != windows ]; then
+    chmod 755 "../vendor/$3"
+  fi
 }
 build darwin arm64 pi-pty-darwin-arm64
 build darwin amd64 pi-pty-darwin-x64

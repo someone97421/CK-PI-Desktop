@@ -20,7 +20,7 @@ describe("SUBAGENT_PRESETS", () => {
     expect(ids).toEqual([
       "explorer",
       "code-reviewer",
-      "test-runner",
+      "worker",
       "fixer",
       "ui-designer",
     ]);
@@ -51,11 +51,13 @@ describe("SUBAGENT_PRESETS", () => {
   });
 
   it("grants Edit/Write only to roles that need them", () => {
+    const worker = findSubagentPreset("worker");
     const fixer = findSubagentPreset("fixer");
     const explorer = findSubagentPreset("explorer");
     const reviewer = findSubagentPreset("code-reviewer");
-    const runner = findSubagentPreset("test-runner");
     const designer = findSubagentPreset("ui-designer");
+    expect(worker?.tools).toContain("Edit");
+    expect(worker?.tools).toContain("Write");
     expect(fixer?.tools).toContain("Edit");
     expect(fixer?.tools).toContain("Write");
     expect(designer?.tools).toContain("Edit");
@@ -63,13 +65,13 @@ describe("SUBAGENT_PRESETS", () => {
     expect(designer?.tools).toContain("BrowserPreview");
     expect(explorer?.tools ?? []).not.toContain("Edit");
     expect(reviewer?.tools ?? []).not.toContain("Edit");
-    expect(runner?.tools ?? []).not.toContain("Edit");
   });
 });
 
 describe("findSubagentPreset", () => {
   it("returns the matching preset", () => {
     expect(findSubagentPreset("explorer")?.id).toBe("explorer");
+    expect(findSubagentPreset("worker")?.id).toBe("worker");
     expect(findSubagentPreset("fixer")?.id).toBe("fixer");
     expect(findSubagentPreset("ui-designer")?.id).toBe("ui-designer");
   });

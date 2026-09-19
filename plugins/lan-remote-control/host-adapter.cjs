@@ -34,12 +34,6 @@ const definitions = {
   "ask.resolve": [true, "agent/askTool/resolve"],
   "plans.resolve": [true, "plans/resolve"],
 };
-const CONFIRMATION_OPERATIONS = [
-  "models.configure",
-  "approval.resolve",
-  "ask.resolve",
-  "plans.resolve",
-];
 const OPERATION_META = Object.fromEntries(
   Object.entries(definitions).map(([name, [mutation, host, attachments]]) => [
     name,
@@ -47,7 +41,6 @@ const OPERATION_META = Object.fromEntries(
       mutation,
       host,
       attachments: !!attachments,
-      needsDesktopConfirmation: CONFIRMATION_OPERATIONS.includes(name),
     },
   ]),
 );
@@ -144,7 +137,8 @@ function createHostAdapter(pi) {
     return pi.desktop.invoke({
       operation: op,
       args,
-      confirm: CONFIRMATION_OPERATIONS.some((x) => definitions[x][1] === op),
+      // 密码登录已授权远控操作，宿主控制器仍要求显式 confirm。
+      confirm: true,
     });
   }
   async function ops() {
@@ -172,13 +166,11 @@ function createHostAdapter(pi) {
         subscribe: typeof pi.desktop.subscribe === "function",
         snapshotPending: typeof pi.desktop.getSessionSnapshot === "function",
       },
-      needsDesktopConfirmation: CONFIRMATION_OPERATIONS,
       limits: {
         maxTextPromptChars: 120000,
         maxAttachmentBytes: 10 * 1024 * 1024,
         maxAttachments: 8,
       },
-      notes: ["审批和会话配置保留桌面原生确认。"],
     };
   }
   function remember(id, messages) {
@@ -656,5 +648,4 @@ module.exports = {
   OPERATION_META,
   READ_OPERATIONS,
   MUTATION_OPERATIONS,
-  CONFIRMATION_OPERATIONS,
 };

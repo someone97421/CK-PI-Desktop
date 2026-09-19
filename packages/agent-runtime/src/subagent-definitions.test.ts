@@ -24,14 +24,14 @@ import {
 } from "./model-capabilities.js";
 
 describe("builtin subagent documents", () => {
-  it("parse into read-only delegates plus a write-capable fixer", async () => {
+  it("parses builtin roles with their declared tools", async () => {
     const { definitions, diagnostics } = await loadSubagentDefinitions(null);
 
     expect(diagnostics).toEqual([]);
     expect(definitions.map((d) => d.name)).toEqual([
       "explorer",
       "code-reviewer",
-      "test-runner",
+      "worker",
       "fixer",
       "ui-designer",
     ]);
@@ -45,16 +45,12 @@ describe("builtin subagent documents", () => {
       expect(definition.description.length).toBeGreaterThan(20);
       expect(definition.prompt.length).toBeGreaterThan(50);
     }
-    // Only `fixer` and `ui-designer` may write to the workspace; every other
-    // builtin is read-only (the shell delegate reads and runs commands, which
-    // is a permission prompt, not an edit). Builtins inherit the parent
-    // session's permission mode unless they explicitly opt into a narrower
-    // scope.
+    // 实施、修复和界面角色声明文件编辑工具，并沿用父会话权限。
     const mutating = definitions.filter(
       (definition) =>
         definition.tools.includes("Write") || definition.tools.includes("Edit"),
     );
-    expect(mutating.map((d) => d.name)).toEqual(["fixer", "ui-designer"]);
+    expect(mutating.map((d) => d.name)).toEqual(["worker", "fixer", "ui-designer"]);
     expect(mutating[0]?.permission ?? "inherit").toBe("inherit");
     const explorer = definitions.find((definition) => definition.name === "explorer")!;
     expect(explorer.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
@@ -64,12 +60,18 @@ describe("builtin subagent documents", () => {
       DEFAULT_SUBAGENT_IDLE_TIMEOUT_SECONDS,
     );
     expect(explorer.maxDurationSeconds).toBe(21_600);
-    expect(definitions[2].tools).toContain("Bash");
     const designer = definitions.find((definition) => definition.name === "ui-designer")!;
     expect(designer.tools).toContain("BrowserPreview");
     expect("maxTurns" in designer).toBe(false);
     expect(designer.description).toBe(findSubagentPreset("ui-designer")?.description);
     expect(designer.prompt).toBe(findSubagentPreset("ui-designer")?.body.trim());
+    for (const name of ["worker", "fixer"]) {
+      const definition = definitions.find((item) => item.name === name)!;
+      const preset = findSubagentPreset(name)!;
+      expect(definition.description).toBe(preset.description);
+      expect(definition.prompt).toBe(preset.body.trim());
+      expect(definition.tools).toEqual(preset.tools);
+    }
   });
 });
 
@@ -181,10 +183,10 @@ describe("loadSubagentDefinitions", () => {
           filePath: "/home/.agents/subagents/explorer.md",
         },
         {
-          id: "test-runner",
+          id: "worker",
           document:
-            "---\nname: test-runner\ndescription: My runner.\ntools: [Bash]\n---\nRun it.\n",
-          filePath: "/home/.agents/subagents/test-runner.md",
+            "---\nname: worker\ndescription: My worker.\ntools: [Bash]\n---\nRun it.\n",
+          filePath: "/home/.agents/subagents/worker.md",
         },
         {
           id: "note-taker",
@@ -198,8 +200,8 @@ describe("loadSubagentDefinitions", () => {
     expect(diagnostics).toEqual([]);
     const byName = new Map(definitions.map((d) => [d.name, d]));
     expect(byName.get("explorer")!.source).toBe("user");
-    expect(byName.get("test-runner")!.source).toBe("user");
-    expect(byName.get("test-runner")!.filePath).toBe("/home/.agents/subagents/test-runner.md");
+    expect(byName.get("worker")!.source).toBe("user");
+    expect(byName.get("worker")!.filePath).toBe("/home/.agents/subagents/worker.md");
     expect(byName.get("note-taker")!.tools).toEqual(["Read", "Write"]);
     expect(byName.get("code-reviewer")!.source).toBe("builtin");
     expect(definitions.filter((d) => d.name === "explorer")).toHaveLength(1);

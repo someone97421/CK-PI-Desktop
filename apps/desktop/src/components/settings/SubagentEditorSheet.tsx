@@ -116,7 +116,7 @@ export const BLANK_SUBAGENT_PRESET_ID = "" as const;
 export const SUBAGENT_PRESET_COPY = {
   explorer: { name: "presetExplorerName", desc: "presetExplorerDesc" },
   "code-reviewer": { name: "presetReviewerName", desc: "presetReviewerDesc" },
-  "test-runner": { name: "presetTestRunnerName", desc: "presetTestRunnerDesc" },
+  worker: { name: "presetWorkerName", desc: "presetWorkerDesc" },
   fixer: { name: "presetFixerName", desc: "presetFixerDesc" },
   "ui-designer": { name: "presetUiDesignerName", desc: "presetUiDesignerDesc" },
 } as const satisfies Record<SubagentPreset["id"], { name: string; desc: string }>;

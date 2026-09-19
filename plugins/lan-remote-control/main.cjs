@@ -223,9 +223,7 @@ async function refreshSettings(force = false) {
 
   const status = remote?.getStatus();
   if (status?.running) {
-    const addressChanged = settings.bindAddress && settings.bindAddress !== status.address;
-    const portChanged = settings.port !== status.port;
-    if (addressChanged || portChanged) remote.markRestartRequired(true);
+    remote.markRestartRequired(settings.port !== status.port);
   }
   return settings;
 }
@@ -598,7 +596,7 @@ function autoStartCancelled(epoch) {
 async function runStartAttempt(reason) {
   clearAutoStartTimer();
   if (!autoStart.enabled || shuttingDown || unloaded || autoStart.inFlight) return null;
-  if (remote?.getStatus().running) {
+  if (remote?.getStatus().running && reason !== "面板开启") {
     autoStart.attempts = 0;
     autoStart.lastError = null;
     autoStart.slowCheck = false;
@@ -690,6 +688,8 @@ async function buildStatus() {
         address: null,
         port: null,
         url: null,
+        links: [],
+        warning: null,
         addresses: network.listLanAddresses(),
         startedAt: null,
         error: remoteError ?? null,
@@ -737,7 +737,7 @@ function startFromPanel(input) {
       if (requestedEpoch !== lifecycleEpoch || shuttingDown || unloaded) {
         return { ok: false, error: { code: "NOT_READY", message: "开启请求已取消" }, status: await buildStatus() };
       }
-      // 面板显式传空串表示“自动选择本机私网地址”，与持久设置里的空值同义。
+      // 兼容旧地址字段：仅作为首选链接，开启始终覆盖当前所有本机私网地址。
       const requestedAddress = typeof input.address === "string" ? input.address.trim() : settings.bindAddress;
       if (requestedAddress && !network.isAllowedBindAddress(requestedAddress)) {
         throw Object.assign(new Error("监听地址必须是本机私网或回环 IPv4 地址"), { code: "INVALID_PARAMS" });
@@ -761,7 +761,8 @@ function startFromPanel(input) {
         recordLog("warn", `start failed: ${failure.code} ${failure.message}`);
         return { ok: false, error: failure, status };
       }
-      return autoStart.persisted ? { ok: true, status } : { ok: true, warning: persistenceWarning(), status };
+      const warning = autoStart.persisted ? status.warning : persistenceWarning();
+      return warning ? { ok: true, warning, status } : { ok: true, status };
     } catch (error) {
       recordLog("warn", `start rejected: ${error?.message ?? error}`);
       return { ok: false, error: errorPayload(error, "INVALID_PARAMS"), status: await buildStatus() };

@@ -888,10 +888,10 @@ export function installCaptureRig(): CaptureRig {
           source: "builtin",
         },
         {
-          name: "test-runner",
-          description: "Run the test suite, then report the first failure that is not flaky.",
-          prompt: "You are test-runner.\n",
-          tools: ["Read", "Glob", "Grep", "Bash"],
+          name: "fixer",
+          description: "Diagnose and fix bugs, regressions or other observed failures.",
+          prompt: "You are fixer.\n",
+          tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
           source: "builtin",
         },
       ];

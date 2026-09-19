@@ -61,7 +61,7 @@ export function prepareBuild(timestamp = process.env.THIS_IS_A_AGENT_BUILD_TIME)
       pkg.build.nsis.shortcutName = branding.name;
       pkg.build.nsis.uninstallDisplayName = branding.name;
       pkg.build.nsis.deleteAppDataOnUninstall = false;
-      pkg.build.mac.extendInfo = { ...pkg.build.mac.extendInfo, CFBundleDisplayName: branding.name, CFBundleName: branding.name };
+      pkg.build.mac.extendInfo = { ...pkg.build.mac.extendInfo, CFBundleDisplayName: branding.name, CFBundleName: branding.slug };
       pkg.buildVersionLabel = stamp.displayVersion;
       pkg.build.buildVersion = `${stamp.version}.0`;
       // macOS 使用三段 bundle version；文件名仍使用完整日期时间。

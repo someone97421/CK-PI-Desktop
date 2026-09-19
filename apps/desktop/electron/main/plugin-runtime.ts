@@ -336,11 +336,9 @@ export type PluginHostServices = {
    */
   desktopSessionSnapshot?: (sessionId: string) => Promise<unknown>;
   /**
-   * Blocking, native consent for a plugin-originated dangerous desktop
-   * operation (session delete, permission-mode change, tool approval). The
-   * controller's `confirm` flag is only the caller's acknowledgement; the
-   * user decides here. Without this service every dangerous operation from a
-   * plugin is refused, which is the safe default for a headless host.
+   * 普通插件危险桌面操作（删除会话、修改权限、处理审批）的原生确认。
+   * local.lan-remote-control 以密码登录作为用户授权，不再弹出桌面确认。
+   * 其他插件的 confirm 仅表示调用方知悉风险；缺少此服务时拒绝其危险操作。
    */
   confirmDesktopControl?: (request: PluginDesktopConsentRequest) => Promise<boolean>;
   audit?: (entry: Record<string, unknown>) => void;
@@ -5123,11 +5121,10 @@ export class PluginRuntime {
           const operationInfo = this.services.desktopControl.operations.find(
             (candidate) => candidate.id === operation,
           );
-          // The controller's `confirm` flag is an acknowledgement by the
-          // caller, not a decision by the user. A plugin can set it at will,
-          // so a dangerous operation additionally needs the host's native
-          // consent; a host without that service refuses outright.
-          if (operationInfo?.risk === "dangerous") {
+          // 局域网远控以插件的密码登录作为用户授权，适用于整个危险操作目录。
+          // 身份取自已加载插件，不能由调用参数选择；其他插件仍须桌面原生确认。
+          const passwordAuthorizedRemote = pluginId === "local.lan-remote-control";
+          if (operationInfo?.risk === "dangerous" && !passwordAuthorizedRemote) {
             if (input.confirm !== true) {
               throw apiError(
                 "CONFIRMATION_REQUIRED",
@@ -5171,7 +5168,7 @@ export class PluginRuntime {
             const result = await this.services.desktopControl.invoke({
               operation,
               args,
-              confirm: input.confirm === true,
+              confirm: passwordAuthorizedRemote || input.confirm === true,
               source: "plugin",
               pluginContext: {
                 pluginId,

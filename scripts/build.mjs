@@ -104,6 +104,13 @@ try {
       if (mode !== "desktop") {
         if (process.platform !== "win32") {
           chmodSync(join(desktop, "this-is-a-agent-macOS-open.command"), 0o755);
+          // 内置 PTY 必须在打包前可执行：只读 DMG / 安装目录无法依赖运行时 chmod。
+          const terminalVendor = join(desktop, "resources/plugins/pi.terminal/vendor");
+          for (const platform of ["darwin", "linux"]) {
+            for (const arch of ["arm64", "x64"]) {
+              chmodSync(join(terminalVendor, `pi-pty-${platform}-${arch}`), 0o755);
+            }
+          }
         }
         const cli = require.resolve("electron-builder/cli.js");
         const args = mode === "pack" ? ["--dir", "--publish", "never"]

@@ -118,13 +118,6 @@ export function isMutationOperation(operation) {
   return MUTATION_SET.has(operation);
 }
 
-/** 需要桌面原生确认的操作：手机上提交后仍需在电脑上点确认。 */
-export const DESKTOP_CONFIRMATION_OPERATIONS = new Set([
-  "models.configure",
-  "approval.resolve",
-  "ask.resolve",
-  "plans.resolve",
-]);
 
 /** 工具审批的决策取值；契约（plan/goal）审批用 approve/reject。 */
 export const TOOL_APPROVAL_DECISIONS = ["allow-once", "allow-session", "deny"];
@@ -643,7 +636,6 @@ export function normalizeCapabilities(raw) {
       operations[name] = {
         supported: asBool(pick(entry, ["supported"]), true),
         mutation: asBool(pick(entry, ["mutation"]), isMutationOperation(name)),
-        needsDesktopConfirmation: asBool(pick(entry, ["needsDesktopConfirmation"]), DESKTOP_CONFIRMATION_OPERATIONS.has(name)),
         stage: asNumber(pick(entry, ["stage"]), 1),
         reason: asString(pick(entry, ["reason"])),
         description: asString(pick(entry, ["description"])),
@@ -656,9 +648,6 @@ export function normalizeCapabilities(raw) {
   const adapter = pick(source, ["adapter"]) || {};
   return {
     operations,
-    needsDesktopConfirmation: new Set(
-      asArray(pick(source, ["needsDesktopConfirmation"])).map((value) => asString(value)).filter(Boolean),
-    ),
     events: {
       transport: asBool(pick(events, ["transport"]), true),
       hostApi: asBool(pick(events, ["hostApi"]), true),
@@ -754,7 +743,7 @@ export function describeError(error) {
     case ErrorCodes.UNAUTHORIZED:
       return "连接已失效，请重新登录";
     case ErrorCodes.CONFIRMATION_REQUIRED:
-      return "需要电脑上的确认，请查看桌面端弹窗";
+      return message || "当前宿主尚未支持登录后直接操作，请更新主程序";
     case ErrorCodes.FORBIDDEN:
       return message || "电脑端拒绝了这次操作";
     case ErrorCodes.SESSION_BUSY:

@@ -1623,23 +1623,22 @@ export class DesktopAgentRuntime {
       // find out whether anything happened. Every clause below is one of those
       // observed failures stated as a hard rule.
       "Collaboration: answer in the same language the user writes in. Before each batch of tool calls, write one short sentence saying what you are about to do in the same assistant message as those calls; never leave the user with no new text for more than one tool batch or 60 seconds of work. Whatever the user asked must be answered in your visible text — your reasoning is not shown to them, so a conclusion that lives only there never reached them. Make the final message self-contained: the outcome, what you changed, and anything still open, without asking the user to re-read intermediate updates. Carry the work through end to end; when you hit a blocker, try to clear it yourself and report what you tried, instead of stopping at analysis or a half-finished change.",
-      // 小任务直接完成；独立工作有收益时主动委派，不设大型任务门槛。
+      // 按协作收益判断委派，按交付物选择角色。
       ...(this.subagents.length
         ? [
             `## Delegation
-Handle quick, tightly scoped work directly. Actively consider subagents for separable work when they can save time, reduce context load or provide a useful independent perspective. A focused investigation, implementation or review can qualify; delegation does not require a large or complex task. When a useful independent subtask is apparent, delegate it early instead of completing it yourself first.
+Handle simple serial work directly, regardless of duration. Delegate when requested by the user or when parallel progress, context isolation, or independent judgment outweighs the handoff cost.
 
 Useful cases, not mandatory stages:
 - User-requested delegation: follow the requested scope and number of subagents.
 - Exploration: delegate a bounded codebase question, call-chain investigation or fault hypothesis when it needs several searches or file reads, especially while you work on another part.
-- Implementation: delegate a self-contained fix, component or module with clear scope and non-overlapping file ownership; medium-sized tasks qualify when the handoff is straightforward.
 - Independent judgment: use focused reviews of finished changes, alternative assessments or blind evaluation when a fresh perspective can catch mistakes or resolve uncertainty; supply necessary facts without imposing your conclusions.
-- Validation or experiments: delegate relevant verification, reproduction or failure diagnosis when it can run independently or keep noisy investigation out of the main context. Follow the user's testing limits.
-- Analysis: delegate logs, documents, datasets or module surveys when a concise report saves context or lets other work proceed.
+- Validation or experiments: delegate relevant verification, reproduction or failure diagnosis when it can run independently. Follow the user's testing limits.
+- Analysis: delegate logs, documents, datasets or module surveys when a concise report lets other work proceed.
 
 Delegation rules:
 - Parallelize independent work only. Before dispatching dependent work, wait for prerequisites to succeed and read their results; a TaskWait progress update is not completion. Review only finished, stable changes.
-- Weigh the expected benefit against handoff and integration effort; one well-scoped delegate is often enough. Keep trivial lookups and tiny edits local, avoid duplicated work, and do not automatically build an exploration/implementation/testing/review pipeline. The main agent owns integration and acceptance.
+- Weigh the collaboration benefit against handoff and integration effort, then match the role to the actual deliverable. Avoid duplicate work and automatic exploration/implementation/testing/review pipelines. The main agent owns integration and acceptance.
 - Task returns immediately. Continue useful independent work, or wait with TaskWait when results are needed; do not invent work to stay busy. Give each task a clear scope, expected result and short \`description\`. Keep user decisions with the main agent.
 - Specify reportIntervalSteps unless user-fixed. Reports do not pause children; TaskGuide corrects at a tool boundary, TaskInspect reads records, and TaskList checks status.
 - Handle small review fixes yourself. For worthwhile follow-up in retained context, use TaskResume with the same delegationId and expectedExecution from TaskList; stopped, failed or released contexts cannot resume, including after restart.
@@ -3641,8 +3640,7 @@ Delegation rules:
       name: SUBAGENT_TOOL_NAME,
       label: "Task",
       description: [
-        "Start one background subagent and return its id immediately. Delegate separable work when it saves time, reduces context load or adds a useful independent perspective; focused and medium-sized tasks qualify. Delegate useful independent subtasks early. Apply the system's Delegation guidance.",
-        "Suitable examples include bounded codebase investigations, self-contained fixes or components, focused review of finished changes, independent verification or diagnosis, and material analysis. Keep trivial lookups and tiny edits local, avoid duplicate work, respect the user's testing limits, and wait for prerequisites before dispatching dependent work. Keep user decisions with the main agent.",
+        "Delegate a scoped task to a suitable subagent and return its id immediately. Follow the system's Delegation guidance for when to delegate and how to choose a role.",
         "A definition's pinned primary model is locked: Task.model is ignored, including the parent model or another authorized model. Configured fallback models are used only after failure.",
         ...(this.availableSubagentModelKeys().length
           ? [

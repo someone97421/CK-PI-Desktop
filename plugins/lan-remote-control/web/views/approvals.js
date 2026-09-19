@@ -1,10 +1,7 @@
 /**
  * 审批 / 提问 / 计划确认。
  *
- * 三者的共同限制（宿主规则，UI 不掩盖）：决议最终由电脑上的原生确认落定，
- * 手机提交只是发起；`approval.resolve` / `ask.resolve` / `plans.resolve` 都属于
- * `needsDesktopConfirmation`。收不到确认时会得到 CONFIRMATION_REQUIRED 或
- * PERMISSION_DENIED，界面据此提示。
+ * 登录后的用户可直接提交审批、回答提问和处理计划，结果由宿主返回。
  */
 
 import { button, createSheet, el, inlineSpinner, prettyJson, stateBlock } from "../dom.js";
@@ -35,7 +32,7 @@ export function approvalCard(ctx, approval, { compact = false } = {}) {
   card.append(
     el("div", {
       className: "approval-hint",
-      text: "手机提交后仍需在电脑上确认（桌面原生确认）。如果电脑端拒绝，这里会提示。",
+      text: "选择处理方式后立即提交。",
     }),
   );
   const actions = el("div", { className: "approval-actions" });
@@ -160,7 +157,7 @@ export function openQuestionSheet(ctx, request) {
   container.append(
     el("div", {
       className: "approval-hint",
-      text: "回答会提交到电脑端；智能体提问同样需要电脑上的确认才会生效。",
+      text: "提交后智能体将收到你的回答。",
     }),
   );
   sheet.body.append(container, footer);
@@ -196,7 +193,7 @@ export function planCard(ctx, plan) {
   card.append(
     el("div", {
       className: "approval-hint",
-      text: "通过计划仍需要在电脑上确认；approve 必须带上权限模式。",
+      text: "选择执行权限模式后通过计划。",
     }),
   );
   const actions = el("div", { className: "approval-actions" });
@@ -231,7 +228,7 @@ export function pendingBanner(ctx, state) {
     banner.append(
       el("div", {
         className: "approval-hint",
-        text: `电脑端报告 ${statusCount} 项待确认，但事件流没有给出详情。工具审批与提问只从事件流到达；可以刷新快照或直接在电脑上处理。`,
+        text: `还有 ${statusCount} 项待处理，正在等待详情；可刷新会话重新获取。`,
       }),
     );
   }

@@ -473,6 +473,27 @@ export function WorkingIndicator({ startedAt }: { startedAt?: number } = {}) {
   );
 }
 
+export function OutputActivityIndicator({ thinking }: { thinking: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="working-indicator run-activity-indicator"
+      data-phase={thinking ? "thinking" : "answering"}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="working-indicator-mark" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="working-indicator-label">
+        {t(thinking ? "chat.thinking" : "chat.outputtingResponse")}
+      </span>
+    </div>
+  );
+}
+
 export function RunActivityIndicator({ activity }: { activity: AgentActivity }) {
   const { t } = useTranslation();
   const [now, setNow] = useState(Date.now);

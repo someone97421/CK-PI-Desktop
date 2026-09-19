@@ -123,7 +123,9 @@ function createRemoteServer(options = {}) {
     startedAt: null,
     lastError: null,
     restartRequired: false,
-    httpServer: null,
+    listeners: [],
+    requestedAddresses: [],
+    warning: null,
     webRootReal: null,
     sockets: new Set(),
     connections: new Set(),
@@ -160,7 +162,7 @@ function createRemoteServer(options = {}) {
   const guard = httpHelpers.createRequestGuard({
     getAllowedHostnames: () => {
       const names = ["127.0.0.1", "localhost"];
-      if (state.address) names.push(state.address);
+      names.push(...state.listeners.map((entry) => entry.address));
       return names;
     },
     getPort: () => state.port,
@@ -190,6 +192,9 @@ function createRemoteServer(options = {}) {
   function getStatus() {
     const running = state.phase === "running";
     const url = running && state.address ? `http://${state.address}:${state.port}/` : null;
+    const addresses = network.listLanAddresses();
+    const networkChanged = running && (addresses.length !== state.requestedAddresses.length ||
+      addresses.some((entry) => !state.requestedAddresses.includes(entry.address)));
     return {
       phase: state.phase,
       running,
@@ -197,10 +202,14 @@ function createRemoteServer(options = {}) {
       bindAddress: state.address,
       port: state.port,
       url,
-      addresses: network.listLanAddresses(),
+      links: running ? state.listeners.filter((entry) => entry.server.listening).map(({ address, label }) => ({
+        address, label, url: `http://${address}:${state.port}/`,
+      })) : [],
+      warning: state.warning,
+      addresses,
       startedAt: state.startedAt ? new Date(state.startedAt).toISOString() : null,
       error: state.lastError,
-      restartRequired: state.restartRequired === true,
+      restartRequired: state.restartRequired === true || networkChanged,
       passwordConfigured: state.devices.passwordConfigured,
       devices: state.devices.list().map((device) => ({
         ...device,
@@ -503,11 +512,10 @@ function createRemoteServer(options = {}) {
 
   // --- http routes ----------------------------------------------------------
 
-  /** CSP `connect-src` additions: only this listener's own WebSocket URL. */
+  /** CSP 仅允许已成功监听的地址建立 WebSocket。 */
   function connectOrigins() {
-    if (!state.address || !state.port) return [];
-    const host = state.address.includes(":") ? `[${state.address}]` : state.address;
-    return [`ws://${host}:${state.port}`];
+    return state.listeners.filter((entry) => entry.server.listening)
+      .map(({ address }) => `ws://${address}:${state.port}`);
   }
 
   function authenticate(req) {
@@ -619,7 +627,7 @@ function createRemoteServer(options = {}) {
     };
     const body = await httpHelpers.readBody(req, { maxBytes: uploadMaxBytes });
     if (!body.ok) {
-      httpHelpers.sendError(res, body.status, body.code, body.message);
+      httpHelpers.sendBodyError(req, res, body);
       return;
     }
     if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
@@ -917,7 +925,25 @@ function createRemoteServer(options = {}) {
 
   async function start({ address, port } = {}, expectedGeneration = generation) {
     if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
-    if (state.phase === "running") return getStatus();
+    // 旧 address 仅作为首选链接，不限制监听集合；旧网卡地址失效也能恢复。
+    if (address && (typeof address !== "string" || !network.isAllowedBindAddress(address))) {
+      throw fail("INVALID_PARAMS", "address must be a private or loopback IPv4 address");
+    }
+    let listenPort = port === undefined || port === null ? DEFAULT_PORT : Number(port);
+    if (!Number.isInteger(listenPort) || listenPort < 0 || listenPort > 65_535) {
+      throw fail("INVALID_PARAMS", "port must be an integer between 0 and 65535");
+    }
+    const candidates = network.listLanAddresses();
+    candidates.sort((a, b) => Number(b.address === address) - Number(a.address === address));
+    if (state.phase === "running") {
+      const sameAddresses = candidates.length === state.listeners.length &&
+        candidates.every((entry) => state.listeners.some((active) => active.address === entry.address && active.server.listening));
+      if (sameAddresses && (listenPort === 0 || listenPort === state.port)) return getStatus();
+      generation += 1;
+      expectedGeneration = generation;
+      await stop();
+      if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
+    }
     if (!state.devices.passwordConfigured) throw fail("PASSWORD_REQUIRED", "请先在电脑端设置访问密码");
     if (state.phase === "starting" || state.phase === "stopping") {
       throw fail("NOT_READY", "server is busy");
@@ -925,99 +951,100 @@ function createRemoteServer(options = {}) {
     state.phase = "starting";
     state.lastError = null;
 
-    let server = null;
+    state.warning = null;
+    state.requestedAddresses = candidates.map((entry) => entry.address);
+    const failures = [];
     try {
-      const requested = network.normalizeRequestedAddress(address);
-      if (!requested.ok) throw fail(requested.code, requested.message);
-      const bindAddress = requested.address ?? network.pickDefaultAddress();
-      if (!bindAddress) {
+      if (!candidates.length) {
         throw fail("ADDRESS_UNAVAILABLE", "no private IPv4 address found on this machine");
-      }
-      let listenPort = DEFAULT_PORT;
-      if (port !== undefined && port !== null) {
-        const parsed = Number(port);
-        if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65_535) {
-          throw fail("INVALID_PARAMS", "port must be an integer between 0 and 65535");
-        }
-        listenPort = parsed;
       }
 
       const WebSocketServer = loadWebSocketServer();
       await state.attachments.init();
       state.webRootReal = await fsp.realpath(state.webRoot).catch(() => null);
 
-      server = http.createServer((req, res) => {
-        void handleRequest(req, res);
-      });
-      server.requestTimeout = REQUEST_TIMEOUT_MS;
-      server.headersTimeout = HEADERS_TIMEOUT_MS;
-      server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
-      server.maxHeadersCount = 64;
-      server.maxConnections = MAX_HTTP_CONNECTIONS;
-      server.on("connection", (socket) => {
-        state.sockets.add(socket);
-        socket.on("close", () => state.sockets.delete(socket));
-      });
-      server.on("clientError", (error, socket) => {
-        log(`client error: ${error?.message ?? error}`);
+      for (const candidate of candidates) {
+        if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
+        const server = http.createServer((req, res) => {
+          void handleRequest(req, res);
+        });
+        server.requestTimeout = REQUEST_TIMEOUT_MS;
+        server.headersTimeout = HEADERS_TIMEOUT_MS;
+        server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+        server.maxHeadersCount = 64;
+        server.maxConnections = MAX_HTTP_CONNECTIONS;
+        server.on("connection", (socket) => {
+          if (state.sockets.size >= MAX_HTTP_CONNECTIONS) { socket.destroy(); return; }
+          state.sockets.add(socket);
+          socket.on("close", () => state.sockets.delete(socket));
+        });
+        server.on("clientError", (error, socket) => {
+          log(`client error: ${error?.message ?? error}`);
+          try { socket.destroy(); } catch { /* already gone */ }
+        });
+        server.on("upgrade", (req, socket, head) => handleUpgrade(req, socket, head));
+        // 全生命周期接住错误；过期监听器的回调不能关闭后来开启的服务。
+        server.on("error", (error) => {
+          log(`listener error: ${error?.message ?? error}`);
+          if (state.phase !== "running" || !state.listeners.some((entry) => entry.server === server)) return;
+          state.lastError = { code: "LISTEN_ERROR", message: String(error?.message ?? error) };
+          if (!server.listening) noteUnexpectedStop("LISTENER_CLOSED", "listener closed after an error");
+        });
+        server.once("close", () => {
+          if (state.phase === "running" && state.listeners.some((entry) => entry.server === server)) {
+            noteUnexpectedStop("LISTENER_CLOSED", "listener closed unexpectedly");
+          }
+        });
+
         try {
-          socket.destroy();
-        } catch {
-          /* already gone */
+          await listen(server, candidate.address, listenPort);
+          const addressInfo = server.address();
+          if (!addressInfo || typeof addressInfo === "string" ||
+              addressInfo.address !== candidate.address || !network.isPrivateIPv4(addressInfo.address)) {
+            throw fail("ADDRESS_UNAVAILABLE", "listener did not bind the requested private address");
+          }
+          listenPort = addressInfo.port;
+          state.port = listenPort;
+          state.listeners.push({ ...candidate, server });
+        } catch (error) {
+          try { server.close(); } catch {}
+          failures.push({ address: candidate.address, label: candidate.label,
+            code: error?.code ?? "INTERNAL", message: String(error?.message ?? error) });
+          log(`监听 ${candidate.address} 失败：${error?.message ?? error}`);
         }
-      });
-      server.on("upgrade", (req, socket, head) => handleUpgrade(req, socket, head));
-
-      await listen(server, bindAddress, listenPort);
+      }
       if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
-      const addressInfo = server.address();
-      if (!addressInfo || typeof addressInfo === "string") {
-        throw fail("INTERNAL", "listener did not expose a TCP address");
-      }
-      if (!network.isAllowedBindAddress(addressInfo.address)) {
-        throw fail("ADDRESS_UNAVAILABLE", `refusing to serve non-private address ${addressInfo.address}`);
-      }
-
-      // 监听建立后必须自己接住 'error'：否则一个未捕获的 error 事件会直接杀掉
-      // 插件进程。'close' 若不是 stop() 引起的，按“意外停止”记录，交给上层按
-      // 开启意图重新监听（见 noteUnexpectedStop）。
-      server.on("error", (error) => {
-        log(`listener error: ${error?.message ?? error}`);
-        if (state.phase !== "running") return;
-        state.lastError = { code: "LISTEN_ERROR", message: String(error?.message ?? error) };
-        if (server.listening === false) noteUnexpectedStop("LISTENER_CLOSED", "listener closed after an error");
-      });
-      server.once("close", () => {
-        if (state.phase === "running") noteUnexpectedStop("LISTENER_CLOSED", "listener closed unexpectedly");
-      });
-
-      state.httpServer = server;
+      if (!state.listeners.length) throw fail(failures[0]?.code ?? "ADDRESS_UNAVAILABLE",
+        failures.map((entry) => `${entry.address}: ${entry.message}`).join("；"));
+      if (failures.length) state.warning = { code: "PARTIAL_LISTEN_FAILED",
+        message: `部分地址监听失败：${failures.map((entry) => `${entry.address}（${entry.message}）`).join("；")}`,
+        failures };
       state.wss = new WebSocketServer({
         noServer: true,
         clientTracking: false,
         perMessageDeflate: false,
         maxPayload: WS_MAX_PAYLOAD_BYTES,
       });
-      state.address = addressInfo.address;
-      state.port = addressInfo.port;
+      state.address = state.listeners[0].address;
+      state.restartRequired = false;
       state.startedAt = Date.now();
       state.phase = "running";
       startTimers();
       void refreshCapabilities(true);
-      log(`listening on http://${state.address}:${state.port}`);
+      log(`listening on ${getStatus().links.map((entry) => entry.url).join(", ")}`);
       return getStatus();
     } catch (error) {
       const coded = error?.code ? error : fail("INTERNAL", String(error?.message ?? error));
       state.lastError = { code: String(coded.code), message: String(coded.message ?? coded) };
       state.phase = "stopped";
       clearTimers();
-      if (server) {
-        try {
-          server.close();
-        } catch {
-          /* never listened */
-        }
-      }
+      const listeners = state.listeners.splice(0);
+      await Promise.all(listeners.map(({ server }) => closeHttpServer(server)));
+      try { state.wss?.close(); } catch {}
+      state.wss = null;
+      state.address = null;
+      state.port = null;
+      state.startedAt = null;
       for (const socket of [...state.sockets]) {
         try {
           socket.destroy();
@@ -1073,9 +1100,8 @@ function createRemoteServer(options = {}) {
     state.lastError = { code: String(code), message: String(message || code) };
     generation += 1;
     clearTimers();
-    const server = state.httpServer;
+    const listeners = state.listeners.splice(0);
     const wss = state.wss;
-    state.httpServer = null;
     state.wss = null;
     for (const conn of [...state.connections]) {
       try {
@@ -1090,10 +1116,8 @@ function createRemoteServer(options = {}) {
     } catch {
       /* already closed */
     }
-    try {
-      server?.close();
-    } catch {
-      /* already closed */
+    for (const { server } of listeners) {
+      try { server.close(); } catch { /* already closed */ }
     }
     for (const socket of [...state.sockets]) {
       try {
@@ -1127,15 +1151,14 @@ function createRemoteServer(options = {}) {
       await delay(50);
     }
 
-    const server = state.httpServer;
+    const listeners = state.listeners.splice(0);
     const wss = state.wss;
-    state.httpServer = null;
     state.wss = null;
     for (const conn of [...state.connections]) {
       try { conn.ws.terminate(); } catch {}
     }
     wss?.close();
-    if (server) await closeHttpServer(server);
+    await Promise.all(listeners.map(({ server }) => closeHttpServer(server)));
 
     await subscriptionPool.clear();
     await state.attachments.dispose();
@@ -1145,6 +1168,8 @@ function createRemoteServer(options = {}) {
     state.address = null;
     state.port = null;
     state.startedAt = null;
+    state.warning = null;
+    state.restartRequired = false;
     state.phase = "stopped";
     return getStatus();
   }
@@ -1153,7 +1178,8 @@ function createRemoteServer(options = {}) {
 
   function createLink() {
     if (state.phase !== "running") return { ok: false, code: "NOT_RUNNING", message: "请先开启远程访问" };
-    return { ok: true, url: `http://${state.address}:${state.port}/` };
+    const { url, links, warning } = getStatus();
+    return { ok: true, url, links, warning };
   }
 
   async function setPassword(password) {

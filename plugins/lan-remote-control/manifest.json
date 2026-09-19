@@ -3,7 +3,7 @@
   "id": "local.lan-remote-control",
   "name": "局域网远程控制",
   "description": "通过局域网浏览器访问这是一个助手的项目和会话。由主机设置访问密码，记录已登录设备；默认不监听网络。",
-  "version": "0.2.8",
+  "version": "0.2.12",
   "main": "main.cjs",
   "engines": {
     "piDesktop": ">=2609.1622.5115"
