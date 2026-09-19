@@ -86,6 +86,13 @@ async function onUnload() {
 }
 
 async function onPanelInvoke(channel, payload) {
+  if (channel === "cu.indicator") {
+    return {
+      running: runtime.status === "running",
+      starting: runtime.status === "starting",
+      failed: runtime.status === "error" || (runtime.status === "starting" && Boolean(runtime.lastError)),
+    };
+  }
   if (channel === "cu.state") return panelState();
   if (channel === "cu.start" || channel === "cu.repair") {
     const settings = await loadSettings();

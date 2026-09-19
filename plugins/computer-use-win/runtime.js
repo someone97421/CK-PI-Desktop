@@ -4,7 +4,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { ControlBanner } = require("./overlay");
-const { probe: probeCua, doctor: cuaDoctor } = require("./cua");
+const { probe: probeCua, doctor: cuaDoctor, childEnv: cuaChildEnv } = require("./cua");
 const { filterRecords, gateRecord, namesMatch, normalize } = require("./policy");
 
 const PLUGIN_VERSION = "0.3.0";
@@ -2059,7 +2059,7 @@ class ComputerUseRuntime {
   }
 
   _childEnv() {
-    const env = { ...process.env };
+    const env = cuaChildEnv();
     if (this.tempDir) {
       env.TMP = this.tempDir;
       env.TEMP = this.tempDir;

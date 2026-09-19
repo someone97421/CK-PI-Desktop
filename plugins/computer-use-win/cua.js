@@ -7,11 +7,14 @@ const crypto = require("node:crypto");
 const vendor = require("./vendor.json");
 const ARCHIVE = path.join(__dirname, "vendor", "cua-windows-x64.zip");
 let runtimeDir = null;
+let driverHome = null;
 let cached = null;
 let verified = false;
 
 function configure(dataPath) {
   runtimeDir = path.join(dataPath, "runtime", `windows-x64-${vendor.version}`);
+  driverHome = path.join(dataPath, "driver-home");
+  fs.mkdirSync(driverHome, { recursive: true });
   cached = null;
   verified = false;
 }
@@ -56,8 +59,18 @@ function probe({ refresh = false, verify = false } = {}) {
   }
   return { ...cached, mcpArgs: [...cached.mcpArgs] };
 }
+/** 驱动配置需持久保存；宿主精简环境时使用插件自己的用户目录。 */
+function childEnv() {
+  const env = { ...process.env };
+  const home = env.HOME || env.USERPROFILE || driverHome;
+  if (home) {
+    env.HOME = env.HOME || home;
+    env.USERPROFILE = env.USERPROFILE || home;
+  }
+  return env;
+}
 function runCapture(exe, args, timeout) {
-  const result = spawnSync(exe, args, { encoding: "utf8", timeout, windowsHide: true, maxBuffer: 2_000_000 });
+  const result = spawnSync(exe, args, { env: childEnv(), encoding: "utf8", timeout, windowsHide: true, maxBuffer: 2_000_000 });
   return { status: result.status, stdout: String(result.stdout || "").trim(), stderr: String(result.stderr || "").trim(), error: result.error?.message || "" };
 }
 function doctor() {
@@ -66,4 +79,4 @@ function doctor() {
   const result = runCapture(info.mcpCommand, ["doctor"], 20_000);
   return { code: result.status ?? 1, text: `${result.stdout}\n${result.stderr}`.trim() || result.error || `doctor exited ${result.status}` };
 }
-module.exports = { configure, probe, doctor };
+module.exports = { configure, probe, doctor, childEnv };

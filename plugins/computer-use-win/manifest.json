@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "cn.star.computer-use",
   "name": "Computer Use（Win 版）",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "description": "Windows x64 桌面控制，内置运行环境，导入即可使用；支持后台 UI Automation、允许列表和急停。",
   "author": "TheFlareStar",
   "license": "MPL-2.0",
