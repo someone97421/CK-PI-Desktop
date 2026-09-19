@@ -150,3 +150,50 @@ test("settings writes validate the mode without changing other preferences", asy
     /thinkingDisplayMode is invalid/,
   );
 });
+
+test("迟到报告的补充回复与完整总结一起保留在任务正文", () => {
+  const task = { id: "task", status: "completed", usageIncomplete: false, finalMessageId: "supplement" };
+  const entry = turn([
+    message("user", "user", "修复问题", { task }),
+    message("intro", "assistant", "开始修复", { taskId: task.id, status: "complete" }),
+    message("edit", "tool", "已修改", { taskId: task.id, toolName: "Edit" }),
+    message("summary", "assistant", "完整交付总结与验证结果", { taskId: task.id, status: "complete" }),
+    message("child", "assistant", "子代理报告", { taskId: task.id, parentToolCallId: "delegate", status: "complete" }),
+    message("supplement", "assistant", "迟到报告已整合", { taskId: task.id, thinking: "核对迟到报告", status: "complete" }),
+  ]);
+  const projected = projectTurnProcess(entry);
+  assert.deepEqual(projected.responses.map((part) => part.message.id), ["summary", "supplement"]);
+  assert.equal(projected.responses.map((part) => part.message.content).join("\n\n"),
+    "完整交付总结与验证结果\n\n迟到报告已整合");
+  assert.deepEqual(projected.process.map((part) => part.kind), ["message", "activity", "activity"]);
+  assert.equal(projected.process.at(-1).items[0].message.thinking, "核对迟到报告");
+});
+
+test("任务正文不越过工具执行或当前轮用户引导", () => {
+  for (const boundary of [
+    message("tool", "tool", "检查结果", { toolName: "Read" }),
+    message("steer", "user", "继续调整", { steering: true }),
+  ]) {
+    const task = { id: "task", status: "completed", usageIncomplete: false, finalMessageId: "final" };
+    const entry = turn([
+      message("user", "user", "修复问题", { task }),
+      message("progress", "assistant", "继续处理", { taskId: task.id, status: "complete" }),
+      { ...boundary, taskId: task.id },
+      message("final", "assistant", "处理完成", { taskId: task.id, status: "complete" }),
+    ]);
+    assert.deepEqual(projectTurnProcess(entry).responses.map((part) => part.message.id), ["final"]);
+  }
+});
+
+test("任务正文遵守终态与最终回复锚点，迟到事件不改写交付", () => {
+  for (const status of ["running", "completed", "aborted", "failed"]) {
+    const task = { id: "task", status, usageIncomplete: false, finalMessageId: "final" };
+    const entry = turn([
+      message("user", "user", "修复问题", { task }),
+      message("final", "assistant", "处理完成", { taskId: task.id, status: "complete" }),
+      message("late", "assistant", "迟到事件", { taskId: task.id, status: "complete" }),
+    ]);
+    assert.deepEqual(projectTurnProcess(entry).responses.map((part) => part.message.id),
+      status === "completed" ? ["final"] : []);
+  }
+});

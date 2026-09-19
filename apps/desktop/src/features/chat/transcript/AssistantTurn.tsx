@@ -243,12 +243,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   const messages = assistantTurnMessages(entry);
   const task = entry.task;
   const settledTask = task && task.status !== "running" ? task : undefined;
-  const finalPart = task?.status === "completed" && entry.finalMessageId
-    ? entry.parts.find((part) => part.kind === "message"
-      && part.message.role === "assistant" && part.message.id === entry.finalMessageId)
-    : undefined;
-  const finalMessage = finalPart?.kind === "message" ? finalPart.message : undefined;
-  const content = task ? finalMessage?.content ?? "" : assistantTurnContent(entry);
+  const { process, responses } = projectTurnProcess(entry);
+  const finalMessage = task ? responses.at(-1)?.message : undefined;
+  const content = task
+    ? responses.map((part) => part.message.content).join("\n\n")
+    : assistantTurnContent(entry);
   const actionMessage = task ? finalMessage : [...messages]
     .reverse()
     .find((message) => message.role === "assistant" && (message.content || "").trim());
@@ -309,9 +308,6 @@ export const AssistantTurn = memo(function AssistantTurn({
   timingsRef.current = turnDelegationTimings;
   const isPlainHistory = !task;
   const turnProcessActive = isPlainHistory && isActive;
-  const { process, responses } = isPlainHistory
-    ? projectTurnProcess(entry)
-    : { process: [], responses: [] };
   const renderPart = (part: AssistantTurnEntry["parts"][number], index: number) => {
     if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
     if (part.kind === "activity") return (
@@ -360,9 +356,9 @@ export const AssistantTurn = memo(function AssistantTurn({
         {settledTask ? (
           <>
             <TaskProcessDrawer key={settledTask.id} task={settledTask}>
-              {entry.parts.map((part, index) => part === finalPart ? null : renderPart(part, index))}
+              {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}
             </TaskProcessDrawer>
-            {finalPart ? renderPart(finalPart, entry.parts.indexOf(finalPart)) : null}
+            {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}
           </>
         ) : isPlainHistory ? (
           <>

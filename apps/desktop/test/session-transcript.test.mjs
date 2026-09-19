@@ -6,6 +6,7 @@ import {
   mergeLiveSessionMessages,
   optimisticUserMessage,
   removeLiveSessionMessage,
+  reconcilePersistedUserMessage,
   upsertLiveSessionMessage,
 } from "../src/lib/session-transcript.ts";
 
@@ -259,4 +260,23 @@ test("a durable-only new user row stays ahead of a live streaming tail (D317)", 
     mergeLiveSessionMessages(durable, live).map((row) => row.id),
     ["keep", "prompt", "answer"],
   );
+});
+
+test("缺少任务字段的回执与历史页保留已确认的引导归属", () => {
+  const live = message("steer", { role: "user", content: "即时正文", steering: true, taskId: "turn-1" });
+  const durable = message("steer", { role: "user", content: "持久正文" });
+  const snapshots = [
+    upsertLiveSessionMessage([live], durable),
+    mergeLiveSessionMessages([durable], [live]),
+    dedupeSessionMessages([live, durable]),
+    reconcilePersistedUserMessage([live], live.id, { ...durable, id: "durable-steer" }),
+  ];
+  for (const rows of snapshots) {
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].content, "持久正文");
+    assert.equal(rows[0].taskId, "turn-1");
+    assert.equal(rows[0].steering, true);
+  }
+  const authoritative = { ...durable, taskId: "turn-2", steering: false };
+  assert.strictEqual(upsertLiveSessionMessage([live], authoritative)[0], authoritative);
 });

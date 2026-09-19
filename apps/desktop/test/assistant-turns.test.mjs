@@ -462,3 +462,45 @@ test("reuses unchanged activity parts when only the tail thinking token changes"
   assert.notEqual(sharedThink, firstThink);
   assert.equal(sharedThink.items[0].message, nextThinking);
 });
+
+test("steering user input during a running turn stays inside that turn", () => {
+  const { entries } = buildTranscriptEntries([
+    message("user", "user", "Start the audit", {
+      taskId: "turn-1",
+      task: { id: "turn-1", status: "running" },
+    }),
+    message("intro", "assistant", "I will inspect the code.", {
+      taskId: "turn-1",
+    }),
+    message("read", "tool", "result", {
+      toolName: "Read",
+      toolCallId: "read",
+      taskId: "turn-1",
+    }),
+    // "Send now" / Alt+Enter steering accepted into the running turn.
+    message("steer", "user", "Also check the queue slice.", {
+      taskId: "turn-1",
+      steering: true,
+    }),
+    message("after", "assistant", "Checking the queue slice.", {
+      taskId: "turn-1",
+    }),
+  ]);
+
+  // Only the original user row and one assistant turn: the steering input
+  // must not fall out as a bottom top-level message under later output.
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].kind, "message");
+  assert.equal(entries[0].message.id, "user");
+  const turn = entries[1];
+  assert.equal(turn.kind, "assistant-turn");
+  assert.deepEqual(
+    turn.parts.map((part) => [part.kind, part.message?.id]),
+    [
+      ["message", "intro"],
+      ["activity", undefined],
+      ["message", "steer"],
+      ["message", "after"],
+    ],
+  );
+});

@@ -364,6 +364,8 @@ export function createQueueSlice({
         crypto.randomUUID(), content, draft?.fileReferences ?? [],
       );
       message.steering = true;
+      // 即时显示也保留任务归属，让引导消息按序进入当前任务块。
+      message.taskId = expectedTurnId;
       runtime.insertOptimisticUserMessage(sessionId, message);
       try {
         await api.steer({

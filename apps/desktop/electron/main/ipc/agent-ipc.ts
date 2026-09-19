@@ -285,6 +285,8 @@ export function registerAgentIpc({
     const message: UiMessage = {
       id: transferId && req.messageId ? req.messageId : durableUserMessageId(req.messageId, session.session?.messages ?? []),
       role: "user",
+      // 接收与回执重放使用相同的任务归属。
+      taskId: req.expectedTurnId,
       content: req.content,
       status: "complete",
       createdAt: new Date().toISOString(),

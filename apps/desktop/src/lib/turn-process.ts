@@ -56,12 +56,31 @@ export function hasFailedProcessTool(parts: readonly AssistantTurnPart[]): boole
 }
 
 /**
- * Only a trailing assistant text can be the answer: text followed by tools is
- * progress. The stream carries no final-answer marker, so a live trailing text
- * remains visible until a later activity establishes that it was intermediate.
- * Errors remain outside the disclosure even when more activity follows them.
+ * 工具前的文字属于过程。任务完成后，保留以最终回复结尾的连续正文，
+ * 避免子任务报告触发的补充回复把完整总结收进抽屉；思考不截断正文，
+ * 工具执行和用户输入则构成边界。旧记录继续使用末尾回复与错误展示。
  */
 export function projectTurnProcess(entry: AssistantTurnEntry) {
+  if (entry.task) {
+    const finalIndex = entry.task.status === "completed" && entry.finalMessageId
+      ? entry.parts.findIndex((part) => part.kind === "message"
+        && part.message.id === entry.finalMessageId)
+      : -1;
+    const responses: Extract<AssistantTurnPart, { kind: "message" }>[] = [];
+    for (let index = finalIndex; index >= 0; index -= 1) {
+      const part = entry.parts[index];
+      if (part.kind === "activity") {
+        if (part.items.some((item) => item.kind === "tool")) break;
+      } else if (part.kind === "message") {
+        if (part.message.role !== "assistant" || part.message.status !== "complete"
+          || part.message.error) break;
+        if (part.message.content.trim()) responses.push(part);
+      }
+    }
+    responses.reverse();
+    const responseParts = new Set<AssistantTurnPart>(responses);
+    return { process: entry.parts.filter((part) => !responseParts.has(part)), responses };
+  }
   const last = entry.parts.at(-1);
   const answer =
     last?.kind === "message" &&

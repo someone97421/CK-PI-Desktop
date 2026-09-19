@@ -245,7 +245,10 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
       if (!message) continue;
       void persistenceOutbox.enqueue({
         key: `message:${envelope.sessionId}:${message.id}`,
-        sessionId: envelope.sessionId, message, turnId: envelope.turnId ?? turnId,
+        sessionId: envelope.sessionId,
+        // 将事件的任务归属一并落盘，重载后仍按当前轮引导分组。
+        message: { ...message, ...(taskId ? { taskId } : {}) },
+        turnId: envelope.turnId ?? turnId,
       }, () => runtimeState.host).catch((error) => {
         logger.app("persistence", "warn", "steering transcript enqueue failed", {
           sessionId: envelope.sessionId, data: String(error),

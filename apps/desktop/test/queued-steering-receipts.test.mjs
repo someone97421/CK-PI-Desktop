@@ -6,7 +6,7 @@ import test from "node:test";
 import { QueuedSteeringReceipts, createQueuedSteeringJournal } from "../electron/main/queued-steering-receipts.ts";
 
 const intent = { queuedTurnId: "queued-1", sessionId: "s1", messageId: "message-1", expectedTurnId: "turn-1" };
-const message = { id: intent.messageId, role: "user", content: "follow up", status: "complete", createdAt: "2026-09-17T00:00:00Z", steering: true };
+const message = { id: intent.messageId, role: "user", content: "follow up", status: "complete", createdAt: "2026-09-17T00:00:00Z", steering: true, taskId: intent.expectedTurnId };
 const silent = () => {};
 async function withDirectory(run) {
   const dir = await mkdtemp(join(process.env.PI_SCRATCH_DIR || tmpdir(), "queued-steering-test-"));
@@ -41,6 +41,7 @@ test("accepted transfer retries the same echo after an outbox failure", () => wi
   await journal.settle(intent.queuedTurnId);
   assert.deepEqual(appends[0], appends[1]);
   assert.equal(appends[1].key, "message:s1:message-1");
+  assert.equal(appends[1].message.taskId, "turn-1", "the replay keeps the owning turn");
   await journal.complete(intent.queuedTurnId);
   assert.deepEqual(await new QueuedSteeringReceipts(dir, silent).list(), []);
 }));

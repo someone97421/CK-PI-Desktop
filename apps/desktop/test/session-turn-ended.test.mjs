@@ -30,6 +30,8 @@ function fixture() {
   const emitted = [];
   const enqueued = [];
 
+  const steeringReplies = new Set();
+
   const persistence = createEventPersistence({
     runtimeState: { host: null },
     activeTurns,
@@ -57,6 +59,7 @@ function fixture() {
     isStaleTerminalEvent: coordination.isStaleTerminalEvent,
     finishApprovedExecution: async () => undefined,
     emitAgentEvent: (envelope) => emitted.push(envelope),
+    steeringReplies,
   });
 
   const envelope = (event, turnId, extra = {}) => ({
@@ -221,4 +224,46 @@ test("a cancellation lock is scoped to its own turn and never inferred", () => {
   assert.equal(f.coordination.peekAbortReason(SESSION, LIVE_TURN), "aborted");
   f.coordination.clearAbortReason(SESSION, LIVE_TURN);
   assert.equal(f.coordination.peekAbortReason(SESSION, LIVE_TURN), undefined);
+});
+
+test("the steering echo keeps its turn attribution in the persistence outbox", async () => {
+  const f = fixture();
+  const steerEcho = {
+    type: "message_end",
+    message: {
+      id: "steer-1",
+      role: "user",
+      content: "Also check the queue slice.",
+      status: "complete",
+      createdAt: "2026-09-17T00:00:00.000Z",
+      steering: true,
+    },
+  };
+  await Promise.resolve();
+  f.persistence.persistAgentEvent(f.envelope(steerEcho, LIVE_TURN));
+  await Promise.resolve();
+  const entry = f.enqueued.find((item) => item.key === `message:${SESSION}:steer-1`);
+  assert.ok(entry, "the echo is persisted");
+  assert.equal(entry.message.taskId, LIVE_TURN, "the envelope's turn is kept");
+});
+
+test("a user row carrying only its own taskId stays attributed", async () => {
+  const f = fixture();
+  const steerEcho = {
+    type: "message_end",
+    message: {
+      id: "steer-2",
+      role: "user",
+      content: "follow up",
+      status: "complete",
+      createdAt: "2026-09-17T00:00:00.000Z",
+      steering: true,
+      taskId: OLD_TURN,
+    },
+  };
+  f.persistence.persistAgentEvent(f.envelope(steerEcho, undefined));
+  await Promise.resolve();
+  const entry = f.enqueued.find((item) => item.key === `message:${SESSION}:steer-2`);
+  assert.ok(entry, "the echo is persisted");
+  assert.equal(entry.message.taskId, OLD_TURN, "the message's own turn is kept");
 });

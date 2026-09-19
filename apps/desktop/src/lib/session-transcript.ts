@@ -85,6 +85,15 @@ export function projectMessageEnd(
     : upsertLiveSessionMessage(next, event.message);
 }
 
+/** 回执可以更新正文，但缺省字段不能抹掉已确认的当前轮引导归属。 */
+function preserveSteeringAttribution(message: UiMessage, previous?: UiMessage): UiMessage {
+  if (message.role !== "user" || previous?.role !== "user" || !previous.steering) return message;
+  const taskId = message.taskId ?? message.task?.id ?? previous.taskId ?? previous.task?.id;
+  const steering = message.steering ?? previous.steering;
+  return taskId === message.taskId && steering === message.steering
+    ? message : { ...message, ...(taskId ? { taskId } : {}), steering };
+}
+
 /**
  * Collapse repeated transcript rows by their canonical message id.
  *
@@ -107,7 +116,7 @@ export function dedupeSessionMessages(messages: UiMessage[]): UiMessage[] {
       continue;
     }
     if (!next) next = messages.slice(0, index);
-    next[previous] = message;
+    next[previous] = preserveSteeringAttribution(message, next[previous]);
   }
   return next ?? messages;
 }
@@ -125,7 +134,7 @@ export function upsertLiveSessionMessage(
   if (index < 0) return [...normalized, message];
   if (normalized[index] === message) return normalized;
   const next = normalized.slice();
-  next[index] = message;
+  next[index] = preserveSteeringAttribution(message, normalized[index]);
   return next;
 }
 
@@ -135,13 +144,12 @@ export function reconcilePersistedUserMessage(
   optimisticMessageId: string,
   message: UiMessage,
 ): UiMessage[] {
-  if (
-    message.role !== "user" ||
-    !messages.some((row) => row.id === optimisticMessageId && row.role === "user")
-  ) return messages;
+  const optimistic = messages.find((row) => row.id === optimisticMessageId && row.role === "user");
+  if (message.role !== "user" || !optimistic) return messages;
+  const acknowledged = preserveSteeringAttribution(message, optimistic);
   return upsertLiveSessionMessage(
-    messages.map((row) => row.id === optimisticMessageId ? message : row),
-    message,
+    messages.map((row) => row.id === optimisticMessageId ? acknowledged : row),
+    acknowledged,
   );
 }
 
@@ -227,7 +235,7 @@ export function mergeLiveSessionMessages(
     const liveIndex = liveIndexById.get(durableMessage.id);
     const live =
       liveIndex === undefined ? undefined : liveNormalized[liveIndex];
-    push(live && isInFlightMessage(live) ? live : durableMessage);
+    push(live && isInFlightMessage(live) ? live : preserveSteeringAttribution(durableMessage, live));
     // Live-only rows between two durable ids belong in the overlap. Trailing
     // rows after the last shared id wait until the durable page is complete
     // so a not-yet-cached user echo stays ahead of the streaming tail.
