@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -281,7 +282,106 @@ fn spawn_stdout_writer(
         })
 }
 
+struct DirectConfigReads {
+    db: Mutex<crate::db::Database>,
+    secrets: crate::secrets::SecretStore,
+    handshook: AtomicBool,
+    shutting_down: AtomicBool,
+}
+
+impl DirectConfigReads {
+    fn open(
+        data_dir: &Path,
+        secrets: crate::secrets::SecretStore,
+        handshook: bool,
+        shutting_down: bool,
+    ) -> Result<Self> {
+        Ok(Self {
+            db: Mutex::new(crate::db::Database::open_read_only_in_dir(data_dir)?),
+            secrets,
+            handshook: AtomicBool::new(handshook),
+            shutting_down: AtomicBool::new(shutting_down),
+        })
+    }
+
+    fn handles(method: &str) -> bool {
+        matches!(method, "settings.get" | "providers.list")
+    }
+
+    async fn read(&self, method: &str, params: Value) -> Result<Value, JsonRpcError> {
+        if !self.handshook.load(Ordering::Acquire) {
+            return Err(rpc_err(1001, "handshake required", "UNAUTHORIZED"));
+        }
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(rpc_err(
+                1001,
+                "host is shutting down",
+                "HOST_SHUTTING_DOWN",
+            ));
+        }
+        let db = self.db.lock().await;
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(rpc_err(
+                1001,
+                "host is shutting down",
+                "HOST_SHUTTING_DOWN",
+            ));
+        }
+        match method {
+            "settings.get" => read_app_settings(&db),
+            "providers.list" => {
+                let include_disabled = params
+                    .get("includeDisabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                read_provider_list(&db, &self.secrets, include_disabled)
+            }
+            _ => unreachable!("direct configuration reader called for {method}"),
+        }
+    }
+}
+
+fn read_app_settings(db: &crate::db::Database) -> Result<Value, JsonRpcError> {
+    let stored = db
+        .get_setting("app")
+        .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?;
+    Ok(normalize_settings_value(stored.unwrap_or_else(|| {
+        json!({
+            "defaultMode": "agent",
+            "defaultCommandShell": tools::shell::default_shell_id(),
+            "theme": "dark",
+            "enterToSend": true,
+            "largePasteThreshold": DEFAULT_LARGE_PASTE_THRESHOLD,
+            "contextCompaction": {
+                "enabled": true,
+                "reserveTokens": 16384,
+                "keepRecentTokens": 20000
+            },
+            "onboardingDismissed": false
+        })
+    })))
+}
+
+fn read_provider_list(
+    db: &crate::db::Database,
+    secrets: &crate::secrets::SecretStore,
+    include_disabled: bool,
+) -> Result<Value, JsonRpcError> {
+    let list = providers::list_providers(db, secrets, include_disabled)
+        .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?;
+    Ok(json!({ "providers": list }))
+}
+
 pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
+    let direct_config = {
+        let st = state.lock().await;
+        Arc::new(DirectConfigReads::open(
+            &st.data_dir,
+            st.secrets.clone(),
+            st.handshook,
+            st.shutting_down,
+        )?)
+    };
     let (tx, rx) = mpsc::unbounded_channel::<String>();
     // Keep request tasks bounded as well as tool executions. Tool calls have
     // their own class/session budgets below; this cap protects the host from
@@ -374,6 +474,7 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
                 let method = req.method.clone();
                 let params = req.params.unwrap_or(json!({}));
                 let state = state.clone();
+                let direct_config = direct_config.clone();
                 let tx = tx.clone();
                 let permit = match request_slots.clone().try_acquire_owned() {
                     Ok(permit) => permit,
@@ -397,7 +498,15 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
 
                 request_tasks.spawn(async move {
                     let _permit = permit;
-                    let out = match handle_request(state, &method, params, tx.clone()).await {
+                    let result = if DirectConfigReads::handles(&method) {
+                        direct_config.read(&method, params).await
+                    } else {
+                        handle_request(state, &method, params, tx.clone()).await
+                    };
+                    if method == "app.handshake" && result.is_ok() {
+                        direct_config.handshook.store(true, Ordering::Release);
+                    }
+                    let out = match result {
                         Ok(result) => JsonRpcResponse {
                             jsonrpc: "2.0",
                             id,
@@ -432,6 +541,7 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
             }
         }
     }
+    direct_config.shutting_down.store(true, Ordering::Release);
 
     {
         let mut st = state.lock().await;
@@ -1769,25 +1879,7 @@ async fn handle_request(
 
         "settings.get" => {
             let st = state.lock().await;
-            let stored = st
-                .db
-                .get_setting("app")
-                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
-            Ok(normalize_settings_value(stored.unwrap_or_else(|| {
-                json!({
-                    "defaultMode": "agent",
-                    "defaultCommandShell": tools::shell::default_shell_id(),
-                    "theme": "dark",
-                    "enterToSend": true,
-                    "largePasteThreshold": DEFAULT_LARGE_PASTE_THRESHOLD,
-                    "contextCompaction": {
-                        "enabled": true,
-                        "reserveTokens": 16384,
-                        "keepRecentTokens": 20000
-                    },
-                    "onboardingDismissed": false
-                })
-            })))
+            read_app_settings(&st.db)
         }
         "settings.set" => {
             validate_settings_value(&params)?;
@@ -1882,12 +1974,10 @@ async fn handle_request(
         "providers.list" => {
             let include_disabled = params
                 .get("includeDisabled")
-                .and_then(|v| v.as_bool())
+                .and_then(Value::as_bool)
                 .unwrap_or(true);
             let st = state.lock().await;
-            let list = providers::list_providers(&st.db, &st.secrets, include_disabled)
-                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
-            Ok(json!({ "providers": list }))
+            read_provider_list(&st.db, &st.secrets, include_disabled)
         }
         "providers.reorder" => {
             let input: providers::ProviderReorderInput = serde_json::from_value(params)

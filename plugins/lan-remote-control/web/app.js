@@ -1,5 +1,5 @@
 import { createLoginView } from "./views/connect.js";
-import { el, button, copyText, iconButton, createSheet, closeAllSheets, confirmAction, autoGrow } from "./dom.js";
+import { el, button, copyText, iconButton, createSheet, closeAllSheets, confirmAction, autoGrow, inlineSpinner } from "./dom.js";
 import { createProjectHome } from "./home.js";
 import { RemoteClient, EventSocket } from "./transport.js";
 import { uuid, TOKEN_STORAGE_KEY, describeError } from "./protocol.js";
@@ -79,8 +79,15 @@ const positions = new Map();
 const disclosureState = new Map();
 let navigationVersion = 0;
 const processVisibility = new Map();
-function openSheetPanel({ title, subtitle } = {}) {
-  const sheet = createSheet({ title, subtitle, onClose: () => sheet.root.remove() });
+function openSheetPanel({ title, subtitle, onClose } = {}) {
+  const sheet = createSheet({
+    title,
+    subtitle,
+    onClose: () => {
+      sheet.root.remove();
+      onClose?.();
+    },
+  });
   document.body.append(sheet.root);
   sheet.open();
   return sheet;
@@ -1101,8 +1108,36 @@ fileInput.addEventListener("change", () => {
 });
 async function modelOptions() {
   const sessionId = current, navigation = navigationVersion;
-  const models = (await api.read("models.list")).items || [];
-  if (!sessionId || current !== sessionId || navigation !== navigationVersion || loginVisible) return;
+  if (!sessionId || loginVisible) return;
+  const request = new AbortController();
+  const sheet = openSheetPanel({
+    title: "会话模型",
+    subtitle: "调整后点击应用，立即更新会话设置。",
+    onClose: () => request.abort(),
+  });
+  const loading = el("div", { className: "sheet-list" }, inlineSpinner("正在加载模型…"));
+  const apply = button("应用", { variant: "primary", disabled: true });
+  sheet.body.append(loading);
+  sheet.panel.append(el("div", { className: "sheet-foot" },
+    button("取消", { variant: "secondary", onClick: () => sheet.close() }), apply));
+  const stale = () => current !== sessionId || navigation !== navigationVersion || loginVisible || !sheet.isOpen();
+  let models;
+  try {
+    const response = await api.read("models.list", {}, { signal: request.signal });
+    if (stale()) return;
+    models = response?.items || [];
+  } catch (error) {
+    if (stale()) return;
+    loading.replaceChildren(
+      el("p", { className: "sheet-hint", text: describeError(error) || "模型加载失败" }),
+      button("重试", { preserveLabel: true, onClick: () => { sheet.close(); void action(modelOptions); } }),
+    );
+    return;
+  }
+  if (!models.length) {
+    loading.replaceChildren(el("p", { className: "sheet-hint", text: "暂无可用模型" }));
+    return;
+  }
   const session = snapshot?.session;
   for (const m of models) modelLabels.set(m.key, m.label);
   updateComposerState();
@@ -1149,14 +1184,13 @@ async function modelOptions() {
   }
   select.addEventListener("change", levels);
   levels();
-  const sheet = openSheetPanel({ title: "会话模型", subtitle: "调整后点击应用，立即更新会话设置。" });
-  sheet.body.append(
+  sheet.body.replaceChildren(
     el("label", { className: "sheet-field" }, "模型", select),
     el("label", { className: "sheet-field" }, "思考强度", thinking),
     el("label", { className: "sheet-field" }, "工作模式", mode),
     el("label", { className: "sheet-field" }, "权限模式", permission),
   );
-  const apply = button("应用", { variant: "primary" });
+  apply.disabled = false;
   apply.addEventListener("click", () => {
     if (apply.disabled || !sheet.isOpen()) return;
     const settings = { sessionId, modelKey: select.value, thinkingLevel: thinking.value, mode: mode.value, permissionMode: permission.value };
@@ -1175,8 +1209,6 @@ async function modelOptions() {
       }
     })();
   });
-  sheet.panel.append(el("div", { className: "sheet-foot" },
-    button("取消", { variant: "secondary", onClick: () => sheet.close() }), apply));
 }
 async function commands() {
   const sessionId = current;

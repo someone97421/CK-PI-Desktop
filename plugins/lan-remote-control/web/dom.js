@@ -280,7 +280,7 @@ export function createSheet({ id, title, subtitle, onClose } = {}) {
   let lastFocus = null, open = false, busy = false, focusTimer;
   const disabledStates = new Map();
   const onKeydown = (event) => {
-    if (!open || sheetStack.at(-1) !== controller) return;
+    if (!open || sheetStack[sheetStack.length - 1] !== controller) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -323,14 +323,14 @@ export function createSheet({ id, title, subtitle, onClose } = {}) {
     lastFocus = document.activeElement;
     const app = document.getElementById("app");
     if (!sheetStack.length && app) { appWasInert = app.inert; app.inert = true; }
-    if (sheetStack.length) sheetStack.at(-1).root.inert = true;
+    if (sheetStack.length) sheetStack[sheetStack.length - 1].root.inert = true;
     sheetStack.push(controller);
     backdrop.style.zIndex = String(40 + sheetStack.length);
     backdrop.hidden = false;
     document.body.classList.add("sheet-open");
     document.addEventListener("keydown", onKeydown, true);
     focusTimer = setTimeout(() => {
-      if (open && sheetStack.at(-1) === controller) closeBtn.focus({ preventScroll: true });
+      if (open && sheetStack[sheetStack.length - 1] === controller) closeBtn.focus({ preventScroll: true });
     }, 30);
   }
   function close({ force = false } = {}) {
@@ -338,9 +338,9 @@ export function createSheet({ id, title, subtitle, onClose } = {}) {
     open = false;
     clearTimeout(focusTimer);
     backdrop.hidden = true;
-    const wasTop = sheetStack.at(-1) === controller;
+    const wasTop = sheetStack[sheetStack.length - 1] === controller;
     sheetStack.splice(sheetStack.indexOf(controller), 1);
-    if (sheetStack.length) sheetStack.at(-1).root.inert = false;
+    if (sheetStack.length) sheetStack[sheetStack.length - 1].root.inert = false;
     else {
       document.body.classList.remove("sheet-open");
       const app = document.getElementById("app");

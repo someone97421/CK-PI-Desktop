@@ -91,6 +91,38 @@ impl Database {
         Self::open(&data_dir.join("pi.sqlite"))
     }
 
+    /// Open the initialized database for short, current configuration reads.
+    /// The primary connection owns schema migration and all writes; WAL lets
+    /// this connection read committed rows without waiting on unrelated state.
+    pub fn open_read_only_in_dir(data_dir: &Path) -> Result<Self> {
+        let path = data_dir.join("pi.sqlite");
+        let conn = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .context("open sqlite read-only")?;
+        conn.execute_batch(
+            r#"
+        PRAGMA query_only = ON;
+        PRAGMA foreign_keys = ON;
+        PRAGMA busy_timeout = 5000;
+        PRAGMA temp_store = MEMORY;
+        PRAGMA cache_size = -4000;
+        "#,
+        )?;
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        if version != SCHEMA_VERSION {
+            return Err(anyhow!(
+                "read-only database schema version {version} does not match supported {SCHEMA_VERSION}"
+            ));
+        }
+        Ok(Self {
+            conn,
+            data_dir: data_dir.to_path_buf(),
+        })
+    }
+
     /// Open a specific database file, bootstrapping the latest schema on a
     /// fresh file. A pre-v7 file is archived and replaced by a fresh one
     /// (D119 breaking reset — content moved to transcript files, no data
