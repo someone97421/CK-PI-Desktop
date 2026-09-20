@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "pi.responses-image-generation",
+  "name": "Responses image generation",
+  "version": "1.0.0",
+  "description": "Bundled skill: generate images through a Responses `image_generation` tool call and save them as local files.",
+  "i18n": {
+    "en": {
+      "name": "Responses image generation",
+      "description": "Bundled skill: generate images through a Responses `image_generation` tool call and save them as local files."
+    },
+    "zh-CN": {
+      "name": "Responses 原生生图",
+      "description": "随应用附带、可在插件页关闭的生图技能：用 Responses 的 image_generation 原生工具生成图片并保存为本地文件。"
+    }
+  },
+  "author": "this-is-a-agent",
+  "categories": [
+    "official"
+  ],
+  "main": "main.js",
+  "contributes": {
+    "skills": [
+      "skills/responses-image-generation.md"
+    ]
+  },
+  "permissions": [
+    "agent.prompt.inject"
+  ],
+  "engines": {
+    "piDesktop": ">=0.8.0"
+  }
+}

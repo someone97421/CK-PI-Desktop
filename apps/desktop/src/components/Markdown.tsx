@@ -704,13 +704,17 @@ function MarkdownImage({
   const urlTitle = usePreviewTitle("url");
   const source = typeof src === "string" ? src : "";
   const isRemote = /^https?:/i.test(source);
-  const decoded = safeDecodeUri(source);
+  const decoded = safeDecodeUri(source).replaceAll("\\", "/").replace(/^\/(?=[A-Za-z]:\/)/, "");
   const rel = isRemote ? null : toWorkspaceRel(decoded, root, baseDir);
   const attachmentRef =
     !isRemote && /^attachments\/[0-9a-f]{64}$/i.test(decoded.replace(/\\/g, "/"))
       ? decoded.replace(/\\/g, "/")
       : null;
-  const localRef = rel ?? attachmentRef;
+  // Scratch and other allowed absolute paths are resolved by the host, which
+  // checks both containment and real paths before returning image data.
+  const absoluteRef = !isRemote && /^(?:\/|[A-Za-z]:\/)/.test(decoded)
+    && !decoded.startsWith("//") ? decoded : null;
+  const localRef = rel ?? attachmentRef ?? absoluteRef;
   // Always run the hook before any branch so hook order stays stable when a
   // streaming src flips between remote and local. Remote images pass null.
   const dataUrl = useReferencedImageDataUrl(isRemote ? null : localRef);
