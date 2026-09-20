@@ -153,6 +153,8 @@ export const IPC = {
     scheduledUpdate: "pi-desktop/scheduled/update",
     scheduledDelete: "pi-desktop/scheduled/delete",
     scheduledRun: "pi-desktop/scheduled/run",
+    scheduledExecute: "pi-desktop/scheduled/execute",
+    scheduledListRuns: "pi-desktop/scheduled/listRuns",
     toolResolvePermission: "pi-desktop/tool/resolvePermission",
     askToolResolve: "pi-desktop/agent/askTool/resolve",
     plansPending: "pi-desktop/plans/pending",

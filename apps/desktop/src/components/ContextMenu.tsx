@@ -44,7 +44,7 @@ export type ContextMenuItem = {
   danger?: boolean;
   /** Hairline above this item, splitting the menu into groups. */
   separatorBefore?: boolean;
-  onSelect: () => void;
+  onSelect: (selection: string) => void;
 };
 
 export type ContextMenuRequest = {
@@ -60,6 +60,8 @@ export type ContextMenuRequest = {
 export type ContextMenuState = ContextMenuRequest & {
   /** Where the pointer asked for the surface. */
   point: ContextMenuPoint;
+  /** Live selection at open time; empty when the caret was collapsed. */
+  selection: string;
 };
 
 /**
@@ -77,6 +79,26 @@ function pointForEvent(event: ReactMouseEvent<HTMLElement>): ContextMenuPoint {
   };
 }
 
+/**
+ * A selection in the composer or another row is not "this turn's excerpt".
+ * Anchor or focus inside the right-clicked node is enough: a range that
+ * starts in this row still belongs to Copy here.
+ */
+function snapshotSelection(root: EventTarget): string {
+  const live = window.getSelection();
+  if (!live || live.rangeCount === 0 || live.isCollapsed) return "";
+  const text = live.toString();
+  if (!text || !(root instanceof Node)) return "";
+  const { anchorNode, focusNode } = live;
+  if (
+    (anchorNode && root.contains(anchorNode)) ||
+    (focusNode && root.contains(focusNode))
+  ) {
+    return text;
+  }
+  return "";
+}
+
 export function useContextMenu() {
   const [state, setState] = useState<ContextMenuState | null>(null);
   const closeContextMenu = useCallback(() => setState(null), []);
@@ -90,7 +112,14 @@ export function useContextMenu() {
       if (!request.items.length) return;
       event.preventDefault();
       event.stopPropagation();
-      setState({ ...request, point: pointForEvent(event) });
+      /*
+        Snapshot the live selection before the menu takes focus: focusing a
+        menuitem collapses the range, and Copy would then only see the whole
+        turn. A collapsed caret, or a selection that lives outside this
+        target, is stored as empty so Copy still falls back.
+      */
+      const selection = snapshotSelection(event.currentTarget);
+      setState({ ...request, point: pointForEvent(event), selection });
     },
     [],
   );
@@ -275,7 +304,7 @@ export function ContextMenu({
               // Close first: an item that opens a dialog must not leave a menu
               // layered over it.
               onClose();
-              item.onSelect();
+              item.onSelect(state.selection);
             }}
           >
             {item.icon ? (

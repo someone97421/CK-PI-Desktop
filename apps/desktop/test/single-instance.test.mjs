@@ -35,9 +35,13 @@ test("默认业务目录沿用原版互斥，同时把新版 Chromium 数据放�
     assert.equal(app.getName(), "这是一个助手");
     assert.equal(app.paths.userData, join(appData, "this-is-a-agent"));
     assert.equal(app.paths.sessionData, join(app.paths.userData, "chromium"));
-    assert.equal(app.paths.crashDumps, join(app.paths.userData, "Crashpad"));
-    const duplicate = configureApplicationIdentity(fakeApp(appData, false), { home, dataDir: result.dataDir });
+    assert.equal(app.paths.crashDumps, join(app.paths.userData, "diagnostics", "crash-dumps"));
+    const duplicateApp = fakeApp(appData, false);
+    const duplicate = configureApplicationIdentity(duplicateApp, { home, dataDir: result.dataDir });
     assert.equal(duplicate.hasSingleInstanceLock, false);
+    assert.equal(duplicateApp.paths.crashDumps, undefined);
+    assert.equal(duplicateApp.paths.sessionData, undefined);
+    assert.equal(duplicateApp.paths.logs, undefined);
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 

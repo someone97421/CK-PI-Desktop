@@ -29,14 +29,19 @@ export function configureApplicationIdentity(app: App, options: { home?: string;
   app.setName(APP_LEGACY_LOCK_NAME);
   app.setPath("userData", lockDir);
   const hasSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!hasSingleInstanceLock) {
+    return { dataDir, hasSingleInstanceLock: false };
+  }
   app.setName(APP_NAME);
+  const diagnosticsDir = join(profileDir, "diagnostics");
+  const crashDumpsDir = join(diagnosticsDir, "crash-dumps");
   // 不把新版 Chromium 缓存、网页 Cookie 或本地存储写入原版的 profile。
-  for (const path of [profileDir, join(profileDir, "chromium"), join(profileDir, "Crashpad")]) {
+  for (const path of [profileDir, join(profileDir, "chromium"), diagnosticsDir, crashDumpsDir]) {
     mkdirSync(path, { recursive: true });
   }
   app.setPath("userData", profileDir);
   app.setPath("sessionData", join(profileDir, "chromium"));
-  app.setPath("crashDumps", join(profileDir, "Crashpad"));
+  app.setPath("crashDumps", crashDumpsDir);
   app.setAppLogsPath(join(profileDir, "logs"));
-  return { dataDir, hasSingleInstanceLock };
+  return { dataDir, hasSingleInstanceLock: true };
 }

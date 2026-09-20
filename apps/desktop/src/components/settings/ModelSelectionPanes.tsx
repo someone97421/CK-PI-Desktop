@@ -32,7 +32,7 @@ import {
   MAX_OUTPUT_PRESETS,
   matchPresetIndex,
 } from "../../lib/model-limit-presets";
-import { Button, Field, Input, Tooltip, TooltipButton, cx } from "../ui";
+import { Button, Field, HelpIcon, Input, Tooltip, TooltipButton, cx } from "../ui";
 import { IconClose, IconGripVertical, IconHelp, IconPlus, IconRefresh, IconSearch } from "../icons";
 import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import { filterChosenModels, hidesAddedBinding } from "./model-chosen-filter";
@@ -435,7 +435,17 @@ export function ModelSelectionPanes({
                 onChange={(event) => toggleVisibleModels(event.target.checked)}
               />
             ) : null}
-            <h4 className="provider-models-title">{listTitle}</h4>
+            <h4 className="provider-models-title">
+              {listTitle}
+              {/* Where this batch came from is the heading's answer now, so the
+                  list keeps its height whether the source is the catalog or
+                  the fallback. */}
+              {discovery.source === "catalog" ? (
+                <HelpIcon label={t("settings.modelsFromCatalogNote")} />
+              ) : discovery.source === "fallback" ? (
+                <HelpIcon label={t("settings.modelsFallbackNote")} />
+              ) : null}
+            </h4>
             {onReload ? (
               <button
                 type="button"
@@ -469,12 +479,6 @@ export function ModelSelectionPanes({
           </div>
         </div>
 
-        {discovery.source === "catalog" ? (
-          <div className="provider-models-note">{t("settings.modelsFromCatalogNote")}</div>
-        ) : null}
-        {discovery.source === "fallback" ? (
-          <div className="provider-models-note">{t("settings.modelsFallbackNote")}</div>
-        ) : null}
         {fetchFailed && !emptyFetchError ? (
           <ModelsFetchErrorMessage error={discovery.error} variant="banner" />
         ) : null}
@@ -591,7 +595,7 @@ export function ModelSelectionPanes({
                       <IconClose size={12} />
                     </TooltipButton>
                   </div>
-                  {/* Dense sheet: 2xs labels, alias hint as a title tooltip. */}
+                  {/* Dense sheet: 2xs labels, explanations behind the help marks. */}
                   <div
                     className="provider-chosen-row-body"
                     id={advancedId}
@@ -600,11 +604,11 @@ export function ModelSelectionPanes({
                     <label className="provider-chosen-field">
                       <span className="provider-chosen-field-label">
                         {t("settings.modelAlias")}
+                        <HelpIcon label={t("settings.modelAliasHint")} />
                       </span>
                       <Input
                         value={binding.alias ?? ""}
                         placeholder={t("settings.modelAliasPlaceholder")}
-                        title={t("settings.modelAliasHint")}
                         spellCheck={false}
                         autoCorrect="off"
                         autoCapitalize="off"
@@ -619,8 +623,14 @@ export function ModelSelectionPanes({
                     </label>
                     <div className="provider-chosen-limits">
                       <label className="provider-chosen-field">
+                        {/* A catalog window keeps following models.dev until the
+                            user pins a number; the mark beside the label is the
+                            only place that still says so. */}
                         <span className="provider-chosen-field-label">
                           {t("settings.contextWindow")}
+                          {followsCatalog ? (
+                            <HelpIcon label={t("settings.contextWindowCatalogHint")} />
+                          ) : null}
                         </span>
                         {/* Preset ladder (#202): click writes the token count;
                             the input stays hand-editable off the ladder. */}
@@ -670,13 +680,6 @@ export function ModelSelectionPanes({
                             })
                           }
                         />
-                        {/* A catalog window keeps following models.dev; the hint
-                            says so until the user pins a number. */}
-                        {followsCatalog ? (
-                          <span className="provider-chosen-limit-hint">
-                            {t("settings.contextWindowCatalogHint")}
-                          </span>
-                        ) : null}
                       </label>
                       <label className="provider-chosen-field">
                         <span className="provider-chosen-field-label">
@@ -732,12 +735,12 @@ export function ModelSelectionPanes({
                       <div className="provider-chosen-thinking-head">
                         <span className="provider-chosen-thinking-label">
                           {t("settings.supportedThinkingLevels")}
+                          {/* Nothing published means every level here is a
+                              manual override; that is what the mark explains. */}
+                          {publishedLevels.length === 0 ? (
+                            <HelpIcon label={t("settings.thinkingManualOverrideHint")} />
+                          ) : null}
                         </span>
-                        {publishedLevels.length === 0 ? (
-                          <span className="provider-chosen-thinking-hint">
-                            {t("settings.thinkingManualOverrideHint")}
-                          </span>
-                        ) : null}
                         {bindingDefaultThinkingMenuLevels(enabledLevels).length > 1 ? (
                           <div className="provider-chosen-thinking-default">
                             <span className="provider-chosen-thinking-label">

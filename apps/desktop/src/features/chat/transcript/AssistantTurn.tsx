@@ -27,6 +27,7 @@ import {
   collectDelegationTimings,
 } from "../../../lib/subagent-topology";
 import {
+  isLastActivityPart,
   projectTurnProcess,
   resolveThinkingDisplayMode,
   shouldGroupTurnProcess,
@@ -353,6 +354,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     ),
   );
   const turnProcessActive = !settledTask && isActive;
+  const activePart = turnProcessActive ? entry.parts.at(-1) : undefined;
   const renderPart = (part: AssistantTurnEntry["parts"][number], index: number) => {
     if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
     if (part.kind === "activity") return (
@@ -360,9 +362,9 @@ export const AssistantTurn = memo(function AssistantTurn({
         key={`activity-${part.items[0]?.message.id ?? index}`}
         items={part.items}
         endedAt={part.endedAt}
-        isActive={!settledTask && isActive && index === entry.parts.length - 1}
-        runtimeActivity={!settledTask && isActive && index === entry.parts.length - 1
-          ? runtimeActivity : undefined}
+        isActive={part === activePart}
+        isLast={isLastActivityPart(entry.parts, part)}
+        runtimeActivity={part === activePart ? runtimeActivity : undefined}
         turnDelegationStatuses={turnDelegationStatuses}
         turnDelegationTimings={turnDelegationTimings}
         embedded={Boolean(settledTask) || isPlainHistory}

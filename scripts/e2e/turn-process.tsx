@@ -123,8 +123,26 @@ export async function turnProcessProbe() {
       "detailed keeps intermediate progress visible",
     );
     check(
+      container.querySelector('[data-message-id="edit"]')?.classList.contains("open") === true,
+      "detailed opens the last tool",
+    );
+    check(
+      container.querySelector('[data-message-id="read"]')?.classList.contains("open") !== true,
+      "detailed keeps earlier tools collapsed",
+    );
+    check(
       container.querySelectorAll(".tool-row").length === 3,
       "detailed shows thinking and both tools in place",
+    );
+    render(
+      [intro, { ...read, toolStatus: "error", isError: true }, answer],
+      false,
+      null,
+      "failed-last-tool",
+    );
+    check(
+      container.querySelector('[data-message-id="read"]')?.classList.contains("open") !== true,
+      "detailed keeps a last failed tool collapsed",
     );
 
     const streaming = message("stream", "assistant", "Live text", {
@@ -175,6 +193,10 @@ export async function turnProcessProbe() {
     check(
       header()?.getAttribute("aria-expanded") === "false" && !visible(process()),
       "compact completed process starts collapsed",
+    );
+    check(
+      container.querySelector('[data-message-id="edit"]')?.classList.contains("open") !== true,
+      "compact keeps tool payloads collapsed",
     );
     check(
       header()?.textContent?.includes("4 steps"),

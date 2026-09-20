@@ -4,7 +4,9 @@ import { placeContextMenu } from "../src/lib/context-menu.ts";
 import { register } from "node:module";
 
 register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
-const { conversationPlainText } = await import("../src/lib/chat-transcript-text.ts");
+const { conversationPlainText, copySelectionOrFallback } = await import(
+  "../src/lib/chat-transcript-text.ts"
+);
 
 test("a menu that fits the viewport stays at the pointer", () => {
   assert.deepEqual(
@@ -49,4 +51,10 @@ test("an empty conversation copies nothing so the action can stay disabled", () 
     ),
     "",
   );
+});
+
+test("copy prefers a live selection over the whole turn", () => {
+  assert.equal(copySelectionOrFallback("  this line  ", "whole message"), "  this line  ");
+  assert.equal(copySelectionOrFallback("", "whole message"), "whole message");
+  assert.equal(copySelectionOrFallback(undefined, "whole message"), "whole message");
 });

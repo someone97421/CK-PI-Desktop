@@ -152,6 +152,8 @@ type ActivityGroupProps = {
   embedded?: boolean;
   isActive: boolean;
   endedAt?: string;
+  /** Last activity chunk of this assistant turn. */
+  isLast?: boolean;
   /** Current runtime wait phase, when the group owns the live turn tail. */
   runtimeActivity?: AgentActivity;
   /** Delegation statuses from the entire assistant turn (cross-activity-part). */
@@ -185,6 +187,7 @@ function activityGroupPropsEqual(
     previous.embedded !== next.embedded ||
     previous.isActive !== next.isActive ||
     previous.endedAt !== next.endedAt ||
+    previous.isLast !== next.isLast ||
     previous.runtimeActivity !== next.runtimeActivity ||
     previous.items.length !== next.items.length
   ) {
@@ -211,6 +214,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   embedded = false,
   isActive,
   endedAt,
+  isLast = false,
   runtimeActivity,
   turnDelegationStatuses,
   turnDelegationTimings,
@@ -345,23 +349,33 @@ export const ActivityGroup = memo(function ActivityGroup({
           />
         );
       }
-      return item.kind === "tool" ? (
-        <Fragment key={item.message.id}>
-          <ToolRow
-            message={item.message}
+      const autoOpenLatest =
+        !compact && isLast && itemIndex === items.length - 1;
+      if (item.kind === "tool") {
+        return (
+          <Fragment key={item.message.id}>
+            <ToolRow
+              message={item.message}
+              autoOpen={autoOpenLatest}
+              onUserInteraction={claimDisclosure}
+              {...(item.delegate ? { delegate: item.delegate } : {})}
+            />
+            <ReviewChangeCard message={item.message} />
+          </Fragment>
+        );
+      }
+      if (item.kind === "hostedSearch") {
+        return (
+          <HostedSearchRow
+            key={`hosted-search-${item.message.id}-${item.round.id}`}
+            round={item.round}
+            streaming={isActive && item.message.status === "streaming"}
+            autoOpen={autoOpenLatest}
             onUserInteraction={claimDisclosure}
-            {...(item.delegate ? { delegate: item.delegate } : {})}
           />
-          <ReviewChangeCard message={item.message} />
-        </Fragment>
-      ) : item.kind === "hostedSearch" ? (
-        <HostedSearchRow
-          key={`hosted-search-${item.message.id}-${item.round.id}`}
-          round={item.round}
-          streaming={isActive && item.message.status === "streaming"}
-          onUserInteraction={claimDisclosure}
-        />
-      ) : (
+        );
+      }
+      return (
         <ThinkingRow
           key={`thinking-${item.message.id}`}
           message={item.message}
@@ -447,7 +461,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   );
 }, activityGroupPropsEqual);
 
-/** Keep the transcript responsive while the model waits for its first event. */
+/** Keep the running turn visible when no more specific runtime phase is known. */
 export function WorkingIndicator({ startedAt }: { startedAt?: number } = {}) {
   const { t } = useTranslation();
   const [elapsed, setElapsed] = useState(0);
@@ -510,6 +524,8 @@ export function RunActivityIndicator({ activity }: { activity: AgentActivity }) 
   const { t } = useTranslation();
   const [now, setNow] = useState(Date.now);
   const retryErrorDetailsId = useId();
+  const retryReasonRef = useRef<HTMLSpanElement | null>(null);
+  const retryPlateRef = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
     setNow(Date.now());
@@ -522,6 +538,66 @@ export function RunActivityIndicator({ activity }: { activity: AgentActivity }) 
   );
   const label = runActivityLabel(activity, t as Translate, now);
   const retryError = activity.phase === "retrying" ? activity.error : undefined;
+
+  // The plate hangs off the tail row inside `.thread-scroll`, whose
+  // `overflow: auto` clips it, and the conversation bar paints over the same
+  // band from a higher stacking level. The room depends on where the row sits
+  // in the viewport, which no window-based rule can know: a short transcript
+  // leaves the row mid-window, and a long provider message still lost its first
+  // lines (ADR 0196). Measure the room the row actually leaves - the plate is
+  // anchored 8px above the trigger, so its own bottom edge starts that room -
+  // and let the remainder scroll.
+  useEffect(() => {
+    if (!retryError) return;
+    const reason = retryReasonRef.current;
+    const plate = retryPlateRef.current;
+    if (!reason || !plate) return;
+    const measure = () => {
+      const toolbarHeight =
+        Number.parseFloat(
+          getComputedStyle(reason).getPropertyValue("--ds-toolbar-height"),
+        ) || 0;
+      // The plate is anchored 8px above the trigger, so its own bottom edge
+      // starts the room - but the resting state carries a 4px downward
+      // translate the revealed state drops. Measure the settled edge, or the
+      // cap comes out 4px too generous and the top slides under the bar.
+      const resting = getComputedStyle(plate).transform;
+      const offset = resting === "none" ? 0 : new DOMMatrixReadOnly(resting).m42;
+      const settledBottom = plate.getBoundingClientRect().bottom - offset;
+      const room = Math.floor(settledBottom - toolbarHeight);
+      // The heading stays readable: only the message body scrolls inside the
+      // plate, which keeps the plate's own rounded corner away from a
+      // scrollbar (Chromium does not clip one to the radius).
+      const bodyText = plate.querySelector<HTMLElement>(
+        ".run-activity-error-message",
+      );
+      const chrome = bodyText
+        ? bodyText.getBoundingClientRect().top -
+          plate.getBoundingClientRect().top +
+          (Number.parseFloat(getComputedStyle(plate).paddingBottom) || 0)
+        : 0;
+      plate.style.setProperty(
+        "--run-activity-error-max-height",
+        `${Math.max(0, room)}px`,
+      );
+      plate.style.setProperty(
+        "--run-activity-error-body-max-height",
+        `${Math.max(0, Math.floor(room - chrome))}px`,
+      );
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    const scroller = reason.closest(".thread-scroll");
+    scroller?.addEventListener("scroll", measure, { passive: true });
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(document.documentElement);
+    return () => {
+      window.removeEventListener("resize", measure);
+      scroller?.removeEventListener("scroll", measure);
+      observer?.disconnect();
+    };
+  }, [retryError]);
   const retryErrorSummary = retryError
     ? (() => {
         const key = `errors.${retryError.code}`;
@@ -534,6 +610,7 @@ export function RunActivityIndicator({ activity }: { activity: AgentActivity }) 
     : label;
   const labelContent = retryError ? (
     <span
+      ref={retryReasonRef}
       className="run-activity-retry-reason"
       tabIndex={0}
       aria-describedby={retryErrorDetailsId}
@@ -542,6 +619,7 @@ export function RunActivityIndicator({ activity }: { activity: AgentActivity }) 
       <span className="working-indicator-label">{label}</span>
       <span
         id={retryErrorDetailsId}
+        ref={retryPlateRef}
         className="run-activity-error-popover message-error"
         role="tooltip"
       >

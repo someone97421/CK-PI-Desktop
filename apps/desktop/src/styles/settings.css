@@ -91,7 +91,6 @@
 .plugin-scenic-blur-control { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px; border: 1px solid color-mix(in srgb, var(--ds-border) 84%, transparent); border-radius: var(--radius-md-plus); background: color-mix(in srgb, var(--ds-bg-elevated) 82%, transparent); box-shadow: 0 10px 24px color-mix(in srgb, #000 16%, transparent); }
 .plugin-scenic-blur-copy { display: grid; gap: 3px; }
 .plugin-scenic-blur-label { font-weight: 600; }
-.plugin-scenic-blur-help { color: var(--ds-text-muted); font-size: 12px; }
 .plugin-scenic-blur-actions { display: flex; align-items: center; gap: 12px; min-width: min(100%, 360px); }
 .plugin-scenic-blur-actions input { flex: 1; min-width: 110px; }
 .plugin-scenic-blur-actions output { min-width: 34px; color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
@@ -359,6 +358,13 @@
   font-weight: var(--font-weight-strong);
 }
 
+/* The heading's help mark sits beside the heading rather than inside it: a
+   nested button would join the heading's accessible name. */
+.settings-card-heading-help {
+  display: flex;
+  align-items: center;
+}
+
 .settings-card-heading-row {
   display: flex;
   align-items: flex-end;
@@ -617,12 +623,13 @@
   line-height: var(--leading-compact);
 }
 
-.settings-row-desc {
+/* A row's live value (not an explanation): visible, and secondary to the
+   title the same way the retired desc line was. */
+.settings-row-detail {
   margin-top: 3px;
   color: var(--ds-text-secondary);
   font-size: var(--text-sm);
   line-height: var(--leading-body);
-  max-width: 62ch;
 }
 
 .settings-row-control {
@@ -2383,7 +2390,13 @@
   text-overflow: ellipsis;
 }
 
+.extension-prompt-dialog {
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+}
+
 .extension-prompt-message {
+  overflow-wrap: anywhere;
   margin: 0 0 12px;
   color: var(--ds-text-primary);
   font-size: var(--text-sm);
@@ -2398,6 +2411,7 @@
 }
 
 .extension-prompt-option {
+  overflow-wrap: anywhere;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2408,12 +2422,15 @@
   cursor: pointer;
 }
 
+.extension-prompt-option input {
+  flex-shrink: 0;
+}
+
 .extension-prompt-source-path {
   display: block;
   margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
   font-size: var(--text-3xs);
 }
 

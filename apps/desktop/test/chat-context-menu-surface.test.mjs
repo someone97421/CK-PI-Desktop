@@ -30,6 +30,11 @@ test("the pointer-anchored menu portals, measures, and closes without trapping f
   assert.match(menuSource, /window\.addEventListener\("keydown", onKeyDown, true\)/);
   assert.match(menuSource, /if \(event\.key === "Tab"\)/);
   assert.match(menuSource, /onContextMenu=\{/);
+  assert.match(menuSource, /function snapshotSelection\(/);
+  assert.match(menuSource, /live\.isCollapsed/);
+  assert.match(menuSource, /root\.contains\(anchorNode\)/);
+  assert.match(menuSource, /root\.contains\(focusNode\)/);
+  assert.match(menuSource, /item\.onSelect\(state\.selection\)/);
   assert.match(menuSource, /if \(!request\.items\.length\) return;/);
 });
 

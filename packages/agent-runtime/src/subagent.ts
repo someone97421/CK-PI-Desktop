@@ -38,6 +38,7 @@ import {
 import {
   addUsage,
   cumulativeDelta,
+  isCertificateVerificationError,
   subagentCanMutate,
   subagentToolsLabel,
   type AgentEventEnvelope,
@@ -63,6 +64,7 @@ import {
   type SubagentCheckpoint,
 } from "./subagent-checkpoint.js";
 import { classifyAgentError } from "./agent-errors.js";
+import { withProviderFetchFailure } from "./provider-transport-recovery.js";
 import {
   assistantContent,
   nowIso,
@@ -1354,7 +1356,10 @@ export class SubagentRun {
             typeof (message as { errorMessage?: unknown }).errorMessage === "string"
               ? ((message as { errorMessage?: string }).errorMessage as string)
               : "provider stream failed";
-          classifiedError = classifyProviderError(raw, this.retryState.status);
+          classifiedError = withProviderFetchFailure(
+            classifyProviderError(raw, this.retryState.status),
+            this.retryState.failure,
+          );
         }
         // Recover only a rejected request. A successful tool-use reply may
         // already have effects before the run loop yields; never replay it based
@@ -1426,6 +1431,8 @@ export class SubagentRun {
           status: failed ? "error" : stopReason === "aborted" ? "aborted" : "complete",
           ...(messageUsage ? { usage: messageUsage } : {}),
           ...(failed ? { isError: true } : {}),
+          ...(isCertificateVerificationError(classifiedError?.details?.networkCode)
+            ? { error: classifiedError } : {}),
         };
         this.currentAssistant = undefined;
         this.emit({ type: "message_end", message: row });

@@ -159,3 +159,43 @@ test("an empty conversation disables copy instead of writing a blank clipboard",
   });
   assert.equal(items.find((item) => item.id === "copy-conversation").disabled, true);
 });
+
+test("copy on a speaking turn prefers the live selection", () => {
+  const copied = [];
+  const copyActions = {
+    copyText: (text, selection) => copied.push({ text, selection }),
+    selectText: noop,
+  };
+  const items = userMessageMenuItems({
+    t,
+    text: "Fix the crash",
+    selectTarget: null,
+    editable: true,
+    running: false,
+    revision: null,
+    actions: copyActions,
+    onEdit: noop,
+    onDelete: noop,
+    onActivateRevision: noop,
+  });
+  items.find((item) => item.id === "copy").onSelect("this line");
+  assert.deepEqual(copied, [{ text: "Fix the crash", selection: "this line" }]);
+});
+
+test("copy conversation ignores a live selection", () => {
+  const copied = [];
+  const copyActions = {
+    copyText: (text, selection) => copied.push({ text, selection }),
+    selectText: noop,
+  };
+  const items = conversationMenuItems({
+    t,
+    conversation: "You:\nHi",
+    scrollRef: { current: null },
+    contentRef: { current: null },
+    actions: copyActions,
+    onReturnToLatest: noop,
+  });
+  items.find((item) => item.id === "copy-conversation").onSelect("this line");
+  assert.deepEqual(copied, [{ text: "You:\nHi", selection: undefined }]);
+});

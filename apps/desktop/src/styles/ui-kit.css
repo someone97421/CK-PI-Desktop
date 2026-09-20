@@ -28,6 +28,39 @@
   overflow-wrap: anywhere;
   white-space: normal;
 }
+
+/* A help tooltip carries a sentence, not a label, so it wraps instead of
+   running off its anchor. */
+.ui-tooltip-help {
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-align: left;
+}
+
+/*
+  The help affordance: a row, card heading, or form field keeps its
+  explanation out of the layout and behind this question mark, which is the
+  only mark that there is more to read (D601). It is a button, so a keyboard
+  reaches the same sentence a pointer hovers.
+*/
+.ui-help-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ds-text-muted);
+  vertical-align: middle;
+  cursor: help;
+}
+.ui-help-icon:hover,
+.ui-help-icon:focus-visible {
+  color: var(--ds-text-secondary);
+}
 .panel-card {
   border-radius: var(--radius-lg);
   background: var(--ds-tile);

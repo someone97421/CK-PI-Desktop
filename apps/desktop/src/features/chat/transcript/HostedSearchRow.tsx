@@ -29,15 +29,19 @@ function sourceHost(url: string): string {
 export const HostedSearchRow = memo(function HostedSearchRow({
   round,
   streaming,
+  autoOpen = false,
   onUserInteraction,
 }: {
   round: HostedSearchRound;
   streaming: boolean;
+  autoOpen?: boolean;
   onUserInteraction?: () => void;
 }) {
   const { t } = useTranslation();
   const detailsId = useId();
-  const disclosure = useAutomaticDisclosure(false);
+  const searching = streaming && round.status === "searching";
+  const failed = round.status === "failed";
+  const disclosure = useAutomaticDisclosure(autoOpen && !failed);
   const { open, toggle: toggleDisclosure, collapse: collapseDisclosure } = disclosure;
   const titleRef = disclosure.titleRef;
   const toggleRow = useCallback(() => {
@@ -49,8 +53,6 @@ export const HostedSearchRow = memo(function HostedSearchRow({
     collapseDisclosure();
   }, [collapseDisclosure, onUserInteraction]);
 
-  const searching = streaming && round.status === "searching";
-  const failed = round.status === "failed";
   const sources = round.sources ?? [];
   // The opened page leads the body list; dedupe against extracted sources.
   const links = [
@@ -142,5 +144,6 @@ export const HostedSearchRow = memo(function HostedSearchRow({
 }, (previous, next) =>
   previous.round === next.round &&
   previous.streaming === next.streaming &&
+  previous.autoOpen === next.autoOpen &&
   previous.onUserInteraction === next.onUserInteraction,
 );

@@ -43,3 +43,15 @@ export function conversationPlainText(
   }
   return blocks.join("\n\n");
 }
+
+/**
+ * Copy prefers a live selection over the whole turn. A collapsed caret is not
+ * a selection, so it falls through to the fallback rather than writing "".
+ * The excerpt is copied as selected, including surrounding whitespace.
+ */
+export function copySelectionOrFallback(
+  selection: string | undefined,
+  fallback: string,
+): string {
+  return selection ? selection : fallback;
+}

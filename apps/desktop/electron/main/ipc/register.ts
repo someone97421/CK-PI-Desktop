@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
+import { dialog, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import { err, ErrorCodes, IPC, ok, type Result } from "@pi-desktop/shared";
 import type { AgentHostBridge } from "../agent-host-bridge";
 import type { AgentSidecar } from "../agent-sidecar";
@@ -7,6 +7,7 @@ import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 import type { HostProcess } from "../host-process";
 import { ROUTE_LOCAL, type BackendRouter } from "../remote/backend-router";
 import { registerAgentExtensionIpc } from "../agent-extensions-ipc";
+import { readNpmPath, writeNpmPath } from "../npm-preferences";
 import { registerAgentIpc } from "./agent-ipc";
 import { registerAppIpc } from "./app-ipc";
 import { registerDiagnosticsIpc } from "./diagnostics-ipc";
@@ -35,6 +36,7 @@ import type { IpcRegistrar } from "./types";
 import type { createTraySessions } from "../tray-sessions";
 
 export type RegisterIpcDependencies = {
+  isQuitting: () => boolean;
   ipcMain: IpcMain;
   getMainWindow: () => BrowserWindow | null;
   getHost: () => HostProcess | null;
@@ -315,9 +317,16 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     registrar,
     getHost,
     scheduledRunsBySession,
+    isQuitting: dependencies.isQuitting,
+    invoke: async (channel, args) => {
+      const handler = ipcHandlers.get(channel);
+      if (!handler) throw new Error("scheduled prompt handler unavailable");
+      return handler(...args);
+    },
   });
   registerWorkspaceIpc({
     registrar,
+    getMainWindow,
     getHost,
     getSidecar,
     dataDir,
@@ -337,6 +346,10 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     handle,
     bridge: agentExtensions,
     window: getMainWindow,
+    dialogs: dialog,
+    getLocale: getUpdaterLocale,
+    getNpmPath: () => readNpmPath(dataDir),
+    setNpmPath: (path) => writeNpmPath(dataDir, path),
     importRoot: join(dataDir, "plugins", "imported"),
     loadDevPlugin: async (path) => {
       const currentHost = getHost();

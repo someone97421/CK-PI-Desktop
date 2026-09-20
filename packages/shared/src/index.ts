@@ -2,6 +2,7 @@ export * from "./activation.js";
 export * from "./protocol.js";
 export * from "./app-version.js";
 export * from "./errors.js";
+export * from "./certificate-errors.js";
 export * from "./types.js";
 export * from "./transcript-truncation.js";
 export * from "./keyboard-shortcuts.js";

@@ -27,6 +27,7 @@ import {
   type ContextMenuRequest,
 } from "../../../components/ContextMenu";
 import { useAppStore } from "../../../stores/app-store";
+import { copySelectionOrFallback } from "../../../lib/chat-transcript-text";
 
 export type OpenTranscriptMenu = (
   event: ReactMouseEvent<HTMLElement>,
@@ -65,9 +66,11 @@ export function useChatTextActions() {
   const showToast = useAppStore((state) => state.showToast);
 
   const copyText = useCallback(
-    async (text: string) => {
+    async (text: string, selection?: string) => {
+      const payload = copySelectionOrFallback(selection, text);
+      if (!payload) return;
       try {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(payload);
         showToast(t("chat.copied"), { variant: "success" });
       } catch {
         showToast(t("chat.copyFailed"), { variant: "error" });

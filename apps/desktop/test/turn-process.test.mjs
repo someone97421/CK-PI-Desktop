@@ -7,6 +7,7 @@ const {
   projectTurnProcess,
   visibleProcessSteps,
   resolveThinkingDisplayMode,
+  isLastActivityPart,
   shouldAutoOpenTurnProcess,
   shouldGroupTurnProcess,
   turnProcessTiming,
@@ -111,6 +112,27 @@ test("only compact groups a turn into a process; compact auto-opens active failu
   assert.equal(shouldAutoOpenTurnProcess("compact", true, false), false);
   assert.equal(shouldAutoOpenTurnProcess("compact", true, true), true);
   assert.equal(shouldAutoOpenTurnProcess("compact", false, true), false);
+});
+
+test("the last activity part owns detailed-mode's default-open tool", () => {
+  const entry = turn([
+    message("intro", "assistant", "Inspect", { thinking: "Plan" }),
+    message("read", "tool", "result", { toolName: "Read" }),
+    message("progress", "assistant", "Next"),
+    message("edit", "tool", "updated", { toolName: "Edit" }),
+    message("final", "assistant", "Fixed"),
+  ]);
+  const activities = entry.parts.filter((part) => part.kind === "activity");
+  assert.ok(activities.length >= 2);
+  assert.equal(isLastActivityPart(entry.parts, activities[0]), false);
+  assert.equal(isLastActivityPart(entry.parts, activities.at(-1)), true);
+  assert.equal(
+    isLastActivityPart(
+      entry.parts,
+      entry.parts.find((part) => part.kind === "message"),
+    ),
+    false,
+  );
 });
 
 test("history timing uses recorded ends and rejects invalid timestamps and durations", () => {

@@ -37,6 +37,8 @@ describe("Plan protocol contracts", () => {
     expect(IPC_WHITELIST.has(IPC.invoke.scheduledUpdate)).toBe(true);
     expect(IPC_WHITELIST.has(IPC.invoke.scheduledDelete)).toBe(true);
     expect(IPC_WHITELIST.has(IPC.invoke.scheduledRun)).toBe(true);
+    expect(IPC_WHITELIST.has(IPC.invoke.scheduledExecute)).toBe(true);
+    expect(IPC_WHITELIST.has(IPC.invoke.scheduledListRuns)).toBe(true);
     expect(IPC.invoke.providersRefreshModelCatalog).toBe(
       "pi-desktop/providers/refreshModelCatalog",
     );
@@ -227,16 +229,16 @@ describe("Plan protocol contracts", () => {
   });
 
   it("derives transport deadlines from command execution semantics", () => {
-    expect(rpcTimeoutMs("tools.execute", { toolName: "Bash" })).toBe(190_000);
+    expect(rpcTimeoutMs("tools.execute", { toolName: "Bash" })).toBe(220_000);
     expect(
       rpcTimeoutMs("tools.execute", { toolName: "Bash", timeoutMs: 5_000 }),
-    ).toBe(135_000);
+    ).toBe(165_000);
     expect(
       rpcTimeoutMs("tools.execute", { toolName: "Bash", timeoutMs: 60_000 }),
-    ).toBe(190_000);
+    ).toBe(220_000);
     expect(
       rpcTimeoutMs("tools.execute", { toolName: "Bash", timeoutMs: 0 }),
-    ).toBe(190_000);
+    ).toBe(220_000);
     expect(
       rpcTimeoutMs("tools.execute", {
         toolName: "Bash",
@@ -250,5 +252,27 @@ describe("Plan protocol contracts", () => {
     expect(rpcTimeoutMs("tools.abort", { sessionId: "s", toolCallId: "t" })).toBe(
       130_000,
     );
+  });
+
+  it("covers the permission wait, the admission queue, and host-core dispatch", () => {
+    // Permission (120s) + admission queue (30s) + host-core dispatch (150s) +
+    // slack (10s). A flat 130s would cut off a prompted plugin tool that is
+    // still inside its budget, and dropping the queue wait would cut off a call
+    // that had to wait for a saturated plugin class before it was dispatched.
+    expect(rpcTimeoutMs("tools.execute", { toolName: "plugin_advisor_ask" })).toBe(
+      310_000,
+    );
+    expect(rpcTimeoutMs("tools.execute", { toolName: "mcp_github_search" })).toBe(
+      310_000,
+    );
+    expect(
+      rpcTimeoutMs("tools.execute", {
+        toolName: "plugin_advisor_ask",
+        timeoutMs: 5_000,
+      }),
+    ).toBe(165_000);
+    expect(
+      rpcTimeoutMs("tools.execute", { toolName: "plugin_advisor_ask", timeoutMs: 0 }),
+    ).toBe(310_000);
   });
 });

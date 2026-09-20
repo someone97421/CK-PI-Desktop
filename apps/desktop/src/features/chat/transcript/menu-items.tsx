@@ -29,7 +29,7 @@ import type { ContextMenuItem } from "../../../components/ContextMenu";
 
 /** Actions the builders call; the components own their real implementations. */
 export type MenuItemActions = {
-  copyText: (text: string) => void;
+  copyText: (text: string, selection?: string) => void;
   selectText: (element: HTMLElement | null) => void;
 };
 
@@ -71,7 +71,7 @@ export function userMessageMenuItems({
       id: "copy",
       label: t("chat.copy"),
       icon: copyIcon(),
-      onSelect: () => actions.copyText(text),
+      onSelect: (selection) => actions.copyText(text, selection),
     });
     items.push({
       id: "select-text",
@@ -153,7 +153,7 @@ export function assistantTurnMenuItems({
       id: "copy",
       label: t("chat.copy"),
       icon: copyIcon(),
-      onSelect: () => actions.copyText(answer),
+      onSelect: (selection) => actions.copyText(answer, selection),
     });
     items.push({
       id: "select-text",
@@ -207,6 +207,7 @@ export function conversationMenuItems({
       label: t("chat.copyConversation"),
       icon: copyIcon(),
       disabled: !conversation,
+      // The labelled thread is the action; a live selection belongs to Copy on a turn.
       onSelect: () => actions.copyText(conversation),
     },
     {

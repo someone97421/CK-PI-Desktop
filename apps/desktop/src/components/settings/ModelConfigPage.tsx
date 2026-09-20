@@ -454,7 +454,7 @@ export function ModelConfigPage() {
                 {t("settings.defaultModel")}
               </div>
               {defaultProviderReady ? (
-                <div className="settings-row-desc model-default-value">
+                <div className="settings-row-detail model-default-value">
                   <span className="model-default-provider">{defaultProvider.name}</span>
                   <span className="model-default-sep" aria-hidden>
                     ·
@@ -465,7 +465,7 @@ export function ModelConfigPage() {
                   </span>
                 </div>
               ) : (
-                <div className="settings-row-desc model-default-value">
+                <div className="settings-row-detail model-default-value">
                   <span className="model-default-empty">
                     {readyProviders.length === 0
                       ? t("settings.defaultModelNone")

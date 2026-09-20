@@ -109,7 +109,7 @@ test("selected thinking chips keep high contrast in both themes", () => {
 test("thinking levels use a compact accessible grouped control", () => {
   assert.match(
     pickerSource,
-    /className="provider-chosen-thinking-head">[\s\S]*?provider-chosen-thinking-hint[\s\S]*?<\/div>\s*<div[\s\S]*?className="provider-chosen-thinking-chips"/,
+    /className="provider-chosen-thinking-head">[\s\S]*?thinkingManualOverrideHint[\s\S]*?<\/div>\s*<div[\s\S]*?className="provider-chosen-thinking-chips"/,
   );
   assert.match(pickerSource, /role="group"/);
   assert.match(styles, /\.provider-chosen-thinking-head \{/);
@@ -205,11 +205,14 @@ test("a model the catalog does not describe still reports its binding overrides"
 
 test("the advanced body is a compact sheet without helper paragraphs", () => {
   // The generic Field + hint paragraph made the disclosure a stacked form dump
-  // inside a half-pane. Labels stay 2xs, the alias hint is a title tooltip, and
-  // the default selector sits on the thinking label row.
+  // inside a half-pane. Labels stay 2xs, the alias hint is the help mark beside
+  // the label, and the default selector sits on the thinking label row.
   assert.match(pickerSource, /className="provider-chosen-field"/);
-  assert.match(pickerSource, /title=\{t\("settings.modelAliasHint"\)\}/);
-  assert.doesNotMatch(pickerSource, /hint=\{t\("settings.modelAliasHint"\)\}/);
+  assert.match(
+    pickerSource,
+    /<HelpIcon label=\{t\("settings\.modelAliasHint"\)\} \/>/,
+  );
+  assert.doesNotMatch(pickerSource, /hint=\{t\("settings\.modelAliasHint"\)\}/);
   assert.match(pickerSource, /aria-controls=\{advancedId\}/);
   assert.match(pickerSource, /models\[0\]\?\.id \?\? null/);
   assert.match(
