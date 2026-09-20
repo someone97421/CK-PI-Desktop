@@ -1,10 +1,10 @@
 /**
  * Prompt-enhancement settings (ADR 0121).
  *
- * This card owns the prompt itself: a switch that chooses between the built-in
- * user template and a saved one, and the settings icon button that opens the
- * template editor. Which model runs the rewrite, and with how much reasoning,
- * is a model decision and lives on the Model configuration page.
+ * This card owns the Composer Enhance prompt action: a switch that chooses
+ * between the built-in user template and a saved one, the settings icon button
+ * that opens the template editor, and the model plus reasoning rows that pick
+ * which model runs the rewrite.
  *
  * What is deliberately not editable: the system prompt. It carries the rewrite
  * contract the feature is verified against (proper-noun preservation, language
@@ -29,6 +29,7 @@ import {
 import { Button, Field, TooltipButton, cx, portalOverlay } from "../../components/ui";
 import { IconPencil, IconX } from "../../components/icons";
 import { SettingsCard, SettingsRow } from "./primitives";
+import { EnhancementModelCard } from "../../components/settings/EnhancementModelCard";
 
 export function PromptEnhancementCard({
   settings,
@@ -90,6 +91,8 @@ export function PromptEnhancementCard({
           <IconPencil size={15} />
         </TooltipButton>
       </SettingsRow>
+
+      <EnhancementModelCard />
 
       {editorOpen ? (
         <PromptEnhancementEditorSheet

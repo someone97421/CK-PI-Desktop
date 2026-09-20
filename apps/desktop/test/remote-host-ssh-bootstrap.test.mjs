@@ -198,8 +198,20 @@ test("a failed remote script reports the step it failed at", async () => {
   const error = await catchError(() => bootstrap.bootstrap(request()));
   assert.equal(error.errorCode, "HOST_BOOTSTRAP_FAILED");
   assert.equal(error.step, "checksum-mismatch");
+  assert.match(error.message, /did not match the published SHA-256/);
   assert.deepEqual(transport.calls.forwards, []);
   assert.equal(transport.calls.disposeCount, 1);
+});
+
+test("a missing remote Node.js is reported as a Node version requirement", async () => {
+  const transport = fakeTransport({
+    stdout: "PI_HOST_FAILED {\"code\":\"HOST_BOOTSTRAP_FAILED\",\"step\":\"missing-node\"}\n",
+  });
+  const { bootstrap } = harness({ transport });
+  const error = await catchError(() => bootstrap.bootstrap(request()));
+  assert.equal(error.errorCode, "HOST_BOOTSTRAP_FAILED");
+  assert.equal(error.step, "missing-node");
+  assert.match(error.message, /no Node\.js.*22/);
 });
 
 test("a failed pairing exchange closes the forward it can no longer use", async () => {

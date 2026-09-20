@@ -527,6 +527,7 @@ export function ProviderSetupDialog({
             listTitle={t("settings.serviceModels")}
             busy={saving}
             onReload={discovery.reload}
+            apiStyle={resolvedApiStyle}
           />
         </div>
       </div>

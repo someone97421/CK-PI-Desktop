@@ -11,10 +11,12 @@ import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
 import { getSettingsSaveError, saveSettingsPatch, subscribeSettingsSaveError } from "../../lib/settings-save";
 import {
-  SETTINGS_NAV,
+  isSettingsDestinationHidden,
   SETTINGS_NAV_GROUP_LABELS,
+  visibleSettingsNav,
   type SettingsNavGroupId,
 } from "../../lib/settings-search";
+import { pluginViewIcon } from "../../lib/plugin-view-icons";
 import {
   IconArchive,
   IconBookOpen,
@@ -25,12 +27,13 @@ import {
   IconGlobe,
   IconInfo,
   IconKeyboard,
+  IconPalette,
   IconSearch,
   IconServer,
   IconSliders,
   IconSparkles,
 } from "../../components/icons";
-import { Button, cx } from "../../components/ui";
+import { Badge, Button, cx } from "../../components/ui";
 import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
 import { KeyboardShortcutsSection } from "../../components/settings/KeyboardShortcutsSection";
 import { ConfigTransferSection } from "../../components/settings/ConfigTransferSection";
@@ -88,6 +91,12 @@ export function SettingsPage() {
   const refreshProviders = useAppStore((s) => s.refreshProviders);
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
 
+  // Developer-only destinations (Remote Hosts) exist only while developer
+  // mode is on; the rail, the page, and settings search drop them together.
+  const developerMode = settings?.developerMode === true;
+  const navEntries = useMemo(() => visibleSettingsNav(developerMode), [developerMode]);
+  const tabHidden = isSettingsDestinationHidden(tab, developerMode);
+
   const [query, setQuery] = useState("");
   const saveError = useSyncExternalStore(subscribeSettingsSaveError, getSettingsSaveError);
   const [recoveringSettings, setRecoveringSettings] = useState(!settings);
@@ -107,6 +116,14 @@ export function SettingsPage() {
       setSettingsTab("general");
     }
   }, [activeExtension, extensions, setSettingsTab]);
+
+  // A hidden destination must not keep rendering: leave the page the rail no
+  // longer offers (for example Remote Hosts once developer mode is switched
+  // off) and fall back to General.
+  useEffect(() => {
+    if (!settings || !tabHidden) return;
+    setSettingsTab("general");
+  }, [settings, tabHidden, setSettingsTab]);
 
   const recoverSettings = useCallback(async () => {
     setRecoveringSettings(true);
@@ -195,7 +212,7 @@ export function SettingsPage() {
       remoteHosts: <IconGlobe size={14} />,
       about: <IconInfo size={14} />,
     };
-    return SETTINGS_NAV.map((entry) => ({
+    return navEntries.map((entry) => ({
       id: entry.id,
       labelKey: entry.labelKey,
       titleKey: entry.titleKey,
@@ -203,7 +220,7 @@ export function SettingsPage() {
       group: entry.group,
       keywordKeys: entry.keywordKeys,
     }));
-  }, []);
+  }, [navEntries]);
 
   // Search matches the tab label and the titles of the rows inside it, so
   // typing e.g. "theme" or "主题" surfaces Basics even though the tab is
@@ -274,6 +291,11 @@ export function SettingsPage() {
                   >
                     <span className="settings-nav-icon">{item.icon}</span>
                     <span className="settings-nav-label">{t(item.labelKey)}</span>
+                    {item.id === "remoteHosts" ? (
+                      <Badge tone="warning" className="settings-nav-experimental">
+                        {t("settings.remoteHosts.experimental")}
+                      </Badge>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -285,12 +307,19 @@ export function SettingsPage() {
               {extensions.filter((entry) => {
                 const q = query.trim().toLowerCase();
                 return !q || [entry.label, ...entry.keywords].some((value) => value.toLowerCase().includes(q));
-              }).map((entry) => (
-                <button key={entry.ref} className={cx("settings-nav-item", activeExtension?.ref === entry.ref && "active")} onClick={() => setActiveExtension(entry)}>
-                  <span className="settings-nav-icon"><IconBookOpen size={14} /></span>
-                  <span className="settings-nav-label">{entry.label}</span>
-                </button>
-              ))}
+              }).map((entry) => {
+                const ExtensionIcon = pluginViewIcon(entry.icon) ?? IconPalette;
+                return (
+                  <button
+                    key={entry.ref}
+                    className={cx("settings-nav-item", activeExtension?.ref === entry.ref && "active")}
+                    onClick={() => setActiveExtension(entry)}
+                  >
+                    <span className="settings-nav-icon"><ExtensionIcon size={14} /></span>
+                    <span className="settings-nav-label">{entry.label}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -314,7 +343,12 @@ export function SettingsPage() {
       <div className="settings-content">
         <div className="settings-content-inner">
           <div className="settings-content-enter">
-          <h1 className="settings-section-title">{activeExtension?.label ?? t(activeTitleKey)}</h1>
+          <h1 className="settings-section-title">
+            <span>{activeExtension?.label ?? t(activeTitleKey)}</span>
+            {!activeExtension && tab === "remoteHosts" && !tabHidden ? (
+              <Badge tone="warning">{t("settings.remoteHosts.experimental")}</Badge>
+            ) : null}
+          </h1>
 
           {activeExtension ? (
             <PluginScenicThemesDestination destination={activeExtension} selectTheme={selectPluginTheme} />
@@ -476,7 +510,7 @@ export function SettingsPage() {
 
           {tab === "projects" && <ProjectsPage />}
 
-          {tab === "remoteHosts" && <RemoteHostsPage />}
+          {tab === "remoteHosts" && !tabHidden && <RemoteHostsPage />}
 
           {tab === "about" && (
             <div className="settings-stack">

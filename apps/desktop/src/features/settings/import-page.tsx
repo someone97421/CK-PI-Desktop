@@ -414,6 +414,8 @@ export function SessionImportPanel() {
   const disclosure = useGroupDisclosure();
   const [scanning, setScanning] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [codexCap, setCodexCap] = useState<number | null>(null);
+
 
   const keyOf = (candidate: ImportCandidate) =>
     `${candidate.source}:${candidate.externalId}`;
@@ -423,8 +425,10 @@ export function SessionImportPanel() {
     try {
       const res = await api.scanImportSessions();
       setCandidates(res.sessions);
+      setCodexCap(typeof res.truncated?.codex === "number" ? res.truncated.codex : null);
       setSelected(new Set());
       disclosure.reset();
+
     } catch (e) {
       showToast(e instanceof Error ? e.message : String(e), { variant: "error" });
     } finally {
@@ -527,12 +531,16 @@ export function SessionImportPanel() {
               />
             }
           />
+          {codexCap != null ? (
+            <p className="import-hint">{t("settings.importCodexCapped", { limit: codexCap })}</p>
+          ) : null}
           <ImportResults
             message={
               candidates.length === 0 ? t("settings.importNone") : undefined
             }
           >
             <div className="import-groups">
+
               {groups.map((group, groupIndex) => {
                 const groupKeys = group.items.map(keyOf);
                 const groupSelected = groupKeys.filter((k) => selected.has(k)).length;

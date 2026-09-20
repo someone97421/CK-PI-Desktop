@@ -23,7 +23,7 @@ import type {
   ProviderPublic,
   ReviewRollbackResult,
   SessionSummary,
-  ThinkingLevel,
+  SessionThinkingLevel,
   UiMessage,
 } from "@pi-desktop/shared";
 import type { SettingsTabId } from "../lib/settings-search";
@@ -95,7 +95,7 @@ export type RefreshSessionsOptions = {
 /** Toolbar selections retained on the unpersisted new-task draft. */
 export type DraftSessionConfiguration = {
   mode: Mode;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel: SessionThinkingLevel;
   providerId?: string;
   modelId?: string;
   permissionMode?: PermissionMode;
@@ -200,7 +200,7 @@ export type AppState = {
     mode: Mode;
     providerId?: string;
     modelId?: string;
-    thinkingLevel: ThinkingLevel;
+    thinkingLevel: SessionThinkingLevel;
     permissionMode?: PermissionMode;
   }) => Promise<void>;
   /** Returns true once accepted unless concurrent smart Stop restores it. */

@@ -100,7 +100,13 @@ export class PersistenceOutbox {
   }
 
   private async flushLoop(getHost: () => HostProcess | null): Promise<void> {
+    // host 负责跨会话 ID 隔离；只有成功回执才能确认快照覆盖。
+    // duplicate / poison 不得视为成功，也不得伪造成功回执：仅把该条延后
+    // （保留消息、不调 onMessagePersisted），让后排先行，下一轮再试，
+    // 避免单条坏头饿死整个队列，但不丢消息。
+    let deferred = 0;
     while (this.entries.length > 0) {
+      if (deferred >= this.entries.length) return;
       const current = this.entries[0];
       const currentHost = getHost();
       if (!currentHost || !currentHost.isAvailable()) return;
@@ -111,13 +117,31 @@ export class PersistenceOutbox {
           turnId: current.turnId,
         });
       } catch (error) {
-        // host 负责跨会话 ID 隔离；只有成功回执才能确认快照覆盖。
+        if (isDuplicateMessageIdError(error)) {
+          this.logger("warn", "session persistence flush deferred duplicate message id", {
+            key: current.key,
+            data: String(error),
+          });
+          if (this.deferHead(current)) deferred += 1;
+          await this.persist();
+          continue;
+        }
+        if (isPoisonMessageError(error)) {
+          this.logger("warn", "session persistence flush deferred poisoned message", {
+            key: current.key,
+            data: String(error),
+          });
+          if (this.deferHead(current)) deferred += 1;
+          await this.persist();
+          continue;
+        }
         this.logger("warn", "session persistence flush paused", {
           key: current.key,
           data: String(error),
         });
         return;
       }
+      deferred = 0;
       try {
         await this.onMessagePersisted?.(current.sessionId);
       } catch (callbackError) {
@@ -131,6 +155,14 @@ export class PersistenceOutbox {
       if (this.entries[0] === current) this.entries.shift();
       await this.persist();
     }
+  }
+
+  /** 仅延后收到失败回执的原快照，已删除或替换的消息不影响当前队头。 */
+  private deferHead(current: MessageAppend): boolean {
+    if (this.entries[0] !== current) return false;
+    this.entries.shift();
+    this.entries.push(current);
+    return true;
   }
 
   private async load(): Promise<void> {
@@ -171,4 +203,21 @@ export class PersistenceOutbox {
     this.persistChain = write.catch(() => undefined);
     await write;
   }
+}
+
+function isDuplicateMessageIdError(error: unknown): boolean {
+  return /UNIQUE constraint failed: messages\.id/i.test(String(error));
+}
+
+/**
+ * The host will reject this message on every retry. Match the host-core
+ * provenance prefix in the JSON-RPC message body (append maps those failures
+ * as INTERNAL). Do not treat PLUGIN_PERMISSION_DENIED or schema
+ * INVALID_PARAMS as poison — those are a different surface, and serde
+ * failures do not even put INVALID_PARAMS in the message text.
+ * 注意：判为 poison 也只是延后隔离，不得视为成功、不得调成功回执、
+ * 不得丢弃消息。
+ */
+function isPoisonMessageError(error: unknown): boolean {
+  return /(?<![A-Z_])PERMISSION_DENIED:/i.test(String(error));
 }

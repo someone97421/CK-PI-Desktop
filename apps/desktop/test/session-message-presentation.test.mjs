@@ -47,6 +47,11 @@ function loadComponent(name, extras = {}) {
     "./context": { TranscriptReadOnlyContext: React.createContext(false), useActiveSessionTitle: () => "Title" },
     "../../../lib/selection-quote": { selectionMarkdownWithinRow: () => "" },
     "../../../lib/response-annotations": { requestTextWithoutAnnotations },
+    "./menu-items": { userMessageMenuItems: () => [] },
+    "./TranscriptMenu": {
+      useTranscriptMenu: () => () => {},
+      useChatTextActions: () => ({ copyText: () => {}, selectText: () => {} }),
+    },
     ...extras,
   };
   const module = { exports: {} };

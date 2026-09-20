@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { TFunction } from "i18next";
 import {
+  canonicalThinkingLevel,
   restoreInlineComposerFileReferenceTokens,
   serializeComposerFileReferences,
   serializeInlineComposerFileReferences,
@@ -119,7 +120,7 @@ export function useComposerSubmit({
         draft: textToEnhance,
         providerId,
         modelId,
-        thinkingLevel,
+        thinkingLevel: canonicalThinkingLevel(thinkingLevel),
       });
       const currentKey = draftKeyForSession(useAppStore.getState().activeSessionId);
       if (

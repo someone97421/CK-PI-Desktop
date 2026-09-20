@@ -90,7 +90,18 @@ const DEFAULT_EXEC_TIMEOUT_MS = 120_000;
 const DEFAULT_FORWARD_TIMEOUT_MS = 30_000;
 
 function fail(message: string, errorCode: string, data?: Record<string, unknown>): Error {
-  return Object.assign(new Error(message), { errorCode, ...(data ?? {}) });
+  // `data` is duplicated so IPC wrap can forward it as `details` while existing
+  // callers still read `error.stderr` / `error.code` as own properties.
+  return Object.assign(new Error(message), { errorCode, ...(data ?? {}), data });
+}
+
+/** Last non-empty line of ssh stderr; that is what the Settings toast shows. */
+function lastSshDiagnostic(stderr: string): string {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return lines.at(-1) ?? "";
 }
 
 /**
@@ -130,8 +141,11 @@ export function sshCommonArgs(target: SshTarget): string[] {
   if (password) {
     // The helper answers every prompt with the same secret, so a retry could
     // only repeat a wrong password — and repeated failures are what trip a
-    // server's own lockout. One prompt, one answer.
-    args.push("-o", "NumberOfPasswordPrompts=1");
+    // server's own lockout. One prompt, one answer. Default identities are
+    // skipped: an encrypted `~/.ssh/id_rsa` would consume that single prompt
+    // as a key passphrase and never try the login password. Password mode in
+    // Settings replaces a key; users with both pick key mode.
+    args.push("-o", "NumberOfPasswordPrompts=1", "-o", "PubkeyAuthentication=no");
   }
   if (target.port !== undefined) args.push("-p", String(target.port));
   if (target.identityFile) args.push("-i", target.identityFile);
@@ -366,13 +380,17 @@ export function createSystemSshTransport(
       await releaseEnv();
     }
     if (result.code !== 0) {
+      const stderr = redactBootstrapOutput(result.stderr).slice(-2000);
+      const diagnostic = lastSshDiagnostic(stderr);
       throw fail(
-        `ssh command failed with exit code ${result.code}`,
+        diagnostic
+          ? `ssh command failed with exit code ${result.code}: ${diagnostic}`
+          : `ssh command failed with exit code ${result.code}`,
         ErrorCodes.HOST_BOOTSTRAP_FAILED,
         {
           command,
           code: result.code,
-          stderr: redactBootstrapOutput(result.stderr).slice(-2000),
+          stderr,
           // The bootstrap script reports *where* it failed on stdout, so the
           // caller can turn a bare exit code into a named step.
           stdout: redactBootstrapOutput(result.stdout).slice(-4000),

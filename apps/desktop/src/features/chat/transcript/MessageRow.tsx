@@ -3,6 +3,7 @@ import {
   useContext,
   useMemo,
   useState,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
@@ -21,6 +22,7 @@ import { TranscriptReadOnlyContext, useActiveSessionTitle } from "./context";
 import { selectionMarkdownWithinRow } from "../../../lib/selection-quote";
 import { requestTextWithoutAnnotations } from "../../../lib/response-annotations";
 import { IconQuote, IconChat } from "../../../components/icons";
+import { userMessageMenuItems } from "./menu-items";
 import { SessionMessageOrigin } from "./SessionMessageOrigin";
 import {
   CopyButton,
@@ -28,6 +30,10 @@ import {
   LinkifiedText,
   MessageAttachmentImage,
 } from "./shared";
+import {
+  useChatTextActions,
+  useTranscriptMenu,
+} from "./TranscriptMenu";
 
 export const MessageRow = memo(function MessageRow({
   message,
@@ -37,6 +43,8 @@ export const MessageRow = memo(function MessageRow({
   isRunning: boolean;
 }) {
   const { t } = useTranslation();
+  const openTranscriptMenu = useTranscriptMenu();
+  const { copyText, selectText } = useChatTextActions();
   const editUserMessage = useAppStore((s) => s.editUserMessage);
   const activateMessageRevision = useAppStore((s) => s.activateMessageRevision);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
@@ -89,12 +97,44 @@ export const MessageRow = memo(function MessageRow({
     setRetryingEdit(false);
     if (saved) setEditing(false);
   };
+  /*
+    The pointer path to the actions the hover row already offers. Only a human
+    turn is owned here: an assistant answer belongs to its turn, so this row
+    must not answer for one — it would offer Copy without the Regenerate and
+    Branch items that live on the turn.
+  */
+  const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!isUser) return;
+    openTranscriptMenu(event, {
+      label: t("chat.messageMenu"),
+      items: userMessageMenuItems({
+        t,
+        text: requestTextWithoutAnnotations(message.content || ""),
+        selectTarget:
+          event.currentTarget.querySelector<HTMLElement>(".message-bubble"),
+        editable: editableUserMessage && !transcriptReadOnly,
+        running: isRunning,
+        revision: showRevisionPager && !transcriptReadOnly
+          ? { count: revisionCount, active: activeRevision }
+          : null,
+        actions: { copyText, selectText },
+        onEdit: () => {
+          setEditValue(editSeed);
+          setEditing(true);
+        },
+        onDelete: () => void deleteMessage(message.id),
+        onActivateRevision: (index) =>
+          void activateMessageRevision(message.id, index),
+      }),
+    });
+  };
   return (
     <div
       className={`message-row ${isSessionMessage ? "session-message" : isUser ? "user" : message.role}`}
       data-minimap-id={message.id}
       data-message-id={message.id}
       data-row-role={isSessionMessage ? undefined : "user"}
+      onContextMenu={onContextMenu}
       role="article"
       aria-label={isSessionMessage ? t("sessionCollaboration.agentMessage") : isUser ? t("chat.userMessage") : t("chat.assistantMessage")}
     >
@@ -195,7 +235,10 @@ export const MessageRow = memo(function MessageRow({
                         {message.command}
                       </code>
                     ) : (
-                      <LinkifiedText text={requestTextWithoutAnnotations(String(message.content || ""))} />
+                      <LinkifiedText
+                        text={requestTextWithoutAnnotations(String(message.content || ""))}
+                        attachments={message.attachments}
+                      />
                     )}
                   </div>
                 ) : null}

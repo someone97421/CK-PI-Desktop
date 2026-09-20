@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { TFunction } from "i18next";
 import { formatTokenCount, modelIdsMatch } from "@pi-desktop/shared";
 import { AnchoredMenu } from "../../../components/settings/AnchoredMenu";
@@ -15,6 +16,23 @@ import { composerModelBadges } from "../../../lib/composer-models";
 import type { useComposerModelMenu } from "./hooks/useComposerModelMenu";
 
 type ModelMenuController = ReturnType<typeof useComposerModelMenu>;
+
+/**
+ * Keys the native range input must own while focused. The menu root ignores
+ * arrows, but stopping propagation keeps the keys unambiguous — they adjust
+ * the level, never drive menu navigation — no matter where focus lands.
+ */
+const THINKING_SLIDER_KEYS = new Set([
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Enter",
+]);
 
 export type ComposerModelPickerProps = {
   t: TFunction;
@@ -59,9 +77,43 @@ export function ComposerModelPicker({
     thinkingMenuLevels,
     showView,
     selectModel,
+    commitThinkingLevel,
     selectThinkingLevel,
     onMenuKeyDown,
   } = controller;
+
+  // Slider geometry: one stop per available level, with the fill carried as
+  // a CSS custom property so the accent track can follow the native input.
+  const thinkingSliderIndex = Math.max(
+    thinkingMenuLevels.findIndex((level) => level === thinkingLevel),
+    0,
+  );
+  // Local drag lead: the native input follows the pointer or arrow key
+  // immediately while the store confirmation lands, so a controlled value
+  // never snaps back mid-drag. Only the latest request can release the lead.
+  const thinkingLevelsKey = thinkingMenuLevels.join("|");
+  const [dragThinkingIndex, setDragThinkingIndex] = useState<number | null>(null);
+  const thinkingDragSequence = useRef(0);
+  useEffect(() => {
+    thinkingDragSequence.current += 1;
+    setDragThinkingIndex(null);
+  }, [thinkingLevelsKey, selectedProviderId, selectedModelId, open]);
+  const commitSliderIndex = async (index: number) => {
+    const level = thinkingMenuLevels[index];
+    if (!level) return;
+    const sequence = ++thinkingDragSequence.current;
+    setDragThinkingIndex(index);
+    try {
+      await commitThinkingLevel(level);
+    } finally {
+      if (thinkingDragSequence.current === sequence) setDragThinkingIndex(null);
+    }
+  };
+  const thinkingSliderValue = dragThinkingIndex ?? thinkingSliderIndex;
+  const thinkingSliderPercent =
+    thinkingMenuLevels.length > 1
+      ? (thinkingSliderValue / (thinkingMenuLevels.length - 1)) * 100
+      : 0;
 
   return (
     <AnchoredMenu
@@ -136,6 +188,51 @@ export function ComposerModelPicker({
             <span className="composer-menu-entry-value">{thinkingLabel}</span>
             <IconChevronRight size={14} aria-hidden="true" />
           </button>
+          {/* The slider sits directly under the Reasoning level entry
+              (issue #417): one drag adjusts the level without entering the
+              submenu, while the entry itself opens the classic radio list. */}
+          {thinkingMenuLevels.length > 1 ? (
+            <div className="composer-thinking-slider">
+              <input
+                type="range"
+                className="composer-thinking-range"
+                min={0}
+                max={thinkingMenuLevels.length - 1}
+                step={1}
+                value={thinkingSliderValue}
+                aria-label={t("chat.reasoningLevel")}
+                aria-valuetext={thinkingMenuLevels[thinkingSliderValue] ?? thinkingLevel}
+                style={
+                  {
+                    "--composer-thinking-progress": `${thinkingSliderPercent}%`,
+                  } as CSSProperties
+                }
+                onChange={(event) => {
+                  void commitSliderIndex(Number(event.target.value));
+                }}
+                onKeyDown={(event) => {
+                  if (THINKING_SLIDER_KEYS.has(event.key)) event.stopPropagation();
+                }}
+              />
+              <div className="composer-thinking-ticks" aria-hidden="true">
+                {thinkingMenuLevels.map((level, index) => (
+                  <button
+                    key={level}
+                    type="button"
+                    tabIndex={-1}
+                    className={`composer-thinking-tick ${thinkingSliderValue === index ? "active" : ""}`}
+                    title={level}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      void commitSliderIndex(index);
+                    }}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <>

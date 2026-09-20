@@ -180,6 +180,8 @@ const ErrorCodes = {
 ignoreBrokenStdio();
 installMainProcessErrorHandlers();
 
+const isDevelopmentBuild =
+  process.env.PI_DESKTOP_DEV === "1" || !app.isPackaged;
 const { dataDir, hasSingleInstanceLock } = configureApplicationIdentity(app);
 if (!hasSingleInstanceLock) {
   // 立即终止，防止下面的日志、outbox 和插件初始化触碰另一个进程的业务目录。
@@ -232,8 +234,6 @@ const launcherState: LauncherState = {
 };
 let windowCreationPromise: Promise<void> | null = null;
 let applicationBooted = false;
-const isDevelopmentBuild =
-  process.env.PI_DESKTOP_DEV === "1" || !app.isPackaged;
 const pendingApplicationMenuCommands: AppMenuCommand[] = [];
 type MenuRendererReadyGate = {
   window: BrowserWindow;
@@ -809,6 +809,7 @@ function isHostUnavailable(error: unknown): boolean {
 
 /** Pull the user's MCP server records from host-core into the local runtime. */
 function sendToRenderer(channel: string, payload: unknown) {
+  applicationLifecycle?.traySessions.observeEvent(channel, payload);
   if (channel === IPC.event.pluginChanged) {
     applicationLifecycle?.applyNativeThemeSource({
       theme: applicationAppearanceState.appThemePreference,
@@ -893,6 +894,7 @@ const applicationAppearanceState: ApplicationAppearanceState = {
 };
 
 applicationLifecycle = createApplicationLifecycle({
+  getRunningSessionIds: () => activeTurns.keys(),
   state: windowLifecycleState,
   appState: applicationLifecycleState,
   appearanceState: applicationAppearanceState,
@@ -1268,6 +1270,7 @@ const { bootHostStatus, runtimeArch, bootBackends } = runtimeLifecycle;
 
 function registerIpc() {
   return registerIpcHandlers({
+    traySessions: applicationLifecycle!.traySessions,
     ipcMain,
     getMainWindow: () => mainWindow,
     getHost: () => host,

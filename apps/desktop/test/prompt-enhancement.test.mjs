@@ -103,7 +103,8 @@ test("prompt-enhancement settings expose templates, restore, and the draft varia
   assert.match(card, /const templateChanged = savedTemplateValue !== savedTemplate/);
   assert.match(card, /settings-icon-button/);
   assert.match(card, /IconPencil/);
-  // The model and reasoning rows live on the Model configuration page, not here.
+  assert.match(card, /EnhancementModelCard/);
+  // Model and reasoning rows are composed in, not inlined on this file.
   assert.doesNotMatch(card, /promptEnhancementProviderId/);
   assert.doesNotMatch(card, /promptEnhancementThinkingLevel/);
   assert.doesNotMatch(card, /promptEnhancementModelId/);
@@ -187,16 +188,32 @@ test("the default ceiling is about a minute", () => {
   assert.equal(PROMPT_ENHANCEMENT_TIMEOUT_MS, 60_000);
 });
 
-test("the enhancement model and reasoning live on their own Model-page card", async () => {
+test("the enhancement model and reasoning are rows on the Prompt enhancement card", async () => {
+  const settingsPage = await read("../src/features/settings/SettingsPage.tsx");
+  const promptCard = await read("../src/features/settings/prompt-enhancement-card.tsx");
   const modelPage = await read("../src/components/settings/ModelConfigPage.tsx");
+  const search = await read("../src/lib/settings-search.ts");
   const card = await read("../src/components/settings/EnhancementModelCard.tsx");
 
-  // The Models page mounts the dedicated card rather than inlining the rows.
-  assert.match(modelPage, /EnhancementModelCard/);
+  const aiStart = settingsPage.indexOf('{tab === "ai" && settings && (');
+  const shortcutsStart = settingsPage.indexOf('{tab === "shortcuts" && settings && (');
+  const aiSource = settingsPage.slice(aiStart, shortcutsStart);
+  assert.match(aiSource, /PromptEnhancementCard/);
+  assert.doesNotMatch(aiSource, /EnhancementModelCard/);
+  assert.match(promptCard, /EnhancementModelCard/);
+  assert.doesNotMatch(modelPage, /EnhancementModelCard/);
   assert.doesNotMatch(modelPage, /promptEnhancementProviderId/);
 
-  // Card title and row title are separate strings (B3: both read "Default model").
-  assert.match(card, /promptEnhancementModelTitle/);
+  const aiSearch = search.slice(search.indexOf('id: "ai"'), search.indexOf('id: "shortcuts"'));
+  const agentSearch = search.slice(search.indexOf('id: "agent"'), search.indexOf('id: "skills"'));
+  assert.match(aiSearch, /promptEnhancementTitle/);
+  assert.match(aiSearch, /promptEnhancementModelTitle/);
+  assert.match(aiSearch, /promptEnhancementThinking/);
+  assert.doesNotMatch(agentSearch, /promptEnhancementModelTitle/);
+  assert.doesNotMatch(agentSearch, /promptEnhancementThinking/);
+
+  assert.doesNotMatch(card, /promptEnhancementModelTitle/);
+  assert.doesNotMatch(card, /SettingsCard/);
   assert.match(card, /t\("settings\.promptEnhancementModel"\)/);
 
   // Same control as the default-model row: one anchored menu, one search field.
@@ -208,7 +225,6 @@ test("the enhancement model and reasoning live on their own Model-page card", as
   assert.match(card, /promptEnhancementModelUnavailable/);
   assert.match(card, /pickModel/);
 
-  // The rows use the shared settings row, not an ad-hoc layout.
   assert.match(card, /SettingsRow/);
 });
 
@@ -230,7 +246,7 @@ test("the reasoning row follows the selected model's real ladder", async () => {
   assert.doesNotMatch(card, /promptEnhancementThinkingFollow/);
 });
 
-test("the model-page copy exists in both reference locales", () => {
+test("the enhancement-model copy exists in both reference locales", () => {
   for (const source of [en, zh]) {
     for (const key of [
       "promptEnhancementModelTitle",

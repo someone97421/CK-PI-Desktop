@@ -781,3 +781,61 @@ pub(crate) fn migrate_v17_to_v18(conn: &Connection, path: &Path) -> Result<()> {
     })?;
     Ok(())
 }
+
+/// v19 widens the session thinking-level CHECK to include `omit` (ADR 0295).
+/// SQLite cannot ALTER a CHECK, so the sessions table is rebuilt in place.
+pub(crate) fn migrate_v18_to_v19_tx(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    tx.execute_batch(
+        "CREATE TABLE sessions_v19 (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL DEFAULT '',
+  project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  provider_id TEXT,
+  model_id    TEXT,
+  mode        TEXT NOT NULL DEFAULT 'agent',
+  thinking_level TEXT NOT NULL DEFAULT 'off'
+                CHECK (thinking_level IN ('off', 'minimal', 'low', 'medium',
+                                          'high', 'xhigh', 'max', 'omit')),
+  permission_mode TEXT NOT NULL DEFAULT 'inherit'
+                CHECK (permission_mode IN ('inherit', 'ask', 'accept-edits', 'auto')),
+  source      TEXT,
+  deleted_at  INTEGER,
+  pinned      INTEGER NOT NULL DEFAULT 0,
+  last_seq    INTEGER NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+INSERT INTO sessions_v19 (
+  id, title, project_id, provider_id, model_id, mode, thinking_level,
+  permission_mode, source, deleted_at, pinned, last_seq, created_at, updated_at
+)
+SELECT
+  id, title, project_id, provider_id, model_id, mode, thinking_level,
+  permission_mode, source, deleted_at, pinned, last_seq, created_at, updated_at
+FROM sessions;
+DROP TABLE sessions;
+ALTER TABLE sessions_v19 RENAME TO sessions;
+CREATE INDEX idx_sessions_updated ON sessions(updated_at DESC);
+CREATE INDEX idx_sessions_project ON sessions(project_id) WHERE project_id IS NOT NULL;
+CREATE INDEX idx_sessions_deleted ON sessions(deleted_at) WHERE deleted_at IS NOT NULL;",
+    )?;
+    tx.pragma_update(None, "user_version", 19i64)?;
+    Ok(())
+}
+
+pub(crate) fn migrate_v18_to_v19(conn: &Connection, path: &Path) -> Result<()> {
+    let backup = create_migration_backup(conn, path, 18)?;
+    conn.pragma_update(None, "foreign_keys", false)?;
+    let result = (|| {
+        let tx = conn.unchecked_transaction()?;
+        migrate_v18_to_v19_tx(&tx)?;
+        tx.commit().with_context(|| {
+            format!(
+                "commit schema v18 to v19 migration; backup {} remains",
+                backup.display()
+            )
+        })
+    })();
+    let _ = conn.pragma_update(None, "foreign_keys", true);
+    result
+}

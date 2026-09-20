@@ -120,7 +120,23 @@ const DEFAULT_READY_TIMEOUT_SEC = 120;
 const DEFAULT_INSTALL_TIMEOUT_MS = 900_000;
 
 function fail(message: string, errorCode: string, data?: Record<string, unknown>): Error {
-  return Object.assign(new Error(message), { errorCode, ...(data ?? {}) });
+  return Object.assign(new Error(message), { errorCode, ...(data ?? {}), data });
+}
+
+const REMOTE_STEP_MESSAGES: Record<string, string> = {
+  "missing-node": "the remote machine has no Node.js; pi-host needs Node.js 22 or newer",
+  "node-too-old": "the remote Node.js is too old; pi-host needs Node.js 22 or newer",
+  "download-failed": "the remote machine could not download the pi-host bundle from GitHub",
+  "checksum-mismatch": "the downloaded pi-host bundle did not match the published SHA-256",
+  "missing-tar": "the remote machine has no tar",
+  "install-failed": "the remote pi-host install.sh failed",
+  "ready-timeout": "the remote pi-host started but did not become ready in time",
+  "host-exited": "the remote pi-host process exited before it became ready",
+  "host-start-failed": "the remote pi-host process failed to start",
+};
+
+function remoteStepMessage(step: string): string {
+  return REMOTE_STEP_MESSAGES[step] ?? `the remote bootstrap failed at '${step}'`;
 }
 
 /**
@@ -307,18 +323,14 @@ export function createSshBootstrap(deps: SshBootstrapDeps): SshBootstrap {
             String((error as { stdout?: unknown }).stdout ?? ""),
           );
           if (!reported.failure) throw error;
-          throw fail(
-            `the remote bootstrap failed at '${reported.failure}'`,
-            ErrorCodes.HOST_BOOTSTRAP_FAILED,
-            {
-              step: reported.failure,
-              stderr: String((error as { stderr?: unknown }).stderr ?? "").slice(-2000),
-            },
-          );
+          throw fail(remoteStepMessage(reported.failure), ErrorCodes.HOST_BOOTSTRAP_FAILED, {
+            step: reported.failure,
+            stderr: String((error as { stderr?: unknown }).stderr ?? "").slice(-2000),
+          });
         }
         const parsed = parseBootstrapOutput(result.stdout);
         if (parsed.failure) {
-          throw fail(`the remote bootstrap failed at '${parsed.failure}'`, ErrorCodes.HOST_BOOTSTRAP_FAILED, {
+          throw fail(remoteStepMessage(parsed.failure), ErrorCodes.HOST_BOOTSTRAP_FAILED, {
             step: parsed.failure,
             stderr: result.stderr.slice(-2000),
           });
@@ -389,6 +401,16 @@ export function createSshBootstrap(deps: SshBootstrapDeps): SshBootstrap {
           ...(target.password !== undefined ? { sshSecret: target.password } : {}),
           steps,
         };
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        log("error", "ssh bootstrap failed", {
+          host: target.host,
+          message: err.message,
+          errorCode: (error as { errorCode?: string }).errorCode,
+          step: (error as { step?: string }).step,
+          stderr: String((error as { stderr?: string }).stderr ?? "").slice(-500),
+        });
+        throw error;
       } finally {
         // On success the caller adopts the forward, which is a child of this
         // transport — disposing here would tear down the tunnel it just got.

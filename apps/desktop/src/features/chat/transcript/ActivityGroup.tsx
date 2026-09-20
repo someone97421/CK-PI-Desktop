@@ -55,12 +55,14 @@ import { ToolRow } from "./ToolRow";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
 import { useAppStore } from "../../../stores/app-store";
 import { resolveThinkingDisplayMode } from "../../../lib/turn-process";
+import { HostedSearchRow } from "./HostedSearchRow";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 type ActivityItem = AssistantActivityItem;
 
 export function activityItemDetail(item: ActivityItem): string {
+  if (item.kind === "hostedSearch") return item.round.query ?? "";
   if (item.kind === "thinking") {
     // Latest thought line, so a collapsed header reads like a live ticker.
     const lines = thinkingText(item.message)
@@ -168,6 +170,9 @@ export function activityItemsEqual(
   }
   if (previous.kind === "tool" && next.kind === "tool") {
     return subagentRunsEqual(previous.delegate, next.delegate);
+  }
+  if (previous.kind === "hostedSearch" && next.kind === "hostedSearch") {
+    return previous.round === next.round;
   }
   return true;
 }
@@ -349,6 +354,13 @@ export const ActivityGroup = memo(function ActivityGroup({
           />
           <ReviewChangeCard message={item.message} />
         </Fragment>
+      ) : item.kind === "hostedSearch" ? (
+        <HostedSearchRow
+          key={`hosted-search-${item.message.id}-${item.round.id}`}
+          round={item.round}
+          streaming={isActive && item.message.status === "streaming"}
+          onUserInteraction={claimDisclosure}
+        />
       ) : (
         <ThinkingRow
           key={`thinking-${item.message.id}`}

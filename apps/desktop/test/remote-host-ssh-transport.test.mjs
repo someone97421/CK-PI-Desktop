@@ -264,6 +264,11 @@ test("a non-zero exit becomes a typed error carrying both streams", { timeout: T
       assert.equal(error.command, "bootstrap");
       assert.match(error.stderr, /STDERR-MARKER-connection reset by peer/);
       assert.match(error.stdout, /STDOUT-MARKER-the remote step failed/);
+      assert.match(
+        error.message,
+        /exit code 3: STDERR-MARKER-connection reset by peer/,
+        "the toast-facing message must carry ssh's last diagnostic",
+      );
       return true;
     },
   );

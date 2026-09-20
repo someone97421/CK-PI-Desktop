@@ -133,12 +133,13 @@ test("the workbench reuses the shared segmented control instead of a third copy"
 });
 
 test("the empty state dresses its own glyph, not the icon in its CTA button", () => {
-  // The empty state can carry a create button, and that button carries an icon.
-  // As a descendant selector this rule also turned that 14px glyph into a 34px
-  // faint chip with its own background, which hid the icon and stretched the
-  // button. Direct child only.
-  assert.match(styles, /\.agent-capability-empty > svg\s*\{/);
+  // Lucide icons set inline width/height. Padding the SVG itself crushed the
+  // stroke into a blank chip, and a descendant `svg` rule also ate the CTA
+  // button's icon. Chip the host Icon on a wrapper instead.
+  assert.match(layout, /agent-capability-empty-icon/);
+  assert.match(styles, /\.agent-capability-empty-icon\s*\{/);
   assert.doesNotMatch(styles, /\.agent-capability-empty svg\s*\{/);
+  assert.doesNotMatch(styles, /\.agent-capability-empty > svg\s*\{/);
   // The pages that pass a CTA into the empty state are the ones that regressed.
   for (const page of [mcp, subagents]) {
     assert.match(page, /action=\{addButton\}|action=\{[a-zA-Z]*[Bb]utton\}/);

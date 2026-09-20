@@ -51,7 +51,7 @@ const settingsSource = (
 const stylesSource = await loadStyles();
 
 test("composer exposes the runtime thinking level order and provider filtering", () => {
-  for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+  for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max", "omit"]) {
     assert.match(composerSource, new RegExp(`"${level}"`));
   }
   assert.match(composerSource, /supportedThinkingLevels/);

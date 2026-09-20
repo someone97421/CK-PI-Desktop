@@ -5,7 +5,7 @@ import type { ContextCompactionFallback, ContextCompactionMark, ContextCompactio
 import type { AgentStatus } from "./sessions.js";
 import type { MessageUsage, ToolTokenUsage, UiMessage } from "./messages.js";
 import type { PermissionDecision, Risk } from "./permissions.js";
-import type { ThinkingLevel } from "./models.js";
+import type { SessionThinkingLevel } from "./models.js";
 import type { RacpPermissionMode } from "../racp.js";
 
 export type AgentPromptRequest = {
@@ -92,7 +92,7 @@ export type PromptEnhancementRequest = {
   /** Renderer snapshot of the model currently shown in the Composer. */
   providerId?: string;
   modelId?: string;
-  thinkingLevel?: ThinkingLevel;
+  thinkingLevel?: SessionThinkingLevel;
 };
 
 export type PromptEnhancementResponse = {
@@ -105,7 +105,7 @@ export type SessionSummarizeTitleRequest = {
   assistantReply?: string;
   providerId?: string;
   modelId?: string;
-  thinkingLevel?: ThinkingLevel;
+  thinkingLevel?: SessionThinkingLevel;
 };
 
 export type SessionSummarizeTitleResponse = {

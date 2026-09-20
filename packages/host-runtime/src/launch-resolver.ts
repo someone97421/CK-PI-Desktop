@@ -12,7 +12,7 @@ import {
   type CommandShellCatalog,
   type ModelBinding,
   type Mode,
-  type ThinkingLevel,
+  type SessionThinkingLevel,
   type UserSkillRecord,
   type UserSubagentRecord,
 } from "@pi-desktop/shared";
@@ -54,7 +54,7 @@ export type LaunchOverrides = {
   turnId?: string;
   providerId?: string;
   modelId?: string;
-  thinkingLevel?: ThinkingLevel;
+  thinkingLevel?: SessionThinkingLevel;
 };
 
 /** What a turn needs to start: the provider identity and the sidecar payload. */
@@ -94,11 +94,12 @@ export type HeadlessLaunchResolverOptions = {
   catalog?: ModelCatalogPort;
 };
 
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const SESSION_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "omit"] as const;
 
-function normalizeThinkingLevel(value: unknown): ThinkingLevel {
-  return typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel)
-    ? (value as ThinkingLevel)
+function normalizeThinkingLevel(value: unknown): SessionThinkingLevel {
+  return typeof value === "string" &&
+    (SESSION_THINKING_LEVELS as readonly string[]).includes(value)
+    ? (value as SessionThinkingLevel)
     : "off";
 }
 

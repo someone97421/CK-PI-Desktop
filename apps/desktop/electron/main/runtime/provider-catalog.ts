@@ -1,6 +1,6 @@
 import {
   ErrorCodes as SharedErrorCodes,
-  THINKING_LEVELS,
+  SESSION_THINKING_LEVELS,
   defaultCommandShellForPlatform,
   isCommandShellId,
   isAppearanceSettings,
@@ -10,7 +10,7 @@ import {
   validateSpeechSettings,
   type CommandShellId,
   type ModelBinding,
-  type ThinkingLevel,
+  type SessionThinkingLevel,
 } from "@pi-desktop/shared";
 import {
   capabilitiesFromModelConfig,
@@ -54,7 +54,7 @@ export type RuntimeProvider = {
 export type RuntimeSession = {
   providerId?: string;
   modelId?: string;
-  thinkingLevel?: ThinkingLevel;
+  thinkingLevel?: SessionThinkingLevel;
 };
 
 export type SessionCapabilityDefaults = {
@@ -167,10 +167,10 @@ export function createProviderCatalogRuntime({
     };
   };
 
-  const normalizeThinkingLevel = (value: unknown): ThinkingLevel =>
+  const normalizeThinkingLevel = (value: unknown): SessionThinkingLevel =>
     typeof value === "string" &&
-    (THINKING_LEVELS as readonly string[]).includes(value)
-      ? (value as ThinkingLevel)
+    (SESSION_THINKING_LEVELS as readonly string[]).includes(value)
+      ? (value as SessionThinkingLevel)
       : "off";
 
   const normalizeSettings = <T>(

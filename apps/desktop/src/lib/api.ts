@@ -84,6 +84,7 @@ import type {
   ScheduledTask,
   ProviderCreateInput,
   ProviderPublic,
+  ProviderReorderInput,
   ProviderUpdateInput,
   Result,
   SessionDetail,
@@ -92,6 +93,7 @@ import type {
   SessionSearchContextRequest,
   SessionSummary,
   SessionCollaborationSummary,
+  TraySessionPreferences,
   ToolPermissionResolution,
   UserSkillInput,
   UserSkillRecord,
@@ -582,7 +584,11 @@ export const api = {
       config,
     ).then((result) => ({ ...result, session: normalizeSession(result.session) })),
   scanImportSessions: () =>
-    invoke<{ sessions: ImportCandidate[] }>(IPC.invoke.sessionImportScan),
+    invoke<{
+      sessions: ImportCandidate[];
+      truncated?: Partial<Record<ImportSource, number>>;
+    }>(IPC.invoke.sessionImportScan),
+
   runImportSessions: (items: ImportCandidate[]) =>
     invoke<ImportRunResult>(IPC.invoke.sessionImportRun, items),
   scanImportModelConfigs: () =>
@@ -604,6 +610,8 @@ export const api = {
   getFontMetadata: (family: string) => invoke<FontMetadata>(IPC.invoke.fontMetadata, family),
   listCommandShells: () =>
     invoke<CommandShellCatalog>(IPC.invoke.commandShellList),
+  reorderProviders: (input: ProviderReorderInput) =>
+    invoke<{ ok: boolean }>(IPC.invoke.providersReorder, input),
   listProviders: () =>
     invoke<{ providers: ProviderPublic[] }>(IPC.invoke.providersList),
   createProvider: (input: ProviderCreateInput) =>
@@ -1325,6 +1333,15 @@ export const api = {
     ),
   menuRendererReady: () =>
     invoke<{ ready: boolean }>(IPC.invoke.menuRendererReady),
+  setTraySessionPreferences: (preferences: TraySessionPreferences) =>
+    invoke<{ ok: boolean }>(IPC.invoke.traySetSessionPreferences, preferences),
+  onTraySessionActivated: (listener: (sessionId: string | null) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.traySessionActivated, (payload) => {
+      const sessionId = (payload as { sessionId?: unknown })?.sessionId;
+      if (sessionId === null || (typeof sessionId === "string" && sessionId)) listener(sessionId);
+    });
+  },
   nativeMenuAction: (action: NativeMenuAction) =>
     invoke<{ maximized: boolean; fullScreen: boolean }>(
       IPC.invoke.nativeMenuAction,

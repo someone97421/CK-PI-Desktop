@@ -42,6 +42,11 @@ export type SettingsNavEntry = {
   group: SettingsNavGroupId;
   /** i18n keys of the rows inside the tab; search matches their translations. */
   keywordKeys: string[];
+  /**
+   * Destination only exists while `AppSettings.developerMode` is on; the
+   * rail, the page, and settings search drop it together.
+   */
+  developerOnly?: true;
 };
 
 export const SETTINGS_NAV: SettingsNavEntry[] = [
@@ -104,6 +109,10 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.promptEnhancementCustomTemplate",
       "settings.promptEnhancementEdit",
       "settings.promptEnhancementUserTemplate",
+      "settings.promptEnhancementModelTitle",
+      "settings.promptEnhancementModel",
+      "settings.promptEnhancementModelFollow",
+      "settings.promptEnhancementThinking",
       "settings.largePasteThreshold",
     ],
   },
@@ -136,10 +145,6 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     titleKey: "settings.configuration",
     group: "agent",
     keywordKeys: [
-      "settings.promptEnhancementModelTitle",
-      "settings.promptEnhancementModel",
-      "settings.promptEnhancementModelFollow",
-      "settings.promptEnhancementThinking",
       "settings.providers",
       "settings.models",
       "settings.defaultModel",
@@ -249,16 +254,18 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     group: "system",
     keywordKeys: [
       "settings.remoteHosts.title",
-      "settings.remoteHosts.pairTitle",
+      "settings.remoteHosts.addTitle",
+      "settings.remoteHosts.addSsh",
+      "settings.remoteHosts.addPair",
       "settings.remoteHosts.pair",
       "settings.remoteHosts.fieldUrl",
       "settings.remoteHosts.fieldPairingToken",
-      "settings.remoteHosts.sshTitle",
       "settings.remoteHosts.sshHost",
       "settings.remoteHosts.sshAuthMode",
       "settings.remoteHosts.sshPassword",
       "settings.remoteHosts.statusOnline",
       "settings.remoteHosts.statusOffline",
+      "settings.remoteHosts.experimental",
     ],
   },
   {
@@ -278,6 +285,24 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
   },
 ];
 
+/** Destinations the current mode offers, in rail order. */
+export function visibleSettingsNav(developerMode: boolean): SettingsNavEntry[] {
+  return SETTINGS_NAV.filter((entry) => entry.developerOnly !== true || developerMode);
+}
+
+/**
+ * True when `tab` is a destination the current mode hides, so a caller holding
+ * a stale selection can fall back instead of rendering a page the rail no
+ * longer offers.
+ */
+export function isSettingsDestinationHidden(
+  tab: SettingsTabId,
+  developerMode: boolean,
+): boolean {
+  const entry = SETTINGS_NAV.find((candidate) => candidate.id === tab);
+  return entry?.developerOnly === true && !developerMode;
+}
+
 export type SettingsSearchHit = {
   tab: SettingsTabId;
   tabLabelKey: string;
@@ -285,15 +310,20 @@ export type SettingsSearchHit = {
   rowKey: string | null;
 };
 
+export type SettingsSearchOptions = {
+  limit?: number;
+  developerMode?: boolean;
+};
+
 export function searchSettings(
   query: string,
   t: (key: string) => string,
-  limit = 8,
+  { limit = 8, developerMode = false }: SettingsSearchOptions = {},
 ): SettingsSearchHit[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const hits: SettingsSearchHit[] = [];
-  for (const entry of SETTINGS_NAV) {
+  for (const entry of visibleSettingsNav(developerMode)) {
     if (t(entry.labelKey).toLowerCase().includes(q)) {
       hits.push({ tab: entry.id, tabLabelKey: entry.labelKey, rowKey: null });
     }

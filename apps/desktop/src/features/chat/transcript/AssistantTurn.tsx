@@ -3,6 +3,7 @@ import {
   useContext,
   useMemo,
   useRef,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type {
@@ -25,7 +26,11 @@ import {
   collectDelegationStatuses,
   collectDelegationTimings,
 } from "../../../lib/subagent-topology";
-import { projectTurnProcess } from "../../../lib/turn-process";
+import {
+  projectTurnProcess,
+  resolveThinkingDisplayMode,
+  shouldGroupTurnProcess,
+} from "../../../lib/turn-process";
 import { useAppStore } from "../../../stores/app-store";
 import { TranscriptReadOnlyContext } from "./context";
 import { selectionMarkdownWithinRow } from "../../../lib/selection-quote";
@@ -43,6 +48,11 @@ import { activityItemsEqual, ActivityGroup } from "./ActivityGroup";
 import { MessageRow } from "./MessageRow";
 import { TaskProcessDrawer } from "./TaskProcessDrawer";
 import { TaskReviewCard } from "./TaskReviewCard";
+import { assistantTurnMenuItems } from "./menu-items";
+import {
+  useChatTextActions,
+  useTranscriptMenu,
+} from "./TranscriptMenu";
 import { TurnProcess } from "./TurnProcess";
 
 type AssistantTurnProps = {
@@ -226,6 +236,8 @@ export const AssistantTurn = memo(function AssistantTurn({
   runtimeActivity,
 }: AssistantTurnProps) {
   const { t } = useTranslation();
+  const openTranscriptMenu = useTranscriptMenu();
+  const { copyText, selectText } = useChatTextActions();
   const retryAssistantMessage = useAppStore((s) => s.retryAssistantMessage);
   const forkAssistantMessage = useAppStore((s) => s.forkAssistantMessage);
   const annotateLabel = t("chat.annotate");
@@ -273,6 +285,34 @@ export const AssistantTurn = memo(function AssistantTurn({
     : !isActive && !hasError && Boolean(content) && Boolean(actionMessage);
   const streaming = !settledTask &&
     isActive && messages.some((message) => message.status === "streaming");
+  /*
+    The turn owns the menu for its whole subtree, the answer rows it renders
+    included: Regenerate and Branch act on the turn's answer message, so a menu
+    owned by a single message part could not offer them honestly.
+  */
+  const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    openTranscriptMenu(event, {
+      label: t("chat.messageMenu"),
+      items: assistantTurnMenuItems({
+        t,
+        answer: content,
+        selectTarget:
+          [
+            ...event.currentTarget.querySelectorAll<HTMLElement>(
+              ".message-bubble",
+            ),
+          ].at(-1) ?? null,
+        complete: complete && Boolean(actionMessage) && !transcriptReadOnly && !sessionRunning,
+        actions: { copyText, selectText },
+        onRegenerate: () => {
+          if (actionMessage) void retryAssistantMessage(actionMessage.id);
+        },
+        onBranch: () => {
+          if (actionMessage) void forkAssistantMessage(actionMessage.id);
+        },
+      }),
+    });
+  };
 
   // Collect delegation statuses across ALL activity parts of this turn so that
   // a TaskWait in one part can inform the Task cards in a different part.
@@ -307,6 +347,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   statusesRef.current = turnDelegationStatuses;
   timingsRef.current = turnDelegationTimings;
   const isPlainHistory = !task;
+  const groupProcess = useAppStore((state) =>
+    shouldGroupTurnProcess(
+      resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode),
+    ),
+  );
   const turnProcessActive = isPlainHistory && isActive;
   const renderPart = (part: AssistantTurnEntry["parts"][number], index: number) => {
     if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
@@ -349,6 +394,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       className={`message-row assistant assistant-turn${streaming ? " streaming" : ""}`}
       data-minimap-id={entry.anchorId}
       data-row-role="assistant"
+      onContextMenu={onContextMenu}
       role="article"
       aria-label={t("chat.assistantMessage")}
     >
@@ -360,7 +406,7 @@ export const AssistantTurn = memo(function AssistantTurn({
             </TaskProcessDrawer>
             {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}
           </>
-        ) : isPlainHistory ? (
+        ) : groupProcess ? (
           <>
             <TurnProcess processParts={process} turnParts={entry.parts} isActive={turnProcessActive}>
               {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}

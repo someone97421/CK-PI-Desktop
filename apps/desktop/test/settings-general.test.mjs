@@ -98,6 +98,8 @@ test("Basics and AI tabs expose their respective app and AI controls", () => {
   assert.match(aiSource, /enterToSend: !settings\.enterToSend/);
   assert.match(aiSource, /LargePasteThresholdRow/);
   assert.match(aiSource, /ContextUsageDisplayRow/);
+  assert.match(aiSource, /PromptEnhancementCard/);
+  assert.doesNotMatch(aiSource, /EnhancementModelCard/);
   assert.match(
     settingsPageSource,
     /saveSettings\(\{ contextUsageDisplay: value \}\)/,
@@ -209,6 +211,7 @@ test("model configuration keeps model defaults; AI owns app behavior defaults", 
   assert.match(providersSource, /settings\.defaultModel/);
   assert.doesNotMatch(providersSource, /enterToSend/);
   assert.doesNotMatch(providersSource, /settings\.modeAgent/);
+  assert.doesNotMatch(providersSource, /EnhancementModelCard/);
 });
 
 test("default model selector shows every configured model under its provider", () => {
@@ -343,6 +346,7 @@ test("settings nav keeps a flat searchable index with titled visual groups", () 
   assert.doesNotMatch(generalEntry, /settings\.defaultsTitle/);
   assert.match(aiEntry, /settings\.defaultsTitle/);
   assert.match(aiEntry, /settings\.commandShell/);
+  assert.match(aiEntry, /settings\.promptEnhancementModelTitle/);
   assert.match(settingsSearchSource, /keywordKeys/);
   assert.match(settingsSearchSource, /settings\.projectArchive/);
   assert.doesNotMatch(stylesSource, /\.token-usage-page/);

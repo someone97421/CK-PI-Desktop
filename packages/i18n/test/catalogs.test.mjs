@@ -136,7 +136,7 @@ test("import, project, and temporary-session copy is catalog-backed", () => {
     "settings.importGroupByPath",
     "settings.importNoProject",
     "settings.importSourceClaudeCode",
-    "project.expandDetails",
+    "project.selectProject",
     "project.openActions",
     "project.sessions",
   ]) {

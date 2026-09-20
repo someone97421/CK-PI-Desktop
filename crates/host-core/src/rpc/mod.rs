@@ -1889,6 +1889,21 @@ async fn handle_request(
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             Ok(json!({ "providers": list }))
         }
+        "providers.reorder" => {
+            let input: providers::ProviderReorderInput = serde_json::from_value(params)
+                .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
+            let st = state.lock().await;
+            let moved = providers::reorder_providers(&st.db, &st.secrets, input)
+                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            if !moved {
+                return Err(rpc_err(
+                    1002,
+                    "provider or reorder target not found",
+                    "INVALID_PARAMS",
+                ));
+            }
+            Ok(json!({ "ok": true }))
+        }
         "providers.create" => {
             let input: ProviderCreateInput = serde_json::from_value(params)
                 .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;

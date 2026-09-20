@@ -7,8 +7,10 @@ import {
   isThemeColorScheme,
   NATIVE_MENU_ACTIONS,
   WINDOW_CONTROL_ACTIONS,
+  parseTraySessionPreferences,
   type NativeMenuAction,
   type WindowControlAction,
+  type TraySessionPreferences,
 } from "@pi-desktop/shared";
 import {
   emptyWorkPanelReservationState,
@@ -30,6 +32,7 @@ export type WindowIpcDependencies = {
   respondClosePrompt: (id: string, choice: "tray" | "quit" | null) => boolean;
   markMenuRendererReady: (window: BrowserWindow) => boolean;
   executeNativeMenuAction: (action: NativeMenuAction) => unknown;
+  setTraySessionPreferences: (preferences: TraySessionPreferences) => Promise<void>;
 };
 
 /** Register renderer-drawn window chrome and work-panel geometry channels. */
@@ -45,6 +48,7 @@ export function registerWindowIpc({
   respondClosePrompt,
   markMenuRendererReady,
   executeNativeMenuAction,
+  setTraySessionPreferences,
 }: WindowIpcDependencies): void {
   const { handle, handleWithEvent } = registrar;
   handleWithEvent(IPC.invoke.closePromptRespond, async (event, input: unknown) => {
@@ -54,6 +58,18 @@ export function registerWindowIpc({
       throw new Error("invalid close prompt response");
     }
     return { accepted: respondClosePrompt(id, choice) };
+  });
+
+  handleWithEvent(IPC.invoke.traySetSessionPreferences, async (event, input: unknown) => {
+    registrar.assertMainWindowSender(event);
+    const preferences = parseTraySessionPreferences(input);
+    if (!preferences) {
+      throw Object.assign(new Error("invalid tray session preferences"), {
+        errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
+    await setTraySessionPreferences(preferences);
+    return { ok: true };
   });
 
   handle(IPC.invoke.windowSetWorkPanelReservation, async (input: unknown = {}) => {

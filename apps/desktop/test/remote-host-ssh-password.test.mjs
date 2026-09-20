@@ -114,6 +114,7 @@ test("sshCommonArgs keeps a key-authenticated target on BatchMode", () => {
   assert.notEqual(index, -1, "the default path must still fail instead of prompting");
   assert.equal(args.includes("BatchMode=no"), false);
   assert.equal(args.includes("NumberOfPasswordPrompts=1"), false);
+  assert.equal(args.includes("PubkeyAuthentication=no"), false);
   // No password means no askpass plumbing at all.
   assert.equal(args.includes("-o"), true);
   assert.equal(args.some((arg) => arg.includes("NumberOfPasswordPrompts")), false);
@@ -128,6 +129,9 @@ test("sshCommonArgs relaxes BatchMode only for a password target", () => {
   const index = args.indexOf("NumberOfPasswordPrompts=1");
   assert.notEqual(index, -1);
   assert.equal(args[index - 1], "-o");
+  // Password mode replaces a key: default identities must not consume the
+  // single askpass answer as a passphrase.
+  assert.equal(args.includes("PubkeyAuthentication=no"), true);
   // The secret is nowhere in the argv, in any form.
   for (const arg of args) {
     assert.equal(arg.includes(PASSWORD), false, "the password must never be an ssh argument");

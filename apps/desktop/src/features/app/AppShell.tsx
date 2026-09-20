@@ -305,7 +305,8 @@ export function AppShell() {
     >
       <div className="app-scenic-backdrop" aria-hidden />
       {shell}
-      {ready && <WindowControls />}
+      {/* Outside pane stacking; skip splash so controls cannot cover boot chrome. */}
+      {ready && !showSplash && <WindowControls />}
       <ProjectCreateDialog />
       <ClosePromptDialog />
       {splash}

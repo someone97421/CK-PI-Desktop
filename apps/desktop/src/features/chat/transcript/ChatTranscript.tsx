@@ -1,4 +1,4 @@
-import { memo, useContext } from "react";
+import { memo, useContext, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlanningState, UiMessage } from "@pi-desktop/shared";
 import { proposalKindForMode } from "@pi-desktop/shared";
@@ -25,25 +25,15 @@ import type { TranscriptSearchTarget } from "../../../lib/transcript-reading";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
 import { DisclosureAnchorContext } from "../../../lib/disclosure-anchor-context";
 import { isTurnThinking } from "../../../lib/turn-process";
+import { conversationPlainText } from "../../../lib/chat-transcript-text";
+import {
+  TranscriptMenuProvider,
+  useChatTextActions,
+  useTranscriptMenu,
+} from "./TranscriptMenu";
+import { conversationMenuItems } from "./menu-items";
 
-export const ChatTranscript = memo(function ChatTranscript({
-  sessionId,
-  messages,
-  hasMoreBefore = false,
-  onLoadOlder,
-  isRunning,
-  pendingPermission,
-  queuedPermissions = 0,
-  askPending = false,
-  planningState,
-  paneVisible = true,
-  searchTarget = null,
-  readingWindow = false,
-  hasMoreAfter = false,
-  onLoadNewer,
-  onReturnToLatest,
-  navigationLoading = false,
-}: {
+type ChatTranscriptProps = {
   sessionId: string | undefined;
   messages: UiMessage[];
   hasMoreBefore?: boolean;
@@ -66,8 +56,44 @@ export const ChatTranscript = memo(function ChatTranscript({
   onLoadNewer?: () => Promise<void>;
   onReturnToLatest?: () => void;
   navigationLoading?: boolean;
-}) {
+};
+
+/**
+ * The transcript facade only mounts the right-click menu provider: the
+ * scroller's own background menu has to consume that context, and a component
+ * cannot read a provider it renders itself.
+ */
+export const ChatTranscript = memo(function ChatTranscript(
+  props: ChatTranscriptProps,
+) {
+  return (
+    <TranscriptMenuProvider>
+      <TranscriptBody {...props} />
+    </TranscriptMenuProvider>
+  );
+});
+
+function TranscriptBody({
+  sessionId,
+  messages,
+  hasMoreBefore = false,
+  onLoadOlder,
+  isRunning,
+  pendingPermission,
+  queuedPermissions = 0,
+  askPending = false,
+  planningState,
+  paneVisible = true,
+  searchTarget = null,
+  readingWindow = false,
+  hasMoreAfter = false,
+  onLoadNewer,
+  onReturnToLatest,
+  navigationLoading = false,
+}: ChatTranscriptProps) {
   const { t } = useTranslation();
+  const openTranscriptMenu = useTranscriptMenu();
+  const { copyText, selectText } = useChatTextActions();
   const transcriptRunning = isRunning && !readingWindow;
   const transcriptReadOnly = useContext(TranscriptReadOnlyContext);
   const sessionTitle = useActiveSessionTitle();
@@ -184,6 +210,32 @@ export const ChatTranscript = memo(function ChatTranscript({
   // lane at all, so a finished transcript keeps its exact layout.
   const runtimeStatusLane = transcriptRunning;
 
+  /*
+    The background menu answers the right-clicks no row claimed: the space below
+    the last turn, a system row, a permission or outcome card. It reads the
+    conversation rather than one message, so it is the only surface that can
+    copy the whole thread.
+  */
+  const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
+    openTranscriptMenu(event, {
+      label: t("chat.conversationMenu"),
+      items: conversationMenuItems({
+        t,
+        conversation: conversationPlainText(messages, {
+          user: t("chat.speakerYou"),
+          assistant: t("chat.speakerAssistant"),
+        }),
+        scrollRef,
+        contentRef,
+        actions: { copyText, selectText },
+        onReturnToLatest: () => {
+          onReturnToLatest?.();
+          jumpToLatest();
+        },
+      }),
+    });
+  };
+
   return (
     <TranscriptSearchContext.Provider value={searchTarget}>
     <DisclosureAnchorContext.Provider value={disclosureAnchorNotifier}>
@@ -219,6 +271,7 @@ export const ChatTranscript = memo(function ChatTranscript({
         className="thread-scroll"
         ref={scrollRef}
         data-scroll-owner="transcript"
+        onContextMenu={onContextMenu}
         onScroll={handleScroll}
         role="log"
         aria-live="polite"
@@ -336,4 +389,4 @@ export const ChatTranscript = memo(function ChatTranscript({
     </DisclosureAnchorContext.Provider>
     </TranscriptSearchContext.Provider>
   );
-});
+}

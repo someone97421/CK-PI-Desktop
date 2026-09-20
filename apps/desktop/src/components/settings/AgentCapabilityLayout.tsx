@@ -538,7 +538,9 @@ export function CapabilityEmpty({
 }) {
   return (
     <div className="agent-capability-empty" role="status">
-      {icon ?? <IconFolderOpen size={18} aria-hidden="true" />}
+      <span className="agent-capability-empty-icon" aria-hidden="true">
+        {icon ?? <IconFolderOpen size={18} />}
+      </span>
       <span className="agent-capability-empty-message">{message}</span>
       {hint ? <span className="agent-capability-empty-hint">{hint}</span> : null}
       {action ? <div className="agent-capability-empty-action">{action}</div> : null}

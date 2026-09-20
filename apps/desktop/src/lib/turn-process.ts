@@ -55,6 +55,20 @@ export function hasFailedProcessTool(parts: readonly AssistantTurnPart[]): boole
   );
 }
 
+/** Compact groups a turn into one process disclosure; detailed does not. */
+export function shouldGroupTurnProcess(mode: ThinkingDisplayMode): boolean {
+  return mode === "compact";
+}
+
+/** Compact process stays collapsed unless an active tool failed. */
+export function shouldAutoOpenTurnProcess(
+  mode: ThinkingDisplayMode,
+  isActive: boolean,
+  hasToolFailure: boolean,
+): boolean {
+  return mode === "compact" && isActive && hasToolFailure;
+}
+
 /**
  * 工具前的文字属于过程。任务完成后，保留以最终回复结尾的连续正文，
  * 避免子任务报告触发的补充回复把完整总结收进抽屉；思考不截断正文，

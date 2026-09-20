@@ -5,7 +5,7 @@ import {
   type Mode,
   type PermissionMode,
   type ShortcutPlatform,
-  type ThinkingLevel,
+  type SessionThinkingLevel,
 } from "@pi-desktop/shared";
 import type { AppState } from "../../../stores/app-store";
 import { AnchoredMenu } from "../../../components/settings/AnchoredMenu";
@@ -38,7 +38,7 @@ export type ComposerToolbarProps = {
   planningLive: boolean;
   providerId?: string;
   modelId?: string;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel: SessionThinkingLevel;
   composerPermissionMode: Exclude<PermissionMode, "inherit">;
   permissionOpen: boolean;
   setPermissionOpen: Dispatch<SetStateAction<boolean>>;

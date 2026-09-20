@@ -27,9 +27,9 @@ import { IconCheck, IconChevronDown, IconSearch } from "../icons";
  * Searchable font row shared by the appearance scopes. The parent maps the
  * selected stack into its mode/scope and supplies that scope's default label;
  * an empty stack selects the scope's default. Installed font enumeration is
- * cached across all six rows. The closed trigger and the search haystack fall
- * back to `settings.fontSystemDefault` so the English catalog label in
- * `fonts.ts` never reaches the UI.
+ * cached across all six rows. The app bundles no fonts of its own. The closed
+ * trigger and search haystack fall back to `settings.fontSystemDefault` so the
+ * English catalog label in `fonts.ts` never reaches the UI.
  */
 export function FontFamilyRow({
   settings,
@@ -186,7 +186,6 @@ export function FontFamilyRow({
   }, [defaultLabel, options, query]);
 
   const groupLabel = useCallback((group: string) => {
-    if (group === "bundled") return t("settings.fontBundled");
     if (group === "system") return t("settings.fontSystem");
     if (group === "custom") return t("settings.fontCustom");
     return t("settings.fontSystemDefault");
@@ -427,11 +426,6 @@ export function FontFamilyRow({
                                 ? defaultLabel
                                 : row.option.label}
                             </span>
-                            {row.option.license ? (
-                              <span className="settings-font-item-license">
-                                {row.option.license}
-                              </span>
-                            ) : null}
                             {row.option.value === selectedValue ? (
                               <IconCheck
                                 size={14}

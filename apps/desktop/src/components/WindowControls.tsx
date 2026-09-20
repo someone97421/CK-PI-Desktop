@@ -7,14 +7,10 @@ import { TooltipButton } from "./ui";
  * Renderer-drawn window controls for Windows/Linux (D-frameless chrome).
  *
  * macOS keeps native inset traffic lights; other platforms run a frameless
- * window. Controls sit at the shell level so work-panel stacking contexts
- * cannot cover them; each button has a square hit target in the titlebar.
+ * window. Controls sit at the shell level outside conversation and work-panel
+ * stacking contexts, with square hit targets in the 46px titlebar band.
  */
-export function WindowControls({
-  contained = false,
-}: {
-  contained?: boolean;
-} = {}) {
+export function WindowControls() {
   const { t } = useTranslation();
   const platform = window.piDesktop?.platform ?? "darwin";
   const [maximized, setMaximized] = useState(false);
@@ -38,9 +34,7 @@ export function WindowControls({
 
   return (
     <div
-      className={`window-controls no-drag${
-        contained ? " window-controls-in-pane" : ""
-      }`}
+      className="window-controls no-drag"
     >
       <TooltipButton
         type="button"

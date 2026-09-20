@@ -82,6 +82,7 @@ import type {
   SubagentDefinition,
   SubagentGuideReceipt,
   SubagentRunStatus,
+  SessionThinkingLevel,
   SubagentThinkingLevel,
   ThinkingLevel,
   ToolTokenUsage,
@@ -95,6 +96,7 @@ import {
   DEFAULT_SUBAGENT_PERMISSION,
   formatAskToolOutput,
   formatSessionMessage,
+  hostedSearchFromMessage,
   isCommandShellOption,
   isToolsOutputParams,
   isReportIntervalSteps,
@@ -163,7 +165,7 @@ import {
   composeModeSystemPrompt,
   DEFAULT_RUNTIME_SYSTEM_PROMPT,
 } from "./mode-prompts.js";
-import { clampThinkingLevel } from "./thinking-level.js";
+import { agentThinkingLevel, clampThinkingLevel, omitThinkingModel } from "./thinking-level.js";
 import {
   alignRetainedReasoningIdentity,
   harvestRetainedReasoning,
@@ -188,6 +190,7 @@ import {
   computeContextBudget,
   createFallbackCheckpointPlan,
   generateCompactionSummary,
+  compactionThinkingLevel,
   retainedUserMessageBudget,
   selectRetainedUserMessages,
   shapeCheckpointPreparation,
@@ -809,7 +812,7 @@ export type AgentRuntimeOptions = {
   /** Durable host turn ID for the current prompt, used by plan identity. */
   turnId?: string;
   provider: RuntimeProviderConfig;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel: SessionThinkingLevel;
   systemPrompt?: string;
   /** Session-bound workspace root used for path-scoped instruction requests. */
   projectPath?: string;
@@ -868,7 +871,7 @@ export type AgentRuntimeOptions = {
 export type RuntimeMatchConfig = {
   mode: Mode;
   provider: RuntimeProviderConfig;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel: SessionThinkingLevel;
   pluginTools?: PluginToolDef[];
   pluginSkills?: PluginSkillDef[];
   trustedExtensions?: TrustedExtensionSpec[];
@@ -1360,7 +1363,7 @@ export class DesktopAgentRuntime {
   readonly sessionId: string;
   private mode: Mode;
   private provider: RuntimeProviderConfig;
-  private thinkingLevel: ThinkingLevel;
+  private thinkingLevel: SessionThinkingLevel;
   private host: RuntimeHost;
   private onEvent: (envelope: AgentEventEnvelope) => void;
   private streamSink: StreamCoalescer;
@@ -1734,7 +1737,10 @@ Delegation rules:
           m,
           context,
           hookedOptions,
-          (retryOptions) => this.models.streamSimple(m, context, retryOptions),
+          (retryOptions) =>
+            this.thinkingLevel === "omit"
+              ? this.models.stream(omitThinkingModel(m), context, retryOptions)
+              : this.models.streamSimple(m, context, retryOptions),
           {
             claim: (error, phase) => this.claimProviderRetry(error, phase),
             headers: () => this.providerRetryHeaders,
@@ -1767,7 +1773,7 @@ Delegation rules:
         systemPrompt: this.composeSystemPrompt(),
         model,
         tools,
-        thinkingLevel: this.thinkingLevel,
+        thinkingLevel: agentThinkingLevel(this.thinkingLevel),
         messages: this.liveSessionContext().messages,
       },
       // Plan transitions must be the only tool call in an assistant batch.
@@ -2216,7 +2222,7 @@ Delegation rules:
     });
     this.thinkingLevel = clampThinkingLevel(this.provider, this.thinkingLevel);
     this.agent.state.model = model;
-    this.agent.state.thinkingLevel = this.thinkingLevel;
+    this.agent.state.thinkingLevel = agentThinkingLevel(this.thinkingLevel);
     // The session model changed, so a launched candidate has to be proven
     // against the one actually in use — an extension agent's catalog-free
     // model cannot be verified, so the summary follows it.
@@ -2291,9 +2297,9 @@ Delegation rules:
       getModel: () => runtime.model,
       setModel: (model) => runtime.setExtensionModel(model),
       modelRegistry: runtime.extensionModelRegistry(),
-      getThinkingLevel: () => runtime.thinkingLevel,
+      getThinkingLevel: () => agentThinkingLevel(runtime.thinkingLevel),
       setThinkingLevel: (level) => {
-        runtime.thinkingLevel = clampThinkingLevel(runtime.provider, level as ThinkingLevel);
+        runtime.thinkingLevel = clampThinkingLevel(runtime.provider, level as SessionThinkingLevel);
       },
       isIdle: () => !runtime.agent.state.isStreaming,
       abort: () => {
@@ -2411,13 +2417,13 @@ Delegation rules:
   }
 
   /* Rebuild pi-ai messages from the persisted transcript, including tool
-   * call/result pairs — tool rows persist toolCallId/toolName/toolArgs and
-   * the result (including deferred-tool activation markers), which is
-   * everything the model context needs. Losing them
-   * (the pre-D120 behavior) collapsed a reseeded session to bare chat text:
-   * the model forgot every file it had read and, seeing its own history
-   * "answer" without visible tool use, stopped calling tools altogether.
-   * Failed assistant turns stay transcript-only. */
+   * call/result pairs and hosted-search replay blocks. Tool rows persist
+   * toolCallId/toolName/toolArgs and the result (including deferred-tool
+   * activation markers). Hosted search persists the adapter's raw content
+   * parts on `hostedSearch.replay` so Anthropic/Responses can ground later
+   * turns after a restart. Losing either (the pre-D120 tool behavior)
+   * collapsed a reseeded session to bare chat text. Failed assistant turns
+   * stay transcript-only. */
   private historyToEntries(history: UiMessage[]): MessageEntry[] {
     const api = apiBindingForProviderModel(this.provider).api;
     const deepSeekCompletionsReplay =
@@ -2486,6 +2492,15 @@ Delegation rules:
               ? { thinkingSignature: "reasoning_content" as const }
               : {}),
           });
+        }
+        const replay = m.hostedSearch?.replay;
+        if (Array.isArray(replay)) {
+          for (const block of replay) {
+            if (!block || typeof block !== "object" || block.type !== "hostedSearch") {
+              continue;
+            }
+            content.push(block as unknown as AssistantMessage["content"][number]);
+          }
         }
         if (m.content?.trim()) {
           content.push({ type: "text" as const, text: m.content });
@@ -6665,13 +6680,14 @@ Delegation rules:
     preparation: ShapedPreparation,
     signal: AbortSignal,
   ): ReturnType<typeof generateCompactionSummary> {
+    const model = this.compactionModel ?? this.model;
     return generateCompactionSummary({
       preparation,
       provider: this.compactionProvider ?? this.provider,
-      model: this.compactionModel ?? this.model,
+      model: this.thinkingLevel === "omit" ? omitThinkingModel(model) : model,
       models: this.compactionModels ?? this.models,
       sessionId: this.sessionId,
-      thinkingLevel: clampThinkingLevel(
+      thinkingLevel: compactionThinkingLevel(
         this.compactionProvider ?? this.provider,
         this.thinkingLevel,
       ),
@@ -6915,6 +6931,33 @@ Delegation rules:
     }
   }
 
+  /**
+   * Fold pi-ai hostedSearch content blocks and message citations into the
+   * current assistant bubble as `UiMessage.hostedSearch`, emitting a
+   * full-frame message_update when the normalized state actually changed.
+   * Search state transitions are low frequency, so a full frame costs less
+   * than teaching every delta path about the field.
+   */
+  private applyHostedSearch(message: unknown): void {
+    if (!this.currentAssistant) return;
+    const record = message as {
+      content?: unknown;
+      hostedSearchCitations?: unknown;
+    };
+    const next = hostedSearchFromMessage({
+      content: record?.content,
+      citations: record?.hostedSearchCitations,
+    });
+    if (!next) return;
+    const previous = this.currentAssistant.hostedSearch;
+    if (previous && JSON.stringify(previous) === JSON.stringify(next)) return;
+    this.currentAssistant = {
+      ...this.currentAssistant,
+      hostedSearch: next,
+    };
+    this.emit({ type: "message_update", message: this.currentAssistant });
+  }
+
   private async handleAgentEvent(event: AgentEvent) {
     this.forwardAgentEventToExtensions(event);
     switch (event.type) {
@@ -6980,6 +7023,7 @@ Delegation rules:
           } else {
             this.emit({ type: "message_start", message: this.currentAssistant });
           }
+          this.applyHostedSearch(event.message);
         }
         // User messages are echoed and persisted by the desktop main process
         // (agentPrompt handler); re-emitting them here would duplicate the
@@ -6988,6 +7032,7 @@ Delegation rules:
       }
       case "message_update": {
         if (this.currentAssistant && event.message.role === "assistant") {
+          this.applyHostedSearch(event.message);
           const content = assistantContent((event.message as any).content);
           const previousText = this.currentAssistant.content;
           const previousThinking = this.currentAssistant.thinking ?? "";
@@ -7110,6 +7155,21 @@ Delegation rules:
             );
           }
           const usage = usageFromPi((event.message as any).usage as Usage | undefined);
+          const hostedSearch = hostedSearchFromMessage({
+            content: (event.message as any).content,
+            citations: (event.message as any).hostedSearchCitations,
+          });
+          if (hostedSearch) {
+            const terminal = failed || aborted ? "failed" : "completed";
+            for (const round of hostedSearch.rounds) {
+              if (round.status === "searching") round.status = terminal;
+            }
+            hostedSearch.status = hostedSearch.rounds.some(
+              (round) => round.status === "failed",
+            )
+              ? "failed"
+              : "completed";
+          }
           const endedAt = Date.now();
           const providerWaitMs =
             this.requestStartedAt !== undefined &&
@@ -7281,6 +7341,7 @@ Delegation rules:
             ...(classifiedError
               ? { error: classifiedError, isError: true }
               : {}),
+            ...(hostedSearch ? { hostedSearch } : {}),
           };
           this.emit({ type: "message_end", message: this.currentAssistant });
           this.activeProviderRetryAttempt = 0;

@@ -129,3 +129,143 @@ test("non-unique flush errors still pause the outbox", async () => {
   await outbox.flush(getHost);
   assert.equal(outbox.size(), 2);
 });
+
+test("poisoned provenance message is isolated without loss or forged success receipt", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const logs = [];
+  const acknowledged = [];
+  const outbox = new PersistenceOutbox(dir, (level, message, data) => {
+    logs.push({ level, message, data });
+  });
+  outbox.setOnMessagePersisted((sessionId) => { acknowledged.push(sessionId); });
+  const calls = [];
+  const host = mockHost(async (_method, params) => {
+    calls.push(params);
+    if (params.message.id === "steering-poison") {
+      throw new Error("PERMISSION_DENIED: transcript input does not match its session delivery");
+    }
+  });
+  const getHost = () => host;
+  try {
+    await outbox.enqueue(
+      {
+        key: "message:s1:steering-poison",
+        sessionId: "s1",
+        message: { id: "steering-poison", role: "user", steering: true },
+      },
+      getHost,
+    );
+    await outbox.enqueue(
+      {
+        key: "message:s2:assistant-1",
+        sessionId: "s2",
+        message: { id: "assistant-1", role: "assistant" },
+      },
+      getHost,
+    );
+    await outbox.flush(getHost);
+    // 后排先行但坏头不丢、不确认：只确认成功写入的那条。
+    assert.equal(outbox.size(), 1);
+    assert.ok(calls.some((params) => params.message.id === "assistant-1"));
+    assert.deepEqual(acknowledged, ["s2"]);
+    assert.ok(
+      logs.some((row) => row.message === "session persistence flush deferred poisoned message"),
+    );
+    const stored = JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8"));
+    assert.deepEqual(
+      stored.map((entry) => entry.message.id),
+      ["steering-poison"],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("duplicate message id is isolated without forged success receipt", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const acknowledged = [];
+  const outbox = new PersistenceOutbox(dir, silent);
+  outbox.setOnMessagePersisted((sessionId) => { acknowledged.push(sessionId); });
+  const host = mockHost(async (_method, params) => {
+    if (params.message.id === "dup-head") {
+      throw new Error("UNIQUE constraint failed: messages.id");
+    }
+  });
+  const getHost = () => host;
+  try {
+    await outbox.enqueue(
+      { key: "message:s1:dup-head", sessionId: "s1", message: { id: "dup-head" } },
+      getHost,
+    );
+    await outbox.enqueue(
+      { key: "message:s2:good-tail", sessionId: "s2", message: { id: "good-tail" } },
+      getHost,
+    );
+    await outbox.flush(getHost);
+    assert.equal(outbox.size(), 1);
+    assert.deepEqual(acknowledged, ["s2"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("PLUGIN_PERMISSION_DENIED is not poison and still pauses the outbox (D597)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const outbox = new PersistenceOutbox(dir, silent);
+  const host = mockHost(async () => {
+    throw new Error("PLUGIN_PERMISSION_DENIED: missing grant for fs.write");
+  });
+  const getHost = () => host;
+  await outbox.enqueue(
+    { key: "message:s1:a", sessionId: "s1", message: { id: "a" } },
+    getHost,
+  );
+  await outbox.enqueue(
+    { key: "message:s2:b", sessionId: "s2", message: { id: "b" } },
+    getHost,
+  );
+  await outbox.flush(getHost);
+  assert.equal(outbox.size(), 2);
+});
+
+for (const mutation of ["delete", "replace"]) {
+  for (const failure of ["UNIQUE constraint failed: messages.id", "PERMISSION_DENIED: invalid provenance"]) {
+    test(`旧失败回执不延后并发${mutation}后的消息：${failure}`, async () => {
+      const dir = await mkdtemp(join(tmpdir(), "pi-outbox-receipt-"));
+      const outbox = new PersistenceOutbox(dir, silent);
+      const started = Promise.withResolvers();
+      const receipt = Promise.withResolvers();
+      const acknowledged = [];
+      outbox.setOnMessagePersisted((sessionId) => { acknowledged.push(sessionId); });
+      const original = { key: "message:s1:a", sessionId: "s1", message: { id: "old" } };
+      await outbox.enqueue(original, () => null);
+      await outbox.enqueue({ key: "message:s2:b", sessionId: "s2", message: { id: "tail" } }, () => null);
+      await outbox.flush(() => null);
+      const delivered = [];
+      const host = mockHost(async (_method, params) => {
+        if (params.message.id === "old") {
+          started.resolve();
+          await receipt.promise;
+          throw new Error(failure);
+        }
+        delivered.push(params.message.id);
+      });
+      const flushing = outbox.flush(() => host);
+      try {
+        await started.promise;
+        if (mutation === "delete") await outbox.dropSession("s1");
+        else await outbox.enqueue({ ...original, message: { id: "new" } }, () => host);
+        receipt.resolve();
+        await flushing;
+        assert.equal(outbox.size(), 0);
+        assert.deepEqual(delivered, mutation === "delete" ? ["tail"] : ["new", "tail"]);
+        assert.deepEqual(acknowledged, mutation === "delete" ? ["s2"] : ["s1", "s2"]);
+        assert.deepEqual(JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8")), []);
+      } finally {
+        receipt.resolve();
+        await flushing;
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+}

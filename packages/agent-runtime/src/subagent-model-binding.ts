@@ -11,6 +11,7 @@ import {
   withOpenCodeSessionHeaders,
 } from "./opencode-session-headers.js";
 import { mergeProviderHeaders, withProviderHeaders } from "./provider-headers.js";
+import { agentThinkingLevel as agentThinkingLevelFor, omitThinkingModel as withOmittedThinking } from "./thinking-level.js";
 import { captureProviderResponse, carriesRetryDelayHeaders, createProviderRetryStream } from "./provider-retry.js";
 import type { AgentOptions } from "@earendil-works/pi-agent-core";
 import type { SubagentThinkingLevel } from "@pi-desktop/shared";
@@ -42,17 +43,11 @@ export function subagentModelBinding(opts: {
       : builtModel;
   const models = createProviderModels(opts.provider, model);
   const omitThinking = opts.thinkingLevel === "omit";
-  const agentThinkingLevel =
-    opts.thinkingLevel === "omit" ? "off" : opts.thinkingLevel;
+  const agentThinkingLevel = agentThinkingLevelFor(opts.thinkingLevel);
   // The Responses adapter's low-level stream still uses a model-level
   // `off` mapping as its fallback. Null it only for the omit path so the
   // provider receives no synthesized reasoning setting at all.
-  const omitThinkingModel = omitThinking
-    ? {
-        ...model,
-        thinkingLevelMap: { ...model.thinkingLevelMap, off: null },
-      }
-    : model;
+  const omitThinkingModel = omitThinking ? withOmittedThinking(model) : model;
   const requestKey = providerRequestKey(opts.provider);
   return {
     model,
