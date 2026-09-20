@@ -83,7 +83,7 @@ export const MessageRow = memo(function MessageRow({
         .filter((segment): segment is { kind: "target"; text: string; label: string; target: { kind: "file"; path: string } } => segment.kind === "target" && segment.target.kind === "file")
         .map((segment) => segment.target.path),
     );
-    return attachments.filter((attachment) => !inline.has(attachment.ref));
+    return attachments.filter((attachment) => attachment.kind === "image" || !inline.has(attachment.ref));
   }, [message.attachments, message.content, workspaceRoot]);
   const cancelEdit = () => {
     setEditValue(editSeed);

@@ -148,6 +148,8 @@ export type SerializedToolCallContent = {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  thoughtSignature?: string;
+  namespace?: string;
 };
 
 export type SerializedImageContent = {
@@ -180,7 +182,7 @@ export type SerializedAssistantMessage = {
   usage?: Usage;
   stopReason?: "stop" | "toolUse" | "length";
   timestamp: number;
-};
+} & Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">;
 
 export type SerializedToolResultMessage = {
   role: "toolResult";
@@ -399,6 +401,18 @@ export function validatePairedToolCalls(messages: readonly (AgentMessage | Seria
   }
 }
 
+/** 保留模型库定义的响应元数据，供恢复上下文和诊断使用。 */
+function assistantMetadata(message: Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">) {
+  return {
+    ...(typeof message.responseModel === "string" ? { responseModel: message.responseModel } : {}),
+    ...(typeof message.responseId === "string" ? { responseId: message.responseId } : {}),
+    ...(typeof message.providerThinkingLevel === "string" ? { providerThinkingLevel: message.providerThinkingLevel } : {}),
+    ...(Array.isArray(message.diagnostics) ? { diagnostics: message.diagnostics.map((item) => ({ ...item })) } : {}),
+    ...(typeof message.rawStopReason === "string" ? { rawStopReason: message.rawStopReason } : {}),
+    ...(typeof message.endTurn === "boolean" ? { endTurn: message.endTurn } : {}),
+  };
+}
+
 /** Encode AgentMessage sequence with strict whitelist codec */
 export function encodeAgentMessages(
   messages: readonly AgentMessage[],
@@ -465,7 +479,8 @@ export function encodeAgentMessages(
         const a = message as AssistantMessage;
         assertKnownKeys(
           a as unknown as Record<string, unknown>,
-          ["role", "content", "api", "provider", "model", "usage", "stopReason", "timestamp"],
+          ["role", "content", "api", "provider", "model", "usage", "stopReason", "timestamp",
+            "responseModel", "responseId", "providerThinkingLevel", "diagnostics", "rawStopReason", "endTurn", "errorMessage", "deferred"],
           `messages[${idx}]`,
         );
 
@@ -513,13 +528,17 @@ export function encodeAgentMessages(
               ...(typeof part.redacted === "boolean" ? { redacted: part.redacted } : {}),
             });
           } else if (part.type === "toolCall") {
-            assertKnownKeys(part, ["type", "id", "name", "arguments"], `messages[${idx}].content[${pIdx}]`);
+            assertKnownKeys(part, ["type", "id", "name", "arguments", "thoughtSignature", "namespace"], `messages[${idx}].content[${pIdx}]`);
             const id = typeof part.id === "string" ? part.id : "";
             const name = typeof part.name === "string" ? part.name : "";
             const args = (part.arguments && typeof part.arguments === "object" && !Array.isArray(part.arguments))
               ? (part.arguments as Record<string, unknown>)
               : {};
-            contentParts.push({ type: "toolCall", id, name, arguments: args });
+            contentParts.push({
+              type: "toolCall", id, name, arguments: args,
+              ...(typeof part.thoughtSignature === "string" ? { thoughtSignature: part.thoughtSignature } : {}),
+              ...(typeof part.namespace === "string" ? { namespace: part.namespace } : {}),
+            });
           } else {
             throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", `Unknown assistant content part type at index ${idx}`);
           }
@@ -532,6 +551,7 @@ export function encodeAgentMessages(
           provider: typeof a.provider === "string" ? a.provider : "",
           model: typeof a.model === "string" ? a.model : "",
           timestamp: typeof a.timestamp === "number" ? a.timestamp : Date.now(),
+          ...assistantMetadata(a),
         };
 
         if (a.stopReason === "stop" || a.stopReason === "toolUse" || a.stopReason === "length") {
@@ -546,6 +566,7 @@ export function encodeAgentMessages(
             cacheRead: typeof u.cacheRead === "number" ? u.cacheRead : 0,
             cacheWrite: typeof u.cacheWrite === "number" ? u.cacheWrite : 0,
             totalTokens: typeof u.totalTokens === "number" ? u.totalTokens : 0,
+            ...(typeof u.cacheWrite1h === "number" ? { cacheWrite1h: u.cacheWrite1h } : {}),
             ...(typeof u.reasoning === "number" ? { reasoning: u.reasoning } : {}),
             ...(u.cost ? { cost: { ...u.cost } } : { cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }),
           };
@@ -661,6 +682,7 @@ export function decodeAgentMessages(serialized: readonly SerializedAgentMessage[
           provider: raw.provider,
           model: raw.model,
           timestamp: raw.timestamp,
+          ...assistantMetadata(raw),
           stopReason: (raw.stopReason ?? "stop") as any,
           usage: {
             input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
@@ -676,6 +698,7 @@ export function decodeAgentMessages(serialized: readonly SerializedAgentMessage[
             totalTokens: raw.usage.totalTokens,
             cost: raw.usage.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
             ...(raw.usage.reasoning !== undefined ? { reasoning: raw.usage.reasoning } : {}),
+            ...(raw.usage.cacheWrite1h !== undefined ? { cacheWrite1h: raw.usage.cacheWrite1h } : {}),
           };
         }
         messages.push(aMsg as unknown as AgentMessage);

@@ -39,8 +39,6 @@ import {
 import type { ComposerPrefill } from "../model";
 import { useComposerImagePreview, type ComposerImagePreviewController } from "./useComposerImagePreview";
 
-import { detachImageTokens, isImageReference } from "../image-attachments";
-
 type ComposerSession = { id: string };
 
 export type ComposerDraftController = {
@@ -194,17 +192,6 @@ export function useComposerDraft({
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    if (fileReferences.some((reference) => isImageReference(reference) && reference.token)) {
-      const detached = detachImageTokens(value, fileReferences, pendingEditorCaretRef.current ?? cursor);
-      valueRef.current = detached.text;
-      fileReferencesRef.current = detached.references;
-      pendingEditorCaretRef.current = detached.caret;
-      editorValueRef.current = null;
-      setValue(detached.text);
-      setCursor(detached.caret);
-      setFileReferences(detached.references);
-      return;
-    }
     if (editorValueRef.current === value) return;
     paintCurrentDraft(element, value);
     const pendingCaret = pendingEditorCaretRef.current;
@@ -457,10 +444,6 @@ export function useComposerDraft({
     nextReferences: ComposerFileReference[],
     caret: number,
   ) => {
-    const detached = detachImageTokens(nextText, nextReferences, caret);
-    nextText = detached.text;
-    nextReferences = detached.references;
-    caret = detached.caret;
     // A token may now refer to a different attachment even when text is equal.
     editorValueRef.current = null;
     pendingEditorCaretRef.current = caret;
@@ -592,6 +575,12 @@ export function useComposerDraft({
     imagePreview,
     removeImage: (id) => {
       if (inputBlocked) return;
+      const reference = fileReferencesRef.current.find((item) => item.id === id);
+      if (reference?.token && readLiveDraft().includes(reference.token)) {
+        removeChipByToken(reference.token);
+        ref.current?.focus();
+        return;
+      }
       invalidatePromptEnhancement();
       setFileReferences((current) => current.filter((reference) => reference.id !== id));
       ref.current?.focus();

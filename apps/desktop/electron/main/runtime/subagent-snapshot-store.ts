@@ -1,7 +1,6 @@
 /**
- * Subagent snapshot store implementing SubagentPersistencePort (ADR 0089).
- * Sole desktop host service responsible for snapshot encryption, atomic CAS
- * control state mutations, session lifecycle fencing, event confirmation and quotas.
+ * Sole desktop host service responsible for snapshot persistence, atomic CAS control
+ * state mutations, session lifecycle fencing, event confirmation and quotas.
  */
 
 import { createHash } from "node:crypto";
@@ -41,6 +40,7 @@ import {
   type SubagentRevokeRequest,
 } from "@pi-desktop/agent-runtime";
 import {
+  LegacySnapshotKeyUnavailableError,
   SNAPSHOT_FILE_LIMIT,
   SubagentSnapshotFiles,
   type SnapshotKeyProtector,
@@ -183,8 +183,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
         this.available = true;
       } catch (error) {
         this.available = false;
-        this.availableReason =
-          error instanceof Error ? error.message : "系统安全存储不可用，子代理上下文仅保留在内存中。";
+        this.availableReason = error instanceof Error ? error.message : "子代理快照目录不可用。";
         this.initialized = true;
         return;
       }
@@ -242,8 +241,10 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
 
           let sessionControl: SessionControlRecord | null = null;
           try {
-            sessionControl = await this.loadSessionControl(sessionId);
-          } catch {
+            sessionControl = await this.loadSessionControl(sessionId, true);
+          } catch (error) {
+            // 保留当前用户无法解密的旧会话，避免初始化将旧加密控制记录覆盖。
+            if (error instanceof LegacySnapshotKeyUnavailableError) continue;
             // Corrupted session control -> mark isolated
             sessionControl = {
               sessionId,
@@ -693,7 +694,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
         canResume: false,
         source: "disk",
         persistenceState: "unavailable",
-        reason: this.availableReason || "子代理持久化未启用或安全存储不可用",
+        reason: this.availableReason || "子代理持久化未启用或存储不可用",
       };
     }
 
@@ -1354,8 +1355,8 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
 
       // Populate summary metadata for directory entries
       control.appVersion = validatedCheckpoint.header.appVersion;
-      control.modelId = validatedCheckpoint.modelBinding.modelId;
-      control.agentName = validatedCheckpoint.config.agentName;
+      control.modelId = validatedCheckpoint.modelBinding.provider.modelId;
+      control.agentName = validatedCheckpoint.config.definition.name;
       control.lastReportSummary =
         validatedCheckpoint.observer.latestReport?.statement ||
         validatedCheckpoint.usage.lastReportText;
@@ -1684,7 +1685,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       try {
         rawCheckpoint = this.files.decode(bytes, identity);
       } catch {
-        throw new SubagentPersistenceError("SNAPSHOT_CORRUPTED", "快照解密或认证失败");
+        throw new SubagentPersistenceError("SNAPSHOT_CORRUPTED", "快照格式、身份或旧版加密认证失败");
       }
 
       const validatedCheckpoint = validateCheckpoint(rawCheckpoint);
@@ -1904,12 +1905,15 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     if (!this.available || !this.enabled) {
       throw new SubagentPersistenceError(
         "STORAGE_UNAVAILABLE",
-        this.availableReason || "子代理上下文持久化未启用或安全存储不可用",
+        this.availableReason || "子代理上下文持久化未启用或存储不可用",
       );
     }
   }
 
-  private async loadSessionControl(sessionId: string): Promise<SessionControlRecord | null> {
+  private async loadSessionControl(
+    sessionId: string,
+    preserveUnavailableLegacy = false,
+  ): Promise<SessionControlRecord | null> {
     const p = this.files.path(sessionId, "session-control.bin");
     let bytes: Buffer;
     try {
@@ -1926,10 +1930,11 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     try {
       return this.files.decode<SessionControlRecord>(bytes, `${sessionId}/session-control`);
     } catch (err) {
+      if (preserveUnavailableLegacy && err instanceof LegacySnapshotKeyUnavailableError) throw err;
       this.isolatedSessions.set(sessionId, "SESSION_CONTROL_CORRUPTED");
       throw new SubagentPersistenceError(
         "SNAPSHOT_CORRUPTED",
-        `会话控制记录解密或认证失败: ${(err as Error).message}`,
+        `会话控制记录格式、身份或旧版加密认证失败: ${(err as Error).message}`,
       );
     }
   }
@@ -1958,7 +1963,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     } catch (err) {
       throw new SubagentPersistenceError(
         "SNAPSHOT_CORRUPTED",
-        `任务控制记录解密或认证失败: ${(err as Error).message}`,
+        `任务控制记录格式、身份或旧版加密认证失败: ${(err as Error).message}`,
       );
     }
   }

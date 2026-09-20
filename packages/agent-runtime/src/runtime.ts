@@ -428,6 +428,7 @@ export type DelegationRecord = {
    * single shot per record. */
   reportDelivered: boolean;
   persistenceState?: SubagentPersistenceState;
+  persistenceReason?: string;
   durableRevision?: number;
   durableGeneration?: number;
   source?: "memory" | "disk";
@@ -456,6 +457,7 @@ function delegationSummary(record: DelegationRecord): Record<string, unknown> {
     canResume: (!record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested) &&
       (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? record.persistenceState === "durable-ready" : false)),
     persistenceState: record.persistenceState ?? (record.isColdDisk ? "durable-ready" : "memory-only"),
+    ...(record.persistenceState === "persistence-error" && record.persistenceReason ? { reason: record.persistenceReason } : {}),
     source: record.source ?? (record.isColdDisk ? "disk" : "memory"),
     activeDurationMs: (record.activeDurationMs ?? 0) + (record.status === "running" ? Math.max(0, Date.now() - record.startedAt) : 0),
     sessionId: record.sessionId,
@@ -4009,8 +4011,10 @@ Delegation rules:
     if (record.interruptionReceipt) {
       await record.interruptionReceipt;
     } else if (record.status === "completed" && record.run && !this.persistenceClient.isMemoryOnly(record.delegationId)) {
+      let persistencePhase = "导出上下文快照";
       try {
         record.persistenceState = "saving";
+        record.persistenceReason = undefined;
         let realProjectPath = "";
         if (this.projectPath) {
           try {
@@ -4053,6 +4057,7 @@ Delegation rules:
             },
           },
         };
+        persistencePhase = "写入上下文快照";
         const commitReceipt = await this.persistenceClient.commitSnapshot({
           sessionId: this.sessionId,
           delegationId: record.delegationId,
@@ -4077,7 +4082,12 @@ Delegation rules:
           record.persistenceState = commitReceipt.durableReady ? "durable-ready" : "memory-only";
         }
       } catch (commitErr) {
-        if (!record.stopRequested) record.persistenceState = "persistence-error";
+        if (!record.stopRequested) {
+          record.persistenceState = "persistence-error";
+          const code = (commitErr as { code?: unknown } | null)?.code;
+          const errorCode = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "UNKNOWN";
+          record.persistenceReason = `${persistencePhase}失败（${errorCode}），当前上下文仍保留在内存中。`;
+        }
       }
     } else if (record.status === "failed" && !record.stopRequested) {
       await this.persistenceClient.failExecution({
@@ -4738,6 +4748,10 @@ Delegation rules:
       else if (record.status === "failed" || record.persistenceState === "failed") reason = "Subagent execution failed.";
       else if (record.contextReleased && !record.durableGeneration) reason = "Context released; persistent snapshot unavailable.";
       else reason = "Only normally completed executions with valid snapshots can resume.";
+    }
+
+    if (persistenceState === "persistence-error" && record.persistenceReason) {
+      reason = reason ? `${record.persistenceReason} ${reason}` : record.persistenceReason;
     }
 
     return {
