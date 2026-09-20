@@ -634,7 +634,6 @@ export function compactionThinkingLevel(
   provider: RuntimeProviderConfig,
   requested: ThinkingLevel | "omit",
 ): ThinkingLevel | undefined {
-  return requested === "omit"
-    ? undefined
-    : clampThinkingLevel(provider, requested);
+  const level = clampThinkingLevel(provider, requested);
+  return requested === "omit" || level === "omit" ? undefined : level;
 }

@@ -6,30 +6,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { FontFaceMetadata, FontMetadata } from "@pi-desktop/shared";
 import { localFontPath, readFontMetadata } from "./font-metadata-parser";
-import fontsCss from "../../src/styles/fonts.css?raw";
-import geistPath from "../../src/assets/fonts/geist.woff2?asset";
-import interPath from "../../src/assets/fonts/inter.woff2?asset";
-import notoPath from "../../src/assets/fonts/noto-sans-sc.woff2?asset";
-import wenkaiPath from "../../src/assets/fonts/lxgw-wenkai.woff2?asset";
 
 const run = promisify(execFile);
 const TTL = 60_000;
 const TIMEOUT = 20_000;
 const MAX_FILES = 8000;
 const key = (family: string) => family.normalize("NFC").toLowerCase();
-const bundledPaths: Record<string, string> = {
-  "geist.woff2": geistPath, "inter.woff2": interPath,
-  "noto-sans-sc.woff2": notoPath, "lxgw-wenkai.woff2": wenkaiPath,
-};
-const bundled = new Map<string, { path: string; min: number; max: number }>();
-for (const match of fontsCss.matchAll(/@font-face\s*\{([^}]+)\}/g)) {
-  const family = match[1].match(/font-family:\s*"([^"]+)"/)?.[1];
-  const filename = match[1].match(/url\("\.\.\/assets\/fonts\/([^"]+)"\)/)?.[1];
-  const weights = match[1].match(/font-weight:\s*(\d+)(?:\s+(\d+))?\s*;/);
-  if (family && filename && weights && bundledPaths[filename]) {
-    bundled.set(key(family), { path: bundledPaths[filename], min: Number(weights[1]), max: Number(weights[2] ?? weights[1]) });
-  }
-}
 
 async function systemFontPaths(signal: AbortSignal): Promise<string[]> {
   const options = { timeout: 12_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true, signal };
@@ -155,28 +137,12 @@ export async function getFontMetadata(input: unknown): Promise<FontMetadata> {
   const existing = pending.get(name);
   if (existing) return existing;
   if (pending.size >= 64) return { family, source: "system", status: "unavailable", faces: [] };
-  const asset = bundled.get(name);
-  const unavailable: FontMetadata = { family, source: asset ? "bundled" : "system", status: "unavailable", faces: [] };
+  const unavailable: FontMetadata = { family, source: "system", status: "unavailable", faces: [] };
   let timer: ReturnType<typeof setTimeout>;
   const work = async (): Promise<FontMetadata> => {
     let faces: FontFaceMetadata[] = [];
     try {
-      if (asset) {
-        const parsed = await readFontMetadata(asset.path, AbortSignal.timeout(TIMEOUT));
-        faces = parsed.map(({ families: _families, ...face }) => {
-          if (face.wght) {
-            const min = Math.max(asset.min, face.wght.min);
-            const max = Math.min(asset.max, face.wght.max);
-            if (min > max) throw new Error("CSS and font weights disagree");
-            const normal = Math.min(max, Math.max(min, face.wght.default));
-            return { ...face, weight: normal, wght: { min, max, default: normal } };
-          }
-          if (face.weight < asset.min || face.weight > asset.max) throw new Error("CSS and font weights disagree");
-          return face;
-        });
-      } else {
-        faces = (await loadSystemIndex()).get(name) ?? [];
-      }
+      faces = (await loadSystemIndex()).get(name) ?? [];
     } catch {
       // Unknown metadata must never be presented as a fabricated static face.
     }
