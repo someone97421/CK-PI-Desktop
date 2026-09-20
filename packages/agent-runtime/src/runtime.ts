@@ -1632,7 +1632,7 @@ export class DesktopAgentRuntime {
       ...(this.subagents.length
         ? [
             `## Delegation
-Handle simple serial tasks directly. Delegate only when requested by the user or when the concrete benefits of parallel progress, context isolation, or independent judgment outweigh the handoff and acceptance costs. Base this decision on the actual benefits for the current task.
+Default to handling work directly when it can be completed sequentially with the context you already have. Delegate when the user requests it or when you can identify a concrete benefit from parallel progress, context isolation, or independent judgment that outweighs handoff and acceptance costs. A self-contained deliverable alone is not sufficient reason to delegate.
 
 Useful cases, not mandatory stages:
 - User-requested delegation: follow the requested scope and number of subagents.
@@ -1643,9 +1643,9 @@ Useful cases, not mandatory stages:
 
 Delegation rules:
 - Parallelize independent work only. Before dispatching dependent work, wait for prerequisites to succeed and read their results; a TaskWait progress update is not completion. Review only finished, stable changes.
-- Weigh the collaboration benefit against handoff and integration effort, then match the role to the actual deliverable. Avoid duplicate work and automatic exploration/implementation/testing/review pipelines. The main agent owns integration and acceptance.
+- Match the role to the deliverable and give the delegate ownership of exploration and implementation within its scope. The main agent works on independent tasks and accepts finished, stable results; do not investigate or implement the same scope in parallel. To take over, first cancel the delegation and confirm in-flight operations have settled, then inspect its changes and continue. Avoid automatic exploration/implementation/testing/review pipelines.
 - Task returns immediately. Continue useful independent work, or wait with TaskWait when results are needed; do not invent work to stay busy. Give each task a clear scope, constraints, expected result and short \`description\`; retain overall direction, scope changes and user decisions with the main agent. Read the delegate's report interval from the Task catalog for reporting cadence. Choose a convergence estimate suited to task complexity using these reference tiers: short 32, medium 64, medium-long 96, long 128 tool calls. End the task brief with the approximate estimate, allowing early completion and reasonable variation; ask for current findings and remaining work if substantially more effort is needed. These tiers are pacing references, not quotas or hard limits; the report interval controls reporting frequency, not expected task size.
-- Specify reportIntervalSteps unless user-fixed. Reports do not pause children; TaskGuide corrects at a tool boundary, TaskInspect reads records, and TaskList checks status. If two corrective attempts fail to restore effective progress, cancel that delegation with TaskStop, confirm in-flight operations have settled, inspect existing changes, and finish the task yourself.
+- Specify reportIntervalSteps unless user-fixed. Reports do not pause children; TaskGuide corrects at a tool boundary, TaskInspect reads records, and TaskList checks status. Intervene for concrete deviation, a blocker, a scope change, or a missed agreed checkpoint. First obtain a concise account of current conclusions, blockers, and next steps, then decide whether to guide or take over. User-facing progress updates are not a reason to poll, repeat the investigation, or redirect the delegate. If two corrective attempts fail to restore effective progress, take over using the ownership rule above.
 - Handle small review fixes yourself. For worthwhile follow-up in retained context, use TaskResume with the same delegationId and expectedExecution from TaskList; stopped, failed or released contexts cannot resume, including after restart.
 - TaskStop cancels only when intended; ending your response does not stop children. Respect explicit user stops and never automatically recreate that work.`,
             ...(this.subagentModelSummary()
