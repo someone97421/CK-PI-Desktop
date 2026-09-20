@@ -8,7 +8,8 @@
 }
 
 .task-process-drawer,
-.task-review-card {
+.task-review-card,
+.task-steering-message {
   width: 100%;
   align-self: stretch;
   box-sizing: border-box;
@@ -69,6 +70,10 @@
   font-size: var(--text-xs-plus);
   line-height: var(--leading-body);
   overflow-wrap: anywhere;
+}
+
+.task-steering-label {
+  text-align: right;
 }
 
 .task-process-content {

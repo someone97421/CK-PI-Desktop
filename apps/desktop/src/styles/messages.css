@@ -50,9 +50,9 @@
   max-width: 240px;
 }
 
-.message-row.assistant .message-col,
-.message-row.system .message-col,
-.message-row.tool .message-col {
+.message-row.assistant > .message-col,
+.message-row.system > .message-col,
+.message-row.tool > .message-col {
   width: min(100%, var(--chat-prose-max-width, 720px));
   align-items: flex-start;
 }
@@ -1893,9 +1893,9 @@
   border-radius: var(--radius-sm);
 }
 
-.message-row.assistant .message-bubble,
-.message-row.system .message-bubble,
-.message-row.tool .message-bubble {
+.message-row.assistant > .message-col > .message-bubble,
+.message-row.system > .message-col > .message-bubble,
+.message-row.tool > .message-col > .message-bubble {
   width: 100%;
   max-width: 100%;
   padding: 0;
