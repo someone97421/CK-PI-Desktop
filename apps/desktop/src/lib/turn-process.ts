@@ -127,10 +127,12 @@ export function visibleProcessSteps(
       continue;
     }
     for (const item of part.items) {
+      // Between provider streams the turn is still active but the last
+      // reasoning row is complete; keep its process shell through that wait.
       if (
         item.kind === "tool" ||
         mode === "detailed" ||
-        isThinkingActive(item.message, active)
+        (active && item.kind === "thinking" && !item.message.content.trim())
       ) {
         count += 1;
       }

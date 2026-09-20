@@ -75,7 +75,7 @@ test("errors and aborted partial replies remain outside the process", () => {
   );
 });
 
-test("compact thinking disappears after reasoning ends without removing stored data", () => {
+test("compact thinking keeps a process header through active wait gaps", () => {
   const thinking = message("think", "assistant", "", {
     thinking: "Private reasoning",
     status: "streaming",
@@ -83,6 +83,9 @@ test("compact thinking disappears after reasoning ends without removing stored d
   const entry = turn([thinking]);
   assert.equal(visibleProcessSteps(entry.parts, "compact", true), 1);
   assert.equal(visibleProcessSteps(entry.parts, "compact", false), 0);
+  const waiting = turn([{ ...thinking, status: "complete" }]);
+  assert.equal(visibleProcessSteps(waiting.parts, "compact", true), 1);
+  assert.equal(visibleProcessSteps(waiting.parts, "compact", false), 0);
   const withAnswer = turn([{ ...thinking, content: "Answer" }]);
   assert.equal(
     visibleProcessSteps(projectTurnProcess(withAnswer).process, "compact", true),

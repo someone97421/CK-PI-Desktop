@@ -352,7 +352,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode),
     ),
   );
-  const turnProcessActive = isPlainHistory && isActive;
+  const turnProcessActive = !settledTask && isActive;
   const renderPart = (part: AssistantTurnEntry["parts"][number], index: number) => {
     if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
     if (part.kind === "activity") return (
@@ -406,7 +406,7 @@ export const AssistantTurn = memo(function AssistantTurn({
             </TaskProcessDrawer>
             {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}
           </>
-        ) : groupProcess ? (
+        ) : isPlainHistory && groupProcess ? (
           <>
             <TurnProcess processParts={process} turnParts={entry.parts} isActive={turnProcessActive}>
               {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}
