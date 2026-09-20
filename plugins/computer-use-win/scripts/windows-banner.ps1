@@ -2,10 +2,21 @@
 # Physical Esc (not SendInput) writes "esc" to stdout and exits.
 # Plugin process owns this child and kills it when control tools finish.
 $ErrorActionPreference = "Stop"
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @"
+$bannerReferences = if ($PSVersionTable.PSEdition -eq 'Core') {
+  # Add-Type replaces its default reference set when -ReferencedAssemblies is used.
+  # PowerShell 7's WinForms facade needs the already loaded WindowsDesktop dependency closure.
+  @([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.Location } |
+    ForEach-Object { $_.Location } | Sort-Object -Unique)
+} else {
+  @('System.Windows.Forms', 'System.Drawing')
+}
+Add-Type -ReferencedAssemblies $bannerReferences @"
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;

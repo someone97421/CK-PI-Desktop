@@ -19,7 +19,12 @@ async function loadSettings() {
 }
 
 function fail(error) {
-  return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  return {
+    ok: false,
+    isError: true,
+    error: error instanceof Error ? error.message : String(error),
+    ...(error?.rpcError ? { rpcError: error.rpcError } : {}),
+  };
 }
 
 async function panelState() {

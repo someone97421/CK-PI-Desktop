@@ -10,21 +10,30 @@ function image(width, height) {
   data.writeUInt32BE(width, 16); data.writeUInt32BE(height, 20);
   return { type: "image", mimeType: "image/png", data: data.toString("base64") };
 }
-function fixture(cropResult) {
+function fixture(cropResult, fixtureOptions = {}) {
   const calls = [];
+  const resolverCalls = [];
   const sandbox = { module: { exports: {} }, Buffer, console, setTimeout, clearTimeout,
-    __dirname: path.dirname(runtimePath), process: { platform: "linux", env: {} },
+    __dirname: path.dirname(runtimePath), process: { platform: fixtureOptions.platform || "linux", env: {} },
     require(name) {
+      if (name === "./powershell") return { resolvePowerShell(options) {
+        resolverCalls.push(options);
+        return "C:\\mock\\pwsh.exe";
+      } };
       if (name === "./image-region") return { cropImageRegion(item, region, options) { calls.push({ item, region, options }); return cropResult; } };
       if (name === "./overlay") return { ControlBanner: class {} };
       if (name === "./cua") return {};
       if (name === "./policy") return require("../policy");
       if (name === "electron") throw new Error("no Electron in test host");
+      if (name === "node:child_process" && fixtureOptions.platform === "win32") return {
+        spawn() { throw new Error("unexpected spawn"); },
+        spawnSync() { return { status: 0, stdout: JSON.stringify({ ok: true, jpeg: "YQ==" }), stderr: "" }; },
+      };
       return require(name);
     },
   };
   vm.runInNewContext(fs.readFileSync(runtimePath, "utf8"), sandbox, { filename: runtimePath });
-  return { present: sandbox.module.exports.presentResult, calls };
+  return { present: sandbox.module.exports.presentResult, calls, resolverCalls };
 }
 const region = { x: 20, y: 30, width: 40, height: 50 };
 const result = { content: [{ type: "text", text: "state" }, image(1280, 805)],
@@ -59,6 +68,15 @@ test("crop backend receives the explicit runtime helper environment", () => {
   const env = { TEMP: "D:\\project\\Temp", TMP: "D:\\project\\Temp" };
   f.present(result, { observe: true, region, env });
   assert.equal(f.calls[0].options.env, env);
+});
+test("presentation forwards helper environment to crop and every PowerShell compression", () => {
+  const f = fixture({ ok: false, diagnostic: { code: "helper_timeout", backend: "powershell" } }, { platform: "win32" });
+  const env = { TEMP: "D:\\project\\Temp", powershellExe: "C:\\env host\\pwsh.exe" };
+  const output = f.present(result, { observe: true, region, env });
+  assert.equal(f.calls[0].options.env, env);
+  assert.equal(output.images[0].data, "YQ==");
+  assert.ok(f.resolverCalls.length >= 1);
+  assert.ok(f.resolverCalls.every((options) => options.env === env && options.powershellExe === env.powershellExe));
 });
 test("missing, null and coercible region fields are not silently converted", () => {
   const f = fixture();

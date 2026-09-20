@@ -3,6 +3,7 @@
 const fs = require("node:fs/promises");
 const crypto = require("node:crypto");
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { createModelSettings } = require("./model-settings.cjs");
 const definitions = {
   capabilities: [false],
   "projects.list": [false, "project/list"],
@@ -141,6 +142,12 @@ function createHostAdapter(pi) {
       confirm: true,
     });
   }
+  const modelSettings = createModelSettings({
+    listModels: () => { assertAuthorized(); return pi.models.list(); },
+    getSession: (id) => rawSession(id, { limit: 1 }),
+    configureSession: (id, config) => host("session/configure", [id, config]),
+    serializeSession: session,
+  });
   async function ops() {
     if (!catalogue)
       catalogue = new Set((await pi.desktop.listOperations()).map((x) => x.id));
@@ -312,21 +319,7 @@ function createHostAdapter(pi) {
       };
     }
     if (op === "models.list") {
-      const models = await pi.models.list();
-      return {
-        items: models.map((m) => ({
-          ...pick(m, [
-            "providerId",
-            "modelId",
-            "thinkingLevels",
-            "contextWindow",
-            "maxTokens",
-            "capabilities",
-          ]),
-          key: m.key || `${m.providerId}/${m.modelId || m.id}`,
-          label: m.label || m.name || m.modelId || m.id,
-        })),
-      };
+      return modelSettings.list(input.sessionId === undefined ? undefined : text(input.sessionId, "sessionId"));
     }
     if (op === "commands.list") {
       const r = await host("composer/commands", [
@@ -407,23 +400,7 @@ function createHostAdapter(pi) {
       const r = await host("agent/stop", [{ sessionId: id }]);
       return { stopped: r?.requested !== false };
     }
-    if (op === "models.configure") {
-      const s = await rawSession(id);
-      const config = {
-        mode: input.mode || s.mode,
-        ...pick(input, ["thinkingLevel", "permissionMode"]),
-      };
-      if (input.modelKey) {
-        const model = (await execute("models.list")).items.find(
-          (m) => m.key === input.modelKey,
-        );
-        if (!model) fail("INVALID_PARAMS", "模型不可用");
-        config.providerId = model.providerId;
-        config.modelId = model.modelId;
-      }
-      const r = await host("session/configure", [id, config]);
-      return { session: session(r.session) };
-    }
+    if (op === "models.configure") return modelSettings.configure(id, input);
     if (op.startsWith("queue.") && op !== "queue.push") {
       const row = (await entries(id)).find(
         (e) => (e.id || e.turnId) === input.turnId,

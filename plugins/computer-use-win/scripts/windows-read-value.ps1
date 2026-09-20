@@ -1,5 +1,9 @@
 # Read-only, window-scoped UI Automation value probe. Request JSON is read from stdin.
 $ErrorActionPreference = 'Stop'
+# Node sends UTF-8 JSON; Windows PowerShell otherwise uses the system code page.
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
@@ -24,10 +28,59 @@ public static class ValueReaderNative
     public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr lParam);
 
     [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam,
         uint flags, uint timeout, out IntPtr result);
 
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+
+    // A bounded, same-process GW_OWNER chain is required, including every intermediary.
+    // The path is also an identity snapshot for the post-read ownership check.
+    public static string OwnerPath(IntPtr candidate, IntPtr target, uint pid) {
+        if (candidate != target && !IsWindowVisible(candidate)) return null;
+        var seen = new System.Collections.Generic.HashSet<IntPtr>();
+        var path = new System.Collections.Generic.List<string>();
+        for (int depth = 0; depth < 32; depth++) {
+            uint actual;
+            if (candidate == IntPtr.Zero || !seen.Add(candidate) || !IsWindow(candidate) ||
+                GetWindowThreadProcessId(candidate, out actual) == 0 || actual != pid) return null;
+            path.Add(candidate.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (candidate == target) return String.Join("/", path.ToArray());
+            candidate = GetWindow(candidate, 4); // GW_OWNER, never parent/desktop traversal
+        }
+        return null;
+    }
+
+    public static IntPtr[] SearchRoots(IntPtr target, uint pid, int maxRoots,
+        System.Diagnostics.Stopwatch timer, int deadline, out int filtered, out bool complete) {
+        var roots = new System.Collections.Generic.List<IntPtr>();
+        roots.Add(target);
+        int rejected = 0, candidates = 0;
+        bool finished = true;
+        bool enumerated = EnumWindows(delegate(IntPtr hwnd, IntPtr unused) {
+            if (timer.ElapsedMilliseconds >= deadline || ++candidates > 4096) {
+                finished = false; return false;
+            }
+            if (hwnd == target) return true;
+            if (OwnerPath(hwnd, target, pid) == null) { rejected++; return true; }
+            if (roots.Count >= maxRoots) { finished = false; return false; }
+            roots.Add(hwnd);
+            return true;
+        }, IntPtr.Zero);
+        filtered = rejected;
+        complete = finished && enumerated;
+        return roots.ToArray();
+    }
 
     public static IntPtr FindRenderWidget(IntPtr root) {
         IntPtr found = IntPtr.Zero;
@@ -85,6 +138,7 @@ $timer = $null
 $nodesVisited = 0
 $maxNodes = 2000
 $deadlineMs = 4500
+$initializingProviders = $false
 
 try {
   $rawRequest = [Console]::In.ReadToEnd()
@@ -125,12 +179,27 @@ try {
     $result = New-Result 'unavailable' 'target_pid_mismatch' $targetEcho $selectorEcho $false 0 `
       ([ordered]@{ stage = 'target'; nodes_visited = 0; elapsed_ms = 0; limit = $maxNodes; deadline_ms = $deadlineMs })
   } else {
+    # Load the standard Win32 control proxies before any UIA provider access.
+    # ProxyManager inspects its caller's stack: PowerShell dynamic frames can have
+    # no ReflectedType. A non-inlined CLR method supplies the required caller.
+    $initializingProviders = $true
+    Add-Type -ReferencedAssemblies ([System.Windows.Automation.AutomationElement].Assembly.Location) -TypeDefinition @'
+using System.Runtime.CompilerServices;
+using System.Windows.Automation;
+public static class ValueReaderProviderBootstrap
+{
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void Initialize()
+    {
+        // An empty registration triggers default proxies without appending them twice.
+        ClientSettings.RegisterClientSideProviders(new ClientSideProviderDescription[0]);
+    }
+}
+'@ | Out-Null
+    [ValueReaderProviderBootstrap]::Initialize()
+    $initializingProviders = $false
     $rootVerified = $true
-    $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
-    if ($null -eq $root -or [uint32]$root.Current.ProcessId -ne $targetPid) {
-      $result = New-Result 'unavailable' 'target_pid_mismatch' $targetEcho $selectorEcho $false 0 `
-        ([ordered]@{ stage = 'target'; nodes_visited = 0; elapsed_ms = 0; limit = $maxNodes; deadline_ms = $deadlineMs })
-    } else {
+    # Acquire UIA roots only after WM_GETOBJECT has activated the provider.
       # Chromium/Electron renderers expose their full UIA tree lazily: nudge the
       # renderer widget with WM_GETOBJECT/OBJID_CLIENT before the raw walk, or a
       # selector that matches the driver tree reports no_match here. EnumChildWindows
@@ -156,21 +225,47 @@ try {
         $activation = 'failed'
       }
       $timer = [System.Diagnostics.Stopwatch]::StartNew()
-      $queue = New-Object System.Collections.Queue
-      $queue.Enqueue($root)
-      $matches = New-Object System.Collections.ArrayList
+      $candidatesFiltered = 0
       $complete = $true
+      $rootHandles = [ValueReaderNative]::SearchRoots($handle, $targetPid, $maxNodes, $timer,
+        $deadlineMs, [ref]$candidatesFiltered, [ref]$complete)
+      $queue = New-Object System.Collections.Queue
+      $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+      $rootPaths = @{}
+      $matches = New-Object System.Collections.ArrayList
       $searchFailure = $false
+      $rootsScanned = 0
       $wantedRole = Normalize-Role $selectorRole
       $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
 
-      :search while ($queue.Count -gt 0) {
+      # Seed every root before walking: an owned root already present in the main
+      # provider tree is deduplicated with the same runtime ID and native scope.
+      foreach ($rootHandle in $rootHandles) {
+        if ($timer.ElapsedMilliseconds -ge $deadlineMs) { $complete = $false; break }
+        $ownerPath = [ValueReaderNative]::OwnerPath($rootHandle, $handle, $targetPid)
+        if ($null -eq $ownerPath) { $complete = $false; $searchFailure = $true; break }
+        $rootPaths[$rootHandle] = $ownerPath
+        $root = [System.Windows.Automation.AutomationElement]::FromHandle($rootHandle)
+        if ($null -eq $root -or [uint32]$root.Current.ProcessId -ne $targetPid) {
+          $complete = $false; $searchFailure = $true; break
+        }
+        $rootsScanned++
+        $runtimeId = $root.GetRuntimeId()
+        if ($null -eq $runtimeId -or $runtimeId.Length -eq 0) {
+          $complete = $false; $searchFailure = $true; break
+        }
+        if ($seen.Add(($runtimeId -join ','))) { $queue.Enqueue($root) }
+      }
+
+      :search while ($complete -and $queue.Count -gt 0) {
         if ($timer.ElapsedMilliseconds -ge $deadlineMs) { $complete = $false; break search }
         $element = $queue.Dequeue()
         $nodesVisited++
         try {
           $current = $element.Current
-          if ([uint32]$current.ProcessId -eq $targetPid -and $current.IsEnabled -and -not $current.IsOffscreen) {
+          # A provider may expose foreign children; never walk through their subtree.
+          if ([uint32]$current.ProcessId -ne $targetPid) { continue }
+          if ($current.IsEnabled -and -not $current.IsOffscreen) {
             $matchesSelector = $true
             if ($hasName -and -not [string]::Equals([string]$current.Name, $selectorName,
                 [System.StringComparison]::OrdinalIgnoreCase)) { $matchesSelector = $false }
@@ -182,17 +277,17 @@ try {
             if ($matchesSelector) { [void]$matches.Add($element) }
           }
 
-          # Raw-view children are traversed manually so both node and time bounds are enforceable.
+          # One shared budget and runtime-ID set across all selected roots.
           $child = $walker.GetFirstChild($element)
           while ($null -ne $child) {
             if ($timer.ElapsedMilliseconds -ge $deadlineMs) { $complete = $false; break search }
-            if (($nodesVisited + $queue.Count) -ge $maxNodes) { $complete = $false; break search }
-            try {
-              if ([uint32]$child.Current.ProcessId -eq $targetPid) { $queue.Enqueue($child) }
-            } catch {
-              $complete = $false
-              $searchFailure = $true
-              break search
+            if ([uint32]$child.Current.ProcessId -eq $targetPid) {
+              $runtimeId = $child.GetRuntimeId()
+              if ($null -eq $runtimeId -or $runtimeId.Length -eq 0) { throw 'missing runtime identity' }
+              if ($seen.Add(($runtimeId -join ','))) {
+                if (($nodesVisited + $queue.Count) -ge $maxNodes) { $complete = $false; break search }
+                $queue.Enqueue($child)
+              }
             }
             $child = $walker.GetNextSibling($child)
           }
@@ -202,11 +297,13 @@ try {
           break search
         }
       }
+      if ($timer.ElapsedMilliseconds -ge $deadlineMs) { $complete = $false }
 
       $matchCount = $matches.Count
       $diagnostics = [ordered]@{
         stage = 'search'; nodes_visited = $nodesVisited; elapsed_ms = [int]$timer.ElapsedMilliseconds
         limit = $maxNodes; deadline_ms = $deadlineMs; uia_activation = $activation
+        roots_scanned = $rootsScanned; owned_roots = $rootHandles.Count - 1; candidates_filtered = $candidatesFiltered
       }
       if (-not $complete) {
         $code = if ($searchFailure) { 'search_unavailable' } else { 'partial_search' }
@@ -275,7 +372,17 @@ try {
           }
         }
       }
-    }
+      # Recheck every selected root, including owned windows deduplicated against
+      # the main tree. Any PID/owner/visibility change invalidates the merged read.
+      foreach ($rootHandle in $rootPaths.Keys) {
+        if ([ValueReaderNative]::OwnerPath($rootHandle, $handle, $targetPid) -cne $rootPaths[$rootHandle]) {
+          $result = New-Result 'unavailable' 'root_scope_changed' $targetEcho $selectorEcho $false 0 $diagnostics
+          break
+        }
+      }
+      if ($result.status -eq 'read' -and ([uint32]$hit.Current.ProcessId -ne $targetPid -or $hit.Current.IsPassword)) {
+        $result = New-Result 'unavailable' 'root_scope_changed' $targetEcho $selectorEcho $false 0 $diagnostics
+      }
   }
 
   # Revalidate the native HWND/PID identity after every completed search/read decision.
@@ -287,8 +394,10 @@ try {
     }
   }
 } catch {
-  $result = New-Result 'error' 'helper_exception' $targetEcho $selectorEcho $false 0 `
-    ([ordered]@{ stage = 'helper'; nodes_visited = $nodesVisited; limit = $maxNodes; deadline_ms = $deadlineMs })
+  $failureCode = if ($initializingProviders) { 'provider_initialization_failed' } else { 'helper_exception' }
+  $failureStage = if ($initializingProviders) { 'provider_initialization' } else { 'helper' }
+  $result = New-Result 'error' $failureCode $targetEcho $selectorEcho $false 0 `
+    ([ordered]@{ stage = $failureStage; nodes_visited = $nodesVisited; limit = $maxNodes; deadline_ms = $deadlineMs })
 }
 
 $result | ConvertTo-Json -Compress -Depth 6

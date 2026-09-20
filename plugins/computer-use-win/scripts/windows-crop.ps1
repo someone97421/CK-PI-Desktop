@@ -6,6 +6,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 $MaxInputBytes = 16MB
 $MaxPngBytes = 3MB
 $MaxDimension = 32768

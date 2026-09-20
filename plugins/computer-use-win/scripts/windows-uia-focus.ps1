@@ -7,6 +7,9 @@ param(
   [Parameter(Mandatory = $true)][int64]$Hwnd
 )
 $ErrorActionPreference = "Stop"
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 
 if ($Hwnd -eq 0) {
   Write-Output '{"ok":false,"error":"no-hwnd"}'

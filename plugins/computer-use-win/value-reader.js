@@ -3,6 +3,7 @@
 const childProcess = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
+const { resolvePowerShell } = require("./powershell");
 
 const SOURCES = new Set(["uia_value_pattern", "uia_text_pattern"]);
 const DEFAULT_MAX_CHARS = 4096;
@@ -75,7 +76,7 @@ function sameObject(actual, expected) {
 function safeDiagnostics(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const output = {};
-  for (const key of ["nodes_visited", "elapsed_ms", "limit", "deadline_ms"]) {
+  for (const key of ["nodes_visited", "elapsed_ms", "limit", "deadline_ms", "roots_scanned", "owned_roots", "candidates_filtered"]) {
     if (Number.isInteger(value[key]) && value[key] >= 0 && value[key] <= 1000000) output[key] = value[key];
   }
   if (typeof value.stage === "string" && /^[a-z_]{1,32}$/.test(value.stage)) output.stage = value.stage;
@@ -136,7 +137,11 @@ function readControlValue(target, selector, env = {}) {
     limits: { max_chars: maxChars, max_nodes: maxNodes, deadline_ms: deadlineMs },
   });
   const spawnSync = typeof env.spawnSync === "function" ? env.spawnSync : childProcess.spawnSync;
-  const executable = env.powershellPath || "powershell.exe";
+  const executable = resolvePowerShell({
+    env: { ...process.env, ...env },
+    powershellPath: env.powershellPath,
+    powershellExe: env.powershellExe,
+  });
   const scriptPath = env.scriptPath || path.join(__dirname, "scripts", "windows-read-value.ps1");
   const tempDir = env.tempDir || env.PI_SCRATCH_DIR || env.TEMP || process.env.PI_SCRATCH_DIR;
   if (!tempDir) return resultBase("error", "safe_temp_unavailable", cleanTarget, cleanSelector, false, { stage: "configuration" });

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>桌面宠物设置</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: transparent;
+        font-family: 'Microsoft YaHei UI', 'Segoe UI', system-ui, sans-serif;
+      }
+      /* 停靠视图：宿主给了整页画布，卡片直接铺满（视觉样式在 settings.js 注入的同一份 CSS 里） */
+      #settings-root {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="settings-root"></div>
+    <script src="./settings.js"></script>
+    <script>
+      // 停靠视图：整页不可拖动，也不需要标题栏关闭按钮（宿主有自己的视图容器）
+      window.PetSettings.mount(document.getElementById('settings-root'), { movable: false });
+    </script>
+  </body>
+</html>

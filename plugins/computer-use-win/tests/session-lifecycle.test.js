@@ -15,6 +15,7 @@ function fixture() {
     module: { exports: {} }, Buffer, console, setTimeout, clearTimeout,
     __dirname: path.dirname(sourcePath), process: { platform: "win32", env: {} },
     require(name) {
+      if (name === "./powershell") return { resolvePowerShell: () => "powershell.exe" };
       if (name === "node:child_process") return {
         spawn() {
           const child = new EventEmitter();

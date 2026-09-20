@@ -1,6 +1,9 @@
 param([Parameter(Mandatory = $true)][int]$ProcessId)
 
 $ErrorActionPreference = "Stop"
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;

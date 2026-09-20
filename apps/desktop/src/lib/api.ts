@@ -1146,6 +1146,7 @@ export const api = {
   setPluginScenicThemeBlur: (pluginId: string, themeId: string, blur: number) => invoke(IPC.invoke.pluginScenicThemesSetBlur, { pluginId, themeId, blur }),
   listPluginServices: () => invoke<PluginServiceStatus[]>(IPC.invoke.pluginServices),
   getRemoteAccessStatus: () => invoke<{ available: boolean; running: boolean; failed?: boolean }>(IPC.invoke.pluginRemoteAccessStatus),
+  getComputerUseStatus: () => invoke<{ available: boolean; running: boolean; starting?: boolean; failed?: boolean }>(IPC.invoke.pluginComputerUseStatus),
   /**
    * Work panel views, already filtered by permission, activation scope, and
    * entry existence, with titles resolved for the active locale (ADR 0104).

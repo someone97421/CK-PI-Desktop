@@ -21,9 +21,10 @@ function fixture(result) {
   return { calls, executors: makeExecutors(runtime, async () => ({ enabled: true })) };
 }
 
-test("facade remains thirteen tools with matching manifest names", () => {
+test("facade remains thirteen desktop tools with matching manifest names", () => {
   assert.equal(OCU_TOOLS.length + 1, 13);
-  assert.deepEqual([...OCU_TOOLS, STOP_TOOL].map(x => x.name).sort(), manifest.contributes.agentTools.map(x => x.name).sort());
+  const all = [...OCU_TOOLS, STOP_TOOL];
+  assert.deepEqual(all.map(x => x.name).sort(), manifest.contributes.agentTools.map(x => x.name).sort());
 });
 
 test("observation schema matches manifest including nested wait contracts", () => {
@@ -108,4 +109,40 @@ test("region args on a non-observe action are stripped and reported as observe_r
   const result = await f.executors.type_text({ app: "Notepad", text: "hi", region_x: 0, region_y: 0, region_width: 10, region_height: 10 });
   assert.equal(f.calls[0][1].region_x, undefined);
   assert.equal(result.structuredContent.region_crop.code, "observe_required");
+});
+
+test("secondary Select and unsupported patterns never become a default click", async () => {
+  for (const action of ["Select", "Toggle", "Expand", "Collapse", "ScrollIntoView", "SetFocus", "Scroll", "CustomAction", "", "toString", "__proto__"]) {
+    const f = fixture({ content: [{ type: "text", text: "must not invoke" }] });
+    const result = await f.executors.perform_secondary_action({ app: "explorer.exe", window_id: 100,
+      element_index: "33", action, observe: true });
+    assert.equal(f.calls.length, 0, action);
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredContent.code, "unsupported_secondary_action");
+    assert.equal(result.structuredContent.action_result.action, "perform_secondary_action");
+    assert.equal(result.structuredContent.action_result.delivery, "not_sent");
+    assert.equal(result.structuredContent.transport_sent, false);
+  }
+});
+
+test("supported secondary actions retain their semantics and public action identity", async () => {
+  for (const [action, routed, extra] of [["Invoke", "click", {}], ["Set_Value", "set_value", { value: "" }],
+    ["ScrollUp", "scroll", { direction: "up" }], ["ScrollDown", "scroll", { direction: "down" }],
+    ["ScrollLeft", "scroll", { direction: "left" }], ["ScrollRight", "scroll", { direction: "right" }]]) {
+    const f = fixture({ content: [{ type: "text", text: "unverified" }], structuredContent: { action_result: evidence } });
+    const result = await f.executors.perform_secondary_action({ app: "explorer.exe", window_id: 100,
+      element_index: "33", action, value: "", text: "must not replace explicit empty value" });
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0][0], routed);
+    for (const [key, value] of Object.entries(extra)) assert.equal(f.calls[0][1][key], value);
+    assert.equal(f.calls[0][1].action, undefined);
+    assert.equal(f.calls[0][1].text, undefined);
+    assert.equal(f.calls[0][1].app, "explorer.exe");
+    assert.equal(f.calls[0][1].window_id, 100);
+    assert.equal(String(f.calls[0][1].element_index), "33");
+    assert.equal(result.structuredContent.requested_action, action);
+    assert.equal(result.structuredContent.action_result.action, "perform_secondary_action");
+    assert.equal(result.structuredContent.action_result.routed_action, routed);
+    assert.equal(result.structuredContent.action_result.delivery, "unknown");
+  }
 });

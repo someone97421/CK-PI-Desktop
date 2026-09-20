@@ -8,7 +8,7 @@ const vm = require("node:vm");
 
 const runtimePath = path.join(__dirname, "..", "runtime.js");
 const source = fs.readFileSync(runtimePath, "utf8");
-const button = { role: "Button", label: "Open", element_index: 4, element_token: "button-4",
+const button = { role: "Button", label: "Open", element_index: 4, element_token: "snap:4", enabled: true, visible: true,
   frame: { x: 10, y: 10, w: 100, h: 40 }, actions: ["Invoke"] };
 const overlayItem = { role: "MenuItem", label: "删除记录", element_index: 5,
   frame: { x: 10, y: 60, w: 100, h: 30 }, actions: ["Invoke"] };
@@ -19,6 +19,7 @@ function fixture({ elements = [button], clickResult, stopAfterFront = false, rep
     module: { exports: {} }, exports: {}, Buffer, console, setTimeout, clearTimeout,
     __dirname: path.dirname(runtimePath), process: { platform: "win32", env: {} },
     require(name) {
+      if (name === "./powershell") return { resolvePowerShell: () => "powershell.exe" };
       if (name === "node:child_process") return {
         spawn() { throw new Error("Unexpected spawn"); },
         spawnSync() { throw new Error("Unexpected native input"); },
@@ -73,7 +74,7 @@ test("AX right-click uses foreground target once without overlay annotation", as
   assert.equal(f.clicks().length, 1);
   assert.equal(f.clicks()[0].payload.delivery_mode, "foreground");
   assert.equal(f.clicks()[0].payload.element_index, 4);
-  assert.equal(f.clicks()[0].payload.element_token, "button-4");
+  assert.equal(f.clicks()[0].payload.element_token, "snap:4");
   assert.equal(result.structuredContent.overlay_unverified, undefined);
 });
 

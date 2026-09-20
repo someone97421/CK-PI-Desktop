@@ -11,12 +11,14 @@
 | 会话创建 | sessions.create、sessions.fork | projectId；sessionId、throughMessageId、title |
 | 消息 | chat.send、chat.edit、chat.retry、chat.stop | sessionId、text、messageId、attachmentIds |
 | 队列 | queue.list、queue.push、queue.remove、queue.prioritize、queue.reorder、queue.edit | sessionId、turnId、direction |
-| 目录 | models.list、commands.list、subagents.list | 命令和子智能体需要 sessionId |
-| 配置 | models.configure | sessionId、modelKey、thinkingLevel、mode、permissionMode |
+| 目录 | models.list、commands.list、subagents.list | 模型目录传 sessionId 时同时返回当前会话设置；命令和子智能体需要 sessionId |
+| 配置 | models.configure | sessionId；按需提供 modelKey、providerId、modelId、thinkingLevel、mode、permissionMode，返回更新后的 session |
 | 决议 | approval.resolve、ask.resolve、plans.resolve | 会话及待处理记录 ID、决议/回答 |
 | 其他 | attachments.read、collaboration.get、plans.list | sessionId；附件 ref |
 
 `OPERATION_META` 是网络操作白名单的代码来源。浏览器没有通用宿主调用入口。目录按目标会话项目读取；技能与模板可插入消息，桌面专属命令禁用。子智能体选择插入委派请求，不保证模型一定调用指定子智能体。
+
+模型面板通过 `models.list({ sessionId })` 一次获取目录及会话设置。模型条目包含 `key`、`providerId`、`providerName`、`modelId`、`label`、`alias`、`isDefault` 和 `thinkingLevels`；目录来自宿主 `pi.models.list()` 的本地可用模型。选择使用完整 key，保存时同时携带提供商与模型 ID。面板只提交修改字段，服务端按当前目录核对模型与思考档位，成功回执用于更新输入区。获取失败可刷新重试；当前模型不在目录时保留当前值，不自动选择其他模型。
 
 ## 数据与安全
 

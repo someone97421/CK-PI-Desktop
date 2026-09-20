@@ -6,6 +6,9 @@ param(
   [uint32]$TargetPid = 0
 )
 $ErrorActionPreference = "Stop"
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 $result = [ordered]@{
   ok = $false; code = 'helper_error'; sent = 0; expected = 4
   foreground_hwnd = 0; focus_hwnd = 0; target_hwnd = $Hwnd; target_pid = $TargetPid; last_error = 0

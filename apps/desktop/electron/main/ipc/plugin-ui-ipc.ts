@@ -38,26 +38,36 @@ export function registerPluginUiIpc({
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
     registrar.handle(channel, fn);
   };
-  // fork 的侧栏入口只读取指定插件的监听状态，不开放任意插件调用或网络启停。
-  let remoteStatusPending: Promise<{ available: boolean; running: boolean; failed?: boolean }> | null = null;
-  handle(IPC.invoke.pluginRemoteAccessStatus, async () => {
-    const id = "local.lan-remote-control";
-    const loaded = plugins.getLoaded(id);
-    if (!loaded || !loaded.permissions.has("ui.panel") || !pluginActiveInProject(id, currentWorkspacePath())) {
-      return { available: false, running: false };
-    }
-    if (!remoteStatusPending) {
-      remoteStatusPending = plugins.invokePanelBridge(id, "remote.indicator")
-        .then((result) => {
-          const available = plugins.getLoaded(id) === loaded && pluginActiveInProject(id, currentWorkspacePath());
-          const running = (result as { running?: unknown } | null)?.running;
-          return { available, running: available && running === true, failed: typeof running !== "boolean" };
-        })
-        .catch(() => ({ available: plugins.getLoaded(id) === loaded, running: false, failed: true }))
-        .finally(() => { remoteStatusPending = null; });
-    }
-    return remoteStatusPending;
-  });
+  // 侧栏仅允许读取这两个插件的状态，启停和设置仍由插件面板负责。
+  type SidebarStatus = { available: boolean; running: boolean; starting?: boolean; failed?: boolean };
+  for (const [channel, id, indicator] of [
+    [IPC.invoke.pluginRemoteAccessStatus, "local.lan-remote-control", "remote.indicator"],
+    [IPC.invoke.pluginComputerUseStatus, "cn.star.computer-use", "cu.indicator"],
+  ] as const) {
+    let pending: Promise<SidebarStatus> | null = null;
+    handle(channel, async () => {
+      const loaded = plugins.getLoaded(id);
+      const isAvailable = () => !!loaded && plugins.getLoaded(id) === loaded
+        && loaded.permissions.has("ui.panel") && pluginActiveInProject(id, currentWorkspacePath());
+      if (!isAvailable()) return { available: false, running: false };
+      if (!pending) {
+        pending = plugins.invokePanelBridge(id, indicator)
+          .then((result) => {
+            const available = isAvailable();
+            const state = result as { running?: unknown; starting?: unknown; failed?: unknown } | null;
+            return {
+              available,
+              running: available && state?.running === true,
+              starting: available && state?.starting === true,
+              failed: available && (state?.failed === true || typeof state?.running !== "boolean"),
+            };
+          })
+          .catch(() => ({ available: isAvailable(), running: false, failed: true }))
+          .finally(() => { pending = null; });
+      }
+      return pending;
+    });
+  }
   handle(IPC.invoke.pluginOpenPanel, async (id: string) => {
     const loaded = plugins.getLoaded(id);
     if (!loaded) throw new Error("plugin not loaded");

@@ -22,6 +22,7 @@ function fixture({ platform = "win32", elements = overlay, live = elements, nati
     Date: class extends Date { static now() { return now; } },
     __dirname: path.dirname(runtimePath), process: { platform, env: {} },
     require(name) {
+      if (name === "./powershell") return { resolvePowerShell: () => "powershell.exe" };
       if (name === "node:child_process") return {
         spawn() { throw new Error("Unexpected spawn"); },
         spawnSync(exe, args, opts) {
@@ -295,7 +296,7 @@ for (const live of [[], normal]) {
     const cached = f.runtime.targets.get("notepad");
     assert.equal(cached.snapshot_id, "new");
     assert.equal(cached.elements.length, live.length);
-    assert.equal(f.runtime._elementFields("notepad", 99).element_token, undefined);
+    assert.throws(() => f.runtime._elementFields("notepad", 99), { code: "stale_tree" });
     await f.press("Down");
     assert.equal(f.calls.native.length, 2);
     assert.equal(f.calls.action.length, 0);
@@ -394,9 +395,10 @@ test("native activation source preserves owned popups and checks focus immediate
   assert.match(activation, /System\.Threading\.Thread\.Sleep\(300\);/);
   assert.match(activation, /if \(IsIconic\(root\)\) \{ result\.code = "restore_incomplete"; return false; \}/);
   assert.equal((ps.match(/SetForegroundWindow\(root\)/g) || []).length, 1);
-  assert.match(activation, /if \(!activated \|\| !BelongsTo[\s\S]*code = "foreground_mismatch"; return false;/);
-  const withoutSettle = activation.replace("System.Threading.Thread.Sleep(300);", "");
-  assert.doesNotMatch(withoutSettle, /SendInput|Thread\.Sleep|while\s*\(|for\s*\(/);
+  assert.match(activation, /if \(belongs\) return true;/);
+  assert.match(activation, /long remaining = 300 - result.activation_wait_ms;/);
+  assert.match(activation, /if \(remaining <= 0\) \{ result.code = "foreground_mismatch"; return false; \}/);
+  assert.doesNotMatch(activation, /SendInput|!activated/);
   assert.doesNotMatch(ps, /AttachThreadInput|SetFocus|keybd_event|SendKeys/);
   assert.match(ps, /if \(!EnsureForeground\(hwnd, pid, result\)\) return result;/);
   assert.match(ps, /GetGUIThreadInfo\(thread, ref info\)/);
@@ -408,9 +410,8 @@ test("fresh full empty tree without a new snapshot ID clears the old snapshot an
   f.runtime.targets.get("notepad").snapshot_id = "old";
   await f.snapshot();
   assert.equal(f.runtime.targets.get("notepad").elements.length, 0);
-  const fields = f.runtime._elementFields("notepad", 2);
-  assert.equal(fields.snapshot_id, undefined);
-  assert.equal(fields.element_token, undefined);
+  assert.equal(f.runtime.targets.get("notepad").snapshot_id, undefined);
+  assert.throws(() => f.runtime._elementFields("notepad", 2), { code: "stale_tree" });
 });
 
 test("Menu partial live tree with visible editor sends one Escape and no Menu/CUA action", async () => {

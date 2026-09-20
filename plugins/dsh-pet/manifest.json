@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "id": "local.dsh-pet",
+  "name": "桌面宠物 dsh-pet",
+  "version": "0.1.4",
+  "description": "把 dsh-pet 的桌面核心搬进这是一个助手：透明点击穿透的小窗、106 段透明 webm 动作与 Codex v2 精灵图集角色（Xiao Dino）、拖拽甩抛物理、跨屏漫游、多宠物与 PI 会话工作状态联动。",
+  "author": "PC2005-cloud / 移植：CK-PI-Desktop",
+  "homepage": "https://github.com/PC2005-cloud/dsh-pet",
+  "license": "MIT",
+  "main": "main.cjs",
+  "ui": {
+    "panel": "widget/index.html",
+    "shape": "widget",
+    "alwaysOnTop": true,
+    "resizable": false,
+    "width": 924,
+    "height": 744,
+    "title": {
+      "en": "Desktop Pet",
+      "zh-CN": "桌面宠物"
+    }
+  },
+  "permissions": [
+    "ui.panel",
+    "ui.view",
+    "background.service",
+    "desktop.control",
+    "session.read",
+    "models.list",
+    "agent.complete"
+  ],
+  "activationEvents": [
+    "onStartup",
+    "onCommand:dsh-pet.show",
+    "onCommand:dsh-pet.settings"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "dsh-pet.show",
+        "title": "桌面宠物：显示宠物",
+        "keywords": [
+          "桌宠",
+          "宠物",
+          "pet",
+          "dsh-pet"
+        ],
+        "category": "桌面宠物"
+      },
+      {
+        "id": "dsh-pet.hide",
+        "title": "桌面宠物：收起宠物",
+        "keywords": [
+          "桌宠",
+          "隐藏",
+          "hide"
+        ],
+        "category": "桌面宠物"
+      },
+      {
+        "id": "dsh-pet.settings",
+        "title": "桌面宠物：设置",
+        "keywords": [
+          "桌宠",
+          "设置",
+          "大小",
+          "多宠物"
+        ],
+        "category": "桌面宠物"
+      }
+    ],
+    "views": [
+      {
+        "id": "settings",
+        "title": {
+          "en": "Desktop Pet Settings",
+          "zh-CN": "桌面宠物设置"
+        },
+        "icon": "bot",
+        "entry": "views/settings.html",
+        "order": 20
+      }
+    ],
+    "services": [
+      {
+        "id": "dsh-pet-state",
+        "label": "桌面宠物状态跟踪",
+        "autoRestart": true
+      }
+    ],
+    "settings": [
+      {
+        "key": "size",
+        "title": "宠物大小",
+        "description": "宠物宽度（120–600，单位 DIP）。高度按 9:16 自动计算。",
+        "type": "number",
+        "default": 462
+      },
+      {
+        "key": "roaming",
+        "title": "屏幕漫游",
+        "description": "开启后宠物会随机走动、转向并播放大动作。",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "workStatus",
+        "title": "会话状态联动",
+        "description": "跟随这是一个助手的会话状态切换思考/干活/等待/完成动画与气泡。",
+        "type": "boolean",
+        "default": true
+      },
+      {
+        "key": "showOnStartup",
+        "title": "启动时显示宠物",
+        "description": "关闭后只在你手动执行“显示宠物”命令或打开设置时才出现。",
+        "type": "boolean",
+        "default": true
+      }
+    ]
+  },
+  "engines": {
+    "piDesktop": ">=2609.1910.700"
+  }
+}

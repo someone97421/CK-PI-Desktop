@@ -3,6 +3,7 @@
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const { resolvePowerShell } = require("./powershell");
 
 const BANNER_TEXT = "AI 正在控制你的电脑进行作业，可以按 ESC 强行打断";
 
@@ -22,7 +23,11 @@ class ControlBanner {
     const script = path.join(__dirname, "scripts", "windows-banner.ps1");
     if (!fs.existsSync(script)) return;
     const childEnv = { ...(env || process.env), OCU_BANNER_TEXT: BANNER_TEXT };
-    const child = spawn("powershell.exe", [
+    const child = spawn(resolvePowerShell({
+      env: childEnv,
+      powershellPath: env && env.powershellPath,
+      powershellExe: env && env.powershellExe,
+    }), [
       "-NoProfile",
       "-STA",
       "-NonInteractive",

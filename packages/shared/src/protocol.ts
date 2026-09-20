@@ -232,6 +232,7 @@ export const IPC = {
     pluginScenicThemesSetBlur: "pi-desktop/plugin/scenicThemes/setBlur",
     pluginServices: "pi-desktop/plugin/services",
     pluginRemoteAccessStatus: "pi-desktop/plugin/remoteAccessStatus",
+    pluginComputerUseStatus: "pi-desktop/plugin/computerUseStatus",
     pluginViews: "pi-desktop/plugin/views",
     pluginViewOpen: "pi-desktop/plugin/view/open",
     pluginViewClose: "pi-desktop/plugin/view/close",

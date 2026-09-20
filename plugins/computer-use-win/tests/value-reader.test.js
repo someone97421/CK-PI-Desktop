@@ -1,11 +1,12 @@
 "use strict";
-// Mocked process boundaries and static checks only; these tests never query UI Automation.
+// Mocked boundaries plus native parsing/invalid-HWND checks; never query a real UIA tree.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { readControlValue } = require("../value-reader");
+const { windowsPowerShellHosts } = require("./powershell-hosts");
 
 const target = { pid: 42, window_id: 100 };
 const selector = { automation_id: "number-editor-input-fldLZZcp9p", role: "Edit" };
@@ -46,6 +47,7 @@ test("serializes a bounded JSON stdin request without selector interpolation", (
   const echoed = { name: tricky.name, automation_id: "id", role: "Edit" };
   const result = readControlValue(target, tricky, {
     platform: "win32",
+    powershellPath: "C:\\custom host\\pwsh.exe",
     maxChars: 17,
     maxNodes: 50,
     deadlineMs: 700,
@@ -54,7 +56,7 @@ test("serializes a bounded JSON stdin request without selector interpolation", (
   });
   assert.equal(result.status, "read");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].file, "powershell.exe");
+  assert.equal(calls[0].file, "C:\\custom host\\pwsh.exe");
   assert.ok(calls[0].args.includes("-Sta"));
   assert.ok(calls[0].args.includes(scriptPath));
   assert.ok(!calls[0].args.some(arg => arg.includes(tricky.name)));
@@ -66,6 +68,7 @@ test("serializes a bounded JSON stdin request without selector interpolation", (
   assert.equal(calls[0].options.timeout, 8000);
   assert.equal(calls[0].options.env.TEMP, "C:\\scratch");
   assert.equal(calls[0].options.env.TMP, "C:\\scratch");
+  assert.equal(calls[0].options.env.TMPDIR, "C:\\scratch");
 });
 
 test("preserves an empty UIA value as a successful read", () => {
@@ -128,6 +131,17 @@ test("invalid inputs and helper failures are bounded structured errors", () => {
   assert.doesNotMatch(JSON.stringify(failed), /secret/);
 });
 
+test("provider initialization errors preserve their stage and discard attached content", () => {
+  const result = invoke(nativeResult({ status: "error", source: null,
+    code: "provider_initialization_failed", complete: false, match_count: 0,
+    value: "sensitive", diagnostics: { stage: "provider_initialization", exception: "sensitive" } }));
+  assert.equal(result.code, "provider_initialization_failed");
+  assert.equal(result.status, "error");
+  assert.deepEqual(result.diagnostics, { stage: "provider_initialization" });
+  assert.ok(!Object.hasOwn(result, "value"));
+  assert.doesNotMatch(JSON.stringify(result), /sensitive/);
+});
+
 test("PID/HWND echo mismatch invalidates the helper result", () => {
   const wrongTarget = invoke(nativeResult({ target: { pid: 43, window_id: 100 } }));
   assert.equal(wrongTarget.status, "error");
@@ -166,7 +180,8 @@ test("native helper is read-only, window scoped, bounded, and does not use prope
   assert.match(scriptSource, /\$current\.IsOffscreen/);
   assert.doesNotMatch(scriptSource, /FindAll|RootElement|FocusedElement|GetFocusedElement|HelpText|LegacyIAccessible|\.SetFocus|SetForegroundWindow|SendInput|SendKeys|keybd_event|Set-Clipboard|Get-Clipboard|Clipboard|mouse_event|Click\s*\(/i);
   const imports = [...scriptSource.matchAll(/public static extern\s+\w+\s+(\w+)\s*\(/g)].map(match => match[1]);
-  assert.deepEqual(imports, ["IsWindow", "GetWindowThreadProcessId", "GetClassName", "EnumChildWindows", "SendMessageTimeout"]);
+  assert.deepEqual(imports, ["IsWindow", "GetWindowThreadProcessId", "GetClassName", "EnumChildWindows",
+    "EnumWindows", "IsWindowVisible", "GetWindow", "SendMessageTimeout"]);
   assert.match(scriptSource, /\$WM_GETOBJECT = 0x003D/);
   assert.match(scriptSource, /RenderWidgetHost/);
   assert.match(scriptSource, /FindRenderWidget/);
@@ -182,6 +197,12 @@ test("PowerShell 5.1 parses helper and compiles embedded C# without querying a G
 }, () => {
   const nativeBlock = scriptSource.match(/Add-Type -TypeDefinition @"\r?\n([\s\S]*?)\r?\n"@ \| Out-Null/);
   assert.ok(nativeBlock);
+  assert.match(nativeBlock[1], /public static class ValueReaderNative/);
+  const bootstrapBlock = scriptSource.match(/Add-Type -ReferencedAssemblies [^\r\n]+ -TypeDefinition @'\r?\n([\s\S]*?)\r?\n'@ \| Out-Null/);
+  assert.ok(bootstrapBlock);
+  assert.match(bootstrapBlock[1], /MethodImplOptions.NoInlining/);
+  assert.ok(scriptSource.indexOf("[ValueReaderProviderBootstrap]::Initialize()") <
+    scriptSource.indexOf("[System.Windows.Automation.TreeWalker]::RawViewWalker"));
   const quote = value => `'${value.replace(/'/g, "''")}'`;
   const command = `
 $ErrorActionPreference = 'Stop'
@@ -190,14 +211,43 @@ $tokens = $null; $errors = $null
 [void][System.Management.Automation.Language.Parser]::ParseFile(${quote(scriptPath)}, [ref]$tokens, [ref]$errors)
 if ($errors.Count -ne 0) { throw ($errors | ForEach-Object Message | Out-String) }
 Add-Type -TypeDefinition ${quote(nativeBlock[1])}
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -ReferencedAssemblies ([System.Windows.Automation.AutomationElement].Assembly.Location) -TypeDefinition ${quote(bootstrapBlock[1])}
 'compiled-only'
 `;
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
     "-EncodedCommand", Buffer.from(command, "utf16le").toString("base64")], {
     encoding: "utf8", timeout: 30000, windowsHide: true,
-    env: { ...process.env, TEMP: process.env.PI_SCRATCH_DIR, TMP: process.env.PI_SCRATCH_DIR },
+    env: { ...process.env, TEMP: process.env.PI_SCRATCH_DIR, TMP: process.env.PI_SCRATCH_DIR, TMPDIR: process.env.PI_SCRATCH_DIR },
   });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), "compiled-only");
+});
+
+for (const host of windowsPowerShellHosts) {
+test(`${host.name}: stdin/stdout preserves Chinese Office selectors as UTF-8`, {
+  skip: process.platform !== "win32" || !process.env.PI_SCRATCH_DIR,
+}, () => {
+  const invalidTarget = { pid: 1, window_id: 2147483647 };
+  for (const name of ["文件名", "中文 ' \" $() 😀"]) {
+    const expectedSelector = { name, role: "Edit" };
+    const result = readControlValue(invalidTarget, expectedSelector, {
+      tempDir: process.env.PI_SCRATCH_DIR, powershellPath: host.executable,
+    });
+    assert.equal(result.code, "target_pid_mismatch", JSON.stringify(result));
+    assert.deepEqual(result.target, invalidTarget);
+    assert.deepEqual(result.selector, expectedSelector);
+    assert.ok(!Object.hasOwn(result, "value"));
+  }
+});
+}
+
+test("owned-root diagnostics allow bounded counts without provider content", () => {
+  const result = invoke(nativeResult({ diagnostics: { is_password: false, roots_scanned: 3,
+    owned_roots: 2, candidates_filtered: 12, window_title: "secret", owner_path: "secret" } }));
+  assert.deepEqual(result.diagnostics, { roots_scanned: 3, owned_roots: 2, candidates_filtered: 12, is_password: false });
+  const invalid = invoke(nativeResult({ diagnostics: { is_password: false, roots_scanned: "secret",
+    owned_roots: -1, candidates_filtered: 1000001 } }));
+  assert.deepEqual(invalid.diagnostics, { is_password: false });
 });

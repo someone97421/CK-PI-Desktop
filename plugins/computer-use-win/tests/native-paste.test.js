@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { windowsPowerShellHosts } = require("./powershell-hosts");
 const scripts = path.join(__dirname, "..", "scripts");
 const keySource = fs.readFileSync(path.join(scripts, "windows-send-key.ps1"), "utf8");
 const pasteSource = fs.readFileSync(path.join(scripts, "windows-paste.ps1"), "utf8");
@@ -12,8 +13,8 @@ const nativeBlock = /Add-Type @"\r?\n([\s\S]*?)\r?\n"@/;
 const windows = process.platform === "win32";
 const scratch = process.env.PI_SCRATCH_DIR;
 const quote = (value) => `'${value.replace(/'/g, "''")}'`;
-function powershell(source) {
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+function powershell(source, executable = "powershell.exe") {
+  const result = spawnSync(executable, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
     "-EncodedCommand", Buffer.from(source, "utf16le").toString("base64")], {
     encoding: "utf8", timeout: 30000, windowsHide: true,
     env: { ...process.env, ...(scratch ? { TEMP: scratch, TMP: scratch } : {}) },
@@ -34,9 +35,10 @@ test("paste chord builds Control/V down then reverse key-ups; menu flags stay in
   assert.match(keySource, /\(Extended\(vk\) \? 1u : 0u\) \| \(up \? 2u : 0u\)/);
 });
 
-test("allowlist executes with a mocked native call for every key/modifier combination", { skip: !windows }, () => {
+for (const host of windowsPowerShellHosts) {
+test(`${host.name}: allowlist executes with a mocked native call for every key/modifier combination`, { skip: !windows }, () => {
   assert.match(keySource, nativeBlock);
-  const call = /\[WinSendKey\]::Send\(\$Hwnd, \$TargetPid, \[uint16\]\$vkMap\[\$name\], \$Shift.IsPresent, \$Control.IsPresent\)/;
+  const call = /\[WinSendKey\]::Send\(\$Hwnd, \$TargetPid, \[uint16\]\$vkMap\[\$name\], \$Shift.IsPresent, \$Control.IsPresent(?:, \$Alt.IsPresent)?\)/g;
   assert.match(keySource, call);
   const mocked = keySource.replace(nativeBlock, "").replace(call,
     "New-MockDelivery $Hwnd $TargetPid $vkMap[$name] $Shift.IsPresent $Control.IsPresent")
@@ -55,7 +57,7 @@ function New-MockDelivery($hwndValue, $target, $vk, $shift, $control) {
 }
 $script = [ScriptBlock]::Create(${quote(mocked)})
 ${cases.map(({ key, shift, control }) => `& $script -Hwnd 100 -TargetPid 42 -Key ${quote(key)} -Shift:$${shift} -Control:$${control}`).join("\n")}
-`);
+`, host.executable);
   assert.equal(result.status, 0, result.stderr);
   const outputs = result.stdout.trim().split(/\r?\n/).map(JSON.parse);
   assert.equal(outputs.length, cases.length);
@@ -75,6 +77,7 @@ ${cases.map(({ key, shift, control }) => `& $script -Hwnd 100 -TargetPid 42 -Key
     }
   });
 });
+}
 
 test("PID, owned-popup, foreground, focus and held-key guards precede delivery", () => {
   const activation = keySource.slice(keySource.indexOf("static bool EnsureForeground("), keySource.indexOf("static bool CheckTarget("));
@@ -93,7 +96,10 @@ test("PID, owned-popup, foreground, focus and held-key guards precede delivery",
   assert.match(keySource, /if \(Held\(modifier\)\) \{ result.code = "modifier_held"; return result; \}/);
   assert.match(keySource, /if \(Held\(vk\)\) \{ result.code = "key_held"; return result; \}/);
   assert.match(keySource, /if \(!CheckTarget\(hwnd, pid, result\)\) return result;\s*SetLastError\(0\);\s*result.sent = SendInput/);
-  assert.doesNotMatch(keySource.replace("System.Threading.Thread.Sleep(300);", ""), /AttachThreadInput|keybd_event|SetFocus|SetCaretPos|SendKeys|windows-uia-focus|Thread\.Sleep/);
+  assert.doesNotMatch(keySource, /AttachThreadInput|keybd_event|SetFocus|SetCaretPos|SendKeys|windows-uia-focus/);
+  assert.doesNotMatch(check, /Thread\.Sleep/);
+  const injection = keySource.slice(keySource.indexOf("public static Result Send("));
+  assert.doesNotMatch(injection, /Thread\.Sleep/);
 });
 
 test("partial delivery never replays: one full batch, cleanup only releases the inserted prefix", () => {
@@ -142,8 +148,9 @@ const wrapperCases = [
   { name: "clipboard then send", value: delivery(), clipboard: true, status: 0 },
   { name: "clipboard failure", clipboard: true, clipThrows: true, calls: 0, status: 1 },
 ];
+for (const host of windowsPowerShellHosts) {
 for (const scenario of wrapperCases) {
-  test(`legacy ${scenario.name}: JSON and exit status, no replay`, { skip: !windows }, () => {
+  test(`${host.name}: legacy ${scenario.name}: JSON and exit status, no replay`, { skip: !windows }, () => {
     const helperPath = "Join-Path $PSScriptRoot 'windows-send-key.ps1'";
     assert.ok(pasteSource.includes(helperPath));
     const mocked = pasteSource.replace(helperPath, "'Invoke-MockDelivery'");
@@ -164,7 +171,7 @@ function Set-Clipboard {
 & {
 ${mocked}
 } ${scenario.args ?? "-Hwnd 100 -TargetPid 42"} ${scenario.clipboard ? `-ClipFile ${quote(path.join(scripts, "windows-paste.ps1"))}` : ""}
-`);
+`, host.executable);
     assert.equal(result.status, scenario.status, result.stderr);
     const output = JSON.parse(result.stdout.trim());
     assert.equal(output.ok, scenario.status === 0);
@@ -179,6 +186,7 @@ ${mocked}
       if (!scenario.clipThrows) assert.ok(result.stderr.indexOf("MOCK_CLIPBOARD") < result.stderr.indexOf("MOCK_SEND"));
     }
   });
+}
 }
 
 test("original embedded C# compiles in Windows PowerShell 5.1 without executing it", {

@@ -6,8 +6,9 @@ const path = require("node:path");
 const { ControlBanner } = require("./overlay");
 const { probe: probeCua, doctor: cuaDoctor, childEnv: cuaChildEnv } = require("./cua");
 const { filterRecords, gateRecord, namesMatch, normalize } = require("./policy");
+const { resolvePowerShell } = require("./powershell");
 
-const PLUGIN_VERSION = "0.3.0";
+const PLUGIN_VERSION = "0.4.0";
 const START_TIMEOUT_MS = 15_000;
 const RPC_TIMEOUT_MS = 90_000;
 const FOCUS_TIMEOUT_MS = 8_000;
@@ -136,7 +137,11 @@ function tryCompressWithPowerShell(buf, options = {}) {
   const qualities = options.qualities || AGENT_JPEG_QUALITIES;
   try {
     for (const quality of qualities) {
-      const result = spawnSync("powershell.exe", [
+      const result = spawnSync(resolvePowerShell({
+        env: options.env,
+        powershellPath: options.powershellPath || (options.env && options.env.powershellPath),
+        powershellExe: options.powershellExe || (options.env && options.env.powershellExe),
+      }), [
         "-NoProfile",
         "-NonInteractive",
         "-ExecutionPolicy",
@@ -261,6 +266,9 @@ function normalizeActionResult(result, action) {
   if (Number.isInteger(s.sent)) evidence.push({ kind: "transport", sent: s.sent, expected: s.expected });
   if (uiChange !== "unknown") evidence.push({ kind: "ui_change", value: uiChange });
   if (matched) evidence.push(...s.wait.evidence);
+  if (s.window_verification?.status === "absent" && s.window_verification.source === "list_windows") {
+    evidence.push({ kind: "target_window_absent", ...s.window_verification });
+  }
   return { ...result, structuredContent: { ...s, action_result: {
     schema_version: 1, action, delivery, ui_change: uiChange,
     goal: matched ? "confirmed" : "unconfirmed", retry_safe: readOnly || delivery === "not_sent", evidence,
@@ -329,7 +337,7 @@ function evaluateWait(result, predicate, maxElements, maxDepth) {
 }
 
 function observationFields(cached) {
-  return Object.fromEntries(["observation_id", "image_version", "tree_version", "image_captured_at", "tree_captured_at", "tree_actionable", "pid", "window_id"].map((key) => [key, cached[key] ?? null]));
+  return Object.fromEntries(["observation_id", "image_version", "tree_version", "image_captured_at", "tree_captured_at", "tree_actionable", "snapshot_actionable", "pid", "window_id"].map((key) => [key, cached[key] ?? null]));
 }
 
 function observationText(cached) {
@@ -780,6 +788,42 @@ function nestedTargetMismatch(value, target, nesting = 0) {
   });
 }
 
+// Explicit indices need a fresh, target-bound capture, not proof that every
+// control was enumerated. Cancellation/navigation still use liveTreeGuard.
+function explicitSnapshotTrusted(result, target) {
+  const s = structuredOf(result);
+  return !captureFailed(result) && !responseFlaggedUnhealthy(result)
+    && Array.isArray(s.elements) && !s.query && !s.query_local && s.tree_stale !== true
+    && s._capture_target_match !== false && !nestedTargetMismatch(result, target);
+}
+
+function validElementIndex(value) {
+  return (typeof value === "number" || (typeof value === "string" && /^\d+$/.test(value)))
+    && Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+}
+
+function elementAvailable(el, requireExplicit) {
+  const on = (v) => v === true || v === 1 || v === "true" || v === "1";
+  const off = (v) => v === false || v === 0 || v === "false" || v === "0";
+  const enabled = [el.enabled, el.is_enabled];
+  const visible = [el.visible, el.is_visible];
+  const offscreen = [el.offscreen, el.is_offscreen, el.is_off_screen];
+  if (editorMarkerUnavailable(el) || offscreen.some(on)
+    || [el.password, el.is_password, el.isPassword, el.protected, el.is_protected].some(on)) return false;
+  // CUA Office snapshots omit visibility flags even for valid token-bound controls.
+  // Explicit hidden/disabled/offscreen values above still reject the element.
+  return !requireExplicit || enabled.some(on);
+}
+
+function uiaCaptureTimeout(result) {
+  const s = structuredOf(result);
+  if (!result?.message && !captureFailed(result) && !responseFlaggedUnhealthy(result)) return false;
+  const text = typeof result?.message === "string" ? `${result.code || ""} ${result.message}`
+    : JSON.stringify({ ...s, elements: undefined, tree_markdown: undefined,
+      content: (result?.content || []).filter((item) => item.type === "text") });
+  return /timed[ _-]?out|timeout|provider.{0,80}unresponsive|unresponsive.{0,80}provider/i.test(text);
+}
+
 function liveTreeGuard(result, target) {
   const structured = structuredOf(result);
   if (captureFailed(result)) return { usable: false, reason: "capture_failed", elements: [] };
@@ -925,12 +969,14 @@ function isPasteChord(key) {
   return keys.length === 2 && keys.includes("v") && keys.some((item) => item === "ctrl" || item === "command");
 }
 
-const EDITOR_SINGLE_KEYS = new Set(["return", "tab", "delete", "space"]);
+const EDITOR_SINGLE_KEYS = new Set(["return", "tab", "space"]);
+const FOCUS_PRESERVING_KEYS = new Set(["delete", "backspace"]);
 
 function keyNeedsEditorFocus(parsed) {
   if (!parsed) return false;
   if (parsed.kind === "hotkey") {
     const keys = parsed.keys;
+    if (keys.some((key) => FOCUS_PRESERVING_KEYS.has(key))) return false;
     if (keys.includes("escape") || keys.includes("alt")) return false;
     return keys.includes("ctrl") || keys.includes("win") || keys.includes("command");
   }
@@ -952,7 +998,7 @@ function sendUiaFocus(env, hwnd) {
   if (!IS_WIN || !fs.existsSync(script) || !hwnd) return false;
   try {
     const result = spawnSync(
-      "powershell.exe",
+      resolvePowerShell({ env, powershellPath: env && env.powershellPath, powershellExe: env && env.powershellExe }),
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Hwnd", String(Number(hwnd))],
       { env, encoding: "utf8", timeout: FOCUS_TIMEOUT_MS, windowsHide: true, maxBuffer: 1_000_000 },
     );
@@ -971,7 +1017,7 @@ function readFocusState(env, hwnd, pid) {
   if (!fs.existsSync(script)) return null;
   try {
     const result = spawnSync(
-      "powershell.exe",
+      resolvePowerShell({ env, powershellPath: env && env.powershellPath, powershellExe: env && env.powershellExe }),
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
         "-Hwnd", String(Number(hwnd)), "-TargetPid", String(Number(pid || 0))],
       { env, encoding: "utf8", timeout: FOCUS_TIMEOUT_MS, windowsHide: true, maxBuffer: 64_000 },
@@ -984,9 +1030,43 @@ function readFocusState(env, hwnd, pid) {
   }
 }
 
-// Deliberately narrow: never discard modifiers to turn a hotkey into a menu key.
-function nativeKeyChord(parsed) {
+// Only identity returned for the resolved HWND/PID, never a caller alias or title.
+function windowIdentity(record) {
+  return Object.fromEntries(["app_name", "process_name", "executable_path", "window_class", "class_name"]
+    .filter((key) => record[key] != null).map((key) => [key, record[key]]));
+}
+
+function isOfficeTarget(target) {
+  const executable = target.process_name || target.executable_path;
+  const name = String(executable || target.app_name || "").trim().split(/[\\/]/).pop().replace(/\.exe$/i, "");
+  if (name) return /^(winword|excel|powerpnt|wps|et|wpp|(?:microsoft )?(?:word|excel|powerpoint)|wps (?:office|writer|spreadsheets|presentation))$/i.test(name);
+  return /^(OpusApp|XLMAIN|PPTFrameClass|kwps\.KwpsMainWindow|ket\.KetMainWindow|kwpp\.KwppMainWindow)$/i
+    .test(String(target.window_class || target.class_name || ""));
+}
+
+function officeKeyChord(parsed) {
   if (!parsed) return null;
+  if (parsed.kind === "press_key") {
+    return ["f2", "f5", "f9", "f12", "delete", "backspace", "space"].includes(parsed.key) ? { key: parsed.key } : null;
+  }
+  const keys = parsed.keys || [];
+  const key = keys.filter((item) => !["ctrl", "shift", "alt"].includes(item));
+  // Exact sets only: unknown or repeated modifiers must never be discarded.
+  if (key.length !== 1 || new Set(keys).size !== keys.length) return null;
+  const control = keys.includes("ctrl"), shift = keys.includes("shift"), alt = keys.includes("alt");
+  const allowed = control && !shift && !alt
+    ? ["n", "o", "s", "g", "f", "a", "z", "y", "b", "i", "u", "home", "end", "return", "m", "d", "w", "1"].includes(key[0])
+    : control && shift && !alt ? ["n", "l", "s", "home", "end", "left", "right", "up", "down"].includes(key[0])
+    : control && alt && !shift ? ["1", "2", "3"].includes(key[0])
+    : alt && !control && !shift ? key[0] === "f4"
+    : shift && !control && !alt && ["f5", "home", "end", "left", "right", "up", "down", "pageup", "pagedown", "tab"].includes(key[0]);
+  return allowed ? { key: key[0], control, shift, alt } : null;
+}
+
+// Deliberately narrow: never discard modifiers to turn a hotkey into a menu key.
+function nativeKeyChord(parsed, office = false) {
+  if (!parsed) return null;
+  if (office) return officeKeyChord(parsed);
   if (parsed.kind === "press_key") {
     return OVERLAY_KEYS.has(parsed.key) || ["space", "backspace"].includes(parsed.key)
       ? { key: parsed.key, shift: false } : null;
@@ -998,21 +1078,23 @@ function nativeKeyChord(parsed) {
   return key === "f10" || key === "tab" ? { key, shift: true } : null;
 }
 
-function sendWindowsKey(env, hwnd, pid, parsed) {
+function sendWindowsKey(env, hwnd, pid, parsed, office = false) {
   const failure = (code, diagnostic = "") => ({
     ok: false, code, sent: null, expected: null, foreground_hwnd: 0, focus_hwnd: 0,
     target_hwnd: hwnd, target_pid: pid, last_error: 0, diagnostic: String(diagnostic).slice(0, 800),
   });
-  const chord = nativeKeyChord(parsed);
+  const chord = nativeKeyChord(parsed, office);
   if (!IS_WIN || !chord) return { ...failure("unsupported_key_chord"), sent: 0, expected: 0 };
   const script = path.join(__dirname, "scripts", "windows-send-key.ps1");
   if (!fs.existsSync(script) || !hwnd || !pid) return { ...failure("invalid_native_target"), sent: 0, expected: 0 };
   const extra = ["-Hwnd", String(Number(hwnd)), "-TargetPid", String(Number(pid)), "-Key", chord.key];
   if (chord.shift) extra.push("-Shift");
   if (chord.control) extra.push("-Control");
+  if (chord.alt) extra.push("-Alt");
+  if (office) extra.push("-Office");
   try {
     const result = spawnSync(
-      "powershell.exe",
+      resolvePowerShell({ env, powershellPath: env && env.powershellPath, powershellExe: env && env.powershellExe }),
       ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...extra],
       { env, encoding: "utf8", timeout: FOCUS_TIMEOUT_MS, windowsHide: true, maxBuffer: 64_000 },
     );
@@ -1027,7 +1109,7 @@ function sendWindowsKey(env, hwnd, pid, parsed) {
       return failure("invalid_native_result", diagnostic);
     }
     const accepted = result.status === 0 && !result.error && transport.ok
-      && transport.expected === (chord.shift || chord.control ? 4 : 2) && transport.sent === transport.expected
+      && transport.expected === 2 * (1 + Number(!!chord.shift) + Number(!!chord.control) + Number(!!chord.alt)) && transport.sent === transport.expected
       && Number(transport.target_hwnd) === Number(hwnd) && Number(transport.target_pid) === Number(pid);
     return { ...transport, ok: accepted, code: accepted || !transport.ok ? transport.code : "native_process_failed", diagnostic };
   } catch (error) {
@@ -1037,11 +1119,13 @@ function sendWindowsKey(env, hwnd, pid, parsed) {
 
 function win32KeyResult(app, parsed, transport) {
   const key = parsed.kind === "hotkey" ? parsed.keys.join("+") : parsed.key;
+  const focusDiagnostic = !transport.ok && Number(transport.foreground_hwnd) > 0
+    ? ` foreground_hwnd=${transport.foreground_hwnd} foreground_pid=${transport.foreground_pid ?? "unknown"} foreground_class=${JSON.stringify(transport.foreground_class || "")} target_hwnd=${transport.target_hwnd} activation_attempted=${transport.activation_attempted ?? "unknown"} activation_returned=${transport.activation_returned ?? "unknown"} activation_wait_ms=${transport.activation_wait_ms ?? "unknown"}. Inspect the blocking window before another input.` : "";
   return {
     ...(transport.ok ? {} : { isError: true }),
     content: [{ type: "text", text: transport.ok
       ? `ok action=press_key app=${app}. transport_sent=true effect=unverifiable path=win32-hwnd key=${key}. Input accepted once; key effect not verified.`
-      : `Windows key transport failed: ${transport.code} sent=${transport.sent}/${transport.expected}. No retry.${transport.diagnostic ? ` ${transport.diagnostic}` : ""}` }],
+      : `Windows key transport failed: ${transport.code} sent=${transport.sent}/${transport.expected}.${focusDiagnostic} No retry.${transport.diagnostic ? ` ${transport.diagnostic}` : ""}` }],
     structuredContent: { ...transport, transport_sent: Number.isInteger(transport.sent) ? transport.sent > 0 : null, effect: "unverifiable", path: "win32-hwnd" },
   };
 }
@@ -1093,6 +1177,7 @@ class ComputerUseRuntime {
       const controlling = CONTROL_TOOLS.has(name) && !waiting;
       let began = false;
       let mapped;
+      let operationEpoch;
       const waitStartedAt = Date.now();
       try {
         const validation = name === "get_app_state" && validateStateArgs(nextArgs);
@@ -1110,6 +1195,7 @@ class ComputerUseRuntime {
         } else await this.ensureRunning();
         if (controlling) { this.beginControl(); began = true; }
         const beforeSig = action && observe && nextArgs.app ? this._treeSignatureFor(nextArgs.app) : null;
+        operationEpoch = this._sessionEpoch || 0;
         mapped = await this._dispatch(name, nextArgs, observe);
         if (beforeSig) nextArgs._treeBeforeSig = beforeSig;
       } catch (error) {
@@ -1125,7 +1211,8 @@ class ComputerUseRuntime {
       mapped = normalizeActionResult(mapped, name);
       if (action) {
         mapped = this._recordActionObservation(nextArgs.app || nextArgs.name, mapped);
-        if (observe && nextArgs.app && !this.stoppedByUser && !structuredOf(mapped).cancellation?.post_observed) {
+        if (observe && nextArgs.app && !this.stoppedByUser && operationEpoch === (this._sessionEpoch || 0)
+          && !structuredOf(mapped).cancellation?.post_observed) {
           mapped = await this._observeAction(nextArgs, mapped);
           if (nextArgs._treeBeforeSig) mapped = this._applyTreeDiff(nextArgs._treeBeforeSig, mapped);
         }
@@ -1139,26 +1226,58 @@ class ComputerUseRuntime {
   }
 
   async _observeAction(args, actionResult) {
+    if (structuredOf(actionResult).code === "target_window_closed") return actionResult;
     const context = { active: true, deadline: Date.now() + 10000 };
+    const epoch = this._sessionEpoch || 0;
+    const sourceTarget = this.targets.get(normalize(args.app)) || structuredOf(actionResult);
+    const target = { pid: Number(sourceTarget.pid), window_id: Number(args.window_id || sourceTarget.window_id) };
+    const actionDelivery = structuredOf(actionResult).action_result?.delivery;
+    const canVerifyClosure = actionDelivery !== "not_sent" && Number.isSafeInteger(target.pid) && target.pid > 0
+      && Number.isSafeInteger(target.window_id) && target.window_id > 0;
     try {
       const observation = await this._waitStep(() => this._getAppState({
-        app: args.app, window_id: args.window_id, refresh: true,
+        app: args.app, window_id: target.window_id, refresh: true,
         include_tree: true, include_screenshot: true, _waitContext: context,
       }), context);
-      const state = structuredOf(observation);
-      const failed = captureFailed(observation);
-      return { ...actionResult,
-        content: [...(actionResult.content || []).filter((item) => item.type === "text"), ...(observation.content || [])],
+      const state = { pid: target.pid, window_id: target.window_id, ...structuredOf(observation) };
+      const current = this.targets.get(normalize(args.app));
+      const superseded = this.stoppedByUser || epoch !== (this._sessionEpoch || 0)
+        || !current || state.observation_id !== current.observation_id
+        || (state.snapshot_actionable === true && current.snapshot_actionable !== true);
+      if (superseded) { state.tree_actionable = false; state.snapshot_actionable = false; }
+      const failed = captureFailed(observation) || state.tree_unavailable === true || superseded;
+      let mapped = { ...actionResult,
+        content: [...(actionResult.content || []).filter((item) => item.type === "text"),
+          ...(observation.content || []).map(item => superseded && item.type === "text"
+            ? { ...item, text: String(item.text || "").replace(/(tree|snapshot)_actionable=true/g, "$1_actionable=false") } : item)],
         structuredContent: { ...structuredOf(actionResult), ...observationFields(state), ...stalenessFields(state),
+          snapshot_id: state.snapshot_id ?? null, elements: state.elements || [], tree_markdown: state.tree_markdown ?? null,
           observation: state, ...(failed ? { observation_error: "post_action_capture_failed" } : {}) },
       };
+      const elements = state.elements;
+      const incompleteEmptyTree = Array.isArray(elements) && elements.length === 0
+        && !completeFreshTree(observation, 400, 20, true);
+      const closureCandidate = captureFailed(observation) || state.tree_unavailable === true
+        || responseFlaggedUnhealthy(observation) || state._capture_target_match === false
+        || !Array.isArray(elements) || incompleteEmptyTree;
+      if (closureCandidate && canVerifyClosure && !this.stoppedByUser && epoch === (this._sessionEpoch || 0)) {
+        const detail = textFromResult(observation).trim() || state.degraded_reason || state.error || state.code || "capture returned no usable accessibility tree";
+        mapped = await this._verifyWindowAbsent(target, mapped, epoch, `Post-action observation failed: ${detail}`);
+      }
+      return mapped;
     } catch (error) {
-      this._invalidateTrees(args.app);
-      return { ...actionResult,
+      // A superseding capture owns its cache; a late failure must not revoke it.
+      let mapped = { ...actionResult,
         content: [...(actionResult.content || []), { type: "text", text: `Post-action observation failed: ${error.message}. Action was not replayed.` }],
         structuredContent: { ...structuredOf(actionResult), observation_error: error.code || "capture_failed" },
       };
-    } finally { context.active = false; }
+      if (canVerifyClosure && !this.stoppedByUser && epoch === (this._sessionEpoch || 0)) {
+        mapped = await this._verifyWindowAbsent(target, mapped, epoch, `Post-action observation failed: ${error.message}`);
+      }
+      return mapped;
+    } finally {
+      context.active = false;
+    }
   }
 
   async _dispatch(name, args, observe) {
@@ -1225,6 +1344,7 @@ class ComputerUseRuntime {
       this._invalidateTrees();
     }
     result = result || runtimeError("action_delivery_unknown", "Empty action result");
+    if (name === "click" && captureFailed(result)) result = await this._verifyClickWindow(args, result, actionEpoch);
     result = { ...result, structuredContent: { ...structuredOf(result), verify_needed: true,
       delivery_mode: deliveryMode, delivery_path: `cua-${deliveryMode}`,
       route_reason: opts.routeReason || (opts.overlay ? "existing_overlay" : "default_delivery") } };
@@ -1232,6 +1352,86 @@ class ComputerUseRuntime {
     if (observe) return result;
     return { ...result, content: [{ type: "text", text: actionSummary(result, name, this._labelForPid(args.pid) || "") },
       ...(result.content || []).filter((item) => item.type === "image")] };
+  }
+
+  async _verifyClickWindow(args, result, actionEpoch) {
+    const diagnostic = (result.content || []).filter(item => item.type === "text").map(item => item.text || "").join("\n");
+    const pre = /^foreground_unavailable: Windows did not activate exact target HWND (0x[\da-f]+|\d+) \(actual foreground HWND (?:0x[\da-f]+|\d+)\); no mouse input was sent\.(?:\s|$)/i.exec(diagnostic);
+    if (pre && Number(pre[1]) === Number(args.window_id)) {
+      return { ...result, structuredContent: { ...structuredOf(result), delivery: "not_sent", sent: 0, transport_sent: false } };
+    }
+    const post = /^foreground_unavailable: exact target HWND (0x[\da-f]+|\d+) or a verified same-process post-action window was not foreground after the click \(actual foreground HWND (?:0x[\da-f]+|\d+)\)\.(?:\s|$)/i.exec(diagnostic);
+    if (!post || Number(post[1]) !== Number(args.window_id)) return result;
+    return this._verifyWindowAbsent({ pid: Number(args.pid), window_id: Number(args.window_id) }, result, actionEpoch, diagnostic);
+  }
+
+  async _verifyWindowAbsent(target, result, actionEpoch, diagnostic) {
+    const pid = Number(target?.pid);
+    const windowId = Number(target?.window_id);
+    const inconclusive = (reason) => ({ ...result, structuredContent: { ...structuredOf(result),
+      window_verification: { status: "inconclusive", source: "list_windows", pid, window_id: windowId, reason } } });
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(windowId) || windowId <= 0) {
+      return inconclusive("invalid_target");
+    }
+    if (this.stoppedByUser) return inconclusive("stopped");
+    if (actionEpoch !== (this._sessionEpoch || 0)) return inconclusive("session_changed");
+    const context = { active: true, deadline: Date.now() + 5000 };
+    try {
+      const listed = await this._waitStep(() => this._cua("list_windows", {}, Math.max(1, context.deadline - Date.now())), context);
+      if (this.stoppedByUser) return inconclusive("stopped");
+      if (actionEpoch !== (this._sessionEpoch || 0)) return inconclusive("session_changed");
+      const structured = structuredOf(listed);
+      const windows = structured.windows;
+      const records = [listed, structured];
+      const flagged = (value) => value != null && value !== false && value !== 0 && value !== "" && value !== "false";
+      const filtered = records.some(record =>
+        ["query", "query_local", "filtered", "is_filtered", "filter", "filters"].some(key => flagged(record[key])));
+      const incomplete = records.some(record =>
+        ["truncated", "is_truncated", "windows_truncated", "incomplete", "is_incomplete", "windows_incomplete", "has_more"].some(key => flagged(record[key]))
+        || ["complete", "is_complete", "windows_complete"].some(key => record[key] === false || record[key] === "false")
+        || /^(truncated|incomplete|partial)$/i.test(String(record.status || record.list_status || "")));
+      if (captureFailed(listed)) return inconclusive("enumeration_error");
+      if (filtered) return inconclusive("filtered");
+      if (incomplete) return inconclusive("incomplete");
+      if (responseFlaggedUnhealthy(listed)) return inconclusive("enumeration_error");
+      if (!Array.isArray(windows)) return inconclusive("malformed");
+      if (!windows.length) return inconclusive("empty");
+      if (!windows.every(win => win && Number.isSafeInteger(Number(win.pid)) && Number(win.pid) > 0
+        && Number.isSafeInteger(Number(win.window_id)) && Number(win.window_id) > 0)) return inconclusive("malformed");
+      const matchingHwnd = windows.filter(win => Number(win.window_id) === windowId);
+      if (matchingHwnd.some(win => Number(win.pid) === pid)) return inconclusive("target_present");
+      if (matchingHwnd.length) return inconclusive("hwnd_reused");
+      for (const [key, cached] of this.targets) {
+        if (Number(cached.pid) === pid && Number(cached.window_id) === windowId) this.targets.delete(key);
+      }
+      this._nativeMenuContext = null;
+      const windowVerification = { status: "absent", source: "list_windows", pid, window_id: windowId };
+      const original = structuredOf(result);
+      const cleaned = { ...original };
+      const staleFields = new Set(["observation", "observation_error", "observation_id", "snapshot_id", "elements",
+        "elements_complete", "tree_markdown", "tree_stale", "image_stale", "image_version", "tree_version",
+        "image_captured_at", "tree_captured_at", "tree_error", "tree_unavailable", "degraded", "degraded_reason",
+        "_capture_target_match"]);
+      for (const key of Object.keys(cleaned)) {
+        if (staleFields.has(key) || /^screenshot(?:_|$)/i.test(key)) delete cleaned[key];
+      }
+      let closed = { ...result, isError: false, ok: true,
+        content: [{ type: "text", text: `target_window_closed pid=${pid} window_id=${windowId}; target absent from independent list_windows. Warning: ${diagnostic}` }],
+        structuredContent: { ...cleaned, ok: true, success: true, error: null, error_code: null, status: "target_window_closed",
+          code: "target_window_closed", ui_change: "changed", pid, window_id: windowId,
+          window_verification: windowVerification, warning: { code: original.code, message: diagnostic },
+          tree_actionable: false, snapshot_actionable: false,
+          observation: { ...windowVerification, status: "target_window_closed", tree_actionable: false, snapshot_actionable: false } } };
+      if (original.action_result?.action) closed = normalizeActionResult(closed, original.action_result.action);
+      return closed;
+    } catch (error) {
+      const reason = error?.code === "wait_timeout" || error?.message === "runtime timeout: tools/call" ? "timeout"
+        : error?.code === "session_changed" ? "session_changed"
+          : error?.code === "stopped_by_user" ? "stopped" : "enumeration_error";
+      return inconclusive(reason);
+    } finally {
+      context.active = false;
+    }
   }
 
   _labelForPid(pid) {
@@ -1306,6 +1506,7 @@ class ComputerUseRuntime {
     if (pid && windows[0]) {
       this._rememberTarget(args.name || args.path || String(pid), {
         app: args.name || args.path,
+        ...windowIdentity(windows[0]),
         pid,
         window_id: windows[0].window_id,
       });
@@ -1344,6 +1545,7 @@ class ComputerUseRuntime {
     if (gate) throw new Error(gate);
     const target = {
       app: picked.app_name || app,
+      ...windowIdentity(picked),
       pid: picked.pid,
       window_id: picked.window_id,
       window_bounds: picked.bounds || picked.window_bounds,
@@ -1357,15 +1559,18 @@ class ComputerUseRuntime {
     let prev = this.targets.get(key) || {};
     if ((target.pid != null && prev.pid != null && Number(target.pid) !== Number(prev.pid))
       || (target.window_id != null && prev.window_id != null && Number(target.window_id) !== Number(prev.window_id))) {
-      prev = { tree_actionable: false, elements: [], snapshot_id: null };
+      prev = { tree_actionable: false, snapshot_actionable: false, elements: [], snapshot_id: null };
       this._nativeMenuContext = null;
     }
     this.targets.set(key, { ...prev, ...target, app: target.app || prev.app || app });
   }
 
   _invalidateTrees(app) {
+    this._observationRevision = (this._observationRevision || 0) + 1;
     for (const [key, target] of this.targets) {
-      if (!app || key === normalize(app)) target.tree_actionable = false;
+      if (!app || key === normalize(app)) {
+        target.tree_actionable = false; target.snapshot_actionable = false; target._elementState = "stale";
+      }
     }
   }
 
@@ -1386,6 +1591,7 @@ class ComputerUseRuntime {
     }
     // Even an action's attached observation is not permission to reuse AX indices.
     cached.tree_actionable = false;
+    cached.snapshot_actionable = false;
     return { ...result, content: [...(result.content || []), { type: "text", text: observationText(cached) }],
       structuredContent: { ...s, ...observationFields(cached) } };
   }
@@ -1393,21 +1599,28 @@ class ComputerUseRuntime {
   _elementFields(app, elementIndex) {
     if (elementIndex == null || elementIndex === "") return {};
     const cached = this.targets.get(normalize(app)) || {};
-    if (cached.tree_actionable !== true) {
-      const neverActionable = cached.tree_actionable !== true && cached._everActionable !== true;
-      const error = new Error(neverActionable
-        ? "stale_tree: this window's AX tree is not actionable (incomplete or foreign), so element_index cannot be used and refresh=true will not change that; click by x,y screenshot coordinates instead."
-        : "stale_tree: element indices are no longer actionable; call get_app_state with refresh=true and include_tree=true.");
+    const fail = (reason) => {
+      const error = new Error(`stale_tree: ${reason}; call get_app_state with refresh=true and include_tree=true, or observe the current popup/screenshot before choosing a target.`);
       error.code = "stale_tree";
       throw error;
+    };
+    if (!validElementIndex(elementIndex)) fail("element_index must be a nonnegative integer");
+    if (cached.tree_actionable !== true && cached.snapshot_actionable !== true) {
+      fail(`tree ${cached._elementState || (!Array.isArray(cached.elements) ? "missing" : "stale or untrusted")}`);
     }
     const index = Number(elementIndex);
+    if (cached._ambiguousIndices?.includes(index)) fail("element index ambiguous in the captured tree");
+    const matches = (cached.elements || []).filter((item) => item && validElementIndex(item.element_index) && Number(item.element_index) === index);
+    if (matches.length !== 1) fail("element index missing or ambiguous in the current snapshot");
+    const el = matches[0];
+    if (!elementAvailable(el, el.element_token != null || cached.tree_actionable !== true)) fail("element disabled, hidden, offscreen, or availability unknown");
     const out = { element_index: index };
+    if (el.element_token != null) {
+      if (typeof cached.snapshot_id !== "string" || !cached.snapshot_id
+        || el.element_token !== `${cached.snapshot_id}:${index}`) fail("element token does not match the current snapshot");
+      out.element_token = el.element_token;
+    } else if (cached.tree_actionable !== true) fail("partial snapshot requires an exact element token");
     if (cached.snapshot_id) out.snapshot_id = cached.snapshot_id;
-    const el = Array.isArray(cached.elements)
-      ? cached.elements.find((item) => Number(item.element_index) === index)
-      : null;
-    if (el && el.element_token) out.element_token = el.element_token;
     return out;
   }
 
@@ -1415,6 +1628,7 @@ class ComputerUseRuntime {
     const existing = this._elementFields(app, elementIndex);
     if (existing.element_index != null) return existing;
     let cached = this.targets.get(normalize(app)) || {};
+    if (isOfficeTarget(cached)) return {}; // Preserve document/owned-panel focus; never pick Microsoft Search.
     if (force || cached.tree_actionable !== true || !Array.isArray(cached.elements) || !cached.elements.length) {
       try {
         await this._getAppState({
@@ -1441,6 +1655,7 @@ class ComputerUseRuntime {
   }
 
   _waitStep(work, context) {
+    const epoch = this._sessionEpoch || 0;
     return new Promise((resolve, reject) => {
       let done = false;
       let timer;
@@ -1450,19 +1665,20 @@ class ComputerUseRuntime {
         if (error) reject(error); else resolve(value);
       };
       const check = () => {
-        if (this.stoppedByUser || !context.active || Date.now() >= context.deadline) {
+        const replaced = epoch !== (this._sessionEpoch || 0);
+        if (this.stoppedByUser || replaced || !context.active || Date.now() >= context.deadline) {
           context.active = false;
-          const error = new Error(this.stoppedByUser ? "Wait cancelled by user" : "Wait deadline reached");
-          error.code = this.stoppedByUser ? "stopped_by_user" : "wait_timeout";
+          const error = new Error(this.stoppedByUser ? "Wait cancelled by user" : replaced ? "Wait session changed" : "Wait deadline reached");
+          error.code = this.stoppedByUser ? "stopped_by_user" : replaced ? "session_changed" : "wait_timeout";
           finish(error);
         } else timer = setTimeout(check, Math.min(50, Math.max(1, context.deadline - Date.now())));
       };
       // Even a mocked/stalled RPC is bounded; late resolutions cannot cache state.
       Promise.resolve().then(() => {
-        if (!done && context.active && !this.stoppedByUser) return work();
+        if (!done && context.active && !this.stoppedByUser && epoch === (this._sessionEpoch || 0)) return work();
       }).then((value) => {
         if (done) return;
-        if (this.stoppedByUser || !context.active || Date.now() > context.deadline) check();
+        if (this.stoppedByUser || epoch !== (this._sessionEpoch || 0) || !context.active || Date.now() >= context.deadline) check();
         else finish(null, value);
       }, (error) => finish(error));
       check();
@@ -1523,12 +1739,12 @@ class ComputerUseRuntime {
     if (status !== "matched") this._invalidateTrees(args.app);
     last = last || runtimeError(status === "cancelled" ? "stopped_by_user" : "wait_timeout", "No completed wait observation");
     const s = { ...structuredOf(last) };
-    if (status !== "matched") s.tree_actionable = false;
+    if (status !== "matched") { s.tree_actionable = false; s.snapshot_actionable = false; }
     const wait = { status, predicate: { ...args.wait_for }, attempts, elapsed_ms: Date.now() - start,
       reason: checked.reason, evidence: status === "matched" ? checked.evidence : [] };
     const content = [];
     if (wantTree) content.push(...(last.content || []).filter((item) => item.type === "text").map((item) => status === "matched"
-      ? item : { ...item, text: String(item.text || "").replace(/tree_actionable=true/g, "tree_actionable=false") }));
+      ? item : { ...item, text: String(item.text || "").replace(/(tree|snapshot)_actionable=true/g, "$1_actionable=false") }));
     else { delete s.elements; delete s.tree_markdown; content.push({ type: "text", text: observationText(s) }); }
     if (wantScreenshot) {
       const image = imageFromResult(last);
@@ -1548,10 +1764,16 @@ class ComputerUseRuntime {
     if (args.wait_for !== undefined) return this._waitForState(args);
     const context = args._waitContext;
     const epoch = this._sessionEpoch || 0;
+    let revision = this._observationRevision || 0;
     const checkWait = () => {
       if (this.stoppedByUser || epoch !== (this._sessionEpoch || 0)) {
         const error = new Error("Observation belongs to a stopped or replaced driver session");
         error.code = this.stoppedByUser ? "stopped_by_user" : "session_changed";
+        throw error;
+      }
+      if (revision !== (this._observationRevision || 0)) {
+        const error = new Error("Observation superseded by another capture or action");
+        error.code = "observation_superseded";
         throw error;
       }
       if (context && (this.stoppedByUser || !context.active || Date.now() > context.deadline)) {
@@ -1562,38 +1784,74 @@ class ComputerUseRuntime {
     };
     checkWait();
     if (args.refresh) this._invalidateTrees(args.app);
+    revision = this._observationRevision || 0;
     const target = await this._resolveTarget(args.app, args.window_id, context);
     checkWait();
     this._rememberTarget(args.app, target);
     this._menuContextFor(target);
     const prev = this.targets.get(normalize(args.app)) || {};
     const query = args.query != null && args.query !== "" ? String(args.query) : "";
-    const localQuery = Boolean(query && !args.refresh && !includeScreenshot && includeTree && prev.tree_actionable === true && Array.isArray(prev.elements));
+    const localQuery = Boolean(query && !args.refresh && !includeScreenshot && includeTree && prev.snapshot_actionable === true && Array.isArray(prev.elements));
     if (localQuery) {
       const elements = filterElements(prev.elements, query);
-      return { content: [{ type: "text", text: `${observationText(prev)} snapshot_id=${prev.snapshot_id} query=${query} (local) screenshot omitted\n${trimTreeText(compactElements(elements))}` }],
-        structuredContent: { ...observationFields(prev), snapshot_id: prev.snapshot_id, elements, query, query_local: true } };
+      this._observationRevision = (this._observationRevision || 0) + 1;
+      this._rememberTarget(args.app, { ...prev, elements, tree_actionable: false });
+      const filtered = this.targets.get(normalize(args.app));
+      return { content: [{ type: "text", text: `${observationText(filtered)} snapshot_id=${prev.snapshot_id} query=${query} (local) screenshot omitted\n${trimTreeText(compactElements(elements))}` }],
+        structuredContent: { ...observationFields(filtered), snapshot_id: prev.snapshot_id, elements, elements_complete: false, query, query_local: true } };
     }
     // Every actual query refresh requests a full tree, then filters locally. A
     // new screenshot must never inherit actionable tokens from an older tree.
     this._invalidateTrees(args.app);
+    revision = this._observationRevision || 0;
     const payload = { pid: target.pid, window_id: target.window_id, include_screenshot: includeScreenshot,
       include_accessibility_tree: includeTree, max_depth: Number(args.max_tree_depth) || 20,
       max_elements: Number(args.max_tree_nodes) || 400, max_dimension: MAX_IMAGE_DIMENSION };
     let result;
+    let treeError = null;
+    const captureContext = context || { active: true, deadline: Date.now() + RPC_TIMEOUT_MS + 10000 };
     try {
-      result = await this._cua("get_window_state", payload, context ? Math.max(1, context.deadline - Date.now()) : RPC_TIMEOUT_MS);
+      result = await this._waitStep(() => this._cua("get_window_state", payload,
+        Math.min(RPC_TIMEOUT_MS, Math.max(1, captureContext.deadline - Date.now()))), captureContext);
       checkWait();
     } catch (error) {
-      if (epoch === (this._sessionEpoch || 0) && (!context || context.active)) this._nativeMenuContext = null;
-      throw error;
+      checkWait();
+      this._nativeMenuContext = null;
+      if (!includeTree || !includeScreenshot || !uiaCaptureTimeout(error)) throw error;
+      result = runtimeError(error.code || "capture_failed", error.message);
+    }
+    if (includeTree && includeScreenshot && uiaCaptureTimeout(result)) {
+      checkWait();
+      treeError = { ...structuredOf(result),
+        message: (result.content || []).filter((item) => item.type === "text").map((item) => item.text).join("\n") };
+      delete treeError.elements;
+      delete treeError.tree_markdown;
+      const fallbackContext = context || { active: true, deadline: Math.min(captureContext.deadline, Date.now() + 10000) };
+      // One read-only fallback; never activate the owner or repeat the action.
+      try {
+        result = await this._waitStep(() => this._cua("get_window_state",
+          { ...payload, include_accessibility_tree: false }, Math.max(1, fallbackContext.deadline - Date.now())), fallbackContext);
+        checkWait();
+      } catch (error) {
+        checkWait();
+        if (error.code === "wait_timeout" || error.code === "stopped_by_user" || error.code === "session_changed") throw error;
+        result = runtimeError(error.code || "screenshot_capture_failed", error.message);
+      }
+      const screenshotState = { ...structuredOf(result), tree_unavailable: true, tree_error: treeError,
+        tree_actionable: false, snapshot_actionable: false, elements_complete: false };
+      delete screenshotState.elements;
+      delete screenshotState.tree_markdown;
+      delete screenshotState.snapshot_id;
+      result = { ...result, structuredContent: screenshotState };
     }
     if (captureFailed(result)) {
       this._nativeMenuContext = null;
-      return result ? { ...result, isError: true } : runtimeError("capture_failed", "Empty window state");
+      return result ? { ...result, isError: true,
+        structuredContent: { ...structuredOf(result), tree_actionable: false, snapshot_actionable: false } }
+        : runtimeError("capture_failed", "Empty window state");
     }
     let structured = structuredOf(result);
-    if (!context && includeScreenshot && structured.screenshot_error) {
+    if (!treeError && !context && includeScreenshot && structured.screenshot_error) {
       await this._cua("bring_to_front", { pid: target.pid, window_id: target.window_id }).catch(() => {});
       await sleep(200);
       checkWait();
@@ -1605,24 +1863,31 @@ class ComputerUseRuntime {
     const captureTargetMatch = structured._capture_target_match !== false
       && (structured.pid == null || Number(structured.pid) === Number(target.pid))
       && (structured.window_id == null || Number(structured.window_id) === Number(target.window_id));
-    const trustedTree = liveTreeGuard(result, target).usable && captureTargetMatch;
+    const trustedTree = explicitSnapshotTrusted(result, target) && captureTargetMatch;
     const freshTree = includeTree && trustedTree && Array.isArray(structured.elements);
-    const complete = freshTree && completeFreshTree(result, payload.max_elements, payload.max_depth, true);
+    const complete = freshTree && liveTreeGuard(result, target).usable
+      && completeFreshTree(result, payload.max_elements, payload.max_depth, true);
+    const actionable = freshTree && (!includeScreenshot || imageFromResult(result)) && !structured.screenshot_error;
     if (includeTree && (!complete || !treeHasMenu(structured.elements || []))) this._nativeMenuContext = null;
     const image = includeScreenshot ? imageFromResult(result) : null;
     const capturedAt = new Date().toISOString();
     const origin = originFromBounds(structured.window_bounds) || originFromBounds(target.window_bounds) || originFromBounds(prev.window_bounds);
+    const elements = includeTree ? (query ? filterElements(structured.elements || [], query) : structured.elements || []) : [];
+    const indices = (structured.elements || []).filter(el => el && validElementIndex(el.element_index)).map(el => Number(el.element_index));
     const remembered = { ...target,
       window_bounds: structured.window_bounds || target.window_bounds || prev.window_bounds,
       snapshot_id: freshTree ? structured.snapshot_id : prev.snapshot_id,
-      elements: includeTree ? localizeElements(structured.elements || [], origin) : prev.elements || [],
+      elements: includeTree ? localizeElements(elements, origin) : prev.elements || [],
+      _ambiguousIndices: indices.filter((index, position) => indices.indexOf(index) !== position),
       observation_id: this._observationId = (this._observationId || 0) + 1,
       image_version: image ? (this._imageVersion = (this._imageVersion || 0) + 1) : prev.image_version ?? 0,
       tree_version: freshTree ? (this._treeVersion = (this._treeVersion || 0) + 1) : prev.tree_version ?? 0,
       image_captured_at: image ? capturedAt : prev.image_captured_at ?? null,
       tree_captured_at: freshTree ? capturedAt : prev.tree_captured_at ?? null,
-      tree_actionable: Boolean(complete && (!includeScreenshot || image) && !structured.screenshot_error),
-      _everActionable: prev._everActionable === true || Boolean(complete && (!includeScreenshot || image) && !structured.screenshot_error),
+      tree_actionable: Boolean(actionable && complete && !query),
+      snapshot_actionable: Boolean(actionable && typeof structured.snapshot_id === "string" && structured.snapshot_id),
+      _everActionable: prev._everActionable === true || Boolean(actionable && complete),
+      _elementState: !includeTree || !Array.isArray(structured.elements) ? "missing" : !trustedTree ? "untrusted" : complete ? "fresh" : "partial",
     };
     this._rememberTarget(args.app, remembered);
     // A fresh screenshot with an inherited tree timestamp (or vice versa) is a
@@ -1634,10 +1899,9 @@ class ComputerUseRuntime {
     if (!args._waitContext && includeTree && freshTree) {
       this._noteIdleMarkers(args.app, remembered.elements, remembered.tree_version);
     }
-    const elements = includeTree ? (query ? filterElements(structured.elements || [], query) : structured.elements || []) : [];
     structured = { ...structured, ...observationFields(remembered), _capture_target_match: captureTargetMatch,
       ...(treeStale ? { tree_stale: true } : {}), ...(imageStale ? { image_stale: true } : {}),
-      ...(query ? { query, query_local: false } : {}) };
+      ...(query ? { query, query_local: false, elements_complete: false, tree_markdown: compactElements(elements) } : {}) };
     if (includeTree && freshTree) structured.elements = elements;
     if (!includeTree) { delete structured.elements; delete structured.tree_markdown; }
     const size = image ? imageSize(image) : { width: 0, height: 0 };
@@ -1648,6 +1912,7 @@ class ComputerUseRuntime {
       includeScreenshot ? `screenshot_width=${structured.screenshot_width || size.width} screenshot_height=${structured.screenshot_height || size.height}` : "screenshot omitted",
       includeTree ? `elements=${elements.length}` : "tree omitted", query ? `query=${query}` : null].filter(Boolean).join(" ");
     const text = [meta, includeTree ? trimTreeText(compactElements(elements) || structured.tree_markdown) : null,
+      treeError ? `tree unavailable: ${treeError.message || JSON.stringify(treeError)}` : null,
       includeScreenshot && !image ? `screenshot unavailable: ${structured.screenshot_error || "missing from driver result"}` : null].filter(Boolean).join("\n");
     const content = [{ type: "text", text }];
     if (image) content.push(image);
@@ -1863,9 +2128,9 @@ class ComputerUseRuntime {
     const content = (result.content || []).map((item) => item.type === "text"
       ? { ...item, text: `${item.text}${positive} cancellation_status=${status} reason=${reason}.` } : item);
     if (observe && observation) content.push(...(observation.content || []).map((item) => item.type === "text"
-      ? { ...item, text: String(item.text || "").replace(/tree_actionable=true/g, "tree_actionable=false") } : item));
+      ? { ...item, text: String(item.text || "").replace(/(tree|snapshot)_actionable=true/g, "$1_actionable=false") } : item));
     const observedState = observation ? structuredOf(observation) : null;
-    const state = observedState ? { ...observedState, tree_actionable: false } : null;
+    const state = observedState ? { ...observedState, tree_actionable: false, snapshot_actionable: false } : null;
     result = { ...result, content, structuredContent: {
       ...structuredOf(result), cancellation,
       ...(before.markers.some((marker, i) => marker.kind === "cell_editor" && !this._markerResidency(args.app, before.markers)[i]) ? { cell_editing: true } : {}),
@@ -1874,19 +2139,19 @@ class ComputerUseRuntime {
     return result;
   }
 
-  async _sendNativeNavigation(args, target, parsed, menuContext) {
+  async _sendNativeNavigation(args, target, parsed, menuContext, office = false) {
     const actionEpoch = this._sessionEpoch || 0;
     if (this.stoppedByUser) return runtimeError("stopped_by_user", "Computer Use stopped; no key sent", "not_sent");
-    // Do not activate an owner over its already-focused native popup. Otherwise
-    // prepare the target once, then let the helper validate foreground/focus.
-    if (!menuContext) {
+    // The Office helper checks same-PID owned popups before activating once.
+    // Ordinary navigation keeps its existing foreground preparation contract.
+    if (!office && !menuContext) {
       await this._cua("bring_to_front", { pid: target.pid, window_id: target.window_id }).catch(() => {});
     }
     if (this.stoppedByUser || actionEpoch !== (this._sessionEpoch || 0)) {
       return runtimeError(this.stoppedByUser ? "stopped_by_user" : "session_changed",
         "Control session stopped or changed before native key delivery; no key sent", "not_sent");
     }
-    const transport = sendWindowsKey(this._childEnv(), target.window_id, target.pid, parsed);
+    const transport = sendWindowsKey(this._childEnv(), target.window_id, target.pid, parsed, office && Boolean(officeKeyChord(parsed)));
     this._invalidateTrees(args.app);
     if (!transport.ok || (parsed.kind === "press_key" && parsed.key === "return")) this._nativeMenuContext = null;
     return win32KeyResult(args.app, parsed, transport);
@@ -1916,7 +2181,7 @@ class ComputerUseRuntime {
       && parsed.keys.includes("shift") && parsed.keys.includes("tab");
 
     if (IS_WIN && (plainNavigation || shiftedTab)) {
-      return this._sendNativeNavigation(args, target, parsed, menuContext);
+      return this._sendNativeNavigation(args, target, parsed, menuContext, isOfficeTarget(target));
     }
 
     if (IS_WIN && (menuKey || plainEscape)) {
@@ -1930,7 +2195,7 @@ class ComputerUseRuntime {
       // restore and foreground the window; do it before the fresh guard capture.
       // Skip while a native menu intent is open: activating the owner could
       // dismiss its popup.
-      if (!menuContext) {
+      if (!menuContext && !isOfficeTarget(target)) {
         await this._cua("bring_to_front", { pid: target.pid, window_id: target.window_id }).catch(() => {});
         if (this.stoppedByUser || guardEpoch !== (this._sessionEpoch || 0)) {
           return liveGuardBlocked(this.stoppedByUser ? "stopped_by_user" : "session_changed",
@@ -1977,6 +2242,17 @@ class ComputerUseRuntime {
       const transport = sendWindowsKey(this._childEnv(), target.window_id, target.pid, escape);
       this._nativeMenuContext = null;
       return this._postCancellation(args, target, escape, transport, before, observe, guardEpoch, operationContext.deadline);
+    }
+
+    if (IS_WIN && isOfficeTarget(target) && (parsed.kind === "hotkey" || officeKeyChord(parsed))) {
+      if (!officeKeyChord(parsed)) {
+        this._nativeMenuContext = null;
+        return win32KeyResult(args.app, parsed, sendWindowsKey(this._childEnv(), target.window_id, target.pid, parsed, true));
+      }
+      // Preserve the current document/cell focus; never search for an Edit control.
+      const result = await this._sendNativeNavigation(args, target, parsed, menuContext, true);
+      this._nativeMenuContext = null;
+      return result;
     }
 
 
@@ -2028,10 +2304,16 @@ class ComputerUseRuntime {
 
   async _pasteText(args, observe) {
     this._nativeMenuContext = null;
+    const operationEpoch = this._sessionEpoch || 0;
+    const cancelled = () => this.stoppedByUser || operationEpoch !== (this._sessionEpoch || 0);
+    const cancellation = () => runtimeError(this.stoppedByUser ? "stopped_by_user" : "session_changed",
+      "Control session stopped or changed during paste preparation; no paste sent", "not_sent");
     const target = await this._resolveTarget(args.app, args.window_id);
+    if (cancelled()) return cancellation();
     if (!args.pasteOnly) {
       const value = String(args.text ?? "");
       const clip = await this._cua("clipboard_write", { text: value }).catch(() => null);
+      if (cancelled()) return cancellation();
       if (!clip || clip.isError) {
         const wrote = writeClipboardText(value);
         if (!wrote) {
@@ -2039,9 +2321,9 @@ class ComputerUseRuntime {
         }
       }
     }
+    if (cancelled()) return cancellation();
     if (IS_WIN) {
-      await this._cua("bring_to_front", { pid: target.pid, window_id: target.window_id }).catch(() => {});
-      if (this.stoppedByUser) return runtimeError("stopped_by_user", "Computer Use stopped; no paste sent", "not_sent");
+      // EnsureForeground in the helper preserves an already-focused owned panel.
       const parsed = { kind: "hotkey", keys: ["ctrl", "v"] };
       const transport = sendWindowsKey(this._childEnv(), target.window_id, target.pid, parsed);
       this._invalidateTrees();
@@ -2381,6 +2663,7 @@ function presentResult(result, opts = {}) {
     diagnostics.region_crop = cropResult.diagnostic;
     const cropped = cropResult.ok ? cropResult.image : null;
     const full = compressImageForAgent(source, {
+      env: opts.env,
       keepOriginalChars: 0,
       forceJpeg: true,
       maxB64Chars: 100_000,
@@ -2389,6 +2672,7 @@ function presentResult(result, opts = {}) {
     });
     const detail = cropped
       ? compressImageForAgent(cropped, {
+          env: opts.env,
           qualities: [80, 65, 50],
           maxEdges: [0, 1280],
         })
@@ -2412,9 +2696,10 @@ function presentResult(result, opts = {}) {
     }
     const rawImages = content.filter((item) => item && item.type === "image" && item.data);
     if (!rawImages.length && source) rawImages.push(source);
-    images.push(...rawImages.map((item) => compressImageForAgent(item)).filter(Boolean));
+    images.push(...rawImages.map((item) => compressImageForAgent(item, { env: opts.env })).filter(Boolean));
     if (!images.length && source) {
       const fallback = compressImageForAgent(source, {
+        env: opts.env,
         keepOriginalChars: 0,
         forceJpeg: true,
         maxB64Chars: AGENT_MAX_B64_CHARS,

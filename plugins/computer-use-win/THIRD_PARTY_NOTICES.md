@@ -28,3 +28,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## GenOffice
+
+Office 知识和桌面工作流技能参考了公开的 **GenOffice** 文档；本插件不包含 GenOffice 二进制文件或引擎源码。
+
+- 来源：https://github.com/genspark-ai/genoffice
+- 参考版本：v0.10.639
+- 许可证：社区仓库采用 Apache-2.0；本插件未使用另行授权的 `ee/` 内容
+- 上游技能：https://github.com/genspark-ai/genoffice/blob/v0.10.639/skills/genoffice/SKILL.md
+- 许可证与声明：https://github.com/genspark-ai/genoffice/blob/v0.10.639/LICENSE 和 https://github.com/genspark-ai/genoffice/blob/v0.10.639/NOTICE
+
+本插件中的 Office 技能是参考上游技能及 README 后重新编写的工作流摘要，并加入 Windows 桌面控制说明；未逐字打包上游技能，也未复制其文档引擎。GenOffice 与 Genspark 名称归各自权利人所有，本插件与其不存在附属或背书关系。

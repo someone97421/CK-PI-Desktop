@@ -1,0 +1,19 @@
+{
+  "name": "@local/dsh-pet",
+  "version": "0.1.4",
+  "private": true,
+  "type": "module",
+  "description": "dsh-pet 桌宠（这是一个助手插件）：透明点击穿透窗口 + 106 段透明 webm 动作 + 拖拽甩抛物理 + 多宠物 + PI 会话状态联动",
+  "license": "MIT",
+  "scripts": {
+    "bundle": "node scripts/build.mjs --bundle",
+    "check": "node scripts/build.mjs --check",
+    "pack": "node scripts/build.mjs --pack"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

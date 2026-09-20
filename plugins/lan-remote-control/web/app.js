@@ -14,6 +14,7 @@ import { mergeSnapshot, assertQueueDraftAvailable } from "./recovery.js";
 import { createMutationRecovery } from "./mutation-recovery.js";
 import { buildProcessTimeline, processSummary } from "./process.js";
 import { createSubagentObserver } from "./subagents.js";
+import { openModelSettings } from "./model-settings.js";
 
 const subagentObserver = createSubagentObserver();
 
@@ -249,11 +250,7 @@ const modelChip = button("模型", {
   iconName: "model",
   preserveLabel: true,
   className: "composer-model",
-  onClick: () => action(async () => {
-    if (modelChip.disabled) return;
-    modelChip.disabled = true;
-    try { await modelOptions(); } finally { modelChip.disabled = false; }
-  }),
+  onClick: openSessionSettings,
 });
 const moreButton = iconButton("more", { title: "更多操作", className: "composer-more", onClick: openComposerMore });
 const modelLabels = new Map();
@@ -1106,108 +1103,27 @@ fileInput.addEventListener("change", () => {
   renderAttachments();
   void action(async () => { for (const job of jobs) await uploadFile(job); });
 });
-async function modelOptions() {
+function openSessionSettings() {
   const sessionId = current, navigation = navigationVersion;
   if (!sessionId || loginVisible) return;
-  const request = new AbortController();
-  const sheet = openSheetPanel({
-    title: "会话模型",
-    subtitle: "调整后点击应用，立即更新会话设置。",
-    onClose: () => request.abort(),
-  });
-  const loading = el("div", { className: "sheet-list" }, inlineSpinner("正在加载模型…"));
-  const apply = button("应用", { variant: "primary", disabled: true });
-  sheet.body.append(loading);
-  sheet.panel.append(el("div", { className: "sheet-foot" },
-    button("取消", { variant: "secondary", onClick: () => sheet.close() }), apply));
-  const stale = () => current !== sessionId || navigation !== navigationVersion || loginVisible || !sheet.isOpen();
-  let models;
-  try {
-    const response = await api.read("models.list", {}, { signal: request.signal });
-    if (stale()) return;
-    models = response?.items || [];
-  } catch (error) {
-    if (stale()) return;
-    loading.replaceChildren(
-      el("p", { className: "sheet-hint", text: describeError(error) || "模型加载失败" }),
-      button("重试", { preserveLabel: true, onClick: () => { sheet.close(); void action(modelOptions); } }),
-    );
-    return;
-  }
-  if (!models.length) {
-    loading.replaceChildren(el("p", { className: "sheet-hint", text: "暂无可用模型" }));
-    return;
-  }
-  const session = snapshot?.session;
-  for (const m of models) modelLabels.set(m.key, m.label);
-  updateComposerState();
-  const select = el("select", { attrs: { "aria-label": "模型" } }),
-    thinking = el("select", { attrs: { "aria-label": "思考强度" } }),
-    mode = el("select", { attrs: { "aria-label": "工作模式" } }),
-    permission = el("select", { attrs: { "aria-label": "权限模式" } });
-  for (const value of ["agent", "plan", "goal"])
-    mode.append(
-      el("option", {
-        value,
-        text: { agent: "执行", plan: "计划", goal: "目标" }[value],
-        selected: value === session?.mode,
-      }),
-    );
-  for (const value of ["inherit", "ask", "accept-edits", "auto"])
-    permission.append(
-      el("option", {
-        value,
-        text: PERMISSION_MODE_LABELS[value] || value,
-        selected: value === session?.permissionMode,
-      }),
-    );
-  for (const m of models)
-    select.append(
-      el("option", {
-        value: m.key,
-        text: m.label,
-        selected: m.key === session?.modelKey,
-      }),
-    );
-  function levels() {
-    thinking.replaceChildren(
-      ...(
-        models.find((m) => m.key === select.value)?.thinkingLevels || ["off"]
-      ).map((x) =>
-        el("option", {
-          value: x,
-          text: x,
-          selected: x === session?.thinkingLevel,
-        }),
-      ),
-    );
-  }
-  select.addEventListener("change", levels);
-  levels();
-  sheet.body.replaceChildren(
-    el("label", { className: "sheet-field" }, "模型", select),
-    el("label", { className: "sheet-field" }, "思考强度", thinking),
-    el("label", { className: "sheet-field" }, "工作模式", mode),
-    el("label", { className: "sheet-field" }, "权限模式", permission),
-  );
-  apply.disabled = false;
-  apply.addEventListener("click", () => {
-    if (apply.disabled || !sheet.isOpen()) return;
-    const settings = { sessionId, modelKey: select.value, thinkingLevel: thinking.value, mode: mode.value, permissionMode: permission.value };
-    sheet.setBusy(true);
-    void (async () => {
-      try {
-        if (current !== sessionId || navigation !== navigationVersion || loginVisible) { sheet.close({ force: true }); return; }
-        await mutate("models.configure", settings);
-        sheet.setBusy(false);
-        sheet.close();
-        if (current === sessionId && navigation === navigationVersion) await refresh();
-      } catch (error) {
-        sheet.setBusy(false);
-        sheet.showError(describeError(error));
-        report(error);
-      }
-    })();
+  openModelSettings({
+    sessionId,
+    read: (...args) => api.read(...args),
+    save: mutate,
+    openSheet: openSheetPanel,
+    isCurrent: () => current === sessionId && navigationVersion === navigation && !loginVisible,
+    onCatalog: (models) => {
+      modelLabels.clear();
+      for (const model of models) modelLabels.set(model.key, model.alias || model.label);
+      updateComposerState();
+    },
+    onSaved: (session) => {
+      // 使已经在途的旧快照失效，当前显示以配置回执为准。
+      refreshVersion++;
+      if (snapshot) snapshot.session = { ...snapshot.session, ...session };
+      updateComposerState();
+      scheduleRefresh();
+    },
   });
 }
 async function commands() {

@@ -1,4 +1,4 @@
-# Read-only keyboard focus probe for one window (GetGUIThreadInfo on its thread).
+# Read-only keyboard focus probe for one window and its same-process owned popup.
 # Never moves focus, never sends input. Used when a target has no UIA ValuePattern
 # read-back (games, custom-drawn canvases) so an unverified type_text can still
 # report where keyboard focus actually sits.
@@ -9,6 +9,9 @@ param(
   [Parameter(Mandatory = $false)][int64]$TargetPid = 0
 )
 $ErrorActionPreference = "Stop"
+[Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$OutputEncoding = [Console]::OutputEncoding
 
 if ($Hwnd -eq 0) {
   Write-Output '{"ok":false,"error":"no-hwnd"}'
@@ -36,7 +39,21 @@ public static class FocusProbe {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO lpgui);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern bool IsChild(IntPtr hWndParent, IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint command);
+  public static bool BelongsTo(IntPtr hwnd, IntPtr target, uint expectedPid) {
+    IntPtr root = GetAncestor(target, 2);
+    uint actualPid;
+    if (root == IntPtr.Zero || expectedPid == 0 || GetWindowThreadProcessId(root, out actualPid) == 0 || actualPid != expectedPid) return false;
+    for (int i = 0; hwnd != IntPtr.Zero && i < 32; i++) {
+      if (GetWindowThreadProcessId(hwnd, out actualPid) == 0 || actualPid != expectedPid) return false;
+      hwnd = GetAncestor(hwnd, 2);
+      if (hwnd == IntPtr.Zero || GetWindowThreadProcessId(hwnd, out actualPid) == 0 || actualPid != expectedPid) return false;
+      if (hwnd == root) return true;
+      hwnd = GetWindow(hwnd, 4);
+    }
+    return false;
+  }
 }
 "@
 
@@ -52,6 +69,15 @@ if ($TargetPid -ne 0 -and $procId -ne [uint32]$TargetPid) {
   exit 1
 }
 
+$foreground = [FocusProbe]::GetForegroundWindow()
+$foregroundBelongs = [FocusProbe]::BelongsTo($foreground, $target, $procId)
+$queryWindow = $target
+if ($foregroundBelongs) {
+  $foregroundPid = [uint32]0
+  $threadId = [FocusProbe]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)
+  $queryWindow = $foreground
+}
+
 $info = New-Object FocusProbe+GUITHREADINFO
 $info.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf([type][FocusProbe+GUITHREADINFO])
 if (-not [FocusProbe]::GetGUIThreadInfo($threadId, [ref]$info)) {
@@ -59,9 +85,8 @@ if (-not [FocusProbe]::GetGUIThreadInfo($threadId, [ref]$info)) {
   exit 1
 }
 
-$foreground = [FocusProbe]::GetForegroundWindow()
 $focus = $info.hwndFocus
-$belongs = ($focus -eq $target) -or ($focus -ne [IntPtr]::Zero -and [FocusProbe]::IsChild($target, $focus))
+$belongs = [FocusProbe]::BelongsTo($focus, $target, $procId)
 # GUI_CARETBLINKING = 0x1
 $caretVisible = ($info.flags -band 1) -ne 0 -and $info.hwndCaret -ne [IntPtr]::Zero
 
@@ -71,7 +96,9 @@ $caretVisible = ($info.flags -band 1) -ne 0 -and $info.hwndCaret -ne [IntPtr]::Z
   foreground_hwnd = $foreground.ToInt64()
   focus_hwnd = $focus.ToInt64()
   caret_hwnd = $info.hwndCaret.ToInt64()
-  target_foreground = ($foreground -eq $target)
+  target_foreground = [bool]$foregroundBelongs
+  exact_target_foreground = ($foreground -eq $target)
+  focus_query_hwnd = $queryWindow.ToInt64()
   target_thread_focus = [bool]$belongs
   caret_visible = [bool]$caretVisible
 } | ConvertTo-Json -Compress

@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
 const { cropImageRegion } = require("../image-region");
+const { windowsPowerShellHosts } = require("./powershell-hosts");
 
 const item = { type: "image", mimeType: "image/png", data: "YWJj" };
 
@@ -84,6 +85,7 @@ test("Electron failure falls back to bounded PowerShell invocation", () => {
   const result = cropImageRegion(item, { x: 1, y: 1, width: 2, height: 2 }, {
     nativeImage: native.nativeImage,
     platform: "win32",
+    powershellExe: "C:\\custom host\\pwsh.exe",
     env: { PI_SCRATCH_DIR: "C:\\scratch" },
     spawnSync(exe, args, options) {
       invocation = { exe, args, options };
@@ -93,13 +95,35 @@ test("Electron failure falls back to bounded PowerShell invocation", () => {
   assert.equal(result.ok, true);
   assert.equal(result.diagnostic.backend, "powershell");
   assert.deepEqual(result.diagnostic.attempts.map((entry) => entry.code), ["electron_crop_failed", "cropped"]);
-  assert.equal(invocation.exe, "powershell.exe");
+  assert.equal(invocation.exe, "C:\\custom host\\pwsh.exe");
   assert.equal(invocation.options.timeout, 8000);
   assert.equal(invocation.options.maxBuffer, 4 * 1024 * 1024);
   assert.equal(invocation.options.input, item.data);
   assert.equal(invocation.options.env.TEMP, "C:\\scratch");
   assert.equal(invocation.options.env.TMP, "C:\\scratch");
   assert.deepEqual(invocation.args.slice(-8), ["-X", "1", "-Y", "1", "-Width", "2", "-Height", "2"]);
+});
+
+test("PowerShell override is read from env and a top-level override wins", () => {
+  const region = { x: 0, y: 0, width: 2, height: 2 };
+  for (const [overrides, expected] of [
+    [{ env: { PI_SCRATCH_DIR: "C:\\scratch", powershellExe: "C:\\env host\\pwsh.exe" } }, "C:\\env host\\pwsh.exe"],
+    [{ powershellPath: "D:\\top host\\pwsh.exe",
+      env: { PI_SCRATCH_DIR: "C:\\scratch", powershellExe: "C:\\env host\\pwsh.exe" } }, "D:\\top host\\pwsh.exe"],
+  ]) {
+    let executable;
+    const result = cropImageRegion(item, region, {
+      nativeImage: null,
+      platform: "win32",
+      ...overrides,
+      spawnSync(exe) {
+        executable = exe;
+        return helperResult(4, 4, region);
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(executable, expected);
+  }
 });
 
 test("invalid image and region values are rejected before either backend", () => {
@@ -173,13 +197,15 @@ test("PowerShell output must match the requested intersection and PNG dimensions
   assert.equal(result.diagnostic.code, "helper_invalid_result");
 });
 
-test("real Windows System.Drawing helper crops deterministic pixels headlessly", { skip: process.platform !== "win32" }, () => {
+for (const host of windowsPowerShellHosts) {
+test(`${host.name}: real System.Drawing helper crops deterministic pixels headlessly`, { skip: process.platform !== "win32" }, () => {
   const source = bmp24(4, 4);
   const scratch = process.env.PI_SCRATCH_DIR || process.env.TEMP;
   const result = cropImageRegion({ type: "image", mimeType: "image/bmp", data: source.toString("base64") },
     { x: 1, y: 1, width: 10, height: 2 }, {
       nativeImage: null,
       platform: "win32",
+      powershellExe: host.executable,
       env: { PI_SCRATCH_DIR: scratch },
     });
   assert.equal(result.ok, true, JSON.stringify(result.diagnostic));
@@ -206,6 +232,7 @@ test("real Windows System.Drawing helper crops deterministic pixels headlessly",
   assert.equal(checked.status, 0, String(checked.stderr).slice(0, 240));
   assert.deepEqual(JSON.parse(checked.stdout.trim()), { width: 3, height: 2, r: 60, g: 70, b: 12 });
 });
+}
 
 test("explicit helper temp directory wins over inherited scratch and normalizes all temp variables", () => {
   for (const env of [

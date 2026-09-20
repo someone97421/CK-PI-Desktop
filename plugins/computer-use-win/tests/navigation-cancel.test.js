@@ -20,6 +20,7 @@ function fixture({ platform = "win32", captures = [state(normal)], native, after
     module: { exports: {} }, exports: {}, Buffer, console, setTimeout, clearTimeout,
     __dirname: path.dirname(runtimePath), process: { platform, env: {} },
     require(name) {
+      if (name === "./powershell") return { resolvePowerShell: () => "powershell.exe" };
       if (name === "node:child_process") return {
         spawn() { throw new Error("live process prohibited"); },
         spawnSync(exe, args) {
@@ -267,7 +268,7 @@ test("post-observation await boundary rejects a replacement session", async () =
   const step = f.runtime._waitStep.bind(f.runtime);
   f.runtime._waitStep = async (...args) => {
     const result = await step(...args);
-    f.runtime._sessionEpoch = (f.runtime._sessionEpoch || 0) + 1;
+    if (f.calls.native.length) f.runtime._sessionEpoch = (f.runtime._sessionEpoch || 0) + 1;
     return result;
   };
   const result = await f.press("Escape");

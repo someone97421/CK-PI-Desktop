@@ -16,8 +16,9 @@ Prefer the PI-Desktop `Browser` tool for Chrome/Edge/web pages. Use these tools 
 - `launch_app` — start an app that is not running.
 - `get_app_state` — tree and/or screenshot for one window. Required before `element_index`.
   - First look: defaults (tree + screenshot). Meta includes `screenshot_width` / `screenshot_height`.
-  - Re-index before another AX click: `include_screenshot=false, refresh=true`.
+  - Re-index when no actionable snapshot is available: `include_screenshot=false, refresh=true`. A fresh observation returned by `observe=true` can supply the next exact control when it explicitly reports `snapshot_actionable=true`.
   - Vision-only (canvas / custom-drawn): `include_tree=false`. This gets a new image but invalidates the old AX tree for actions.
+  - If a UIA provider times out while a screenshot was requested, one read-only screenshot fallback may be returned with the tree error. Its image is usable for observation; old AX indices remain invalid. Main-window captures may omit owned dialogs: after Save/Go To/Show, check `list_windows` and the AX tree before deciding the command failed.
   - `query` filters a still-valid cached tree without renumbering; `refresh=true` bypasses cache. Use fresh observations for verification.
   - `region_*` crops the source screenshot. Electron-unavailable Windows hosts use a bounded System.Drawing fallback. Read `structuredContent.region_crop` for backend/error and detail-to-source mapping. Crop detail coordinates are not window coordinates.
   - `read_value` requests an exact Windows UIA control value by observed `name` or `automation_id`, optionally `role`. It is read-only, cannot combine with `wait_for`, and never uses OCR, clipboard or focus changes.
@@ -26,7 +27,7 @@ Prefer the PI-Desktop `Browser` tool for Chrome/Edge/web pages. Use these tools 
   - `press_key` — one chord per call. Pick chords for the **host OS** (table below). Never `type_text` the words Escape/Return/Tab. `Backspace` ≠ `Delete`.
   - `paste_text` — Unicode / TSV. Sets clipboard then paste. Do not `press_key` a paste chord (clipboard not set).
   - `scroll` / `drag` / `type_text` / `set_value` — background UIA.
-  - `click` / `press_key` / `type_text` accept `delivery_mode` (`background` default, `foreground`). Use `foreground` when a result or the driver reports background delivery unavailable ("escalate to delivery_mode"). It brings the window to the front before the one attempt; it is not a retry.
+  - `click` / `press_key` / `type_text` accept `delivery_mode` (`background` default, `foreground`). Use `foreground` when the driver reports background delivery unavailable. Delivery remains one attempt. Guarded native Office keys and Windows paste preserve an already-focused owned popup and activate the target only if necessary.
   - Action tools accept `region_x/region_y/region_width/region_height`; with `observe=true` the post-action screenshot is cropped to that strip. Requires `observe=true` (otherwise reported as `observe_required`).
 - Action responses preserve `structuredContent.action_result` (delivery / UI change / goal / evidence). `verified` / `effect` from the driver describe its action check, not the entire business task. `observe=true` requests post-action state. `type_text` may choose a Document/Edit for XAML; `paste_text` instead preserves the current focused control and caret, so select the destination first. Its legacy `element_index` does not retarget paste.
 - `stop_computer_use` — kills the helper; user must start it again from the panel.
@@ -42,8 +43,9 @@ Do not invent window ids. Prefer `element_index` from the latest `get_app_state`
 5. Do not snapshot merely because a result is unverifiable, and do not repeat the action. When the next step depends on its outcome, use a read-only `wait_for` or one focused observation. For fresh AX indices use `include_screenshot=false, refresh=true`. Stop once sufficient goal evidence is available.
 6. Keyboard: one chord per call; no screenshots between a known navigation sequence. Never type the words Escape/Return/Tab. Use a fresh AX observation before another element-index action, not before every key.
 7. No automatic action replay: right-click and existing-overlay clicks select foreground before delivery; a right-click is not itself an existing overlay. Windows paste uses one guarded Ctrl+V, never CUA then native fallback. Unknown results require evidence before further actions. `retry_safe` is a diagnostic, not permission for a blind retry. A definite no-send still requires resolving the cause and confirming the target.
+8. A close action may remove its target HWND before foreground verification. `target_window_closed` with independent window-list evidence means that exact window disappeared; it does not prove a document was saved or authorize replay. A pre-input `foreground_unavailable` remains a no-send refusal. If several unrelated apps report the same blocking foreground HWND, inspect it once and resolve focus; changing `delivery_mode` or repeating the chord is not a fix.
 
-AX indices become unusable after an action, target change, failed observation, or screenshot-only observation. `stale_tree` means refresh the tree, not click the same index again. Pixel-to-AX upgrades use only a valid current tree. New image versions do not certify tree freshness.
+AX indices from before an action become unusable. A new, explicitly captured post-action observation can supply new indices: follow its `snapshot_actionable` flag, not the preceding action's success. Target changes, failed observations and screenshot-only observations invalidate old indices. `stale_tree` means refresh and select the newly shown control; switching between click/type_text/set_value/secondary_action does not revive the same old index. `snapshot_actionable=true` permits an explicitly selected current token-bound control even when `tree_actionable=false`; an incomplete tree still cannot prove a dialog/editor absent or safely choose an arbitrary Edit. A fresh `query` observation authorizes only the controls actually returned, without renumbering. Pixel-to-AX upgrades use only a valid complete current tree. New image versions alone do not certify tree freshness.
 
 ## Read-only condition waits
 
@@ -91,6 +93,8 @@ Office-class surfaces (Feishu docs and bitable, Excel/WPS, PowerPoint, Word, IDE
 3. `Escape` leaves cell edit / dropdown. `Return` confirms. Context menu and save/paste chords follow the OS table below. `Delete` **clears a cell** — it does not delete a record/row.
 4. Do not click unlabeled toolbar Groups, `gallery-to-page`, AI builders, or “问问 AI”. Do not double-click a cell to “open” it (that starts edit).
 5. Snapshot only at: landed on the row, after a delete confirm dialog, after paste.
+
+Office files (xlsx/docx/pptx and WPS equivalents): load `office-workflows` for formulas/styles/layout/acceptance (knowledge only) and `office-desktop` for this GUI. Prefer keys/Go To over pixels.
 
 ## OS keys
 

@@ -85,21 +85,10 @@ const DELIVERY_PROP = {
   },
 };
 
-const SECONDARY_ALIASES = {
-  invoke: "click",
-  toggle: "click",
-  select: "click",
-  expand: "click",
-  collapse: "click",
-  scrollintoview: "click",
-  setfocus: "click",
-  setvalue: "set_value",
-};
-
 function routeSecondaryAction(args) {
   const raw = String(args.action || "").trim();
   const key = raw.toLowerCase().replace(/[\s_-]+/g, "");
-  if (key === "scroll" || key === "scrolldown") {
+  if (key === "scrolldown") {
     return { name: "scroll", args: { app: args.app, element_index: args.element_index, window_id: args.window_id, direction: "down", pages: 1 } };
   }
   if (key === "scrollup") {
@@ -111,11 +100,16 @@ function routeSecondaryAction(args) {
   if (key === "scrollright") {
     return { name: "scroll", args: { app: args.app, element_index: args.element_index, window_id: args.window_id, direction: "right", pages: 1 } };
   }
-  const mapped = SECONDARY_ALIASES[key] || "click";
-  if (mapped === "set_value") {
-    return { name: "set_value", args: { ...args, value: args.value || args.text || "" } };
+  if (key === "setvalue") {
+    return { name: "set_value", args: { app: args.app, element_index: args.element_index,
+      window_id: args.window_id, value: args.value ?? args.text ?? "" } };
   }
-  return { name: "click", args: { app: args.app, element_index: args.element_index, window_id: args.window_id } };
+  if (key === "invoke") {
+    return { name: "click", args: { app: args.app, element_index: args.element_index, window_id: args.window_id } };
+  }
+  // A driver's default click may prefer Invoke over SelectionItem on a file.
+  // Never substitute a different accessibility operation for the requested one.
+  return null;
 }
 
 const SNAPSHOT_TOOLS = new Set(["get_app_state"]);
@@ -235,7 +229,7 @@ const OCU_TOOLS = [
   },
   {
     name: "perform_secondary_action",
-    description: "Invoke a named accessibility action on an element from the latest get_app_state. Mapped onto click/scroll/set_value.",
+    description: "Run supported accessibility actions: Invoke, SetValue, or directional Scroll. Select, Toggle, Expand, Collapse, ScrollIntoView, SetFocus and unknown actions are rejected without input; they are never replaced with Invoke.",
     risk: "high",
     needsApp: true,
     schema: {
@@ -401,8 +395,20 @@ function makeExecutors(runtime, loadSettings, dependencies = {}) {
       context?.log?.(`${tool.name} ${forwarded.app || forwarded.name || ""}`.trim());
       if (tool.name === "perform_secondary_action") {
         const routed = routeSecondaryAction(forwarded);
+        if (!routed) {
+          const error = `unsupported_secondary_action: ${String(forwarded.action || "")}; no action sent. Use an observed supported command or verified keyboard navigation; Select is never replaced with Invoke.`;
+          return presentResult({ isError: true, content: [{ type: "text", text: error }], structuredContent: {
+            code: "unsupported_secondary_action", requested_action: forwarded.action, delivery: "not_sent", transport_sent: false,
+            action_result: { schema_version: 1, action: tool.name, delivery: "not_sent", ui_change: "unchanged",
+              goal: "unconfirmed", retry_safe: true, evidence: [] },
+          } }, { observe: false, action: tool.name, app: forwarded.app });
+        }
         const result = await runtime.callTool(routed.name, routed.args, { observe, settings });
-        return presentResult(result, { observe, region, action: tool.name, app: forwarded.app, screenshotExpected: observe });
+        const structured = result && result.structuredContent || {};
+        const presented = { ...result, structuredContent: { ...structured, requested_action: forwarded.action,
+          ...(structured.action_result ? { action_result: { ...structured.action_result, action: tool.name, routed_action: routed.name } } : {}) } };
+        return presentResult(presented, { observe, region, action: tool.name, app: forwarded.app, screenshotExpected: observe,
+          env: runtime._childEnv ? runtime._childEnv() : process.env });
       }
       let result = await runtime.callTool(tool.name, forwarded, { observe, settings });
       if (valueSelector !== undefined) result = await attachReadValue(runtime,

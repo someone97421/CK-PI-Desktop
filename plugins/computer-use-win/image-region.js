@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync: defaultSpawnSync } = require("node:child_process");
+const { resolvePowerShell } = require("./powershell");
 
 const MAX_INPUT_BYTES = 16 * 1024 * 1024;
 const MAX_STDOUT_BYTES = 4 * 1024 * 1024;
@@ -207,7 +208,11 @@ function runPowerShell(data, region, options, attempts) {
     "-X", String(region.x), "-Y", String(region.y), "-Width", String(region.width), "-Height", String(region.height)];
   let child;
   try {
-    child = spawnSync(options.powershellExe || "powershell.exe", args, {
+    child = spawnSync(resolvePowerShell({
+      env,
+      powershellPath: options.powershellPath || (options.env && options.env.powershellPath),
+      powershellExe: options.powershellExe || (options.env && options.env.powershellExe),
+    }), args, {
       input: data,
       encoding: "utf8",
       timeout,

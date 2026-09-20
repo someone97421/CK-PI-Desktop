@@ -2,19 +2,19 @@
   "schemaVersion": 1,
   "id": "cn.star.computer-use",
   "name": "Computer Use（Win 版）",
-  "version": "0.3.4",
-  "description": "Windows x64 桌面控制，内置运行环境，导入即可使用；支持后台 UI Automation、允许列表和急停。",
+  "version": "0.4.0",
+  "description": "Windows x64 桌面控制，内置离线运行环境、Office 知识和应用操作技能，支持允许列表和急停。",
   "author": "TheFlareStar",
   "license": "MPL-2.0",
   "i18n": {
     "en": {
       "name": "Computer Use (Windows)",
-      "description": "Windows x64 desktop automation with bundled runtime, background UI Automation, allowlist and emergency stop.",
+      "description": "Windows x64 desktop automation with bundled offline runtime, Office knowledge, application workflows, allowlist and emergency stop.",
       "safetyNotes": "Runs the bundled cua-driver MCP runtime to capture windows and send mouse/keyboard input. Existing tool permissions, denylist and optional allowlist apply. Screenshots are returned to the agent; this plugin does not upload them."
     },
     "zh-CN": {
       "name": "Computer Use（Win 版）",
-      "description": "Windows x64 桌面控制，内置运行环境，导入即可使用；支持后台 UI Automation、允许列表和急停。",
+      "description": "Windows x64 桌面控制，内置离线运行环境、Office 知识和应用操作技能，支持允许列表和急停。",
       "safetyNotes": "插件会启动包内 cua-driver MCP，可截取窗口并发送键鼠。保留工具权限、内置拒绝列表和可选允许列表。截图回给智能体，本插件不主动上传。"
     }
   },
@@ -156,7 +156,7 @@
       },
       {
         "name": "perform_secondary_action",
-        "description": "Invoke a named accessibility action on an element from the latest get_app_state.",
+        "description": "Run supported accessibility actions: Invoke, SetValue, or directional Scroll. Select, Toggle, Expand, Collapse, ScrollIntoView, SetFocus and unknown actions are rejected without input; they are never replaced with Invoke.",
         "risk": "high",
         "schema": {
           "type": "object",
@@ -307,7 +307,9 @@
       }
     ],
     "skills": [
-      "skills/computer-use.md"
+      "skills/computer-use.md",
+      "skills/office-workflows.md",
+      "skills/office-desktop.md"
     ],
     "settings": [
       {

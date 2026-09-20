@@ -2290,6 +2290,7 @@ export function Sidebar({
             </TooltipButton>
             <NotificationCenter onBeforeOpen={() => closeMenus(false)} />
             <RemoteAccessButton />
+            <RemoteAccessButton kind="computer" />
           </div>
 
           {/* Fork: the build chip was the entry point for the upstream update

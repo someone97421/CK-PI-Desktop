@@ -7,7 +7,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const runtimePath = path.join(__dirname, "..", "runtime.js");
 const source = fs.readFileSync(runtimePath, "utf8");
-const button = { element_index: 1, element_token: "token-1", role: "Button", label: "Save", frame: { x: 0, y: 0, w: 100, h: 100 } };
+const button = { element_index: 1, element_token: "same-driver-id:1", enabled: true, visible: true, role: "Button", label: "Save", frame: { x: 0, y: 0, w: 100, h: 100 } };
 const image = { type: "image", mimeType: "image/png", data: "YWJj" };
 const state = (elements = [button], extra = {}, screenshot = false) => ({ content: screenshot ? [image] : [], structuredContent: { snapshot_id: "same-driver-id", elements, ...extra } });
 const plain = (value) => JSON.parse(JSON.stringify(value));
@@ -18,6 +18,7 @@ function fixture({ platform = "win32", actionResult, capture, native, clipboardF
     module: { exports: {} }, Buffer, console, setTimeout, clearTimeout,
     process: { platform, env: {} }, __dirname: path.dirname(runtimePath),
     require(name) {
+      if (name === "./powershell") return { resolvePowerShell: () => "powershell.exe" };
       if (name === "node:child_process") return {
         spawn() { throw new Error("Live process prohibited"); },
         spawnSync(exe, args) {
@@ -109,7 +110,7 @@ for (const sent of [0, 1, 3, 4]) {
     assert.equal(f.calls.native.length, 1);
     assert.ok(f.calls.native[0].args.includes("-Control"));
     assert.equal(f.calls.native[0].args[f.calls.native[0].args.indexOf("-Key") + 1], "v");
-    assert.deepEqual(f.calls.cua.map((c) => c.name), ["clipboard_write", "bring_to_front"]);
+    assert.deepEqual(f.calls.cua.map((c) => c.name), ["clipboard_write"]);
     const a = result.structuredContent.action_result;
     assert.equal(a.delivery, sent === 0 ? "not_sent" : sent < 4 ? "partial" : "sent");
     assert.equal(a.goal, "unconfirmed");
@@ -125,7 +126,7 @@ for (const native of [new Error("helper timeout"), { status: 0, stdout: "malform
     assert.equal(f.calls.native.length, 1);
     assert.equal(result.structuredContent.action_result.delivery, "unknown");
     assert.equal(result.structuredContent.action_result.retry_safe, false);
-    assert.deepEqual(f.calls.cua.map((c) => c.name), ["bring_to_front"]);
+    assert.deepEqual(f.calls.cua.map((c) => c.name), []);
   });
 }
 
@@ -167,7 +168,7 @@ test("an action invalidates AX: pixel stays pixel, explicit index fails stale_tr
   const f = fixture();
   await f.snapshot();
   await f.call("click", { x: 10, y: 10 });
-  assert.equal(f.calls.cua.at(-1).payload.element_token, "token-1");
+  assert.equal(f.calls.cua.at(-1).payload.element_token, "same-driver-id:1");
   await f.call("click", { x: 10, y: 10 });
   assert.equal(f.calls.cua.at(-1).payload.x, 10);
   assert.equal(f.calls.cua.at(-1).payload.element_token, undefined);
@@ -179,19 +180,19 @@ test("an action invalidates AX: pixel stays pixel, explicit index fails stale_tr
 });
 
 test("local query only uses a valid tree; refresh replaces tokens and query+screenshot fetches tree", async () => {
-  const f = fixture({ capture: (n, p) => state([{ ...button, element_token: `fresh-${n}` }], {}, p.include_screenshot) });
+  const f = fixture({ capture: (n, p) => state([{ ...button, element_token: `fresh-${n}:1` }], { snapshot_id: `fresh-${n}` }, p.include_screenshot) });
   const first = await f.snapshot();
   const local = await f.snapshot({ query: "save" });
   assert.equal(f.calls.cua.length, 1);
   assert.equal(local.structuredContent.query_local, true);
   assert.equal(local.structuredContent.tree_version, first.structuredContent.tree_version);
   const refreshed = await f.snapshot({ query: "save", refresh: true });
-  assert.equal(refreshed.structuredContent.elements[0].element_token, "fresh-2");
-  assert.equal(f.runtime.targets.get("notepad").elements[0].element_token, "fresh-2");
+  assert.equal(refreshed.structuredContent.elements[0].element_token, "fresh-2:1");
+  assert.equal(f.runtime.targets.get("notepad").elements[0].element_token, "fresh-2:1");
   await f.snapshot({ query: "save", include_screenshot: true });
   assert.equal(f.calls.cua.at(-1).payload.include_accessibility_tree, true);
   assert.equal(f.calls.cua.at(-1).payload.query, undefined);
-  assert.equal(f.runtime.targets.get("notepad").elements[0].element_token, "fresh-3");
+  assert.equal(f.runtime.targets.get("notepad").elements[0].element_token, "fresh-3:1");
   await f.call("click", { x: 150, y: 150 });
   const fresh = await f.snapshot({ query: "save" });
   assert.notEqual(fresh.structuredContent.query_local, true);
