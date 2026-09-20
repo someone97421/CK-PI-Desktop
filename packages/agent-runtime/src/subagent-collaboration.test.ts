@@ -401,6 +401,112 @@ describe("parent supervision connectivity", () => {
     await fixture.runtime.dispose();
   });
 
+  it("delivers a final report at the next active tool boundary without TaskWait or an idle prompt", async () => {
+    interceptChildren(["child-held"]);
+    const fixture = parent(32);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    fixture.host.call.mockImplementation(async (_method?: unknown, params?: any) => {
+      if (params?.args?.path === "child-held") await held;
+      return { ok: true, content: "ok" };
+    });
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "Inspect independently" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    fixture.internal.agent.setTools([{
+      name: "Read", label: "Read", description: "Independent parent work", parameters: Type.Object({ path: Type.String() }),
+      execute: async () => {
+        release();
+        await record.completion;
+        expect(record.reportDelivered).toBe(false);
+        return result;
+      },
+    }]);
+    const contexts = setStream(fixture.internal.agent, (_context, index) => !index ? reply(["parent-work"]) : reply());
+    await fixture.internal.agent.prompt("Continue independent work");
+    expect(contexts).toHaveLength(2);
+    expect(JSON.stringify(contexts[1].messages)).toContain(record.result.report);
+    expect(record.reportDelivered).toBe(true);
+    expect(fixture.internal.agent.state.messages.filter((message: any) => message.role === "user")).toHaveLength(1);
+    const prompt = vi.spyOn(fixture.internal.agent, "prompt");
+    await fixture.internal.resumeAfterDelegations();
+    expect(prompt).not.toHaveBeenCalled();
+    // 用户/模型显式按 id 重读仍返回原报告，不重新触发自动投递。
+    const reread = await fixture.internal.buildSubagentWaitTool().execute("reread", { delegationIds: [record.delegationId] });
+    expect(reread.content[0].text).toContain(record.result.report);
+    const steer = vi.spyOn(fixture.internal.agent, "steer");
+    fixture.internal.queueSupervisionAtBoundary();
+    expect(steer).not.toHaveBeenCalled();
+    await fixture.runtime.dispose();
+  });
+
+  it("does not automatically repeat a final report already returned by TaskWait", async () => {
+    interceptChildren([]);
+    const fixture = parent(32);
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "Inspect" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    await record.completion;
+    const waited = await fixture.internal.buildSubagentWaitTool().execute("wait", { delegationIds: [record.delegationId] });
+    expect(waited.content[0].text).toContain(record.result.report);
+    const contexts = setStream(fixture.internal.agent, () => reply());
+    await fixture.internal.agent.prompt("Finish using the report already read");
+    await fixture.internal.resumeAfterDelegations();
+    expect(contexts).toHaveLength(1);
+    await fixture.runtime.dispose();
+  });
+
+  it("waits for snapshot settlement before idle delivery and exposes a resumable execution once", async () => {
+    interceptChildren([]);
+    const fixture = parent(32);
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const saving = new Promise<void>((resolve) => { entered = resolve; });
+    vi.spyOn(fixture.internal.persistenceClient, "isMemoryOnly").mockReturnValue(false);
+    vi.spyOn(fixture.internal.persistenceClient, "commitSnapshot").mockImplementation(async () => {
+      entered();
+      await held;
+      return { revision: 1, durableReady: false };
+    });
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "Inspect" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    await saving;
+    const contexts = setStream(fixture.internal.agent, () => reply());
+    const resume = fixture.internal.resumeAfterDelegations();
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(record).toMatchObject({ status: "completed", settling: true, reportDelivered: false });
+      expect(contexts).toHaveLength(0);
+    } finally {
+      release();
+      await resume;
+    }
+    expect(contexts).toHaveLength(1);
+    expect(JSON.stringify(contexts[0].messages)).toContain(record.result.report);
+    expect(fixture.runtime.subagentRecallStatus(record.delegationId)).toMatchObject({ canResume: true, execution: 1 });
+    await fixture.internal.resumeAfterDelegations();
+    expect(contexts).toHaveLength(1);
+    await fixture.runtime.dispose();
+  });
+
+  it.each(["settling", "previous-turn", "cancelled", "fatal-error"])("keeps a %s final report out of active boundary delivery", async (state) => {
+    interceptChildren([]);
+    const fixture = parent(32);
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "Inspect" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    await record.completion;
+    if (state === "settling") record.settling = true;
+    if (state === "previous-turn") record.startedEpoch -= 1;
+    if (state === "cancelled") fixture.internal.runCancelled = true;
+    if (state === "fatal-error") fixture.internal.turnHadError = true;
+    const steer = vi.spyOn(fixture.internal.agent, "steer");
+    fixture.internal.queueSupervisionAtBoundary();
+    expect(steer).not.toHaveBeenCalled();
+    expect(record.reportDelivered).toBe(false);
+    record.settling = false;
+    await fixture.runtime.dispose();
+  });
+
   it("wakes idle final-report waiting with progress, and refuses foreign or stale controls", async () => {
     interceptChildren(["a", "b"]);
     const fixture = parent(1);
