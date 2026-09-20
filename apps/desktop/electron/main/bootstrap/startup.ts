@@ -1,4 +1,5 @@
 import { app, BrowserWindow, crashReporter, Menu, safeStorage } from "electron";
+import { join } from "node:path";
 import { createScheduledRunner } from "../runtime/scheduled-runner";
 import {
   APP_NAME,

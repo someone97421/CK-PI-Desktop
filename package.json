@@ -1,7 +1,7 @@
 {
   "name": "this-is-a-agent",
   "private": true,
-  "version": "2609.2018.1946",
+  "version": "2609.2100.5448",
   "description": "这是一个助手 — local-first AI coding agent desktop app",
   "packageManager": "pnpm@11.18.0",
   "engines": {
