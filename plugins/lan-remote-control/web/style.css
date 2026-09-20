@@ -1321,7 +1321,8 @@ pre {
 
 .sheet-backdrop {
   position: fixed;
-  inset: 0;
+  inset: var(--rc-visible-top, 0px) 0 auto;
+  height: var(--rc-visible-height, 100dvh);
   z-index: 40;
   display: flex;
   align-items: flex-end;
@@ -1333,18 +1334,20 @@ pre {
 .sheet {
   display: flex;
   width: 100%;
-  max-height: min(84vh, calc(var(--rc-app-height) - 40px));
+  max-height: calc(var(--rc-visible-height, 100dvh) - max(16px, env(safe-area-inset-top)));
   flex-direction: column;
   border-top-left-radius: var(--radius-xl);
   border-top-right-radius: var(--radius-xl);
   background: var(--ds-bg-secondary);
   box-shadow: var(--ds-shadow-dialog);
   animation: sheet-in var(--motion-normal) var(--motion-ease);
-  padding-bottom: var(--rc-keyboard-inset);
+  overflow: hidden;
+  padding-bottom: 0;
 }
 
 .sheet-header {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--ds-border-subtle);
@@ -1370,9 +1373,119 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-height: 0;
+  overscroll-behavior: contain;
   overflow-y: auto;
   padding: 12px 12px calc(16px + var(--rc-safe-bottom));
   -webkit-overflow-scrolling: touch;
+}
+
+/* sheet 内通用构件：固定底部操作、整行操作列表、表单字段、文本预览。 */
+.sheet-foot {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--ds-border-subtle);
+  padding: 10px 12px calc(10px + var(--rc-safe-bottom));
+}
+.sheet-feedback { flex: none; margin: 0; padding: 8px 16px; font-size: 13px; color: var(--ds-text-secondary); overflow-wrap: anywhere; }
+.sheet-feedback-error { color: var(--ds-error); }
+.sheet:has(.sheet-foot) .sheet-body { padding-bottom: 12px; }
+.sheet-subtitle:empty { display: none; }
+.sheet-list > .row-actions { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.sheet-foot .btn-icon-action > .btn-label { position: static; width: auto; height: auto; padding: 0; margin: 0; clip-path: none; overflow: visible; white-space: normal; }
+.sheet-foot .btn-icon-action { width: auto; height: auto; padding: 10px 14px; gap: 6px; }
+.sheet-list > .row-actions > .btn { min-height: 44px; justify-content: flex-start; }
+.queue-item { padding: 12px 0; border-bottom: 1px solid var(--ds-border-subtle); }
+.queue-item:last-child { border-bottom: 0; }
+.queue-item .row-actions { gap: 6px; margin-top: 12px; }
+.queue-item .row-actions .btn { min-height: 44px; }
+
+.sheet-foot > .btn {
+  flex: 1 1 0;
+  min-height: 44px;
+}
+
+.sheet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sheet-list > .btn {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.sheet-list > .btn[disabled] {
+  opacity: 0.45;
+}
+
+.sheet-section {
+  margin: 8px 0 -2px;
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs);
+}
+
+.sheet-field {
+  display: grid;
+  gap: 6px;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.sheet-field select,
+.sheet-field textarea {
+  width: 100%;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--ds-bg-tertiary);
+  color: var(--ds-text-primary);
+  font: inherit;
+  font-size: 16px;
+  min-width: 0;
+}
+
+.sheet-field select {
+  min-height: 44px;
+  padding: 0 10px;
+}
+
+.sheet-field textarea {
+  min-height: 120px;
+  max-height: 40vh;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.sheet-hint {
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs);
+}
+
+.sheet-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-sm);
+}
+
+.sheet-quote {
+  margin: 0;
+  border-left: 2px solid var(--ds-border-strong);
+  padding: 2px 0 2px 10px;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 @keyframes sheet-in {
@@ -1680,15 +1793,15 @@ pre {
 
   .sheet-backdrop {
     align-items: center;
-    justify-content: flex-end;
+    justify-content: center;
     padding: 24px;
   }
 
   .sheet {
-    width: min(520px, 46vw);
-    max-height: min(80vh, 720px);
+    width: min(560px, 100%);
+    max-height: min(720px, calc(var(--rc-visible-height, 100dvh) - 48px));
     border-radius: var(--radius-lg);
-    animation: sheet-side-in var(--motion-normal) var(--motion-ease);
+    animation: sheet-in var(--motion-normal) var(--motion-ease);
   }
 
   @keyframes sheet-side-in {

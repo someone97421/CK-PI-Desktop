@@ -1,5 +1,5 @@
 import { createLoginView } from "./views/connect.js";
-import { el, button, copyText, iconButton } from "./dom.js";
+import { el, button, copyText, iconButton, createSheet, closeAllSheets, confirmAction, autoGrow } from "./dom.js";
 import { createProjectHome } from "./home.js";
 import { RemoteClient, EventSocket } from "./transport.js";
 import { uuid, TOKEN_STORAGE_KEY, describeError } from "./protocol.js";
@@ -79,6 +79,16 @@ const positions = new Map();
 const disclosureState = new Map();
 let navigationVersion = 0;
 const processVisibility = new Map();
+function openSheetPanel({ title, subtitle } = {}) {
+  const sheet = createSheet({ title, subtitle, onClose: () => sheet.root.remove() });
+  document.body.append(sheet.root);
+  sheet.open();
+  return sheet;
+}
+function closeOverlays() {
+  closeAllSheets();
+  for (const dialog of document.querySelectorAll("dialog")) dialog.remove();
+}
 function disclosure(key, label, excerpt, ...children) {
   const stateKey = `${current}:${key}`;
   const details = el("details", { className: "remote-process", open: disclosureState.get(stateKey) || false },
@@ -107,7 +117,7 @@ function showHome({ reload = true } = {}) {
   if (current) positions.set(current, transcript.scrollTop);
   socket?.unsubscribe(current);
   subagentObserver.close();
-  for (const dialog of document.querySelectorAll("dialog")) dialog.remove();
+  closeOverlays();
   renderVersion++; refreshVersion++;
   current = null; snapshot = null; messages = []; liveTools.clear(); recentEvents.length = 0;
   setPage("home");
@@ -190,6 +200,9 @@ function updateViewport() {
   const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
   document.documentElement.style.setProperty("--rc-visible-height", `${viewport?.height || window.innerHeight}px`);
   document.documentElement.style.setProperty("--rc-visible-top", `${viewport?.offsetTop || 0}px`);
+  // 软键盘占位：底部面板与输入区据此避开键盘（iOS 不改变布局视口高度）。
+  const keyboard = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+  document.documentElement.style.setProperty("--rc-keyboard-inset", `${keyboard}px`);
   if (atBottom) requestAnimationFrame(() => { transcript.scrollTop = transcript.scrollHeight; });
 }
 window.visualViewport?.addEventListener("resize", updateViewport);
@@ -198,12 +211,66 @@ window.addEventListener("resize", updateViewport);
 window.addEventListener("pageshow", updateViewport);
 updateViewport();
 const input = el("textarea", {
-  attrs: { placeholder: "发送消息…", "aria-label": "消息", rows: 2 },
+  attrs: { placeholder: "发送消息…", "aria-label": "消息", rows: 1 },
 });
+// 输入框随内容自适应增高；程序化改写 value 后需手动调用一次。
+const growInput = autoGrow(input, {
+  maxHeight: () => Math.min(240, (window.visualViewport?.height || window.innerHeight) * 0.28),
+});
+window.visualViewport?.addEventListener("resize", growInput);
+window.addEventListener("resize", growInput);
 const attachmentList = el("div"),
   annotationList = el("div");
-const toolbar = el("div", { className: "row-actions" });
-const send = button("发送", { variant: "primary", type: "submit" });
+const send = button("发送", { variant: "primary", type: "submit", className: "composer-send" });
+const attachButton = iconButton("attach", { title: "添加附件", className: "composer-attach", onClick: () => fileInput.click() });
+const stopButton = button("停止", {
+  className: "composer-stop",
+  onClick: () => action(async () => {
+    if (!current || stopButton.disabled) return;
+    const sessionId = current;
+    stopButton.disabled = true;
+    try {
+      await mutate("chat.stop", { sessionId });
+      if (current === sessionId) await refresh();
+    } finally {
+      stopButton.disabled = false;
+    }
+  }),
+});
+stopButton.hidden = true;
+const modelChip = button("模型", {
+  iconName: "model",
+  preserveLabel: true,
+  className: "composer-model",
+  onClick: () => action(async () => {
+    if (modelChip.disabled) return;
+    modelChip.disabled = true;
+    try { await modelOptions(); } finally { modelChip.disabled = false; }
+  }),
+});
+const moreButton = iconButton("more", { title: "更多操作", className: "composer-more", onClick: openComposerMore });
+const modelLabels = new Map();
+function currentModelLabel() {
+  const key = snapshot?.session?.modelKey;
+  return (key && modelLabels.get(key)) || key || "";
+}
+function updateComposerState() {
+  const running = !!(snapshot?.session?.running || snapshot?.status?.running);
+  stopButton.hidden = !running;
+  const label = currentModelLabel();
+  const text = label ? `模型：${label}` : "模型";
+  modelChip.querySelector(".btn-label").textContent = text;
+  modelChip.title = label ? text : "模型设置";
+  modelChip.setAttribute("aria-label", modelChip.title);
+}
+function openComposerMore() {
+  if (!current) return;
+  const sheet = openSheetPanel({ title: "更多操作", subtitle: "命令、技能与待发队列" });
+  const list = el("div", { className: "sheet-list" },
+    button("命令/技能", { preserveLabel: true, iconName: "commands", onClick: () => { sheet.close(); action(commands); } }),
+    button("队列", { preserveLabel: true, iconName: "queue", onClick: () => { sheet.close(); action(queue); } }));
+  sheet.body.append(list);
+}
 const api = new RemoteClient({
   getToken: () => token,
   onUnauthorized: () => {
@@ -303,10 +370,15 @@ function drawRecovery() {
         }),
     }),
     button("已核对，解除未决状态", {
-      onClick: () => {
-        if (confirm("核对当前会话后解除未决状态？此操作不会重发消息。"))
-          action(() => recovery.acknowledge());
-      },
+      onClick: () =>
+        action(async () => {
+          const ok = await confirmAction({
+            title: "解除未决状态",
+            detail: "核对当前会话后解除未决状态？此操作不会重发消息。",
+            confirmLabel: "解除",
+          });
+          if (ok) await recovery.acknowledge();
+        }),
     }),
   );
 }
@@ -351,7 +423,7 @@ function showLogin() {
   renderVersion++; refreshVersion++;
   current = null; snapshot = null; messages = []; liveTools.clear(); recentEvents.length = 0;
   socket?.close?.();
-  for (const dialog of document.querySelectorAll("dialog")) dialog.remove();
+  closeOverlays();
   layout();
   setPage("login");
   home.reset(); composer.hidden = true;
@@ -367,6 +439,7 @@ async function openSession(id, { navigate = true } = {}) {
   if (loginVisible || !token) return;
   renderVersion++;
   subagentObserver.close();
+  closeOverlays();
   saveDraft();
   if (current) positions.set(current, transcript.scrollTop);
   socket?.unsubscribe(current);
@@ -388,6 +461,8 @@ async function openSession(id, { navigate = true } = {}) {
   messages = [];
   const draft = drafts.get(id) || {};
   input.value = draft.text || "";
+  growInput();
+  updateComposerState();
   uploaded = draft.uploaded || [];
   annotations = draft.annotations || [];
   queuedDraftId = draft.queuedDraftId || "";
@@ -446,25 +521,8 @@ async function drawChat() {
   const container = document.createDocumentFragment();
   const timeline = buildProcessTimeline(messages, liveTools);
   const cards = new Map();
-  const top = el(
-    "div",
-    { className: "row-actions" },
-    button("刷新", { onClick: () => action(refresh) }),
-  );
-  if (parents.has(current))
-    top.append(
-      button("返回主对话", {
-        onClick: () => action(() => openSession(parents.get(current))),
-      }),
-    );
-  for (const [child, parent] of parents)
-    if (parent === current)
-      top.append(
-        button("打开侧边对话", {
-          onClick: () => action(() => openSession(child)),
-        }),
-      );
   const processToggle = button(processVisibility.get(current) ? "收起过程" : "展开过程", {
+    iconName: "info",
     preserveLabel: true,
     onClick: () => {
       const open = !processVisibility.get(current);
@@ -474,7 +532,6 @@ async function drawChat() {
     },
   });
   processToggle.setAttribute("aria-pressed", String(!!processVisibility.get(current)));
-  top.append(processToggle);
   if (snapshot?.messages?.hasMoreBefore)
     container.append(
       button("加载更早消息", {
@@ -608,6 +665,7 @@ async function drawChat() {
       button("引用", {
         onClick: () => {
           input.value += `${input.value ? "\n\n" : ""}${buildQuoteText(window.getSelection()?.toString() || m.content, `引用自 ${snapshot.session.title || "会话"}`)}\n`;
+          growInput();
           input.focus();
         },
       }),
@@ -615,17 +673,7 @@ async function drawChat() {
     if (m.role === "assistant") {
       actions.append(
         button("批注", {
-          onClick: () => {
-            const selection = window.getSelection()?.toString() || m.content;
-            const note = prompt("批注内容");
-            if (note === null) return;
-            annotations.push({
-              messageId: m.id,
-              text: selection.slice(0, 2000),
-              annotation: note,
-            });
-            renderAttachments();
-          },
+          onClick: () => openAnnotationSheet(m),
         }),
         button("侧边对话", {
           onClick: () =>
@@ -650,20 +698,7 @@ async function drawChat() {
     if (m.role === "user")
       actions.append(
         button("编辑重发", {
-          onClick: () =>
-            action(async () => {
-              const value = prompt(
-                "编辑消息并重新生成（后续消息会被替换）",
-                m.content,
-              );
-              if (value === null) return;
-              await mutate("chat.edit", {
-                sessionId: current,
-                messageId: m.id,
-                text: value,
-              });
-              await refresh();
-            }),
+          onClick: () => openEditSheet(m),
         }),
         button("重试", {
           onClick: () =>
@@ -676,20 +711,18 @@ async function drawChat() {
             }),
         }),
       );
-    // 先解除模态 inert，再让按钮处理复制或将焦点交给输入框。
+    let menuSheet = null;
+    // 先关闭面板解除焦点占用，再让按钮处理复制或将焦点交给输入框。
     actions.addEventListener("click", (event) => {
-      if (event.target.closest("button")) actions.closest("dialog")?.remove();
+      if (event.target.closest("button")) menuSheet?.close();
     }, { capture: true });
     for (const item of actions.children) item.classList.remove("btn-icon-action");
     card.querySelector(".remote-message-heading").append(iconButton("more", {
       title: "消息操作",
       className: "remote-message-more",
       onClick: () => {
-        const dialog = el("dialog", { className: "remote-message-menu", attrs: { "aria-label": "消息操作" } },
-          el("div", { className: "remote-message-menu-heading" }, el("strong", { text: "消息操作" }),
-            iconButton("close", { title: "关闭", onClick: () => dialog.remove() })), actions);
-        document.body.append(dialog);
-        dialog.showModal();
+        menuSheet = openSheetPanel({ title: "消息操作" });
+        menuSheet.body.append(el("div", { className: "sheet-list" }, actions));
       },
     }));
     cards.set(m.id, card);
@@ -713,16 +746,25 @@ async function drawChat() {
   }
   if (version !== renderVersion || current !== renderedSession) return;
   subagentObserver.update(current, messages, liveTools);
-  top.append(button(subagentObserver.buttonLabel(), { iconName: "sidechat", preserveLabel: true, onClick: () => subagentObserver.open() }));
   const scroll = transcript.scrollTop;
   const nearBottom = transcript.scrollHeight - scroll - transcript.clientHeight < 100;
   const focusedDisclosure = document.activeElement?.closest("details")?.dataset.disclosureKey;
-  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
-  if (pendingCount) top.append(button(`待处理 ${pendingCount}`, { preserveLabel: true, onClick: () => {
-    transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" });
-  } }));
   const title = snapshot?.session?.title || "对话";
-  chatHeading.replaceChildren(el("h2", { text: title, attrs: { title } }), top);
+  chatHeading.replaceChildren(el("div", { className: "remote-chat-titlebar" },
+    el("h2", { text: title, attrs: { title } }),
+    processToggle,
+    iconButton("more", { title: "会话操作", onClick: openChatMore })));
+  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
+  const running = !!(snapshot?.session?.running || snapshot?.status?.running);
+  const statusRow = el("div", { className: "remote-chat-status" },
+    el("span", { className: `remote-run-status${running ? " is-running" : ""}`, text: running ? "正在处理" : "就绪" }),
+    button(subagentObserver.buttonLabel(), { iconName: "sidechat", preserveLabel: true, onClick: () => subagentObserver.open() }));
+  if (pendingCount) statusRow.append(button(`待处理 ${pendingCount}`, {
+    iconName: "warning", preserveLabel: true, className: "remote-pending-chip",
+    onClick: () => transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" }),
+  }));
+  chatHeading.append(statusRow);
+  updateComposerState();
   transcript.replaceChildren(container);
   renderPending();
   if (focusedDisclosure) {
@@ -733,16 +775,82 @@ async function drawChat() {
   else transcript.scrollTop = scroll;
   updateJump();
 }
+function openChatMore() {
+  if (!current) return;
+  const sheet = openSheetPanel({ title: snapshot?.session?.title || "会话", subtitle: "会话操作" });
+  const list = el("div", { className: "sheet-list" });
+  const add = (label, options) =>
+    list.append(button(label, {
+      preserveLabel: true,
+      ...options,
+      onClick: () => { sheet.close(); options.onClick(); },
+    }));
+  add("刷新", { iconName: "refresh", onClick: () => action(refresh) });
+  if (parents.has(current))
+    add("返回主对话", { iconName: "back", onClick: () => action(() => openSession(parents.get(current))) });
+  for (const [child, parent] of parents)
+    if (parent === current)
+      add("打开侧边对话", { iconName: "sidechat", onClick: () => action(() => openSession(child)) });
+  add(subagentObserver.buttonLabel(), { iconName: "sidechat", onClick: () => subagentObserver.open() });
+  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
+  if (pendingCount)
+    add(`待处理 ${pendingCount}`, { iconName: "warning", onClick: () => {
+      transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" });
+    } });
+  sheet.body.append(list);
+}
 function showText(title, text) {
-  const dialog = el(
-    "dialog",
-    {},
-    el("h3", { text: title }),
-    el("pre", { text }),
-    button("返回对话", { iconName: "back", preserveLabel: true, onClick: () => dialog.remove() }),
+  const sheet = openSheetPanel({ title });
+  sheet.body.append(el("pre", { className: "sheet-text", text }));
+}
+function openAnnotationSheet(m) {
+  const sessionId = current;
+  const selection = (window.getSelection()?.toString() || m.content || "").slice(0, 2000);
+  const sheet = openSheetPanel({ title: "添加批注", subtitle: "批注随下一条消息一起发送" });
+  const noteInput = el("textarea", { attrs: { "aria-label": "批注内容", placeholder: "批注内容…" } });
+  sheet.body.append(
+    el("p", { className: "sheet-quote", text: selection }),
+    el("label", { className: "sheet-field" }, "批注内容", noteInput),
   );
-  document.body.append(dialog);
-  dialog.showModal();
+  const submit = button("添加批注", {
+    variant: "primary",
+    onClick: () => {
+      if (current !== sessionId || loginVisible) { sheet.close(); return; }
+      annotations.push({ messageId: m.id, text: selection, annotation: noteInput.value });
+      renderAttachments();
+      saveDraft();
+      sheet.close();
+    },
+  });
+  sheet.panel.append(el("div", { className: "sheet-foot" },
+    button("取消", { variant: "secondary", onClick: () => sheet.close() }), submit));
+}
+function openEditSheet(m) {
+  const sessionId = current, navigation = navigationVersion;
+  const sheet = openSheetPanel({ title: "编辑重发", subtitle: "修改后重新生成，后续消息会被替换" });
+  const editInput = el("textarea", { value: m.content || "", attrs: { "aria-label": "消息内容" } });
+  sheet.body.append(el("label", { className: "sheet-field" }, "消息内容", editInput));
+  const submit = button("重新生成", { variant: "primary" });
+  submit.addEventListener("click", () => {
+    if (submit.disabled || !sheet.isOpen()) return;
+    const text = editInput.value;
+    sheet.setBusy(true);
+    void (async () => {
+      try {
+        if (current !== sessionId || navigation !== navigationVersion || loginVisible) { sheet.close({ force: true }); return; }
+        await mutate("chat.edit", { sessionId, messageId: m.id, text });
+        sheet.setBusy(false);
+        sheet.close();
+        if (current === sessionId && navigation === navigationVersion) await refresh();
+      } catch (error) {
+        sheet.setBusy(false);
+        sheet.showError(describeError(error));
+        report(error);
+      }
+    })();
+  });
+  sheet.panel.append(el("div", { className: "sheet-foot" },
+    button("取消", { variant: "secondary", onClick: () => sheet.close() }), submit));
 }
 function renderPending() {
   for (const plan of snapshot?.pending?.plans || []) {
@@ -996,12 +1104,8 @@ async function modelOptions() {
   const models = (await api.read("models.list")).items || [];
   if (!sessionId || current !== sessionId || navigation !== navigationVersion || loginVisible) return;
   const session = snapshot?.session;
-  const dialog = el(
-    "dialog",
-    {},
-    el("h3", { text: "会话模型" }),
-    el("p", { text: "调整后点击应用，立即更新会话设置。" }),
-  );
+  for (const m of models) modelLabels.set(m.key, m.label);
+  updateComposerState();
   const select = el("select", { attrs: { "aria-label": "模型" } }),
     thinking = el("select", { attrs: { "aria-label": "思考强度" } }),
     mode = el("select", { attrs: { "aria-label": "工作模式" } }),
@@ -1010,7 +1114,7 @@ async function modelOptions() {
     mode.append(
       el("option", {
         value,
-        text: value,
+        text: { agent: "执行", plan: "计划", goal: "目标" }[value],
         selected: value === session?.mode,
       }),
     );
@@ -1018,7 +1122,7 @@ async function modelOptions() {
     permission.append(
       el("option", {
         value,
-        text: value,
+        text: PERMISSION_MODE_LABELS[value] || value,
         selected: value === session?.permissionMode,
       }),
     );
@@ -1045,136 +1149,165 @@ async function modelOptions() {
   }
   select.addEventListener("change", levels);
   levels();
-  dialog.append(
-    select,
-    thinking,
-    el("label", {}, "工作模式", mode),
-    el("label", {}, "权限模式", permission),
-    button("应用", {
-      onClick: () =>
-        action(async () => {
-          await mutate("models.configure", {
-            sessionId,
-            modelKey: select.value,
-            thinkingLevel: thinking.value,
-            mode: mode.value,
-            permissionMode: permission.value,
-          });
-          dialog.remove();
-          await refresh();
-        }),
-    }),
-    button("取消", { onClick: () => dialog.remove() }),
+  const sheet = openSheetPanel({ title: "会话模型", subtitle: "调整后点击应用，立即更新会话设置。" });
+  sheet.body.append(
+    el("label", { className: "sheet-field" }, "模型", select),
+    el("label", { className: "sheet-field" }, "思考强度", thinking),
+    el("label", { className: "sheet-field" }, "工作模式", mode),
+    el("label", { className: "sheet-field" }, "权限模式", permission),
   );
-  document.body.append(dialog);
-  dialog.showModal();
+  const apply = button("应用", { variant: "primary" });
+  apply.addEventListener("click", () => {
+    if (apply.disabled || !sheet.isOpen()) return;
+    const settings = { sessionId, modelKey: select.value, thinkingLevel: thinking.value, mode: mode.value, permissionMode: permission.value };
+    sheet.setBusy(true);
+    void (async () => {
+      try {
+        if (current !== sessionId || navigation !== navigationVersion || loginVisible) { sheet.close({ force: true }); return; }
+        await mutate("models.configure", settings);
+        sheet.setBusy(false);
+        sheet.close();
+        if (current === sessionId && navigation === navigationVersion) await refresh();
+      } catch (error) {
+        sheet.setBusy(false);
+        sheet.showError(describeError(error));
+        report(error);
+      }
+    })();
+  });
+  sheet.panel.append(el("div", { className: "sheet-foot" },
+    button("取消", { variant: "secondary", onClick: () => sheet.close() }), apply));
 }
 async function commands() {
   const sessionId = current;
   const navigation = navigationVersion;
-  const r = await api.read("commands.list", { sessionId });
-  if (current !== sessionId || navigation !== navigationVersion || loginVisible) return;
-  // 触屏焦点切换不代表取消选择，防止 focusout/blur 在 click 前移除按钮。
-  const dialog = el("dialog", { className: "remote-command-picker", dataset: { persistent: "true" }, attrs: { "aria-label": "命令与技能" } },
-    el("div", { className: "remote-command-heading" }, el("h3", { text: "命令与技能" }),
-      iconButton("close", { title: "关闭", onClick: () => dialog.remove() })),
-    el("p", { className: "connection-banner", text: "选择后插入输入框，补充要求后发送。" }));
+  const sheet = openSheetPanel({ title: "命令与技能", subtitle: "选择后插入输入框，补充要求后发送。" });
+  const stale = () => current !== sessionId || navigation !== navigationVersion || loginVisible || !sheet.isOpen();
+  const list = el("div", { className: "sheet-list" }, el("p", { className: "sheet-hint", text: "正在加载…" }));
+  sheet.body.append(list);
   function insert(text) {
-    if (current !== sessionId || navigation !== navigationVersion || loginVisible) { dialog.remove(); return; }
+    if (stale()) { sheet.close(); return; }
     const start = input.selectionStart ?? input.value.length;
     const end = input.selectionEnd ?? start;
     const separator = start > 0 && !/\s/.test(input.value[start - 1]) ? " " : "";
-    dialog.remove();
+    sheet.close();
     input.setRangeText(`${separator}${text}`, start, end, "end");
     input.dispatchEvent(new Event("input", { bubbles: true }));
     saveDraft();
     input.focus({ preventScroll: true });
   }
+  let r, agents;
+  try {
+    r = await api.read("commands.list", { sessionId });
+    if (stale()) { sheet.close(); return; }
+    agents = await api.read("subagents.list", { sessionId });
+    if (stale()) { sheet.close(); return; }
+  } catch (error) {
+    if (stale()) { sheet.close(); return; }
+    list.replaceChildren(el("p", { className: "sheet-hint", text: describeError(error) || "加载失败" }),
+      button("重试", { preserveLabel: true, onClick: () => { sheet.close(); void action(commands); } }));
+    return;
+  }
+  list.replaceChildren();
+  if (!(r.items || []).length) list.append(el("p", { className: "sheet-hint", text: "暂无可用命令" }));
   for (const c of r.items || [])
-    dialog.append(button(
+    list.append(button(
       `/${c.name} · ${c.title || c.description || ""}${c.supported === false ? "（桌面专属）" : ""}`,
       { preserveLabel: true, disabled: c.supported === false, onClick: () => insert(`/${c.name} `) },
     ));
-  const agents = await api.read("subagents.list", { sessionId });
-  if (current !== sessionId || navigation !== navigationVersion || loginVisible) return;
-  dialog.append(
-    el("h3", { text: "子智能体委派建议" }),
-    el("p", { text: "选择后插入委派请求，由当前智能体按工具权限执行。" }),
-  );
+  list.append(el("p", { className: "sheet-section", text: "子智能体委派建议 · 选择后插入委派请求，由当前智能体按工具权限执行" }));
   for (const agent of agents.items || [])
-    dialog.append(button(agent.name, {
+    list.append(button(agent.name, {
       preserveLabel: true,
       onClick: () => insert(`请使用 ${agent.name} 子智能体处理以下任务：`),
     }));
-  document.body.append(dialog);
-  dialog.showModal();
 }
 async function queue() {
-  const r = await api.read("queue.list", { sessionId: current });
-  const dialog = el("dialog", {}, el("h3", { text: "待发消息" }));
-  for (const item of r.items || []) {
-    const row = el(
-      "section",
-      {},
-      el("p", { text: item.content }),
-      el("small", { text: item.locked ? "优先组已锁定" : "" }),
-    );
-    for (const [label, op, extra] of [
-      ["立即发送", "queue.prioritize", {}],
-      ["上移", "queue.reorder", { direction: "up" }],
-      ["下移", "queue.reorder", { direction: "down" }],
-      ["编辑", "queue.edit", {}],
-      ["移除", "queue.remove", {}],
-    ])
-      row.append(
-        button(label, {
-          disabled: item.locked,
-          onClick: () =>
-            action(async () => {
-              if (op === "queue.edit") assertQueueDraftAvailable(queuedDraftId);
-              if (
-                op === "queue.edit" &&
-                input.value.trim() &&
-                !confirm("当前草稿不为空，将把队列内容追加到草稿，继续？")
-              )
-                return;
-              const result = await mutate(op, {
-                sessionId: current,
-                turnId: item.turnId,
-                ...extra,
-              });
-              if (result.draft) {
-                input.value += (input.value ? "\n\n" : "") + result.draft.text;
-                queuedDraftId = result.draft.id;
-                queuedAttachments = result.draft.attachments || [];
+  const sessionId = current, navigation = navigationVersion;
+  const sheet = openSheetPanel({ title: "待发消息", subtitle: "会话运行时提交的消息在此排队" });
+  const stale = () => current !== sessionId || navigation !== navigationVersion || loginVisible || !sheet.isOpen();
+  const list = el("div", { className: "sheet-list" });
+  sheet.body.append(list);
+  async function reload() {
+    if (stale()) return;
+    list.replaceChildren(el("p", { className: "sheet-hint", text: "正在加载…" }));
+    let response;
+    try { response = await api.read("queue.list", { sessionId }); }
+    catch (error) {
+      if (!stale()) list.replaceChildren(
+        el("p", { className: "sheet-hint", text: describeError(error) }),
+        button("重试", { preserveLabel: true, onClick: () => void reload() }));
+      return;
+    }
+    if (stale()) return;
+    list.replaceChildren();
+    if (!response.items?.length) list.append(el("p", { className: "sheet-hint", text: "暂无待发消息" }));
+    for (const item of response.items || []) {
+      const row = el("section", { className: "queue-item" },
+        el("p", { className: "sheet-quote", text: item.content }),
+        item.locked ? el("small", { className: "sheet-hint", text: "优先组已锁定" }) : null);
+      const actions = el("div", { className: "row-actions" });
+      for (const [label, op, extra] of [
+        ["立即发送", "queue.prioritize", {}], ["上移", "queue.reorder", { direction: "up" }],
+        ["下移", "queue.reorder", { direction: "down" }], ["编辑", "queue.edit", {}], ["移除", "queue.remove", {}],
+      ]) actions.append(button(label, { disabled: item.locked, preserveLabel: true, onClick: () => {
+        if (stale() || sheet.panel.getAttribute("aria-busy") === "true") return;
+        sheet.setBusy(true);
+        void (async () => {
+          try {
+            if (op === "queue.edit") {
+              assertQueueDraftAvailable(queuedDraftId);
+              if (input.value.trim() && !await confirmAction({ title: "追加到草稿", detail: "当前草稿不为空，将把队列内容追加到草稿，继续？", confirmLabel: "继续" })) return;
+            }
+            if (stale()) return;
+            const result = await mutate(op, { sessionId, turnId: item.turnId, ...extra });
+            if (result.draft) {
+              // 回执到达前导航离开时，仍将取回的队列草稿保存在原会话。
+              const draft = current === sessionId ? (saveDraft(), drafts.get(sessionId)) : (drafts.get(sessionId) || {});
+              draft.text = (draft.text ? `${draft.text}\n\n` : "") + result.draft.text;
+              draft.queuedDraftId = result.draft.id;
+              draft.queuedAttachments = result.draft.attachments || [];
+              draft.omittedQueuedRefs = [];
+              drafts.set(sessionId, draft);
+              persistDrafts();
+              if (current === sessionId && !loginVisible) {
+                input.value = draft.text;
+                queuedDraftId = draft.queuedDraftId;
+                queuedAttachments = draft.queuedAttachments;
                 omittedQueuedRefs = [];
+                growInput();
                 renderAttachments();
+                if (!stale()) {
+                  sheet.setBusy(false);
+                  sheet.close();
+                  input.focus({ preventScroll: true });
+                }
               }
-              dialog.remove();
-              if (!result.draft) await queue();
-            }),
-        }),
-      );
-    dialog.append(row);
+            } else {
+              sheet.setBusy(false);
+              await reload();
+            }
+          } catch (error) {
+            sheet.setBusy(false);
+            sheet.showError(describeError(error));
+            report(error);
+          } finally {
+            if (sheet.panel.getAttribute("aria-busy") === "true") sheet.setBusy(false);
+          }
+        })();
+      } }));
+      row.append(actions);
+      list.append(row);
+    }
   }
-  dialog.append(button("关闭", { onClick: () => dialog.remove() }));
-  document.body.append(dialog);
-  dialog.showModal();
+  await reload();
 }
-composer.append(annotationList, attachmentList, input, toolbar, fileInput);
-toolbar.append(
-  button("附件", { onClick: () => fileInput.click() }),
-  button("命令/技能", { onClick: () => action(commands) }),
-  button("模型", { onClick: () => action(modelOptions) }),
-  button("队列", { onClick: () => action(queue) }),
-  button("停止", {
-    onClick: () =>
-      action(async () => {
-        await mutate("chat.stop", { sessionId: current });
-        await refresh();
-      }),
-  }),
-  send,
+composer.append(
+  annotationList,
+  attachmentList,
+  el("div", { className: "remote-composer-main" }, attachButton, input, stopButton, send),
+  el("div", { className: "remote-composer-tools" }, modelChip, moreButton),
+  fileInput,
 );
 composer.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1226,6 +1359,7 @@ composer.addEventListener("submit", (event) => {
       }
       if (current !== sendingSession) return;
       input.value = remaining?.text || "";
+      growInput();
       uploaded = remaining?.uploaded || [];
       annotations = remaining?.annotations || [];
       queuedDraftId = remaining?.queuedDraftId || "";

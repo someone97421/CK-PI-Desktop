@@ -243,24 +243,27 @@ export async function copyText(text) {
   }
 }
 
-/** 自动增高输入框，并同步键盘安全区高度变量。 */
+/** 自动增高输入框；高度上限随当前可见视口计算。 */
 export function autoGrow(textarea, { maxHeight = 200 } = {}) {
   const resize = () => {
     textarea.style.height = "auto";
-    const next = Math.min(maxHeight, textarea.scrollHeight);
-    textarea.style.height = `${next}px`;
+    const limit = typeof maxHeight === "function" ? maxHeight() : maxHeight;
+    textarea.style.height = `${Math.min(limit, textarea.scrollHeight)}px`;
   };
   textarea.addEventListener("input", resize);
   resize();
   return resize;
 }
 
-/**
- * 底部面板 / 抽屉容器。手机上是底部面板，宽屏上是右侧浮层。
- * focusable: 打开时把焦点移进面板，关闭后归还。
- */
+const sheetStack = [];
+let appWasInert = false;
+export function closeAllSheets() {
+  for (const sheet of [...sheetStack].reverse()) sheet.close({ force: true });
+}
+
+/** 手机底部面板；只有最上层接收键盘操作，关闭后归还非编辑焦点。 */
 export function createSheet({ id, title, subtitle, onClose } = {}) {
-  const backdrop = el("div", { className: "sheet-backdrop", attrs: { hidden: true } });
+  const backdrop = el("div", { className: "sheet-backdrop", hidden: true });
   const body = el("div", { className: "sheet-body" });
   const header = el("header", { className: "sheet-header" });
   const titleNode = el("h2", { className: "sheet-title", text: title || "" });
@@ -271,65 +274,88 @@ export function createSheet({ id, title, subtitle, onClose } = {}) {
     className: "sheet",
     attrs: { role: "dialog", "aria-modal": "true", "aria-label": title || "面板", id: id || undefined },
   });
-  panel.append(header, body);
+  const feedback = el("p", { className: "sheet-feedback", hidden: true, attrs: { role: "status", "aria-live": "polite" } });
+  panel.append(header, body, feedback);
   backdrop.append(panel);
-  let lastFocus = null;
-  let open = false;
-
+  let lastFocus = null, open = false, busy = false, focusTimer;
+  const disabledStates = new Map();
   const onKeydown = (event) => {
-    if (!open) return;
+    if (!open || sheetStack.at(-1) !== controller) return;
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopImmediatePropagation();
       close();
-      return;
-    }
-    if (event.key === "Tab") trapFocus(event, panel);
+    } else if (event.key === "Tab") trapFocus(event, panel);
   };
-
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop) close();
   });
-
   function setTitle(next, nextSubtitle) {
     setText(titleNode, next || "");
     setText(subtitleNode, nextSubtitle || "");
+    panel.setAttribute("aria-label", next || "面板");
   }
-
+  function setBusy(value) {
+    busy = value;
+    panel.setAttribute("aria-busy", String(value));
+    if (value) {
+      for (const node of panel.querySelectorAll("button, input, textarea, select")) {
+        if (!disabledStates.has(node)) disabledStates.set(node, node.disabled);
+        node.disabled = true;
+      }
+      feedback.classList.remove("sheet-feedback-error");
+      feedback.textContent = "正在提交…";
+      feedback.hidden = false;
+    } else {
+      for (const [node, disabled] of disabledStates) node.disabled = disabled;
+      disabledStates.clear();
+      feedback.hidden = true;
+    }
+  }
+  function showError(error) {
+    feedback.textContent = String(error?.message || error || "操作失败，请重试。");
+    feedback.classList.add("sheet-feedback-error");
+    feedback.hidden = false;
+  }
   function openSheet() {
     if (open) return;
     open = true;
     lastFocus = document.activeElement;
+    const app = document.getElementById("app");
+    if (!sheetStack.length && app) { appWasInert = app.inert; app.inert = true; }
+    if (sheetStack.length) sheetStack.at(-1).root.inert = true;
+    sheetStack.push(controller);
+    backdrop.style.zIndex = String(40 + sheetStack.length);
     backdrop.hidden = false;
     document.body.classList.add("sheet-open");
     document.addEventListener("keydown", onKeydown, true);
-    const focusTarget = panel.querySelector("[data-autofocus], button, input, textarea, select");
-    if (focusTarget && typeof focusTarget.focus === "function") {
-      setTimeout(() => focusTarget.focus({ preventScroll: true }), 30);
-    }
+    focusTimer = setTimeout(() => {
+      if (open && sheetStack.at(-1) === controller) closeBtn.focus({ preventScroll: true });
+    }, 30);
   }
-
-  function close() {
-    if (!open) return;
+  function close({ force = false } = {}) {
+    if (!open || (busy && !force)) return;
     open = false;
+    clearTimeout(focusTimer);
     backdrop.hidden = true;
-    document.body.classList.remove("sheet-open");
+    const wasTop = sheetStack.at(-1) === controller;
+    sheetStack.splice(sheetStack.indexOf(controller), 1);
+    if (sheetStack.length) sheetStack.at(-1).root.inert = false;
+    else {
+      document.body.classList.remove("sheet-open");
+      const app = document.getElementById("app");
+      if (app) app.inert = appWasInert;
+    }
     document.removeEventListener("keydown", onKeydown, true);
     if (onClose) onClose();
-    if (lastFocus && typeof lastFocus.focus === "function") {
+    const editable = lastFocus?.matches("input, textarea, select, [contenteditable]");
+    if (!force && wasTop && !editable && lastFocus?.isConnected && !lastFocus.closest("[inert]")) {
       lastFocus.focus({ preventScroll: true });
     }
     lastFocus = null;
   }
-
-  /** 用标题栏做「返回」样式（用于侧会话这类二级页面）。 */
-  function setBackAction(handler) {
-    closeBtn.replaceChildren(icon("back", { size: 18 }));
-    closeBtn.setAttribute("aria-label", "返回");
-    closeBtn.replaceWith(closeBtn.cloneNode(true));
-  }
-  void setBackAction;
-
-  return { root: backdrop, panel, body, header, titleNode, subtitleNode, open: openSheet, close, setTitle, isOpen: () => open };
+  const controller = { root: backdrop, panel, body, header, titleNode, subtitleNode, open: openSheet, close, setTitle, setBusy, showError, isOpen: () => open };
+  return controller;
 }
 
 function trapFocus(event, container) {
@@ -387,8 +413,6 @@ export function createToaster(host) {
 /** 简单的确认对话框（用于删除、断开等破坏性动作），Promise<boolean>。 */
 export function confirmAction({ title, detail, confirmLabel = "确认", cancelLabel = "取消", danger = false }) {
   return new Promise((resolve) => {
-    const sheet = createSheet({ title, subtitle: detail || "" });
-    const row = el("div", { className: "row-actions" });
     let settled = false;
     const finish = (value) => {
       if (settled) return;
@@ -396,18 +420,22 @@ export function confirmAction({ title, detail, confirmLabel = "确认", cancelLa
       sheet.close();
       resolve(value);
     };
-    row.append(
-      button(cancelLabel, { variant: "secondary", onClick: () => finish(false) }),
-      button(confirmLabel, { variant: danger ? "danger" : "primary", onClick: () => finish(true) }),
-    );
-    sheet.body.append(row);
-    sheet.root.addEventListener("click", (event) => {
-      if (event.target === sheet.root) finish(false);
+    const sheet = createSheet({
+      title,
+      subtitle: detail || "",
+      // 任何关闭路径（按钮、Esc、遮罩）都按取消处理，Promise 不悬挂。
+      onClose: () => { sheet.root.remove(); finish(false); },
     });
+    const row = el("div", { className: "sheet-foot" });
+    row.append(
+      button(cancelLabel, { variant: "secondary", preserveLabel: true, onClick: () => finish(false) }),
+      button(confirmLabel, { variant: danger ? "danger" : "primary", preserveLabel: true, onClick: () => finish(true) }),
+    );
+    sheet.panel.append(row);
+    document.body.append(sheet.root);
     sheet.open();
   });
 }
-
 /** 长按（触摸屏上替代右键菜单）。 */
 export function onLongPress(node, handler, { delay = 480 } = {}) {
   let timer = null;
