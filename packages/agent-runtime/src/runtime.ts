@@ -6253,7 +6253,9 @@ Delegation rules:
     this.setAgentMessages(messages);
     this.agent.state.tools = tools;
     return {
-      messages: this.agent.state.messages,
+      // 运行循环和 Agent 的 message_end 处理都会追加消息，必须使用独立数组。
+      // 保留消息对象及系统消息，只隔离数组，避免失败重试后残留重复的 assistant。
+      messages: [...this.agent.state.messages],
       tools,
     };
   }
