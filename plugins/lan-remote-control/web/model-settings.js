@@ -145,6 +145,10 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
       if (!result?.session || result.session.id !== sessionId) throw new Error("宿主未返回更新后的会话，请刷新后确认当前设置。");
       if (!active()) return;
       onSaved(result.session);
+      try {
+        if (result.session.modelKey)
+          localStorage.setItem("lan-remote-last-model", JSON.stringify({ modelKey: result.session.modelKey }));
+      } catch {}
       sheet.setBusy(false);
       sheet.close();
     } catch (error) {

@@ -3,7 +3,7 @@
 const fs = require("node:fs/promises");
 const crypto = require("node:crypto");
 const { AsyncLocalStorage } = require("node:async_hooks");
-const { createModelSettings } = require("./model-settings.cjs");
+const { createModelSettings, THINKING_LEVELS } = require("./model-settings.cjs");
 const definitions = {
   capabilities: [false],
   "projects.list": [false, "project/list"],
@@ -148,6 +148,82 @@ function createHostAdapter(pi) {
     configureSession: (id, config) => host("session/configure", [id, config]),
     serializeSession: session,
   });
+  // 与桌面新建会话对齐：客户端显式选择优先，否则继承桌面设置的默认
+  // 模型、默认模式和初始思考档位，让远程建的会话创建即固定。
+  const SESSION_MODES = new Set(["agent", "plan", "goal"]);
+  const THINKING_LADDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  function normalizeSessionMode(value) {
+    if (typeof value !== "string") return null;
+    const mode = value.trim();
+    if (mode === "chat") return "plan";
+    return SESSION_MODES.has(mode) ? mode : null;
+  }
+  async function createdSessionDefaults(input) {
+    const config = {};
+    const requestedMode = normalizeSessionMode(input.mode);
+    if (typeof input.mode === "string" && input.mode.trim() && !requestedMode)
+      fail("INVALID_PARAMS", "工作模式无效");
+    if (requestedMode) config.mode = requestedMode;
+    const items = await modelSettings.catalog();
+    const keyOf = (item) => `${item.providerId}/${item.modelId}`;
+    let model;
+    const requestedKey =
+      typeof input.modelKey === "string" ? input.modelKey.trim() : "";
+    if (requestedKey) {
+      model = items.find((item) => keyOf(item) === requestedKey);
+      if (!model)
+        fail("INVALID_PARAMS", "所选模型已不可用，请刷新模型列表后重新选择");
+    } else {
+      let settings = null;
+      try {
+        settings = await host("settings/get");
+      } catch {
+        settings = null;
+      }
+      const settingsKey =
+        settings &&
+        typeof settings.defaultProviderId === "string" &&
+        typeof settings.defaultModelId === "string"
+          ? `${settings.defaultProviderId}/${settings.defaultModelId}`
+          : "";
+      model =
+        (settingsKey
+          ? items.find((item) => keyOf(item) === settingsKey)
+          : undefined) ||
+        items.find((item) => item.isDefault === true) ||
+        null;
+      if (!config.mode) {
+        const defaultMode = normalizeSessionMode(settings?.defaultMode);
+        if (defaultMode) config.mode = defaultMode;
+      }
+    }
+    if (!model) {
+      if (typeof input.thinkingLevel === "string" && input.thinkingLevel.trim())
+        fail("INVALID_PARAMS", "所选模型已不可用，请刷新模型列表后重新选择");
+      return config;
+    }
+    config.providerId = model.providerId;
+    config.modelId = model.modelId;
+    const levels =
+      Array.isArray(model.thinkingLevels) && model.thinkingLevels.length
+        ? model.thinkingLevels
+        : ["off"];
+    const requestedLevel =
+      typeof input.thinkingLevel === "string" ? input.thinkingLevel.trim() : "";
+    if (requestedLevel) {
+      if (!THINKING_LEVELS.has(requestedLevel))
+        fail("INVALID_PARAMS", "思考强度无效");
+      if (!levels.includes(requestedLevel))
+        fail("INVALID_PARAMS", "所选模型不支持此思考强度，请重新选择");
+      config.thinkingLevel = requestedLevel;
+    } else {
+      // 没有存储默认值时取最强可用档位，与桌面 initialThinkingLevelForBinding 一致。
+      config.thinkingLevel =
+        [...THINKING_LADDER].reverse().find((level) => levels.includes(level)) ||
+        "off";
+    }
+    return config;
+  }
   async function ops() {
     if (!catalogue)
       catalogue = new Set((await pi.desktop.listOperations()).map((x) => x.id));
@@ -347,6 +423,7 @@ function createHostAdapter(pi) {
       const projects = (await execute("projects.list")).items;
       const project = projects.find((p) => p.id === input.projectId);
       if (!project) fail("INVALID_PARAMS", "请选择已有项目");
+      const defaults = await createdSessionDefaults(input);
       const r = await host("session/create", [
         {
           projectId: project.id,
@@ -355,6 +432,7 @@ function createHostAdapter(pi) {
             typeof input.title === "string"
               ? input.title.slice(0, 200)
               : undefined,
+          ...defaults,
         },
       ]);
       return { session: session(r.session) };

@@ -70,7 +70,7 @@ function createModelSettings({ listModels, getSession, configureSession, seriali
     }
     return { session: serializeSession(updated) };
   }
-  return { list, configure };
+  return { list, configure, catalog };
 }
 
-module.exports = { createModelSettings };
+module.exports = { createModelSettings, THINKING_LEVELS };

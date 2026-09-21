@@ -301,7 +301,14 @@ const home = createProjectHome({
   openSession,
   createSession: async (projectId) => {
     const version = navigationVersion;
-    const result = await mutate("sessions.create", { projectId });
+    let modelKey;
+    try {
+      modelKey = JSON.parse(localStorage.getItem("lan-remote-last-model") || "null")?.modelKey;
+    } catch {}
+    const result = await mutate("sessions.create", {
+      projectId,
+      ...(typeof modelKey === "string" && modelKey ? { modelKey } : {}),
+    });
     if (version === navigationVersion && !loginVisible) await openSession(result.session.id);
   },
   report,

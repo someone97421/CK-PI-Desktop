@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 能力/导航 | capabilities、projects.list、workspace.get、sessions.list | projectId、cursor、limit |
 | 会话读取 | sessions.get、sessions.messages、sessions.pending | sessionId、before、limit |
-| 会话创建 | sessions.create、sessions.fork | projectId；sessionId、throughMessageId、title |
+| 会话创建 | sessions.create、sessions.fork | projectId；sessionId、throughMessageId、title；sessions.create 还可选传 modelKey、mode、thinkingLevel，缺省时继承桌面设置的默认模型/模式/思考档位 |
 | 消息 | chat.send、chat.edit、chat.retry、chat.stop | sessionId、text、messageId、attachmentIds |
 | 队列 | queue.list、queue.push、queue.remove、queue.prioritize、queue.reorder、queue.edit | sessionId、turnId、direction |
 | 目录 | models.list、commands.list、subagents.list | 模型目录传 sessionId 时同时返回当前会话设置；命令和子智能体需要 sessionId |
