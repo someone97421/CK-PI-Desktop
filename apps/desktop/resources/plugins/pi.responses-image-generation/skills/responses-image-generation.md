@@ -1,6 +1,6 @@
 ---
 name: responses-image-generation
-description: 使用 OpenAI 兼容 Responses API 的 image_generation 原生工具生成图片并保存为本地文件。适用于用户要求用 GPT Image 生图、通过 Codex 或 sub2api 等中转复用现有认证生成图片、验证 Responses 生图能力，或希望不另配图片服务 Key 的场景。
+description: 使用 OpenAI 兼容 Responses API 的 image_generation 原生工具生成图片并保存为本地文件。适用于 GPT Image 生图、上传单张或多张参考图进行改图与风格参考、通过 Codex 或 sub2api 等中转复用现有认证生成图片，以及验证 Responses 生图能力的场景。
 compatibility: 需要 Python 3.11+、网络访问，以及支持 image_generation 的 Responses 服务；脚本仅使用 Python 标准库。
 ---
 
@@ -12,7 +12,7 @@ compatibility: 需要 Python 3.11+、网络访问，以及支持 image_generatio
 
 ## 执行流程
 
-1. 从用户要求中确定画面内容和输出目录。优先使用用户已有的服务配置。主对话模型与图片模型是两个不同字段，保留中转要求的主模型完整标识。
+1. 从用户要求中确定画面内容、参考图和输出目录。有参考图时按下节取得本地文件并传入脚本。优先使用用户已有的服务配置。主对话模型与图片模型是两个不同字段，保留中转要求的主模型完整标识。
 2. 选择下方一种运行方式。用户已要求生成时直接执行；不要仅返回代码或反复索要已存在的 Key。
 3. 脚本默认强制调用生图工具，适合明确的生图任务；`--auto` 允许模型自行决定调用。后者可能只返回文字，应如实报告未出图。
 4. 等待本次请求结束。生图可能耗时，使用宿主允许的长任务机制并保持进度反馈。脚本不自动重试，以免已经计费的请求重复生成。
@@ -35,6 +35,51 @@ python "$PI_DESKTOP_BUILTIN_PLUGINS_DIR/pi.responses-image-generation/scripts/ge
 ```
 
 `--base-url` 支持 API 根地址或完整 `/responses` 地址。若服务通过其他方式认证，可省略 Key；明确需要匿名访问时可加 `--no-auth`。可传 `--prompt-file` 读取 UTF-8 长提示词。`--image-model` 默认 `gpt-image-2.5-flare`；服务不支持该型号时按实际支持情况选择，传 `default` 则不指定工具模型，由上游选择。不要静默切换模型或服务。
+
+## 参考图上传与改图
+
+使用可重复的 `--reference-image "本地文件路径"`。脚本读取 PNG、JPEG 或 WebP，根据文件头识别 MIME，再将 Base64 data URL 放入 Responses 用户消息的 `input_image`，与提示词一起发送给所选服务。无需先上传到图床或调用 Files API；图片内容不会经过额外的第三方存储。
+
+### 取得参考图
+
+- 用户发送聊天附件时，使用宿主提供的附件本地路径；看见图片不等于脚本能访问附件。已有可读路径就直接使用，不要求用户重复上传。
+- 用户指定工作区文件时，解析实际路径；路径带空格或中文时用引号包住。Windows Git Bash 可使用 `"C:/Users/用户名/Pictures/参考图.png"`。
+- 若只有网页图片链接，先用可用的下载工具保存到会话 scratch 目录，再传本地路径。`--reference-image` 接收本地文件，不接收 URL、`file://` 或 Base64 文本。
+- 若当前只能看到图片内容而没有可读取的原文件，向用户索取本地路径或可访问附件，不猜测附件存储位置，也不以文字复述代替参考图上传。
+
+### 单图示例
+
+```bash
+python "$PI_DESKTOP_BUILTIN_PLUGINS_DIR/pi.responses-image-generation/scripts/generate.py" --codex-config --reference-image "C:/Pictures/角色参考.png" --prompt "以参考图中的角色为基础，保留脸型、配色和服装，改为在森林里挥手，绘本风格" --output-dir <输出目录>
+```
+
+### 多图示例
+
+```bash
+python "$PI_DESKTOP_BUILTIN_PLUGINS_DIR/pi.responses-image-generation/scripts/generate.py" --codex-config --reference-image "C:/Pictures/角色.png" --reference-image "C:/Pictures/场景.webp" --prompt "图 1 是角色参考，保留其外观；图 2 是场景参考，将角色放到该场景中央，统一光照" --output-dir <输出目录>
+```
+
+图 1、图 2 按 `--reference-image` 出现顺序对应。说明每张图的用途以及需要保留和修改的内容；所有参考图随同一个请求发送，不为每张图分别生图。通用 API 方式和 `--prompt-file` 同样支持该参数。不传参考图时继续按纯文字生图。
+
+脚本原样上传图片，不自动缩放或转换格式。服务对图片数量、尺寸和请求体大小的限制以实际返回为准；需要转换或压缩时将副本放在 scratch 目录，保留用户原图。Base64 会增加约三分之一体积，遇到 413 或图片限制错误时按服务提示调整。输入文件缺失或格式无法识别时，脚本会在发送请求前报错。
+
+### 带图请求结构
+
+带参考图时，上方请求的 `input` 改为下列消息数组，其他生图工具参数保持一致：
+
+```json
+[
+  {
+    "role": "user",
+    "content": [
+      {"type": "input_text", "text": "按图 1 的角色外观生成新的场景"},
+      {"type": "input_image", "image_url": "data:image/png;base64,<脚本读取文件后编码>"}
+    ]
+  }
+]
+```
+
+示例中的 Base64 是占位说明，实际编码由脚本完成，不要把完整图片编码写进工具参数、对话或文档。报告中的 `reference_image_count` 记录传入数量；是否成功出图仍以响应状态和实际保存的图片为准。
 
 ## 请求与返回
 
@@ -59,7 +104,7 @@ python "$PI_DESKTOP_BUILTIN_PLUGINS_DIR/pi.responses-image-generation/scripts/ge
 
 - 401/403：检查本次目标服务的认证与账户权限；不要把其他服务的凭据发给这个地址。
 - 404：核对 `/responses` 路径和中转 API 根路径。
-- 400 或不支持工具/模型：该端点可能未实现原生生图，或图片模型参数不兼容。按返回信息调整后再决定是否重试。
+- 400 或不支持工具/模型：该端点可能未实现原生生图，或图片模型参数不兼容。有参考图时还需核对是否支持 Responses 的 `input_image` 和 data URL；不要静默丢弃参考图改成纯文字请求。按返回信息调整后再决定是否重试。
 - 200 但无图片：检查是否有 `image_generation_call`、错误事件或 incomplete 状态；不能把文字答复当作生图成功。
 - 超时/断流：说明结果未知或返回不完整，先检查已保存文件和中转记录，不自动再发一次。
 - 图片存在但聊天坏图：用宿主文件附件或本地资源协议展示；不要据此判定 API 生图失败。

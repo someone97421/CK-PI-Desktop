@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pi.responses-image-generation",
   "name": "Responses image generation",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Bundled skill: generate images through a Responses `image_generation` tool call and save them as local files.",
   "i18n": {
     "en": {

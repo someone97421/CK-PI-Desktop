@@ -25,6 +25,8 @@ def options():
     prompt = p.add_mutually_exclusive_group(required=True)
     prompt.add_argument('--prompt')
     prompt.add_argument('--prompt-file', type=Path)
+    p.add_argument('--reference-image', type=Path, action='append', default=[], metavar='PATH',
+                   help='本地 PNG/JPEG/WebP 参考图；可重复传入，顺序对应提示词中的图 1、图 2')
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--auto', action='store_true')
     p.add_argument('--timeout', type=float, default=300, help='网络读写超时秒数')
@@ -68,6 +70,28 @@ def configuration(args):
     if not endpoint.endswith('/responses'):
         endpoint += '/responses'
     return endpoint, model, key
+
+
+def reference_input(prompt, paths):
+    if not paths:
+        return prompt
+    content = [{'type': 'input_text', 'text': prompt}]
+    for index, path in enumerate(paths, start=1):
+        path = path.expanduser()
+        if not path.is_file():
+            raise ValueError(f'参考图 {index} 不是可读取的本地文件：{path}')
+        raw = path.read_bytes()
+        if raw.startswith(b'\x89PNG\r\n\x1a\n'):
+            mime = 'image/png'
+        elif raw.startswith(b'\xff\xd8\xff'):
+            mime = 'image/jpeg'
+        elif raw.startswith(b'RIFF') and raw[8:12] == b'WEBP':
+            mime = 'image/webp'
+        else:
+            raise ValueError(f'参考图 {index} 格式无法识别，请使用 PNG/JPEG/WebP：{path}')
+        encoded = base64.b64encode(raw).decode('ascii')
+        content.append({'type': 'input_image', 'image_url': f'data:{mime};base64,{encoded}'})
+    return [{'role': 'user', 'content': content}]
 
 
 def sse_events(response):
@@ -157,8 +181,8 @@ def main():
         tool = {'type': 'image_generation'}
         if args.image_model != 'default':
             tool['model'] = args.image_model
-        body = {'model': model, 'input': prompt, 'tools': [tool], 'tool_choice': 'auto' if args.auto else {'type': 'image_generation'}, 'stream': True, 'store': False}
-        result.report.update(model=model, image_model=args.image_model)
+        body = {'model': model, 'input': reference_input(prompt, args.reference_image), 'tools': [tool], 'tool_choice': 'auto' if args.auto else {'type': 'image_generation'}, 'stream': True, 'store': False}
+        result.report.update(model=model, image_model=args.image_model, reference_image_count=len(args.reference_image))
         headers = {'Content-Type': 'application/json', 'Accept': 'text/event-stream'}
         if key:
             headers['Authorization'] = 'Bearer ' + key
