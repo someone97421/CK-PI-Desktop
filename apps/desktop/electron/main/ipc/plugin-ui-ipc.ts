@@ -10,6 +10,7 @@ import { PluginViewHost, pluginViewKey } from "../plugin-view-host";
 import { PluginPanelHost } from "../plugin-panel-host";
 import type { PluginPanelTheme } from "../../shared/plugin-panel-chrome";
 import type { IpcRegistrar } from "./types";
+import { registerPluginInlineViewIpc } from "./plugin-inline-view-ipc";
 
 export type PluginUiIpcDependencies = {
   registrar: IpcRegistrar;
@@ -35,6 +36,7 @@ export function registerPluginUiIpc({
   getUpdaterLocale,
   getPluginPanelTheme,
 }: PluginUiIpcDependencies): void {
+  registerPluginInlineViewIpc({ registrar, plugins, pluginActiveInProject, currentWorkspacePath, getUpdaterLocale });
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
     registrar.handle(channel, fn);
   };

@@ -40,7 +40,7 @@ import { FilesTab } from "./FilesTab";
 import { PluginViewTab } from "./PluginViewTab";
 import { SubagentPanel } from "./SubagentPanel";
 import { SideChatTab } from "./SideChatTab";
-import { subagentObserverLocation, type SubagentPanelSelection } from "../../lib/subagent-panel";
+import type { SubagentPanelSelection } from "../../lib/subagent-panel";
 import {
   MAIN_PANE_MIN_WIDTH,
   WORK_PANEL_COMPACT_MIN_WIDTH,
@@ -615,7 +615,7 @@ export function WorkPanel({
           </div>
         </header>
         <div className="work-panel-body">
-          {subagentPanel ? <SubagentPanel selection={subagentPanel} blocked={exiting || panelBlocked || blockingOverlayActive} /> : null}
+          {subagentPanel ? <SubagentPanel selection={subagentPanel} /> : null}
           {!subagentPanel && activeTab?.kind === "review" && (
             <div
               id={`work-panel-surface-${activeTab.id}`}
@@ -656,9 +656,7 @@ export function WorkPanel({
                     title={activeLabel}
                     icon={activePluginView?.icon}
                     sessionId={activeSessionId ?? undefined}
-                    location={ref.pluginId === "local.subagent-observer"
-                      ? subagentObserverLocation({ sessionId: activeSessionId ?? "", delegationId: "" })
-                      : activeTab.location}
+                    location={activeTab.location}
                     // Native WebContentsViews composite above renderer content.
                     blocked={exiting || panelBlocked || blockingOverlayActive}
                   />

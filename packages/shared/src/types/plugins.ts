@@ -1,6 +1,7 @@
 /** Shared public types grouped by the owning application domain. */
 import type { ActivationScope } from "../activation.js";
 import type { TrustedExtensionDiagnostic } from "../trusted-extensions.js";
+import type { SubagentCollaborationSnapshot } from "../subagent-collaboration.js";
 
 /**
  * Where the marketplace catalog comes from.
@@ -136,6 +137,41 @@ export type PluginViewMeta = {
   pluginName: string;
   icon?: string;
   order: number;
+};
+
+/** 与 SDK 的声明式内嵌视图协议对应，不传递可执行代码。 */
+export type PluginInlineNode = {
+  kind: "row" | "column" | "text" | "action" | "details" | "pre" | "list" | "item";
+  key?: string;
+  text?: string;
+  title?: string;
+  children?: PluginInlineNode[];
+  disabled?: boolean;
+  action?: string;
+  icon?: "stop";
+};
+
+export type PluginInlineViewMeta = {
+  pluginId: string;
+  viewId: string;
+  slot: "subagent.supervision";
+};
+
+export type PluginInlineViewContext = {
+  sessionId: string;
+  delegationId: string;
+  execution?: number;
+  running: boolean;
+  live: boolean;
+  parentTurnId?: string;
+  compact: boolean;
+  locale: string;
+  collaboration?: SubagentCollaborationSnapshot;
+};
+
+export type PluginInlineViewRequest = PluginInlineViewMeta & {
+  context: PluginInlineViewContext;
+  action?: string;
 };
 
 /** A data-only scenic Settings destination rendered by the host React tree. */

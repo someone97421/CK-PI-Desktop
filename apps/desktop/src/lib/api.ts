@@ -70,6 +70,9 @@ import type {
   PluginSettingDefinition,
   PluginServiceStatus,
   PluginViewMeta,
+  PluginInlineNode,
+  PluginInlineViewMeta,
+  PluginInlineViewRequest,
   PluginScenicThemesDestinationMeta,
   PluginTheme,
   MarketPluginSummary,
@@ -1167,6 +1170,9 @@ export const api = {
    * entry existence, with titles resolved for the active locale (ADR 0104).
    */
   listPluginViews: () => invoke<PluginViewMeta[]>(IPC.invoke.pluginViews),
+  listPluginInlineViews: () => invoke<PluginInlineViewMeta[]>(IPC.invoke.pluginInlineViews),
+  pluginInlineView: (request: PluginInlineViewRequest) =>
+    invoke<PluginInlineNode | null>(IPC.invoke.pluginInlineView, request),
   /** Create or reuse the view's web contents. Does not show it. */
   pluginViewOpen: (
     pluginId: string,

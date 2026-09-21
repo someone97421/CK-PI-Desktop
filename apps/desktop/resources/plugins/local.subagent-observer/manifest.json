@@ -2,16 +2,16 @@
   "schemaVersion": 1,
   "id": "local.subagent-observer",
   "name": "子代理观测",
-  "version": "1.0.0",
-  "description": "在工作面板中查看当前会话的子代理任务、执行过程、进度汇报和快照状态。",
+  "version": "1.1.0",
+  "description": "提供会话中子代理任务的进度汇报、执行快照与实时停止/撤销召回观测条。",
   "i18n": {
     "en": {
       "name": "Subagent Observer",
-      "description": "Inspect subagent tasks, execution history, progress reports, and snapshot state for the current session."
+      "description": "Provides subagent progress reporting, execution snapshots, and live stop/revoke inline supervision in sessions."
     },
     "zh-CN": {
       "name": "子代理观测",
-      "description": "在工作面板中查看当前会话的子代理任务、执行过程、进度汇报和快照状态。"
+      "description": "提供会话中子代理任务的进度汇报、执行快照与实时停止/撤销召回观测条。"
     }
   },
   "author": "PI-Desktop",
@@ -19,13 +19,10 @@
   "categories": ["productivity", "official"],
   "main": "main.js",
   "contributes": {
-    "views": [
+    "inlineViews": [
       {
-        "id": "observer",
-        "title": { "en": "Subagents", "zh-CN": "子代理" },
-        "icon": "bot",
-        "entry": "views/index.html",
-        "order": 30
+        "id": "supervision",
+        "slot": "subagent.supervision"
       }
     ]
   },

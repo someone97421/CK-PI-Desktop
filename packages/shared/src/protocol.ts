@@ -236,6 +236,8 @@ export const IPC = {
     pluginRemoteAccessStatus: "pi-desktop/plugin/remoteAccessStatus",
     pluginComputerUseStatus: "pi-desktop/plugin/computerUseStatus",
     pluginViews: "pi-desktop/plugin/views",
+    pluginInlineViews: "pi-desktop/plugin/inline-views",
+    pluginInlineView: "pi-desktop/plugin/inline-view",
     pluginViewOpen: "pi-desktop/plugin/view/open",
     pluginViewClose: "pi-desktop/plugin/view/close",
     pluginViewSetBounds: "pi-desktop/plugin/view/setBounds",

@@ -9,7 +9,7 @@ import {
 import { IconTarget } from "../../../components/icons";
 import { ToolRow } from "./ToolRow";
 
-/** 主聊天中一轮委派的任务入口；详细观测由内置插件承载。 */
+/** 主聊天中一轮委派的任务入口；详情在宿主子代理观察窗展示。 */
 export function SubagentTopology({
   items,
   delegationStatuses,

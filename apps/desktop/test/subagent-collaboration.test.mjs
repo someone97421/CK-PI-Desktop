@@ -21,7 +21,7 @@ async function loadSource(relative, modules = {}, globals = {}, extra = "") {
   return sandbox.module.exports;
 }
 
-test("人工终止按钮通过 renderer API 和专用 IPC 定向停止，不调用整轮停止", async () => {
+test("观测条上下文经插件定向停止子代理，保留宿主专用 IPC", async () => {
   const handlers = new Map();
   const requests = [];
   const ipc = await loadSource("../electron/main/ipc/agent-ipc.ts");
@@ -41,29 +41,36 @@ test("人工终止按钮通过 renderer API 和专用 IPC 定向停止，不调�
   const jsx = (type, props) => ({ type, props });
   const state = { activeSessionId: "session-1", runningSessions: { "session-1": true } };
   const component = await loadSource("../src/features/chat/transcript/SubagentSupervision.tsx", {
-    react: { useState: (value) => [value, () => {}], useEffect: () => {} },
+    react: { useMemo: (factory) => factory() },
     "react/jsx-runtime": { jsx, jsxs: jsx },
-    "react-i18next": { useTranslation: () => ({ t: (key) => key }) },
-    "../../../lib/api": { api },
+    "react-i18next": { useTranslation: () => ({ i18n: { resolvedLanguage: "zh-CN" } }) },
     "../../../lib/tool-presentation": { toolResultPayload: (message) => message.toolResult.details },
     "../../../stores/app-store": { useAppStore: (select) => select(state) },
-    "../../../components/icons": { IconStop: () => null },
+    "../../../components/PluginInlineSlot": { PluginInlineSlot: "plugin-inline" },
   });
   const message = { toolResult: { details: { delegationId: "child-1", collaboration: {
     reportIntervalSteps: 4, intervalSource: "dispatch", phase: "running", completedSteps: 2, stepsSinceReport: 2,
   } } } };
   const tree = component.SubagentSupervision({ message, running: true, compact: true });
-  const find = (node) => !node || typeof node !== "object" ? undefined : Array.isArray(node)
-    ? node.map(find).find(Boolean) : node.type === "button" ? node : find(node.props?.children);
-  const button = find(tree);
-  assert.ok(button);
-  await button.props.onClick({ stopPropagation() {} });
+  assert.equal(tree.type, "plugin-inline");
+  assert.equal(tree.props.slot, "subagent.supervision");
+  const plugin = await loadSource("../resources/plugins/local.subagent-observer/supervision.js");
+  const helpers = {
+    desktopInvoke: (operation, [input]) => {
+      assert.equal(operation, "subagent/stop");
+      return api.stopSubagent(input.sessionId, input.delegationId, input.expectedExecution);
+    },
+    getSessionSnapshot: async () => ({ session: { status: "running" } }),
+  };
+  await plugin.handleSupervisionAction(tree.props.context, "stop", helpers);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].method, "agent.subagentStop");
   assert.equal(requests[0].sessionId, "session-1");
   assert.equal(requests[0].delegationId, "child-1");
   state.runningSessions["session-1"] = false;
-  assert.equal(find(component.SubagentSupervision({ message, running: true, compact: true })), undefined);
+  const historical = component.SubagentSupervision({ message, running: true, compact: true }).props.context;
+  assert.equal(historical.live, false);
+  await assert.rejects(() => plugin.handleSupervisionAction(historical, "stop", helpers), /historical/);
   await assert.rejects(() => handlers.get(protocol.IPC.invoke.subagentStop)({ sessionId: "session-1" }), /delegationId/);
 });
 
@@ -97,34 +104,19 @@ test("召回状态查询经过专用只读 IPC，历史卡片不凭落盘快照�
   const { api } = await loadSource("../src/lib/api.ts", {}, { window: { piDesktop: {
     invoke: async (channel, payload) => ({ ok: true, data: await handlers.get(channel)(payload) }),
   } } });
-  const jsx = (type, props) => ({ type, props });
-  const state = { activeSessionId: "s", runningSessions: {} };
-  const slots = [];
-  let cursor = 0;
-  let effects = [];
-  const component = await loadSource("../src/features/chat/transcript/SubagentSupervision.tsx", {
-    react: { useState: (initial) => { const i = cursor++; if (!(i in slots)) slots[i] = initial; return [slots[i], (value) => { slots[i] = value; }]; },
-      useEffect: (fn) => effects.push(fn) },
-    "react/jsx-runtime": { jsx, jsxs: jsx },
-    "react-i18next": { useTranslation: () => ({ t: (key) => key }) },
-    "../../../lib/api": { api },
-    "../../../lib/tool-presentation": { toolResultPayload: (message) => message.toolResult.details },
-    "../../../stores/app-store": { useAppStore: (select) => select(state) },
-    "../../../components/icons": { IconStop: () => null },
+  const plugin = await loadSource("../resources/plugins/local.subagent-observer/supervision.js");
+  const context = { sessionId: "s", delegationId: "child", running: false, live: false, locale: "en", execution: 2,
+    collaboration: { execution: 2, reportIntervalSteps: 3, intervalSource: "dispatch", phase: "finished", completedSteps: 4, stepsSinceReport: 0 } };
+  const render = () => plugin.renderSupervision(context, {
+    desktopInvoke: (operation, [input]) => {
+      assert.equal(operation, "subagent/recallStatus");
+      return api.subagentRecallStatus(input.sessionId, input.delegationId);
+    },
   });
-  const message = { toolResult: { details: { delegationId: "child", canResume: true, collaboration: {
-    execution: 2, reportIntervalSteps: 3, intervalSource: "dispatch", phase: "finished", completedSteps: 4, stepsSinceReport: 0,
-  } } } };
-  const render = () => { cursor = 0; effects = []; return component.SubagentSupervision({ message, running: false }); };
-  assert.doesNotMatch(JSON.stringify(render()), /subagentRecallReady/);
-  for (const effect of effects) effect();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.match(JSON.stringify(render()), /subagentRecallReady/);
+  assert.match(JSON.stringify(await render()), /Available for parent recall/);
   assert.equal(requests[0].method, "agent.subagentRecallStatus");
   available = false;
-  for (const effect of effects) effect();
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.doesNotMatch(JSON.stringify(render()), /subagentRecallReady/);
+  assert.doesNotMatch(JSON.stringify(await render()), /Available for parent recall/);
   await assert.rejects(() => handlers.get(protocol.IPC.invoke.subagentStop)({ sessionId: "s", delegationId: "child", expectedExecution: 0 }), /expectedExecution/);
 });
 

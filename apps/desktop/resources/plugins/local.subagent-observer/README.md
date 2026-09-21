@@ -1,38 +1,51 @@
-# 子代理观测
+# 子代理观测条
 
-`local.subagent-observer` 是内置工作面板视图，用于观察当前会话中的子代理执行。插件不导入宿主 renderer 代码，历史解析与展示逻辑全部包含在本目录。
+`local.subagent-observer` 在任务工具行和宿主子代理详情窗的原位置提供进度、汇报、执行轮次、快照状态及停止／撤销召回操作。任务卡片、身份栏、完整过程和窗口滚动由宿主维护。
 
-## 模块职责
+## 贡献接口
 
-- `main.js`：调用 `session/get` 分页读取会话，管理 `pi.desktop.subscribe` 会话订阅，接收 `desktop:event` 并生成节流修订号；转发召回状态查询与停止/撤销召回操作。
-- `views/parser.js`：解析 `UiMessage`，按根 Task 的 `toolCallId` 聚合 `parentToolCallId` 子消息，并以 `executionId ?? delegationId` 区分同一 delegation 的不同 execution。
-- `views/observer.js`：负责分页取消、增量刷新、会话切换、选中与搜索定位、滚动跟随、召回状态和操作交互。
-- `views/observer.css`：使用宿主外观基色、系统字体和紧凑双栏布局。
+清单声明 `contributes.inlineViews: [{ "id": "supervision", "slot": "subagent.supervision" }]`。宿主按插件启用状态、项目作用域及已有的 `ui.view`、`desktop.control` 权限发现贡献。停用插件后卸载观测条；再次启用或重载时重新读取贡献。
 
-## 宿主接口
+插件使用 `onPanelInvoke(channel, payload)` 接收两个固定通道：
 
-插件声明 `desktop.control`，使用以下既有或宿主注册的操作：
+- `inline.render`：根据执行上下文返回 `PluginInlineNode | null`。
+- `inline.action`：处理 `stop` 或 `revoke` 操作，成功后返回更新后的节点；失败时抛出错误，由宿主在观测条内显示。
 
-- `session/get`：`args: [{ id, messageLimit: 200, messageBefore? }]`
-- `subagent/recallStatus`：`args: [{ sessionId, delegationId }]`
-- `subagent/stop`：`args: [{ sessionId, delegationId, expectedExecution? }]`
+请求示例：
 
-实时状态通过 `pi.desktop.getSessionSnapshot({ sessionId })` 获取；会话事件通过 `pi.desktop.subscribe` / `unsubscribe` 管理。停止与撤销召回均由宿主既有接口执行，插件携带 `expectedExecution`，由宿主校验执行版本。
-
-视图位置格式为：
-
-```text
-?sessionId=<会话>&task=<执行展示键>&message=<消息ID>&query=<搜索文本>&request=<定位请求ID>&open=<打开请求ID>
+```json
+{
+  "viewId": "supervision",
+  "context": {
+    "sessionId": "session-id",
+    "delegationId": "delegation-id",
+    "execution": 1,
+    "running": true,
+    "live": true,
+    "parentTurnId": "turn-id",
+    "compact": false,
+    "locale": "zh-CN",
+    "collaboration": {
+      "reportIntervalSteps": 32,
+      "stepsSinceReport": 2,
+      "completedSteps": 34,
+      "intervalSource": "definition",
+      "phase": "running"
+    }
+  }
+}
 ```
 
-`sessionId` 和 `task` 用于可靠绑定与选中。`message`、`query`、`request` 为可选搜索定位参数；新的 `request` 会让相同条件再次展开并滚动到命中记录。`open` 由宿主在每次打开时更新，用于区分同一任务的重复投递。首次通过 URL 的 `piViewOpen` 读取，后续通过 `pluginBridge.on("view:open", ({ path }) => ...)` 接收。
+动作请求在同一载荷中增加 `"action": "stop"` 或 `"action": "revoke"`。`collaboration` 沿用宿主的 `SubagentCollaborationSnapshot`，包含最新报告和引导回执。
 
-宿主始终显式传入当前会话；普通插件标签页也随当前会话更新位置。没有 `sessionId` 时显示打开会话的提示。
+节点支持 `row`、`column`、`text`、`action`、`details`、`pre`、`list`、`item`。`text` 始终作为纯文本显示，`details.text` 是折叠标题，`action.action` 是回传的操作名。可选属性为 `key`、`title`、`children`、`disabled`、`icon: "stop"`。宿主校验节点并提供通用布局、按钮、折叠和外观主题。
 
-## 刷新策略
+## 执行与生命周期
 
-插件进程先订阅会话事件。连续流事件合并为修订号，视图以 500ms 轻量轮询观察修订号，并限制历史刷新频率；`message_end`、`tool_execution_end` 和 `agent.turnEnded` 等结束事件触发快速收尾刷新。
-
-首次进入和手动刷新读取全部分页，每页 200 条。自动刷新从最新页向前读取，直到遇到本地最新消息再合并；如果历史中已找不到重叠点，则替换本地历史。读取期间收到的新修订号会继续触发刷新，不因当前请求尚未完成而丢失。
-
-会话切换通过 generation 丢弃旧请求结果；每个视图的绑定与解绑串行处理，同一会话共享订阅。卸载时清理计时器、视图监听和桌面订阅。视图保留任务选中、展开状态与滚动位置，实时跟随仅在原先位于底部时生效。
+- `supervision.js` 维护观测条的中英文文案、节点构建和操作逻辑。
+- `main.js` 通过 `pi.desktop.invoke({ operation, args })` 查询与操作，并在内存中记录同次执行的停止请求，合并重复点击；卸载时清理状态。
+- 宿主会话数据变化时重新渲染。历史任务按需查询 `subagent/recallStatus`；查询失败时不提供撤销召回按钮。
+- 停止操作要求任务仍在活跃执行中，并通过 `pi.desktop.getSessionSnapshot` 核对会话及轮次。运行中或等待工具审批的任务均可停止。请求携带 `expectedExecution`，由宿主校验执行版本。
+- 撤销召回前重新查询快照状态，核对磁盘来源、执行版本及可召回状态，再调用 `subagent/stop`。
+- 宿主丢弃已卸载、已切换会话或旧执行的异步结果；同一组件操作期间禁用按钮。
+- `package.json` 固定 CommonJS 模块边界，使源码加载和安装包加载使用相同模块格式。插件不写入运行状态文件，也不定时轮询完整会话历史。

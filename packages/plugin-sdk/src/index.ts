@@ -135,6 +135,8 @@ export type PluginManifest = {
     bus?: PluginBusContrib;
     /** Surfaces the plugin docks inside the host's work panel. */
     views?: PluginViewContrib[];
+    /** 在宿主已有位置嵌入声明式内容；使用 ui.view 权限。 */
+    inlineViews?: PluginInlineViewContrib[];
     /** External session namespaces this plugin may import and own. */
     sessionSources?: PluginSessionSourceContrib[];
     /**
@@ -161,6 +163,41 @@ export type PluginManifest = {
   engines?: { piDesktop?: string };
   activationEvents?: string[];
 };
+
+export type PluginInlineViewContrib = {
+  id: string;
+  slot: "subagent.supervision";
+};
+
+/** 插件通过 onPanelInvoke 的 inline.render / inline.action 返回纯数据。 */
+export type PluginInlineNode = {
+  kind: "row" | "column" | "text" | "action" | "details" | "pre" | "list" | "item";
+  key?: string;
+  text?: string;
+  title?: string;
+  children?: PluginInlineNode[];
+  disabled?: boolean;
+  action?: string;
+  icon?: "stop";
+};
+
+/** 只允许宿主支持的节点与属性，不执行插件提供的 HTML 或脚本。 */
+export function isPluginInlineNode(value: unknown): value is PluginInlineNode | null {
+  let count = 0;
+  const visit = (node: unknown, depth: number): boolean => {
+    if (!node || typeof node !== "object" || Array.isArray(node) || depth > 16 || ++count > 4096) return false;
+    const item = node as Record<string, unknown>;
+    if (!["row", "column", "text", "action", "details", "pre", "list", "item"].includes(String(item.kind))) return false;
+    for (const field of ["key", "text", "title", "action"]) {
+      if (item[field] !== undefined && typeof item[field] !== "string") return false;
+    }
+    if (item.disabled !== undefined && typeof item.disabled !== "boolean") return false;
+    if (item.icon !== undefined && item.icon !== "stop") return false;
+    if (item.kind === "action" && (typeof item.action !== "string" || !item.action)) return false;
+    return item.children === undefined || (Array.isArray(item.children) && item.children.every((child) => visit(child, depth + 1)));
+  };
+  return value === null || visit(value, 0);
+}
 
 /**
  * Host-owned chrome labels (`ui.title`, views, destinations, session sources).
@@ -1976,6 +2013,17 @@ export function validateContributions(
           return `contributes.windowAppearance.backgroundColor.${key} must be #rrggbb or #rrggbbaa`;
         }
       }
+    }
+  }
+
+  if (contributes.inlineViews !== undefined) {
+    if (!Array.isArray(contributes.inlineViews)) return "contributes.inlineViews must be an array";
+    const inlineIds = new Set<string>();
+    for (const view of contributes.inlineViews) {
+      if (!view || typeof view.id !== "string" || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(view.id)) return "invalid inline view id";
+      if (inlineIds.has(view.id)) return `duplicate inline view id "${view.id}"`;
+      inlineIds.add(view.id);
+      if (view.slot !== "subagent.supervision") return "unsupported inline view slot";
     }
   }
 

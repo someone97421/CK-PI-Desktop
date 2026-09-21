@@ -1,208 +1,51 @@
 "use strict";
 
-const sessions = new Map();
-const clients = new Map();
-const bindChains = new Map();
-let appearance = null;
-let locale = "en";
+const { renderSupervision, handleSupervisionAction } = require("./supervision");
+const stopRequests = new Set();
+const actions = new Map();
+const helpers = {
+  desktopInvoke: (operation, args = []) => pi.desktop.invoke({ operation, args }),
+  getSessionSnapshot: (input) => pi.desktop.getSessionSnapshot(input),
+};
 
-function text(value) {
-  return typeof value === "string" ? value.trim() : "";
+function executionKey(context) {
+  return JSON.stringify([context.sessionId, context.delegationId, context.execution ?? context.collaboration?.execution]);
 }
 
-
-async function desktop(operation, args = [], confirm = false) {
-  return pi.desktop.invoke({ operation, args, ...(confirm ? { confirm: true } : {}) });
-}
-
-async function readAppearance() {
-  try {
-    const value = await pi.app.getAppearance();
-    if (value && typeof value === "object") appearance = value;
-  } catch {
-    // Older hosts can still use prefers-color-scheme in the view.
-  }
-  try {
-    locale = (await pi.app.getLocale()) || "en";
-  } catch {
-    locale = "en";
-  }
-  return { appearance, locale };
-}
-
-function stateFor(sessionId) {
-  let state = sessions.get(sessionId);
-  if (!state) {
-    state = {
-      sessionId,
-      subscriptionId: "",
-      revision: 0,
-      terminalRevision: 0,
-      lastAt: "",
-      pendingTimer: null,
-      clients: new Set(),
-    };
-    sessions.set(sessionId, state);
-  }
-  return state;
-}
-
-function noteEvent(frame) {
-  if (!frame || typeof frame !== "object") return;
-  const sessionId = text(frame.sessionId);
-  const state = sessions.get(sessionId);
-  if (!state || (state.subscriptionId && frame.subscriptionId !== state.subscriptionId)) return;
-  state.lastAt = text(frame.at) || new Date().toISOString();
-
-  const eventType = frame.kind === "agent.event" && frame.payload && typeof frame.payload === "object"
-    ? frame.payload.event?.type
-    : "";
-  const terminal = frame.kind === "agent.turnEnded" || eventType === "message_end" || eventType === "tool_execution_end" || eventType === "tool_end" || eventType === "tool_error";
-  if (terminal) {
-    if (state.pendingTimer) clearTimeout(state.pendingTimer);
-    state.pendingTimer = null;
-    state.revision += 1;
-    state.terminalRevision = state.revision;
-    return;
-  }
-  if (!state.pendingTimer) {
-    state.pendingTimer = setTimeout(() => {
-      state.pendingTimer = null;
-      state.revision += 1;
-    }, 300);
-  }
-}
-
-async function subscribe(sessionId, clientId) {
-  const state = stateFor(sessionId);
-  state.clients.add(clientId);
-  if (!state.subscription) {
-    state.subscription = pi.desktop.subscribe({ sessionId }).then((result) => {
-      state.subscriptionId = text(result?.subscriptionId);
-      state.revision += 1;
-    }).catch((error) => { state.subscription = null; throw error; });
-  }
-  await state.subscription;
-  return state;
-}
-
-async function releaseClient(clientId) {
-  const sessionId = clients.get(clientId);
-  clients.delete(clientId);
-  if (!sessionId) return;
-  const state = sessions.get(sessionId);
-  if (!state) return;
-  state.clients.delete(clientId);
-  if (state.clients.size) return;
-  sessions.delete(sessionId);
-  if (state.pendingTimer) clearTimeout(state.pendingTimer);
-  try {
-    await state.subscription;
-    if (state.subscriptionId) await pi.desktop.unsubscribe(state.subscriptionId);
-  } catch {
-    // 卸载时宿主也会清理订阅。
-  }
-}
-
-async function bindNow(payload) {
-  const clientId = text(payload?.clientId);
-  const sessionId = text(payload?.sessionId);
-  if (!clientId || !sessionId) throw new Error("clientId and sessionId are required");
-  const previous = clients.get(clientId);
-  if (previous && previous !== sessionId) await releaseClient(clientId);
-  clients.set(clientId, sessionId);
-  const state = await subscribe(sessionId, clientId);
-  return {
-    ok: true,
-    sessionId,
-    revision: state.revision,
-    terminalRevision: state.terminalRevision,
-    ...await readAppearance(),
-  };
-}
-
-function withClient(clientId, operation) {
-  const previous = bindChains.get(clientId) || Promise.resolve();
-  const next = previous.catch(() => {}).then(operation);
-  bindChains.set(clientId, next);
-  void next.then(
-    () => { if (bindChains.get(clientId) === next) bindChains.delete(clientId); },
-    () => { if (bindChains.get(clientId) === next) bindChains.delete(clientId); },
-  );
-  return next;
-}
-
-function bind(payload) {
-  return withClient(text(payload?.clientId), () => bindNow(payload));
-}
-
-async function onLoad() {
-  await readAppearance();
-  pi.events.on("desktop:event", noteEvent);
+function render(context) {
+  const key = executionKey(context);
+  if (!context.running || !context.live || context.collaboration?.phase === "finished") stopRequests.delete(key);
+  return renderSupervision({ ...context, requested: stopRequests.has(key) }, helpers);
 }
 
 async function onPanelInvoke(channel, payload = {}) {
-  switch (channel) {
-    case "observer.bootstrap":
-      return { ok: true, sessionId: text(payload.sessionId), ...await readAppearance() };
-    case "observer.bind":
-      return bind(payload);
-    case "observer.unbind":
-      await withClient(text(payload.clientId), () => releaseClient(text(payload.clientId)));
-      return { ok: true };
-    case "observer.poll": {
-      const sessionId = text(payload.sessionId);
-      const state = sessions.get(sessionId);
-      return {
-        ok: true,
-        revision: state?.revision || 0,
-        terminalRevision: state?.terminalRevision || 0,
-        lastAt: state?.lastAt || "",
-      };
-    }
-    case "observer.history": {
-      const sessionId = text(payload.sessionId);
-      if (!sessionId) throw new Error("sessionId is required");
-      const input = { id: sessionId, messageLimit: 200 };
-      if (Number.isSafeInteger(payload.messageBefore) && payload.messageBefore >= 0) input.messageBefore = payload.messageBefore;
-      return desktop("session/get", [input]);
-    }
-    case "observer.snapshot": {
-      const sessionId = text(payload.sessionId);
-      if (!sessionId) throw new Error("sessionId is required");
-      return pi.desktop.getSessionSnapshot({ sessionId });
-    }
-    case "observer.recall": {
-      const sessionId = text(payload.sessionId);
-      const delegationId = text(payload.delegationId);
-      if (!sessionId || !delegationId) throw new Error("sessionId and delegationId are required");
-      return desktop("subagent/recallStatus", [{ sessionId, delegationId }]);
-    }
-    case "observer.stop": {
-      const sessionId = text(payload.sessionId);
-      const delegationId = text(payload.delegationId);
-      if (!sessionId || !delegationId) throw new Error("sessionId and delegationId are required");
-      const input = { sessionId, delegationId };
-      if (Number.isSafeInteger(payload.expectedExecution)) input.expectedExecution = payload.expectedExecution;
-      return desktop("subagent/stop", [input]);
-    }
-    case "observer.appearance":
-      return { ok: true, ...await readAppearance() };
-    default: {
-      const error = new Error(`Unsupported observer channel: ${channel}`);
-      error.code = "UNSUPPORTED";
+  if (payload.viewId !== "supervision") throw new Error("Unknown inline view");
+  const context = payload.context;
+  if (channel === "inline.render") return render(context);
+  if (channel !== "inline.action") throw new Error(`Unsupported inline view channel: ${channel}`);
+  const key = executionKey(context);
+  if (actions.has(key)) {
+    await actions.get(key);
+    return render(context);
+  }
+  if (payload.action === "stop" && stopRequests.has(key)) return render(context);
+  const operation = (async () => {
+    if (payload.action === "stop") stopRequests.add(key);
+    try {
+      await handleSupervisionAction(context, payload.action, helpers);
+    } catch (error) {
+      stopRequests.delete(key);
       throw error;
     }
+  })();
+  actions.set(key, operation);
+  try {
+    await operation;
+    return await render(context);
+  } finally {
+    actions.delete(key);
   }
 }
 
-async function onUnload() {
-  pi.events.off("desktop:event", noteEvent);
-  await Promise.allSettled([...bindChains.values()]);
-  await Promise.allSettled([...clients.keys()].map(releaseClient));
-  sessions.clear();
-  clients.clear();
-  bindChains.clear();
-}
-
-module.exports = { onLoad, onPanelInvoke, onUnload };
+function onUnload() { stopRequests.clear(); actions.clear(); }
+module.exports = { onPanelInvoke, onUnload };

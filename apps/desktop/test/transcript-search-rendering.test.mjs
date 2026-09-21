@@ -24,8 +24,8 @@ test("rendered Markdown and file chips map source-only hits to their visible own
     const { LinkifiedText } = await server.ssrLoadModule(
       "/src/features/chat/transcript/shared.tsx",
     );
-    const { subagentObserverLocation } = await server.ssrLoadModule(
-      "/src/lib/subagent-panel.ts",
+    const { SubagentPanel } = await server.ssrLoadModule(
+      "/src/components/workpanel/SubagentPanel.tsx",
     );
     const { useAppStore } = await server.ssrLoadModule("/src/stores/app-store.ts");
     const { ActivityGroup } = await server.ssrLoadModule(
@@ -182,13 +182,10 @@ test("rendered Markdown and file chips map source-only hits to their visible own
         },
       },
     });
-    const selection = { sessionId: "s", delegationId: "task & execution=2", searchRequestId: 1 };
-    const location = new URLSearchParams(subagentObserverLocation(selection, focus));
-    assert.equal(location.get("sessionId"), "s");
-    assert.equal(location.get("task"), selection.delegationId);
-    assert.equal(location.get("message"), "child");
-    assert.equal(location.get("query"), "needle");
-    assert.equal(location.get("request"), "1");
+    const panel = render(SubagentPanel, {
+      selection: { sessionId: "s", delegationId: "task", searchRequestId: 1 },
+    });
+    assert.match(panel, /data-message-id="child"/);
     const groupProps = { items: [{ kind: "tool", message: parent }], isActive: false };
     const group = (target) =>
       renderToStaticMarkup(
@@ -208,14 +205,17 @@ test("rendered Markdown and file chips map source-only hits to their visible own
       /class="tool-activity-header" aria-expanded="true"/,
     );
 
-    // 普通打开和过期/其他会话的搜索不能继续定位旧记录。
-    for (const stale of [null, { ...focus, requestId: 2 }, { ...focus, sessionId: "other" }]) {
-      const plain = new URLSearchParams(subagentObserverLocation(selection, stale));
-      assert.equal(plain.get("task"), selection.delegationId);
-      assert.equal(plain.has("message"), false);
-    }
-    const plain = new URLSearchParams(subagentObserverLocation({ sessionId: "s", delegationId: "task" }, focus));
-    assert.equal(plain.has("message"), false);
+    assert.match(panel, /<strong data-source-start="5" data-source-end="15">needle<\/strong>/);
+    assert.doesNotMatch(panel, /subagent-panel-empty/);
+    Object.assign(useAppStore.getInitialState(), {
+      transcriptViews: {},
+      messages: [parent, { ...child, content: "Updated live answer." }],
+    });
+    const livePanel = render(SubagentPanel, {
+      selection: { sessionId: "s", delegationId: "task" },
+    });
+    assert.match(livePanel, /Updated live answer/);
+    assert.doesNotMatch(livePanel, /Read <strong/);
   } finally {
     globalThis.document = originalDocument;
     globalThis.NodeFilter = originalFilter;
