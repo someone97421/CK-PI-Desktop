@@ -1637,7 +1637,7 @@ export class DesktopAgentRuntime {
       ...(this.subagents.length
         ? [
             `## Delegation
-Default to handling work directly when it can be completed sequentially with the context you already have. Delegate when the user requests it or when you can identify a concrete benefit from parallel progress, context isolation, or independent judgment that outweighs handoff and acceptance costs. A self-contained deliverable alone is not sufficient reason to delegate.
+Default to completing the task yourself when its scope is clear, you already have the relevant context, and the work follows a single dependency chain. In that situation, prefer direct execution through completion; delegate when the user requests it or when you can identify a concrete benefit from parallel progress, context isolation, or independent judgment that outweighs handoff, waiting, and acceptance costs. A self-contained deliverable or an available specialist alone is not sufficient reason to delegate.
 
 Useful cases, not mandatory stages:
 - User-requested delegation: follow the requested scope and number of subagents.
