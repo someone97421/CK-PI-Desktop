@@ -105,6 +105,10 @@ import {
   type SubagentProviderRetryState,
 } from "./subagent-model-binding.js";
 import {
+  dedupeToolCallMessages,
+  reportDuplicateToolCallDrop,
+} from "./tool-call-dedupe.js";
+import {
   classifyProviderError,
   delayWithAbort,
   PROVIDER_RATE_LIMIT_MAX_RETRIES,
@@ -382,7 +386,8 @@ export class SubagentRun {
     this.agent = new Agent({
       streamFn: binding.streamFn,
       getApiKey: binding.getApiKey,
-      convertToLlm,
+      convertToLlm: (messages) =>
+        convertToLlm(this.dedupeToolCalls(messages)),
       // 每次模型请求都检查快照上下文，覆盖首次请求、恢复、重试与工具后续轮。
       transformContext: (messages, signal) => this.prepareRequestContext(messages, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
@@ -819,6 +824,15 @@ export class SubagentRun {
     return this.result("completed", this.lastReportText);
   }
 
+  private modelBinding() {
+    return this.bindingFor(this.provider, this.thinkingLevel);
+  }
+  private dedupeToolCalls(messages: AgentMessage[]): AgentMessage[] {
+    const drop = dedupeToolCallMessages(messages);
+    reportDuplicateToolCallDrop(this.opts.sessionId, drop);
+    return drop.messages;
+  }
+
   private bindingFor(
     provider: RuntimeProviderConfig,
     thinkingLevel: SubagentThinkingLevel,
@@ -1164,7 +1178,9 @@ export class SubagentRun {
     if (messages.at(-1)?.role !== "assistant") {
       throw new Error("Cannot retry a subagent provider stream without its failed assistant message");
     }
-    messages.pop();
+    // A failed provider stream can leave more than one assistant row after a
+    // tool round. Remove the entire failed suffix before continuing.
+    while (messages.at(-1)?.role === "assistant") messages.pop();
     this.setAgentMessages(messages);
     this.providerRetryInProgress = true;
     try {
@@ -1478,6 +1494,10 @@ export class SubagentRun {
               };
             }
           }
+        }
+        if (!failed && stopReason !== "aborted") {
+          this.providerTransientRetryAttempt = 0;
+          this.providerRateLimitRetryAttempt = 0;
         }
         const messageUsage = usageFromPi(message.usage);
         this.usage = addUsage(this.usage, messageUsage);

@@ -473,6 +473,17 @@ export type PluginProviderModelContrib = {
   maxTokens?: number;
   /** Whether the model accepts image input. */
   supportsImages?: boolean;
+  /**
+   * Thinking levels the picker may offer for this model, most restrictive
+   * first (e.g. `["off", "low", "high"]`). Names outside the canonical set are
+   * dropped. Omit for a model that exposes no reasoning control.
+   */
+  thinkingLevels?: string[];
+  /**
+   * Which of `thinkingLevels` a new session opens on. Ignored unless it names
+   * one of them. Omit to let the runtime pick the first available level.
+   */
+  defaultThinkingLevel?: string;
 };
 
 /**

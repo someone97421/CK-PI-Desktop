@@ -15,13 +15,16 @@ import type { PluginSkillDef } from "@pi-desktop/agent-runtime";
 /** Bundled skill teaching the plugin-development loop. */
 export const PLUGIN_DEV_SKILL_FILE = "plugin-development.md";
 export const PLUGIN_DEV_SKILL_ID = "pi-desktop/plugin-development";
+export const IMAGE_GENERATION_SKILL_ID = "pi-desktop/imagegen";
+const IMAGE_GENERATION_SKILL_FILE = "image-generation.md";
 
 /** electron-builder copies `resources/skills` to `<resources>/skills`. */
 function resolveBuiltinSkillPath(fileName: string): string | null {
+  const moduleDir = typeof __dirname === "string" ? __dirname : import.meta.dirname;
   const candidates = [
     join(process.resourcesPath || "", "skills", fileName),
-    join(__dirname, "../../resources/skills", fileName),
-    join(__dirname, "../../../resources/skills", fileName),
+    join(moduleDir, "../../resources/skills", fileName),
+    join(moduleDir, "../../../resources/skills", fileName),
   ];
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) return candidate;
@@ -85,35 +88,35 @@ export type BuiltinSkillInput = {
  * fresh so a packaged update takes effect without a restart.
  */
 export function builtinSkills(input: BuiltinSkillInput): PluginSkillDef[] {
-  if (!isPluginWorkspace(input.workspacePath, input.pluginPaths)) return [];
-  const raw = readBuiltinSkill(PLUGIN_DEV_SKILL_FILE);
-  if (!raw?.trim()) return [];
-  const parsed = parseSkillFrontmatter(raw);
-  if (!parsed.body) return [];
-  return [
-    {
-      id: PLUGIN_DEV_SKILL_ID,
-      name: parsed.name ?? "this-is-a-agent plugin development",
-      description: parsed.description,
-    },
-  ];
+  const ids = [IMAGE_GENERATION_SKILL_ID];
+  if (isPluginWorkspace(input.workspacePath, input.pluginPaths)) ids.push(PLUGIN_DEV_SKILL_ID);
+  return ids.flatMap((id) => {
+    const file = id === IMAGE_GENERATION_SKILL_ID ? IMAGE_GENERATION_SKILL_FILE : PLUGIN_DEV_SKILL_FILE;
+    const raw = readBuiltinSkill(file);
+    if (!raw?.trim()) return [];
+    const parsed = parseSkillFrontmatter(raw);
+    return parsed.body
+      ? [{
+          id,
+          name: parsed.name ?? (id === PLUGIN_DEV_SKILL_ID ? "this-is-a-agent plugin development" : id),
+          description: parsed.description,
+        }]
+      : [];
+  });
 }
-
-/**
- * Load a built-in skill body for the `Skill` tool. Returns null for any id the
  * host does not ship, which is the caller's cue to try the plugin registry.
  */
 export function loadBuiltinSkillBody(
   id: string,
 ): { id: string; name: string; body: string } | null {
-  if (id !== PLUGIN_DEV_SKILL_ID) return null;
-  const raw = readBuiltinSkill(PLUGIN_DEV_SKILL_FILE);
+  if (id !== PLUGIN_DEV_SKILL_ID && id !== IMAGE_GENERATION_SKILL_ID) return null;
+  const raw = readBuiltinSkill(id === IMAGE_GENERATION_SKILL_ID ? IMAGE_GENERATION_SKILL_FILE : PLUGIN_DEV_SKILL_FILE);
   if (!raw?.trim()) return null;
   const parsed = parseSkillFrontmatter(raw);
   if (!parsed.body) return null;
   return {
-    id: PLUGIN_DEV_SKILL_ID,
-    name: parsed.name ?? "this-is-a-agent plugin development",
+    id,
+    name: parsed.name ?? (id === PLUGIN_DEV_SKILL_ID ? "this-is-a-agent plugin development" : id),
     body: parsed.body,
   };
 }

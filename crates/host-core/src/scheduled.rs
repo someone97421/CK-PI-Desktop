@@ -31,6 +31,9 @@ pub struct ScheduledTask {
     pub next_run_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<String>,
+    /// Presence distinguishes a saved project (including null) from legacy tasks.
+    #[serde(skip)]
+    pub(crate) workspace_bound: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +172,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledTask> {
             .get("nextRunAt")
             .and_then(Value::as_i64)
             .map(ms_to_ts),
+        workspace_bound: config.get("workspacePath").is_some(),
         workspace_path: config
             .get("workspacePath")
             .and_then(Value::as_str)

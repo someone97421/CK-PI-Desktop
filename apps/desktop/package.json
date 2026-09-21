@@ -232,7 +232,8 @@
     },
     "portable": {
       "artifactName": "this-is-a-agent-Portable-20260921-215541-${arch}.${ext}",
-      "requestExecutionLevel": "user"
+      "requestExecutionLevel": "user",
+      "unpackDirName": "this-is-a-agent-Portable"
     },
     "deb": {
       "packageName": "this-is-a-agent",

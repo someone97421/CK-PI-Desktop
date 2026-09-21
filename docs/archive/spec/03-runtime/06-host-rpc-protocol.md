@@ -1046,6 +1046,7 @@ numeric slot; the string is the contract, the number is transport detail.
 | 1001 | HOST_SHUTTING_DOWN | the host is draining after EOF and refused the call |
 | 1002 | INVALID_PARAMS | schema validation failed |
 | 1002 | MODEL_ALIAS_TOO_LONG | provider row alias exceeds 60 code points |
+| 1002 | MODEL_BINDINGS_DEGRADED | stored model bindings are unreadable; explicit model-array replacement is refused |
 | 1003 | NOT_FOUND | entity missing (legacy slot, kept for old callers) |
 | 1006 | RATE_LIMITED | a per-caller budget window was exhausted |
 | 1007 | NOT_FOUND | entity missing |

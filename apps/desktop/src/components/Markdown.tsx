@@ -53,6 +53,7 @@ import {
 } from "../lib/latex-math";
 import { useAppStore } from "../stores/app-store";
 import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url";
+import { absoluteImagePath, remarkLocalImagePaths } from "../lib/markdown-image-paths";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import {
   isLocalFileHref,
@@ -712,9 +713,7 @@ function MarkdownImage({
       : null;
   // Scratch and other allowed absolute paths are resolved by the host, which
   // checks both containment and real paths before returning image data.
-  const absoluteRef = !isRemote && /^(?:\/|[A-Za-z]:\/)/.test(decoded)
-    && !decoded.startsWith("//") ? decoded : null;
-  const localRef = rel ?? attachmentRef ?? absoluteRef;
+  const localRef = (isRemote ? null : absoluteImagePath(source)) ?? rel ?? attachmentRef;
   // Always run the hook before any branch so hook order stays stable when a
   // streaming src flips between remote and local. Remote images pass null.
   const dataUrl = useReferencedImageDataUrl(isRemote ? null : localRef);
@@ -876,7 +875,7 @@ function remarkAnnotationMarkers() {
   };
 }
 
-const staticRemarkPlugins = [remarkGfm, remarkMath, remarkAnnotationMarkers];
+const staticRemarkPlugins = [remarkGfm, remarkMath, remarkAnnotationMarkers, remarkLocalImagePaths];
 
 // Extend the default schema only for the media elements rendered above, plus
 // `remark-math`'s math classes on `<code>`: the default `language-*` allow list

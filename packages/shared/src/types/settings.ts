@@ -40,6 +40,7 @@ export type AppearanceSettings = Partial<Record<"light" | "dark", ModeAppearance
 export type CloseBehavior = "ask" | "tray" | "quit";
 
 export type AppSettings = {
+  imageGeneration?: import("../image-generation.js").ImageGenerationBinding | null;
   defaultProviderId?: string;
   defaultModelId?: string;
   /**

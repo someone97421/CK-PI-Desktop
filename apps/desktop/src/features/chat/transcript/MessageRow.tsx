@@ -109,12 +109,13 @@ export const MessageRow = memo(function MessageRow({
       label: t("chat.messageMenu"),
       items: userMessageMenuItems({
         t,
-        text: requestTextWithoutAnnotations(message.content || ""),
-        selectTarget:
-          event.currentTarget.querySelector<HTMLElement>(".message-bubble"),
-        editable: editableUserMessage && !transcriptReadOnly,
+        text: editing ? editValue : requestTextWithoutAnnotations(message.content || ""),
+        selectTarget: event.currentTarget.querySelector<HTMLElement>(
+          editing ? ".message-edit-input" : ".message-bubble",
+        ),
+        editable: editableUserMessage && !editing && !transcriptReadOnly,
         running: isRunning,
-        revision: showRevisionPager && !transcriptReadOnly
+        revision: !editing && showRevisionPager && !transcriptReadOnly
           ? { count: revisionCount, active: activeRevision }
           : null,
         actions: { copyText, selectText },

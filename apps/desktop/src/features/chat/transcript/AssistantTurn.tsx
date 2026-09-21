@@ -46,6 +46,7 @@ import {
   MessageMeta,
 } from "./shared";
 import { activityItemsEqual, ActivityGroup } from "./ActivityGroup";
+import { GeneratedImages } from "./GeneratedImages";
 import { MessageRow } from "./MessageRow";
 import { TaskProcessDrawer } from "./TaskProcessDrawer";
 import { TaskReviewCard } from "./TaskReviewCard";
@@ -424,6 +425,9 @@ export const AssistantTurn = memo(function AssistantTurn({
         ) : (
           entry.parts.map(renderPart)
         )}
+        {turnAllActivityItems.filter((item) => item.kind === "tool" && item.message.toolName === "GenerateImages").map((item) => (
+          <GeneratedImages key={item.message.id} message={item.message} />
+        ))}
         {!task && !isActive && metaMessage ? (
           <MessageMeta
             modelId={modelId}

@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   OAUTH_AUTH_KIND,
+  isImageGenerationModel,
   modelIdsMatch,
   type ModelBinding,
   type ProviderPublic,
@@ -35,13 +36,13 @@ import {
 } from "../icons";
 import { AnchoredMenu } from "./AnchoredMenu";
 import {
-  defaultModelIdOf,
   defaultModelOptions,
   displayedDefaultModelId,
   providerOffersModel,
   type DefaultModelOption,
 } from "./default-model";
 import { copyProviderConfiguration, type ProviderCopyDraft } from "./provider-copy";
+import { ImageGenerationModelRow } from "./ImageGenerationModelRow";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
 import { useProviderReorder } from "./useProviderReorder";
 import { VendorAccountsSection } from "./VendorAccountsSection";
@@ -188,7 +189,7 @@ export function ModelConfigPage() {
 
   const providerReady = (provider: ProviderPublic) =>
     provider.enabled &&
-    !!defaultModelIdOf(provider) &&
+    defaultModelOptions([provider], settings?.imageGeneration).length > 0 &&
     (provider.hasSecret || provider.hasOauth || provider.authKind === "none");
 
   const aiProviders = useMemo(
@@ -197,7 +198,7 @@ export function ModelConfigPage() {
   );
   const reorder = useProviderReorder(aiProviders, busyId !== null || testingId !== null || setupFor !== null);
   const readyProviders = providers.filter(providerReady);
-  const defaultModelOptionsList = defaultModelOptions(readyProviders);
+  const defaultModelOptionsList = defaultModelOptions(readyProviders, settings?.imageGeneration);
   /*
     The compaction picker offers the follow entry plus the same configured
     models the default picker lists, filtered locally like every other picker.
@@ -228,7 +229,9 @@ export function ModelConfigPage() {
     providers.find((provider) => provider.id === settings.defaultProviderId) ?? null;
   const editingProvider =
     setupFor ? providers.find((provider) => provider.id === setupFor) ?? null : null;
-  const defaultProviderReady = defaultProvider !== null && providerReady(defaultProvider);
+  const defaultProviderReady = defaultProvider !== null && providerReady(defaultProvider) &&
+    !isImageGenerationModel(settings.imageGeneration, defaultProvider.id,
+      displayedDefaultModelId(defaultProvider, settings.defaultModelId));
   /*
     Compaction follows the main model until both fields name a provider and one
     of its models. A pin is only runnable while that provider is still ready and
@@ -246,9 +249,11 @@ export function ModelConfigPage() {
     compactionProvider !== null &&
     providerReady(compactionProvider) &&
     providerOffersModel(compactionProvider, compactionModelId);
+  }
 
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
+    if (isImageGenerationModel(useAppStore.getState().settings?.imageGeneration, provider.id, modelId)) return;
     setBusyId(provider.id);
     try {
       await api.setSettings({
@@ -298,10 +303,14 @@ export function ModelConfigPage() {
   /**
    * Preserve the selected app default unless it was removed from the provider.
    */
-  const afterSaved = async (saved: ProviderPublic, models: ModelBinding[]) => {
+  const afterSaved = async (saved: ProviderPublic, models: ModelBinding[], imageModelId?: string) => {
     const firstModelId = models[0]?.id;
     try {
-      if (copyDraft) {
+      if (imageModelId) {
+        await api.setSettings({ ...(await api.getSettings()), imageGeneration: { providerId: saved.id, modelId: imageModelId } });
+        useAppStore.setState({ settings: await api.getSettings() });
+        showToast(t("settings.providerSaved"), { variant: "success" });
+      } else if (copyDraft) {
         showToast(t("settings.providerSaved"), { variant: "success" });
       } else if (!editingProvider) {
         await api.setSettings({
@@ -694,6 +703,7 @@ export function ModelConfigPage() {
               </div>
             </AnchoredMenu>
           </div>
+          <ImageGenerationModelRow settings={settings} providers={providers} />
         </div>
       </section>
 
@@ -817,7 +827,7 @@ export function ModelConfigPage() {
                           variant="ghost"
                           disabled={rowBusy || !providerReady(provider)}
                           onClick={() =>
-                            void setDefaultModel(provider, defaultModelIdOf(provider) ?? "")
+                            void setDefaultModel(provider, defaultModelOptions([provider], settings.imageGeneration)[0]?.modelId ?? "")
                           }
                         >
                           {t("settings.makeDefault")}
@@ -1022,7 +1032,8 @@ export function ModelConfigPage() {
           provider={editingProvider}
           initialDraft={copyDraft}
           onClose={() => { setSetupFor(null); setCopyDraft(null); }}
-          onSaved={(saved, models) => void afterSaved(saved, models)}
+          imageModelId={settings.imageGeneration?.providerId === editingProvider?.id ? settings.imageGeneration?.modelId : undefined}
+          onSaved={afterSaved}
         />
       ) : null}
     </div>

@@ -26,3 +26,4 @@ export * from "./subagent-checkpoint.js";
 export * from "./subagent-persistence.js";
 export * from "./subagent-persistence-client.js";
 export * from "./speech/index.js";
+export * from "./image-generation/index.js";

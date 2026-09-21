@@ -41,7 +41,7 @@ pub(super) fn handle_in_workspace(
                     .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
                 if existing
                     .as_ref()
-                    .is_some_and(|task| task.schedule.is_none() && task.workspace_path.is_none())
+                    .is_some_and(|task| !task.workspace_bound && task.schedule.is_none())
                 {
                     params["workspacePath"] = json!(workspace);
                 } else if let Some(object) = params.as_object_mut() {
@@ -138,7 +138,7 @@ pub(super) fn handle_in_workspace(
                     .get("defaultModelId")
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
-                project_path: if task.schedule.is_some() || task.workspace_path.is_some() {
+                project_path: if task.workspace_bound || task.schedule.is_some() {
                     task.workspace_path.clone()
                 } else {
                     st.workspace.get().map(|w| w.path)
@@ -232,6 +232,90 @@ fn validate_schedule_input(params: &Value) -> Result<(), JsonRpcError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_task_keeps_saved_workspace_across_run_edit_and_restart() {
+        for project_bound in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let project_a = tempfile::tempdir().unwrap();
+            let project_b = tempfile::tempdir().unwrap();
+            let saved_path = project_bound.then(|| {
+                project_a
+                    .path()
+                    .canonicalize()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            let state = AppState::open(dir.path()).unwrap();
+            let task = handle_in_workspace(
+                &state,
+                "scheduled.create",
+                json!({
+                    "title":"A task", "prompt":"Reply OK", "cadence":"manual", "schedule":null
+                }),
+                saved_path.clone(),
+            )
+            .unwrap()["task"]
+                .clone();
+            let id = task["id"].as_str().unwrap();
+            drop(state);
+            let mut state = AppState::open(dir.path()).unwrap();
+            state.workspace.set(project_b.path());
+            let run = handle(&state, "scheduled.run", json!({"id":id})).unwrap();
+            let session = sessions::get_session(&state.db, run["sessionId"].as_str().unwrap())
+                .unwrap()
+                .unwrap();
+            assert_eq!(session.summary.project_path, saved_path);
+            handle(
+                &state,
+                "scheduled.finishRun",
+                json!({"runId":run["runId"],"status":"completed"}),
+            )
+            .unwrap();
+            let edited = handle(
+                &state,
+                "scheduled.update",
+                json!({
+                    "id":id, "title":"Renamed", "cadence":"manual", "schedule":null
+                }),
+            )
+            .unwrap();
+            assert_eq!(edited["task"]["workspacePath"], json!(saved_path));
+            let recurring = handle(
+                &state,
+                "scheduled.update",
+                json!({
+                    "id":id, "cadence":"hourly", "schedule":{"hour":9,"minute":0,"weekday":0}
+                }),
+            )
+            .unwrap();
+            assert_eq!(recurring["task"]["workspacePath"], json!(saved_path));
+        }
+    }
+
+    #[test]
+    fn legacy_task_uses_current_workspace_until_explicitly_configured() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let mut state = AppState::open(dir.path()).unwrap();
+        let task = handle(
+            &state,
+            "scheduled.create",
+            json!({"prompt":"Reply OK","cadence":"manual"}),
+        )
+        .unwrap()["task"]
+            .clone();
+        let id = task["id"].as_str().unwrap();
+        let path = state.workspace.set(project.path()).path;
+        let run = handle(&state, "scheduled.run", json!({"id":id})).unwrap();
+        let session = sessions::get_session(&state.db, run["sessionId"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.summary.project_path, Some(path.clone()));
+        let edited = handle(&state, "scheduled.update", json!({"id":id,"schedule":null})).unwrap();
+        assert_eq!(edited["task"]["workspacePath"], path);
+    }
 
     #[test]
     fn selected_weekdays_round_trip_and_invalid_edits_preserve_saved_schedule() {

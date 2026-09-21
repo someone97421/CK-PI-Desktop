@@ -12,6 +12,7 @@ import type {
 } from "@pi-desktop/shared";
 import {
   initialThinkingLevelForBinding,
+  isImageGenerationModel,
   modelIdsMatch,
   normalizeLargePasteThreshold,
   stripInlineComposerFileReferenceTokens,
@@ -395,6 +396,7 @@ export function Composer({
     : !!provider &&
       provider.enabled &&
       !!modelId &&
+      !isImageGenerationModel(settings?.imageGeneration, provider.id, modelId) &&
       (provider.hasSecret || provider.authKind === "none");
   const enterToSend = settings?.enterToSend ?? true;
   // Chips occupy sentinel characters, which `trim()` preserves. Keep the

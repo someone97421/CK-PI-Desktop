@@ -583,8 +583,10 @@ fn rpc_err(code: i64, message: impl Into<String>, error_code: &str) -> JsonRpcEr
 
 fn provider_rpc_err(error: impl ToString) -> JsonRpcError {
     let message = error.to_string();
-    if message.starts_with("MODEL_ALIAS_TOO_LONG:") {
-        return rpc_err(1002, message, "MODEL_ALIAS_TOO_LONG");
+    for error_code in ["MODEL_ALIAS_TOO_LONG", "MODEL_BINDINGS_DEGRADED"] {
+        if message.starts_with(&format!("{error_code}:")) {
+            return rpc_err(1002, message, error_code);
+        }
     }
     rpc_err(1000, message, "INTERNAL")
 }
@@ -795,6 +797,21 @@ fn validate_settings_value(value: &Value) -> Result<(), JsonRpcError> {
     let Some(object) = value.as_object() else {
         return Ok(());
     };
+    if let Some(binding) = object.get("imageGeneration").filter(|v| !v.is_null()) {
+        for (key, max) in [("providerId", 128), ("modelId", 256)] {
+            if !binding
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= max)
+            {
+                return Err(rpc_err(
+                    1002,
+                    "invalid image generation binding",
+                    "INVALID_PARAMS",
+                ));
+            }
+        }
+    }
     if let Some(template_value) = object.get("promptEnhancementUserTemplate") {
         if let Some(message) =
             prompt_enhancement_template_error("promptEnhancementUserTemplate", template_value)
@@ -8786,5 +8803,27 @@ mod tests {
         }
         let st = state.lock().await;
         assert_eq!(st.plugins.locale(), "en-US");
+    }
+}
+
+#[cfg(test)]
+mod image_generation_settings_tests {
+    use super::*;
+    #[test]
+    fn validates_optional_image_binding() {
+        for value in [
+            json!({}),
+            json!({"imageGeneration": null}),
+            json!({"imageGeneration": {"providerId": "p", "modelId": "image"}}),
+        ] {
+            assert!(validate_settings_value(&value).is_ok());
+        }
+        for value in [
+            json!(false),
+            json!({}),
+            json!({"providerId": "p", "modelId": " "}),
+        ] {
+            assert!(validate_settings_value(&json!({"imageGeneration": value})).is_err());
+        }
     }
 }

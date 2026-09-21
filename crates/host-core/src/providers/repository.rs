@@ -8,7 +8,7 @@ pub(crate) fn provider_from_row(
     let id: String = row.get(0)?;
     let legacy_model_id: Option<String> = row.get(9)?;
     let config_raw: String = row.get(11).unwrap_or_else(|_| "{}".to_string());
-    let models = config_model_bindings(&config_raw, legacy_model_id.clone());
+    let models = config_model_bindings(&config_raw, legacy_model_id.clone(), &id);
     let has_api_key = secret_ref.as_ref().map(|r| secrets.has(r)).unwrap_or(false);
     let has_oauth = secrets.has(&secret_ref_for_provider_oauth(&id));
     Ok(ProviderPublic {
@@ -181,6 +181,15 @@ pub fn update_provider(
     if let Some(models) = input.models.as_deref() {
         validate_model_aliases(models)?;
     }
+    let raw_config: String = db.conn().query_row(
+        "SELECT config_json FROM providers WHERE id = ?1",
+        params![input.id],
+        |row| row.get(0),
+    )?;
+    // Do not let a partial read silently replace unreadable stored bindings.
+    if input.models.is_some() {
+        ensure_model_bindings_update_safe(&raw_config)?;
+    }
     // Derive from the API key ref directly: `has_secret` now also covers an
     // OAuth credential, so reusing it here would stamp an api_key ref onto a
     // provider that only ever signed in with a vendor account.
@@ -192,11 +201,6 @@ pub fn update_provider(
         upsert_secret_meta(db, &api_key_ref, &input.id, &backend)?;
         secret_ref = Some(api_key_ref);
     }
-    let raw_config: String = db.conn().query_row(
-        "SELECT config_json FROM providers WHERE id = ?1",
-        params![input.id],
-        |row| row.get(0),
-    )?;
     // `Some(None)` clears an explicit levels override; plain `None` leaves it.
     let levels_update = if input.supported_thinking_levels.is_some() {
         Some(input.supported_thinking_levels.clone())

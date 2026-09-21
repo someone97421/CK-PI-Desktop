@@ -123,11 +123,18 @@ fn execute_inner(st: &AppState, p: &ToolsExecuteParams) -> Result<Value, JsonRpc
         if !args.contains_key("cadence") {
             return Err(invalid("cadence required"));
         }
-        if cadence == "hourly" && !args.contains_key("schedule") {
-            input["schedule"] = json!({"hour":0,"minute":0,"weekday":0});
-        } else if cadence == "manual" {
+        if cadence == "manual" {
             input["schedule"] = Value::Null;
         }
+    }
+    if args.get("cadence").and_then(Value::as_str) == Some("hourly")
+        && !args.contains_key("schedule")
+        && existing
+            .as_ref()
+            .and_then(|task| task.schedule.as_ref())
+            .is_none()
+    {
+        input["schedule"] = json!({"hour":0,"minute":0,"weekday":0});
     }
     if p.tool_name != "ScheduledTaskDelete"
         && cadence != "manual"
@@ -307,6 +314,81 @@ mod tests {
             call(&state, &session.id, "ScheduledTaskList", json!({})).await["content"]["tasks"],
             json!([])
         );
+    }
+
+    #[tokio::test]
+    async fn manual_to_hourly_update_needs_no_calendar_schedule() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = AppState::open(dir.path()).unwrap();
+        st.handshook = true;
+        st.db
+            .set_setting("app", &json!({"defaultPermissionMode":"auto"}))
+            .unwrap();
+        let session =
+            sessions::create_session(&st.db, None, Some("agent".into()), None, None, None).unwrap();
+        let state = Arc::new(Mutex::new(st));
+        let created = call(
+            &state,
+            &session.id,
+            "ScheduledTaskCreate",
+            json!({
+                "title":"Review", "prompt":"Review project", "cadence":"manual", "enabled":false
+            }),
+        )
+        .await;
+        assert_eq!(created["ok"], true, "{created}");
+        let id = created["content"]["task"]["id"].as_str().unwrap();
+        for cadence in ["daily", "weekly"] {
+            let rejected = call(
+                &state,
+                &session.id,
+                "ScheduledTaskUpdate",
+                json!({"id":id,"cadence":cadence}),
+            )
+            .await;
+            assert_eq!(rejected["errorCode"], "INVALID_PARAMS");
+        }
+        let before = crate::db::now_ms();
+        let updated = call(
+            &state,
+            &session.id,
+            "ScheduledTaskUpdate",
+            json!({"id":id,"cadence":"hourly"}),
+        )
+        .await;
+        let after = crate::db::now_ms();
+        assert_eq!(updated["ok"], true, "{updated}");
+        let task = &updated["content"]["task"];
+        assert_eq!(task["cadence"], "hourly");
+        assert_eq!(task["enabled"], false);
+        assert_eq!(task["prompt"], "Review project");
+        let next = crate::db::ts_to_ms(task["nextRunAt"].as_str().unwrap());
+        assert!((before + 3_600_000..=after + 3_600_000).contains(&next));
+        let renamed = call(
+            &state,
+            &session.id,
+            "ScheduledTaskUpdate",
+            json!({"id":id,"title":"Renamed"}),
+        )
+        .await;
+        assert_eq!(renamed["content"]["task"]["nextRunAt"], task["nextRunAt"]);
+        let custom = json!({"hour":15,"minute":30,"weekday":2,"weekdays":[2,4]});
+        let configured = call(
+            &state,
+            &session.id,
+            "ScheduledTaskUpdate",
+            json!({"id":id,"cadence":"weekly","schedule":custom}),
+        )
+        .await;
+        assert_eq!(configured["ok"], true, "{configured}");
+        let hourly = call(
+            &state,
+            &session.id,
+            "ScheduledTaskUpdate",
+            json!({"id":id,"cadence":"hourly"}),
+        )
+        .await;
+        assert_eq!(hourly["content"]["task"]["schedule"], custom);
     }
 
     #[test]

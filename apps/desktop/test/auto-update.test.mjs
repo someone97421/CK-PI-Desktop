@@ -263,6 +263,11 @@ test("packaging publishes an electron-updater feed for GitHub Releases", () => {
     `this-is-a-agent-Portable-${pkg.buildVersionLabel}-` + '${arch}.${ext}',
   );
   assert.equal(pkg.build.portable.requestExecutionLevel, "user");
+  assert.equal(
+    pkg.build.portable.unpackDirName,
+    "PI-Desktop-Portable",
+    "portable extraction path stays stable for Windows taskbar identity",
+  );
   // The upload step must carry every updater feed, and the release publishes
   // all platforms unfiltered (D126/D285).
   assert.match(releaseWorkflowSource, /release\/\*\.zip/);
