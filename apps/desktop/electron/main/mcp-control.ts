@@ -211,6 +211,8 @@ const CONTROL_OPERATION_SPECS: OperationSpec[] = [
   spec("agentAbort", "agent/abort", "Abort an active Agent turn.", "write", ["request"]),
   spec("agentStop", "agent/stop", "Request a graceful Agent stop.", "write", ["request"]),
   spec("agentGetStatus", "agent/getStatus", "Read Agent runtime status.", "read", ["sessionId"]),
+  spec("subagentRecallStatus", "subagent/recallStatus", "Read one subagent execution's recall status.", "read", ["{sessionId,delegationId}"]),
+  spec("subagentStop", "subagent/stop", "Stop one subagent execution or revoke its recall.", "write", ["{sessionId,delegationId,expectedExecution?}"]),
   // The Host-owned turn queue. `queue/edit` is not an operation: the desktop
   // edits a queued prompt by removing it and restoring the composer draft.
   spec("agentQueueList", "queue/list", "List a session's Host-owned pending turns in delivery order.", "read", ["{sessionId}"]),

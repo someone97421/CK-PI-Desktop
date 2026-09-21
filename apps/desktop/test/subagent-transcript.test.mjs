@@ -8,10 +8,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const transcriptSource = await readTranscriptSource();
-const detailSource = transcriptSource.slice(
-  transcriptSource.indexOf("function delegateTaskDescription"),
-  transcriptSource.indexOf("/**\n * A truthful one-level graph", transcriptSource.indexOf("function delegateTaskDescription")),
-);
 const runtimeSource = await readFile(
   new URL("../../../packages/agent-runtime/src/runtime.ts", import.meta.url),
   "utf8",
@@ -125,23 +121,6 @@ test("a terminal tool event repairs a row lost during renderer reload", () => {
   assert.match(eventsSource, /toolName: message\.toolName \?\? completed\.toolName/);
 });
 
-test("the shared side-panel detail keeps the live conversation process", () => {
-  assert.match(transcriptSource, /delegate\?: SubagentRun/);
-  assert.match(detailSource, /function delegateTaskDescription\(message: UiMessage\)/);
-  assert.match(detailSource, /className="subagent-detail-hero"/);
-  assert.match(detailSource, /className="subagent-detail-task-card"/);
-  assert.match(detailSource, /taskOverflow/);
-  assert.match(detailSource, /setTaskOverflow\(\(current\) => \(taskExpanded \? current : overflowing\)\)/);
-  assert.match(detailSource, /aria-expanded=\{taskExpanded\}/);
-  assert.match(detailSource, /aria-controls=\{taskBodyId\}/);
-  assert.match(detailSource, /<SubagentRunRows/);
-  assert.match(detailSource, /scrollable=\{false\}/);
-  assert.match(transcriptSource, /className=\{`subagent-run-rows\$\{scrollable \? "" : " is-panel-flow"\}`\}/);
-  assert.match(transcriptSource, /onScroll=\{scrollable \? handleScroll : undefined\}/);
-  assert.match(transcriptSource, /\{scrollable && showJump \?/);
-  assert.doesNotMatch(detailSource, /<ToolDetailBlocks blocks=\{blocks\}/);
-});
-
 test("a Task row is expandable and names the delegate it used", () => {
   assert.match(
     transcriptSource,
@@ -176,7 +155,7 @@ test("a Task node shows the effective model after the subagent name", () => {
   );
 });
 
-test("a Task node and detail header show the effective thinking level", () => {
+test("a Task node shows the effective thinking level", () => {
   assert.match(
     runtimeSource,
     /modelId: provider\.modelId,\s*\n\s*thinkingLevel,/,
@@ -196,10 +175,6 @@ test("a Task node and detail header show the effective thinking level", () => {
   assert.match(
     transcriptSource,
     /className="subagent-topology-node-model"[\s\S]*?title=\{modelLabel\}[\s\S]*?aria-label=\{modelLabel\}/,
-  );
-  assert.match(
-    transcriptSource,
-    /className="subagent-detail-model"[\s\S]*?title=\{modelLabel\}[\s\S]*?aria-label=\{modelLabel\}/,
   );
 });
 

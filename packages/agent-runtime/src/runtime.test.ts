@@ -443,15 +443,12 @@ describe("DesktopAgentRuntime configuration matching", () => {
     const runtime = createRuntime();
     const prompt = (runtime as any).agent.state.systemPrompt as string;
 
-    expect(prompt).toContain("answer in the same language the user writes in");
-    expect(prompt).toContain(
-      "never leave the user with no new text for more than one tool batch or 60 seconds",
-    );
-    // The observed failure: a 2830-character conclusion written into thinking
-    // while the visible text stayed empty, twice in a row.
-    expect(prompt).toContain("must be answered in your visible text");
-    expect(prompt).toContain("Make the final message self-contained");
-    expect(prompt).toContain("Carry the work through end to end");
+    expect(prompt).toContain("answer in the user's language");
+    expect(prompt).toContain("update the user when findings, decisions, or blockers change");
+    expect(prompt).toContain("Keep updates substantive rather than narrating each tool batch");
+    expect(prompt).toContain("Make the final answer self-contained");
+    expect(prompt).toContain("Carry the work through end to end within the requested scope");
+    expect(prompt).toContain("When the criteria are met and permitted checks are complete, deliver the result");
 
     await runtime.dispose();
   });

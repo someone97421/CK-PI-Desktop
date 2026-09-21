@@ -53,7 +53,7 @@ import {
   ThinkingRow,
   useAutomaticDisclosure,
 } from "./shared";
-import { SubagentTopology } from "./SubagentDetail";
+import { SubagentTopology } from "./SubagentTopology";
 import { ToolRow } from "./ToolRow";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
 import { useAppStore } from "../../../stores/app-store";

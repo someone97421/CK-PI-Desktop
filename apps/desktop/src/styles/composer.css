@@ -49,6 +49,58 @@
   transition: width var(--chat-width-transition, var(--motion-duration-normal) var(--motion-ease-out));
 }
 
+/* 会话子代理总览独占一行，计入输入区高度，附件和发送控件不被覆盖。 */
+.subagent-strip {
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.subagent-strip-scroll {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  padding: 3px 2px;
+}
+
+.subagent-capsule-item { flex: 0 0 auto; max-width: min(220px, 75%); }
+
+.subagent-capsule {
+  --capsule-color: var(--ds-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--capsule-color) 24%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--capsule-color) 9%, var(--ds-bg-primary));
+  color: var(--capsule-color);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+
+.subagent-capsule.is-running { --capsule-color: #438bd5; }
+.subagent-capsule.is-completed { --capsule-color: var(--ds-success); }
+.subagent-capsule.is-failed { --capsule-color: var(--ds-error); }
+.subagent-capsule.is-timed_out,
+.subagent-capsule.is-denied { --capsule-color: var(--ds-warning); }
+.subagent-capsule:hover { background: color-mix(in srgb, var(--capsule-color) 17%, var(--ds-bg-primary)); }
+.subagent-capsule.is-selected { border-color: var(--capsule-color); box-shadow: 0 0 0 1px var(--capsule-color); }
+.subagent-capsule:focus-visible { outline: 2px solid var(--capsule-color); outline-offset: 2px; }
+.subagent-capsule-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-capsule-status { display: flex; align-items: center; justify-content: center; width: 12px; flex-shrink: 0; }
+.subagent-capsule-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: subagent-capsule-pulse 1.6s ease-in-out infinite; }
+.subagent-strip-retry { flex-shrink: 0; border: 0; background: transparent; color: var(--ds-text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+@keyframes subagent-capsule-pulse { 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .subagent-capsule-dot { animation: none; } }
+
 /* Asktool uses the same decision surface as Plan and Goal approval: it is
  * mounted in the transparent composer dock, so it paints the composer plate
  * with its shadow rather than the in-flow `--ds-tile` wash (03-permission-ux

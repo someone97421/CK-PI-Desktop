@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "local.subagent-observer",
+  "name": "子代理观测",
+  "version": "1.0.0",
+  "description": "在工作面板中查看当前会话的子代理任务、执行过程、进度汇报和快照状态。",
+  "i18n": {
+    "en": {
+      "name": "Subagent Observer",
+      "description": "Inspect subagent tasks, execution history, progress reports, and snapshot state for the current session."
+    },
+    "zh-CN": {
+      "name": "子代理观测",
+      "description": "在工作面板中查看当前会话的子代理任务、执行过程、进度汇报和快照状态。"
+    }
+  },
+  "author": "PI-Desktop",
+  "license": "MIT",
+  "categories": ["productivity", "official"],
+  "main": "main.js",
+  "contributes": {
+    "views": [
+      {
+        "id": "observer",
+        "title": { "en": "Subagents", "zh-CN": "子代理" },
+        "icon": "bot",
+        "entry": "views/index.html",
+        "order": 30
+      }
+    ]
+  },
+  "permissions": ["ui.view", "desktop.control"],
+  "engines": { "piDesktop": ">=0.9.0" },
+  "activationEvents": ["onStartup"]
+}
