@@ -243,3 +243,30 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 - 上游流程规则、发布检查脚本、额外语言、官方版本号及归档文档更新不纳入；维护简中与英文更新说明。同步前的 README 本地修改单独暂存，完成合并后恢复；未跟踪的 `release/` 不纳入提交。
 
 本轮进行了源码适配、独立差异审阅、暂存差异格式检查及 Git 合并关系核对；为核实接口，仅下载 npm 官方 Pi 0.86.1 包中的源码到会话临时目录阅读，未执行包代码。未运行测试、typecheck、构建、依赖安装、服务或浏览器预览，未操作用户实际数据库，未发布或推送。
+
+## 本轮增量：图片生成、运行时稳定性与模型绑定修复
+
+本轮固定上游目标为 `0111e306c120ad5820688d7608cb37bad8fbcc1f`，从 `f6dd5e28479c040bfcaa6dcb31305604dc1e4936` 增量同步，共 91 个提交、50 个非合并提交，上游版本为 `0.15.2`。合并前本地 HEAD 为 `4cd0091be`，在当前 `main` 使用正常 `git merge --no-ff --no-commit`，合并提交为 `535ac0bc3`，两个父提交分别为 `4cd0091be` 与上述上游 SHA；已通过 `git merge-base --is-ancestor` 确认祖先关系。
+
+用户评估后确认全部吸收，包括图片生成功能。
+
+采纳范围：
+
+- 聊天图片生成与编辑：设置中配置唯一生图模型（新增 `imageGeneration` 绑定），`GenerateImages` 工具权限与本地取消接线，批量生成，预览在 Chromium 解码验证，图片绑定从对话模型选择排除；新增内置 imagegen 技能与 `models.dev` 目录更新。
+- Agent 运行时稳定性：上下文估算按实际请求成本校准并加固边界；工具调用 ID 每次请求唯一（请求前视图去重）；子代理工具调用去重；成功响应后重置重试预算；续跑恢复加固；失败流可留下多行助手消息时移除整个失败后缀。
+- Composer 与聊天修复：工作区切换清 undo 历史、文件引用原生 undo 恢复、消息编辑草稿复制、URL 尾部标点与括号不进链接。
+- 定时任务修复：每小时任务不再要求日历字段；手动任务以 `workspace_bound` 标记保留工作区绑定（取代 fork 此前按路径判断的补修）。
+- 模型绑定与插件提供商修复：存储绑定逐条读取、degraded 更新保护（新增 `MODEL_BINDINGS_DEGRADED` 错误码）、插件提供商保留声明的 thinkingLevels。
+- MCP 市场加固：注册表 header 变量与 URL 隔离、未绑定 token 保持字面量、router fake-ip 源识别（沿用 fork 的 `allowFakeIp` 代理判定）；落地页插件崩溃与提供商重试加固。
+- 桌面杂项：项目名默认取主文件夹名、归档会话从项目打开恢复、插件崩溃诊断命名退出码、复制完整对话历史、便携版固定解压路径（`unpackDirName` 采用 fork 身份 `this-is-a-agent-Portable`）、CSS 优化警告清理、设置往返保留无限重试布尔值。
+- 按既有边界排除：上游版本号 0.15.2、GitHub CI、Vercel/docs 部署、docs 站点依赖、其他语种及更新日志、上游流程文档；`docs/archive/` 保持原归档快照，新增的上游归档文档不引入。
+
+适配与保留：
+
+- 子代理保留 fork 的每次请求上下文转换入口（`transformContext`/`prepareRequestContext`），不切换回上游本轮的回合边界保护；同时采纳上游的工具调用去重（`dedupeToolCalls`）与失败后缀清理，重试清尾仍经 fork 的 `setAgentMessages`。
+- 工具取消保持 fork 的全工具调用 ID 取消语义（所有工具注册取消接收器），未采用上游仅限 Bash/GenerateImages 的收窄；`getApiKey` 维持 fork 的 `providerRequestKey` 直取。
+- 定时任务取上游 `workspace_bound` 实现，fork 的旧路径判断补修由该字段取代。
+- 保留品牌、恐龙图标、日期版本（各 package/Cargo 版本字段维持 `2609.2121.5541`）、发布源、安装身份、独立缓存与共用业务目录互斥、schema 19 / protocol 11、模型绑定、Google fetch 兼容、分区字体字重与浅深配色、任务级过程抽屉、引用/批注/侧边对话、固定 275px 侧栏、内置终端及局域网远控插件；仅维护简中与英文。
+- 设置新增 `imageGeneration` 与 `infiniteProviderRetry` 均为可选字段，不执行数据库迁移。
+
+本轮进行了冲突处理、源码审阅与 Git 父提交/祖先关系核对；未运行测试、typecheck、构建、依赖安装、应用服务或浏览器预览，未操作用户实际数据库，未发布。推送待用户确认。
