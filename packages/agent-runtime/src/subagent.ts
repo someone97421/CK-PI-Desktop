@@ -207,6 +207,8 @@ export type SubagentRunOptions = {
    * Direct message and observer state restoration without model execution.
    */
   restoredCheckpoint?: SubagentCheckpoint;
+  /** Initial context used by focused callers and fallback boundary checks. */
+  initialMessages?: AgentMessage[];
   /** Primary model before fallback was applied, for faithful persistence restore */
   primaryProvider?: RuntimeProviderConfig;
 };
@@ -343,7 +345,7 @@ export class SubagentRun {
     }
     this.provider = opts.provider;
     this.thinkingLevel = opts.thinkingLevel;
-    let initialMessages: AgentMessage[] = [];
+    let initialMessages: AgentMessage[] = opts.initialMessages ? [...opts.initialMessages] : [];
 
     if (opts.restoredCheckpoint) {
       const cp = opts.restoredCheckpoint;
@@ -615,7 +617,7 @@ export class SubagentRun {
       })),
     ];
 
-    const snapshotMessages = this.agent.state.messages.filter(
+    const snapshotMessages: AgentMessage[] = this.agent.state.messages.filter(
       (message) => message.role !== "system",
     );
     const encodedMessages = encodeAgentMessages(snapshotMessages, validBindings);

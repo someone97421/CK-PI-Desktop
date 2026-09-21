@@ -628,7 +628,9 @@ export function encodeAgentMessages(
           toolCallId: typeof t.toolCallId === "string" ? t.toolCallId : "",
           toolName: typeof t.toolName === "string" ? t.toolName : "",
           content,
-          ...(t.details && typeof t.details === "object" ? { details: t.details } : {}),
+          ...(t.details && typeof t.details === "object" && !Array.isArray(t.details)
+            ? { details: t.details as Record<string, unknown> }
+            : {}),
           ...(addedToolNames && addedToolNames.length > 0 ? { addedToolNames } : {}),
           isError: Boolean(t.isError),
           timestamp: typeof t.timestamp === "number" ? t.timestamp : Date.now(),

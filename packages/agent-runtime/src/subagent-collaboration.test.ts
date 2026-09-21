@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAssistantMessageEventStream, Type, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
-import type { Agent, AgentTool } from "@earendil-works/pi-agent-core";
+import type { Agent, AgentTool, JsonValue } from "@earendil-works/pi-agent-core";
 import type { AgentEventEnvelope, SubagentDefinition } from "@pi-desktop/shared";
 import { SubagentObserver, type SubagentObservation } from "./subagent-observer.js";
 import { SubagentRun } from "./subagent.js";
@@ -272,7 +272,7 @@ describe("parent supervision connectivity", () => {
     const fixture = parent(2);
     expect(fixture.internal.agent.state.tools.some((tool: AgentTool) => tool.name === "TaskResume")).toBe(true);
     let stage = 0;
-    const call = (name: string, id: string, args: Record<string, unknown>): AssistantMessage => ({ ...reply(), stopReason: "toolUse",
+    const call = (name: string, id: string, args: Record<string, JsonValue>): AssistantMessage => ({ ...reply(), stopReason: "toolUse",
       content: [{ type: "toolCall", name, id, arguments: args }] });
     setStream(fixture.internal.agent, () => {
       const record = [...fixture.internal.delegations.values()][0] as any;
