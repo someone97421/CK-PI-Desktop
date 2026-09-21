@@ -32,7 +32,9 @@ import {
   type BeforeToolCallResult,
 } from "@earendil-works/pi-agent-core";
 import {
+  createInitialSystemMessage,
   isContextOverflow,
+  toToolDeclaration,
   type AssistantMessage,
 } from "@earendil-works/pi-ai";
 import {
@@ -415,9 +417,13 @@ export class SubagentRun {
       this.agent.state.messages = messages;
       return;
     }
-    const systemPrompt = this.agent.state.systemPrompt;
+    const system = createInitialSystemMessage(
+      this.agent.state.systemPrompt,
+      this.agent.state.tools.map(toToolDeclaration),
+    );
+    // 新版 core 从系统消息读取模型可见工具，不能只保留提示词文字。
     this.agent.state.messages = [
-      { role: "system", content: systemPrompt, timestamp: Date.now() },
+      ...(system ? [system] : []),
       ...messages.filter((message) => message.role !== "system"),
     ];
   }

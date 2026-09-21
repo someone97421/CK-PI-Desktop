@@ -22,6 +22,7 @@ import type { RuntimeProviderConfig } from "./provider-binding.js";
 type Request = {
   model: string;
   messages: Array<{ role: string; content: unknown; tool_calls?: unknown[] }>;
+  tools?: Array<{ type: string; function: { name: string; parameters: unknown } }>;
 };
 
 const SUMMARIZATION_MARK = "summarization assistant";
@@ -341,6 +342,11 @@ describe("subagent context checkpoints", () => {
     expect(executions).toBe(1);
     expect(f.summaries).toHaveLength(1);
     expect(f.works).toHaveLength(2);
+    for (const request of f.works) {
+      expect(request.tools).toEqual([expect.objectContaining({
+        type: "function", function: expect.objectContaining({ name: "Read", parameters: { type: "object", properties: {} } }),
+      })]);
+    }
     expect(JSON.stringify(f.works[1].messages)).not.toContain("xxxxxxx");
     expect(f.works[1].messages.some((message) => message.role === "tool")).toBe(false);
   });
@@ -404,6 +410,29 @@ it("keeps tool messages unique when no checkpoint is needed", async () => {
   expect(executions).toBe(1);
   expect(f.summaries).toHaveLength(0);
   expect(f.works).toHaveLength(2);
+  for (const request of f.works) {
+    expect(request.tools?.map((tool) => tool.function.name)).toEqual(["Read"]);
+  }
   expect(f.works[1].messages.flatMap((message) => message.tool_calls ?? [])).toHaveLength(1);
   expect(f.works[1].messages.filter((message) => message.role === "tool")).toHaveLength(1);
+});
+
+it("备用模型和召回请求仍携带子代理的工具声明", async () => {
+  const f = await fixture({ contextWindow: 32_000, maxTokens: 4_096, failFirst: true });
+  const fallback = { ...f.provider, id: "fallback", modelId: "fallback-model" };
+  const { run } = f.createRun({
+    fallbackModels: [{ key: "fallback/fallback-model", provider: fallback }],
+    tools: [{
+      name: "Read", label: "Read", description: "Read a file.", parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: "text", text: "file content" }], details: {} }),
+    }],
+  });
+  expect((await run.run()).status).toBe("completed");
+  expect(f.works).toHaveLength(2);
+  expect(f.works[1].model).toBe("fallback-model");
+  expect((await run.resume("继续检查", "turn-2", "task-2")).status).toBe("completed");
+  expect(f.works).toHaveLength(3);
+  for (const request of f.works) {
+    expect(request.tools?.map((tool) => tool.function.name)).toEqual(["Read"]);
+  }
 });

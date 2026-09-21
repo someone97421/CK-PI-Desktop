@@ -534,3 +534,38 @@ test("settled Task snapshots outrank stale lifecycle polling during a parallel f
   // History reconstruction must preserve success, rather than infer abortion.
   assert.equal(collectDelegationStatuses(items, { turnLive: false }).get("first"), "completed");
 });
+
+test("原 Task 仍为运行中时，子记录的完成回执结束卡片和计时", () => {
+  const item = task("child", "success", "running", { execution: 1, startedAt: 100 });
+  item.delegate = { items: [lifecycle("TaskExecution", {
+    delegationId: "child", execution: 1, status: "completed", startedAt: 100, completedAt: 200,
+  })] };
+  const staleList = lifecycle("TaskList", { delegations: [{ delegationId: "child", execution: 1, status: "running" }] });
+  for (const turnLive of [true, false]) {
+    const statuses = collectDelegationStatuses([item, staleList], { turnLive });
+    assert.equal(subagentOutcome(item.message, statuses), "completed");
+    assert.deepEqual(summarizeSubagentActivity([item], statuses), { total: 1, finished: 1, running: 0, issues: 0, warnings: 0 });
+  }
+  const timings = collectDelegationTimings([item, staleList]);
+  assert.deepEqual(delegationTimingBounds([item], timings), { startedAt: 100, completedAt: 200 });
+});
+
+test("子记录的失败回执提供终态和具体错误", () => {
+  const item = task("child", "success", "running");
+  const error = { code: "PROVIDER_ERROR", message: "Provider stopped with: MALFORMED_FUNCTION_CALL" };
+  item.delegate = { items: [lifecycle("TaskExecution", { delegationId: "child", status: "failed", error })] };
+  assert.equal(subagentOutcome(item.message, collectDelegationStatuses([item])), "failed");
+  assert.deepEqual(collectDelegationFailures([item]).get("child"), error);
+});
+
+test("其他任务和旧执行轮次的回执不能结束当前召回", () => {
+  const item = task("recall", "success", "running", { delegationId: "child", execution: 2, startedAt: 300 });
+  item.message.toolName = "TaskResume";
+  item.delegate = { items: [
+    lifecycle("TaskExecution", { delegationId: "child", execution: 1, status: "completed", completedAt: 200 }),
+    lifecycle("TaskExecution", { delegationId: "other", execution: 2, status: "failed", completedAt: 400, error: { code: "OTHER" } }),
+  ] };
+  assert.equal(subagentOutcome(item.message, collectDelegationStatuses([item], { turnLive: true })), "running");
+  assert.equal(collectDelegationTimings([item]).get("child:2").completedAt, undefined);
+  assert.equal(collectDelegationFailures([item]).size, 0);
+});

@@ -114,6 +114,22 @@ function addTiming(
   });
 }
 
+/** 执行回执归在 Task 的子记录中，原 Task 行未刷新时仍可据此收尾。 */
+function* executionSnapshots(
+  items: readonly AssistantActivityItem[],
+): Generator<Record<string, unknown>> {
+  for (const item of items) {
+    if (!isDelegationActivityItem(item)) continue;
+    const key = delegationExecutionKey(asRecord(toolResultPayload(item.message)));
+    if (!key) continue;
+    for (const child of item.delegate?.items ?? []) {
+      if (child.kind !== "tool" || child.message.toolName !== "TaskExecution") continue;
+      const payload = asRecord(toolResultPayload(child.message));
+      if (payload && delegationExecutionKey(payload) === key) yield payload;
+    }
+  }
+}
+
 /**
  * Runtime timing for each delegation, including the initial `Task` start and
  * the later lifecycle snapshot that carries `completedAt`.
@@ -139,6 +155,7 @@ export function collectDelegationTimings(
       addTiming(timings, delegation);
     }
   }
+  for (const snapshot of executionSnapshots(items)) addTiming(timings, snapshot);
   return timings;
 }
 
@@ -204,6 +221,11 @@ export function collectDelegationStatuses(
     if (!payload) continue;
     ingestLifecycleStatuses(statuses, payload.delegations, false);
     ingestLifecycleStatuses(statuses, payload.stopped, true);
+  }
+  for (const snapshot of executionSnapshots(items)) {
+    const status = asDelegationStatus(snapshot.status);
+    const key = delegationExecutionKey(snapshot);
+    if (key && status && status !== "running") statuses.set(key, status);
   }
   // The runtime refreshes Task itself as soon as its delegate settles. This
   // terminal snapshot outranks an older TaskList/TaskWait running snapshot,
@@ -285,6 +307,11 @@ export function collectDelegationFailures(
         if (failure) failures.set(id, failure);
       }
     }
+  }
+  for (const snapshot of executionSnapshots(items)) {
+    const key = delegationExecutionKey(snapshot);
+    const failure = readDelegationFailure(snapshot);
+    if (key && failure) failures.set(key, failure);
   }
   for (const item of items) {
     if (!isDelegationActivityItem(item)) continue;
