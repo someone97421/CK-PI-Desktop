@@ -111,8 +111,12 @@ export async function turnProcessProbe() {
   try {
     render(messages);
     check(
-      container.querySelectorAll(".turn-process").length === 0,
-      "detailed does not wrap a process",
+      container.querySelectorAll(".turn-process").length === 1,
+      "detailed wraps one process per turn",
+    );
+    check(
+      header()?.getAttribute("aria-expanded") === "true" && visible(process()),
+      "detailed starts the process open",
     );
     check(
       visible(container.querySelector('[data-message-id="answer"]')),
@@ -155,7 +159,8 @@ export async function turnProcessProbe() {
     );
     render([streaming, read], true, null, "stream");
     check(
-      !header() && visible(container.querySelector('[data-message-id="stream"]')),
+      header()?.getAttribute("aria-expanded") === "true" &&
+        visible(container.querySelector('[data-message-id="stream"]')),
       "detailed keeps streamed text visible after later tools",
     );
     render([intro, read, { ...answer, status: "aborted" }], false, null, "aborted");
@@ -199,7 +204,7 @@ export async function turnProcessProbe() {
       "compact keeps tool payloads collapsed",
     );
     check(
-      header()?.textContent?.includes("4 steps"),
+      header()?.textContent?.includes("2 tools"),
       "process counts tools and progress once",
     );
     click(header());
@@ -288,6 +293,25 @@ export async function turnProcessProbe() {
       header()?.getAttribute("aria-expanded") === "true" && visible(process()),
       "an active tool failure opens an unclaimed process",
     );
+
+    const task = {
+      id: "settled-task", status: "completed" as const,
+      startedAt: intro.createdAt, endedAt: answer.createdAt,
+      usageIncomplete: true, finalMessageId: answer.id,
+    };
+    const taskMessages = messages.map((item) => ({ ...item, taskId: task.id, task }));
+    render(taskMessages, false, null, task.id);
+    const drawer = () => container.querySelector<HTMLDetailsElement>(".task-process-drawer");
+    check(drawer() && !drawer()?.open, "settled task starts collapsed");
+    const taskSearch = { sessionId: "s", messageId: "progress", query: "problem", requestId: 2 };
+    render(taskMessages, false, taskSearch, task.id);
+    check(drawer()?.open && visible(container.querySelector('[data-message-id="progress"]')),
+      "search reveals progress inside the settled task drawer");
+    click(container.querySelector(".task-process-summary"));
+    render(taskMessages, false, taskSearch, task.id);
+    check(!drawer()?.open, "a render preserves manual collapse after search");
+    render(taskMessages, false, { ...taskSearch, requestId: 3 }, task.id);
+    check(drawer()?.open, "a new search reveals the task drawer again");
 
     let saved: Partial<AppSettings> | undefined;
     flushSync(() =>

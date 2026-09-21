@@ -200,7 +200,10 @@ async function fixture(options: {
     const agent = (
       run as unknown as { agent: { state: { messages: AgentMessage[] } } }
     ).agent;
-    if (options.history?.length) agent.state.messages = [...options.history];
+    if (options.history?.length) {
+      const system = agent.state.messages.filter((message) => message.role === "system");
+      agent.state.messages = [...system, ...options.history];
+    }
     return { run, events, agent };
   };
   return {
@@ -258,7 +261,7 @@ describe("subagent context checkpoints", () => {
     expect(result.report).toContain(WORK_TEXT);
   });
 
-  it("fails without dropping tool history when the summary request cannot fit", async () => {
+  it("degrades to a bounded context when the summary request cannot fit", async () => {
     // ~6k tokens of history against a 4k hard limit and a summary input limit
     // of ~4.9k: the summary request would itself exceed the model's window.
     const f = await fixture({
@@ -270,11 +273,12 @@ describe("subagent context checkpoints", () => {
 
     const result = await run.run();
 
-    expect(result.status).toBe("failed");
-    expect(result.error?.code).toBe("CONTEXT_COMPACTION_FAILED");
+    expect(result.status).toBe("completed");
+    expect(result.contextDegraded).toBe(true);
+    expect(result.report).toContain("older working history was discarded");
     expect(f.summaries).toHaveLength(0);
-    expect(f.works).toHaveLength(0);
-    expect(JSON.stringify(agent.state.messages)).toContain("x".repeat(24_000));
+    expect(f.works).toHaveLength(1);
+    expect(JSON.stringify(agent.state.messages)).not.toContain("x".repeat(24_000));
     expect(result.contextCompactions).toBeUndefined();
   });
 
@@ -360,16 +364,16 @@ describe("subagent context checkpoints", () => {
     expect(f.requests[1]).toBe(f.summaries[0]);
   });
 
-  it("retains original tool history when the provider cuts the summary short", async () => {
+  it("degrades safely when the provider cuts the summary short", async () => {
     const f = await fixture({ contextWindow: 32_000, maxTokens: 4_096, history: historyWithToolOutput(80_000), summaryFinishReason: "length" });
     const { run, agent } = f.createRun();
     const result = await run.run();
-    expect(result.status).toBe("failed");
-    expect(result.error?.code).toBe("CONTEXT_COMPACTION_FAILED");
-    expect(f.works).toHaveLength(0);
-    expect(JSON.stringify(agent.state.messages)).toContain("x".repeat(80_000));
+    expect(result.status).toBe("completed");
+    expect(result.contextDegraded).toBe(true);
+    expect(f.works).toHaveLength(1);
+    expect(JSON.stringify(agent.state.messages)).not.toContain("x".repeat(80_000));
   });
-  it("checks the first fallback request against the smaller model window", async () => {
+  it("skips a fallback whose smaller window cannot hold the carried context", async () => {
     const f = await fixture({ contextWindow: 128_000, maxTokens: 4_096, history: historyWithToolOutput(80_000), failFirst: true });
     const fallback: RuntimeProviderConfig = {
       ...f.provider, id: "fallback", modelId: "fallback-model",
@@ -377,12 +381,12 @@ describe("subagent context checkpoints", () => {
     };
     const { run } = f.createRun({ fallbackModels: [{ key: "fallback/fallback-model", provider: fallback }] });
     const result = await run.run();
-    expect(result.status).toBe("completed");
-    expect(f.works).toHaveLength(2);
-    expect(f.summaries).toHaveLength(1);
-    expect(f.works[1].model).toBe("fallback-model");
-    expect(f.summaries[0].model).toBe("fallback-model");
-    expect(JSON.stringify(f.works[1].messages)).not.toContain("xxxxxxx");
+    expect(result.status).toBe("failed");
+    expect(f.works).toHaveLength(1);
+    expect(f.summaries).toHaveLength(0);
+    expect(result.modelFailures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ model: "fallback/fallback-model", code: "SUBAGENT_CONTEXT_OVERFLOW" }),
+    ]));
   });
 });
 

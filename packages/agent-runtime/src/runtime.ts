@@ -118,6 +118,7 @@ import {
   isRecord,
   nowIso,
   timestampMs,
+  toJsonObject,
   toJsonValue,
   usageFromPi,
   usageToPi,
@@ -136,7 +137,12 @@ import {
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { PathMutex } from "./path-lock.js";
-import { clampOutputToContext } from "./output-cap.js";
+import { clampOutputToContext, effectiveModelContextWindow } from "./output-cap.js";
+import {
+  contextBudgetFor,
+  retainedUserMessageBudget,
+  type ContextBudget,
+} from "./context-budget.js";
 import {
   composeSubagentSystemPrompt,
   SubagentRun,
@@ -176,6 +182,7 @@ import {
 import { genericModelConfig, visionFromModelConfig } from "./model-capabilities.js";
 import type { ProjectInstructions } from "./project-instructions.js";
 import { projectInstructionsPrompt } from "./project-instructions-prompt.js";
+import type { CustomSystemPrompt } from "./custom-system-prompt.js";
 import { projectMemoryPrompt } from "./project-memory-prompt.js";
 import {
   pluginSkillsPrompt,
@@ -189,18 +196,15 @@ import {
 } from "./opencode-session-headers.js";
 import {
   compactionSummaryWouldExceedBudget,
-  computeContextBudget,
   createFallbackCheckpointPlan,
   generateCompactionSummary,
   compactionThinkingLevel,
-  retainedUserMessageBudget,
   selectRetainedUserMessages,
   shapeCheckpointPreparation,
   stripCompactionFallbackNotice,
   COMPACTION_FALLBACK_KEEP_RECENT_RATIO,
   COMPACTION_FALLBACK_MAX_SUMMARY_CHARS,
   type CompactionRetentionMode,
-  type ContextBudget,
   type ShapedPreparation,
 } from "./context-compaction.js";
 /** Re-exported for callers that read the marker off the runtime module. */
@@ -820,7 +824,11 @@ export type AgentRuntimeOptions = {
   turnId?: string;
   provider: RuntimeProviderConfig;
   thinkingLevel: SessionThinkingLevel;
+  /** Persisted opt-in for retrying transient provider failures until success. */
+  infiniteProviderRetry?: boolean;
   systemPrompt?: string;
+  /** pi-compatible SYSTEM.md / APPEND_SYSTEM.md resolved for the session. */
+  customSystemPrompt?: CustomSystemPrompt;
   /** Session-bound workspace root used for path-scoped instruction requests. */
   projectPath?: string;
   /** Instructions resolved from the session's workspace. */
@@ -882,6 +890,7 @@ export type RuntimeMatchConfig = {
   pluginTools?: PluginToolDef[];
   pluginSkills?: PluginSkillDef[];
   trustedExtensions?: TrustedExtensionSpec[];
+  customSystemPrompt?: CustomSystemPrompt;
   projectInstructions?: ProjectInstructions;
   projectMemory?: string;
   projectPath?: string;
@@ -1269,14 +1278,15 @@ function toolResultFromUi(
   const rawRecord: Record<string, unknown> | undefined = isRecord(raw)
     ? raw
     : undefined;
-  const rawAddedToolNames = rawRecord?.addedToolNames;
-  const addedToolNames =
-    Array.isArray(rawAddedToolNames)
-      ? rawAddedToolNames.filter(
-          (name: unknown): name is string =>
-            typeof name === "string" && name.length > 0,
-        )
-      : [];
+  const detailsRecord = toJsonObject(rawRecord?.details);
+  const rawAddedToolNames =
+    detailsRecord.addedToolNames ?? rawRecord?.addedToolNames;
+  const addedToolNames = Array.isArray(rawAddedToolNames)
+    ? rawAddedToolNames.filter(
+        (name: unknown): name is string =>
+          typeof name === "string" && name.length > 0,
+      )
+    : [];
   if (blocks.length === 0) {
     blocks.push({
       type: "text",
@@ -1290,10 +1300,14 @@ function toolResultFromUi(
     toolCallId: m.toolCallId ?? "",
     toolName: m.toolName ?? "",
     content: blocks,
-    ...(isRecord(raw) && raw.details !== undefined
-      ? { details: raw.details }
+    ...(Object.keys(detailsRecord).length > 0 || addedToolNames.length > 0
+      ? {
+          details: {
+            ...detailsRecord,
+            ...(addedToolNames.length > 0 ? { addedToolNames } : {}),
+          },
+        }
       : {}),
-    ...(addedToolNames.length > 0 ? { addedToolNames } : {}),
     isError:
       interrupted ||
       m.toolStatus === "error" ||
@@ -1319,7 +1333,7 @@ function estimateToolTokenUsage(
         type: "toolCall" as const,
         id: toolCallId,
         name: toolName,
-        arguments: isRecord(args) ? args : { value: args },
+        arguments: toJsonObject(isRecord(args) ? args : { value: args }),
       },
     ],
     api: model.api,
@@ -1375,6 +1389,7 @@ export class DesktopAgentRuntime {
   private onEvent: (envelope: AgentEventEnvelope) => void;
   private streamSink: StreamCoalescer;
   private baseSystemPrompt: string;
+  private customSystemPrompt?: CustomSystemPrompt;
   private planningState: PlanningState;
   private pendingPlanId?: string;
   private currentAssistant?: UiMessage;
@@ -1471,6 +1486,8 @@ export class DesktopAgentRuntime {
   private providerTransientRetryAttempt = 0;
   /** Shared OpenCode-style 429 retry count across setup and stream phases. */
   private providerRateLimitRetryAttempt = 0;
+  /** Opt-in mode removes only the retry-count ceiling; abort and backoff stay intact. */
+  private infiniteProviderRetry = false;
   private activeProviderRetryAttempt = 0;
   private providerRetryInProgress = false;
   private suppressProviderRetryRunEnd = false;
@@ -1582,6 +1599,7 @@ export class DesktopAgentRuntime {
     this.planningState = proposalKindForMode(this.mode) ? "planning" : "inactive";
     this.provider = opts.provider;
     this.thinkingLevel = clampThinkingLevel(opts.provider, opts.thinkingLevel);
+    this.infiniteProviderRetry = opts.infiniteProviderRetry === true;
     this.host = opts.host;
     this.persistenceClient = new SubagentPersistenceClient(opts.host, opts.sessionId);
     this.hostCloseUnsubscribe = this.host.onClose?.(() => {
@@ -1604,6 +1622,7 @@ export class DesktopAgentRuntime {
     this.commandShell = opts.commandShell;
     this.scratchDir = opts.scratchDir;
     this.projectPath = opts.projectPath?.trim() || undefined;
+    this.customSystemPrompt = opts.customSystemPrompt;
     this.baseProjectInstructions = opts.projectInstructions;
     this.projectInstructions = opts.projectInstructions;
     this.projectMemory = opts.projectMemory?.trim() || undefined;
@@ -1624,7 +1643,7 @@ export class DesktopAgentRuntime {
     this.fullEntries = this.historyToEntries(opts.history ?? []);
     this.activeCompaction = opts.compaction;
     const skillsPrompt = pluginSkillsPrompt(this.pluginSkills);
-    const defaultSystemPrompt = [
+    const defaultSystemPromptParts = [
       DEFAULT_RUNTIME_SYSTEM_PROMPT,
       // Collaboration rules. Measured sessions ran hours with 380 assistant
       // messages and exactly one non-empty text body: a reasoning model reads
@@ -1683,8 +1702,17 @@ Delegation rules:
       // path-scoped instruction reload never drops it, and it stays ahead of
       // the instruction chain so the user's own AGENTS.md keeps the last word.
       ...(skillsPrompt ? [skillsPrompt] : []),
+    ];
+    // SYSTEM.md replaces only the product persona. Operational desktop rules
+    // remain active; APPEND_SYSTEM.md is composed before project instructions.
+    this.baseSystemPrompt = [
+      (
+        opts.customSystemPrompt?.replace ??
+        opts.systemPrompt ??
+        DEFAULT_RUNTIME_SYSTEM_PROMPT
+      ).trim(),
+      ...defaultSystemPromptParts.slice(1),
     ].join("\n\n");
-    this.baseSystemPrompt = opts.systemPrompt ?? defaultSystemPrompt;
     this.agent = new Agent({
       streamFn: (m, context, options) => {
         this.setAgentActivity({ phase: "waiting-model", since: Date.now() });
@@ -1779,6 +1807,7 @@ Delegation rules:
                 phase: "retrying",
                 since: Date.now(),
                 attempt,
+                ...(this.infiniteProviderRetry ? { infinite: true } : {}),
                 retryDelayMs: delayMs,
                 error: this.retryActivityError(error),
               });
@@ -1921,6 +1950,46 @@ Delegation rules:
     );
   }
 
+  /** Update the opt-in retry policy without rebuilding an idle runtime. */
+  setInfiniteProviderRetry(enabled: boolean): void {
+    if (this.disposed) throw new Error("runtime disposed");
+    this.infiniteProviderRetry = enabled;
+  }
+
+  private agentUsesTranscriptSystemMessages(): boolean {
+    let current: object | null = this.agent.state as unknown as object;
+    while (current) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, "systemPrompt");
+      if (descriptor) return typeof descriptor.get === "function" && !descriptor.set;
+      current = Object.getPrototypeOf(current) as object | null;
+    }
+    return false;
+  }
+
+  private setAgentSystemPrompt(prompt: string): void {
+    if (!this.agentUsesTranscriptSystemMessages()) {
+      (this.agent.state as unknown as { systemPrompt: string }).systemPrompt = prompt;
+      return;
+    }
+    const messages = this.agent.state.messages.filter((message) => message.role !== "system");
+    this.agent.state.messages = [
+      { role: "system", content: prompt, timestamp: Date.now() },
+      ...messages,
+    ];
+  }
+
+  private setAgentMessages(messages: AgentMessage[]): void {
+    if (!this.agentUsesTranscriptSystemMessages()) {
+      this.agent.state.messages = messages;
+      return;
+    }
+    const systemPrompt = this.agent.state.systemPrompt;
+    this.agent.state.messages = [
+      { role: "system", content: systemPrompt, timestamp: Date.now() },
+      ...messages.filter((message) => message.role !== "system"),
+    ];
+  }
+
   /** Switch the planning state on this Agent without creating another Agent. */
   setMode(mode: Mode): void {
     if (this.disposed) throw new Error("runtime disposed");
@@ -1937,7 +2006,7 @@ Delegation rules:
     this.activeDeferredToolNames.clear();
     this.rebuildToolCatalog();
     this.restoreDeferredToolsFromContext();
-    this.agent.state.systemPrompt = this.composeSystemPrompt();
+    this.setAgentSystemPrompt(this.composeSystemPrompt());
     this.agent.state.tools = this.activeTools();
     this.setPlanningState(planningState, details);
   }
@@ -1954,6 +2023,7 @@ Delegation rules:
       this.mode,
       [
         this.baseSystemPrompt,
+        ...(this.customSystemPrompt?.append ? [this.customSystemPrompt.append] : []),
         ...(optionalToolsPrompt ? [optionalToolsPrompt] : []),
         ...(projectPrompt ? [projectPrompt] : []),
         ...(memoryPrompt ? [memoryPrompt] : []),
@@ -2183,6 +2253,8 @@ Delegation rules:
       safeJson(this.commandShell) === safeJson(config.commandShell) &&
       safeJson(this.baseProjectInstructions ?? null) ===
         safeJson(config.projectInstructions ?? null) &&
+      safeJson(this.customSystemPrompt ?? null) ===
+        safeJson(config.customSystemPrompt ?? null) &&
       (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "") &&
       (this.projectPath ?? "") === (config.projectPath?.trim() ?? "") &&
       // Enabling a plugin, revoking agent.prompt.inject or renaming a skill
@@ -2576,9 +2648,7 @@ Delegation rules:
           type: "toolCall",
           id: m.toolCallId,
           name: m.toolName,
-          arguments: isRecord(m.toolArgs)
-            ? (m.toolArgs as Record<string, unknown>)
-            : {},
+          arguments: toJsonObject(m.toolArgs),
         });
         toolCarrier.stopReason = "toolUse";
         append(m.id, toolResultFromUi(m, timestamp));
@@ -3438,8 +3508,12 @@ Delegation rules:
               : `No matching on-demand tool. Available names: ${availablePreview.join(", ")}${remaining > 0 ? `, and ${remaining} more` : ""}.`;
         return {
           content: [{ type: "text", text }],
-          details: { query, matches, activated },
-          ...(activated.length > 0 ? { addedToolNames: activated } : {}),
+          details: {
+            query,
+            matches,
+            activated,
+            ...(activated.length > 0 ? { addedToolNames: activated } : {}),
+          },
         };
       },
     };
@@ -3912,6 +3986,7 @@ Delegation rules:
           parentToolCallId: toolCallId,
           task,
           provider,
+          infiniteProviderRetry: this.infiniteProviderRetry,
           thinkingLevel,
           fallbackModels: (definition.fallbackModels ?? []).map((pin) => ({
             key: subagentModelKey(pin),
@@ -4956,7 +5031,16 @@ Delegation rules:
               definition,
               provider,
               thinkingLevel,
+              infiniteProviderRetry: this.infiniteProviderRetry,
               fallbackModels,
+              inheritedThinkingLevel: this.thinkingLevel,
+              ...(this.compactionProvider || this.compactionCandidate
+                ? {
+                    compactionProvider:
+                      this.compactionProvider ?? this.compactionCandidate,
+                  }
+                : {}),
+              compactionEnabled: this.compactionEnabled,
               systemPrompt: composeSubagentSystemPrompt({
                 definition,
                 guidance: this.subagentGuidance(definition),
@@ -5313,9 +5397,15 @@ Delegation rules:
     for (const message of messages) {
       if (message.role !== "toolResult" || message.isError) continue;
       if (isMissingToolResultPlaceholder(message.content)) continue;
+      const details = toJsonObject(message.details);
+      const addedToolNames = Array.isArray(details.addedToolNames)
+        ? details.addedToolNames.filter(
+            (name): name is string => typeof name === "string",
+          )
+        : [];
       const names =
         message.toolName === TOOL_SEARCH_NAME
-          ? (message.addedToolNames ?? [])
+          ? addedToolNames
           : [message.toolName];
       for (const name of names) {
         if (this.deferredToolNames.has(name)) {
@@ -5599,7 +5689,7 @@ Delegation rules:
 
   private applyProjectInstructions(resolved: ProjectInstructions | undefined): void {
     this.projectInstructions = resolved;
-    this.agent.state.systemPrompt = this.composeSystemPrompt();
+    this.setAgentSystemPrompt(this.composeSystemPrompt());
   }
 
   /**
@@ -5691,8 +5781,9 @@ Delegation rules:
     if (!error.retriable) return undefined;
     if (error.code === "PROVIDER_RATE_LIMITED") {
       if (
+        !this.infiniteProviderRetry &&
         this.providerRateLimitRetryAttempt >=
-        PROVIDER_RATE_LIMIT_MAX_RETRIES
+          PROVIDER_RATE_LIMIT_MAX_RETRIES
       ) {
         return undefined;
       }
@@ -5706,7 +5797,10 @@ Delegation rules:
     // next must not multiply the budget or reset it by changing phase.
     void phase;
     if (!isTransientProviderRetryCode(error.code)) return undefined;
-    if (this.providerTransientRetryAttempt >= PROVIDER_TRANSIENT_MAX_RETRIES) {
+    if (
+      !this.infiniteProviderRetry &&
+      this.providerTransientRetryAttempt >= PROVIDER_TRANSIENT_MAX_RETRIES
+    ) {
       return undefined;
     }
     const attempt = ++this.providerTransientRetryAttempt;
@@ -5849,7 +5943,7 @@ Delegation rules:
       throw new Error("Cannot retry a provider stream without its failed assistant message");
     }
     messages.pop();
-    this.agent.state.messages = messages;
+    this.setAgentMessages(messages);
 
     this.providerRetryInProgress = true;
     this.requestStartedAt = Date.now();
@@ -5873,6 +5967,7 @@ Delegation rules:
         phase: "retrying",
         since: Date.now(),
         attempt: retryAttempt,
+        ...(this.infiniteProviderRetry ? { infinite: true } : {}),
         retryDelayMs: delayMs,
         error: this.retryActivityError(retryError),
       });
@@ -5908,11 +6003,11 @@ Delegation rules:
     // and this one carries nothing worth resending anyway.
     const messages = [...this.agent.state.messages];
     if (messages.at(-1)?.role === "assistant") messages.pop();
-    this.agent.state.messages = messages;
+    this.setAgentMessages(messages);
 
     const promptBefore = this.agent.state.systemPrompt;
     const promptWithNudge = `${promptBefore}\n\n${SILENT_TURN_NUDGE}`;
-    this.agent.state.systemPrompt = promptWithNudge;
+    this.setAgentSystemPrompt(promptWithNudge);
     this.silentTurnRerunInProgress = true;
     this.requestStartedAt = Date.now();
     this.setAgentActivity({ phase: "recovering", since: Date.now() });
@@ -5922,7 +6017,7 @@ Delegation rules:
       await this.waitForIdleAndSteering();
     } finally {
       if (this.agent.state.systemPrompt === promptWithNudge) {
-        this.agent.state.systemPrompt = promptBefore;
+        this.setAgentSystemPrompt(promptBefore);
       }
       this.silentTurnRerunInProgress = false;
       this.suppressSilentTurnRunEnd = false;
@@ -5958,7 +6053,7 @@ Delegation rules:
         this.overflowRecoveryAttempted = true;
         const messages = [...this.agent.state.messages];
         if (messages.at(-1)?.role === "assistant") messages.pop();
-        this.agent.state.messages = messages;
+        this.setAgentMessages(messages);
         const compacted = await this.runCompaction(
           "overflow",
           true,
@@ -6015,11 +6110,11 @@ Delegation rules:
     // bubble, so it must not be sent back as model context.
     const messages = [...this.agent.state.messages];
     if (messages.at(-1)?.role === "assistant") messages.pop();
-    this.agent.state.messages = messages;
+    this.setAgentMessages(messages);
 
     const promptBefore = this.agent.state.systemPrompt;
     const promptWithNudge = `${promptBefore}\n\n${PROGRESS_TURN_NUDGE}`;
-    this.agent.state.systemPrompt = promptWithNudge;
+    this.setAgentSystemPrompt(promptWithNudge);
     this.progressTurnRerunInProgress = true;
     this.requestStartedAt = Date.now();
     this.setAgentActivity({ phase: "recovering", since: Date.now() });
@@ -6030,7 +6125,7 @@ Delegation rules:
       await this.waitForIdleAndSteering();
     } finally {
       if (this.agent.state.systemPrompt === promptWithNudge) {
-        this.agent.state.systemPrompt = promptBefore;
+        this.setAgentSystemPrompt(promptBefore);
       }
       this.progressTurnRerunInProgress = false;
       this.suppressProgressTurnRunEnd = false;
@@ -6049,18 +6144,9 @@ Delegation rules:
     this.agent.state.tools = this.activeTools();
   }
 
-  /**
-   * The session's own budget numbers: the shared rule, measured on this
-   * session's transcript against the active model's window. The session model
-   * charges its system prompt and tool catalog through the provider's usage
-   * report, so nothing is added on top here — see `computeContextBudget`.
-   */
+  /** Shared model-window budget for the session transcript. */
   private contextBudget(messages: AgentMessage[]): ContextBudget {
-    return computeContextBudget({
-      messages,
-      contextWindow: this.model.contextWindow,
-      maxTokens: this.model.maxTokens,
-    });
+    return contextBudgetFor(this.model, messages);
   }
 
   private automaticCompactionNeeded(
@@ -6164,11 +6250,10 @@ Delegation rules:
   private rebuiltAgentContext(): AgentContext {
     const messages = this.liveSessionContext().messages;
     const tools = this.activeTools();
-    this.agent.state.messages = messages;
+    this.setAgentMessages(messages);
     this.agent.state.tools = tools;
     return {
-      systemPrompt: this.agent.state.systemPrompt,
-      messages,
+      messages: this.agent.state.messages,
       tools,
     };
   }
@@ -6243,12 +6328,7 @@ Delegation rules:
     return { context };
   }
 
-  /**
-   * Codex's two-tier `maybe_record`, as a system-prompt append for this turn
-   * only. Codex writes its reminders into conversation history; we have no
-   * channel for a synthetic message that stays out of the transcript, and the
-   * append is equivalent without persisting anything.
-   */
+  /** 本轮预算提醒作为系统消息传入模型，不写入持久化对话。 */
   private withContextBudgetReminder(
     context: AgentContext,
     budget: ContextBudget,
@@ -6258,7 +6338,10 @@ Delegation rules:
     if (!reminder) return context;
     return {
       ...context,
-      systemPrompt: `${context.systemPrompt}\n\n${reminder}`,
+      messages: [
+        ...context.messages,
+        { role: "system", content: reminder, timestamp: Date.now() },
+      ],
     };
   }
 
@@ -6580,7 +6663,7 @@ Delegation rules:
     // resetting its `claim_*` flags when the context window turns over.
     this.contextReminderClaimed = false;
     this.contextFallbackReminderClaimed = false;
-    this.agent.state.messages = this.liveSessionContext().messages;
+    this.setAgentMessages(this.liveSessionContext().messages);
     this.emit({
       type: "compaction_end",
       reason,
@@ -7161,7 +7244,7 @@ Delegation rules:
             | undefined;
           const overflow = isContextOverflow(
             event.message as AssistantMessage,
-            this.model.contextWindow || DEFAULT_CONTEXT_WINDOW,
+            effectiveModelContextWindow(this.model) || DEFAULT_CONTEXT_WINDOW,
           );
           const failed = stopReason === "error" || overflow;
           const aborted = stopReason === "aborted";
@@ -7410,7 +7493,7 @@ Delegation rules:
             // anything else should that order ever change.
             const messages = this.agent.state.messages;
             if (messages.at(-1) === event.message) {
-              this.agent.state.messages = messages.slice(0, -1);
+              this.setAgentMessages(messages.slice(0, -1));
             }
           } else if (!failed && !aborted && !emptyResponse) {
             this.appendLiveEntry(assistantId, event.message);
@@ -7637,7 +7720,7 @@ Delegation rules:
     const userMessageId = this.pendingUserMessageId || randomUUID();
     this.pendingUserMessageId = undefined;
     this.appendLiveEntry(userMessageId, incomingUserMessage);
-    this.agent.state.messages = this.liveSessionContext().messages;
+    this.setAgentMessages(this.liveSessionContext().messages);
   }
 
   private failBeforeProviderRequest(
@@ -7729,7 +7812,7 @@ Delegation rules:
       timestamp: Date.now(),
     };
     this.appendLiveEntry(internalId, internalMessage);
-    this.agent.state.messages = this.liveSessionContext().messages;
+    this.setAgentMessages(this.liveSessionContext().messages);
     this.setAgentActivity({ phase: "starting", since: Date.now() });
     await this.agent.continue();
     await this.waitForIdleAndSteering();
@@ -7874,8 +7957,9 @@ Delegation rules:
       },
       (acc, next) => ({ ...(acc ?? {}), ...next }),
     );
-    this.agent.state.systemPrompt =
-      typeof result?.systemPrompt === "string" ? result.systemPrompt : base;
+    this.setAgentSystemPrompt(
+      typeof result?.systemPrompt === "string" ? result.systemPrompt : base,
+    );
   }
 
   /**
@@ -7985,7 +8069,9 @@ Delegation rules:
   private retainPendingSteering(): void {
     this.agent.clearSteeringQueue();
     for (const [message, id] of this.pendingSteering) {
-      if (!this.agent.state.messages.includes(message)) this.agent.state.messages = [...this.agent.state.messages, message];
+      if (!this.agent.state.messages.includes(message)) {
+        this.setAgentMessages([...this.agent.state.messages, message]);
+      }
       this.appendLiveEntry(id, message);
     }
     this.pendingSteering.clear();

@@ -151,6 +151,7 @@ function createRuntime(
     compactionStrategy: CompactionStrategy;
     projectPath: string;
     scratchDir: string;
+    customSystemPrompt: import("./custom-system-prompt.js").CustomSystemPrompt;
     projectInstructions: import("./project-instructions.js").ProjectInstructions;
     projectMemory: string;
     pluginTools: PluginToolDef[];
@@ -178,6 +179,7 @@ function createRuntime(
     compactionStrategy: overrides.compactionStrategy,
     projectPath: overrides.projectPath,
     scratchDir: overrides.scratchDir,
+    customSystemPrompt: overrides.customSystemPrompt,
     pluginTools: overrides.pluginTools,
     subagents: overrides.subagents,
     subagentProviders: overrides.subagentProviders,
@@ -224,6 +226,7 @@ function runtimeMatches(
     pluginTools: (runtime as any).pluginTools,
     pluginSkills: (runtime as any).pluginSkills,
     projectInstructions: (runtime as any).baseProjectInstructions,
+    customSystemPrompt: (runtime as any).customSystemPrompt,
     projectMemory: (runtime as any).projectMemory,
     projectPath: (runtime as any).projectPath,
     commandShell: (runtime as any).commandShell,
@@ -233,6 +236,100 @@ function runtimeMatches(
     ...overrides,
   });
 }
+
+describe("custom system prompt files (issue #542)", () => {
+  const persona = "You are Custom, a specialized assistant.";
+  const appendix = "MARKER-XYZ-123 Always end with the marker.";
+
+  function promptOf(runtime: DesktopAgentRuntime): string {
+    return (runtime as any).agent.state.systemPrompt as string;
+  }
+
+  it("replaces only the persona, keeping operational rules", async () => {
+    const runtime = createRuntime({
+      customSystemPrompt: { replace: persona },
+    });
+    const prompt = promptOf(runtime);
+
+    expect(prompt).toContain(persona);
+    expect(prompt).not.toContain("You are PI-Desktop");
+    // Operational rules from the default prompt must survive the replacement.
+    expect(prompt).toContain("Collaboration: answer in the same language");
+    expect(prompt).toContain("Searching and reading: prefer the Read");
+    expect(prompt).toContain("multi_tool_use.parallel");
+    expect(prompt).toContain("Editing workflow: use the built-in Edit or Write tool");
+    expect(prompt).toContain("You are operating in Agent mode.");
+
+    await runtime.dispose();
+  });
+
+  it("appends APPEND_SYSTEM.md after the base prompt and before project instructions", async () => {
+    const runtime = createRuntime({
+      customSystemPrompt: { append: appendix },
+      projectInstructions: {
+        entries: [{ source: "AGENTS.md", content: "Run unit tests." }],
+      },
+    });
+    const prompt = promptOf(runtime);
+
+    expect(prompt).toContain(appendix);
+    expect(prompt).toContain("You are PI-Desktop");
+    expect(prompt).toContain("Run unit tests.");
+    expect(prompt.indexOf(appendix)).toBeGreaterThan(
+      prompt.indexOf("You are PI-Desktop"),
+    );
+    expect(prompt.indexOf("Run unit tests.")).toBeGreaterThan(
+      prompt.indexOf(appendix),
+    );
+
+    await runtime.dispose();
+  });
+
+  it("applies replace and append together", async () => {
+    const runtime = createRuntime({
+      customSystemPrompt: { replace: persona, append: appendix },
+    });
+    const prompt = promptOf(runtime);
+
+    expect(prompt).toContain(persona);
+    expect(prompt).toContain(appendix);
+    expect(prompt).not.toContain("You are PI-Desktop");
+
+    await runtime.dispose();
+  });
+
+  it("keeps the default prompt without custom files", async () => {
+    const runtime = createRuntime();
+    const prompt = promptOf(runtime);
+
+    expect(prompt).toContain("You are PI-Desktop");
+    expect(prompt).not.toContain("MARKER-XYZ-123");
+
+    await runtime.dispose();
+  });
+
+  it("retires the runtime when custom prompt content changes", async () => {
+    const runtime = createRuntime({
+      customSystemPrompt: { append: appendix },
+    });
+    expect(
+      runtimeMatches(runtime, { customSystemPrompt: { append: appendix } }),
+    ).toBe(true);
+    expect(
+      runtimeMatches(runtime, {
+        customSystemPrompt: { append: "Different appendix." },
+      }),
+    ).toBe(false);
+    expect(
+      runtimeMatches(runtime, { customSystemPrompt: undefined }),
+    ).toBe(false);
+    expect(
+      runtimeMatches(runtime, { customSystemPrompt: { replace: persona } }),
+    ).toBe(false);
+
+    await runtime.dispose();
+  });
+});
 
 describe("DesktopAgentRuntime configuration matching", () => {
   it("retires an idle runtime when project memory changes", async () => {
@@ -1894,7 +1991,7 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
     );
 
     const result = await search.execute("search-1", { query: "BrowserPreview" });
-    expect(result.addedToolNames).toEqual(["BrowserPreview"]);
+    expect(result.details.activated).toEqual(["BrowserPreview"]);
     expect(agent.state.tools.some((tool: any) => tool.name === "BrowserPreview")).toBe(
       false,
     );
@@ -1910,7 +2007,7 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
           toolName: "ToolSearch",
           content: result.content,
           details: result.details,
-          addedToolNames: result.addedToolNames,
+          addedToolNames: result.details.activated,
           isError: false,
           timestamp: Date.now(),
         },
@@ -2302,7 +2399,7 @@ describe("DesktopAgentRuntime plan transitions", () => {
       } else {
         // The silent assistant is popped before the re-run, and the nudge is
         // on the prompt that re-run actually sends.
-        expect(agent.state.messages).toHaveLength(1);
+        expect(agent.state.messages.filter((message: any) => message.role !== "system")).toHaveLength(1);
         expect(agent.state.systemPrompt).toContain("<no_output_recovery>");
       }
       await handleAgentEvent({ type: "agent_start" });
@@ -2393,7 +2490,7 @@ describe("DesktopAgentRuntime plan transitions", () => {
       } else {
         // The progress assistant is visible in the reused bubble but must be
         // removed before continue() rebuilds the model context.
-        expect(agent.state.messages).toHaveLength(1);
+        expect(agent.state.messages.filter((message: any) => message.role !== "system")).toHaveLength(1);
         expect(agent.state.messages.at(-1)?.role).toBe("user");
         expect(agent.state.systemPrompt).toContain("<progress_only_recovery>");
       }
@@ -2482,7 +2579,7 @@ describe("DesktopAgentRuntime plan transitions", () => {
           { role: "user", content: "execute the approved plan", timestamp: 1 },
         ];
       } else {
-        expect(agent.state.messages).toHaveLength(1);
+        expect(agent.state.messages.filter((message: any) => message.role !== "system")).toHaveLength(1);
         expect(agent.state.messages.at(-1)?.role).toBe("user");
         expect(agent.state.systemPrompt).toContain(
           attempts === 2 ? "<progress_only_recovery>" : "<no_output_recovery>",
@@ -2989,7 +3086,7 @@ describe("DesktopAgentRuntime session collaboration provenance", () => {
       // Accepted silence is not resent: neither the runtime entries nor pi's
       // transcript carry an empty assistant into the next request.
       expect((runtime as any).fullEntries).toHaveLength(0);
-      expect(agent.state.messages.some((message: { role: string }) => message.role === "assistant")).toBe(false);
+      expect(agent.state.messages.filter((message: { role: string }) => message.role !== "system").some((message: { role: string }) => message.role === "assistant")).toBe(false);
       expect(buildSessionContext((runtime as any).fullEntries).messages).toEqual([]);
       onEvent.mockClear();
       await runtime.prompt("Please answer", "human-user", "human-turn");
@@ -3116,7 +3213,7 @@ describe("DesktopAgentRuntime session collaboration provenance", () => {
       expect(events).toContainEqual(expect.objectContaining({
         type: "message_end", message: expect.objectContaining({ status: "complete" }),
       }));
-      expect(agent.state.messages.some((message: { role: string }) => message.role === "assistant")).toBe(false);
+      expect(agent.state.messages.filter((message: { role: string }) => message.role !== "system").some((message: { role: string }) => message.role === "assistant")).toBe(false);
     } finally { await runtime.dispose(); }
   });
 
@@ -3240,7 +3337,7 @@ describe("DesktopAgentRuntime tool history restore (D120)", () => {
         },
       ],
     });
-    const messages = (runtime as any).agent.state.messages;
+    const messages = (runtime as any).agent.state.messages.filter((message: any) => message.role !== "system");
 
     expect(messages.map((m: any) => m.role)).toEqual([
       "user",
@@ -3292,7 +3389,7 @@ describe("DesktopAgentRuntime tool history restore (D120)", () => {
         },
       ],
     });
-    const messages = (runtime as any).agent.state.messages;
+    const messages = (runtime as any).agent.state.messages.filter((message: any) => message.role !== "system");
 
     expect(messages.map((m: any) => m.role)).toEqual([
       "assistant",
@@ -3320,7 +3417,7 @@ describe("DesktopAgentRuntime tool history restore (D120)", () => {
         toolRow(),
       ],
     });
-    const messages = (runtime as any).agent.state.messages;
+    const messages = (runtime as any).agent.state.messages.filter((message: any) => message.role !== "system");
 
     expect(messages.map((m: any) => m.role)).toEqual([
       "user",
@@ -3356,7 +3453,7 @@ describe("DesktopAgentRuntime tool history restore (D120)", () => {
         }),
       ],
     });
-    const messages = (runtime as any).agent.state.messages;
+    const messages = (runtime as any).agent.state.messages.filter((message: any) => message.role !== "system");
 
     expect(messages[1]).toMatchObject({
       role: "toolResult",
@@ -3392,11 +3489,11 @@ describe("DesktopAgentRuntime tool history restore (D120)", () => {
         }),
       ],
     });
-    const messages = (runtime as any).agent.state.messages;
+    const messages = (runtime as any).agent.state.messages.filter((message: any) => message.role !== "system");
 
     expect(messages[1]).toMatchObject({
       role: "toolResult",
-      addedToolNames: ["BrowserPreview"],
+      details: { activated: ["BrowserPreview"] },
     });
 
     await runtime.dispose();
@@ -3415,7 +3512,7 @@ describe("DesktopAgentRuntime tool history restore (D120)", () => {
         toolRow({ toolCallId: undefined }),
       ],
     });
-    const messages = (runtime as any).agent.state.messages;
+    const messages = (runtime as any).agent.state.messages.filter((message: any) => message.role !== "system");
 
     expect(messages.map((m: any) => m.role)).toEqual(["assistant"]);
     expect(messages[0].content).toEqual([{ type: "text", text: "answer" }]);
@@ -3570,7 +3667,7 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
     agent.continue = vi.fn(async () => undefined);
     (runtime as any).automaticCompactionNeeded = vi.fn(() => false);
     (runtime as any).runCompaction = vi.fn(async () => {
-      expect(agent.state.messages).toEqual([user]);
+      expect(agent.state.messages.filter((message: any) => message.role !== "system")).toEqual([user]);
       return true;
     });
 
@@ -3690,7 +3787,7 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
     });
     agent.waitForIdle = vi.fn(async () => undefined);
     agent.continue = vi.fn(async () => {
-      expect(agent.state.messages).toHaveLength(1);
+      expect(agent.state.messages.filter((message: any) => message.role !== "system")).toHaveLength(1);
       await handleAgentEvent({ type: "agent_start" });
       await handleAgentEvent({ type: "turn_start" });
       await handleAgentEvent({
@@ -3770,6 +3867,33 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
     await runtime.dispose();
   });
 
+  it("allows the opt-in retry mode to claim beyond both bounded budgets", async () => {
+    const runtime = createRuntime({ onEvent: vi.fn() });
+    runtime.setInfiniteProviderRetry(true);
+    const claim = (runtime as any).claimProviderRetry.bind(runtime);
+    const transient = classifyAgentError("fetch failed");
+    const rateLimited = classifyAgentError("429: too many requests");
+
+    for (let attempt = 1; attempt <= PROVIDER_TRANSIENT_MAX_RETRIES + 2; attempt += 1) {
+      expect(claim(transient, attempt % 2 === 0 ? "stream" : "request")).toBe(attempt);
+    }
+    for (let attempt = 1; attempt <= PROVIDER_RATE_LIMIT_MAX_RETRIES + 2; attempt += 1) {
+      expect(claim(rateLimited, attempt % 2 === 0 ? "stream" : "request")).toBe(attempt);
+    }
+    await runtime.dispose();
+  });
+
+  it("keeps the bounded retry policy when infinite mode is disabled", async () => {
+    const runtime = createRuntime({ onEvent: vi.fn() });
+    const claim = (runtime as any).claimProviderRetry.bind(runtime);
+    const transient = classifyAgentError("fetch failed");
+    for (let attempt = 1; attempt <= PROVIDER_TRANSIENT_MAX_RETRIES; attempt += 1) {
+      expect(claim(transient, "request")).toBe(attempt);
+    }
+    expect(claim(transient, "request")).toBeUndefined();
+    await runtime.dispose();
+  });
+
   it("retries a mid-stream rate-limit (429) failure in the same turn", async () => {
     const onEvent = vi.fn();
     const runtime = createRuntime({ onEvent });
@@ -3824,7 +3948,7 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
     });
     agent.waitForIdle = vi.fn(async () => undefined);
     agent.continue = vi.fn(async () => {
-      expect(agent.state.messages).toHaveLength(1);
+      expect(agent.state.messages.filter((message: any) => message.role !== "system")).toHaveLength(1);
       await handleAgentEvent({ type: "agent_start" });
       await handleAgentEvent({ type: "turn_start" });
       await handleAgentEvent({
@@ -4061,7 +4185,7 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
       promptDuringRerun = agent.state.systemPrompt;
       // The silent assistant must be gone: agentLoopContinue rejects a
       // transcript that ends with one.
-      expect(agent.state.messages).toHaveLength(1);
+      expect(agent.state.messages.filter((message: any) => message.role !== "system")).toHaveLength(1);
       await handleAgentEvent({ type: "agent_start" });
       await handleAgentEvent({ type: "turn_start" });
       await handleAgentEvent({
@@ -4225,7 +4349,7 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
       ],
     });
 
-    expect((runtime as any).agent.state.messages).toEqual([]);
+    expect((runtime as any).agent.state.messages.filter((message: any) => message.role !== "system")).toEqual([]);
     await runtime.dispose();
   });
 
@@ -4313,7 +4437,7 @@ describe("DesktopAgentRuntime compaction restore", () => {
       },
     });
 
-    const agentMessages = (runtime as any).agent.state.messages;
+    const agentMessages = (runtime as any).agent.state.messages.filter((message: any) => message.role !== "system");
     expect(agentMessages.map((message: any) => message.role)).toEqual([
       "compactionSummary",
       "user",
@@ -4562,9 +4686,9 @@ describe("DesktopAgentRuntime per-turn context protection", () => {
 
     // 19k left of a 224k limit is inside the first reminder tier, so the model
     // is told once. The claim then holds for the rest of this window.
-    expect(below.context.systemPrompt).toContain("<context_budget>");
-    expect(below.context.systemPrompt).toContain("new_context");
-    expect(stillBelow.context.systemPrompt).not.toContain("<context_budget>");
+    expect(JSON.stringify(below.context.messages)).toContain("<context_budget>");
+    expect(JSON.stringify(below.context.messages)).toContain("new_context");
+    expect(JSON.stringify(stillBelow.context.messages)).not.toContain("<context_budget>");
     // The reminder rides on the turn's context only; nothing is persisted.
     expect((runtime as any).agent.state.systemPrompt).not.toContain(
       "<context_budget>",
@@ -4584,7 +4708,7 @@ describe("DesktopAgentRuntime per-turn context protection", () => {
       });
     const hard = await prepareNextTurn(nextTurn);
 
-    expect(hard.context.systemPrompt).not.toContain("<context_budget>");
+    expect(JSON.stringify(hard.context.messages)).not.toContain("<context_budget>");
     expect(runCompaction).toHaveBeenCalledOnce();
     expect(runCompaction).toHaveBeenCalledWith(
       "threshold",
@@ -4750,15 +4874,15 @@ describe("DesktopAgentRuntime per-turn context protection", () => {
     const first = await (runtime as any).prepareNextTurn(nextTurn);
     const second = await (runtime as any).prepareNextTurn(nextTurn);
 
-    expect(first.context.systemPrompt).toContain(
+    expect(JSON.stringify(first.context.messages)).toContain(
       "the next request compacts this conversation",
     );
-    expect(second.context.systemPrompt).not.toContain("<context_budget>");
+    expect(JSON.stringify(second.context.messages)).not.toContain("<context_budget>");
     // Installing a checkpoint opens a new window, so both tiers come back.
     (runtime as any).contextReminderClaimed = false;
     (runtime as any).contextFallbackReminderClaimed = false;
     const afterCheckpoint = await (runtime as any).prepareNextTurn(nextTurn);
-    expect(afterCheckpoint.context.systemPrompt).toContain("<context_budget>");
+    expect(JSON.stringify(afterCheckpoint.context.messages)).toContain("<context_budget>");
 
     await runtime.dispose();
   });
@@ -5139,7 +5263,7 @@ describe("DesktopAgentRuntime per-turn context protection", () => {
       }),
     );
     expect((runtime as any).fullEntries).toHaveLength(2);
-    expect((runtime as any).agent.state.messages[0]).toEqual(
+    expect((runtime as any).agent.state.messages.filter((message: any) => message.role !== "system")[0]).toEqual(
       expect.objectContaining({ role: "compactionSummary" }),
     );
     expect(onEvent.mock.calls.map(([envelope]) => (envelope as any).event)).toContainEqual(
@@ -5410,7 +5534,7 @@ describe("DesktopAgentRuntime per-turn context protection", () => {
         }),
       }),
     ]);
-    expect(agent.state.messages).toEqual([
+    expect(agent.state.messages.filter((message: any) => message.role !== "system")).toEqual([
       expect.objectContaining({ role: "user", content: "oversized request" }),
     ]);
     const events = onEvent.mock.calls.map(([envelope]) => (envelope as any).event);

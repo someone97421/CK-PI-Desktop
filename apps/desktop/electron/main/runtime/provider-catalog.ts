@@ -181,6 +181,10 @@ export function createProviderCatalogRuntime({
     ) as T & { defaultCommandShell?: unknown };
     return {
       ...(value as T),
+      infiniteProviderRetry: (value as T & { infiniteProviderRetry?: unknown })
+        .infiniteProviderRetry === true
+        ? true
+        : undefined,
       defaultCommandShell: isCommandShellId(value.defaultCommandShell)
         ? value.defaultCommandShell
         : defaultCommandShellForPlatform(process.platform),
@@ -193,6 +197,7 @@ export function createProviderCatalogRuntime({
     }
     const value = settings as T & {
       defaultCommandShell?: unknown;
+      infiniteProviderRetry?: unknown;
       networkProxy?: unknown;
       appearance?: unknown;
     };
@@ -207,6 +212,14 @@ export function createProviderCatalogRuntime({
     ) {
       throw Object.assign(new Error("defaultCommandShell is invalid"), {
         errorCode: ErrorCodes.COMMAND_SHELL_INVALID,
+      });
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value, "infiniteProviderRetry") &&
+      typeof value.infiniteProviderRetry !== "boolean"
+    ) {
+      throw Object.assign(new Error("infiniteProviderRetry is invalid"), {
+        errorCode: ErrorCodes.INVALID_PARAMS,
       });
     }
     if (Object.prototype.hasOwnProperty.call(value, "networkProxy")) {

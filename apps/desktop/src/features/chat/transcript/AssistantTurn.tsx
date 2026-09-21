@@ -359,7 +359,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
     if (part.kind === "activity") return (
       <ActivityGroup
-        key={`activity-${part.items[0]?.message.id ?? index}`}
+        key={`activity-${part.items[0]?.message.id ?? index}-${part.items[0]?.kind ?? "activity"}${part.items[0]?.kind === "hostedSearch" ? `-${part.items[0].round.id}` : ""}`}
         items={part.items}
         endedAt={part.endedAt}
         isActive={part === activePart}
@@ -403,14 +403,20 @@ export const AssistantTurn = memo(function AssistantTurn({
       <div className="message-col">
         {settledTask ? (
           <>
-            <TaskProcessDrawer key={settledTask.id} task={settledTask}>
+            <TaskProcessDrawer key={settledTask.id} task={settledTask} processParts={process}>
               {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}
             </TaskProcessDrawer>
             {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}
           </>
         ) : isPlainHistory && groupProcess ? (
           <>
-            <TurnProcess processParts={process} turnParts={entry.parts} isActive={turnProcessActive}>
+            <TurnProcess
+              turnId={entry.id}
+              processParts={process}
+              turnParts={entry.parts}
+              isActive={turnProcessActive}
+              delegationStatuses={turnDelegationStatuses}
+            >
               {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}
             </TurnProcess>
             {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}

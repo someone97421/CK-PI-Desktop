@@ -150,7 +150,7 @@ describe("buildProviderModel OpenAI-compatible role compatibility", () => {
     expect(model.compat).toMatchObject({ supportsDeveloperRole: false });
     const messages = convertMessages(
       model,
-      { systemPrompt: "Follow the workspace rules.", messages: [] },
+      { messages: [{ role: "system", content: "Follow the workspace rules.", timestamp: Date.now() }] } as never,
       { supportsDeveloperRole: model.compat.supportsDeveloperRole } as any,
     );
 
@@ -172,7 +172,7 @@ describe("buildProviderModel OpenAI-compatible role compatibility", () => {
     expect(model.compat).toMatchObject({ supportsDeveloperRole: true });
     const messages = convertMessages(
       model,
-      { systemPrompt: "Use the provider's developer role.", messages: [] },
+      { messages: [{ role: "system", content: "Use the provider's developer role.", timestamp: Date.now() }] } as never,
       { supportsDeveloperRole: model.compat.supportsDeveloperRole } as any,
     );
 
@@ -233,8 +233,8 @@ describe("buildProviderModel OpenAI-compatible role compatibility", () => {
     const messages = convertMessages(
       model,
       {
-        systemPrompt: "Follow the workspace rules.",
         messages: [
+          { role: "system", content: "Follow the workspace rules.", timestamp: Date.now() },
           { role: "user", content: "hello", timestamp: Date.now() },
           {
             role: "assistant",
@@ -254,7 +254,7 @@ describe("buildProviderModel OpenAI-compatible role compatibility", () => {
             timestamp: Date.now(),
           },
         ],
-      },
+      } as never,
       {
         supportsDeveloperRole: false,
         requiresReasoningContentOnAssistantMessages: true,
@@ -353,8 +353,8 @@ describe("buildProviderModel OpenAI-compatible role compatibility", () => {
     const messages = convertMessages(
       model,
       {
-        systemPrompt: "Read the image.",
         messages: [
+          { role: "system", content: "Read the image.", timestamp: Date.now() },
           {
             role: "user",
             content: [
@@ -364,7 +364,7 @@ describe("buildProviderModel OpenAI-compatible role compatibility", () => {
             timestamp: Date.now(),
           },
         ],
-      },
+      } as never,
       { supportsDeveloperRole: false } as any,
     );
 

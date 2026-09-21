@@ -21,6 +21,7 @@ import {
 import type { PluginSkillDef } from "./plugin-skills-prompt.js";
 import type { SessionMessageOrigin, TrustedExtensionSpec } from "@pi-desktop/shared";
 import type { ProjectInstructions } from "./project-instructions.js";
+import type { CustomSystemPrompt } from "./custom-system-prompt.js";
 import {
   normalizeSupportedThinkingLevels,
   normalizeThinkingLevel,
@@ -97,6 +98,7 @@ type RuntimeParams = {
   /** Durable host turn ID for the prompt currently being executed. */
   turnId?: string;
   thinkingLevel?: SessionThinkingLevel;
+  infiniteProviderRetry?: boolean;
   provider: RuntimeProviderConfig;
   /**
    * Optional dedicated context-compaction model, fully resolved by Electron
@@ -119,6 +121,7 @@ type RuntimeParams = {
   scratchDir?: string;
   /** Session-bound workspace root supplied by Electron main. */
   projectPath?: string;
+  customSystemPrompt?: CustomSystemPrompt;
   projectInstructions?: ProjectInstructions;
   projectMemory?: string;
   compactionSettings?: ContextCompactionSettings;
@@ -359,6 +362,7 @@ async function runtimeFor(
     subagentProviders,
     subagentModelKeys,
     projectInstructions: params.projectInstructions,
+    customSystemPrompt: params.customSystemPrompt,
     projectMemory: params.projectMemory,
     projectPath: params.projectPath,
     commandShell: params.commandShell,
@@ -374,6 +378,7 @@ async function runtimeFor(
   }
   if (reusable) {
     reusable.setCompactionSettings(params.compactionSettings);
+    reusable.setInfiniteProviderRetry(params.infiniteProviderRetry === true);
     reusable.setMode(mode);
     return reusable;
   }
@@ -410,6 +415,7 @@ async function runtimeFor(
     provider,
     commandShell: params.commandShell,
     thinkingLevel,
+    infiniteProviderRetry: params.infiniteProviderRetry === true,
     history,
     compaction,
     compactionSettings: params.compactionSettings,
@@ -421,6 +427,7 @@ async function runtimeFor(
     subagentProviders,
     subagentModelKeys,
     projectPath: params.projectPath,
+    customSystemPrompt: params.customSystemPrompt,
     projectInstructions: params.projectInstructions,
     projectMemory: params.projectMemory,
     scratchDir:

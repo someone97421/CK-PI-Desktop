@@ -368,6 +368,10 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     ...settings,
     language: !settings.language || settings.language === "auto" ? "auto" : resolveLocale(settings.language),
     defaultMode: normalizeMode((settings as { defaultMode?: unknown }).defaultMode),
+    infiniteProviderRetry:
+      (settings as { infiniteProviderRetry?: unknown }).infiniteProviderRetry === true
+        ? true
+        : undefined,
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
     )
@@ -403,6 +407,7 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     largePasteThreshold?: unknown;
     fontScale?: unknown;
     chatContentMaxWidth?: unknown;
+    infiniteProviderRetry?: unknown;
     networkProxy?: unknown;
   };
   if (
@@ -437,6 +442,14 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
         errorCode: "INVALID_PARAMS",
       });
     }
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, "infiniteProviderRetry") &&
+    typeof value.infiniteProviderRetry !== "boolean"
+  ) {
+    throw Object.assign(new Error("infiniteProviderRetry is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
   }
   if (Object.prototype.hasOwnProperty.call(value, "networkProxy")) {
     const proxy = validateNetworkProxy(value.networkProxy);

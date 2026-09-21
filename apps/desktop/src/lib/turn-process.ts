@@ -1,5 +1,6 @@
 import type { AppSettings, UiMessage } from "@pi-desktop/shared";
 import type { AssistantTurnEntry, AssistantTurnPart } from "./assistant-turns";
+import { activityItemHasIssue } from "./activity-summary";
 
 type ThinkingDisplayMode = NonNullable<AppSettings["thinkingDisplayMode"]>;
 
@@ -45,19 +46,13 @@ export function hasFailedProcessTool(parts: readonly AssistantTurnPart[]): boole
   return parts.some(
     (part) =>
       part.kind === "activity" &&
-      part.items.some(
-        (item) =>
-          item.kind === "tool" &&
-          (item.message.toolStatus === "error" ||
-            item.message.toolStatus === "denied" ||
-            item.message.isError),
-      ),
+      part.items.some(activityItemHasIssue),
   );
 }
 
-/** Compact groups a turn into one process disclosure; detailed does not. */
+/** Both presentation modes expose the same process hierarchy. */
 export function shouldGroupTurnProcess(mode: ThinkingDisplayMode): boolean {
-  return mode === "compact";
+  return mode === "detailed" || mode === "compact";
 }
 
 /** The last activity chunk of a turn owns detailed-mode's default-open tool. */
@@ -72,13 +67,13 @@ export function isLastActivityPart(
   return false;
 }
 
-/** Compact process stays collapsed unless an active tool failed. */
+/** Detailed keeps narration visible; compact reveals active failures only. */
 export function shouldAutoOpenTurnProcess(
   mode: ThinkingDisplayMode,
   isActive: boolean,
   hasToolFailure: boolean,
 ): boolean {
-  return mode === "compact" && isActive && hasToolFailure;
+  return mode === "detailed" || (isActive && hasToolFailure);
 }
 
 /**
@@ -142,7 +137,7 @@ export function visibleProcessSteps(
       // Between provider streams the turn is still active but the last
       // reasoning row is complete; keep its process shell through that wait.
       if (
-        item.kind === "tool" ||
+        item.kind !== "thinking" ||
         mode === "detailed" ||
         (active && item.kind === "thinking" && !item.message.content.trim())
       ) {

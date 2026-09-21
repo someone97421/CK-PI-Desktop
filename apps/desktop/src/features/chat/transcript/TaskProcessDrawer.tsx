@@ -1,18 +1,28 @@
-import { useId, type ReactNode } from "react";
+import { useContext, useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { formatCompactTokenCount } from "@pi-desktop/shared";
-import type { AssistantTurnEntry } from "../../../lib/assistant-turns";
+import type { AssistantTurnEntry, AssistantTurnPart } from "../../../lib/assistant-turns";
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
+import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
+import { processContainsMessage } from "../../../lib/turn-process";
 import "./task-delivery.css";
 
 /** 只使用持久化的任务边界；旧历史不在视图层猜测结束时间。 */
-export function TaskProcessDrawer({ task, children }: {
+export function TaskProcessDrawer({ task, processParts, children }: {
   task: NonNullable<AssistantTurnEntry["task"]>;
+  processParts: readonly AssistantTurnPart[];
   children: ReactNode;
 }) {
   const { t } = useTranslation();
   const usageId = useId();
   const holdDisclosurePosition = useDisclosureAnchorNotifier();
+  const drawerRef = useRef<HTMLDetailsElement>(null);
+  const search = useContext(TranscriptSearchContext);
+  const revealRequest = search && processContainsMessage(processParts, search.messageId)
+    ? search.requestId : undefined;
+  useLayoutEffect(() => {
+    if (revealRequest !== undefined && drawerRef.current) drawerRef.current.open = true;
+  }, [revealRequest]);
   const start = task.startedAt ? Date.parse(task.startedAt) : NaN;
   const end = task.endedAt ? Date.parse(task.endedAt) : NaN;
   const seconds = Number.isFinite(start) && Number.isFinite(end) && end >= start
@@ -37,7 +47,7 @@ export function TaskProcessDrawer({ task, children }: {
   ].join(" · ");
 
   return (
-    <details className="task-process-drawer">
+    <details ref={drawerRef} className="task-process-drawer">
       <summary
         className="task-process-summary"
         title={details}

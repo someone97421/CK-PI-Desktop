@@ -584,8 +584,13 @@ export function encodeAgentMessages(
           `messages[${idx}]`,
         );
 
-        const addedToolNames = Array.isArray((t as any).addedToolNames)
-          ? ((t as any).addedToolNames as unknown[]).filter((n): n is string => typeof n === "string" && n.length > 0)
+        const detailAddedToolNames =
+          t.details && typeof t.details === "object" && !Array.isArray(t.details)
+            ? (t.details as Record<string, unknown>).addedToolNames
+            : undefined;
+        const rawAddedToolNames = detailAddedToolNames ?? (t as ToolResultMessage & { addedToolNames?: unknown }).addedToolNames;
+        const addedToolNames = Array.isArray(rawAddedToolNames)
+          ? (rawAddedToolNames as unknown[]).filter((n): n is string => typeof n === "string" && n.length > 0)
           : undefined;
 
         let content: string | SerializedUserContentPart[];
@@ -705,13 +710,19 @@ export function decodeAgentMessages(serialized: readonly SerializedAgentMessage[
         break;
       }
       case "toolResult": {
+        const details: Record<string, unknown> =
+          raw.details && typeof raw.details === "object" && !Array.isArray(raw.details)
+            ? { ...raw.details }
+            : {};
+        if (raw.addedToolNames && raw.addedToolNames.length > 0) {
+          details.addedToolNames = raw.addedToolNames;
+        }
         const tMsg: ToolResultMessage = {
           role: "toolResult",
           toolCallId: raw.toolCallId,
           toolName: raw.toolName,
           content: raw.content as any,
-          details: raw.details,
-          ...(raw.addedToolNames && raw.addedToolNames.length > 0 ? { addedToolNames: raw.addedToolNames } : {}),
+          ...(Object.keys(details).length > 0 ? { details } : {}),
           isError: raw.isError,
           timestamp: raw.timestamp,
         } as any;

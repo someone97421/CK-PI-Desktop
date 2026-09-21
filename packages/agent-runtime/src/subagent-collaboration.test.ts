@@ -27,7 +27,7 @@ function setStream(agent: Agent, respond: (context: Context, index: number) => A
   const contexts: Context[] = [];
   agent.streamFunction = (_model, context, options) => {
     if (index >= 10) throw new Error("400 fixture exceeded ten model requests");
-    contexts.push({ systemPrompt: context.systemPrompt, messages: structuredClone(context.messages) });
+    contexts.push({ messages: structuredClone(context.messages) });
     const stream = createAssistantMessageEventStream();
     if (options?.signal?.aborted) {
       queueMicrotask(() => stream.push({ type: "error", reason: "aborted", error: { ...reply(), stopReason: "aborted" } }));
