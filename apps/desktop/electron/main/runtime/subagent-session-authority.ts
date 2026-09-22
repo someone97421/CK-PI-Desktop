@@ -6,9 +6,18 @@ import type { HostProcess } from "../host-process";
 
 const MAX_TRANSCRIPT_BYTES = 512 * 1024 * 1024;
 
-/** 保守覆盖当前转录与再生成分支；不以 mtime 作为旧版本兼容证据。 */
-export function createSubagentSessionAuthority(dataDir: string, getHost: () => HostProcess | null) {
-  return async (sessionId: string): Promise<{ projectRealPath: string; watermark: string } | null> => {
+export type SubagentSessionAuthorityMode = "identity" | "history";
+export type SubagentSessionAuthority = (
+  sessionId: string,
+  mode?: SubagentSessionAuthorityMode,
+) => Promise<{ projectRealPath: string; watermark: string } | null>;
+
+/** 新会话登记只核对身份；历史快照核验与覆盖水位更新读取完整稳定转录。 */
+export function createSubagentSessionAuthority(
+  dataDir: string,
+  getHost: () => HostProcess | null,
+): SubagentSessionAuthority {
+  return async (sessionId: string, mode = "history"): Promise<{ projectRealPath: string; watermark: string } | null> => {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error("Invalid snapshot session identity");
     const host = getHost();
     if (!host) throw new Error("会话服务尚未就绪，暂不能校验快照。");
@@ -32,6 +41,9 @@ export function createSubagentSessionAuthority(dataDir: string, getHost: () => H
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT" || session.messageCount) throw error;
       return { projectRealPath, watermark: digest.update("no-transcript-directory").digest("hex") };
+    }
+    if (mode === "identity") {
+      return { projectRealPath, watermark: `identity:${digest.digest("hex")}` };
     }
     for (const suffix of [".jsonl", ".revisions.jsonl"]) {
       const path = join(directory, `${sessionId}${suffix}`);
