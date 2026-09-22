@@ -858,7 +858,6 @@ JSON-RPC 错误携带一个数字 `code` 以及 `data.errorCode`，后者是来�
 | 1001 | HOST_SHUTTING_DOWN | 主机在 EOF 后正在排空，拒绝了该调用 |
 | 1002 | INVALID_PARAMS | 架构验证失败 |
 | 1002 | MODEL_ALIAS_TOO_LONG | 提供商行别名超过 60 个码点 |
-| 1002 | MODEL_BINDINGS_DEGRADED | 存储模型绑定不可读；拒绝显式替换模型数组 |
 | 1003 | NOT_FOUND | 实体缺失（遗留槽位，为旧调用方保留） |
 | 1006 | RATE_LIMITED | 某个按调用方计的预算窗口已耗尽 |
 | 1007 | NOT_FOUND | 实体缺失 |

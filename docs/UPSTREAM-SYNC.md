@@ -8,12 +8,12 @@
 
 ## 同步状态
 
-- 最后核对的上游 SHA：`f6dd5e28479c040bfcaa6dcb31305604dc1e4936`。
-- 最后正式合入的上游 SHA：`f6dd5e28479c040bfcaa6dcb31305604dc1e4936`。
-- 对应本地合并提交：`c566fdf76b43748dbe692e2faedab5586b84ab7f`，两个父提交分别为 `dbcf424101e08c8f7f8538bb6fc6663efedaca9b` 和上述上游 SHA；已通过 `git merge-base --is-ancestor` 确认祖先关系。
-- 合并前本地提交：`dbcf424101e08c8f7f8538bb6fc6663efedaca9b`。本轮仅在本地合并，未推送。
-- 此次使用正常 `git merge --no-ff --no-commit` 建立合并关系，保留本 fork 定制及下方明确排除的改动。
-- 下次从上述正式合入的上游节点查看新增提交；本轮适配范围与排除项见“本轮增量：子代理上下文、多级折叠与模型重试”，无待决定功能项。
+- 最后核对的上游 SHA：`0111e306c120ad5820688d7608cb37bad8fbcc1f`。
+- 最后正式合入的上游 SHA：`0111e306c120ad5820688d7608cb37bad8fbcc1f`。
+- 对应本地合并提交：`535ac0bc3956b074df89796cd762cdd132251a5f`，两个父提交分别为 `4cd0091becb596d6ae128ac55b803f82e7e8289a` 和上述上游 SHA；已通过 `git merge-base --is-ancestor` 确认祖先关系。
+- 合并前本地提交：`4cd0091becb596d6ae128ac55b803f82e7e8289a`。本轮合并后的审查补修见文末，补修尚未提交、推送。
+- 此次使用正常 `git merge --no-ff --no-commit` 建立合并关系，fork 定制与排除项按下方适配记录维护。
+- 下次从上述正式合入的上游节点查看新增提交；本轮适配范围与排除项见“本轮增量：图片生成、运行时稳定性与模型绑定修复”，无待决定功能项。
 
 ## 已适配
 
@@ -270,3 +270,11 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 - 设置新增 `imageGeneration` 与 `infiniteProviderRetry` 均为可选字段，不执行数据库迁移。
 
 本轮进行了冲突处理、源码审阅与 Git 父提交/祖先关系核对；未运行测试、typecheck、构建、依赖安装、应用服务或浏览器预览，未操作用户实际数据库，未发布。推送待用户确认。
+
+### 合并后审查补修
+
+- 修正模型设置组件的多余闭合括号，以及子代理类重复的 `modelBinding()` 实现；保留生图设置和工具调用去重能力。
+- 根配置恢复 fork 名称、描述、pnpm 版本与 `scripts/build.mjs` 统一构建入口，补齐 `build:pi-host`、`version:stamp` 和侧边对话检查入口；保留本轮新增的图片生成与输入栏遮挡检查入口。
+- `pnpm-lock.yaml` 已通过 `pnpm install --lockfile-only --ignore-scripts` 同步 Lightning CSS 1.33.0 覆盖规则及关联依赖引用。命令成功，提示废弃依赖与 peer dependency 警告；未执行安装脚本。
+- 本轮误合入的 14 份归档文件恢复为合并前快照；同步状态更新为本轮真实上游 SHA 和合并提交。
+- 补修仅做源码与差异核对，未运行测试、typecheck、构建或服务；修改留在当前工作区，未提交、未推送。

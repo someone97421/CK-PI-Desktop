@@ -249,7 +249,6 @@ export function ModelConfigPage() {
     compactionProvider !== null &&
     providerReady(compactionProvider) &&
     providerOffersModel(compactionProvider, compactionModelId);
-  }
 
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
