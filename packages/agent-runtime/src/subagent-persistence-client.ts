@@ -148,8 +148,8 @@ export class SubagentPersistenceClient implements SubagentPersistencePort {
       this._supported = true;
       return res;
     } catch (err) {
-      this._claimed = true;
       if (this.isUnsupportedRpc(err)) {
+        this._claimed = true;
         this._supported = false;
         this._available = false;
         return {
@@ -159,12 +159,13 @@ export class SubagentPersistenceClient implements SubagentPersistencePort {
           reason: "Host does not support subagent persistence",
         };
       }
+      this._claimed = false;
       throw this.wrapPersistenceError(err);
     }
   }
 
   async beginExecution(req: SubagentBeginRequest): Promise<SubagentBeginReceipt> {
-    if (!this.memoryLedger.has(req.delegationId) && req.expectedExecution === 0) {
+    if (!this._claimed && !this.memoryLedger.has(req.delegationId) && req.expectedExecution === 0) {
       await this.claimSession();
       req = { ...req, instanceGeneration: this.instanceGeneration };
     }

@@ -60,15 +60,17 @@ export function ComposerStatus({
               requestTextWithoutAnnotations(item.content).trim() ||
               item.draft.fileReferences.map((reference) => reference.name).join(", ") ||
               t("chat.queuedPromptEmpty");
-            const admitting = isPendingQueuedPrompt(item);
-            const pending = admitting || item.sendPending === true;
-            const actionLabel = (text: string) => admitting ? `${text} · ${t("common.saving")}` : text;
+            const saving = isPendingQueuedPrompt(item);
+            const pending = saving || item.sendPending === true;
             // Send now locks only while its own request is in flight: a row the
             // Host already promoted locally must not stay locked, and neither
             // must a row whose steering request just finished.
             const sendNowLocked = approvalPending || pending;
             const actionLocked = approvalPending || pending;
             const editOrMoveLocked = actionLocked || item.priority !== undefined;
+            const actionLabel = (action: string) =>
+              saving ? `${action} · ${t("common.saving")}` :
+              item.sendPending ? `${action} · ${t("chat.sendNowPending")}` : action;
             return (
               <div
                 key={item.id}
@@ -104,14 +106,14 @@ export function ComposerStatus({
                 </TooltipButton>
                 <TooltipButton
                   type="button"
-                  className="composer-queued-prompt-send-now"
                   tooltip={actionLabel(t("chat.sendNow"))}
                   ariaLabel={actionLabel(t("chat.sendNow"))}
+                  className="composer-queued-prompt-send-now"
                   disabled={sendNowLocked}
                   aria-disabled={sendNowLocked}
                   onClick={() => void sendQueuedNow(item.id)}
                 >
-                  {admitting ? t("common.saving") : pending ? t("chat.sendNowPending") : t("chat.sendNow")}
+                  {saving ? t("common.saving") : pending ? t("chat.sendNowPending") : t("chat.sendNow")}
                 </TooltipButton>
                 <TooltipButton
                   type="button"

@@ -5,6 +5,7 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "修复子代理派发与会话保存并发时的登记失败，登记成功后连续派发不再重复校验转录。",
   "新增加密 WebDAV 配置云同步，支持同步进度、冲突处理和历史恢复，包含本 fork 的外观与独立压缩模型设置。",
   "支持多个生图候选模型和默认模型选择，默认开启宽松网络以连接局域网及自建服务。",
   "改进压缩失败后的最近上下文保留、超长摘要分块及原生搜索历史续跑，增加启动超时恢复。",
@@ -18,6 +19,7 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Fix subagent registration during concurrent session saves and avoid repeated transcript validation after successful registration.",
   "Add encrypted WebDAV configuration sync with progress, conflict handling and history restore, including fork appearance and dedicated compaction-model settings.",
   "Support multiple image-generation candidates and a default selection; enable relaxed networking by default for LAN and self-hosted services.",
   "Improve recent-context retention after failed compaction, chunked summaries and hosted-search continuation; add startup timeout recovery.",

@@ -260,7 +260,8 @@ export function ModelConfigPage() {
     compactionPinned &&
     compactionProvider !== null &&
     providerReady(compactionProvider) &&
-    providerOffersModel(compactionProvider, compactionModelId);
+    providerOffersModel(compactionProvider, compactionModelId) &&
+    !isImageGenerationModel(imageGenerationCandidates, compactionProvider.id, compactionModelId);
 
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
@@ -319,7 +320,9 @@ export function ModelConfigPage() {
   };
 
   /**
-   * Preserve the selected app default unless it was removed from the provider.
+   * Preserve the selected app defaults unless they were removed from the
+   * provider or no longer resolve, and let a newly added provider claim a
+   * default only while none resolves.
    */
   const afterSaved = async (
     saved: ProviderPublic,

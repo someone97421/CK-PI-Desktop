@@ -8,6 +8,7 @@ import {
   normalizeMode,
   resolveBindingContextWindow,
   trustedExtensionAgentKeyFromProviderId,
+  type AppSettings,
   type CommandShellCatalog,
   type McpServerRecord,
   type ModelBinding,
@@ -260,10 +261,15 @@ export function createSessionLaunchRuntime({
 
   async function resolveCompactionProvider(
     providers: RuntimeProvider[],
-    settings: { compactionProviderId?: string | null; compactionModelId?: string | null },
+    settings: Pick<AppSettings, "compactionProviderId" | "compactionModelId" | "imageGeneration" | "imageGenerationModels">,
   ): Promise<RuntimeProviderConfig | undefined> {
     const { compactionProviderId, compactionModelId } = settings;
     if (!compactionProviderId || !compactionModelId) return undefined;
+    if (isImageGenerationModel(
+      imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration),
+      compactionProviderId,
+      compactionModelId,
+    )) return undefined;
     const row = providers.find(
       (candidate) => candidate.id === compactionProviderId && candidate.enabled !== false,
     );

@@ -45,6 +45,7 @@ import {
   SubagentSnapshotFiles,
   type SnapshotKeyProtector,
 } from "./subagent-snapshot-files.js";
+import type { SubagentSessionAuthority } from "./subagent-session-authority.js";
 
 export const DEFAULT_RETENTION_DAYS = 30;
 export const MAX_SESSION_SNAPSHOTS = 100;
@@ -104,7 +105,7 @@ export interface StoredControlRecord extends SubagentControlRecord {
 export interface SubagentSnapshotStoreOptions {
   dataDir: string;
   protector: SnapshotKeyProtector;
-  sessionAuthority: (sessionId: string) => Promise<{ projectRealPath: string; watermark: string } | null>;
+  sessionAuthority: SubagentSessionAuthority;
   deliverEvent: (envelope: AgentEventEnvelope) => Promise<void>;
 }
 
@@ -132,11 +133,11 @@ function computeCommitDigest(checkpoint: SubagentCheckpoint, pendingDeliveries?:
 export class SubagentSnapshotStore implements SubagentPersistencePort {
   readonly root: string;
   readonly files: SubagentSnapshotFiles;
-  private readonly sessionAuthority: (sessionId: string) => Promise<{ projectRealPath: string; watermark: string } | null>;
+  private readonly sessionAuthority: SubagentSessionAuthority;
   private readonly deliverEvent: (envelope: AgentEventEnvelope) => Promise<void>;
   private readonly queue = new AsyncSerialQueue();
 
-  /** Sessions whose cold watermark has been verified against sessionAuthority in this owner session */
+  /** Sessions admitted in this owner process; cold sessions were history-verified before admission. */
   private readonly verifiedSessions = new Set<string>();
 
   /** Memory fence for revoked tasks; prevents resurrection even if disk write fails */
@@ -879,19 +880,45 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
         };
       }
 
-      const authority = await this.sessionAuthority(req.sessionId);
-      if (!authority) {
+      let sessionControl = await this.loadSessionControl(req.sessionId);
+      if (sessionControl?.isolated) {
         return {
           sessionId: req.sessionId,
-          instanceGeneration: 0,
+          instanceGeneration: sessionControl.instanceGeneration,
           available: false,
-          reason: "会话不存在或已删除",
+          reason: `会话已被隔离无法持久化: ${sessionControl.isolateReason || "外部未知变更"}`,
           settings,
         };
       }
 
-      let sessionControl = await this.loadSessionControl(req.sessionId);
+      // Repeated claims from the admitted owner are idempotent and do not re-read a live transcript.
+      if (
+        sessionControl &&
+        this.verifiedSessions.has(req.sessionId) &&
+        sessionControl.claimedRuntimeInstanceId === req.runtimeInstanceId &&
+        !sessionControl.closed
+      ) {
+        return {
+          sessionId: req.sessionId,
+          instanceGeneration: sessionControl.instanceGeneration,
+          available: true,
+          settings,
+        };
+      }
+
       if (!sessionControl) {
+        // There is no historical snapshot to authorize. Validate the live session identity and
+        // controlled directory now; recordCoverage/clean shutdown will replace this marker.
+        const authority = await this.sessionAuthority(req.sessionId, "identity");
+        if (!authority) {
+          return {
+            sessionId: req.sessionId,
+            instanceGeneration: 0,
+            available: false,
+            reason: "会话不存在或已删除",
+            settings,
+          };
+        }
         sessionControl = {
           sessionId: req.sessionId,
           projectRealPath: authority.projectRealPath,
@@ -906,17 +933,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
         await this.saveSessionControl(req.sessionId, sessionControl);
         this.verifiedSessions.add(req.sessionId);
       } else {
-        if (sessionControl.isolated) {
-          return {
-            sessionId: req.sessionId,
-            instanceGeneration: sessionControl.instanceGeneration,
-            available: false,
-            reason: `会话已被隔离无法持久化: ${sessionControl.isolateReason || "外部未知变更"}`,
-            settings,
-          };
-        }
-
-        // Verify watermark and dirty flag upon initial session admission
+        // A record not admitted during initialization is historical state and must be verified strictly.
         if (!this.verifiedSessions.has(req.sessionId)) {
           if (sessionControl.dirty) {
             sessionControl.isolated = true;
@@ -931,6 +948,16 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
             };
           }
 
+          const authority = await this.sessionAuthority(req.sessionId, "history");
+          if (!authority) {
+            return {
+              sessionId: req.sessionId,
+              instanceGeneration: sessionControl.instanceGeneration,
+              available: false,
+              reason: "会话不存在或已删除",
+              settings,
+            };
+          }
           if (authority.watermark !== sessionControl.coveredWatermark) {
             sessionControl.isolated = true;
             sessionControl.isolateReason = "SESSION_WATERMARK_MISMATCH";
@@ -943,23 +970,15 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
               settings,
             };
           }
-
           this.verifiedSessions.add(req.sessionId);
         }
 
-        // RuntimeInstanceId idempotency: only advance instanceGeneration if different instance claims
-        if (sessionControl.claimedRuntimeInstanceId === req.runtimeInstanceId && !sessionControl.closed) {
-          sessionControl.dirty = true;
-          sessionControl.updatedAt = Date.now();
-          await this.saveSessionControl(req.sessionId, sessionControl);
-        } else {
-          sessionControl.instanceGeneration += 1;
-          sessionControl.claimedRuntimeInstanceId = req.runtimeInstanceId;
-          sessionControl.closed = false;
-          sessionControl.dirty = true;
-          sessionControl.updatedAt = Date.now();
-          await this.saveSessionControl(req.sessionId, sessionControl);
-        }
+        sessionControl.instanceGeneration += 1;
+        sessionControl.claimedRuntimeInstanceId = req.runtimeInstanceId;
+        sessionControl.closed = false;
+        sessionControl.dirty = true;
+        sessionControl.updatedAt = Date.now();
+        await this.saveSessionControl(req.sessionId, sessionControl);
       }
 
       return {

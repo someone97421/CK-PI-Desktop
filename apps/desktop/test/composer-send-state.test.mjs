@@ -149,7 +149,7 @@ test("running prompts use a removable per-session queue with priority actions", 
   assert.match(composer, /disabled=\{sendNowLocked\}/);
   assert.match(
     composer,
-    /\{admitting \? t\("common\.saving"\) : pending \? t\("chat\.sendNowPending"\) : t\("chat\.sendNow"\)\}/,
+    /\{saving \? t\("common\.saving"\) : pending \? t\("chat\.sendNowPending"\) : t\("chat\.sendNow"\)\}/,
   );
   assert.equal((composer.match(/\sdisabled=\{actionLocked\}/g) ?? []).length, 1);
   assert.equal((composer.match(/\sdisabled=\{editOrMoveLocked\}/g) ?? []).length, 3);
@@ -233,7 +233,7 @@ test("cross-session agent_end cannot clear the active session's running flag", (
   )?.[0] ?? "";
   assert.ok(crossSession.length > 0);
   assert.match(crossSession, /return;/);
-  const agentEnd = handleEvents.match(/case "agent_end":\s*set\(\{ isRunning: false \}\)/);
+  const agentEnd = handleEvents.match(/case "agent_end":\s*\{?\s*set\(\{ isRunning: false \}\)/);
   assert.ok(agentEnd, "active-session agent_end clears isRunning");
 });
 
