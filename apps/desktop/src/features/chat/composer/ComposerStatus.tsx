@@ -60,7 +60,9 @@ export function ComposerStatus({
               requestTextWithoutAnnotations(item.content).trim() ||
               item.draft.fileReferences.map((reference) => reference.name).join(", ") ||
               t("chat.queuedPromptEmpty");
-            const pending = isPendingQueuedPrompt(item) || item.sendPending === true;
+            const admitting = isPendingQueuedPrompt(item);
+            const pending = admitting || item.sendPending === true;
+            const actionLabel = (text: string) => admitting ? `${text} · ${t("common.saving")}` : text;
             // Send now locks only while its own request is in flight: a row the
             // Host already promoted locally must not stay locked, and neither
             // must a row whose steering request just finished.
@@ -81,8 +83,8 @@ export function ComposerStatus({
                 <TooltipButton
                   type="button"
                   className="composer-queued-prompt-action composer-queued-prompt-move-up"
-                  tooltip={t("chat.moveQueuedPromptUp")}
-                  ariaLabel={t("chat.moveQueuedPromptUp")}
+                  tooltip={actionLabel(t("chat.moveQueuedPromptUp"))}
+                  ariaLabel={actionLabel(t("chat.moveQueuedPromptUp"))}
                   disabled={editOrMoveLocked}
                   aria-disabled={editOrMoveLocked}
                   onClick={() => void moveQueuedPrompt(item.id, "up")}
@@ -92,28 +94,30 @@ export function ComposerStatus({
                 <TooltipButton
                   type="button"
                   className="composer-queued-prompt-action composer-queued-prompt-move-down"
-                  tooltip={t("chat.moveQueuedPromptDown")}
-                  ariaLabel={t("chat.moveQueuedPromptDown")}
+                  tooltip={actionLabel(t("chat.moveQueuedPromptDown"))}
+                  ariaLabel={actionLabel(t("chat.moveQueuedPromptDown"))}
                   disabled={editOrMoveLocked}
                   aria-disabled={editOrMoveLocked}
                   onClick={() => void moveQueuedPrompt(item.id, "down")}
                 >
                   <IconArrowDown size={13} aria-hidden />
                 </TooltipButton>
-                <button
+                <TooltipButton
                   type="button"
                   className="composer-queued-prompt-send-now"
+                  tooltip={actionLabel(t("chat.sendNow"))}
+                  ariaLabel={actionLabel(t("chat.sendNow"))}
                   disabled={sendNowLocked}
                   aria-disabled={sendNowLocked}
                   onClick={() => void sendQueuedNow(item.id)}
                 >
-                  {pending ? t("chat.sendNowPending") : t("chat.sendNow")}
-                </button>
+                  {admitting ? t("common.saving") : pending ? t("chat.sendNowPending") : t("chat.sendNow")}
+                </TooltipButton>
                 <TooltipButton
                   type="button"
                   className="composer-queued-prompt-action composer-queued-prompt-edit"
-                  tooltip={t("chat.editQueuedPrompt")}
-                  ariaLabel={t("chat.editQueuedPrompt")}
+                  tooltip={actionLabel(t("chat.editQueuedPrompt"))}
+                  ariaLabel={actionLabel(t("chat.editQueuedPrompt"))}
                   disabled={editOrMoveLocked}
                   aria-disabled={editOrMoveLocked}
                   onClick={() => editQueuedPrompt(item.id)}
@@ -123,8 +127,8 @@ export function ComposerStatus({
                 <TooltipButton
                   type="button"
                   className="composer-queued-prompt-action composer-queued-prompt-remove"
-                  tooltip={t("chat.removeQueuedPrompt")}
-                  ariaLabel={t("chat.removeQueuedPrompt")}
+                  tooltip={actionLabel(t("chat.removeQueuedPrompt"))}
+                  ariaLabel={actionLabel(t("chat.removeQueuedPrompt"))}
                   disabled={actionLocked}
                   aria-disabled={actionLocked}
                   onClick={() => removeQueuedPrompt(item.id)}

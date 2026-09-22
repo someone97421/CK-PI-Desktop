@@ -34,6 +34,7 @@ export {
   type SourcedCatalogEntry,
 } from "./mcp-registry.js";
 export * from "./public-network.js";
+export * from "./network-policy.js";
 export * from "./skill-catalog.js";
 export * from "./skill-catalog-builtin.js";
 export * from "./model-config-import.js";

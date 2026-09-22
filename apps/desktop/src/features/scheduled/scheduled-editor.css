@@ -6,7 +6,9 @@
 }
 .scheduled-fields > * { min-width: 0; max-width: 100%; }
 .scheduled-fields .settings-menu-select-trigger {
-  height: 36px;
+  /* The editor is a form: its dropdowns are fields, so they take the shared
+     field metric rather than the compact Settings-row pill size. */
+  height: var(--ds-field-height);
   border-radius: var(--radius-md);
 }
 .scheduled-weekday-trigger { max-width: min(300px, 100%); }

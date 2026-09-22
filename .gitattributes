@@ -3,3 +3,7 @@
 /kill-dev.cmd text eol=crlf
 /scripts/stop-dev.ps1 text eol=crlf
 /plugins/lan-remote-control/dist/*.piplug binary
+
+# Generated diffs encode an empty context line as one significant space.
+# Keep other whitespace diagnostics enabled; source-file checks are unchanged.
+patches/*.patch whitespace=-blank-at-eol

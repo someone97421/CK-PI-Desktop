@@ -1,6 +1,10 @@
 use super::{json, plan_rpc_err, rpc_err, AppState, JsonRpcError, Value};
 use crate::{scheduled, sessions};
 
+#[cfg(test)]
+#[path = "scheduled_project_tests.rs"]
+mod project_tests;
+
 pub(super) fn handle(st: &AppState, method: &str, params: Value) -> Result<Value, JsonRpcError> {
     handle_in_workspace(
         st,
@@ -35,6 +39,21 @@ pub(super) fn handle_in_workspace(
         "scheduled.update" => {
             let mut params = params;
             validate_schedule_input(&params)?;
+            if matches!(
+                params.get("cadence").and_then(Value::as_str),
+                Some("daily" | "weekly")
+            ) && params.get("schedule").is_none()
+            {
+                let id = params.get("id").and_then(Value::as_str).unwrap_or("");
+                let existing = scheduled::get_task(&st.db, id)
+                    .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+                if existing.is_some_and(|task| task.schedule.is_some() && !task.calendar_configured)
+                {
+                    return Err(rpc_err(1002,
+                        "Confirm a calendar time and provide schedule when changing this task to Daily or Weekly",
+                        "INVALID_PARAMS"));
+                }
+            }
             if params.get("schedule").is_some() {
                 let id = params.get("id").and_then(Value::as_str).unwrap_or("");
                 let existing = scheduled::get_task(&st.db, id)
@@ -233,6 +252,70 @@ fn validate_schedule_input(params: &Value) -> Result<(), JsonRpcError> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn review_deleted_project_is_not_recreated_by_automatic_task() {
+        use std::sync::Arc;
+        use tokio::sync::{mpsc, Mutex};
+        let dir = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let mut st = AppState::open(dir.path()).unwrap();
+        st.handshook = true;
+        let path = st.workspace.set(project.path()).path;
+        sessions::create_session(
+            &st.db,
+            None,
+            Some("agent".into()),
+            None,
+            None,
+            Some(path.clone()),
+        )
+        .unwrap();
+        let task = handle(
+            &st,
+            "scheduled.create",
+            json!({
+                "title":"Review", "prompt":"Review project", "cadence":"hourly",
+                "schedule":{"hour":0,"minute":0,"weekday":0}
+            }),
+        )
+        .unwrap()["task"]
+            .clone();
+        let state = Arc::new(Mutex::new(st));
+        let removed = super::super::handle_request(
+            state.clone(),
+            "projects.remove",
+            json!({"path":path}),
+            mpsc::unbounded_channel().0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed["removed"], true);
+        let st = state.lock().await;
+        let count = || {
+            st.db
+                .conn()
+                .query_row("SELECT COUNT(*) FROM projects", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
+        assert_eq!(count(), 0);
+        st.db.conn().execute(
+            "UPDATE scheduled_tasks SET config_json = json_set(config_json, '$.nextRunAt', ?1) WHERE id = ?2",
+            rusqlite::params![crate::db::now_ms(), task["id"].as_str().unwrap()],
+        ).unwrap();
+        let launched = handle(
+            &st,
+            "scheduled.run",
+            json!({"id":task["id"],"automatic":true}),
+        );
+        assert_eq!(
+            count(),
+            0,
+            "Automatic admission resurrected the deleted project: {launched:?}"
+        );
+    }
+
     #[test]
     fn manual_task_keeps_saved_workspace_across_run_edit_and_restart() {
         for project_bound in [true, false] {
@@ -240,12 +323,7 @@ mod tests {
             let project_a = tempfile::tempdir().unwrap();
             let project_b = tempfile::tempdir().unwrap();
             let saved_path = project_bound.then(|| {
-                project_a
-                    .path()
-                    .canonicalize()
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned()
+                crate::db::canonical_project_path(&project_a.path().to_string_lossy()).unwrap()
             });
             let state = AppState::open(dir.path()).unwrap();
             let task = handle_in_workspace(
@@ -307,7 +385,8 @@ mod tests {
         .unwrap()["task"]
             .clone();
         let id = task["id"].as_str().unwrap();
-        let path = state.workspace.set(project.path()).path;
+        let path =
+            crate::db::canonical_project_path(&state.workspace.set(project.path()).path).unwrap();
         let run = handle(&state, "scheduled.run", json!({"id":id})).unwrap();
         let session = sessions::get_session(&state.db, run["sessionId"].as_str().unwrap())
             .unwrap()
@@ -362,7 +441,9 @@ mod tests {
         let mut state = AppState::open(dir.path()).unwrap();
         let original_project = tempfile::tempdir().unwrap();
         let different_project = tempfile::tempdir().unwrap();
-        let original_path = state.workspace.set(original_project.path()).path;
+        let original_path =
+            crate::db::canonical_project_path(&state.workspace.set(original_project.path()).path)
+                .unwrap();
         let task = handle(
             &state,
             "scheduled.create",

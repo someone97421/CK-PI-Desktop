@@ -61,6 +61,7 @@ export type TrustedExtensionLoadReport = {
 
 /** Interactive and status calls the sidecar sends to the desktop (spec §9). */
 export type TrustedExtensionUiRequest =
+  | { kind: "cancel"; requestId: string }
   | { kind: "notify"; message: string; level: "info" | "warning" | "error" }
   | { kind: "confirm"; title: string; message: string }
   | { kind: "select"; title: string; options: string[] }
@@ -69,15 +70,17 @@ export type TrustedExtensionUiRequest =
   | { kind: "setWorkingMessage"; text: string | undefined };
 
 export type TrustedExtensionUiResponse =
+  | { kind: "cancel" }
   | { kind: "notify" }
-  | { kind: "confirm"; value: boolean }
-  | { kind: "select"; value: string | undefined }
-  | { kind: "input"; value: string | undefined }
+  | { kind: "confirm"; value: boolean; cancelled?: boolean }
+  | { kind: "select"; value: string | undefined; cancelled?: boolean }
+  | { kind: "input"; value: string | undefined; cancelled?: boolean }
   | { kind: "setStatus" }
   | { kind: "setWorkingMessage" };
 
 /** Envelope for `extensions.ui.request` (sidecar → main). */
 export type TrustedExtensionUiRequestEnvelope = {
+  requestId?: string;
   sessionId: string;
   extensionId: string;
   extensionLabel: string;
@@ -86,6 +89,8 @@ export type TrustedExtensionUiRequestEnvelope = {
 
 /** Modal prompt shown to the user (main → renderer). */
 export type TrustedExtensionUiPrompt = {
+  /** Main retires this exact prompt after cancellation or timeout. */
+  cancelled?: boolean;
   promptId: string;
   sessionId: string;
   extensionId: string;

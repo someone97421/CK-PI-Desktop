@@ -116,8 +116,8 @@ test("model options are visually nested under their provider heading", () => {
 });
 
 test("model groups use the account-aware display name", () => {
-  assert.match(composerSource, /composerProviderDisplayName\(candidate\)/);
-  assert.match(composerSource, /composerProviderSearchText\(candidate\)/);
+  assert.match(composerSource, /providerDisplayName: providerDisplayName\(candidate\)/);
+  assert.match(composerSource, /providerSearchText: providerSearchText\(candidate\)/);
   assert.match(composerSource, /aria-label=\{group\.providerDisplayName\}/);
   assert.match(composerSource, /\{group\.providerDisplayName\}/);
 });

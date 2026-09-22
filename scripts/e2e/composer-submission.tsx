@@ -4,6 +4,7 @@ import type { i18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { Composer } from "../../apps/desktop/src/components/Composer";
 import { useAppStore } from "../../apps/desktop/src/stores/app-store";
+import { api } from "../../apps/desktop/src/lib/api";
 import { writeComposerDraft, deleteComposerDraft } from "../../apps/desktop/src/lib/composer-draft-cache";
 import type { ComposerDraftSnapshot } from "../../apps/desktop/src/lib/composer-smart-stop";
 
@@ -72,6 +73,44 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
       "last image must be reachable by scrolling");
     flushSync(() => last.querySelector<HTMLButtonElement>(".composer-image-attachment-remove")!.click());
     assert(tray.children.length === 19 && !sendButton().disabled, "scrolled attachment removal must preserve other images");
+
+    // Issue #795: a command source that cannot be read must refuse the
+    // submission, instead of handing `/compact` to the model as prompt text.
+    const toasts: string[] = [];
+    const originalComposerCommands = api.composerCommands;
+    const originalShowToast = useAppStore.getState().showToast;
+    api.composerCommands = async () => {
+      throw new Error("composer/commands unavailable");
+    };
+    useAppStore.setState({
+      showToast: (message) => {
+        toasts.push(String(message));
+      },
+    });
+    try {
+      prefill("/compact", []);
+      await painted();
+      const attempted = sent.length;
+      sendButton().click();
+      await painted();
+      await painted();
+      await painted();
+      assert(
+        sent.length === attempted,
+        `a refused slash submission must not reach the send path: ${JSON.stringify(sent.map((entry) => entry.content))}`,
+      );
+      assert(
+        editor().textContent === "/compact",
+        `a refused submission must keep the draft: ${JSON.stringify(editor().textContent)}`,
+      );
+      assert(
+        toasts.includes(i18n.t("chat.slashCommandSourceUnavailable")),
+        `the refusal must be visible: ${JSON.stringify(toasts)}`,
+      );
+    } finally {
+      api.composerCommands = originalComposerCommands;
+      useAppStore.setState({ showToast: originalShowToast });
+    }
   } finally {
     flushSync(() => root.unmount());
     host.remove();

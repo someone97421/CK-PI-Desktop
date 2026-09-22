@@ -30,6 +30,7 @@ import {
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { clampThinkingLevel } from "./thinking-level.js";
+import { effectiveModelContextWindow } from "./output-cap.js";
 
 import {
   COMPACTION_SUMMARY_RETRY_POLICY,
@@ -124,7 +125,7 @@ export function stripCompactionFallbackNotice(
   return carried;
 }
 
-function boundedText(value: string, maxChars: number): string {
+export function boundedText(value: string, maxChars: number): string {
   const text = value.trim();
   if (text.length <= maxChars) return text;
   const marker = "\n\n[context recovery summary shortened]\n\n";
@@ -467,13 +468,7 @@ export function compactionSummaryWouldExceedBudget(
   budget: Pick<ContextBudget, "hardLimit" | "requestHeadroom">,
   summaryModel: Pick<Model<Api>, "contextWindow" | "maxTokens">,
 ): boolean {
-  const contextWindow = Math.max(
-    budget.hardLimit + budget.requestHeadroom,
-    Math.max(
-      1,
-      Math.round(summaryModel.contextWindow || DEFAULT_CONTEXT_WINDOW),
-    ),
-  );
+  const contextWindow = effectiveModelContextWindow(summaryModel);
   const modelOutputBudget = Math.min(
     Math.floor(budget.requestHeadroom * 0.8),
     Math.max(1, Math.round(summaryModel.maxTokens || DEFAULT_MAX_TOKENS)),

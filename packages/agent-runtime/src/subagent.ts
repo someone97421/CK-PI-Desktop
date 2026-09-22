@@ -32,9 +32,7 @@ import {
   type BeforeToolCallResult,
 } from "@earendil-works/pi-agent-core";
 import {
-  createInitialSystemMessage,
   isContextOverflow,
-  toToolDeclaration,
   type AssistantMessage,
 } from "@earendil-works/pi-ai";
 import {
@@ -66,6 +64,13 @@ import {
   type SubagentCheckpoint,
 } from "./subagent-checkpoint.js";
 import { classifyAgentError } from "./agent-errors.js";
+import { readLocalRequestErrorDetails } from "./local-request-errors.js";
+import {
+  initialSystemTranscript,
+  rebuildSystemTranscript,
+  replaceSystemPrompt,
+  syncSystemTools,
+} from "./system-transcript.js";
 import { withProviderFetchFailure } from "./provider-transport-recovery.js";
 import {
   assistantContent,
@@ -297,6 +302,7 @@ export class SubagentRun {
   private executing = false;
   private lastStatus?: SubagentRunStatus;
   private streamError?: { code: string; message: string };
+  private turnAborted = false;
   private pendingProviderRetry?: ReturnType<typeof classifyAgentError>;
   private providerRetryInProgress = false;
   private providerTransientRetryAttempt = 0;
@@ -395,11 +401,12 @@ export class SubagentRun {
       // 引导不再结束本轮：TaskGuide 立即 steer 进当前轮，文本在下一个安全点注入子上下文，
       // 本轮尚未开始的旧工具由 beforeToolCall 跳过。
       initialState: {
-        systemPrompt: opts.systemPrompt,
         model: binding.model,
         tools: opts.tools,
         thinkingLevel: binding.agentThinkingLevel,
-        messages: initialMessages,
+        messages: initialMessages.some((message) => message.role === "system")
+          ? syncSystemTools(replaceSystemPrompt(initialMessages, opts.systemPrompt), opts.tools)
+          : initialSystemTranscript(opts.systemPrompt, opts.tools, initialMessages),
       },
       toolExecution: "sequential",
       // 同一安全点的多批指导一次注入，避免第二批又等一个轮次边界。
@@ -422,15 +429,10 @@ export class SubagentRun {
       this.agent.state.messages = messages;
       return;
     }
-    const system = createInitialSystemMessage(
-      this.agent.state.systemPrompt,
-      this.agent.state.tools.map(toToolDeclaration),
+    this.agent.state.messages = syncSystemTools(
+      rebuildSystemTranscript(this.agent.state.messages, messages),
+      this.agent.state.tools,
     );
-    // 新版 core 从系统消息读取模型可见工具，不能只保留提示词文字。
-    this.agent.state.messages = [
-      ...(system ? [system] : []),
-      ...messages.filter((message) => message.role !== "system"),
-    ];
   }
 
 
@@ -799,6 +801,9 @@ export class SubagentRun {
     if (signal?.aborted) {
       return this.result("aborted", "The delegated task was aborted.");
     }
+    if (this.turnAborted) {
+      return this.result("aborted", "The delegated task was aborted.");
+    }
     if (this.contextFailure) {
       return this.result("failed", "", this.contextFailure);
     }
@@ -1079,12 +1084,15 @@ export class SubagentRun {
 
 
   private useNextModel(): boolean {
-    if (this.runSignal().aborted || !this.streamError || this.streamError.code === "TURN_ABORTED") return false;
+    // An aborted turn never continues, whether the signal flipped yet or the
+    // cancel was only visible on the settled message.
+    if (this.runSignal().aborted || this.turnAborted || !this.streamError || this.streamError.code === "TURN_ABORTED") return false;
     if (!this.opts.fallbackModels?.length) return false;
     const failed = this.agent.state.messages.at(-1);
     // Only a provider's terminal assistant error permits fallback. Host/tool
     // failures, cancellation, and unexpected internal exceptions do not.
     if (failed?.role !== "assistant" || failed.stopReason !== "error") return false;
+    if (readLocalRequestErrorDetails(failed)) return false;
     this.recordModelFailure(`${this.provider.id}/${this.provider.modelId}`, this.streamError);
     const carried = this.agent.state.messages.slice(0, -1);
     while (this.fallbackIndex < this.opts.fallbackModels.length) {
@@ -1144,7 +1152,7 @@ export class SubagentRun {
     error: ReturnType<typeof classifyAgentError>,
     phase: "request" | "stream",
   ): number | undefined {
-    if (!error.retriable) return undefined;
+    if (!error.retriable || error.details?.origin === "local") return undefined;
     if (error.code === "PROVIDER_RATE_LIMITED") {
       if (
         this.opts.infiniteProviderRetry !== true &&
@@ -1444,23 +1452,28 @@ export class SubagentRun {
         const message = event.message as AssistantMessage;
         const content = assistantContent(message.content);
         const stopReason = message.stopReason as string | undefined;
-        const streamFailure = stopReason === "error";
+        // Read the cancel off the settled message, the same way the session
+        // runtime does: pi-ai wraps an AbortError that fired before the signal
+        // flipped in a local marker whose preserved cause name is the only
+        // trace of the Stop. An abort is not a failure, so it neither retries
+        // nor produces an error row; other local errors stay terminal below.
+        const localError = readLocalRequestErrorDetails(message);
+        const aborted =
+          stopReason === "aborted" || localError?.causeName === "AbortError";
+        if (aborted) this.turnAborted = true;
+        const streamFailure = !aborted && stopReason === "error";
         let classifiedError: ReturnType<typeof classifyAgentError> | undefined;
         let retryAttempt: number | undefined;
         if (streamFailure) {
-          const raw =
-            typeof (message as { errorMessage?: unknown }).errorMessage === "string"
-              ? ((message as { errorMessage?: string }).errorMessage as string)
-              : "provider stream failed";
           classifiedError = withProviderFetchFailure(
-            classifyProviderError(raw, this.retryState.status),
+            classifyProviderError(message, this.retryState.status),
             this.retryState.failure,
           );
         }
         // Recover only a rejected request. A successful tool-use reply may
         // already have effects before the run loop yields; never replay it based
         // solely on oversized usage reported by a provider.
-        const overflow = streamFailure && (
+        const overflow = !localError && streamFailure && (
           isContextOverflow(message, this.modelContextWindow()) ||
           classifiedError?.code === "CONTEXT_TOO_LARGE"
         );
@@ -1481,18 +1494,18 @@ export class SubagentRun {
             this.overflowCompactionAttempted = true;
             this.pendingOverflowCompaction = true;
           } else {
-            retryAttempt = this.claimProviderRetry(failure, "stream");
+            retryAttempt = failure.details?.origin === "local"
+              ? undefined : this.claimProviderRetry(failure, "stream");
             if (retryAttempt !== undefined) {
               this.pendingProviderRetry = failure;
             } else {
-              this.streamError = {
-                code: failure.code,
-                message: failure.message,
-              };
+              this.streamError = failure.details?.origin === "local"
+                ? failure
+                : { code: failure.code, message: failure.message };
             }
           }
         }
-        if (!failed && stopReason !== "aborted") {
+        if (!failed && !aborted) {
           this.providerTransientRetryAttempt = 0;
           this.providerRateLimitRetryAttempt = 0;
         }
@@ -1528,10 +1541,11 @@ export class SubagentRun {
           ...(content.hasThinking && content.thinking
             ? { thinking: content.thinking }
             : {}),
-          status: failed ? "error" : stopReason === "aborted" ? "aborted" : "complete",
+          status: failed ? "error" : aborted ? "aborted" : "complete",
           ...(messageUsage ? { usage: messageUsage } : {}),
           ...(failed ? { isError: true } : {}),
-          ...(isCertificateVerificationError(classifiedError?.details?.networkCode)
+          ...(classifiedError?.details?.origin === "local" ||
+              isCertificateVerificationError(classifiedError?.details?.networkCode)
             ? { error: classifiedError } : {}),
         };
         this.currentAssistant = undefined;

@@ -18,6 +18,10 @@ const providersSource = await readFile(
   new URL("../src/components/settings/ModelConfigPage.tsx", import.meta.url),
   "utf8",
 );
+const defaultModelSource = await readFile(
+  new URL("../src/components/settings/default-model.ts", import.meta.url),
+  "utf8",
+);
 const scheduledSource = await readFile(
   new URL("../src/pages/ScheduledPage.tsx", import.meta.url),
   "utf8",
@@ -156,13 +160,14 @@ test("language persists as part of shared app settings", () => {
   assert.match(sharedTypesSource, /networkProxy\?: NetworkProxySettings/);
 });
 
-test("General Network card persists a custom HTTP or SOCKS5 proxy and fake-IP opt-in", () => {
+test("General Network card persists a custom HTTP or SOCKS5 proxy and the relaxed network mode", () => {
   assert.match(settingsPageSource, /<NetworkProxySection /);
-  assert.match(networkProxySource, /settings\.proxyFakeIp/);
-  assert.match(networkProxySource, /allowFakeIp/);
+  assert.match(networkProxySource, /settings\.networkRelaxedMode/);
+  // Fake-IP tolerance belongs to the network mode now, not to the proxy payload.
+  assert.doesNotMatch(networkProxySource, /allowFakeIp/);
   assert.match(settingsSearchSource, /settings\.proxy/);
   assert.match(settingsSearchSource, /settings\.proxyCustom/);
-  assert.match(settingsSearchSource, /settings\.proxyFakeIp/);
+  assert.match(settingsSearchSource, /settings\.networkRelaxedMode/);
   assert.match(electronMainSource, /applyNetworkProxyFromAppSettings/);
   assert.match(electronMainSource, /IPC\.invoke\.networkProxyTest/);
   assert.match(protocolSource, /networkProxyTest: "pi-desktop\/network\/testProxy"/);
@@ -172,8 +177,8 @@ test("General Network card persists a custom HTTP or SOCKS5 proxy and fake-IP op
   ]) {
     assert.match(source, /proxyCustom:/);
     assert.match(source, /proxyUrlPlaceholder:/);
-    assert.match(source, /proxyFakeIp:/);
-    assert.match(source, /proxyFakeIpDesc:/);
+    assert.match(source, /networkRelaxedMode:/);
+    assert.match(source, /networkRelaxedModeDesc:/);
   }
 });
 
@@ -238,7 +243,12 @@ test("default model selector shows every configured model under its provider", (
   assert.match(defaultModelPicker, /setDefaultModel\(provider, modelId\)/);
   assert.match(providersSource, /settings-text-action model-default-trigger/);
   assert.doesNotMatch(providersSource, /defaultModelDescription/);
-  assert.match(providersSource, /aria-label=\{`\$\{provider\.name\} · \$\{modelId\}`\}/);
+  // The accessible name follows the provider heading, which is the vendor
+  // account's own label when it has one (#785).
+  assert.match(
+    providersSource,
+    /aria-label=\{`\$\{providerDisplayName\(provider\)\} · \$\{modelId\}`\}/,
+  );
   assert.match(providersSource, /placeholder=\{t\("settings\.defaultModelSearch"\)\}/);
   assert.match(providersSource, /model-default-results/);
   assert.match(stylesSource, /\.model-default-results\s*\{[\s\S]*?overflow-y: auto;/);
@@ -247,9 +257,13 @@ test("default model selector shows every configured model under its provider", (
 
 test("model configuration separates AI services from independently removable vendor accounts", () => {
   assert.match(providersSource, /authKind !== OAUTH_AUTH_KIND/);
+  // Readiness (a key, an OAuth account, or a no-auth provider) now lives in the
+  // shared helper, so the page must delegate to it instead of re-inlining the
+  // rule next to a second copy that can drift from the picker.
+  assert.match(providersSource, /providerServesChatModels\(/);
   assert.match(
-    providersSource,
-    /provider\.hasSecret \|\| provider\.hasOauth \|\| provider\.authKind === "none"/,
+    defaultModelSource,
+    /provider\.hasSecret \|\| !!provider\.hasOauth \|\| provider\.authKind === "none"/,
   );
   assert.doesNotMatch(providersSource, /provider-config-hero/);
   assert.doesNotMatch(providersSource, /settings-section-subtitle/);

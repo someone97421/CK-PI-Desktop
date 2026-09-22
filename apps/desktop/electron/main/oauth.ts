@@ -41,6 +41,7 @@ import {
   type ModelConfig,
   type VendorModelBinding,
 } from "@pi-desktop/agent-runtime";
+import { discoverProviderModels } from "./model-discovery.ts";
 import {
   OAUTH_AUTH_KIND,
   type OAuthLoginEvent,
@@ -88,6 +89,42 @@ export function apiStyleForWireApi(api: string): string {
 
 export function protocolForApiStyle(apiStyle: string): string {
   return PROTOCOL_BY_API_STYLE[apiStyle] ?? "openai_compatible";
+}
+
+const XAI_VENDOR_ID = "xai";
+const XAI_MODELS_URL_BASE = "https://api.x.ai/v1";
+const XAI_LIVE_MODELS_TTL_MS = 30_000;
+const THINKING_LEVEL_ORDER = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const satisfies readonly ThinkingLevel[];
+
+/**
+ * xAI's `/models` list also publishes image and video generators. Those are not
+ * conversation models; the chat picker and session launch both reject them.
+ */
+const XAI_NON_CONVERSATION_MODEL =
+  /(?:^|[-_/])(?:imagine|image|video|tts|stt|embed(?:ding)?|whisper|aurora|flux)(?:$|[-_/])/i;
+
+export function isXaiConversationModel(modelId: string): boolean {
+  const id = modelId.trim();
+  return id.length > 0 && !XAI_NON_CONVERSATION_MODEL.test(id);
+}
+
+function thinkingLevelsFromPiModel(model: Model<Api>): ThinkingLevel[] {
+  const map = model.thinkingLevelMap as Partial<Record<string, string | null>> | undefined;
+  if (!map) return model.reasoning ? ["low", "medium", "high"] : ["off"];
+  const levels = THINKING_LEVEL_ORDER.filter((level) => typeof map[level] === "string");
+  return levels.length > 0
+    ? [...levels]
+    : model.reasoning
+      ? ["low", "medium", "high"]
+      : ["off"];
 }
 
 export type HostCall = <T = unknown>(
@@ -197,6 +234,8 @@ export class VendorOAuth {
   private readonly logins = new Map<string, LoginSession>();
   /** One pi-ai collection and credential store per local OAuth account row. */
   private readonly accountModels = new Map<string, AccountModels>();
+  /** Successful xAI `/models` responses, so one login does not refetch per model. */
+  private readonly xaiLiveModels = new Map<string, { at: number; models: OAuthModelOption[] }>();
   /** Per-account write chain: `modify` must be a serialized read-modify-write. */
   private readonly chains = new Map<string, Promise<unknown>>();
   private catalogPromise?: Promise<MutableModels>;
@@ -323,6 +362,7 @@ export class VendorOAuth {
       await running.finished?.catch(() => undefined);
     }
     this.accountModels.delete(providerId);
+    this.xaiLiveModels.delete(providerId);
     await this.deps.call("providers.delete", { id: providerId });
   }
 
@@ -342,9 +382,14 @@ export class VendorOAuth {
   }
 
   /**
-   * Models the signed-in account may actually use. This replaces the `/models`
-   * probe: `getAvailable` applies the vendor's own `filterModels`, which is how
-   * Copilot narrows the list to the user's subscription.
+   * Models the signed-in account may actually use.
+   *
+   * Copilot and the other static vendors still come from pi-ai: `getAvailable`
+   * applies that vendor's `filterModels`. xAI is different. Its pinned catalog
+   * stops at whatever shipped in pi-ai, so a model Grok has already entitled
+   * (grok-4.7 today) never becomes selectable. For that vendor the account's
+   * own `GET /v1/models` list is the authority, and the pinned catalog is only
+   * the fallback when that request fails.
    */
   async listModels(providerId: string): Promise<OAuthModelOption[]> {
     return this.withRowHeaders(providerId, async () => {
@@ -353,6 +398,8 @@ export class VendorOAuth {
       // Dynamic catalogs (radius, Copilot) are empty until refreshed; static and
       // unconfigured providers are skipped inside pi-ai.
       await account.models.refresh({ providers: [account.vendorId] });
+      const live = await this.liveXaiModels(account);
+      if (live) return live;
       const available = await account.models.getAvailable(account.vendorId);
       return available.map((model) => this.optionFor(model));
     });
@@ -396,18 +443,118 @@ export class VendorOAuth {
       await account.models.refresh({ providers: [account.vendorId] });
       model = account.models.getModel(account.vendorId, modelId);
     }
+    const live = await this.liveXaiModels(account);
+    if (live) {
+      const option = live.find((item) => item.modelId === modelId);
+      // A successful Grok list replaces the pinned catalog. An id it did not
+      // return is not offered, even when pi-ai still ships that id.
+      if (!option) return undefined;
+      return this.bindingFromOption(account, option);
+    }
     if (!model) return undefined;
-    const option = this.optionFor(model);
-    const modelConfig = await this.deps.modelConfigFor?.({
+    return this.bindingFromOption(account, this.optionFor(model));
+  }
+
+  /**
+   * Chat models the signed-in xAI account can call right now.
+   * `undefined` means the live list could not be read; callers keep the
+   * pinned catalog. Image and video generators are dropped.
+   */
+  private async liveXaiModels(
+    account: AccountModels,
+  ): Promise<OAuthModelOption[] | undefined> {
+    if (account.vendorId !== XAI_VENDOR_ID) return undefined;
+    const cached = this.xaiLiveModels.get(account.providerId);
+    if (cached && Date.now() - cached.at < XAI_LIVE_MODELS_TTL_MS) return cached.models;
+    let apiKey: string | undefined;
+    let baseUrl = XAI_MODELS_URL_BASE;
+    try {
+      const resolved = await account.models.getAuth(account.vendorId);
+      apiKey = resolved?.auth.apiKey;
+      if (resolved?.auth.baseUrl) baseUrl = resolved.auth.baseUrl.replace(/\/+$/, "");
+    } catch (error) {
+      this.log("warn", "xAI account auth unavailable for model list", {
+        vendorId: account.vendorId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+    if (!apiKey) return undefined;
+    try {
+      const discovered = await discoverProviderModels({
+        baseUrl,
+        apiKey,
+        apiStyle: "responses",
+      });
+      const models = discovered
+        .filter((model) => isXaiConversationModel(model.modelId))
+        .map((model) => ({
+          modelId: model.modelId,
+          apiStyle: apiStyleForWireApi("openai-responses"),
+          baseUrl,
+        }));
+      if (models.length === 0) return undefined;
+      this.xaiLiveModels.set(account.providerId, { at: Date.now(), models });
+      return models;
+    } catch (error) {
+      this.log("warn", "xAI account model list failed", {
+        vendorId: account.vendorId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  private async bindingFromOption(
+    account: AccountModels,
+    option: OAuthModelOption,
+  ): Promise<VendorModelBinding> {
+    const published = await this.deps.modelConfigFor?.({
       vendorKey: account.vendorId,
       option,
-    }).catch(() => undefined) ?? genericModelConfig(modelId, model.baseUrl);
+    }).catch(() => undefined);
+    const modelConfig = this.withPinnedXaiFallback(account, option, published);
     const capabilities = capabilitiesFromModelConfig(modelConfig);
     return {
       apiStyle: option.apiStyle,
       baseUrl: option.baseUrl,
       modelConfig,
       ...capabilities,
+    };
+  }
+
+  /**
+   * models.dev is the metadata source when it already knows the id. A model
+   * that exists only on the live xAI list (the usual case for a just-released
+   * Grok) otherwise inherits limits and thinking levels from the newest pinned
+   * sibling, instead of the 128k generic shape.
+   */
+  private withPinnedXaiFallback(
+    account: AccountModels,
+    option: OAuthModelOption,
+    published: ModelConfig | undefined,
+  ): ModelConfig {
+    const config = published ?? genericModelConfig(option.modelId, option.baseUrl);
+    if (account.vendorId !== XAI_VENDOR_ID || config.source !== "generic") return config;
+    const sibling = ["grok-4.6", "grok-4.5", "grok-4.3"]
+      .map((id) => account.models.getModel(account.vendorId, id))
+      .find((model) => model !== undefined);
+    if (!sibling) return config;
+    const input = (sibling.input ?? []).filter(
+      (modality): modality is "text" | "image" => modality === "text" || modality === "image",
+    );
+    return {
+      ...config,
+      reasoning: sibling.reasoning,
+      input: input.length > 0 ? input : config.input,
+      contextWindow: sibling.contextWindow,
+      maxTokens: sibling.maxTokens,
+      limit: {
+        context: sibling.contextWindow,
+        input: sibling.contextWindow,
+        output: sibling.maxTokens,
+      },
+      supportedThinkingLevels: thinkingLevelsFromPiModel(sibling),
     };
   }
 

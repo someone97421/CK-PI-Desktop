@@ -123,6 +123,14 @@ import type {
   UpdateState,
   WindowControlAction,
   CloseBehavior,
+  ConfigSyncApprovalInput,
+  ConfigSyncChangePasswordInput,
+  ConfigSyncHistoryEntry,
+  ConfigSyncMapProjectInput,
+  ConfigSyncConfigureInput,
+  ConfigSyncRestoreInput,
+  ConfigSyncProgress,
+  ConfigSyncState,
   TrustedExtensionStatusEvent,
   TrustedExtensionUiPrompt,
   TrustedExtensionUiPromptResponse,
@@ -134,8 +142,10 @@ import {
   normalizeLargePasteThreshold,
   normalizeMode,
   normalizeNetworkProxy,
+  normalizeNetworkPolicy,
   resolveFontScale,
   normalizeChatContentMaxWidth,
+  validateNetworkPolicy,
   validateNetworkProxy,
   validateSpeechSettings,
 } from "@pi-desktop/shared";
@@ -387,6 +397,9 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     networkProxy: normalizeNetworkProxy(
       (settings as { networkProxy?: unknown }).networkProxy,
     ),
+    networkPolicy: normalizeNetworkPolicy(
+      (settings as { networkPolicy?: unknown }).networkPolicy,
+    ),
   };
 }
 
@@ -410,6 +423,7 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     chatContentMaxWidth?: unknown;
     infiniteProviderRetry?: unknown;
     networkProxy?: unknown;
+    networkPolicy?: unknown;
   };
   if (
     Object.prototype.hasOwnProperty.call(value, "defaultCommandShell") &&
@@ -460,6 +474,15 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
       });
     }
     value.networkProxy = proxy.value;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "networkPolicy")) {
+    const policy = validateNetworkPolicy(value.networkPolicy);
+    if (!policy.ok) {
+      throw Object.assign(new Error(policy.error), {
+        errorCode: "INVALID_ARGUMENT",
+      });
+    }
+    value.networkPolicy = policy.value;
   }
   if (Object.prototype.hasOwnProperty.call(value, "speech")) {
     (value as AppSettings).speech = validateSpeechSettings(
@@ -618,6 +641,37 @@ export const api = {
   getSettings: () => invoke<AppSettings>(IPC.invoke.settingsGet).then(normalizeSettings),
   setSettings: (settings: AppSettings) =>
     invoke(IPC.invoke.settingsSet, validateSettingsWrite(settings)),
+  configSyncGetState: () => invoke<ConfigSyncState>(IPC.invoke.configSyncGetState),
+  configSyncConfigure: (input: ConfigSyncConfigureInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncConfigure, input),
+  configSyncTest: (input: Omit<ConfigSyncConfigureInput, "backupPassword"> & { backupPassword?: string }) =>
+    invoke<{
+      ok: boolean;
+      conditionalWrites: boolean;
+      appendOnly: boolean;
+      message?: string;
+    }>(
+      IPC.invoke.configSyncTest,
+      input,
+    ),
+  configSyncSyncNow: () => invoke<ConfigSyncState>(IPC.invoke.configSyncSyncNow),
+  configSyncPause: (paused: boolean) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncPause, { paused }),
+  configSyncUnlock: (backupPassword: string) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncUnlock, { backupPassword }),
+  configSyncApprove: (input: ConfigSyncApprovalInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncApprove, input),
+  configSyncReject: (input: ConfigSyncApprovalInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncReject, input),
+  configSyncMapProject: (input: ConfigSyncMapProjectInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncMapProject, input),
+  configSyncListHistory: () =>
+    invoke<ConfigSyncHistoryEntry[]>(IPC.invoke.configSyncListHistory),
+  configSyncRestore: (input: ConfigSyncRestoreInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncRestore, input),
+  configSyncChangePassword: (input: ConfigSyncChangePasswordInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncChangePassword, input),
+  configSyncDisconnect: () => invoke<ConfigSyncState>(IPC.invoke.configSyncDisconnect),
   testNetworkProxy: (settings: unknown) =>
     invoke<{ ok: boolean; error?: string }>(IPC.invoke.networkProxyTest, settings),
   /** Installed system font families (Electron main, cached briefly). */
@@ -670,6 +724,21 @@ export const api = {
       source: "cache" | "remote" | "catalog" | "fallback";
       error?: string;
     }>(IPC.invoke.providersListModels, input),
+  /**
+   * Look one hand-typed model id up in the local models.dev snapshot.
+   *
+   * The discovered list only describes ids a service already serves, so this is
+   * the only way a custom id reaches its published limits before the provider
+   * is saved. Snapshot read only: no provider network access and no host call.
+   * `info` is null when the catalog does not publish the id.
+   */
+  lookupProviderModel: (input: {
+    modelId: string;
+    baseUrl?: string;
+    providerId?: string;
+    vendorKey?: string;
+  }) =>
+    invoke<{ info: ModelInfo | null }>(IPC.invoke.providersLookupModel, input),
   /** Force-refresh models.dev for the running process; release snapshots are bundled. */
   refreshModelCatalog: () =>
     invoke<{
@@ -1264,6 +1333,12 @@ export const api = {
   executeCommand: (commandId: string) =>
     invoke(IPC.invoke.commandPaletteExecute, commandId),
   openLogs: () => invoke(IPC.invoke.logOpenFolder),
+  /**
+   * Quit the application. Used by the surfaces that own the window before the
+   * shell has data; the main process runs the same ordered shutdown as the Quit
+   * menu item, so the answer may never arrive — callers must not depend on it.
+   */
+  quitApp: () => invoke<{ ok: boolean }>(IPC.invoke.appQuit),
   /** Toggles the devtools console; rejects unless developer mode is on. */
   toggleDevTools: (open?: boolean) =>
     invoke<{ open: boolean }>(IPC.invoke.devtoolsToggle, { open }),
@@ -1465,6 +1540,12 @@ export const api = {
       listener((payload as { message: string }).message),
     );
   },
+  onInsecureEndpointNotice: (listener: (payload: { host: string }) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.insecureEndpointNotice, (payload) =>
+      listener(payload as { host: string }),
+    );
+  },
   onHostStatus: (listener: (status: HostStatusEvent) => void) => {
     if (!window.piDesktop?.on) return () => undefined;
     return window.piDesktop.on(IPC.event.hostStatus, (payload) =>
@@ -1550,6 +1631,18 @@ export const api = {
     if (!window.piDesktop?.on) return () => undefined;
     return window.piDesktop.on(IPC.event.settingsChanged, (payload) =>
       listener((payload ?? {}) as Record<string, unknown>),
+    );
+  },
+  onConfigSyncChanged: (listener: (state: ConfigSyncState) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.configSyncChanged, (payload) =>
+      listener(payload as ConfigSyncState),
+    );
+  },
+  onConfigSyncProgress: (listener: (progress: ConfigSyncProgress) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.configSyncProgress, (payload) =>
+      listener(payload as ConfigSyncProgress),
     );
   },
   onPluginLauncherShown: (listener: () => void) => {

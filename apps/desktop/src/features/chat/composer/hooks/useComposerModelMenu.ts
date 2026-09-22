@@ -6,6 +6,7 @@ import type {
 } from "@pi-desktop/shared";
 import {
   initialThinkingLevelForBinding,
+  imageGenerationBindings,
   isImageGenerationModel,
   modelIdsMatch,
 } from "@pi-desktop/shared";
@@ -13,9 +14,11 @@ import { useAppStore } from "../../../../stores/app-store";
 import {
   composerModelMatchesQuery,
   composerModelsForProvider,
-  composerProviderDisplayName,
-  composerProviderSearchText,
 } from "../../../../lib/composer-models";
+import {
+  providerDisplayName,
+  providerSearchText,
+} from "../../../../lib/provider-display";
 import { providerThinkingLevels } from "../../../../lib/session-thinking";
 import {
   sessionThinkingMenuLevels,
@@ -46,6 +49,11 @@ export function useComposerModelMenu({
 }: UseComposerModelMenuOptions) {
   const providers = useAppStore((s) => s.providers);
   const imageGeneration = useAppStore((s) => s.settings?.imageGeneration);
+  const imageGenerationModels = useAppStore((s) => s.settings?.imageGenerationModels);
+  const imageGenerationCandidates = useMemo(
+    () => imageGenerationBindings(imageGenerationModels, imageGeneration),
+    [imageGenerationModels, imageGeneration],
+  );
   const providerModels = useAppStore((s) => s.providerModels);
   const loadProviderModels = useAppStore((s) => s.loadProviderModels);
   const configureActiveSession = useAppStore((s) => s.configureActiveSession);
@@ -117,17 +125,17 @@ export function useComposerModelMenu({
           const models = composerModelsForProvider(
             candidate,
             providerModels[candidate.id],
-            imageGeneration,
+            imageGenerationCandidates,
           );
           return {
             provider: candidate,
-            providerDisplayName: composerProviderDisplayName(candidate),
-            providerSearchText: composerProviderSearchText(candidate),
+            providerDisplayName: providerDisplayName(candidate),
+            providerSearchText: providerSearchText(candidate),
             models,
           };
         })
         .filter((group) => group.models.length > 0),
-    [providers, providerModels, imageGeneration],
+    [providers, providerModels, imageGenerationCandidates],
   );
   const queryNeedle = query.trim().toLowerCase();
   const filteredModelGroups = useMemo(
@@ -250,7 +258,14 @@ export function useComposerModelMenu({
   const selectModel = async (candidate: ProviderPublic, nextModelId: string) => {
     thinkingQueueRef.current?.invalidate();
     await thinkingQueueRef.current?.idle();
-    if (isImageGenerationModel(useAppStore.getState().settings?.imageGeneration, candidate.id, nextModelId)) return;
+    if (isImageGenerationModel(
+      imageGenerationBindings(
+        useAppStore.getState().settings?.imageGenerationModels,
+        useAppStore.getState().settings?.imageGeneration,
+      ),
+      candidate.id,
+      nextModelId,
+    )) return;
     try {
       const nextModelProvider = thinkingProviderForModel(
         candidate,

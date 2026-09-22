@@ -13,9 +13,11 @@ import { Sidebar } from "../../components/Sidebar";
 import { ToastHost } from "../../components/Toast";
 import { UpdateBanner } from "../../components/UpdateBanner";
 import { cx, TooltipButton } from "../../components/ui";
+import { StartupRecovery } from "../../components/StartupRecovery";
 import { WindowControls } from "../../components/WindowControls";
 import { ClosePromptDialog } from "../../components/ClosePromptDialog";
 import { WorkPanel } from "../../components/workpanel/WorkPanel";
+import { useCopyTex } from "../../hooks/use-copy-tex";
 import { api } from "../../lib/api";
 import { CollapsedTitlebarActions, RoutePending } from "./chrome";
 import { useAppShellRuntime } from "./useAppShellRuntime";
@@ -78,9 +80,28 @@ export function AppShell() {
     setArchMismatch,
     showSplash,
     splash,
+    startupPhase,
+    startupWaitedMs,
+    retryStartup,
+    startupRetrying,
     sidebarToggleShortcut,
     workPanelToggleTooltip,
   } = useAppShellRuntime();
+  useCopyTex();
+
+  // A boot that never reaches the shell gets a surface it can act on instead of
+  // a window that only knows how to wait (issue #831). Rendered as a direct child
+  // of the shell so it can layer above the splash and below the window controls.
+  const startupRecovery =
+    startupPhase === "starting" ? null : (
+      <StartupRecovery
+        phase={startupPhase}
+        waitedMs={startupWaitedMs}
+        onRetry={retryStartup}
+        retrying={startupRetrying}
+        down={backendDown}
+      />
+    );
 
   let shell: ReactNode = null;
   if (ready) {
@@ -305,11 +326,18 @@ export function AppShell() {
     >
       <div className="app-scenic-backdrop" aria-hidden />
       {shell}
-      {/* Outside pane stacking; skip splash so controls cannot cover boot chrome. */}
-      {ready && !showSplash && <WindowControls />}
+      {/* Outside pane stacking; skip splash so the band cannot cover boot chrome. */}
+      {/* `showSplash` stays true for as long as the shell is not ready, so a
+          bare `!showSplash` test would leave the recovery surface without any
+          window controls — the only ones a frameless Windows/Linux window has.
+          The controls therefore follow the boot surface that is actually up. */}
+      {(ready && !showSplash) || startupPhase !== "starting" ? (
+        <WindowControls />
+      ) : null}
       <ProjectCreateDialog />
       <ClosePromptDialog />
       {splash}
+      {startupRecovery}
     </div>
   );
 }
