@@ -149,7 +149,7 @@ test("running prompts use a removable per-session queue with priority actions", 
   assert.match(composer, /disabled=\{sendNowLocked\}/);
   assert.match(
     composer,
-    /\{pending \? t\("chat\.sendNowPending"\) : t\("chat\.sendNow"\)\}/,
+    /\{saving \? t\("common\.saving"\) : pending \? t\("chat\.sendNowPending"\) : t\("chat\.sendNow"\)\}/,
   );
   assert.equal((composer.match(/\sdisabled=\{actionLocked\}/g) ?? []).length, 1);
   assert.equal((composer.match(/\sdisabled=\{editOrMoveLocked\}/g) ?? []).length, 3);

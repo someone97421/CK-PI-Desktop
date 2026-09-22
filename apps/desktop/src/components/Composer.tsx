@@ -12,6 +12,7 @@ import type {
 } from "@pi-desktop/shared";
 import {
   initialThinkingLevelForBinding,
+  imageGenerationBindings,
   isImageGenerationModel,
   modelIdsMatch,
   normalizeLargePasteThreshold,
@@ -93,6 +94,10 @@ export function Composer({
     s.activeSessionId ? s.planningStates[s.activeSessionId] : undefined,
   );
   const settings = useAppStore((s) => s.settings);
+  const imageGenerationCandidates = useMemo(
+    () => imageGenerationBindings(settings?.imageGenerationModels, settings?.imageGeneration),
+    [settings?.imageGenerationModels, settings?.imageGeneration],
+  );
   const sessions = useAppStore((s) => s.sessions);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const activeSessionSummary = sessions.find(
@@ -375,7 +380,7 @@ export function Composer({
   );
   const thinkingLabel = thinkingLevel;
   const selectedModel = provider?.id
-    ? composerModelsForProvider(provider, providerModels[provider.id]).find(
+    ? composerModelsForProvider(provider, providerModels[provider.id], imageGenerationCandidates).find(
         (model) => modelIdsMatch(model.modelId, modelId ?? ""),
       )
     : undefined;
@@ -396,7 +401,7 @@ export function Composer({
     : !!provider &&
       provider.enabled &&
       !!modelId &&
-      !isImageGenerationModel(settings?.imageGeneration, provider.id, modelId) &&
+      !isImageGenerationModel(imageGenerationCandidates, provider.id, modelId) &&
       (provider.hasSecret || provider.authKind === "none");
   const enterToSend = settings?.enterToSend ?? true;
   // Chips occupy sentinel characters, which `trim()` preserves. Keep the

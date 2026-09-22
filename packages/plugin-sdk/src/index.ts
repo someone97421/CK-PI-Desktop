@@ -1915,6 +1915,15 @@ export function validateContributions(
       if (model.supportsImages !== undefined && typeof model.supportsImages !== "boolean") {
         return `provider "${provider.id}" model ${modelId} supportsImages must be a boolean`;
       }
+      if (
+        model.thinkingLevels !== undefined &&
+        (!Array.isArray(model.thinkingLevels) || model.thinkingLevels.some((level) => typeof level !== "string"))
+      ) {
+        return `provider "${provider.id}" model ${modelId} thinkingLevels must be an array of strings`;
+      }
+      if (model.defaultThinkingLevel !== undefined && typeof model.defaultThinkingLevel !== "string") {
+        return `provider "${provider.id}" model ${modelId} defaultThinkingLevel must be a string`;
+      }
     }
   }
 

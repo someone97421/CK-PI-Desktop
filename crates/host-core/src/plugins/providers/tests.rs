@@ -658,10 +658,21 @@ fn a_default_outside_the_declared_list_is_dropped() {
 }
 
 #[test]
-fn a_malformed_thinking_levels_field_is_ignored() {
+fn malformed_thinking_level_fields_are_rejected_by_manifest_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("plugin");
     let mut value = serde_json::to_value(manifest()).unwrap();
+
     value["contributes"]["providers"][0]["models"][0]["thinkingLevels"] = json!("high");
-    let manifest: PluginManifest = serde_json::from_value(value).unwrap();
-    let declared = declared_providers(&manifest);
-    assert!(declared[0].models[0].thinking_levels.is_empty());
+    write_plugin(&root, value.clone());
+    assert!(read_manifest_err(&root).contains("thinkingLevels must be an array of strings"));
+
+    value["contributes"]["providers"][0]["models"][0]["thinkingLevels"] = json!(["high", 7]);
+    write_plugin(&root, value.clone());
+    assert!(read_manifest_err(&root).contains("thinkingLevels must be an array of strings"));
+
+    value["contributes"]["providers"][0]["models"][0]["thinkingLevels"] = json!(["high"]);
+    value["contributes"]["providers"][0]["models"][0]["defaultThinkingLevel"] = json!(7);
+    write_plugin(&root, value);
+    assert!(read_manifest_err(&root).contains("defaultThinkingLevel must be a string"));
 }

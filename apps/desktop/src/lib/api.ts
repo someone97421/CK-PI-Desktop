@@ -670,6 +670,21 @@ export const api = {
       source: "cache" | "remote" | "catalog" | "fallback";
       error?: string;
     }>(IPC.invoke.providersListModels, input),
+  /**
+   * Look one hand-typed model id up in the local models.dev snapshot.
+   *
+   * The discovered list only describes ids a service already serves, so this is
+   * the only way a custom id reaches its published limits before the provider
+   * is saved. Snapshot read only: no provider network access and no host call.
+   * `info` is null when the catalog does not publish the id.
+   */
+  lookupProviderModel: (input: {
+    modelId: string;
+    baseUrl?: string;
+    providerId?: string;
+    vendorKey?: string;
+  }) =>
+    invoke<{ info: ModelInfo | null }>(IPC.invoke.providersLookupModel, input),
   /** Force-refresh models.dev for the running process; release snapshots are bundled. */
   refreshModelCatalog: () =>
     invoke<{

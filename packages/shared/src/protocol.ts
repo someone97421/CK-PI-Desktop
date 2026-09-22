@@ -192,6 +192,17 @@ export const IPC = {
     providersSetSecret: "pi-desktop/providers/setSecret",
     providersTest: "pi-desktop/providers/testConnection",
     providersListModels: "pi-desktop/providers/listModels",
+    /**
+     * Look one model id up in the local models.dev snapshot.
+     *
+     * `providersListModels` cannot answer this: it describes a saved or
+     * reached provider's catalogue, and a hand-typed custom id exists nowhere
+     * yet when the settings picker needs its published limits. This is a
+     * snapshot read — no provider network access and no host call — so the
+     * picker can seed a custom row without probing an endpoint that does not
+     * know the id.
+     */
+    providersLookupModel: "pi-desktop/providers/lookupModel",
     providersRefreshModelCatalog: "pi-desktop/providers/refreshModelCatalog",
     providersExportConfig: "pi-desktop/providers/exportConfig",
     providersImportConfig: "pi-desktop/providers/importConfig",

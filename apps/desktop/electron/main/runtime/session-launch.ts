@@ -3,10 +3,12 @@ import {
   ErrorCodes as SharedErrorCodes,
   isActiveInProject,
   isCommandShellCatalog,
+  imageGenerationBindings,
   isImageGenerationModel,
   normalizeMode,
   resolveBindingContextWindow,
   trustedExtensionAgentKeyFromProviderId,
+  type AppSettings,
   type CommandShellCatalog,
   type McpServerRecord,
   type ModelBinding,
@@ -259,10 +261,15 @@ export function createSessionLaunchRuntime({
 
   async function resolveCompactionProvider(
     providers: RuntimeProvider[],
-    settings: { compactionProviderId?: string | null; compactionModelId?: string | null },
+    settings: Pick<AppSettings, "compactionProviderId" | "compactionModelId" | "imageGeneration" | "imageGenerationModels">,
   ): Promise<RuntimeProviderConfig | undefined> {
     const { compactionProviderId, compactionModelId } = settings;
     if (!compactionProviderId || !compactionModelId) return undefined;
+    if (isImageGenerationModel(
+      imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration),
+      compactionProviderId,
+      compactionModelId,
+    )) return undefined;
     const row = providers.find(
       (candidate) => candidate.id === compactionProviderId && candidate.enabled !== false,
     );
@@ -380,7 +387,11 @@ export function createSessionLaunchRuntime({
         errorCode: ErrorCodes.MODEL_NOT_CONFIGURED,
       });
     }
-    if (isImageGenerationModel(settings.imageGeneration, provider.id, modelId)) {
+    if (isImageGenerationModel(
+      imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration),
+      provider.id,
+      modelId,
+    )) {
       throw Object.assign(new Error("The image model cannot be used for conversation; select a chat model"), {
         errorCode: ErrorCodes.MODEL_NOT_CONFIGURED,
       });

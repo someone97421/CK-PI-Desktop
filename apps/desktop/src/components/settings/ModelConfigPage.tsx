@@ -4,14 +4,17 @@
  *
  * The default picker lists each configured model, while provider rows use
  * `models[0]` as the provider's quick default. Editing the default provider
- * preserves `settings.defaultModelId` while that model remains configured.
+ * preserves `settings.defaultModelId` while that model remains configured, and
+ * adding a provider claims the chat or image default only while none resolves.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   OAUTH_AUTH_KIND,
+  imageGenerationBindings,
   isImageGenerationModel,
   modelIdsMatch,
+  type ImageGenerationBinding,
   type ModelBinding,
   type ProviderPublic,
 } from "@pi-desktop/shared";
@@ -40,7 +43,10 @@ import {
   displayedDefaultModelId,
   providerOffersModel,
   type DefaultModelOption,
+  keepsAppDefaultModel,
+  providerServesChatModels,
 } from "./default-model";
+import { planImageGenerationDefaults } from "./image-generation-default";
 import { copyProviderConfiguration, type ProviderCopyDraft } from "./provider-copy";
 import { ImageGenerationModelRow } from "./ImageGenerationModelRow";
 import { ProviderSetupDialog } from "./ProviderSetupDialog";
@@ -107,6 +113,7 @@ export function ModelConfigPage() {
   const [compactionModelQuery, setCompactionModelQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [changingImageModel, setChangingImageModel] = useState(false);
   const [refreshingCatalog, setRefreshingCatalog] = useState(false);
   // Export/import share one flag: both open a modal file dialog.
   const [transferBusy, setTransferBusy] = useState<"export" | "import" | null>(null);
@@ -187,10 +194,14 @@ export function ModelConfigPage() {
     })();
   }, []);
 
+  const imageGenerationCandidates = useMemo(
+    () => imageGenerationBindings(settings?.imageGenerationModels, settings?.imageGeneration),
+    [settings?.imageGenerationModels, settings?.imageGeneration],
+  );
+  // One readiness rule for the picker, the provider rows and the add-provider
+  // guard: both call `providerServesChatModels`.
   const providerReady = (provider: ProviderPublic) =>
-    provider.enabled &&
-    defaultModelOptions([provider], settings?.imageGeneration).length > 0 &&
-    (provider.hasSecret || provider.hasOauth || provider.authKind === "none");
+    providerServesChatModels(provider, imageGenerationCandidates);
 
   const aiProviders = useMemo(
     () => providers.filter((provider) => provider.authKind !== OAUTH_AUTH_KIND),
@@ -198,7 +209,7 @@ export function ModelConfigPage() {
   );
   const reorder = useProviderReorder(aiProviders, busyId !== null || testingId !== null || setupFor !== null);
   const readyProviders = providers.filter(providerReady);
-  const defaultModelOptionsList = defaultModelOptions(readyProviders, settings?.imageGeneration);
+  const defaultModelOptionsList = defaultModelOptions(readyProviders, imageGenerationCandidates);
   /*
     The compaction picker offers the follow entry plus the same configured
     models the default picker lists, filtered locally like every other picker.
@@ -230,7 +241,7 @@ export function ModelConfigPage() {
   const editingProvider =
     setupFor ? providers.find((provider) => provider.id === setupFor) ?? null : null;
   const defaultProviderReady = defaultProvider !== null && providerReady(defaultProvider) &&
-    !isImageGenerationModel(settings.imageGeneration, defaultProvider.id,
+    !isImageGenerationModel(imageGenerationCandidates, defaultProvider.id,
       displayedDefaultModelId(defaultProvider, settings.defaultModelId));
   /*
     Compaction follows the main model until both fields name a provider and one
@@ -248,12 +259,19 @@ export function ModelConfigPage() {
     compactionPinned &&
     compactionProvider !== null &&
     providerReady(compactionProvider) &&
-    providerOffersModel(compactionProvider, compactionModelId);
-  }
+    providerOffersModel(compactionProvider, compactionModelId) &&
+    !isImageGenerationModel(imageGenerationCandidates, compactionProvider.id, compactionModelId);
 
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
-    if (isImageGenerationModel(useAppStore.getState().settings?.imageGeneration, provider.id, modelId)) return;
+    if (isImageGenerationModel(
+      imageGenerationBindings(
+        useAppStore.getState().settings?.imageGenerationModels,
+        useAppStore.getState().settings?.imageGeneration,
+      ),
+      provider.id,
+      modelId,
+    )) return;
     setBusyId(provider.id);
     try {
       await api.setSettings({
@@ -301,23 +319,48 @@ export function ModelConfigPage() {
   };
 
   /**
-   * Preserve the selected app default unless it was removed from the provider.
+   * Preserve the selected app defaults unless they were removed from the
+   * provider or no longer resolve, and let a newly added provider claim a
+   * default only while none resolves.
    */
-  const afterSaved = async (saved: ProviderPublic, models: ModelBinding[], imageModelId?: string) => {
+  const afterSaved = async (
+    saved: ProviderPublic,
+    models: ModelBinding[],
+    imageModelIds?: string[],
+  ) => {
     const firstModelId = models[0]?.id;
     try {
-      if (imageModelId) {
-        await api.setSettings({ ...(await api.getSettings()), imageGeneration: { providerId: saved.id, modelId: imageModelId } });
-        useAppStore.setState({ settings: await api.getSettings() });
-        showToast(t("settings.providerSaved"), { variant: "success" });
+      if (imageModelIds !== undefined) {
+        const current = await api.getSettings();
+        const plan = planImageGenerationDefaults(
+          current,
+          saved.id,
+          imageModelIds,
+          [...providers.filter((provider) => provider.id !== saved.id), saved],
+        );
+        const nextSettings = { ...current, ...plan };
+        await api.setSettings(nextSettings);
+        useAppStore.setState({ settings: nextSettings });
+        showToast(t("settings.imageModelSelected"), { variant: "success" });
       } else if (copyDraft) {
         showToast(t("settings.providerSaved"), { variant: "success" });
       } else if (!editingProvider) {
-        await api.setSettings({
-          ...settings,
-          defaultProviderId: saved.id,
-          defaultModelId: firstModelId ?? "",
-        });
+        // A freshly added provider must not take over the app default: whatever
+        // the user already picked keeps running — as long as that default's own
+        // provider is still runnable — until they change it themselves.
+        const keepsCurrentDefault = keepsAppDefaultModel(
+          providers,
+          settings.defaultProviderId,
+          settings.defaultModelId,
+          imageGenerationCandidates,
+        );
+        if (!keepsCurrentDefault) {
+          await api.setSettings({
+            ...settings,
+            defaultProviderId: saved.id,
+            defaultModelId: firstModelId ?? "",
+          });
+        }
         showToast(t("settings.providerSaved"), { variant: "success" });
       } else {
         if (
@@ -335,6 +378,28 @@ export function ModelConfigPage() {
       showToast(error instanceof Error ? error.message : String(error), {
         variant: "error",
       });
+    }
+  };
+
+  const setImageGenerationDefault = async (binding: ImageGenerationBinding) => {
+    setChangingImageModel(true);
+    try {
+      const current = await api.getSettings();
+      const candidates = imageGenerationBindings(
+        current.imageGenerationModels,
+        current.imageGeneration,
+      );
+      if (!isImageGenerationModel(candidates, binding.providerId, binding.modelId)) return;
+      const nextSettings = { ...current, imageGeneration: binding };
+      await api.setSettings(nextSettings);
+      useAppStore.setState({ settings: nextSettings });
+      showToast(t("settings.imageModelSelected"), { variant: "success" });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), {
+        variant: "error",
+      });
+    } finally {
+      setChangingImageModel(false);
     }
   };
 
@@ -703,7 +768,14 @@ export function ModelConfigPage() {
               </div>
             </AnchoredMenu>
           </div>
-          <ImageGenerationModelRow settings={settings} providers={providers} />
+          {imageGenerationCandidates.length > 0 ? (
+            <ImageGenerationModelRow
+              settings={settings}
+              providers={providers}
+              busy={changingImageModel}
+              onChange={setImageGenerationDefault}
+            />
+          ) : null}
         </div>
       </section>
 
@@ -827,7 +899,7 @@ export function ModelConfigPage() {
                           variant="ghost"
                           disabled={rowBusy || !providerReady(provider)}
                           onClick={() =>
-                            void setDefaultModel(provider, defaultModelOptions([provider], settings.imageGeneration)[0]?.modelId ?? "")
+                            void setDefaultModel(provider, defaultModelOptions([provider], imageGenerationCandidates)[0]?.modelId ?? "")
                           }
                         >
                           {t("settings.makeDefault")}
@@ -1032,7 +1104,11 @@ export function ModelConfigPage() {
           provider={editingProvider}
           initialDraft={copyDraft}
           onClose={() => { setSetupFor(null); setCopyDraft(null); }}
-          imageModelId={settings.imageGeneration?.providerId === editingProvider?.id ? settings.imageGeneration?.modelId : undefined}
+          imageModelIds={editingProvider
+            ? imageGenerationCandidates
+                .filter((binding) => binding.providerId === editingProvider.id)
+                .map((binding) => binding.modelId)
+            : undefined}
           onSaved={afterSaved}
         />
       ) : null}
