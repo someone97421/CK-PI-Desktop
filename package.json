@@ -1,7 +1,7 @@
 {
-  "name": "pi-desktop",
+  "name": "this-is-a-agent",
   "private": true,
-  "version": "2609.2121.5541",
+  "version": "2609.2209.2014",
   "description": "Local-first AI coding agent desktop client",
   "packageManager": "pnpm@10.34.5",
   "engines": {

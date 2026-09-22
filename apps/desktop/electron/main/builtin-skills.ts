@@ -104,8 +104,8 @@ export function builtinSkills(input: BuiltinSkillInput): PluginSkillDef[] {
       : [];
   });
 }
- * host does not ship, which is the caller's cue to try the plugin registry.
- */
+
+/** 读取内置技能正文；未找到时交由调用方查找插件技能。 */
 export function loadBuiltinSkillBody(
   id: string,
 ): { id: string; name: string; body: string } | null {

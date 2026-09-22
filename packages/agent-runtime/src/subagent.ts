@@ -824,9 +824,6 @@ export class SubagentRun {
     return this.result("completed", this.lastReportText);
   }
 
-  private modelBinding() {
-    return this.bindingFor(this.provider, this.thinkingLevel);
-  }
   private dedupeToolCalls(messages: AgentMessage[]): AgentMessage[] {
     const drop = dedupeToolCallMessages(messages);
     reportDuplicateToolCallDrop(this.opts.sessionId, drop);

@@ -293,3 +293,11 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 - 按既定边界保留现有 AGENTS 规则和归档快照，不引入上游流程规则、规则检查脚本及其他语种；本轮不涉及智能体提示词规则修改。
 
 本轮仅源码适配、差异审阅和 Git 合并关系核对；未运行测试、typecheck、构建、依赖安装或服务，未操作实际业务数据库，未发布或推送。
+
+## 同步后 Windows 构建（2026-09-22）
+
+用户要求构建新版并提交推送。通过统一入口 `pnpm --filter @pi-desktop/desktop dist:win` 成功生成 Windows x64 安装版、便携版、解包目录、`latest.yml` 和 blockmap，版本为 `20260922-092014`（内部版本 `2609.2209.2014`）。产物位于 `apps/desktop/release/20260922-092014-ujnSAe/`，构建成功后已按规则清理旧批次。
+
+构建时修复两处源码编译阻塞：删除子代理重复的 `modelBinding()` 实现，修正内置技能加载函数前残缺注释。pnpm 自动下载缓存链接冲突通过临时目录安装项目指定的 pnpm 10.34.5 解决，不修改依赖声明。
+
+依赖 TypeScript 编译、Rust release、sidecar、Electron 主进程/预加载/界面及 Windows 打包均完成；存在未使用方法、CSS highlight 和分包提示等非阻断警告。未另跑测试或进行安装运行验证。版本文件随本次提交保存，构建产物保留本地；Git 推送不代表发布 GitHub Release。
