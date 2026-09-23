@@ -1926,15 +1926,15 @@ Delegation rules:
       // ordering guarantee is untouched.
       toolExecution: "parallel",
       steeringMode: "all",
-      // A queued renderer prompt asks the current run to finish normally at
-      // the next turn boundary. pi-agent-core evaluates this after the
-      // assistant response and completed tool batch, before another provider
-      // request, so no second concurrent durable turn is created.
-      shouldStopAfterTurn: async () => {
+      // A queued renderer prompt ends a completed turn at the next boundary.
+      // pi-agent-core 0.87 also invokes this hook on errors and aborts; those
+      // must leave supervision and the graceful-stop request untouched.
+      finishTurn: async ({ message }) => {
+        if (message.stopReason === "error" || message.stopReason === "aborted") return;
         if (!this.gracefulStopRequested) this.queueSupervisionAtBoundary();
-        if (!this.gracefulStopRequested) return false;
+        if (!this.gracefulStopRequested) return;
         this.gracefulStopRequested = false;
-        return true;
+        return { action: "end" };
       },
     });
 
@@ -6422,7 +6422,7 @@ Delegation rules:
 
   /**
    * Shape the next in-run assistant turn. pi 0.84.4+ calls this only after
-   * `shouldStopAfterTurn` and queued-message checks decide the loop will start
+   * `finishTurn` and queued-message checks decide the loop will start
    * another assistant turn, including between a tool batch and the follow-up
    * model request. A new user prompt compacts separately in `prompt()` via
    * `automaticCompactionNeeded`, because that first turn does not go through

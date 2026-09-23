@@ -362,3 +362,13 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 - 通过统一入口 `pnpm --filter @pi-desktop/desktop dist:win` 成功构建 `20260923-001548`（内部版本 `2609.2300.1548`）。打包网络等待后，指定 `THIS_IS_A_AGENT_ELECTRON_DIST` 复用本机 Electron 43.6.0，并以相同 `THIS_IS_A_AGENT_BUILD_TIME` 完成重建。
 - 产物位于 `apps/desktop/release/20260923-001548-tuIwMZ/`，包含安装 EXE、单文件便携 EXE、解包目录、`latest.yml` 和 blockmap；旧批次已由构建入口清理。最终 `app.asar` 包含身份登记分支，打包 sidecar 包含登记去重及原生搜索、本地请求错误修复。
 - 构建通过 TypeScript 依赖、Rust release、sidecar、Electron 主进程/预加载/界面编译及 Windows 打包；存在未使用 Rust 方法、混合导入和较大分块等非阻断警告。源码与版本文件随本次合并提交，产物保留本地。
+
+## Pi SDK 0.87.0 专项升级（2026-09-23）
+
+用户授权按常规方式升级 Pi SDK。采用上游 `0b71fae77a82997b62f3777e477456e1b1f5d172` 的 SDK 接入与三份 0.87.0 补丁，在当前 `main` 适配；本节记录专项升级，正式上游合并位置仍为顶部记录的 `f49cff5ccff9145b208854737dc526f8f61f6c63`。
+
+- `pi-agent-core`、`pi-ai`、`pi-coding-agent` 统一固定为 0.87.0，同步桌面依赖、扩展内核版本、补丁引用及锁文件。
+- 回合结束接口使用 `finishTurn`，正常边界保留 fork 子代理报告与督导投递；错误或取消响应保留待投递信息及平稳停止请求。正常停止返回 `{ action: "end" }`。
+- 原生 Pi 会话写入保护覆盖 `appendContextEdit`；保留 TaskResume、快照恢复、子代理每次请求上下文转换、当前轮引导与持久回执、模型绑定及 Google fetch 兼容。
+- 0.87.0 补丁延续原生搜索回放、模型相关的上下文估算与推理回放适配，并包含流式字段缺失容错。相关版本断言、回合边界与原生会话测试源码同步维护。
+- 执行 `pnpm install --lockfile-only --ignore-scripts` 成功，仅更新锁文件；pnpm 提示废弃子依赖及 peer dependency 警告。已审阅源码与锁文件差异，未运行测试、typecheck、构建或应用服务，未安装完整依赖、操作用户业务数据、提交或推送。

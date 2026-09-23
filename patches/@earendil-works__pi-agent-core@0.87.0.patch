@@ -1,8 +1,8 @@
 diff --git a/dist/agent-loop.js b/dist/agent-loop.js
-index 9da16513e8d11e4bb3d7109b6f0ae4c35a3abdbd..e71adc7c61a6b9587e84d37dd04a9ce2f5834bfc 100644
+index 4bbd0ce..5bf74e7 100644
 --- a/dist/agent-loop.js
 +++ b/dist/agent-loop.js
-@@ -256,6 +256,12 @@ async function streamAssistantResponse(context, config, signal, emit, streamFunc
+@@ -292,6 +292,12 @@ async function streamAssistantResponse(context, config, signal, emit, streamFunc
              case "toolcall_start":
              case "toolcall_delta":
              case "toolcall_end":
@@ -16,7 +16,7 @@ index 9da16513e8d11e4bb3d7109b6f0ae4c35a3abdbd..e71adc7c61a6b9587e84d37dd04a9ce2
                      partialMessage = event.partial;
                      context.messages[context.messages.length - 1] = partialMessage;
 diff --git a/dist/agent.js b/dist/agent.js
-index 209c9d3a6ed4819c0fc1591892e43caf52c941bf..d5459c927e6117a77211f940253d1fdc64b751a6 100644
+index a2f462f..a3b8a7f 100644
 --- a/dist/agent.js
 +++ b/dist/agent.js
 @@ -1,3 +1,4 @@
@@ -24,7 +24,7 @@ index 209c9d3a6ed4819c0fc1591892e43caf52c941bf..d5459c927e6117a77211f940253d1fdc
  import { createInitialSystemMessage, getCurrentSystemMessage, getCurrentSystemPrompt, toToolDeclaration, } from "@earendil-works/pi-ai";
  import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.js";
  import { getDefaultStreamFn } from "./stream-fn.js";
-@@ -356,6 +357,7 @@ export class Agent {
+@@ -359,6 +360,7 @@ export class Agent {
          }
      }
      async handleRunFailure(error, aborted) {
@@ -32,7 +32,7 @@ index 209c9d3a6ed4819c0fc1591892e43caf52c941bf..d5459c927e6117a77211f940253d1fdc
          const failureMessage = {
              role: "assistant",
              content: [{ type: "text", text: "" }],
-@@ -364,7 +366,8 @@ export class Agent {
+@@ -367,7 +369,8 @@ export class Agent {
              model: this._state.model.id,
              usage: EMPTY_USAGE,
              stopReason: aborted ? "aborted" : "error",
@@ -43,7 +43,7 @@ index 209c9d3a6ed4819c0fc1591892e43caf52c941bf..d5459c927e6117a77211f940253d1fdc
          };
          await this.processEvents({ type: "message_start", message: failureMessage });
 diff --git a/dist/harness/compaction/compaction.d.ts b/dist/harness/compaction/compaction.d.ts
-index 85c89e80b879973e125a053f71f4044febd01744..995a28d5eedbf65227d3bd3b8ef62f3814679d68 100644
+index 85c89e8..995a28d 100644
 --- a/dist/harness/compaction/compaction.d.ts
 +++ b/dist/harness/compaction/compaction.d.ts
 @@ -53,12 +53,12 @@ export interface ContextUsageEstimate {
@@ -64,7 +64,7 @@ index 85c89e80b879973e125a053f71f4044febd01744..995a28d5eedbf65227d3bd3b8ef62f38
  export declare function findTurnStartIndex(entries: Entry[], entryIndex: number, startIndex: number): number;
  /** Cut point selected for compaction. */
 diff --git a/dist/harness/compaction/compaction.js b/dist/harness/compaction/compaction.js
-index d430a3f966cc9624cc2e78638fd207a83a75b312..1682577b73f847324aa89f4455b27e14bace36dd 100644
+index d430a3f..1682577 100644
 --- a/dist/harness/compaction/compaction.js
 +++ b/dist/harness/compaction/compaction.js
 @@ -1,18 +1,12 @@
@@ -171,7 +171,7 @@ index d430a3f966cc9624cc2e78638fd207a83a75b312..1682577b73f847324aa89f4455b27e14
  function findValidCutPoints(entries, startIndex, endIndex) {
      const cutPoints = [];
 diff --git a/dist/harness/compaction/utils.js b/dist/harness/compaction/utils.js
-index f7c6a26ac39539cfb578d79c79c071bfd9fbdcd9..a5de5589fcc9395ea2cb031453359c468f6579a0 100644
+index f7c6a26..a5de558 100644
 --- a/dist/harness/compaction/utils.js
 +++ b/dist/harness/compaction/utils.js
 @@ -1,4 +1,5 @@
@@ -213,7 +213,7 @@ index f7c6a26ac39539cfb578d79c79c071bfd9fbdcd9..a5de5589fcc9395ea2cb031453359c46
          else if (msg.role === "toolResult") {
              const content = contentText(msg.content, "");
 diff --git a/dist/harness/pico3/kinds/collapse.d.ts b/dist/harness/pico3/kinds/collapse.d.ts
-index 736c315ec001a7d3b526ac019d08e59b43711205..4517456d3a141e45f03269b47ef2123edaa94b90 100644
+index 736c315..4517456 100644
 --- a/dist/harness/pico3/kinds/collapse.d.ts
 +++ b/dist/harness/pico3/kinds/collapse.d.ts
 @@ -1,5 +1,5 @@
@@ -234,7 +234,7 @@ index 736c315ec001a7d3b526ac019d08e59b43711205..4517456d3a141e45f03269b47ef2123e
  //# sourceMappingURL=collapse.d.ts.map
 \ No newline at end of file
 diff --git a/dist/harness/pico3/kinds/collapse.js b/dist/harness/pico3/kinds/collapse.js
-index 2fa0e3570797cedf43e2b1e2f1052bc4b62e6d9c..1a22a7d33caf1e46f7ad8930e5dd0000b2a86c9b 100644
+index 2fa0e35..1a22a7d 100644
 --- a/dist/harness/pico3/kinds/collapse.js
 +++ b/dist/harness/pico3/kinds/collapse.js
 @@ -2,7 +2,7 @@ import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
@@ -262,7 +262,7 @@ index 2fa0e3570797cedf43e2b1e2f1052bc4b62e6d9c..1a22a7d33caf1e46f7ad8930e5dd0000
              open = { last: entry.id, tokens };
              exchanges.push(open);
 diff --git a/dist/harness/pico3/kinds/frames.js b/dist/harness/pico3/kinds/frames.js
-index f34eede37d69d0ceaad068d6a01812a1ca5fee7d..fc0191d71ee32aec8260a31a38fa7952b2e4a64b 100644
+index f34eede..fc0191d 100644
 --- a/dist/harness/pico3/kinds/frames.js
 +++ b/dist/harness/pico3/kinds/frames.js
 @@ -1,3 +1,4 @@
@@ -293,7 +293,7 @@ index f34eede37d69d0ceaad068d6a01812a1ca5fee7d..fc0191d71ee32aec8260a31a38fa7952
              c[frame.contentIndex] = { ...frame.content };
              return;
 diff --git a/dist/harness/pico3/kinds/generation.js b/dist/harness/pico3/kinds/generation.js
-index 01ffaa587dbf91bce9a8ade5fb5ed09e174267e3..73970f394690526941efce6714f1647499e81fb3 100644
+index 01ffaa5..73970f3 100644
 --- a/dist/harness/pico3/kinds/generation.js
 +++ b/dist/harness/pico3/kinds/generation.js
 @@ -1,3 +1,4 @@

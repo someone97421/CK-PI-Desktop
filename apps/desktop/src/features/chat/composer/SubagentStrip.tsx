@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
 import { api } from "../../../lib/api";
@@ -25,6 +26,8 @@ export function SubagentStrip({ sessionId }: { sessionId: string }) {
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ pointerId: number; offset: number } | null>(null);
+  const [scroll, setScroll] = useState({ viewport: 0, content: 0, left: 0 });
   const previousNewest = useRef<string | undefined>(undefined);
 
   const previousTranscript = useRef({ live, running });
@@ -82,9 +85,58 @@ export function SubagentStrip({ sessionId }: { sessionId: string }) {
     previousNewest.current = newest;
   }, [newest]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
+    const update = () => {
+      const next = { viewport: element.clientWidth, content: element.scrollWidth, left: element.scrollLeft };
+      setScroll((current) => current.viewport === next.viewport && current.content === next.content && current.left === next.left ? current : next);
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    element.addEventListener("scroll", update, { passive: true });
+    update();
+    return () => {
+      observer.disconnect();
+      element.removeEventListener("scroll", update);
+    };
+  }, [tasks, error]);
+
+  const maxScroll = Math.max(0, scroll.content - scroll.viewport);
+  const trackWidth = Math.max(0, scroll.viewport - 4);
+  const thumbWidth = scroll.content ? Math.min(trackWidth, Math.max(24, trackWidth * scroll.viewport / scroll.content)) : 0;
+  const thumbTravel = trackWidth - thumbWidth;
+  const thumbLeft = maxScroll ? scroll.left / maxScroll * thumbTravel : 0;
+
+  function scrollToPointer(clientX: number, offset: number, track: HTMLDivElement) {
+    if (!scrollRef.current || !thumbTravel) return;
+    const position = Math.max(0, Math.min(thumbTravel, clientX - track.getBoundingClientRect().left - offset));
+    scrollRef.current.scrollLeft = position / thumbTravel * maxScroll;
+  }
+
+  function startDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.currentTarget.focus();
+    const x = event.clientX - event.currentTarget.getBoundingClientRect().left;
+    const offset = x >= thumbLeft && x <= thumbLeft + thumbWidth ? x - thumbLeft : thumbWidth / 2;
+    dragRef.current = { pointerId: event.pointerId, offset };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    scrollToPointer(event.clientX, offset, event.currentTarget);
+  }
+
+  function moveDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === event.pointerId) scrollToPointer(event.clientX, dragRef.current.offset, event.currentTarget);
+  }
+
+  function stopDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+  }
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    const strip = element?.parentElement;
+    if (!element || !strip) return;
     const wheel = (event: WheelEvent) => {
       if (event.ctrlKey || element.scrollWidth <= element.clientWidth) return;
       const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
@@ -92,8 +144,8 @@ export function SubagentStrip({ sessionId }: { sessionId: string }) {
       event.preventDefault();
       element.scrollLeft += delta * (event.deltaMode === 1 ? 20 : event.deltaMode === 2 ? element.clientWidth : 1);
     };
-    element.addEventListener("wheel", wheel, { passive: false });
-    return () => element.removeEventListener("wheel", wheel);
+    strip.addEventListener("wheel", wheel, { passive: false });
+    return () => strip.removeEventListener("wheel", wheel);
   }, [tasks.length, error]);
 
   function open(message: UiMessage) {
@@ -107,6 +159,22 @@ export function SubagentStrip({ sessionId }: { sessionId: string }) {
       {tasks.map((task) => <SubagentCapsule key={task.message.id} {...task} onOpen={() => void open(task.message)} />)}
       {error ? <button className="subagent-strip-retry" onClick={() => setRetry((value) => value + 1)}>{t("chat.subagentStripRetry")}</button> : null}
     </div>
+    {maxScroll > 0 && <div className="subagent-strip-track" role="scrollbar" tabIndex={0}
+      aria-label={t("chat.subagentStripOrder")} aria-orientation="horizontal"
+      aria-valuemin={0} aria-valuemax={Math.ceil(maxScroll)} aria-valuenow={Math.round(scroll.left)}
+      onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={stopDrag} onPointerCancel={stopDrag}
+      onKeyDown={(event) => {
+        const element = scrollRef.current;
+        if (!element) return;
+        const step = event.key === "ArrowRight" ? 40 : event.key === "ArrowLeft" ? -40
+          : event.key === "PageDown" ? element.clientWidth : event.key === "PageUp" ? -element.clientWidth
+          : event.key === "Home" ? -element.scrollWidth : event.key === "End" ? element.scrollWidth : 0;
+        if (!step) return;
+        event.preventDefault();
+        element.scrollLeft += step;
+      }}>
+      <div className="subagent-strip-thumb" style={{ width: thumbWidth, transform: `translateX(${thumbLeft}px)` }} />
+    </div>}
   </div>;
 }
 

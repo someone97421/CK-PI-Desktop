@@ -51,6 +51,7 @@
 
 /* 会话子代理总览独占一行，计入输入区高度，附件和发送控件不被覆盖。 */
 .subagent-strip {
+  position: relative;
   min-width: 0;
   margin-bottom: 8px;
 }
@@ -62,9 +63,34 @@
   max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   padding: 3px 2px;
 }
+.subagent-strip-scroll::-webkit-scrollbar { display: none; }
+
+.subagent-strip-track {
+  position: absolute;
+  bottom: -4px;
+  left: 2px;
+  right: 2px;
+  height: 8px;
+  border-radius: 4px;
+  opacity: 0;
+  pointer-events: none;
+  touch-action: none;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+.subagent-strip:hover .subagent-strip-track,
+.subagent-strip:focus-within .subagent-strip-track { opacity: 1; pointer-events: auto; }
+.subagent-strip-track:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: 1px; }
+.subagent-strip-thumb {
+  height: 4px;
+  margin-top: 2px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--ds-text-primary) 28%, transparent);
+}
+.subagent-strip-track:hover .subagent-strip-thumb { background: color-mix(in oklab, var(--ds-text-primary) 42%, transparent); }
 
 .subagent-capsule-item { flex: 0 0 auto; max-width: min(220px, 75%); }
 

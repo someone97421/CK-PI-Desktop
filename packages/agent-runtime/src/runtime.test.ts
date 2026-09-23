@@ -453,17 +453,35 @@ describe("DesktopAgentRuntime configuration matching", () => {
     await runtime.dispose();
   });
 
-  it("stops once at the next completed turn boundary", async () => {
+  it("stops once at a successful finishTurn boundary and lets errors settle", async () => {
     const runtime = createRuntime();
     const agent = (runtime as any).agent;
+    const supervision = vi.spyOn(runtime as any, "queueSupervisionAtBoundary");
     agent.state.isStreaming = true;
 
     expect(runtime.requestGracefulStop()).toEqual({ requested: true });
-    expect(await agent.shouldStopAfterTurn({})).toBe(true);
-    expect(await agent.shouldStopAfterTurn({})).toBe(false);
+    expect(await agent.finishTurn({ message: { stopReason: "error" } })).toBeUndefined();
+    expect(await agent.finishTurn({ message: { stopReason: "aborted" } })).toBeUndefined();
+    expect(supervision).not.toHaveBeenCalled();
+    expect(await agent.finishTurn({ message: { stopReason: "stop" } })).toEqual({ action: "end" });
+    expect(await agent.finishTurn({ message: { stopReason: "stop" } })).toBeUndefined();
+    expect(supervision).toHaveBeenCalledTimes(1);
 
     agent.state.isStreaming = false;
     expect(runtime.requestGracefulStop()).toEqual({ requested: false });
+    await runtime.dispose();
+  });
+
+  it("queues supervision only at a successful boundary without a graceful stop", async () => {
+    const runtime = createRuntime();
+    const agent = (runtime as any).agent;
+    const supervision = vi.spyOn(runtime as any, "queueSupervisionAtBoundary");
+
+    expect(await agent.finishTurn({ message: { stopReason: "error" } })).toBeUndefined();
+    expect(await agent.finishTurn({ message: { stopReason: "aborted" } })).toBeUndefined();
+    expect(supervision).not.toHaveBeenCalled();
+    expect(await agent.finishTurn({ message: { stopReason: "stop" } })).toBeUndefined();
+    expect(supervision).toHaveBeenCalledTimes(1);
     await runtime.dispose();
   });
 

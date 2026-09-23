@@ -1,5 +1,5 @@
 diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
-index d462f30bd8e5ebcbaf3cf3e0563cb0915d0d1aea..9d89a90bf1c4f79d6299e32094678711263a5132 100644
+index d462f30..3d3dab1 100644
 --- a/dist/api/anthropic-messages.js
 +++ b/dist/api/anthropic-messages.js
 @@ -1,3 +1,6 @@
@@ -39,7 +39,7 @@ index d462f30bd8e5ebcbaf3cf3e0563cb0915d0d1aea..9d89a90bf1c4f79d6299e32094678711
              const response = await retryProviderRequest(() => client.beta.messages.create(params, requestOptions).asResponse(), {
                  maxRetries: options?.maxRetries,
                  maxRetryDelayMs: options?.maxRetryDelayMs,
-@@ -474,6 +481,39 @@ export const stream = (model, context, options) => {
+@@ -474,17 +481,50 @@ export const stream = (model, context, options) => {
                          output.content.push(block);
                          stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
                      }
@@ -79,29 +79,68 @@ index d462f30bd8e5ebcbaf3cf3e0563cb0915d0d1aea..9d89a90bf1c4f79d6299e32094678711
                  }
                  else if (event.type === "content_block_delta") {
                      if (event.delta.type === "text_delta") {
-@@ -515,6 +555,18 @@ export const stream = (model, context, options) => {
+                         const index = blocks.findIndex((b) => b.index === event.index);
+                         const block = blocks[index];
+                         if (block && block.type === "text") {
+-                            block.text += event.delta.text;
++                            block.text += event.delta.text ?? "";
+                             stream.push({
+                                 type: "text_delta",
+                                 contentIndex: index,
+-                                delta: event.delta.text,
++                                delta: event.delta.text ?? "",
                                  partial: output,
                              });
                          }
+@@ -493,11 +533,11 @@ export const stream = (model, context, options) => {
+                         const index = blocks.findIndex((b) => b.index === event.index);
+                         const block = blocks[index];
+                         if (block && block.type === "thinking") {
+-                            block.thinking += event.delta.thinking;
++                            block.thinking += event.delta.thinking ?? "";
+                             stream.push({
+                                 type: "thinking_delta",
+                                 contentIndex: index,
+-                                delta: event.delta.thinking,
++                                delta: event.delta.thinking ?? "",
+                                 partial: output,
+                             });
+                         }
+@@ -506,12 +546,24 @@ export const stream = (model, context, options) => {
+                         const index = blocks.findIndex((b) => b.index === event.index);
+                         const block = blocks[index];
+                         if (block && block.type === "toolCall") {
+-                            block.partialJson += event.delta.partial_json;
++                            block.partialJson += event.delta.partial_json ?? "";
+                             block.arguments = parseStreamingJson(block.partialJson);
+                             stream.push({
+                                 type: "toolcall_delta",
+                                 contentIndex: index,
+-                                delta: event.delta.partial_json,
++                                delta: event.delta.partial_json ?? "",
++                                partial: output,
++                            });
++                        }
 +                        // Hosted web search (PI-Desktop): server_tool_use input
 +                        // (the query) streams as input_json_delta like any tool
 +                        // call; accumulate it so the row can show the query live.
 +                        else if (block && block.type === "hostedSearch" && block.phase === "server_tool_use") {
-+                            block.inputJson = (block.inputJson ?? "") + event.delta.partial_json;
++                            block.inputJson = (block.inputJson ?? "") + (event.delta.partial_json ?? "");
 +                            block.input = parseStreamingJson(block.inputJson);
 +                            stream.push({
 +                                type: "hosted_search_update",
 +                                contentIndex: index,
-+                                partial: output,
-+                            });
-+                        }
-                     }
-                     else if (event.delta.type === "signature_delta") {
-                         const index = blocks.findIndex((b) => b.index === event.index);
-@@ -524,6 +576,18 @@ export const stream = (model, context, options) => {
-                             block.thinkingSignature += event.delta.signature;
+                                 partial: output,
+                             });
                          }
-                     }
+@@ -521,7 +573,19 @@ export const stream = (model, context, options) => {
+                         const block = blocks[index];
+                         if (block && block.type === "thinking") {
+                             block.thinkingSignature = block.thinkingSignature || "";
+-                            block.thinkingSignature += event.delta.signature;
++                            block.thinkingSignature += event.delta.signature ?? "";
++                        }
++                    }
 +                    // Hosted web search (PI-Desktop): citations arrive as deltas
 +                    // on the text block that follows the search result. Collect
 +                    // them on the message for the application to render.
@@ -112,11 +151,9 @@ index d462f30bd8e5ebcbaf3cf3e0563cb0915d0d1aea..9d89a90bf1c4f79d6299e32094678711
 +                            (citation.title === undefined || typeof citation.title === "string")) {
 +                            output.hostedSearchCitations = output.hostedSearchCitations ?? [];
 +                            output.hostedSearchCitations.push(citation);
-+                        }
-+                    }
+                         }
+                     }
                  }
-                 else if (event.type === "content_block_stop") {
-                     const index = blocks.findIndex((b) => b.index === event.index);
 @@ -558,6 +622,12 @@ export const stream = (model, context, options) => {
                                  partial: output,
                              });
@@ -201,7 +238,7 @@ index d462f30bd8e5ebcbaf3cf3e0563cb0915d0d1aea..9d89a90bf1c4f79d6299e32094678711
              if (blocks.length === 0)
                  continue;
 diff --git a/dist/api/azure-openai-responses.js b/dist/api/azure-openai-responses.js
-index ec1e2069102ed3165b2d702b9fc4105d5cf8f4e1..572dce7f2c1775a48bea869fcc0df7d09ef5644b 100644
+index ec1e206..572dce7 100644
 --- a/dist/api/azure-openai-responses.js
 +++ b/dist/api/azure-openai-responses.js
 @@ -1,3 +1,5 @@
@@ -306,7 +343,7 @@ index ec1e2069102ed3165b2d702b9fc4105d5cf8f4e1..572dce7f2c1775a48bea869fcc0df7d0
      if (options?.samplingParams) {
          Object.assign(params, options.samplingParams);
 diff --git a/dist/api/mistral-conversations.js b/dist/api/mistral-conversations.js
-index 3106c5d470dc3610c05d8ee153026df20f86f66e..8b209bb46809c394ffebfd11d5dfd2731c204310 100644
+index 3106c5d..8b209bb 100644
 --- a/dist/api/mistral-conversations.js
 +++ b/dist/api/mistral-conversations.js
 @@ -645,6 +645,9 @@ function toChatMessages(messages, supportsImages) {
@@ -320,7 +357,7 @@ index 3106c5d470dc3610c05d8ee153026df20f86f66e..8b209bb46809c394ffebfd11d5dfd273
                      id: block.id,
                      type: "function",
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index fd459fddd20380242bbe37ec16e260097c9e4236..7d4c90a1aee35efaa05548c4797929111de4db70 100644
+index 80720d0..68d3a57 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
 @@ -1039,21 +1039,27 @@ export function convertMessages(model, context, compat, options) {
@@ -399,8 +436,34 @@ index fd459fddd20380242bbe37ec16e260097c9e4236..7d4c90a1aee35efaa05548c479792911
      return params;
  }
  function convertTools(tools, compat) {
+@@ -1265,6 +1306,9 @@ function detectCompat(model) {
+         requiresAssistantAfterToolResult: false,
+         requiresThinkingAsText: false,
+         requiresReasoningContentOnAssistantMessages: isDeepSeek,
++        // Relays that reject an empty reasoning echo must set this explicitly:
++        // no endpoint can be auto-detected as requiring a real one.
++        requiresNonEmptyReasoningReplay: undefined,
+         thinkingFormat: isDeepSeek
+             ? "deepseek"
+             : isZai
+@@ -1318,6 +1362,8 @@ function getCompat(model) {
+         requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
+         requiresReasoningContentOnAssistantMessages: model.compat.requiresReasoningContentOnAssistantMessages ??
+             detected.requiresReasoningContentOnAssistantMessages,
++        requiresNonEmptyReasoningReplay: model.compat.requiresNonEmptyReasoningReplay ??
++            detected.requiresNonEmptyReasoningReplay,
+         thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
+         openRouterRouting: model.compat.openRouterRouting ?? {},
+         vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
+@@ -1337,4 +1383,4 @@ function getCompat(model) {
+         vllmPriority: model.compat.vllmPriority,
+     };
+ }
+-//# sourceMappingURL=openai-completions.js.map
+\ No newline at end of file
++//# sourceMappingURL=openai-completions.js.map
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index 53597d2c3becdd2c03d4fd265c213a36b403f26b..8bb8ca1ea19d5e9daa584956e307ce59cd089d5d 100644
+index 53597d2..763f99a 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
 @@ -1,3 +1,4 @@
@@ -459,7 +522,45 @@ index 53597d2c3becdd2c03d4fd265c213a36b403f26b..8bb8ca1ea19d5e9daa584956e307ce59
          return undefined;
      };
      const getOrCreateSlot = (outputIndex, item) => {
-@@ -529,6 +560,27 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -485,11 +516,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             const slot = getSlot(event.output_index, "thinking");
+             if (!slot)
+                 continue;
+-            slot.block.thinking += event.delta;
++            slot.block.thinking += event.delta ?? "";
+             stream.push({
+                 type: "thinking_delta",
+                 contentIndex: slot.contentIndex,
+-                delta: event.delta,
++                delta: event.delta ?? "",
+                 partial: output,
+             });
+         }
+@@ -509,11 +540,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             const slot = getSlot(event.output_index, "thinking");
+             if (!slot)
+                 continue;
+-            slot.block.thinking += event.delta;
++            slot.block.thinking += event.delta ?? "";
+             stream.push({
+                 type: "thinking_delta",
+                 contentIndex: slot.contentIndex,
+-                delta: event.delta,
++                delta: event.delta ?? "",
+                 partial: output,
+             });
+         }
+@@ -521,23 +552,44 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             const slot = getSlot(event.output_index, "text");
+             if (!slot)
+                 continue;
+-            slot.block.text += event.delta;
++            slot.block.text += event.delta ?? "";
+             stream.push({
+                 type: "text_delta",
+                 contentIndex: slot.contentIndex,
+-                delta: event.delta,
++                delta: event.delta ?? "",
                  partial: output,
              });
          }
@@ -487,6 +588,29 @@ index 53597d2c3becdd2c03d4fd265c213a36b403f26b..8bb8ca1ea19d5e9daa584956e307ce59
          else if (event.type === "response.refusal.delta") {
              const slot = getSlot(event.output_index, "text");
              if (!slot)
+                 continue;
+-            slot.block.text += event.delta;
++            slot.block.text += event.delta ?? "";
+             stream.push({
+                 type: "text_delta",
+                 contentIndex: slot.contentIndex,
+-                delta: event.delta,
++                delta: event.delta ?? "",
+                 partial: output,
+             });
+         }
+@@ -545,9 +597,9 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             const slot = getSlot(event.output_index, "toolCall");
+             if (!slot || slot.block.partialJson === undefined)
+                 continue;
+-            slot.block.partialJson += event.delta;
++            slot.block.partialJson += event.delta ?? "";
+             slot.block.arguments = parseStreamingJson(slot.block.partialJson);
+-            pushToolCallDelta(slot, event.delta);
++            pushToolCallDelta(slot, event.delta ?? "");
+         }
+         else if (event.type === "response.function_call_arguments.done") {
+             const slot = getSlot(event.output_index, "toolCall");
 @@ -633,9 +685,25 @@ export async function processResponsesStream(openaiStream, output, stream, model
                  });
                  outputSlots.delete(event.output_index);
@@ -514,7 +638,7 @@ index 53597d2c3becdd2c03d4fd265c213a36b403f26b..8bb8ca1ea19d5e9daa584956e307ce59
          else if (event.type === "error") {
              throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
 diff --git a/dist/api/openai-responses.js b/dist/api/openai-responses.js
-index 1396c8d57ffb0e300382281a026d878e6a96b43a..39d201fc29deaa3cf19a8aaafe57ff15bc29cdf4 100644
+index 1396c8d..39d201f 100644
 --- a/dist/api/openai-responses.js
 +++ b/dist/api/openai-responses.js
 @@ -1,3 +1,5 @@
@@ -616,7 +740,7 @@ index 1396c8d57ffb0e300382281a026d878e6a96b43a..39d201fc29deaa3cf19a8aaafe57ff15
      if (options?.samplingParams) {
          Object.assign(params, options.samplingParams);
 diff --git a/dist/api/simple-options.js b/dist/api/simple-options.js
-index 216a45feebc02acef047d1ff133729fb0751b76c..23528b801d65e33d22eb1d63ea49945d24a5e658 100644
+index 216a45f..23528b8 100644
 --- a/dist/api/simple-options.js
 +++ b/dist/api/simple-options.js
 @@ -4,7 +4,7 @@ const MIN_MAX_TOKENS = 1;
@@ -629,7 +753,7 @@ index 216a45feebc02acef047d1ff133729fb0751b76c..23528b801d65e33d22eb1d63ea49945d
  }
  export function buildBaseOptions(model, context, options, apiKey) {
 diff --git a/dist/auth/oauth/anthropic.js b/dist/auth/oauth/anthropic.js
-index 8692e906caa2609396bdccae98d4d593e024ecf6..029138715f58dbb2e5825f9a2d0c182ed7e81f2a 100644
+index 8692e90..0291387 100644
 --- a/dist/auth/oauth/anthropic.js
 +++ b/dist/auth/oauth/anthropic.js
 @@ -140,21 +140,90 @@ async function startCallbackServer(expectedState) {
@@ -773,7 +897,7 @@ index 8692e906caa2609396bdccae98d4d593e024ecf6..029138715f58dbb2e5825f9a2d0c182e
      return {
          type: "oauth",
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 5e8403dd62895d30eb7d8e3f95b87d6535221839..50f728e4427e1cadb9aded7e35f3e44611eefc85 100644
+index 5e8403d..50f728e 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -34,4 +34,7 @@ export * from "./utils/transcript.ts";
@@ -786,7 +910,7 @@ index 5e8403dd62895d30eb7d8e3f95b87d6535221839..50f728e4427e1cadb9aded7e35f3e446
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/dist/index.js b/dist/index.js
-index cf46c043b854412d56c5d65230a509165229806e..0fe002385c3d9906709be1cce6867d0c30a3a151 100644
+index cf46c04..0fe0023 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -21,4 +21,6 @@ export * from "./utils/transcript.js";
@@ -798,7 +922,7 @@ index cf46c043b854412d56c5d65230a509165229806e..0fe002385c3d9906709be1cce6867d0c
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index 49f2a3262e19aea105f95424cdec08444a7f5748..52215b53d50ed92ed0aeb7416ab71c1bdced2d49 100644
+index 5915ca6..f5d4114 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
 @@ -267,6 +267,30 @@ export interface ToolCall {
@@ -861,7 +985,20 @@ index 49f2a3262e19aea105f95424cdec08444a7f5748..52215b53d50ed92ed0aeb7416ab71c1b
  } | {
      type: "done";
      reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;
-@@ -789,6 +819,8 @@ export interface Model<TApi extends Api> {
+@@ -546,6 +576,12 @@ export interface OpenAICompletionsCompat {
+     requiresThinkingAsText?: boolean;
+     /** Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL. */
+     requiresReasoningContentOnAssistantMessages?: boolean;
++    /**
++     * Whether a replayed assistant message that carries no reasoning must send a documented
++     * non-empty placeholder instead of an empty string. Some relays reject the empty echo.
++     * Default: false; only an explicit model.compat opt-in enables it.
++     */
++    requiresNonEmptyReasoningReplay?: boolean;
+     /** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort when supported, "together" uses reasoning: { enabled } plus reasoning_effort when supported, "baseten" uses configurable chat_template_args plus reasoning_effort when supported, "zai" uses thinking: { type }, "qwen" uses top-level enable_thinking: boolean, "qwen-chat-template" uses chat_template_kwargs.enable_thinking and preserve_thinking, "chat-template" uses configurable chat_template_kwargs, "string-thinking" uses top-level thinking: string, and "ant-ling" uses reasoning: { effort } only when the mapped effort is non-null. Default: "openai". */
+     thinkingFormat?: "openai" | "openrouter" | "deepseek" | "together" | "baseten" | "zai" | "qwen" | "chat-template" | "qwen-chat-template" | "string-thinking" | "ant-ling";
+     /** Kwargs to send as `chat_template_kwargs` when `thinkingFormat` is `chat-template`. Use `{ "$var": "thinking.enabled" }`, `{ "$var": "thinking.effort" }`, or `{ "$var": "thinking.budget" }` for pi-controlled thinking values. */
+@@ -809,6 +845,8 @@ export interface Model<TApi extends Api> {
      provider: ProviderId;
      baseUrl: string;
      reasoning: boolean;
@@ -870,8 +1007,15 @@ index 49f2a3262e19aea105f95424cdec08444a7f5748..52215b53d50ed92ed0aeb7416ab71c1b
      /**
       * Maps pi thinking levels to provider/model-specific values.
       * Missing keys use provider defaults. null marks a level as unsupported.
+@@ -833,4 +871,4 @@ export interface ImagesModel<TApi extends ImagesApi> extends Omit<Model<Api>, "a
+     provider: ImagesProviderId;
+     output: ("text" | "image")[];
+ }
+-//# sourceMappingURL=types.d.ts.map
+\ No newline at end of file
++//# sourceMappingURL=types.d.ts.map
 diff --git a/dist/utils/assistant-message-frame.d.ts b/dist/utils/assistant-message-frame.d.ts
-index 08207197acab532d0f5f596363700a2d15a687d8..0584f6898e1d842c4414869b9080505b63c3a7b7 100644
+index 0820719..0584f68 100644
 --- a/dist/utils/assistant-message-frame.d.ts
 +++ b/dist/utils/assistant-message-frame.d.ts
 @@ -1,4 +1,4 @@
@@ -893,15 +1037,43 @@ index 08207197acab532d0f5f596363700a2d15a687d8..0584f6898e1d842c4414869b9080505b
  /**
   * Encodes one assistant stream. `partial` remains a shared live accumulator;
 diff --git a/dist/utils/assistant-message-frame.js b/dist/utils/assistant-message-frame.js
-index c0e00197b2bdd4c815106daa036d844c07aca800..2641d3b3115273f4b693d73ce39f8c62f30afe37 100644
+index c0e0019..a86f593 100644
 --- a/dist/utils/assistant-message-frame.js
 +++ b/dist/utils/assistant-message-frame.js
-@@ -1,3 +1,4 @@
+@@ -1,15 +1,30 @@
 +import { normalizeHostedSearchContent } from "./hosted-search.js";
  import { parseStreamingJson } from "./json-parse.js";
++
++// A gateway that re-serializes provider events with `omitempty` (Go) or drops
++// `undefined` (JS) hands a text / thinking / tool-call delta over with the
++// string field missing. The frame protocol requires a string there, and the only
++// value that can be dropped that way is the empty one, so a non-string payload
++// reads as "". Reading `.length` off it used to throw a bare TypeError that the
++// runtime surfaced as a retriable provider failure and then reproduced on every
++// later turn of the session.
++function textValue(value) {
++    return typeof value === "string" ? value : "";
++}
++function textLength(value) {
++    return typeof value === "string" ? value.length : 0;
++}
  function cloneTextContent(content) {
      return {
-@@ -24,6 +25,24 @@ function cloneToolCall(toolCall) {
+         type: "text",
+-        text: content.text,
++        text: textValue(content.text),
+         ...(content.textSignature === undefined ? {} : { textSignature: content.textSignature }),
+     };
+ }
+ function cloneThinkingContent(content) {
+     return {
+         type: "thinking",
+-        thinking: content.thinking,
++        thinking: textValue(content.thinking),
+         ...(content.thinkingSignature === undefined ? {} : { thinkingSignature: content.thinkingSignature }),
+         ...(content.redacted === undefined ? {} : { redacted: content.redacted }),
+     };
+@@ -24,6 +39,24 @@ function cloneToolCall(toolCall) {
          ...(toolCall.namespace === undefined ? {} : { namespace: toolCall.namespace }),
      };
  }
@@ -926,7 +1098,7 @@ index c0e00197b2bdd4c815106daa036d844c07aca800..2641d3b3115273f4b693d73ce39f8c62
  function cloneStartMessage(message) {
      return {
          role: "assistant",
-@@ -105,6 +124,19 @@ export class AssistantMessageFrameEncoder {
+@@ -105,6 +138,19 @@ export class AssistantMessageFrameEncoder {
          if (!this.started)
              throw new Error(`Assistant message ${event.type} event appears before start`);
          switch (event.type) {
@@ -946,7 +1118,59 @@ index c0e00197b2bdd4c815106daa036d844c07aca800..2641d3b3115273f4b693d73ce39f8c62
              case "text_start": {
                  const content = eventBlock(event);
                  if (content.type !== "text") {
-@@ -311,6 +343,20 @@ export function reduceAssistantMessageFrames(frames) {
+@@ -112,7 +158,7 @@ export class AssistantMessageFrameEncoder {
+                 }
+                 this.startBlock(event.contentIndex, {
+                     kind: "text",
+-                    coveredChars: content.text.length,
++                    coveredChars: textLength(content.text),
+                     deltaChars: 0,
+                 });
+                 return { type: "text_start", contentIndex: event.contentIndex, content: cloneTextContent(content) };
+@@ -139,7 +185,7 @@ export class AssistantMessageFrameEncoder {
+                 }
+                 this.startBlock(event.contentIndex, {
+                     kind: "thinking",
+-                    coveredChars: content.thinking.length,
++                    coveredChars: textLength(content.thinking),
+                     deltaChars: 0,
+                 });
+                 return {
+@@ -183,12 +229,13 @@ export class AssistantMessageFrameEncoder {
+                 const state = this.block(event.contentIndex, "toolCall");
+                 if (state.kind !== "toolCall")
+                     throw new Error("Unreachable tool-call encoder state");
++                const delta = textValue(event.delta);
+                 if (state.caughtUp) {
+-                    return event.delta.length === 0
++                    return delta.length === 0
+                         ? undefined
+-                        : { type: "toolcall_delta", contentIndex: event.contentIndex, delta: event.delta };
++                        : { type: "toolcall_delta", contentIndex: event.contentIndex, delta };
+                 }
+-                state.catchupJson += event.delta;
++                state.catchupJson += delta;
+                 const argumentsValue = parseStreamingJson(state.catchupJson);
+                 if (serializedArguments(argumentsValue) !== state.snapshotArguments) {
+                     // Legacy grammar calls include the initial input in toolcall_start, but their
+@@ -254,12 +301,13 @@ export class AssistantMessageFrameEncoder {
+         const state = this.block(contentIndex, kind);
+         if (state.kind === "toolCall")
+             throw new Error("Unreachable text encoder state");
++        const text = textValue(delta);
+         const deltaStart = state.deltaChars;
+-        state.deltaChars += delta.length;
++        state.deltaChars += text.length;
+         const covered = Math.max(0, state.coveredChars - deltaStart);
+-        if (covered >= delta.length)
++        if (covered >= text.length)
+             return undefined;
+-        const uncovered = covered === 0 ? delta : delta.slice(covered);
++        const uncovered = covered === 0 ? text : text.slice(covered);
+         return kind === "text"
+             ? { type: "text_delta", contentIndex, delta: uncovered }
+             : { type: "thinking_delta", contentIndex, delta: uncovered };
+@@ -311,6 +359,20 @@ export function reduceAssistantMessageFrames(frames) {
              continue;
          }
          switch (frame.type) {
@@ -968,7 +1192,7 @@ index c0e00197b2bdd4c815106daa036d844c07aca800..2641d3b3115273f4b693d73ce39f8c62
                  if (frame.content.type !== "text") {
                      throw new Error(`text_start frame contains ${frame.content.type} content`);
 diff --git a/dist/utils/estimate.d.ts b/dist/utils/estimate.d.ts
-index 6dcca6eff16b95b83e047a6e27b65d9d7694bf2c..5ccaaf2358a0afeea3ce354e5799255ae8508f3d 100644
+index 6dcca6e..5ccaaf2 100644
 --- a/dist/utils/estimate.d.ts
 +++ b/dist/utils/estimate.d.ts
 @@ -1,4 +1,4 @@
@@ -989,7 +1213,7 @@ index 6dcca6eff16b95b83e047a6e27b65d9d7694bf2c..5ccaaf2358a0afeea3ce354e5799255a
  //# sourceMappingURL=estimate.d.ts.map
 \ No newline at end of file
 diff --git a/dist/utils/estimate.js b/dist/utils/estimate.js
-index d04ff22cbe8d7357404b938e228b8e3a2dbdcb1d..28564cc73798163f7590290123b7476573d5bee5 100644
+index d04ff22..28564cc 100644
 --- a/dist/utils/estimate.js
 +++ b/dist/utils/estimate.js
 @@ -1,95 +1,114 @@
@@ -1164,7 +1388,7 @@ index d04ff22cbe8d7357404b938e228b8e3a2dbdcb1d..28564cc73798163f7590290123b74765
 \ No newline at end of file
 diff --git a/dist/utils/hosted-search.d.ts b/dist/utils/hosted-search.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..a76ae5269313931b8476e1f153e76792875ad54c
+index 0000000..a76ae52
 --- /dev/null
 +++ b/dist/utils/hosted-search.d.ts
 @@ -0,0 +1,10 @@
@@ -1180,7 +1404,7 @@ index 0000000000000000000000000000000000000000..a76ae5269313931b8476e1f153e76792
 +export declare function validateHostedSearchMessages(messages: readonly Message[]): void;
 diff --git a/dist/utils/hosted-search.js b/dist/utils/hosted-search.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..b177a2608c5c4ba6d66d6a3fcaef5895e646933b
+index 0000000..b177a26
 --- /dev/null
 +++ b/dist/utils/hosted-search.js
 @@ -0,0 +1,97 @@
@@ -1283,7 +1507,7 @@ index 0000000000000000000000000000000000000000..b177a2608c5c4ba6d66d6a3fcaef5895
 +}
 diff --git a/dist/utils/local-request-error.d.ts b/dist/utils/local-request-error.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..a72f65b33c64b89f118a59bd286e62624711fd90
+index 0000000..a72f65b
 --- /dev/null
 +++ b/dist/utils/local-request-error.d.ts
 @@ -0,0 +1,15 @@
@@ -1304,7 +1528,7 @@ index 0000000000000000000000000000000000000000..a72f65b33c64b89f118a59bd286e6262
 +export declare function prepareLocalRequest<T>(phase: LocalRequestErrorPhase, prepare: () => T): T;
 diff --git a/dist/utils/local-request-error.js b/dist/utils/local-request-error.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d276ddc8caee98dfeeeeaa9bcd234ad63dc414b
+index 0000000..4d276dd
 --- /dev/null
 +++ b/dist/utils/local-request-error.js
 @@ -0,0 +1,38 @@
@@ -1348,7 +1572,7 @@ index 0000000000000000000000000000000000000000..4d276ddc8caee98dfeeeeaa9bcd234ad
 +}
 diff --git a/dist/utils/local-request-stream.d.ts b/dist/utils/local-request-stream.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..879b78cbecb0cc2c4322049ed2c7d61f77be9375
+index 0000000..879b78c
 --- /dev/null
 +++ b/dist/utils/local-request-stream.d.ts
 @@ -0,0 +1,3 @@
@@ -1357,7 +1581,7 @@ index 0000000000000000000000000000000000000000..879b78cbecb0cc2c4322049ed2c7d61f
 +export declare function withLocalRequestErrors(model: Model<Api>, options: { signal?: AbortSignal } | undefined, prepare: () => AssistantMessageEventStream): AssistantMessageEventStream;
 diff --git a/dist/utils/local-request-stream.js b/dist/utils/local-request-stream.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..5c63b882ae4cb618e964c5d2ce8d3c18e0fe4688
+index 0000000..5c63b88
 --- /dev/null
 +++ b/dist/utils/local-request-stream.js
 @@ -0,0 +1,24 @@
