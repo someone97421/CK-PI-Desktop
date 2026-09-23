@@ -111,6 +111,38 @@ test("消息 ID 冲突须等待 host 成功回执后才能确认覆盖", async (
   }
 });
 
+test("a full outbox rejects an entry instead of reporting it enqueued", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-full-"));
+  const path = join(dir, "session-message-outbox.json");
+  const entries = Array.from({ length: 1024 }, (_, index) => ({
+    key: `message:s${index}:m${index}`,
+    sessionId: `s${index}`,
+    message: { id: `m${index}` },
+  }));
+  await writeFile(path, JSON.stringify(entries), "utf8");
+  const logs = [];
+  const outbox = new PersistenceOutbox(dir, (level, message, data) => {
+    logs.push({ level, message, data });
+  });
+
+  await assert.rejects(
+    outbox.enqueue(
+      { key: "message:last:missing", sessionId: "last", message: { id: "missing" } },
+      () => null,
+    ),
+    /outbox is full/i,
+  );
+  assert.equal(outbox.size(), 1024);
+  assert.equal(JSON.parse(await readFile(path, "utf8")).length, 1024);
+  assert.ok(
+    logs.some(
+      (entry) =>
+        entry.message === "session persistence outbox is full" &&
+        entry.data?.key === "message:last:missing",
+    ),
+  );
+});
+
 test("non-unique flush errors still pause the outbox", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
   const outbox = new PersistenceOutbox(dir, silent);

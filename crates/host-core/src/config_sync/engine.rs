@@ -867,7 +867,7 @@ fn config_from_input(
             .or_else(|| existing.map(|value| value.automatic_sync))
             .unwrap_or(true),
         enabled: true,
-        paused: false,
+        paused: existing.is_some_and(|value| value.paused),
         vault_id: header.vault_id.clone(),
         vault_header: header,
         last_run_at: existing.and_then(|value| value.last_run_at.clone()),
@@ -907,11 +907,15 @@ fn parse_remote_mode(value: &str) -> Result<RemoteMode> {
 
 fn mark_error(config: &mut StoredConfig, error: &anyhow::Error) {
     let message = error.to_string();
-    config.last_error_code = if message.starts_with("CONFIG_SYNC_UNSUPPORTED") {
+    config.last_error_code = if message.starts_with("CONFIG_SYNC_UNSUPPORTED")
+        || message.starts_with("CONFIG_SYNC_REDIRECT")
+    {
         Some("UNSUPPORTED_SERVER".into())
     } else if message.starts_with("CONFIG_SYNC_CONFLICT") {
         Some("CONFLICT".into())
-    } else if message.starts_with("CONFIG_SYNC_CRYPTO")
+    } else if message.starts_with("CONFIG_SYNC_AUTH")
+        || message.starts_with("CONFIG_SYNC_PERMISSION")
+        || message.starts_with("CONFIG_SYNC_CRYPTO")
         || message.contains("401 Unauthorized")
         || message.contains("403 Forbidden")
         || message.contains("authentication")

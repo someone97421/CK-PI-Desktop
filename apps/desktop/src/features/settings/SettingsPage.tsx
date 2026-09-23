@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { displayAppVersion } from "@pi-desktop/shared";
 import type {
@@ -78,6 +87,7 @@ type NavItem = {
   titleKey: string;
   icon: ReactNode;
   group: SettingsNavGroupId;
+  experimentalBadgeKey?: string;
   /** i18n keys of the rows inside the tab; search matches their translations. */
   keywordKeys: string[];
 };
@@ -87,6 +97,7 @@ export function SettingsPage() {
   const tab = useAppStore((s) => s.settingsTab);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
   const settingsAnchor = useAppStore((s) => s.settingsAnchor);
+  const settingsTabNonce = useAppStore((s) => s.settingsTabNonce);
   const setSettingsAnchor = useAppStore((s) => s.setSettingsAnchor);
   const setPage = useAppStore((s) => s.setPage);
   const settings = useAppStore((s) => s.settings);
@@ -94,8 +105,7 @@ export function SettingsPage() {
   const refreshProviders = useAppStore((s) => s.refreshProviders);
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
 
-  // Developer-only destinations (Remote Hosts) exist only while developer
-  // mode is on; the rail, the page, and settings search drop them together.
+  // Settings destinations remain available in both normal and developer mode.
   const developerMode = settings?.developerMode === true;
   const navEntries = useMemo(() => visibleSettingsNav(developerMode), [developerMode]);
   const tabHidden = isSettingsDestinationHidden(tab, developerMode);
@@ -106,6 +116,24 @@ export function SettingsPage() {
   const [settingsRecoveryFailed, setSettingsRecoveryFailed] = useState(false);
   const [extensions, setExtensions] = useState<PluginScenicThemesDestinationMeta[]>([]);
   const [activeExtension, setActiveExtension] = useState<PluginScenicThemesDestinationMeta | null>(null);
+  const seenSettingsTabNonce = useRef(settingsTabNonce);
+  // setSettingsTab means "show this built-in category", even when the tab id
+  // does not change. Dismiss a plugin page before paint; an anchor-only deep
+  // link has to do the same or the row lookup hits the plugin instead.
+  if (
+    seenSettingsTabNonce.current !== settingsTabNonce ||
+    (activeExtension && settingsAnchor)
+  ) {
+    seenSettingsTabNonce.current = settingsTabNonce;
+    if (activeExtension) setActiveExtension(null);
+  }
+  const contentRef = useRef<HTMLDivElement>(null);
+  const destination = activeExtension ? `extension:${activeExtension.ref}` : `builtin:${tab}`;
+
+  useLayoutEffect(() => {
+    // Reset before paint and before the search-anchor effect positions its row.
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [destination]);
 
   useEffect(() => {
     const refresh = () => void api.listPluginScenicThemesDestinations().then(setExtensions, () => setExtensions([]));
@@ -120,9 +148,7 @@ export function SettingsPage() {
     }
   }, [activeExtension, extensions, setSettingsTab]);
 
-  // A hidden destination must not keep rendering: leave the page the rail no
-  // longer offers (for example Remote Hosts once developer mode is switched
-  // off) and fall back to General.
+  // Fall back if a future destination is mode-gated while currently selected.
   useEffect(() => {
     if (!settings || !tabHidden) return;
     setSettingsTab("general");
@@ -147,10 +173,12 @@ export function SettingsPage() {
   }, [settings, recoverSettings]);
 
   // Arriving from the global search dialog: scroll to and flash the row
-  // whose title matches the pending anchor key. Rows are located by their
-  // translated title so async tab content (providers, import) needs no
-  // per-row wiring; a short retry window covers late mounts.
-  useEffect(() => {
+  // whose title matches the pending anchor key. This runs after the
+  // destination reset and before paint, so a category change does not flash
+  // the top. Rows are located by their translated title so async tab content
+  // (providers, import) needs no per-row wiring; a short retry window covers
+  // late mounts.
+  useLayoutEffect(() => {
     if (!settingsAnchor) return;
     const target = t(settingsAnchor).trim();
     let cancelled = false;
@@ -223,6 +251,7 @@ export function SettingsPage() {
       titleKey: entry.titleKey,
       icon: iconFor[entry.id],
       group: entry.group,
+      experimentalBadgeKey: entry.experimentalBadgeKey,
       keywordKeys: entry.keywordKeys,
     }));
   }, [navEntries]);
@@ -252,8 +281,8 @@ export function SettingsPage() {
     return [...groups.entries()].map(([id, items]) => ({ id, items }));
   }, [filteredItems]);
 
-  const activeTitleKey =
-    navItems.find((item) => item.id === tab)?.titleKey ?? "settings.title";
+  const activeNavItem = navItems.find((item) => item.id === tab);
+  const activeTitleKey = activeNavItem?.titleKey ?? "settings.title";
   const tabNeedsSettings = ["general", "appearance", "ai", "shortcuts", "agent"].includes(tab);
 
   return (
@@ -296,9 +325,9 @@ export function SettingsPage() {
                   >
                     <span className="settings-nav-icon">{item.icon}</span>
                     <span className="settings-nav-label">{t(item.labelKey)}</span>
-                    {item.id === "remoteHosts" ? (
+                    {item.experimentalBadgeKey ? (
                       <Badge tone="warning" className="settings-nav-experimental">
-                        {t("settings.remoteHosts.experimental")}
+                        {t(item.experimentalBadgeKey)}
                       </Badge>
                     ) : null}
                   </button>
@@ -345,13 +374,13 @@ export function SettingsPage() {
         </div>
       </aside>
 
-      <div className="settings-content">
+      <div className="settings-content" ref={contentRef}>
         <div className="settings-content-inner">
           <div className="settings-content-enter">
           <h1 className="settings-section-title">
             <span>{activeExtension?.label ?? t(activeTitleKey)}</span>
-            {!activeExtension && tab === "remoteHosts" && !tabHidden ? (
-              <Badge tone="warning">{t("settings.remoteHosts.experimental")}</Badge>
+            {!activeExtension && activeNavItem?.experimentalBadgeKey ? (
+              <Badge tone="warning">{t(activeNavItem.experimentalBadgeKey)}</Badge>
             ) : null}
           </h1>
 
@@ -545,7 +574,7 @@ export function SettingsPage() {
 
           {tab === "projects" && <ProjectsPage />}
 
-          {tab === "sync" && <ConfigSyncPage />}
+          {tab === "sync" && !tabHidden && <ConfigSyncPage />}
 
           {tab === "remoteHosts" && !tabHidden && <RemoteHostsPage />}
 

@@ -131,10 +131,22 @@ describe("Plan protocol contracts", () => {
       cadence: "manual",
       mode: normalizeMode("chat"),
       enabled: true,
+      permissionMode: "accept-edits",
+      thinkingLevel: "high",
+      providerId: "provider-1",
+      modelId: "model-1",
+      workspacePath: "C:/work/project",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     };
     expect(task.mode).toBe("plan");
+    expect(task).toMatchObject({
+      permissionMode: "accept-edits",
+      thinkingLevel: "high",
+      providerId: "provider-1",
+      modelId: "model-1",
+      workspacePath: "C:/work/project",
+    });
   });
 
   it("keeps approval actions and target permission modes typed", () => {

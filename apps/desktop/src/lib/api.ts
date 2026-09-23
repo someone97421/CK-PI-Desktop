@@ -882,8 +882,20 @@ export const api = {
     cadence?: ScheduledTask["cadence"];
     enabled?: boolean;
     schedule?: ScheduledTask["schedule"];
+    workspacePath?: string;
+    permissionMode?: ScheduledTask["permissionMode"];
+    thinkingLevel?: ScheduledTask["thinkingLevel"] | null;
+    providerId?: string | null;
+    modelId?: string | null;
   }) => invoke<{ task: ScheduledTask }>(IPC.invoke.scheduledCreate, input),
-  updateScheduled: (input: Partial<ScheduledTask> & { id: string }) =>
+  updateScheduled: (
+    input: Omit<Partial<ScheduledTask>, "providerId" | "modelId" | "thinkingLevel"> & {
+      id: string;
+      thinkingLevel?: ScheduledTask["thinkingLevel"] | null;
+      providerId?: string | null;
+      modelId?: string | null;
+    },
+  ) =>
     invoke<{ task: ScheduledTask }>(IPC.invoke.scheduledUpdate, input),
   deleteScheduled: (id: string) => invoke(IPC.invoke.scheduledDelete, id),
   executeScheduled: (id: string) => invoke<{ sessionId: string }>(IPC.invoke.scheduledExecute, id),

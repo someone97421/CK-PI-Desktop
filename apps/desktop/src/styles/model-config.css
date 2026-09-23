@@ -482,6 +482,14 @@
   line-height: var(--leading-relaxed);
 }
 
+/* Quieter than the import error: folding is informational, not a refusal. */
+.provider-setup-header-note {
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-size: var(--text-2xs);
+  line-height: var(--leading-relaxed);
+}
+
 /* Pick on the left, review on the right; both stretch to the same height. */
 .provider-setup-panes {
   flex: 1;

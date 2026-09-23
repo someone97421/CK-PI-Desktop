@@ -79,7 +79,7 @@ test("the capability row carries no explanatory copy or extra controls", () => {
 });
 
 
-test("image generation selection is an attachment capability and keeps an unavailable row when unbound", () => {
+test("image generation selection hides the summary when nothing can be chosen", () => {
   assert.match(
     pickerSource,
     /className="provider-chosen-capability-rows">[\s\S]*?settings\.setImageModel/,
@@ -90,7 +90,8 @@ test("image generation selection is an attachment capability and keeps an unavai
   );
   assert.match(pickerSource, /imageModelIds\?\.some\([\s\S]*?modelIdsMatch/);
   assert.match(pickerSource, /onImageModelChange\(binding\.id, event\.target\.checked\)/);
-  assert.match(imageModelRowSource, /imageGenerationBindings\(settings\.imageGenerationModels, binding\)/);
+  assert.match(imageModelRowSource, /imageGenerationBindings\(settings\.imageGenerationModels, null\)/);
+  assert.match(imageModelRowSource, /if \(!options\.some\(\(option\) => !option\.disabled\)\) return null;/);
   assert.match(imageModelRowSource, /if \(candidates\.length === 0\) return null;/);
   assert.match(imageModelRowSource, /imageModelUnavailable/);
 });

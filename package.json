@@ -41,6 +41,7 @@
     "test:e2e:oauth-retry": "node --test apps/desktop/test/anthropic-oauth-retry.test.mjs",
     "test:e2e:native-side-chat": "node scripts/e2e-native-side-chat.mjs",
     "test:e2e:boot": "node scripts/e2e-electron-boot.mjs",
+    "test:e2e:settings-scroll": "node scripts/e2e-settings-scroll.mjs",
     "test:e2e:layout": "node scripts/e2e-three-column-layout.mjs",
     "test:e2e:window-controls": "node scripts/e2e-window-controls.mjs",
     "test:e2e:supervision": "node scripts/e2e-supervision.mjs",

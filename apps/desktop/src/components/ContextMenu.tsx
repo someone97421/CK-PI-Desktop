@@ -27,7 +27,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
+import { portalToBody } from "../lib/portal-visibility";
 import {
   placeContextMenu,
   type ContextMenuPlacement,
@@ -324,7 +324,7 @@ export function ContextMenu({
 
   if (!state || typeof document === "undefined") return null;
 
-  return createPortal(
+  return portalToBody(
     <div
       ref={menuRef}
       className={`context-menu${placement ? " is-open" : ""}`}
@@ -369,6 +369,5 @@ export function ContextMenu({
         </Fragment>
       ))}
     </div>,
-    document.body,
   );
 }

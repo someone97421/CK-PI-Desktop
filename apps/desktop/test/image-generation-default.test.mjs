@@ -343,3 +343,17 @@ test("saving the active provider preserves a still-selected default", () => {
   );
   assert.deepEqual(plan.imageGeneration, binding("x", "current"));
 });
+
+test("unchecking every image model on the active provider clears the settings check", () => {
+  const plan = planImageGenerationDefaults(
+    {
+      imageGenerationModels: [binding("x", "img-x"), binding("y", "img-y")],
+      imageGeneration: binding("x", "img-x"),
+    },
+    "x",
+    [],
+    [provider("x", ["img-x"]), provider("y", ["img-y"])],
+  );
+  assert.equal(plan.imageGeneration, null);
+  assert.deepEqual(plan.imageGenerationModels, [binding("y", "img-y")]);
+});

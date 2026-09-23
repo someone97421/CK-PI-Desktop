@@ -128,6 +128,7 @@ import {
   usageFromPi,
   usageToPi,
 } from "./agent-messages.js";
+import { withExplicitRequired } from "./tool-schema.js";
 import { buildSessionContext } from "./session-context.js";
 import {
   initialSystemTranscript,
@@ -381,6 +382,37 @@ function mutationTerminationAdvice(
 export const TOOL_SEARCH_NAME = "ToolSearch";
 /** Stands in for a persisted tool row that never recorded a result. */
 const MISSING_TOOL_RESULT_PLACEHOLDER = "[no tool result recorded]";
+
+function toolNameList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.filter(
+        (name: unknown): name is string =>
+          typeof name === "string" && name.length > 0,
+      ),
+    ),
+  ];
+}
+
+/** Read canonical and historical activation markers from a ToolSearch row. */
+function toolSearchActivatedNames(
+  details: unknown,
+  legacyAddedToolNames?: unknown,
+): string[] {
+  const parsed = typeof details === "string" ? toJsonObject(details) : details;
+  const record = isRecord(parsed) ? parsed : undefined;
+  const candidates = [
+    record?.addedToolNames,
+    record?.activated,
+    legacyAddedToolNames,
+  ];
+  for (const candidate of candidates) {
+    const names = toolNameList(candidate);
+    if (names.length > 0) return names;
+  }
+  return [];
+}
 
 function isMissingToolResultPlaceholder(
   content: ToolResultMessage["content"],
@@ -1352,14 +1384,11 @@ function toolResultFromUi(
     ? raw
     : undefined;
   const detailsRecord = toJsonObject(rawRecord?.details);
-  const rawAddedToolNames =
-    detailsRecord.addedToolNames ?? rawRecord?.addedToolNames;
-  const addedToolNames = Array.isArray(rawAddedToolNames)
-    ? rawAddedToolNames.filter(
-        (name: unknown): name is string =>
-          typeof name === "string" && name.length > 0,
-      )
-    : [];
+  const rawAddedToolNames = rawRecord?.addedToolNames;
+  const addedToolNames =
+    m.toolName === TOOL_SEARCH_NAME
+      ? toolSearchActivatedNames(detailsRecord, rawAddedToolNames)
+      : toolNameList(rawAddedToolNames);
   if (blocks.length === 0) {
     blocks.push({
       type: "text",
@@ -3431,11 +3460,17 @@ Delegation rules:
       // an accidental parallel batch: everything is sequential except `Task`.
       // pi runs a whole batch sequentially when it holds one sequential tool,
       // so only an all-`Task` batch fans out.
-      catalog.set(tool.name, {
-        ...tool,
-        executionMode:
-          tool.name === SUBAGENT_TOOL_NAME ? "parallel" : "sequential",
-      });
+      // The provider-facing schema is settled here too, at the single origin of
+      // every tool, so the session agent and a delegated `Task` run send the
+      // same declaration (#864).
+      catalog.set(
+        tool.name,
+        withExplicitRequired({
+          ...tool,
+          executionMode:
+            tool.name === SUBAGENT_TOOL_NAME ? "parallel" : "sequential",
+        }),
+      );
     }
     this.toolCatalog = catalog;
     this.deferredToolNames = new Set(
@@ -3449,10 +3484,13 @@ Delegation rules:
       }
     }
     if (this.deferredToolNames.size > 0) {
-      this.toolCatalog.set(TOOL_SEARCH_NAME, {
-        ...this.buildToolSearchTool(),
-        executionMode: "sequential",
-      });
+      this.toolCatalog.set(
+        TOOL_SEARCH_NAME,
+        withExplicitRequired({
+          ...this.buildToolSearchTool(),
+          executionMode: "sequential",
+        }),
+      );
     }
   }
 
@@ -5497,15 +5535,12 @@ Delegation rules:
     for (const message of messages) {
       if (message.role !== "toolResult" || message.isError) continue;
       if (isMissingToolResultPlaceholder(message.content)) continue;
-      const details = toJsonObject(message.details);
-      const addedToolNames = Array.isArray(details.addedToolNames)
-        ? details.addedToolNames.filter(
-            (name): name is string => typeof name === "string",
-          )
-        : [];
       const names =
         message.toolName === TOOL_SEARCH_NAME
-          ? addedToolNames
+          ? toolSearchActivatedNames(
+              message.details,
+              (message as unknown as { addedToolNames?: unknown }).addedToolNames,
+            )
           : [message.toolName];
       for (const name of names) {
         if (this.deferredToolNames.has(name)) {

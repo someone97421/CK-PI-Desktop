@@ -36,6 +36,9 @@ type UseComposerModelMenuOptions = {
   thinkingProvider: ProviderPublic | null | undefined;
   thinkingLevel: SessionThinkingLevel;
   controlsBlocked: boolean;
+  configureActiveSession: (configuration: {
+    mode: Mode; providerId?: string; modelId?: string; thinkingLevel: SessionThinkingLevel;
+  }) => Promise<void>;
 };
 
 export function useComposerModelMenu({
@@ -46,6 +49,7 @@ export function useComposerModelMenu({
   thinkingProvider: resolvedThinkingProvider,
   thinkingLevel,
   controlsBlocked,
+  configureActiveSession,
 }: UseComposerModelMenuOptions) {
   const providers = useAppStore((s) => s.providers);
   const imageGeneration = useAppStore((s) => s.settings?.imageGeneration);
@@ -56,7 +60,6 @@ export function useComposerModelMenu({
   );
   const providerModels = useAppStore((s) => s.providerModels);
   const loadProviderModels = useAppStore((s) => s.loadProviderModels);
-  const configureActiveSession = useAppStore((s) => s.configureActiveSession);
   const showToast = useAppStore((s) => s.showToast);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<ComposerMenuView>("root");
@@ -218,7 +221,7 @@ export function useComposerModelMenu({
   useEffect(() => {
     if (!open) return;
     requestAnimationFrame(() => {
-      if (view === "root") rootMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+      if (view === "root") rootMenuRef.current?.querySelector<HTMLButtonElement>(".composer-menu-entry")?.focus();
       if (view === "model") modelSearchRef.current?.focus();
       if (view === "thinking") thinkingListRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
       if (view === "model" && modelHighlight >= 0) {

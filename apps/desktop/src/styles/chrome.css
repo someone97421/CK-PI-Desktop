@@ -1106,7 +1106,7 @@
 }
 
 /* Follow the adjacent titlebar surface when the dock occupies the right edge. */
-.app-shell:has(> .work-panel) > .window-controls {
+.app-shell:has(.work-panel) > .window-controls {
   background: var(--ds-bg-dock-raised);
 }
 
@@ -1245,7 +1245,7 @@
 
 /* Match the scenic backdrop's child-layer specificity so preview navigation
  * stays above the work panel while non-control pixels remain pass-through. */
-.app-shell > .window-chrome-row {
+.app-shell > :where(.app-chat-shell) > .window-chrome-row {
   position: absolute;
   top: 0;
   right: 0;

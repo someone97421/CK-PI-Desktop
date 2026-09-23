@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use reqwest::header::{HeaderMap, HeaderValue, ETAG, IF_MATCH, IF_NONE_MATCH, LOCATION};
+use reqwest::header::{HeaderMap, HeaderValue, ETAG, IF_MATCH, IF_NONE_MATCH};
 use reqwest::{Client, Method, StatusCode, Url};
 use std::net::IpAddr;
 use uuid::Uuid;
@@ -174,7 +174,17 @@ impl WebDavTransport {
         body: Option<Vec<u8>>,
         headers: HeaderMap,
     ) -> Result<reqwest::Response> {
-        let url = self.url(relative)?;
+        self.send_url(method, self.url(relative)?, body, headers)
+            .await
+    }
+
+    async fn send_url(
+        &self,
+        method: Method,
+        url: Url,
+        body: Option<Vec<u8>>,
+        headers: HeaderMap,
+    ) -> Result<reqwest::Response> {
         let mut request = self.client.request(method, url).headers(headers);
         if let Some(body) = body {
             request = request.body(body);
@@ -183,36 +193,52 @@ impl WebDavTransport {
             .authenticated(request)
             .send()
             .await
-            .context("WebDAV request failed")?;
-        if response.headers().get(LOCATION).is_some() || response.status().is_redirection() {
-            bail!("CONFIG_SYNC_SECURITY: WebDAV redirects are not permitted");
+            .map_err(request_error)?;
+        // A 201 often carries Location. Only a 3xx is a redirect, and the
+        // client is built not to follow one.
+        if response.status().is_redirection() {
+            bail!(
+                "CONFIG_SYNC_REDIRECT: use the direct WebDAV endpoint; redirects are not followed"
+            );
         }
         Ok(response)
     }
 
-    /// Create a single collection below the configured vault directory. A
-    /// WebDAV server may report 405 when the collection already exists; that
-    /// is a successful idempotent result for this helper. We intentionally do
-    /// not follow redirects or try to infer a different root.
+    /// Create every missing collection from the selected endpoint down to
+    /// `relative`. A nested remote directory such as `backups/pi` otherwise
+    /// fails because its parent does not exist yet. Ancestors outside the
+    /// endpoint are never created.
     pub async fn ensure_collection(&self, relative: &str) -> Result<()> {
-        let response = self
-            .send(
-                Method::from_bytes(b"MKCOL").expect("MKCOL is a valid method"),
-                relative,
-                None,
-                HeaderMap::new(),
-            )
-            .await?;
-        match response.status() {
-            status
-                if status.is_success()
-                    || status == StatusCode::METHOD_NOT_ALLOWED
-                    || status == StatusCode::PRECONDITION_FAILED =>
-            {
-                Ok(())
+        let target = self.url(relative)?;
+        let base_path = self.base.path().trim_end_matches('/');
+        let suffix = target
+            .path()
+            .trim_end_matches('/')
+            .strip_prefix(base_path)
+            .ok_or_else(|| anyhow::anyhow!("CONFIG_SYNC_INVALID: collection escaped endpoint"))?;
+        let mut path = base_path.to_string();
+        for segment in suffix.split('/').filter(|segment| !segment.is_empty()) {
+            path.push('/');
+            path.push_str(segment);
+            let mut url = self.base.clone();
+            url.set_path(&path);
+            let response = self
+                .send_url(
+                    Method::from_bytes(b"MKCOL").expect("MKCOL is a valid method"),
+                    url,
+                    None,
+                    HeaderMap::new(),
+                )
+                .await?;
+            match response.status() {
+                status
+                    if status.is_success()
+                        || status == StatusCode::METHOD_NOT_ALLOWED
+                        || status == StatusCode::PRECONDITION_FAILED => {}
+                status => return Err(status_error("collection create", status)),
             }
-            status => bail!("CONFIG_SYNC_REMOTE: WebDAV collection create returned {status}"),
         }
+        Ok(())
     }
 
     async fn limited_bytes(response: reqwest::Response) -> Result<Vec<u8>> {
@@ -224,7 +250,7 @@ impl WebDavTransport {
         }
         let mut response = response;
         let mut result = Vec::new();
-        while let Some(chunk) = response.chunk().await.context("read WebDAV response")? {
+        while let Some(chunk) = response.chunk().await.map_err(request_error)? {
             if result.len().saturating_add(chunk.len()) > MAX_REMOTE_OBJECT_BYTES {
                 bail!("CONFIG_SYNC_LIMIT_EXCEEDED: remote object is too large");
             }
@@ -243,10 +269,7 @@ impl WebDavTransport {
             return Ok(None);
         }
         if !response.status().is_success() {
-            bail!(
-                "CONFIG_SYNC_REMOTE: WebDAV GET returned {}",
-                response.status()
-            );
+            return Err(status_error("GET", response.status()));
         }
         let etag = strong_etag(response.headers());
         Ok(Some((Self::limited_bytes(response).await?, etag)))
@@ -257,10 +280,7 @@ impl WebDavTransport {
             .send(Method::PUT, relative, Some(body), HeaderMap::new())
             .await?;
         if !response.status().is_success() {
-            bail!(
-                "CONFIG_SYNC_REMOTE: WebDAV unconditional write returned {}",
-                response.status()
-            );
+            return Err(status_error("unconditional write", response.status()));
         }
         Ok(())
     }
@@ -294,10 +314,7 @@ impl WebDavTransport {
             bail!("CONFIG_SYNC_UNSUPPORTED: WebDAV directory listing is not supported");
         }
         if response.status().as_u16() != 207 && !response.status().is_success() {
-            bail!(
-                "CONFIG_SYNC_REMOTE: WebDAV directory listing returned {}",
-                response.status()
-            );
+            return Err(status_error("directory listing", response.status()));
         }
         let body = Self::limited_bytes(response).await?;
         let text = String::from_utf8(body).context("decode WebDAV directory listing")?;
@@ -351,7 +368,7 @@ impl WebDavTransport {
         match response.status() {
             StatusCode::PRECONDITION_FAILED => Ok(false),
             status if status.is_success() => Ok(true),
-            status => bail!("CONFIG_SYNC_REMOTE: WebDAV create returned {status}"),
+            status => return Err(status_error("create", status)),
         }
     }
 
@@ -367,7 +384,7 @@ impl WebDavTransport {
         match response.status() {
             StatusCode::PRECONDITION_FAILED => Ok(false),
             status if status.is_success() => Ok(true),
-            status => bail!("CONFIG_SYNC_REMOTE: WebDAV conditional write returned {status}"),
+            status => return Err(status_error("conditional write", status)),
         }
     }
 
@@ -376,10 +393,7 @@ impl WebDavTransport {
             .send(Method::DELETE, relative, None, HeaderMap::new())
             .await?;
         if response.status() != StatusCode::NOT_FOUND && !response.status().is_success() {
-            bail!(
-                "CONFIG_SYNC_REMOTE: WebDAV delete returned {}",
-                response.status()
-            );
+            return Err(status_error("delete", response.status()));
         }
         Ok(())
     }
@@ -473,9 +487,41 @@ fn compatible_missing_object_status(value: Option<u16>) -> Option<StatusCode> {
     (value == Some(StatusCode::BAD_GATEWAY.as_u16())).then_some(StatusCode::BAD_GATEWAY)
 }
 
+fn request_error(error: reqwest::Error) -> anyhow::Error {
+    if error.is_timeout() {
+        anyhow::anyhow!("CONFIG_SYNC_TIMEOUT: WebDAV request timed out")
+    } else {
+        anyhow::anyhow!(
+            "CONFIG_SYNC_NETWORK: WebDAV connection failed; check the network and TLS certificate"
+        )
+    }
+}
+
+fn status_error(operation: &str, status: StatusCode) -> anyhow::Error {
+    let code = match status.as_u16() {
+        401 => "AUTH",
+        403 => "PERMISSION",
+        404 => "NOT_FOUND",
+        409 | 423 => "CONFLICT",
+        413 | 507 => "QUOTA",
+        429 => "RATE_LIMIT",
+        500..=599 => "SERVER",
+        _ => "REMOTE",
+    };
+    anyhow::anyhow!("CONFIG_SYNC_{code}: WebDAV {operation} returned {status}")
+}
+
 pub fn remote_error_is_offline(error: &anyhow::Error) -> bool {
     let text = error.to_string().to_lowercase();
-    text.contains("request failed")
+    [
+        "config_sync_network:",
+        "config_sync_timeout:",
+        "config_sync_server:",
+        "config_sync_rate_limit:",
+    ]
+    .iter()
+    .any(|prefix| text.starts_with(prefix))
+        || text.contains("request failed")
         || text.contains("timed out")
         || text.contains("dns")
         || text.contains("connect")
@@ -498,6 +544,7 @@ pub(crate) mod tests {
         weak_etag: bool,
         missing_status: Option<u16>,
         ignore_preconditions: bool,
+        require_parent: bool,
     }
 
     async fn read_request(stream: &mut TcpStream) -> Option<(String, String, HeaderMap, Vec<u8>)> {
@@ -592,7 +639,20 @@ pub(crate) mod tests {
             let mut state = state.lock().expect("fixture state");
             match method.as_str() {
                 "MKCOL" => {
-                    if state.collections.insert(path) {
+                    let normalized = path.trim_end_matches('/').to_string();
+                    if state.require_parent {
+                        let parent = normalized
+                            .rsplit_once('/')
+                            .map(|(parent, _)| parent)
+                            .unwrap_or("");
+                        if !parent.is_empty() && !state.collections.contains(parent) {
+                            (409, Vec::new(), None)
+                        } else if state.collections.insert(normalized) {
+                            (201, Vec::new(), None)
+                        } else {
+                            (405, Vec::new(), None)
+                        }
+                    } else if state.collections.insert(path) {
                         (201, Vec::new(), None)
                     } else {
                         (405, Vec::new(), None)
@@ -692,17 +752,18 @@ pub(crate) mod tests {
     }
 
     pub(crate) async fn fixture(weak_etag: bool) -> Fixture {
-        fixture_with_options(weak_etag, None, false).await
+        fixture_with_options(weak_etag, None, false, false).await
     }
 
     pub(crate) async fn fixture_ignoring_preconditions() -> Fixture {
-        fixture_with_options(false, None, true).await
+        fixture_with_options(false, None, true, false).await
     }
 
     async fn fixture_with_options(
         weak_etag: bool,
         missing_status: Option<u16>,
         ignore_preconditions: bool,
+        require_parent: bool,
     ) -> Fixture {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -712,6 +773,7 @@ pub(crate) mod tests {
             weak_etag,
             missing_status,
             ignore_preconditions,
+            require_parent,
             ..FixtureState::default()
         }));
         let task = tokio::spawn(async move {
@@ -774,6 +836,24 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn nested_directory_creates_missing_ancestors() {
+        let fixture = fixture_with_options(false, None, false, true).await;
+        let transport = WebDavTransport::new(&WebDavConfig {
+            endpoint: fixture.endpoint.clone(),
+            username: String::new(),
+            password: String::new(),
+            directory: "backups/pi/settings".into(),
+            allow_insecure_http: true,
+            missing_object_status: None,
+        })
+        .expect("transport");
+        transport
+            .ensure_collection("vault")
+            .await
+            .expect("nested collections");
+    }
+
+    #[tokio::test]
     async fn local_fixture_proves_conditional_writes() {
         let fixture = fixture(false).await;
         let transport = fixture_transport(&fixture.endpoint);
@@ -785,7 +865,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn probe_rejects_servers_that_ignore_conditional_headers() {
-        let fixture = fixture_with_options(false, None, true).await;
+        let fixture = fixture_with_options(false, None, true, false).await;
         let transport = fixture_transport(&fixture.endpoint);
         let probe = transport.probe().await.expect("probe");
         assert!(!probe.conditional_writes);
@@ -814,7 +894,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn probe_records_bad_gateway_as_the_missing_object_status() {
-        let fixture = fixture_with_options(false, Some(502), false).await;
+        let fixture = fixture_with_options(false, Some(502), false, false).await;
         let transport = fixture_transport(&fixture.endpoint);
         let probe = transport.probe().await.expect("probe");
         assert!(probe.conditional_writes);

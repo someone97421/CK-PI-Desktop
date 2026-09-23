@@ -36,6 +36,7 @@ import {
 import { readWindowState, writeWindowState } from "../window-preferences";
 import { suppressLinuxFramelessSystemMenu } from "../frameless-system-menu";
 import { readAppearanceIconPath } from "../appearance-media";
+import { recoverRendererAfterGone } from "../renderer-recovery";
 
 function windowsIconPath(dataDir: string): string | undefined {
   if (process.platform !== "win32") return undefined;
@@ -470,12 +471,36 @@ export async function createWindow({
     void safeOpenExternal(url).catch(() => undefined);
     return { action: "deny" };
   });
+  let windowCloseAccepted = false;
   window.webContents.on("did-start-loading", () => {
     windowState.notificationViewingSessionId = null;
     if (windowState.mainWindow === window) resetMenuRendererReady(window);
   });
-  window.webContents.on("render-process-gone", () => {
+  window.webContents.on("render-process-gone", (_event, details) => {
     windowState.notificationViewingSessionId = null;
+    recoverRendererAfterGone(details, {
+      isCurrentWindow: windowState.mainWindow === window,
+      quitting: windowState.quitting,
+      windowCloseAccepted,
+      windowDestroyed: window.isDestroyed(),
+      webContentsDestroyed: window.webContents.isDestroyed(),
+      reload: () => window.webContents.reload(),
+      log: (rendererDetails, reloaded) => {
+        logger.app(
+          "diagnostics",
+          rendererDetails.reason === "clean-exit" ? "info" : "warn",
+          "renderer process exited",
+          {
+            event: "rendererProcessGone",
+            data: {
+              reason: rendererDetails.reason,
+              exitCode: rendererDetails.exitCode,
+              reloaded,
+            },
+          },
+        );
+      },
+    });
   });
 
   // Devtools shortcut, gated on developer mode. Frameless windows get no
@@ -888,6 +913,7 @@ export async function createWindow({
       windowState.quitting ||
       windowsAllowedToClose.has(window)
     ) {
+      windowCloseAccepted = true;
       return;
     }
     event.preventDefault();

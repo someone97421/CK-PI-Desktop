@@ -14,7 +14,13 @@ import { Badge, Button, Field, Input, PasswordInput, cx } from "../ui";
 import { IconCloudDown, IconRefresh, IconShield, IconTrash } from "../icons";
 import { SettingsCard, SettingsRow } from "../../features/settings/primitives";
 import { configSyncProgressView } from "../../features/settings/config-sync-progress";
+import { ConfigSyncError } from "./ConfigSyncError";
 import { SettingsMenuSelect } from "./SettingsMenuSelect";
+
+function formatStamp(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
 
 const CATEGORIES: Array<{
   id: Exclude<ConfigSyncCategory, "credentials" | "memory">;
@@ -106,7 +112,12 @@ export function ConfigSyncPage() {
           directory: next.directory ?? current.directory,
           deviceLabel: next.deviceLabel ?? current.deviceLabel,
         }));
-        setSelection((current) => ({ ...current, ...next.categories }));
+        setSelection((current) => ({
+          ...current,
+          ...next.categories,
+          credentials: next.includeSecrets,
+          memory: next.includeMemory,
+        }));
         if (!next.locked) {
           try {
             setHistory(await api.configSyncListHistory());
@@ -373,6 +384,10 @@ export function ConfigSyncPage() {
   const configured = state?.configured === true;
   const locked = state?.locked === true;
   const categories = selection;
+  const vaultPasswordReady =
+    form.backupPassword.length === 0
+      ? configured && !locked
+      : form.backupPassword.length >= 8;
   // The report only exists for a sync this page started: an automatic run stays
   // quiet, and no report outlives the request that produced it. Enabling a
   // vault runs the same full sync as "sync now", so both operations are watched.
@@ -383,6 +398,9 @@ export function ConfigSyncPage() {
 
   return (
     <div className="settings-stack settings-config-sync">
+      {error || state?.lastError ? (
+        <ConfigSyncError message={error ?? state?.lastError ?? ""} />
+      ) : null}
       <SettingsCard
         title={t("settings.configSync.connectionTitle")}
         description={t("settings.configSync.connectionDescription")}
@@ -495,7 +513,7 @@ export function ConfigSyncPage() {
           <Button
             variant="primary"
             onClick={() => void run("configure")}
-            disabled={busy !== null || !form.endpoint || !form.backupPassword}
+            disabled={busy !== null || !form.endpoint || !vaultPasswordReady}
           >
             <IconCloudDown size={14} />
             {configured ? t("settings.configSync.save") : t("settings.configSync.enable")}
@@ -579,18 +597,14 @@ export function ConfigSyncPage() {
               detail={
                 state?.lastSuccessAt
                   ? t("settings.configSync.lastSuccess", {
-                      date: state.lastSuccessAt,
+                      date: formatStamp(state.lastSuccessAt),
                     })
                   : undefined
               }
             >
               <Badge tone={statusTone(state.status)}>{statusLabel}</Badge>
             </SettingsRow>
-            {state?.lastError ? (
-              <SettingsRow title={t("settings.configSync.lastError")}>
-                <span className="settings-config-sync-error">{state.lastError}</span>
-              </SettingsRow>
-            ) : null}
+
             {locked ? (
               <SettingsRow
                 title={t("settings.configSync.unlockTitle")}
@@ -795,6 +809,16 @@ export function ConfigSyncPage() {
                     count: state.preview.mappingRequired,
                   })}
                 </span>
+                <span>
+                  {t("settings.configSync.previewPending", {
+                    count: state.preview.pendingActivation,
+                  })}
+                </span>
+                <span>
+                  {t("settings.configSync.previewConflicts", {
+                    count: state.preview.conflicts,
+                  })}
+                </span>
               </div>
             </SettingsCard>
           ) : null}
@@ -846,7 +870,8 @@ export function ConfigSyncPage() {
                           : entry.revisionId}
                       </div>
                       <div className="settings-config-sync-approval-meta">
-                        {entry.createdAt} · {entry.entityCount} {t("settings.configSync.historyItems")}
+                        {formatStamp(entry.createdAt)} · {entry.entityCount}{" "}
+                        {t("settings.configSync.historyItems")}
                       </div>
                     </div>
                     <Button

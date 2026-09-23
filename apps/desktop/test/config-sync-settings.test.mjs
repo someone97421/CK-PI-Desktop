@@ -24,9 +24,10 @@ const progressModel = await read(
   "../src/features/settings/config-sync-progress.ts",
 );
 
-test("cloud sync is a searchable settings destination", () => {
-  assert.match(settingsPage, /tab === "sync" && <ConfigSyncPage \/>/);
+test("cloud sync rendering follows the settings visibility gate", () => {
+  assert.match(settingsPage, /tab === "sync" && !tabHidden && <ConfigSyncPage \/>/);
   assert.match(settingsIndex, /id: "sync"/);
+  assert.match(settingsIndex, /experimentalBadgeKey: "settings\.configSync\.experimental"/);
   assert.match(settingsIndex, /settings\.configSync\.connectionTitle/);
 });
 

@@ -2101,6 +2101,7 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
 
     const result = await search.execute("search-1", { query: "BrowserPreview" });
     expect(result.details.activated).toEqual(["BrowserPreview"]);
+    expect(result.details.addedToolNames).toEqual(["BrowserPreview"]);
     expect(agent.state.tools.some((tool: any) => tool.name === "BrowserPreview")).toBe(
       false,
     );
@@ -2116,7 +2117,6 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
           toolName: "ToolSearch",
           content: result.content,
           details: result.details,
-          addedToolNames: result.details.activated,
           isError: false,
           timestamp: Date.now(),
         },
@@ -2248,6 +2248,111 @@ describe("DesktopAgentRuntime mode and tool composition", () => {
     expect(runtime.getStatus().planningState).toBe("planning");
     expect(agent.state.systemPrompt).toContain("SubmitGoal");
     expect(agent.state.systemPrompt).toContain("acceptance criteria");
+
+    await runtime.dispose();
+  });
+});
+
+describe("DesktopAgentRuntime tool schema completeness (#864)", () => {
+  it("declares required for every object schema handed to the provider", async () => {
+    // Plan mode keeps the read-only core (Read, Glob, Grep, BrowserPreview)
+    // active instead of deferring it behind ToolSearch, and a plan-safe plugin
+    // tool joins that same core set.
+    const runtime = createRuntime({
+      mode: "plan",
+      pluginTools: [
+        {
+          name: "plugin_demo_read",
+          description: "demo",
+          planSafeActions: ["read"],
+          // A manifest that spells out no `required` at all, like the built-ins
+          // whose canonical argument is declared optional.
+          parameters: { type: "object", properties: {} },
+        },
+      ],
+    });
+    type WireTool = {
+      name: string;
+      parameters?: { type?: unknown; required?: unknown };
+    };
+    const declarations = (
+      (runtime as any).agent.state.tools as Array<unknown>
+    ).map(
+      (tool) => toToolDeclaration(tool as never) as unknown as WireTool,
+    );
+    const byName = new Map<string, WireTool>();
+    for (const declaration of declarations) {
+      byName.set(declaration.name, declaration);
+    }
+
+    // The alias tools require no argument, but the key still has to be an
+    // array: a relay that decodes a missing key into a nil slice answers
+    // `Invalid schema for function 'Read': null is not of type "array"`.
+    for (const name of [
+      "Read",
+      "Glob",
+      "Grep",
+      "BrowserPreview",
+      "plugin_demo_read",
+    ]) {
+      const declaration = byName.get(name);
+      expect(
+        declaration,
+        `${name} missing from the active catalogue`,
+      ).toBeDefined();
+      expect(declaration!.parameters, name).toMatchObject({
+        type: "object",
+        required: [],
+      });
+    }
+    for (const declaration of declarations) {
+      const parameters = declaration.parameters;
+      if (parameters?.type !== "object") continue;
+      expect(
+        Array.isArray(parameters.required),
+        `${declaration.name}.required`,
+      ).toBe(true);
+    }
+    // A tool that does have a required argument keeps exactly that list.
+    expect(byName.get("Bash")!.parameters?.required).toEqual(["command"]);
+
+    await runtime.dispose();
+  });
+
+  it("hands the same schema to a delegated Task run", async () => {
+    // A delegate reads its tools straight from the tool catalogue, so a
+    // normalisation applied only where the session agent is wired up would miss
+    // it — and the default delegate toolset is exactly these read tools.
+    const runtime = createRuntime({
+      subagents: [
+        {
+          name: "worker",
+          description: "Reads files.",
+          tools: ["Read", "Glob", "Grep"],
+          prompt: "Do the job.",
+          source: "user",
+        },
+      ],
+    });
+    subagentRuns.calls.length = 0;
+    subagentRuns.deferred = false;
+    const task = (runtime as any).agent.state.tools.find(
+      (tool: { name: string }) => tool.name === "Task",
+    );
+    await task.execute("delegate-1", { agent: "worker", task: "Read a file." });
+
+    expect(subagentRuns.calls).toHaveLength(1);
+    const delegateTools: Array<Record<string, any>> =
+      subagentRuns.calls[0].tools;
+    expect(delegateTools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(["Read", "Glob", "Grep"]),
+    );
+    for (const delegateTool of delegateTools) {
+      expect(Array.isArray(delegateTool.parameters?.required)).toBe(true);
+    }
+    expect(
+      delegateTools.find((tool) => tool.name === "Read")!.parameters.required,
+    ).toEqual([]);
 
     await runtime.dispose();
   });
@@ -7735,8 +7840,9 @@ describe("DesktopAgentRuntime deferred tool restore (#225)", () => {
     toolArgs: { query: "BrowserPreview" },
     toolResult: {
       content: [{ type: "text", text: "Activated on-demand tools: BrowserPreview." }],
-      details: { activated: ["BrowserPreview"] },
-      addedToolNames: ["BrowserPreview"],
+      details: {
+        addedToolNames: ["BrowserPreview"],
+      },
     },
     ...overrides,
   });
@@ -7756,6 +7862,69 @@ describe("DesktopAgentRuntime deferred tool restore (#225)", () => {
     (runtime as any).resetDeferredToolsForPrompt();
 
     expect(hasTool(runtime, "BrowserPreview")).toBe(true);
+    await runtime.dispose();
+  });
+
+  it("restores legacy activation markers for an unused tool", async () => {
+    const fixtures: Array<{ details: Record<string, unknown>; addedToolNames?: string[] }> = [
+      { details: { activated: ["BrowserPreview"] } },
+      { details: { activated: [] }, addedToolNames: ["BrowserPreview"] },
+    ];
+
+    for (const [index, fixture] of fixtures.entries()) {
+      const runtime = createRuntime({
+        history: [
+          assistantRow,
+          searchRow({
+            id: `tool-search-legacy-${index}`,
+            toolCallId: `call-search-legacy-${index}`,
+            toolResult: {
+              content: [{ type: "text", text: "Activated on-demand tools: BrowserPreview." }],
+              details: fixture.details,
+              ...(fixture.addedToolNames
+                ? { addedToolNames: fixture.addedToolNames }
+                : {}),
+            },
+          }),
+        ],
+      });
+
+      (runtime as any).resetDeferredToolsForPrompt();
+      expect(hasTool(runtime, "BrowserPreview")).toBe(true);
+      await runtime.dispose();
+    }
+  });
+
+  it("restores all activated tools when only some have been called", async () => {
+    const runtime = createRuntime({
+      history: [
+        assistantRow,
+        searchRow({
+          toolResult: {
+            content: [{ type: "text", text: "Activated on-demand tools: BrowserPreview, Glob." }],
+            details: {
+              addedToolNames: ["BrowserPreview", "Glob"],
+            },
+          },
+        }),
+        {
+          id: "tool-preview-ok",
+          role: "tool",
+          content: "",
+          createdAt: now(),
+          status: "complete",
+          toolName: "BrowserPreview",
+          toolCallId: "call-preview-ok",
+          toolStatus: "success",
+          toolArgs: {},
+          toolResult: { content: [{ type: "text", text: "opened" }] },
+        },
+      ],
+    });
+
+    (runtime as any).resetDeferredToolsForPrompt();
+    expect(hasTool(runtime, "BrowserPreview")).toBe(true);
+    expect(hasTool(runtime, "Glob")).toBe(true);
     await runtime.dispose();
   });
 

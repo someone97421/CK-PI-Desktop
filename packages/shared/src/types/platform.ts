@@ -1,5 +1,7 @@
 /** Shared public types grouped by the owning application domain. */
 import type { Mode } from "./common.js";
+import type { GlobalPermissionMode } from "./permissions.js";
+import type { SessionThinkingLevel } from "./models.js";
 
 export type AppVersionInfo = {
   name: string;
@@ -111,4 +113,9 @@ export type ScheduledTask = {
   schedule?: ScheduledTaskSchedule | null;
   nextRunAt?: string;
   workspacePath?: string;
+  /** Explicit task-owned execution settings. Missing fields preserve legacy behavior. */
+  permissionMode?: GlobalPermissionMode;
+  thinkingLevel?: SessionThinkingLevel;
+  providerId?: string;
+  modelId?: string;
 };

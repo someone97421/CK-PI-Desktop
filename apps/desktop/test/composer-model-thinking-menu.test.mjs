@@ -9,7 +9,8 @@ const [modelMenuSource, pickerSource, sliderSource] = await Promise.all([
   readComposerModule("ComposerModelPicker.tsx"),
   readComposerModule("ThinkingLevelSlider.tsx"),
 ]);
-const composerSource = `${modelMenuSource}\n${pickerSource}\n${sliderSource}`;
+const listSource = await readComposerModule("ComposerModelList.tsx");
+const composerSource = `${modelMenuSource}\n${pickerSource}\n${sliderSource}\n${listSource}`;
 const stylesSource = await loadStyles();
 
 test("Composer uses one model × reasoning popover with a root and in-place submenus", () => {
