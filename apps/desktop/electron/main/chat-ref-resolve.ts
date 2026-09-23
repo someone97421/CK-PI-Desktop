@@ -76,6 +76,13 @@ function cleanRef(raw: string): string {
   let value = stripRefDecorations(String(raw ?? ""));
   if (value.includes("\0")) return "";
   value = value.replace(/:\d+(?::\d+)?$/, "");
+  if (process.platform === "win32") {
+    // Git Bash emits /e/path; markdown links may also spell drives /E:/path.
+    // Normalize before exact lookup so ignored build outputs need no index.
+    value = toPosix(value)
+      .replace(/^\/([a-z])\//i, "$1:/")
+      .replace(/^\/(?=[a-z]:\/)/i, "");
+  }
   return value;
 }
 
@@ -275,9 +282,8 @@ export async function resolveChatFileRef(
   if (rootList.length === 0) return null;
 
   // 1. An absolute reference that already names a real path inside a known root
-  //    is unambiguous evidence, so it outranks every shorthand rule below. A
-  //    POSIX-style path on Windows finds nothing here, which is correct: step 2
-  //    then treats its tail as the shorthand it is.
+  //    is unambiguous evidence, so it outranks every shorthand rule below.
+  //    cleanRef translates Windows shell drive paths before this exact lookup.
   if (parsed.absolute) {
     const absolutePath = resolve(cleanRef(ref));
     for (const root of rootList) {

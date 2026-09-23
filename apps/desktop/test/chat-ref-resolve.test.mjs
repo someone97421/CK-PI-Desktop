@@ -131,6 +131,31 @@ test("an absolute scratch path matches exactly inside that root", async () => {
   assert.equal(match?.absolutePath, absolute);
 });
 
+test("Windows shell drive paths resolve ignored build outputs exactly", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const relativePath = "dist/browser/逐帧加载-Tauri-Standalone.exe";
+  const workspace = tempTree("shell-drive", [relativePath]);
+  const absolute = join(workspace, ...relativePath.split("/"));
+  const posix = absolute.replaceAll("\\", "/");
+  const shellPath = posix.replace(/^([a-z]):\//i, (_, drive) => `/${drive.toLowerCase()}/`);
+  for (const ref of [shellPath, `/${posix}`, `@"${shellPath}:12:4"`]) {
+    const match = await resolve(ref, { workspace });
+    assert.equal(match?.matchedBy, "exact-absolute");
+    assert.equal(match?.relativePath, relativePath);
+    assert.equal(match?.absolutePath.toLowerCase(), absolute.toLowerCase());
+  }
+});
+
+test("POSIX single-letter directories retain their native path", {
+  skip: process.platform === "win32",
+}, () => {
+  assert.deepEqual(parseChatRef("/e/project/dist/app.exe"), {
+    segments: ["e", "project", "dist", "app.exe"],
+    absolute: true,
+  });
+});
+
 test("the attachment store is the last root searched", async () => {
   const scratch = tempTree("scratch", []);
   const attachments = tempTree("attachments", ["openimage.js"]);
