@@ -1,14 +1,17 @@
 import type { AppSettings, UserSubagentInput } from "./types.js";
+import type { AppearanceMediaExport } from "./appearance-media.js";
 import type { ProviderExportFile } from "./provider-config-transfer.js";
 
 export const CONFIG_SCOPES = ["appearance", "shortcuts", "instructions", "models", "subagents"] as const;
 export type ConfigScope = typeof CONFIG_SCOPES[number];
-export const APPEARANCE_KEYS = ["theme", "language", "fontFamily", "fontScale", "appearance"] as const;
+export const APPEARANCE_KEYS = ["theme", "language", "fontFamily", "fontScale", "appearance", "homeMediaSize"] as const;
 export type ConfigExportFile = {
   kind: "this-is-a-agent.config";
   version: 1;
   exportedAt: string;
-  appearance?: Pick<AppSettings, typeof APPEARANCE_KEYS[number]>;
+  appearance?: Pick<AppSettings, typeof APPEARANCE_KEYS[number]> & {
+    media?: AppearanceMediaExport;
+  };
   shortcuts?: NonNullable<AppSettings["keybindings"]>;
   instructions?: string;
   models?: {

@@ -693,6 +693,7 @@
   -webkit-user-select: none;
   user-select: none;
 }
+.empty-hero-icon:has(.home-mascot-logo) { width: auto; height: auto; }
 
 .home-mascot-logo {
   display: block;
@@ -703,10 +704,10 @@
   overflow: hidden;
 }
 
-.home-mascot-logo img {
+.home-mascot-logo :is(img, video) {
   display: block;
-  width: 100px;
-  height: 100px;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   pointer-events: none;
   -webkit-user-drag: none;
@@ -714,6 +715,7 @@
 }
 
 .home-mascot-dinosaur { image-rendering: pixelated; }
+.home-mascot-logo video { object-fit: contain; pointer-events: none; }
 
 .empty-hero h1 {
   margin: 0;

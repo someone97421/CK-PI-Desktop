@@ -35,10 +35,12 @@ import {
 } from "../work-panel-window";
 import { readWindowState, writeWindowState } from "../window-preferences";
 import { suppressLinuxFramelessSystemMenu } from "../frameless-system-menu";
+import { readAppearanceIconPath } from "../appearance-media";
 
-function windowsIconPath(): string | undefined {
+function windowsIconPath(dataDir: string): string | undefined {
   if (process.platform !== "win32") return undefined;
-
+  const custom = readAppearanceIconPath(dataDir);
+  if (custom) return custom;
   const resourceRoot = app.isPackaged
     ? process.resourcesPath
     : join(app.getAppPath(), "build");
@@ -197,7 +199,7 @@ export async function createWindow({
         }),
     ...(process.platform === "win32"
       ? {
-          icon: windowsIconPath(),
+          icon: windowsIconPath(dataDir),
         }
       : {}),
     webPreferences: {

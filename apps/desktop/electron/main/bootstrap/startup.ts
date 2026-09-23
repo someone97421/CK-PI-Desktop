@@ -18,6 +18,10 @@ import {
   registerPluginAssetScheme,
 } from "../plugin-asset-protocol";
 import { applyNetworkProxyFromAppSettings } from "../network-proxy";
+import {
+  installAppearanceMediaProtocol,
+  registerAppearanceMediaScheme,
+} from "../appearance-media-protocol";
 import { readCloseBehavior } from "../window-preferences";
 import { createAgentHostBridge, type AgentHostBridge } from "../agent-host-bridge";
 import { createBackendRouter, type BackendRouter } from "../remote/backend-router";
@@ -127,6 +131,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
   // Electron only accepts scheme privileges before the app is ready, and this
   // runs from the composition root, before the `whenReady` promise can settle.
   registerPluginAssetScheme();
+  registerAppearanceMediaScheme();
   // Crashpad ships with Electron, so the reporter needs no native dependency.
   // Dumps stay local (`uploadToServer: false`) under the fork's independent
   // userData diagnostics directory, not in the shared business dataDir.
@@ -196,6 +201,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     installPluginAssetProtocol((pluginId, assetPath) =>
       plugins.resolveThemeAsset(pluginId, assetPath),
     );
+    installAppearanceMediaProtocol(dataDir);
     // Load the close-behavior preference before the first window exists: the
     // close handler reads `closeBehavior` synchronously, and a window created
     // while it still held the "ask" default would prompt a user who already

@@ -28,6 +28,7 @@ import type { PluginViewHost } from "../plugin-view-host";
 import type { HostProcess } from "../host-process";
 import { syncPluginDisplayLocale } from "../plugin-display-locale";
 import type { PluginAppearance } from "../../shared/plugin-panel-chrome";
+import { readAppearanceIconPath } from "../appearance-media";
 
 export type ApplicationLifecycleState = {
   windowCreationPromise: Promise<void> | null;
@@ -117,22 +118,32 @@ export function createApplicationLifecycle({
   });
   let trayActivationGeneration = 0;
 
+  function customIconPath(): string | null {
+    return readAppearanceIconPath(dataDir);
+  }
+
+  function defaultAppIconPath(): string | null {
+    const resourceRoot = app.isPackaged
+      ? process.resourcesPath
+      : join(app.getAppPath(), "build");
+    const candidates = [
+      join(resourceRoot, app.isPackaged ? "tray-icon.png" : "icon_1024.png"),
+      join(resourceRoot, "icon.png"),
+    ];
+    return candidates.find((candidate) => existsSync(candidate)) ?? null;
+  }
+
   function applyDevelopmentBranding() {
-    if (process.platform !== "darwin" || !isDevelopmentBuild || !app.dock) return;
-
-    const iconPath = join(app.getAppPath(), "build", "icon_1024.png");
+    if (process.platform !== "darwin" || !app.dock) return;
+    const iconPath = customIconPath() ?? (isDevelopmentBuild ? defaultAppIconPath() : null);
+    if (!iconPath) return;
     const icon = nativeImage.createFromPath(iconPath);
-    if (icon.isEmpty()) {
-      logger.app("lifecycle", "warn", "development dock icon missing", {
-        data: { iconPath },
-      });
-      return;
-    }
-
-    app.dock.setIcon(icon);
+    if (!icon.isEmpty()) app.dock.setIcon(icon);
   }
 
   function trayIconPath() {
+    const custom = customIconPath();
+    if (custom) return custom;
     const resourceRoot = app.isPackaged
       ? process.resourcesPath
       : join(app.getAppPath(), "build");
@@ -144,6 +155,29 @@ export function createApplicationLifecycle({
           ]
         : [join(resourceRoot, app.isPackaged ? "tray-icon.png" : "icon.png")];
     return candidates.find((candidate) => existsSync(candidate)) ?? null;
+  }
+
+  function applyAppearanceIcon(path: string | null): void {
+    const sourcePath = path ?? trayIconPath();
+    if (!sourcePath) return;
+    const source = nativeImage.createFromPath(sourcePath);
+    if (source.isEmpty()) return;
+    if (state.tray) {
+      const trayIcon = source.resize({
+        width: process.platform === "darwin" ? 18 : 16,
+        height: process.platform === "darwin" ? 18 : 16,
+      });
+      if (process.platform === "darwin" && !path) trayIcon.setTemplateImage(true);
+      state.tray.setImage(trayIcon);
+    }
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.setIcon(source);
+    if (process.platform === "darwin" && app.dock) {
+      const dockPath = path ?? defaultAppIconPath();
+      if (dockPath) {
+        const dockIcon = nativeImage.createFromPath(dockPath);
+        if (!dockIcon.isEmpty()) app.dock.setIcon(dockIcon);
+      }
+    }
   }
 
   function hasVisibleWindow(): boolean {
@@ -260,7 +294,7 @@ export function createApplicationLifecycle({
       width: process.platform === "darwin" ? 18 : 16,
       height: process.platform === "darwin" ? 18 : 16,
     });
-    if (process.platform === "darwin") icon.setTemplateImage(true);
+    if (process.platform === "darwin" && iconPath !== customIconPath()) icon.setTemplateImage(true);
 
     state.tray = new Tray(icon);
     state.tray.setToolTip(APP_NAME);
@@ -638,6 +672,7 @@ export function createApplicationLifecycle({
     toggleMainWindow,
     updateTrayMenu,
     createTray,
+    applyAppearanceIcon,
     resetMenuRendererReady,
     markMenuRendererReady,
     waitForMenuRenderer,

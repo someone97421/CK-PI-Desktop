@@ -129,6 +129,9 @@ export const IPC = {
     settingsSet: "pi-desktop/settings/set",
     settingsExportConfig: "pi-desktop/settings/exportConfig",
     settingsImportConfig: "pi-desktop/settings/importConfig",
+    appearanceMediaGet: "pi-desktop/appearanceMedia/get",
+    appearanceMediaSelect: "pi-desktop/appearanceMedia/select",
+    appearanceMediaReset: "pi-desktop/appearanceMedia/reset",
     configSyncGetState: "pi-desktop/configSync/getState",
     configSyncConfigure: "pi-desktop/configSync/configure",
     configSyncTest: "pi-desktop/configSync/test",
@@ -363,6 +366,7 @@ export const IPC = {
     pluginInstallProgress: "pi-desktop/plugin/event/installProgress",
     /** Host-originated app settings mutation (e.g. plugin `app.setTheme`). */
     settingsChanged: "pi-desktop/app/event/settingsChanged",
+    appearanceMediaChanged: "pi-desktop/app/event/appearanceMediaChanged",
     configSyncChanged: "pi-desktop/configSync/event/changed",
     /** What a running sync is doing, while it is still running. */
     configSyncProgress: "pi-desktop/configSync/event/progress",

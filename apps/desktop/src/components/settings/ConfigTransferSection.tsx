@@ -2,6 +2,7 @@ import { useState } from "react";
 import { CONFIG_SCOPES, type ConfigScope } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { flushSettingsWrites } from "../../lib/settings-save";
+import { refreshAppearanceMedia } from "../../lib/appearance-media";
 import { useAppStore } from "../../stores/app-store";
 import { Button } from "../ui";
 import { SettingsCard, SettingsRow } from "../../features/settings/primitives";
@@ -32,6 +33,7 @@ export function ConfigTransferSection() {
           const settings = await api.getSettings();
           useAppStore.setState({ settings });
           await useAppStore.getState().refreshProviders();
+          await refreshAppearanceMedia();
         } catch {
           setWarnings((current) => [...current, "配置处理已完成，界面刷新失败，请重新打开设置。"]);
         }

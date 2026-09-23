@@ -1,5 +1,13 @@
-import { IPC, type AppSettings, type ConfigScope } from "@pi-desktop/shared";
+import { BrowserWindow, dialog } from "electron";
+import {
+  APPEARANCE_MEDIA_KINDS,
+  IPC,
+  type AppearanceMediaKind,
+  type AppSettings,
+  type ConfigScope,
+} from "@pi-desktop/shared";
 import { exportConfig, importConfig } from "../config-transfer";
+import { AppearanceMediaStore, readAppearanceIconPath } from "../appearance-media";
 import { testNetworkProxy } from "../network-proxy";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { HostProcess } from "../host-process";
@@ -23,6 +31,7 @@ export type SettingsIpcDependencies = {
   } | null) => void;
   applyDeveloperMode: (settings?: { developerMode?: unknown } | null) => void;
   resolveEffectiveCommandShell: () => Promise<unknown>;
+  applyAppearanceIcon: (path: string | null) => void;
 };
 
 /** Register app settings and command-shell channels. */
@@ -39,7 +48,22 @@ export function registerSettingsIpc({
   applyApplicationMenuSettings,
   applyDeveloperMode,
   resolveEffectiveCommandShell,
+  applyAppearanceIcon,
 }: SettingsIpcDependencies): void {
+  const appearanceMedia = new AppearanceMediaStore(dataDir, (state) => {
+    applyAppearanceIcon(readAppearanceIconPath(dataDir));
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send(IPC.event.appearanceMediaChanged, state);
+      }
+    }
+  });
+  const assertMediaKind = (value: unknown): AppearanceMediaKind => {
+    if (typeof value !== "string" || !(APPEARANCE_MEDIA_KINDS as readonly string[]).includes(value)) {
+      throw new Error("不支持的外观媒体类型");
+    }
+    return value as AppearanceMediaKind;
+  };
   let host: HostProcess | null = null;
   let sidecar: AgentSidecar | null = null;
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
@@ -88,6 +112,28 @@ export function registerSettingsIpc({
     return result;
   };
   handle(IPC.invoke.settingsSet, saveSettings);
+  handle(IPC.invoke.appearanceMediaGet, () => appearanceMedia.getState());
+  handle(IPC.invoke.appearanceMediaSelect, async (rawKind: unknown) => {
+    const kind = assertMediaKind(rawKind);
+    const filters = kind === "icon"
+      ? [{ name: "PNG 图标", extensions: ["png"] }]
+      : [{ name: "主页媒体", extensions: ["png", "gif", "webp", "mp4", "webm"] }];
+    const picked = await dialog.showOpenDialog({
+      title: kind === "icon" ? "选择应用图标" : "选择主页媒体",
+      properties: ["openFile"],
+      filters,
+    });
+    if (picked.canceled || !picked.filePaths[0]) {
+      return { canceled: true, state: await appearanceMedia.getState() };
+    }
+    const state = await appearanceMedia.replaceFromPath(kind, picked.filePaths[0]);
+    return { state };
+  });
+  handle(IPC.invoke.appearanceMediaReset, async (rawKind: unknown) => {
+    const kind = assertMediaKind(rawKind);
+    const state = await appearanceMedia.reset(kind);
+    return state;
+  });
 
   // 文件操作和冲突确认留在主进程；不向渲染进程返回密钥。
   let transferring = false;
@@ -103,6 +149,7 @@ export function registerSettingsIpc({
           const current = await transferHost.call<Record<string, unknown>>("settings.get");
           return saveSettings({ ...current, ...patch });
         },
+        appearanceMedia,
       };
       return scopes === undefined ? await importConfig(deps) : await exportConfig(deps, scopes);
     } finally {

@@ -7,6 +7,7 @@
 
 export type SettingsTabId =
   | "general"
+  | "appearance"
   | "ai"
   | "shortcuts"
   | "instructions"
@@ -57,21 +58,9 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     titleKey: "settings.general",
     group: "preferences",
     keywordKeys: [
-      "settings.appearance",
       "settings.configTransfer",
-      "settings.theme",
       "settings.language",
       "settings.languageAuto",
-      "settings.font",
-      "settings.fontSize",
-      "settings.appearanceLight",
-      "settings.appearanceDark",
-      "settings.appearanceAccent",
-      "settings.appearanceBackground",
-      "settings.appearanceForeground",
-      "settings.appearanceUiFont",
-      "settings.appearanceContentFont",
-      "settings.appearanceCodeFont",
       "settings.closeBehaviorTitle",
       "settings.closeBehaviorTray",
       "settings.closeBehaviorQuit",
@@ -84,6 +73,28 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.networkRelaxedMode",
       "settings.networkRelaxedModeDesc",
       "settings.networkRelaxedModeStrictDesc",
+    ],
+  },
+  {
+    id: "appearance",
+    labelKey: "settings.nav.appearance",
+    titleKey: "settings.appearance",
+    group: "preferences",
+    keywordKeys: [
+      "settings.theme",
+      "settings.fontSize",
+      "settings.appearanceLight",
+      "settings.appearanceDark",
+      "settings.appearanceAccent",
+      "settings.appearanceBackground",
+      "settings.font",
+      "settings.appearanceForeground",
+      "settings.appearanceUiFont",
+      "settings.appearanceContentFont",
+      "settings.appearanceCodeFont",
+      "settings.customAppIcon",
+      "settings.customHomeMedia",
+      "settings.customMediaSize",
     ],
   },
   {

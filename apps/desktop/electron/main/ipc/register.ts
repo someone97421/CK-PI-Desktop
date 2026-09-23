@@ -107,6 +107,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyApplicationMenuSettings,
     applyDeveloperMode,
     resolveEffectiveCommandShell,
+    applyAppearanceIcon,
     modelsDevCatalog,
     vendorOAuth,
     enrichProvider,
@@ -265,6 +266,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyApplicationMenuSettings,
     applyDeveloperMode,
     resolveEffectiveCommandShell,
+    applyAppearanceIcon,
   });
   registerConfigSyncIpc({
     registrar,

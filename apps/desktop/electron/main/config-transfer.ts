@@ -13,16 +13,18 @@ import {
 } from "@pi-desktop/shared";
 import { collectProviderConfig, type ProviderRow } from "./provider-config-transfer";
 import type { HostProcess } from "./host-process";
+import type { AppearanceMediaStore } from "./appearance-media";
 
 type Dependencies = {
   host: HostProcess;
   saveSettings: (patch: Partial<AppSettings>) => Promise<unknown>;
+  appearanceMedia: AppearanceMediaStore;
 };
 const labels: Record<ConfigScope, string> = {
   appearance: "外观", shortcuts: "快捷键", instructions: "指令", models: "模型", subagents: "子智能体",
 };
 const filters = [{ name: "JSON 配置文件", extensions: ["json"] }];
-const appearanceLabels = { theme: "主题", language: "语言", fontFamily: "字体", fontScale: "字号", appearance: "分区字体与配色" };
+const appearanceLabels = { theme: "主题", language: "语言", fontFamily: "字体", fontScale: "字号", appearance: "分区字体与配色", homeMediaSize: "主页图大小" };
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 function invalid(message: string): never { throw new Error(`配置文件无效：${message}`); }
 const appearanceOf = (s: AppSettings): NonNullable<ConfigExportFile["appearance"]> => ({
@@ -30,6 +32,7 @@ const appearanceOf = (s: AppSettings): NonNullable<ConfigExportFile["appearance"
   language: !s.language || s.language === "auto" ? "auto" : resolveLocale(s.language),
   fontFamily: s.fontFamily ?? "",
   fontScale: s.fontScale ?? 1, appearance: s.appearance ?? {},
+  homeMediaSize: s.homeMediaSize ?? 100,
 });
 async function readInstructions() {
   try { return await fs.readFile(globalInstructionPath(), "utf8"); }
@@ -53,15 +56,20 @@ function parseFile(raw: string): ConfigExportFile {
   if (!CONFIG_SCOPES.some((scope) => file[scope] !== undefined)) invalid("没有可导入的范围");
   if (file.appearance !== undefined) {
     const a = file.appearance;
-    if (!record(a) || Object.keys(a).some((k) => !(APPEARANCE_KEYS as readonly string[]).includes(k))) invalid("外观字段不正确");
-    if (a.theme !== undefined && (typeof a.theme !== "string" || !["system", "light", "dark"].includes(a.theme) && !a.theme.startsWith("plugin:"))) invalid("主题不正确");
-    if (a.language !== undefined) {
-      if (typeof a.language !== "string") invalid("语言不正确");
-      a.language = a.language === "auto" ? "auto" : resolveLocale(a.language);
+    if (!record(a)) {
+      delete file.appearance;
+    } else {
+      for (const key of Object.keys(a)) {
+        if (!(APPEARANCE_KEYS as readonly string[]).includes(key) && key !== "media") delete a[key];
+      }
+      if (a.theme !== undefined && (typeof a.theme !== "string" || !["system", "light", "dark"].includes(a.theme) && !a.theme.startsWith("plugin:"))) delete a.theme;
+      if (a.language !== undefined && !["auto", "zh-CN", "en"].includes(a.language)) delete a.language;
+      if (a.fontFamily !== undefined && typeof a.fontFamily !== "string") delete a.fontFamily;
+      if (a.fontScale !== undefined && (typeof a.fontScale !== "number" || !Number.isFinite(a.fontScale) || a.fontScale < 0.8 || a.fontScale > 1.5)) delete a.fontScale;
+      if (a.appearance !== undefined && !isAppearanceSettings(a.appearance)) delete a.appearance;
+      if (a.homeMediaSize !== undefined && (typeof a.homeMediaSize !== "number" || !Number.isInteger(a.homeMediaSize) || a.homeMediaSize < 64 || a.homeMediaSize > 200)) delete a.homeMediaSize;
+      if (a.media !== undefined && !record(a.media)) delete a.media;
     }
-    if (a.fontFamily !== undefined && typeof a.fontFamily !== "string") invalid("字体不正确");
-    if (a.fontScale !== undefined && (typeof a.fontScale !== "number" || a.fontScale < 0.8 || a.fontScale > 1.5)) invalid("字号比例不正确");
-    if (a.appearance !== undefined && !isAppearanceSettings(a.appearance)) invalid("外观配色不正确");
   }
   if (file.shortcuts !== undefined) {
     if (!record(file.shortcuts)) invalid("快捷键不正确");
@@ -107,14 +115,17 @@ function parseFile(raw: string): ConfigExportFile {
   return file;
 }
 
-export async function exportConfig({ host }: Dependencies, scopes: ConfigScope[]): Promise<ConfigTransferResult> {
+export async function exportConfig({ host, appearanceMedia }: Dependencies, scopes: ConfigScope[]): Promise<ConfigTransferResult> {
   if (!Array.isArray(scopes) || !scopes.length || scopes.some((s) => !CONFIG_SCOPES.includes(s))) throw new Error("请选择导出范围");
   const picked = await dialog.showSaveDialog({ title: "导出配置", defaultPath: `this-is-a-agent-config-${new Date().toISOString().slice(0, 10)}.json`, filters });
   const result: ConfigTransferResult = { applied: 0, skipped: 0, failed: 0, warnings: [] };
   if (picked.canceled || !picked.filePath) return { ...result, canceled: true };
   const settings = await host.call<AppSettings>("settings.get");
   const file: ConfigExportFile = { kind: "this-is-a-agent.config", version: 1, exportedAt: new Date().toISOString() };
-  if (scopes.includes("appearance")) file.appearance = appearanceOf(settings);
+  if (scopes.includes("appearance")) file.appearance = {
+    ...appearanceOf(settings),
+    media: await appearanceMedia.exportMedia(),
+  };
   if (scopes.includes("shortcuts")) file.shortcuts = settings.keybindings ?? {};
   if (scopes.includes("instructions")) file.instructions = await readInstructions();
   if (scopes.includes("models")) {
@@ -145,12 +156,14 @@ export async function exportConfig({ host }: Dependencies, scopes: ConfigScope[]
   return { ...result, applied: new Set(scopes).size };
 }
 
-export async function importConfig({ host, saveSettings }: Dependencies): Promise<ConfigTransferResult> {
+export async function importConfig({ host, saveSettings, appearanceMedia }: Dependencies): Promise<ConfigTransferResult> {
   const result: ConfigTransferResult = { applied: 0, skipped: 0, failed: 0, warnings: [] };
   const picked = await dialog.showOpenDialog({ title: "导入配置", properties: ["openFile"], filters });
   if (picked.canceled || !picked.filePaths[0]) return { ...result, canceled: true };
-  if ((await fs.stat(picked.filePaths[0])).size > 20 * 1024 * 1024) throw new Error("配置文件不能超过 20 MB");
-  const file = parseFile(await fs.readFile(picked.filePaths[0], "utf8"));
+  const raw = await fs.readFile(picked.filePaths[0], "utf8");
+  const file = parseFile(raw);
+  // 外观导出内嵌原始媒体，不对它施加文件大小上限；其他范围沿用原限制。
+  if (file.appearance === undefined && Buffer.byteLength(raw) > 20 * 1024 * 1024) throw new Error("配置文件不能超过 20 MB");
   const settings = await host.call<AppSettings>("settings.get");
   type Operation = { label: string; conflict: boolean; apply: () => Promise<unknown> };
   const operations: Operation[] = [];
@@ -160,6 +173,18 @@ export async function importConfig({ host, saveSettings }: Dependencies): Promis
     for (const key of APPEARANCE_KEYS) {
       const value = file.appearance[key];
       if (value !== undefined && !isDeepStrictEqual(current[key], value)) add(`外观 · ${appearanceLabels[key]}`, true, () => saveSettings({ [key]: value }));
+    }
+    if (record(file.appearance.media)) {
+      const currentMedia = await appearanceMedia.exportMedia();
+      for (const kind of ["icon", "home"] as const) {
+        if (!Object.prototype.hasOwnProperty.call(file.appearance.media, kind)) continue;
+        const asset = appearanceMedia.parseExportAsset(kind, file.appearance.media[kind]);
+        // 格式不匹配的媒体直接忽略，不影响其他外观项导入。
+        if (asset === undefined || isDeepStrictEqual(currentMedia[kind], asset)) continue;
+        add(`外观 · ${kind === "icon" ? "应用图标" : "主页媒体"}`, currentMedia[kind] != null, async () => {
+          await appearanceMedia.importAsset(kind, asset);
+        });
+      }
     }
   }
   if (file.shortcuts !== undefined && !isDeepStrictEqual(settings.keybindings ?? {}, file.shortcuts)) {

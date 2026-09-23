@@ -39,6 +39,7 @@ import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
 import { KeyboardShortcutsSection } from "../../components/settings/KeyboardShortcutsSection";
 import { ConfigTransferSection } from "../../components/settings/ConfigTransferSection";
 import { AppearancePanels } from "../../components/settings/AppearancePanels";
+import { AppearanceMediaSection } from "../../components/settings/AppearanceMediaSection";
 import { ThinkingDisplayModeRow } from "../../components/settings/ThinkingDisplayModeRow";
 import { FontSizeRow } from "../../components/settings/FontSizeRow";
 import { LanguageRow } from "../../components/settings/LanguageRow";
@@ -201,6 +202,7 @@ export function SettingsPage() {
   const navItems: NavItem[] = useMemo(() => {
     const iconFor: Record<SettingsTab, ReactNode> = {
       // Semantic Lucide glyphs for the settings destinations.
+      appearance: <IconPalette size={14} />,
       general: <IconSliders size={14} />,
       ai: <IconSparkles size={14} />,
       shortcuts: <IconKeyboard size={14} />,
@@ -252,7 +254,7 @@ export function SettingsPage() {
 
   const activeTitleKey =
     navItems.find((item) => item.id === tab)?.titleKey ?? "settings.title";
-  const tabNeedsSettings = ["general", "ai", "shortcuts", "agent"].includes(tab);
+  const tabNeedsSettings = ["general", "appearance", "ai", "shortcuts", "agent"].includes(tab);
 
   return (
     <div className="settings-shell settings-shell-full">
@@ -377,18 +379,26 @@ export function SettingsPage() {
 
           {tab === "general" && settings && (
             <div className="settings-stack">
-              <SettingsCard title={t("settings.appearance")}>
-                <ThemeRow settings={settings} saveSettings={saveSettings} />
+              <SettingsCard>
                 <LanguageRow settings={settings} saveSettings={saveSettings} />
-                <FontSizeRow settings={settings} saveSettings={saveSettings} />
               </SettingsCard>
-              {saveError && <p className="appearance-error" role="alert">{t("settings.appearanceSaveError")}</p>}
-              <AppearancePanels settings={settings} saveSettings={saveSettings} />
 
               <NetworkProxySection settings={settings} saveSettings={saveSettings} />
 
               {platform !== "darwin" && <CloseBehaviorSection />}
               <ConfigTransferSection />
+            </div>
+          )}
+
+          {tab === "appearance" && settings && (
+            <div className="settings-stack">
+              <SettingsCard title={t("settings.appearance")}>
+                <ThemeRow settings={settings} saveSettings={saveSettings} />
+                <FontSizeRow settings={settings} saveSettings={saveSettings} />
+              </SettingsCard>
+              <AppearanceMediaSection settings={settings} saveSettings={saveSettings} />
+              {saveError && <p className="appearance-error" role="alert">{t("settings.appearanceSaveError")}</p>}
+              <AppearancePanels settings={settings} saveSettings={saveSettings} />
             </div>
           )}
 

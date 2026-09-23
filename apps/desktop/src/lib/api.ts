@@ -3,6 +3,9 @@ import { resolveLocale } from "@pi-desktop/i18n";
 import type {
   ConfigScope,
   ConfigTransferResult,
+  AppearanceMediaKind,
+  AppearanceMediaSelectionResult,
+  AppearanceMediaState,
   ScheduledTaskRun,
   ActivationScope,
   AgentCapabilityMove,
@@ -641,6 +644,12 @@ export const api = {
   getSettings: () => invoke<AppSettings>(IPC.invoke.settingsGet).then(normalizeSettings),
   setSettings: (settings: AppSettings) =>
     invoke(IPC.invoke.settingsSet, validateSettingsWrite(settings)),
+  getAppearanceMedia: () =>
+    invoke<AppearanceMediaState>(IPC.invoke.appearanceMediaGet),
+  selectAppearanceMedia: (kind: AppearanceMediaKind) =>
+    invoke<AppearanceMediaSelectionResult>(IPC.invoke.appearanceMediaSelect, kind),
+  resetAppearanceMedia: (kind: AppearanceMediaKind) =>
+    invoke<AppearanceMediaState>(IPC.invoke.appearanceMediaReset, kind),
   configSyncGetState: () => invoke<ConfigSyncState>(IPC.invoke.configSyncGetState),
   configSyncConfigure: (input: ConfigSyncConfigureInput) =>
     invoke<ConfigSyncState>(IPC.invoke.configSyncConfigure, input),

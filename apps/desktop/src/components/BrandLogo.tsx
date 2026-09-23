@@ -3,8 +3,11 @@ import { useEffect, useState } from "react";
 // installer icons for electron-builder; BrandLogo never renders above 64px.
 import brandLogoUrlLight from "../assets/brand/logo-light.png";
 import brandLogoUrlDark from "../assets/brand/logo-dark.png";
+import { useAppearanceMedia } from "../lib/appearance-media";
 
 export function BrandLogo({ size = 16 }: { size?: number }) {
+  const icon = useAppearanceMedia().icon;
+  const [failedUrl, setFailedUrl] = useState<string>();
   const [dark, setDark] = useState(() => document.documentElement.dataset.theme !== "light");
 
   useEffect(() => {
@@ -19,7 +22,8 @@ export function BrandLogo({ size = 16 }: { size?: number }) {
   return (
     <img
       className="brand-logo"
-      src={dark ? brandLogoUrlDark : brandLogoUrlLight}
+      src={icon && icon.url !== failedUrl ? icon.url : (dark ? brandLogoUrlDark : brandLogoUrlLight)}
+      onError={() => { if (icon) setFailedUrl(icon.url); }}
       alt=""
       aria-hidden="true"
       width={size}

@@ -113,6 +113,8 @@ export type AppSettings = {
    * Absent means 1. Range 0.8–1.5 in 0.025 steps. Window zoom is independent.
    */
   fontScale?: number;
+  /** Home media display size in pixels (64–200); absent means 100. */
+  homeMediaSize?: number;
   /** Transcript presentation only; absent means detailed. Reasoning is retained. */
   thinkingDisplayMode?: "detailed" | "compact";
   /**
