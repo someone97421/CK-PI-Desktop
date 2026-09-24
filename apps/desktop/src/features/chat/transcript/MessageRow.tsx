@@ -2,6 +2,8 @@ import {
   memo,
   useContext,
   useMemo,
+  useEffect,
+  useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
@@ -29,6 +31,7 @@ import {
   FileRefChip,
   LinkifiedText,
   MessageAttachmentImage,
+  MessageTimestamp,
 } from "./shared";
 import {
   useChatTextActions,
@@ -45,6 +48,7 @@ export const MessageRow = memo(function MessageRow({
   const { t } = useTranslation();
   const openTranscriptMenu = useTranscriptMenu();
   const { copyText, selectText } = useChatTextActions();
+  const prepareUserMessageEdit = useAppStore((s) => s.prepareUserMessageEdit);
   const editUserMessage = useAppStore((s) => s.editUserMessage);
   const activateMessageRevision = useAppStore((s) => s.activateMessageRevision);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
@@ -57,6 +61,9 @@ export const MessageRow = memo(function MessageRow({
   // resent turn re-expands the template (D123).
   const editSeed = (editableUserMessage && message.command) || requestTextWithoutAnnotations(message.content || "");
   const [editing, setEditing] = useState(false);
+  const [loadingEdit, setLoadingEdit] = useState(false);
+  const editRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => editRequest.current?.abort(), []);
   const [editValue, setEditValue] = useState(editSeed);
   const [retryingEdit, setRetryingEdit] = useState(false);
   const copyLabel = t("chat.copy");
@@ -85,6 +92,33 @@ export const MessageRow = memo(function MessageRow({
     );
     return attachments.filter((attachment) => attachment.kind === "image" || !inline.has(attachment.ref));
   }, [message.attachments, message.content, workspaceRoot]);
+  const beginEdit = async () => {
+    if (!editableUserMessage || isRunning || loadingEdit || transcriptReadOnly) return;
+    const request = new AbortController();
+    editRequest.current?.abort();
+    editRequest.current = request;
+    setLoadingEdit(true);
+    const unsubscribe = useAppStore.subscribe((state, previous) => {
+      if (state.activeSessionId !== previous.activeSessionId ||
+          state.selectingSessionId !== previous.selectingSessionId) request.abort();
+    });
+    request.signal.addEventListener("abort", () => {
+      unsubscribe();
+      if (editRequest.current === request) setLoadingEdit(false);
+    }, { once: true });
+    try {
+      const full = await prepareUserMessageEdit(message.id, request.signal);
+      if (!full || request.signal.aborted || editRequest.current !== request) return;
+      setEditValue(full.command || requestTextWithoutAnnotations(full.content || ""));
+      setEditing(true);
+    } finally {
+      unsubscribe();
+      if (editRequest.current === request) {
+        editRequest.current = null;
+        setLoadingEdit(false);
+      }
+    }
+  };
   const cancelEdit = () => {
     setEditValue(editSeed);
     setEditing(false);
@@ -113,16 +147,13 @@ export const MessageRow = memo(function MessageRow({
         selectTarget: event.currentTarget.querySelector<HTMLElement>(
           editing ? ".message-edit-input" : ".message-bubble",
         ),
-        editable: editableUserMessage && !editing && !transcriptReadOnly,
+        editable: editableUserMessage && !editing && !loadingEdit && !transcriptReadOnly,
         running: isRunning,
         revision: !editing && showRevisionPager && !transcriptReadOnly
           ? { count: revisionCount, active: activeRevision }
           : null,
         actions: { copyText, selectText },
-        onEdit: () => {
-          setEditValue(editSeed);
-          setEditing(true);
-        },
+        onEdit: () => void beginEdit(),
         onDelete: () => void deleteMessage(message.id),
         onActivateRevision: (index) =>
           void activateMessageRevision(message.id, index),
@@ -254,6 +285,7 @@ export const MessageRow = memo(function MessageRow({
         ) : null}
         {!editing && !transcriptReadOnly && (hasAnswer || showRevisionPager) ? (
           <div className="message-actions">
+            <MessageTimestamp createdAt={message.createdAt} />
             {showRevisionPager ? (
               <div className="message-revision-pager" role="group" aria-label={t("chat.revisions")}>
                 <TooltipButton
@@ -295,11 +327,8 @@ export const MessageRow = memo(function MessageRow({
                 className="copy-btn icon"
                 tooltip={editLabel}
                 ariaLabel={editLabel}
-                disabled={isRunning}
-                onClick={() => {
-                  setEditValue(editSeed);
-                  setEditing(true);
-                }}
+                disabled={isRunning || loadingEdit}
+                onClick={() => void beginEdit()}
               >
                 <IconPencil size={13} />
               </TooltipButton>

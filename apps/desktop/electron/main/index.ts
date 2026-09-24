@@ -22,7 +22,7 @@ import {
   APP_ID,
   APP_NAME,
   APP_VERSION,
-  ErrorCodes as SharedErrorCodes,
+  ErrorCodes,
   IPC,
   IPC_WHITELIST,
   KEYBOARD_SHORTCUTS,
@@ -163,16 +163,6 @@ import { registerPluginUiIpc } from "./ipc/plugin-ui-ipc";
 import { registerSkillsIpc } from "./ipc/skills-ipc";
 import { stripWinLongPrefix } from "./path-utils";
 
-// The shared error-code union is reconciled in the shared lane. Keep desktop
-// source type-safe while that lane is temporarily staged at main.
-const ErrorCodes = {
-  ...SharedErrorCodes,
-  COMMAND_SHELL_INVALID: "COMMAND_SHELL_INVALID",
-  SHELL_NOT_FOUND: "SHELL_NOT_FOUND",
-  PLAN_EXECUTION_INTERRUPTED: "PLAN_EXECUTION_INTERRUPTED",
-  PLAN_PERMISSION_MODE_REQUIRED: "PLAN_PERMISSION_MODE_REQUIRED",
-} as const;
-
 // A closed stdout/stderr (Linux AppImage, GUI launch without a TTY) must not
 // surface as Electron's "Uncaught Exception: write EPIPE" dialog. The same
 // default dialog must not appear for a stray uncaughtException (non-ASCII
@@ -183,6 +173,9 @@ installMainProcessErrorHandlers();
 const isDevelopmentBuild =
   process.env.PI_DESKTOP_DEV === "1" || !app.isPackaged;
 const { dataDir, hasSingleInstanceLock } = configureApplicationIdentity(app);
+// Work around a Chromium accessibility-tree crash during streaming updates.
+// Chromium disables its renderer accessibility tree here; assess Computer Use separately.
+app.commandLine.appendSwitch("disable-renderer-accessibility");
 if (!hasSingleInstanceLock) {
   // 立即终止，防止下面的日志、outbox 和插件初始化触碰另一个进程的业务目录。
   app.exit(0);

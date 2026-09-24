@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { Type } from "typebox";
 import type { AgentEventEnvelope, SubagentDefinition } from "@pi-desktop/shared";
 import type { Message } from "@earendil-works/pi-ai";
 import {
@@ -722,6 +723,43 @@ describe("SubagentRun context budget (ADR 0299)", () => {
     const { run } = createRun();
 
     expect(typeof run.agent.transformContext).toBe("function");
+  });
+
+  it("preflights the first request with system and tool-schema overhead", async () => {
+    const smallProvider: RuntimeProviderConfig = {
+      ...provider,
+      id: "small",
+      modelId: "small-model",
+      modelConfig: {
+        source: "generic",
+        name: "Small model",
+        baseUrl: provider.baseUrl ?? "",
+        reasoning: false,
+        input: ["text"],
+        contextWindow: 4_096,
+        maxTokens: 1_024,
+      },
+    };
+    const tools = [{
+      name: "Read",
+      label: "Read",
+      description: "t".repeat(2_200),
+      parameters: Type.Object({}),
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "unused" }],
+        details: {},
+      }),
+    }];
+    const { run } = createRun({
+      provider: smallProvider,
+      systemPrompt: "s".repeat(6_200),
+      tools,
+      compactionEnabled: false,
+    });
+    await expect(run.agent.transformContext!(
+      [{ role: "user", content: "task", timestamp: Date.now() }],
+      new AbortController().signal,
+    )).rejects.toThrow("CONTEXT_COMPACTION_FAILED");
   });
 
   it("remaps a provider context overflow no fallback could absorb", async () => {

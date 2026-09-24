@@ -301,3 +301,30 @@ for (const mutation of ["delete", "replace"]) {
     });
   }
 }
+
+test("foreign key orphan is dropped without a receipt and later entries still drain", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const logs = [];
+  const acknowledged = [];
+  const outbox = new PersistenceOutbox(dir, (level, message, data) => {
+    logs.push({ level, message, data });
+  });
+  outbox.setOnMessagePersisted((sessionId) => { acknowledged.push(sessionId); });
+  const calls = [];
+  const host = mockHost(async (_method, params) => {
+    calls.push(params.message.id);
+    if (params.message.id === "orphaned-child") throw new Error("Error: FOREIGN KEY constraint failed");
+  });
+  const getHost = () => host;
+  try {
+    await outbox.enqueue({ key: "message:s1:orphaned-child", sessionId: "s1", message: { id: "orphaned-child" } }, getHost);
+    await outbox.enqueue({ key: "message:s2:healthy", sessionId: "s2", message: { id: "healthy" } }, getHost);
+    await outbox.flush(getHost);
+    assert.equal(outbox.size(), 0);
+    assert.deepEqual(calls, ["orphaned-child", "healthy"]);
+    assert.deepEqual(acknowledged, ["s2"]);
+    assert.ok(logs.some((row) => row.message === "session persistence flush dropped orphaned message"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -13,7 +13,7 @@ import {
   OAUTH_AUTH_KIND,
   imageGenerationBindings,
   isImageGenerationModel,
-  modelIdsMatch,
+  modelWireIdsEqual,
   type ImageGenerationBinding,
   type ModelBinding,
   type ProviderPublic,
@@ -241,9 +241,11 @@ export function ModelConfigPage() {
     providers.find((provider) => provider.id === settings.defaultProviderId) ?? null;
   const editingProvider =
     setupFor ? providers.find((provider) => provider.id === setupFor) ?? null : null;
+  const effectiveDefaultModelId = settings.defaultModelId?.trim() ||
+    (defaultProvider ? defaultModelOptions([defaultProvider], imageGenerationCandidates)[0]?.modelId : undefined);
   const defaultProviderReady = defaultProvider !== null && providerReady(defaultProvider) &&
-    !isImageGenerationModel(imageGenerationCandidates, defaultProvider.id,
-      displayedDefaultModelId(defaultProvider, settings.defaultModelId));
+    defaultModelOptions([defaultProvider], imageGenerationCandidates).some(({ modelId }) =>
+      modelWireIdsEqual(modelId, effectiveDefaultModelId ?? ""));
   /*
     Compaction follows the main model until both fields name a provider and one
     of its models. A pin is only runnable while that provider is still ready and
@@ -329,12 +331,15 @@ export function ModelConfigPage() {
     models: ModelBinding[],
     imageModelIds?: string[],
   ) => {
-    const firstModelId = models[0]?.id;
+    const selectedImageIds = imageModelIds ?? imageGenerationCandidates
+      .filter((entry) => entry.providerId === saved.id).map((entry) => entry.modelId);
+    const firstModelId = models.find((model) =>
+      !selectedImageIds.some((id) => modelWireIdsEqual(id, model.id)))?.id;
     const replacementChatModelId =
       settings.defaultProviderId === saved.id && firstModelId &&
-      !models.some((model) => modelIdsMatch(model.id, settings.defaultModelId ?? ""))
-        ? firstModelId
-        : undefined;
+      !models.some((model) => modelWireIdsEqual(model.id, settings.defaultModelId ?? "") &&
+        !selectedImageIds.some((id) => modelWireIdsEqual(id, model.id)))
+        ? firstModelId : undefined;
     try {
       if (imageModelIds !== undefined) {
         const current = await api.getSettings();
@@ -344,7 +349,8 @@ export function ModelConfigPage() {
           imageModelIds,
           [...providers.filter((provider) => provider.id !== saved.id), saved],
           current.imageGeneration?.providerId === saved.id &&
-            !saved.models.some((model) => modelIdsMatch(model.id, current.imageGeneration?.modelId ?? "")),
+            (!imageModelIds.some((id) => modelWireIdsEqual(id, current.imageGeneration?.modelId ?? "")) ||
+              !models.some((model) => modelWireIdsEqual(model.id, current.imageGeneration?.modelId ?? ""))),
         );
         const nextSettings = {
           ...current,
@@ -368,7 +374,7 @@ export function ModelConfigPage() {
           settings.defaultModelId,
           imageGenerationCandidates,
         );
-        if (!keepsCurrentDefault) {
+        if (!keepsCurrentDefault && firstModelId) {
           await api.setSettings({
             ...settings,
             defaultProviderId: saved.id,
@@ -555,11 +561,15 @@ export function ModelConfigPage() {
                 </div>
               ) : (
                 <div className="settings-row-detail model-default-value">
-                  <span className="model-default-empty">
-                    {readyProviders.length === 0
-                      ? t("settings.defaultModelNone")
-                      : t("settings.noDefaultProvider")}
-                  </span>
+                  {defaultProvider && settings.defaultModelId ? (
+                    <>
+                      <span className="model-default-provider">{providerDisplayName(defaultProvider)}</span>
+                      <span className="model-default-sep" aria-hidden>·</span>
+                      <span className="model-default-model font-mono" title={t("settings.noDefaultProvider")}>{settings.defaultModelId}</span>
+                      <span className="model-default-empty">{t("settings.noDefaultProvider")}</span>
+                    </>
+                  ) : <span className="model-default-empty">{readyProviders.length === 0
+                    ? t("settings.defaultModelNone") : t("settings.noDefaultProvider")}</span>}
                 </div>
               )}
             </div>
@@ -606,7 +616,7 @@ export function ModelConfigPage() {
                   {visibleDefaultModelOptions.map(({ provider, modelId }, index) => {
                     const isCurrent =
                       provider.id === settings.defaultProviderId &&
-                      modelIdsMatch(settings.defaultModelId ?? "", modelId);
+                      modelWireIdsEqual(settings.defaultModelId ?? "", modelId);
                     const previous = visibleDefaultModelOptions[index - 1];
                     const startsGroup = !previous || previous.provider.id !== provider.id;
                     return (
@@ -740,7 +750,7 @@ export function ModelConfigPage() {
                     const isCurrent =
                       compactionPinned &&
                       row.provider.id === settings.compactionProviderId &&
-                      modelIdsMatch(compactionModelId, row.modelId);
+                      modelWireIdsEqual(compactionModelId, row.modelId);
                     const previous = visibleCompactionModelRows[index - 1];
                     const startsGroup =
                       !previous ||

@@ -97,9 +97,11 @@ import {
 } from "./context-compaction.js";
 import {
   contextBudgetFor,
+  automaticCompactionThresholdFor,
   retainedUserMessageBudget,
   type ContextBudget,
 } from "./context-budget.js";
+import { estimateOutputCapInputTokens } from "./output-cap.js";
 import {
   degradedDelegateMessages,
   subagentContextOverflowError,
@@ -862,7 +864,16 @@ export class SubagentRun {
 
   /** Shared model-window budget, retained independently of snapshot format. */
   private contextBudget(messages: readonly AgentMessage[]): ContextBudget {
-    return contextBudgetFor(this.agent.state.model, [...messages]);
+    const budget = contextBudgetFor(this.agent.state.model, [...messages]);
+    const requestTokens = estimateOutputCapInputTokens({
+      messages: messages.filter(
+        (message): message is Extract<AgentMessage, { content: unknown }> =>
+          message.role !== "system" && "content" in message,
+      ),
+      systemPrompt: this.agent.state.systemPrompt,
+      tools: this.agent.state.tools,
+    }, this.agent.state.model);
+    return { ...budget, tokens: Math.max(budget.tokens, requestTokens) };
   }
 
 
@@ -894,10 +905,13 @@ export class SubagentRun {
    */
   private async ensureContextFits(signal: AbortSignal): Promise<boolean> {
     if (signal.aborted) return false;
-    if (!this.compactionEnabled) return true;
     const budget = this.contextBudget(this.agent.state.messages);
-    if (budget.tokens < budget.hardLimit) return true;
-    return await this.checkpointContext(signal) === "compacted";
+    if (!this.compactionEnabled) return budget.tokens < budget.hardLimit;
+    if (budget.tokens < automaticCompactionThresholdFor(budget)) return true;
+    if (await this.checkpointContext(signal) === "compacted") return true;
+    const fits = this.contextBudget(this.agent.state.messages).tokens < budget.hardLimit;
+    if (fits) this.contextFailure = undefined;
+    return fits;
   }
 
   /** Transform runs after the pending prompt is appended, before every request. */
@@ -1069,9 +1083,10 @@ export class SubagentRun {
       source,
       this.opts.task,
       this.agent.state.model,
+      { systemPrompt: this.agent.state.systemPrompt, tools: this.agent.state.tools },
     );
     // 此助手消息的旧 usage 描述降级前窗口；边界已由逐消息估算保证。
-    if (!degraded) {
+    if (!degraded || this.contextBudget(degraded).tokens >= budget.hardLimit) {
       return false;
     }
     this.summaryMessage = undefined;

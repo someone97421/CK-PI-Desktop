@@ -1,13 +1,5 @@
-/**
- * Resolving which model id represents a provider's default.
- *
- * `settings.defaultModelId` is a single global value, so after the default
- * provider changes it can still name a model belonging to the previous one.
- * Rendering it next to the current provider's name would assert a pairing that
- * is not configured, so these helpers keep the two notions apart: what a
- * provider itself offers, and what is safe to display for it.
- */
-import { isImageGenerationModel, modelIdsMatch, type ImageGenerationBindings, type ProviderPublic } from "@pi-desktop/shared";
+/** Resolve configured chat defaults by complete provider and wire model ID. */
+import { isImageGenerationModel, modelWireIdsEqual as sameComposerModelId, type ImageGenerationBindings, type ProviderPublic } from "@pi-desktop/shared";
 
 export type DefaultModelOption = {
   provider: ProviderPublic;
@@ -46,38 +38,24 @@ export function providerOffersModel(
 ): boolean {
   if (!modelId) return false;
   const bindings = provider.models ?? [];
-  if (bindings.some((binding) => modelIdsMatch(binding.id, modelId))) return true;
+  if (bindings.some((binding) => sameComposerModelId(binding.id, modelId))) return true;
   // A legacy/OAuth row may carry only `defaultModelId` with no bindings yet.
   return (
     bindings.length === 0 &&
     !!provider.defaultModelId &&
-    modelIdsMatch(provider.defaultModelId, modelId)
+    sameComposerModelId(provider.defaultModelId, modelId)
   );
 }
 
-/**
- * The model id to display for the default provider: the global value only when
- * this provider serves it, otherwise the provider's own head binding.
- */
+/** Preserve the saved model ID on screen even when it no longer resolves. */
 export function displayedDefaultModelId(
   provider: ProviderPublic,
   settingsModelId?: string,
 ): string | undefined {
-  return providerOffersModel(provider, settingsModelId)
-    ? settingsModelId
-    : defaultModelIdOf(provider);
+  return settingsModelId?.trim() || defaultModelIdOf(provider);
 }
 
-/**
- * Whether the app default already names a model that still resolves.
- *
- * A non-empty `settings.defaultModelId` is not proof of a default: the value
- * outlives the provider it was picked from, so once that provider is deleted
- * or its binding list is emptied the value names nothing. Callers that would
- * otherwise adopt a default for a freshly added provider resolve through the
- * default provider row — the same pairing the summary line shows — and keep
- * the current value only when a real model stands behind it.
- */
+/** A default resolves only when the provider still offers that exact wire ID. */
 export function hasResolvedDefaultModel(
   providers: readonly ProviderPublic[],
   defaultProviderId?: string,
@@ -85,7 +63,7 @@ export function hasResolvedDefaultModel(
 ): boolean {
   const provider = providers.find((candidate) => candidate.id === defaultProviderId);
   if (!provider) return false;
-  return !!displayedDefaultModelId(provider, defaultModelId)?.trim();
+  return defaultModelOptions([provider]).some(({ modelId }) => sameComposerModelId(modelId, defaultModelId?.trim() || defaultModelIdOf(provider) || ""));
 }
 
 /**
@@ -123,5 +101,6 @@ export function keepsAppDefaultModel(
 ): boolean {
   const provider = providers.find((candidate) => candidate.id === defaultProviderId);
   if (!provider || !providerServesChatModels(provider, imageGeneration)) return false;
-  return hasResolvedDefaultModel(providers, defaultProviderId, defaultModelId);
+  return defaultModelOptions([provider], imageGeneration).some(({ modelId }) =>
+    sameComposerModelId(modelId, defaultModelId?.trim() || defaultModelIdOf(provider) || ""));
 }

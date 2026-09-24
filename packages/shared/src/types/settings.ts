@@ -174,6 +174,8 @@ export type AppSettings = {
    * or work panel compresses without rewriting the preference.
    */
   chatContentMaxWidth?: number;
+  /** Smoothly display incoming streaming text; absent enables it unless motion is reduced. */
+  smoothStreaming?: boolean;
   onboardingDismissed: boolean;
 };
 

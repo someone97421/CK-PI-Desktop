@@ -21,6 +21,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_TOKENS,
 } from "./provider-binding.js";
+import { effectiveModelContextWindow } from "./output-cap.js";
 
 /**
  * Tokens held back from the context window for the summary prompt and the
@@ -44,12 +45,12 @@ export const COMPACTION_MAX_KEEP_RECENT_TOKENS = 64_000;
  */
 export const COMPACTION_RETAINED_USER_MESSAGE_MAX_TOKENS = 20_000;
 
-/**
- * Context thresholds derived from the active model's window.
+/** Context limits derived from the active model's window.
  *
  * `hardLimit` is the safety boundary: the next provider request must not be
- * issued while the context is at or above it. Compaction happens inline at that
- * boundary, the way Codex does it — there is no off-critical-path variant.
+ * issued while the context is at or above it. Automatic compaction starts at
+ * 90% of that budget, inline at the next turn boundary; there is no
+ * off-critical-path variant.
  */
 export type ContextBudget = {
   /** Estimated tokens in the reconstructed model context. */
@@ -62,6 +63,19 @@ export type ContextBudget = {
   keepRecentTokens: number;
 };
 
+/** Fraction of the safe request budget that starts automatic compaction. */
+export const AUTO_COMPACTION_TRIGGER_RATIO = 0.9;
+
+/**
+ * Start compaction before the hard boundary so estimator drift and one-turn
+ * growth do not leave the provider request as the first overflow detector.
+ */
+export function automaticCompactionThresholdFor(
+  budget: Pick<ContextBudget, "hardLimit">,
+): number {
+  return Math.max(1, Math.floor(budget.hardLimit * AUTO_COMPACTION_TRIGGER_RATIO));
+}
+
 /**
  * The only model facts the budget depends on. Kept structural and optional so a
  * pi-ai `Model` passes directly, while a catalog entry that never reported a
@@ -69,6 +83,7 @@ export type ContextBudget = {
  */
 export type ContextBudgetModel = {
   contextWindow?: number;
+  catalogContextWindow?: number;
   maxTokens?: number;
 };
 
@@ -94,10 +109,11 @@ export type ContextBudgetLimits = Omit<ContextBudget, "tokens">;
 export function contextBudgetLimitsFor(
   model: ContextBudgetModel,
 ): ContextBudgetLimits {
-  const contextWindow = Math.max(
-    1,
-    Math.round(model.contextWindow || DEFAULT_CONTEXT_WINDOW),
-  );
+  const contextWindow = effectiveModelContextWindow({
+    ...model,
+    contextWindow: model.contextWindow ?? 0,
+    maxTokens: model.maxTokens ?? 0,
+  }) || DEFAULT_CONTEXT_WINDOW;
   const modelOutputBudget = Math.min(
     Math.max(1, Math.round(model.maxTokens || DEFAULT_MAX_TOKENS)),
     Math.max(1, Math.floor(contextWindow * 0.25)),

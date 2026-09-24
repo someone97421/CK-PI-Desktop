@@ -269,8 +269,10 @@ export function useAppShellRuntime() {
   }, []);
 
   useEffect(() => {
+    const pageHidesWorkPanel =
+      page === "settings" || page === "plugins" || page === "scheduled";
     const shouldPresent =
-      ready && page !== "settings" && (workPanelOpen || subagentPanelOpen);
+      ready && !pageHidesWorkPanel && (workPanelOpen || subagentPanelOpen);
     const request = ++workPanelReservationRequest.current;
 
     if (shouldPresent) {
@@ -606,7 +608,11 @@ export function useAppShellRuntime() {
       }
     });
     const offNotificationChanged = api.onNotificationChanged((notification) => {
-      useAppStore.getState().receiveNotification(notification);
+      const accepted = useAppStore.getState().receiveNotification(notification);
+      // A host replay, renderer reload, or post-clear delayed event may refer
+      // to a row that is already present/acknowledged. Do not surface a native
+      // banner for an event the store intentionally rejected.
+      if (!accepted) return;
       const failed = notification.kind === "task.failed";
       const title = t(
         failed ? "notifications.failedTitle" : "notifications.completedTitle",
@@ -624,6 +630,7 @@ export function useAppShellRuntime() {
           kind: "task",
           title,
           body,
+          createdAt: notification.createdAt,
         })
         .catch(() => undefined);
     });
@@ -741,11 +748,13 @@ export function useAppShellRuntime() {
           case "toggleSidebar":
             toggleSidebar();
             break;
-          case "openWorkPanel":
-            if (useAppStore.getState().page !== "settings") {
+          case "openWorkPanel": {
+            const p = useAppStore.getState().page;
+            if (p !== "settings" && p !== "plugins" && p !== "scheduled") {
               useAppStore.getState().toggleWorkPanel();
             }
             break;
+          }
           case "abort":
             void abort();
             break;

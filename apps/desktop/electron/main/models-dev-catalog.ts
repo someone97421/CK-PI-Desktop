@@ -974,9 +974,11 @@ export class ModelsDevCatalog {
       apiMatches(input.baseUrl, provider.api),
     );
     if (apiProviders.length > 0) {
+      // A shared API endpoint does not identify which publisher owns a custom
+      // model. Never pick the first provider simply because it was indexed first.
       return apiProviders.find((provider) =>
         candidates.has(normalizedProviderKey(provider.providerKey)),
-      ) ?? apiProviders[0];
+      ) ?? (apiProviders.length === 1 ? apiProviders[0] : undefined);
     }
     const knownKey = Object.entries(KNOWN_PROVIDER_BASE_URLS).find(([, urls]) =>
       urls.some((url) => apiMatches(input.baseUrl, url)),
@@ -1028,7 +1030,12 @@ export class ModelsDevCatalog {
     candidates.sort((left, right) =>
       right.score - left.score || left.model.modelId.length - right.model.modelId.length,
     );
-    const result = candidates[0]?.model;
+    // An unknown endpoint can use a unique catalog match (including supported
+    // proxy aliases), but scores are not proof of provider identity. If two
+    // providers publish the same ID, do not borrow either one's metadata.
+    const result = preferredProvider || candidates.length === 1
+      ? candidates[0]?.model
+      : undefined;
     // Cache the result (a miss included) so a repeated miss is also O(1) and
     // cannot grow the candidate index with query-dependent keys.
     this.lookupMemo.set(memoKey, result);

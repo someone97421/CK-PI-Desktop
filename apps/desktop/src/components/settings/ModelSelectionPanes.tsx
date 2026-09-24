@@ -14,9 +14,9 @@ import {
   THINKING_LEVELS,
   bindingDefaultThinkingMenuLevels,
   bindingForCustomModel,
+  bindingForCustomModelInfo,
   bindingFromModelInfo,
   formatTokenCount,
-  modelIdsMatch,
   modelMatchesFilter,
   nativeWebSearchSupportedOn,
   publishedThinkingLevels,
@@ -181,7 +181,7 @@ export function applyVisibleModelSelection(
   for (const row of visibleRows) {
     if (selected.has(row.id.toLowerCase())) continue;
     additions.push(
-      row.info ? bindingFromModelInfo(row.info) : bindingForCustomModel(row.id),
+      row.info ? { ...bindingFromModelInfo(row.info), id: row.id } : bindingForCustomModel(row.id),
     );
   }
   return additions.length === 0 ? current : [...current, ...additions];
@@ -234,9 +234,10 @@ export function ModelSelectionPanes({
   const [chosenQuery, setChosenQuery] = useState("");
   const [customModelId, setCustomModelId] = useState("");
   const [customModelError, setCustomModelError] = useState("");
-  const [expandedModelId, setExpandedModelId] = useState<string | null>(
-    () => models[0]?.id ?? null,
-  );
+  // Keep fetched selections scannable. Expanding the first row by default can
+  // fill the pane with its controls and push every other checked model below
+  // the fold, which makes a successful multi-select look empty.
+  const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
 
   // The returned list is short and already local, so filtering is client-side:
   // no host search and no debounced IPC round trip.
@@ -277,10 +278,9 @@ export function ModelSelectionPanes({
     if (models.length === 0) setChosenQuery("");
   }, [models.length]);
 
-  // The hosted web search tool only exists on two wires; on any other
-  // style the opt-in cannot work, so the checkbox stays present but disabled
-  // with an explanatory hint instead of silently doing nothing.
-  const nativeWebSearchWireCapable = nativeWebSearchSupportedOn(apiStyle);
+  // Use the same published endpoint routing as the runtime. A disabled control
+  // means this connection is not integrated, not that the vendor cannot search.
+  const nativeWebSearchWireCapable = nativeWebSearchSupportedOn(apiStyle, lookupContext?.baseUrl);
 
   /**
    * The chosen list narrows with the discovered list's rule plus the binding's
@@ -295,9 +295,9 @@ export function ModelSelectionPanes({
   );
   const reorder = useModelReorder(visibleChosen, setModels, busy);
 
-  /** A discovered row arrives enriched; a hand-typed id gets generic limits. */
+  /** Keep the wire id of the selected row, even if catalog spelling differs. */
   const bindingForRow = (row: ModelRow): ModelBinding =>
-    row.info ? bindingFromModelInfo(row.info) : bindingForCustomModel(row.id);
+    row.info ? bindingForCustomModelInfo(row.id, row.info) : bindingForCustomModel(row.id);
 
   /**
    * The rule for a model that is being added: a filter is kept while it still
@@ -314,7 +314,6 @@ export function ModelSelectionPanes({
       (binding) => binding.id.toLowerCase() === wanted,
     );
     if (!alreadyChosen) {
-      setExpandedModelId((open) => open ?? row.id);
       keepAddedModelVisible([bindingForRow(row)]);
     }
     setModels((current) => {
@@ -327,7 +326,6 @@ export function ModelSelectionPanes({
 
   const toggleVisibleModels = (select: boolean) => {
     if (select) {
-      setExpandedModelId((open) => open ?? visibleRows[0]?.id ?? null);
       const added = visibleRows
         .filter((row) => !selected.has(row.id.toLowerCase()))
         .map((row) => bindingForRow(row));
@@ -359,6 +357,8 @@ export function ModelSelectionPanes({
     } catch {
       return;
     }
+    // A catalog hit for a different wire id is not metadata for this row.
+    if (info && info.modelId.toLowerCase() !== seed.id.toLowerCase()) return;
     setModels((current) => applyCustomModelLookup(current, seed, info));
   };
 
@@ -379,10 +379,11 @@ export function ModelSelectionPanes({
       return;
     }
     const discovered = rows.find((row) => row.id.toLowerCase() === id.toLowerCase());
-    const binding = customModelSeedBinding(id, discovered?.info);
+    const binding = discovered?.info
+      ? bindingForCustomModelInfo(id, discovered.info)
+      : customModelSeedBinding(id);
     setModels((current) => [...current, binding]);
-    // Expand the row under the id it is stored with: a discovered row keeps the
-    // service's spelling, which can differ from what the user typed.
+    // Expand the stored wire id, not a catalog spelling that may differ.
     setExpandedModelId(binding.id);
     setCustomModelId("");
     setCustomModelError("");
@@ -587,7 +588,7 @@ export function ModelSelectionPanes({
               const publishedDocuments = info ? modelMatchesFilter(info, "pdf") : false;
               const expanded = expandedModelId === binding.id;
               const imageModelSelected = imageModelIds?.some((modelId) =>
-                modelIdsMatch(modelId, binding.id),
+                modelId.toLowerCase() === binding.id.toLowerCase(),
               ) ?? false;
               const advancedId = `model-advanced-${binding.id}`;
               return (

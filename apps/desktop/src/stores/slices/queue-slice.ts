@@ -203,10 +203,22 @@ export function createQueueSlice({
         });
     },
 
-    removeQueuedPrompt: (promptId) => {
+    removeQueuedPrompt: async (promptId) => {
       const sessionId = get().activeSessionId;
       if (!sessionId || pendingQueueSends.has(sessionId)) return;
-      detachQueuedPrompt(sessionId, promptId);
+      const item = queuedPromptForSession(get().queuedPrompts, sessionId, promptId);
+      if (!item || isPendingQueuedPrompt(item)) return;
+      try {
+        await api.removeQueuedPrompt(promptId);
+        set((state) => ({ queuedPrompts: removeQueuedPrompt(state.queuedPrompts, sessionId, promptId) }));
+        queuedDrafts.delete(promptId);
+      } catch (error) {
+        const conflict = error instanceof Error && "code" in error && error.code === "CONFLICT";
+        get().showToast(conflict ? i18n.t("chat.queuedPromptAlreadyStarted") :
+          error instanceof Error ? error.message : String(error), { variant: "error" });
+      } finally {
+        await get().refreshQueuedPrompts(sessionId);
+      }
     },
 
     /** Return one waiting row to the composer as an editable draft. */

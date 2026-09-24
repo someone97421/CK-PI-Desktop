@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+  AUTO_COMPACTION_TRIGGER_RATIO,
+  automaticCompactionThresholdFor,
   COMPACTION_MAX_KEEP_RECENT_TOKENS,
   COMPACTION_MIN_KEEP_RECENT_TOKENS,
   COMPACTION_RETAINED_USER_MESSAGE_MAX_TOKENS,
@@ -24,6 +26,29 @@ describe("contextBudgetFor", () => {
         requestHeadroom: 32_000,
         keepRecentTokens: 44_800,
       });
+  });
+  it("derives an early automatic trigger while preserving the hard guard", () => {
+    const limits = contextBudgetLimitsFor({
+      contextWindow: 256_000,
+      maxTokens: 32_000,
+    });
+    const trigger = automaticCompactionThresholdFor(limits);
+
+    expect(AUTO_COMPACTION_TRIGGER_RATIO).toBe(0.9);
+    expect(trigger).toBe(201_600);
+    expect(trigger).toBeLessThan(limits.hardLimit);
+    expect(automaticCompactionThresholdFor({ hardLimit: 1 })).toBe(1);
+  });
+
+  it("手动窗口大于目录上限时按目录预算压缩", () => {
+    const budget = contextBudgetLimitsFor({
+      contextWindow: 1_048_576, catalogContextWindow: 128_000, maxTokens: 32_000,
+    });
+    expect(budget.hardLimit).toBe(96_000);
+    expect(automaticCompactionThresholdFor(budget)).toBe(86_400);
+    expect(contextBudgetLimitsFor({
+      contextWindow: 64_000, catalogContextWindow: 128_000, maxTokens: 16_000,
+    }).hardLimit).toBe(47_616);
   });
 
   it("clamps the retained tail for a small model context window", () => {

@@ -153,9 +153,10 @@ import {
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { PathMutex } from "./path-lock.js";
-import { clampOutputToContext, effectiveModelContextWindow } from "./output-cap.js";
+import { clampOutputToContext, effectiveModelContextWindow, estimateOutputCapInputTokens } from "./output-cap.js";
 import {
   contextBudgetFor,
+  automaticCompactionThresholdFor,
   retainedUserMessageBudget,
   type ContextBudget,
 } from "./context-budget.js";
@@ -4114,8 +4115,9 @@ Delegation rules:
         } finally {
           record.pendingBegin = undefined;
         }
-        const scopedTools = this.scopeDelegateTools(tools, definition);
-        record.run = new SubagentRun({
+        try {
+          const scopedTools = this.scopeDelegateTools(tools, definition);
+          record.run = new SubagentRun({
           delegationId,
           reportIntervalSteps,
           definition,
@@ -4161,7 +4163,16 @@ Delegation rules:
           resolveToolOutcome: (context) => this.resolveOwnToolOutcome(context),
           signal: abortSignal,
         });
-        this.watchDelegationExecution(record, record.run.run());
+          this.watchDelegationExecution(record, Promise.resolve().then(() => record.run!.run()));
+        } catch {
+          record.reportDelivered = true;
+          await this.settleDelegation(record, {
+            agentName: definition.name, modelId: provider.modelId, thinkingLevel,
+            status: "failed", report: "", turns: 0, toolCalls: 0,
+            error: { code: "SUBAGENT_INITIALIZATION_FAILED", message: "The subagent runtime could not be initialized." },
+          });
+          return this.subagentToolError(toolCallId, `Could not initialize the ${definition.name} subagent. No work was started.`);
+        }
 
         const label =
           isRecord(params) && typeof params.description === "string"
@@ -4202,7 +4213,8 @@ Delegation rules:
           ).catch(() => {
             if ((record.execution ?? 1) !== execution) return;
             record.settling = false;
-            record.persistenceState = "persistence-error";
+            // 事件发布失败不能覆盖已取得的快照提交状态。
+            if (record.persistenceState === "saving") record.persistenceState = "persistence-error";
             record.resolveCompletion();
           });
 
@@ -4239,6 +4251,7 @@ Delegation rules:
     if (record.status !== "running" || record.settling || execution !== (record.execution ?? 1)) return;
     record.settling = true;
     const resolveExecution = record.resolveCompletion;
+    try {
     record.status = record.interruptionReceipt ? "failed" : record.stopRequested ? "stopped" : result.status;
     record.result = result;
     record.completedAt = Date.now();
@@ -4247,9 +4260,6 @@ Delegation rules:
     if (usage && record.startedEpoch === this.turnEpoch) {
       this.turnSubagentUsage = addUsage(this.turnSubagentUsage, usage);
     }
-    const summary = { ...delegationSummary(record), report: result.report, usage, cumulativeUsage: result.usage };
-    (record.executionHistory ??= []).push(summary);
-    if (record.executionHistory.length > 20) record.executionHistory.shift();
     if (record.status === "completed" && this.persistenceClient.isMemoryOnly(record.delegationId)) {
       this.persistenceClient.completeMemoryExecution(record.delegationId, execution);
       record.persistenceState = "memory-only";
@@ -4358,12 +4368,18 @@ Delegation rules:
       record.status = "stopped";
     }
 
+    record.settling = false;
+    const summary = { ...delegationSummary(record), report: result.report, usage, cumulativeUsage: result.usage };
+    (record.executionHistory ??= []).push(summary);
+    if (record.executionHistory.length > 20) record.executionHistory.shift();
     this.publishSubagentExecution(record, "finished", summary);
     this.publishDelegationSettlement(record);
-    record.settling = false;
-    resolveExecution();
-    this.refreshDelegationWait();
-    this.pruneFinishedDelegations();
+    } finally {
+      record.settling = false;
+      resolveExecution();
+      this.refreshDelegationWait();
+      this.pruneFinishedDelegations();
+    }
   }
 
   private publishDelegationSettlement(record: DelegationRecord): void {
@@ -4454,6 +4470,7 @@ Delegation rules:
     this.turnHadError = true;
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptingSteering = false;
+    this.steeringWaitAbort?.abort();
     this.retainPendingSteering();
     this.abortRunningDelegations();
     this.delegationWaitTargets = undefined;
@@ -6289,19 +6306,19 @@ Delegation rules:
   /** Shared model-window budget for the session transcript. */
   private contextBudget(messages: AgentMessage[]): ContextBudget {
     const budget = contextBudgetFor(this.model, messages);
-    // Correct the raw estimate with what past requests actually cost. The
-    // `chars / 4` tail is biased on CJK text, and a projection with no usage
-    // anchor is missing the system/tool overhead; below the sample threshold
-    // `correct()` returns the raw value unchanged, and the downward direction
-    // is bounded by `CONTEXT_CALIBRATION_FACTOR_MIN`.
-    return {
-      ...budget,
-      // Same target model as `contextBudgetFor` above: the calibration input
-      // must describe the request this runtime will actually send.
-      tokens: this.contextCalibration.correct(
-        estimateContextTokens(messages, this.model),
+    const calibratedMessageTokens = this.contextCalibration.correct(
+      estimateContextTokens(messages, this.model),
+    );
+    const requestTokens = estimateOutputCapInputTokens({
+      messages: messages.filter(
+        (message): message is Extract<AgentMessage, { content: unknown }> =>
+          message.role !== "system" && "content" in message,
       ),
-    };
+      ...(typeof this.agent.state.systemPrompt === "string"
+        ? { systemPrompt: this.agent.state.systemPrompt } : {}),
+      tools: this.activeTools(),
+    }, this.model);
+    return { ...budget, tokens: Math.max(calibratedMessageTokens, requestTokens) };
   }
 
   /**
@@ -6350,7 +6367,13 @@ Delegation rules:
     const context = this.liveSessionContext();
     const messages = [...context.messages, ...additionalMessages];
     const budget = this.contextBudget(messages);
-    return this.compactionEnabled && budget.tokens >= budget.hardLimit;
+    return this.compactionEnabled && budget.tokens >= automaticCompactionThresholdFor(budget);
+  }
+
+  private automaticCompactionWouldExceedHardLimit(additionalMessages: AgentMessage[] = []): boolean {
+    const context = this.liveSessionContext();
+    const budget = this.contextBudget([...context.messages, ...additionalMessages]);
+    return budget.tokens >= budget.hardLimit;
   }
 
   /**
@@ -6475,19 +6498,19 @@ Delegation rules:
     _signal?: AbortSignal,
   ): Promise<AgentLoopTurnUpdate> {
     let context = this.rebuiltAgentContext();
-    if (!this.compactionEnabled) {
-      this.pendingModelCompaction = false;
-      return { context };
-    }
-
     const budget = this.contextBudget(context.messages);
     const hardLimitReached = budget.tokens >= budget.hardLimit;
-    // Codex's `should_roll_over`: either the model asked for a new window or
-    // the limit forces one. A model request that fails to compact is not fatal
-    // — nothing is over the boundary yet — so only the limit throws.
+    if (!this.compactionEnabled) {
+      this.pendingModelCompaction = false;
+      if (hardLimitReached) {
+        throw new Error("CONTEXT_TOO_LARGE: context exceeds the safe model budget while automatic compaction is disabled");
+      }
+      return { context };
+    }
+    const automaticThresholdReached = budget.tokens >= automaticCompactionThresholdFor(budget);
     const modelRequested = this.pendingModelCompaction;
     this.pendingModelCompaction = false;
-    if (!hardLimitReached && !modelRequested) {
+    if (!automaticThresholdReached && !modelRequested) {
       return { context: this.withContextBudgetReminder(context, budget) };
     }
 
@@ -8098,6 +8121,10 @@ Delegation rules:
     error: ReturnType<typeof classifyAgentError>,
   ): void {
     this.keepPreflightUserMessage(incomingUserMessage);
+    this.failCurrentPreflight(error);
+  }
+
+  private failCurrentPreflight(error: ReturnType<typeof classifyAgentError>): void {
     this.terminateParentTurn();
     this.finalizeCurrentAssistant("error", error);
     this.emit({ type: "error", error });
@@ -8185,6 +8212,24 @@ Delegation rules:
     this.appendLiveEntry(internalId, internalMessage);
     this.setAgentMessages(this.liveSessionContext().messages);
     this.setAgentActivity({ phase: "starting", since: Date.now() });
+    if (this.automaticCompactionNeeded()) {
+      const compacted = await this.runCompaction("threshold", false, "active_turn");
+      if (!compacted) {
+        if (this.compactionAborted) {
+          this.terminateParentTurn();
+          this.finalizeCurrentAssistant("aborted");
+          return { turnId: this.turnId };
+        }
+        if (this.automaticCompactionWouldExceedHardLimit()) {
+          this.failCurrentPreflight({ code: "CONTEXT_COMPACTION_FAILED", message: "Automatic context compaction failed before approved plan execution", retriable: false });
+          return { turnId: this.turnId };
+        }
+      }
+    }
+    if (this.automaticCompactionWouldExceedHardLimit()) {
+      this.failCurrentPreflight({ code: "CONTEXT_TOO_LARGE", message: "The approved plan still exceeds the safe model context budget after compaction", retriable: false });
+      return { turnId: this.turnId };
+    }
     await this.agent.continue();
     await this.waitForIdleAndSteering();
     // Same recovery contract as a user prompt: a plan execution that overflows,
@@ -8251,14 +8296,15 @@ Delegation rules:
             this.keepPreflightUserMessage(incomingUserMessage);
             throw turnAbortedError("Turn aborted while compacting context");
           }
-          this.failBeforeProviderRequest(incomingUserMessage, {
-            code: "CONTEXT_COMPACTION_FAILED",
-            message: "Automatic context compaction failed before the model request",
-            retriable: false,
-          });
-          return { turnId: this.turnId };
-        }
-        if (this.automaticCompactionNeeded([incomingUserMessage])) {
+          if (this.automaticCompactionWouldExceedHardLimit([incomingUserMessage])) {
+            this.failBeforeProviderRequest(incomingUserMessage, {
+              code: "CONTEXT_COMPACTION_FAILED",
+              message: "Automatic context compaction failed before the model request",
+              retriable: false,
+            });
+            return { turnId: this.turnId };
+          }
+        } else if (this.automaticCompactionWouldExceedHardLimit([incomingUserMessage])) {
           this.failBeforeProviderRequest(incomingUserMessage, {
             code: "CONTEXT_TOO_LARGE",
             message:
@@ -8267,6 +8313,14 @@ Delegation rules:
           });
           return { turnId: this.turnId };
         }
+      }
+      if (!this.compactionEnabled && this.automaticCompactionWouldExceedHardLimit([incomingUserMessage])) {
+        this.failBeforeProviderRequest(incomingUserMessage, {
+          code: "CONTEXT_TOO_LARGE",
+          message: "The pending prompt exceeds the safe model context budget while automatic compaction is disabled",
+          retriable: false,
+        });
+        return { turnId: this.turnId };
       }
       await this.extensionBeforeAgentStart(modelInput);
       if (this.runCancelled || this.disposed) {
@@ -8487,6 +8541,7 @@ Delegation rules:
     this.acceptingSteering = false;
     this.gracefulStopRequested = false;
     this.runCancelled = true;
+    this.steeringWaitAbort?.abort();
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.extensionRunner?.cancelPending();
     this.resolvePendingAskTools();
@@ -8534,6 +8589,7 @@ Delegation rules:
     this.disposed = true;
     this.acceptingSteering = false;
     this.runCancelled = true;
+    this.steeringWaitAbort?.abort();
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptedSteering.clear();
     this.resolvePendingAskTools();

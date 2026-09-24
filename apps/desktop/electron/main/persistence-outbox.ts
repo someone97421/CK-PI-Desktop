@@ -137,6 +137,15 @@ export class PersistenceOutbox {
           await this.persist();
           continue;
         }
+        if (isForeignKeyError(error)) {
+          this.logger("warn", "session persistence flush dropped orphaned message", {
+            key: current.key,
+            data: String(error),
+          });
+          if (this.entries[0] === current) this.entries.shift();
+          await this.persist();
+          continue;
+        }
         this.logger("warn", "session persistence flush paused", {
           key: current.key,
           data: String(error),
@@ -222,4 +231,13 @@ function isDuplicateMessageIdError(error: unknown): boolean {
  */
 function isPoisonMessageError(error: unknown): boolean {
   return /(?<![A-Z_])PERMISSION_DENIED:/i.test(String(error));
+}
+
+/**
+ * The parent row (session or turn) no longer exists. This happens after a
+ * sidecar or host-core crash where the parent was deleted or never committed.
+ * Retrying is pointless — the FK will never be satisfied.
+ */
+function isForeignKeyError(error: unknown): boolean {
+  return /FOREIGN KEY constraint failed/i.test(String(error));
 }

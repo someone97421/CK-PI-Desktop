@@ -8,6 +8,7 @@ import {
   fileWorkPanelTab,
   newWorkPanelTab,
   openWorkPanelTabState,
+  reorderWorkPanelTabsState,
   replaceWorkPanelTabState,
   sanitizeWorkPanelTabsState,
   switchWorkPanelContextState,
@@ -106,6 +107,7 @@ export function createWorkPanelSlice({
   | "replaceWorkPanelTab"
   | "openWorkPanelTabForSession"
   | "activateWorkPanelTab"
+  | "reorderWorkPanelTabs"
   | "closeWorkPanelTab"
   | "collapseWorkPanel"
   | "resetWorkPanelContext"
@@ -284,6 +286,36 @@ export function createWorkPanelSlice({
       return {
         activeWorkPanelTabId: next.activeTabId,
         workPanelFileRequest: fileRequest,
+        workPanelContexts: {
+          ...state.workPanelContexts,
+          [sessionId]: nextContext,
+        },
+      };
+    });
+  },
+  reorderWorkPanelTabs: (sourceTabId, targetTabId, insertAfter) => {
+    set((state) => {
+      const sessionId = state.activeSessionId;
+      if (!sessionId) return {};
+      const next = reorderWorkPanelTabsState(
+        {
+          tabs: state.workPanelTabs,
+          activeTabId: state.activeWorkPanelTabId,
+        },
+        sourceTabId,
+        targetTabId,
+        insertAfter,
+      );
+      if (next.tabs === state.workPanelTabs) return {};
+      const nextContext: WorkPanelContext = {
+        open: state.workPanelOpen,
+        tabs: next.tabs,
+        activeTabId: next.activeTabId,
+        fileRequest: state.workPanelFileRequest,
+      };
+      return {
+        workPanelTabs: next.tabs,
+        activeWorkPanelTabId: next.activeTabId,
         workPanelContexts: {
           ...state.workPanelContexts,
           [sessionId]: nextContext,
