@@ -106,6 +106,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     currentNetworkProxy,
     applyApplicationMenuSettings,
     applyDeveloperMode,
+    applyPreventScreenSleep,
+    applyKeepAwakeWhileRunning,
     resolveEffectiveCommandShell,
     applyAppearanceIcon,
     modelsDevCatalog,
@@ -265,6 +267,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     currentNetworkProxy,
     applyApplicationMenuSettings,
     applyDeveloperMode,
+    applyPreventScreenSleep,
+    applyKeepAwakeWhileRunning,
     resolveEffectiveCommandShell,
     applyAppearanceIcon,
   });
@@ -359,6 +363,12 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getNpmPath: () => readNpmPath(dataDir),
     setNpmPath: (path) => writeNpmPath(dataDir, path),
     importRoot: join(dataDir, "plugins", "imported"),
+    getImportedDescriptions: async () => {
+      const currentHost = getHost();
+      if (!currentHost) throw new Error("host unavailable");
+      const { plugins: registered } = await currentHost.call<{ plugins: import("@pi-desktop/shared").PluginSummary[] }>("plugins.list");
+      return registered.flatMap(plugin => plugin.description ? [plugin.description] : []);
+    },
     loadDevPlugin: async (path) => {
       const currentHost = getHost();
       if (!currentHost) throw new Error("host unavailable");
@@ -380,7 +390,10 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getHost,
     getSidecar,
     getAgentHostBridge,
-    cancelSessionTools: (sessionId: string, reason?: string) => plugins.cancelSessionTools(sessionId, reason),
+    cancelSessionTools: (sessionId: string, reason?: string) => {
+      plugins.cancelSessionTools(sessionId, reason);
+      userMcp.cancelSessionCalls(sessionId);
+    },
     logger,
     vendorOAuth,
     agentExtensions,

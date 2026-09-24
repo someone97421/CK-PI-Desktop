@@ -22,7 +22,6 @@ import {
   APP_ID,
   APP_NAME,
   APP_VERSION,
-  ErrorCodes,
   IPC,
   IPC_WHITELIST,
   KEYBOARD_SHORTCUTS,
@@ -642,7 +641,6 @@ const pluginServices = createPluginServices({
     return applicationLifecycle.resolveAppearance();
   },
   getWorkspacePath: currentWorkspacePath,
-  isHostUnavailable,
   resolveAgentRuntimeLaunch: (...args) => {
     if (!sessionLaunchRuntime) {
       throw new Error("session launch runtime is not initialized");
@@ -787,19 +785,6 @@ function describeError(error: unknown): string {
   return String(error).slice(0, 300);
 }
 
-/**
- * True when a rejection only says the host transport is gone (D080): the call
- * lost a race with shutdown, a crash, or a supervised restart. Every such
- * rejection carries `HOST_UNAVAILABLE`, whether it was refused before it was
- * sent or was in flight when the transport closed.
- */
-function isHostUnavailable(error: unknown): boolean {
-  return (
-    (error as { errorCode?: string } | null | undefined)?.errorCode ===
-    ErrorCodes.HOST_UNAVAILABLE
-  );
-}
-
 /** Pull the user's MCP server records from host-core into the local runtime. */
 function sendToRenderer(channel: string, payload: unknown) {
   applicationLifecycle?.traySessions.observeEvent(channel, payload);
@@ -938,6 +923,9 @@ const {
   executeNativeMenuAction,
   dispatchNativeMenuAction,
   applyDeveloperMode,
+  applyPreventScreenSleep,
+  applyKeepAwakeWhileRunning,
+  disposePowerSaveBlockers,
   applyNativeThemeSource,
   applyApplicationMenuSettings,
   applyAppThemePreference,
@@ -1303,6 +1291,8 @@ function registerIpc() {
     currentNetworkProxy,
     applyApplicationMenuSettings,
     applyDeveloperMode,
+    applyPreventScreenSleep,
+    applyKeepAwakeWhileRunning,
     resolveEffectiveCommandShell,
     applyAppearanceIcon,
     modelsDevCatalog,
@@ -1432,6 +1422,8 @@ registerApplicationStartup({
   planUiProbe,
   applyApplicationMenuSettings,
   applyDeveloperMode,
+  applyPreventScreenSleep,
+  applyKeepAwakeWhileRunning,
   applyPluginLauncherShortcut,
   applyToggleWindowShortcut,
   ensureWindow,
@@ -1519,6 +1511,7 @@ registerShutdownHandlers({
   updater,
   logger,
   confirmQuitDialog,
+  disposePowerSaveBlockers,
 });
 
 registerApplicationActivation({

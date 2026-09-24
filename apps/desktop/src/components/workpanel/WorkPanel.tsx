@@ -20,6 +20,7 @@ import {
   isKnownWorkPanelTab,
   parsePluginViewRef,
   pluginWorkPanelTab,
+  subagentTabDisplayLabels,
   toolWorkPanelTab,
 } from "../../lib/work-panel-tabs";
 import { pluginViewIcon, pluginViewInitial } from "../../lib/plugin-view-icons";
@@ -43,6 +44,7 @@ import {
 import { ReviewTab } from "./ReviewTab";
 import { FilesTab } from "./FilesTab";
 import { PluginViewTab } from "./PluginViewTab";
+import { SubagentTranscriptTab } from "./SubagentTranscriptTab";
 import { SubagentPanel } from "./SubagentPanel";
 import { SideChatTab } from "./SideChatTab";
 import { sideChatTabSessionId } from "../../lib/side-chat";
@@ -63,6 +65,7 @@ const TAB_ICONS = {
   file: IconFileText,
   plugin: IconPlug,
   sidechat: IconChat,
+  subagent: IconBot,
 } as const;
 
 type WorkPanelResizeState = {
@@ -116,6 +119,7 @@ function tabLabel(
   }
   if (tab.kind === "sidechat") return t("sideChat.title");
   if (tab.kind === "new") return t("panel.new.title");
+  if (tab.kind === "subagent") return tab.label ?? t("panel.tabs.subagent");
   if (tab.kind !== "file") return t(`panel.tabs.${tab.kind}`);
   const path = tab.resource ?? "";
   return path.split("/").filter(Boolean).pop() || t("panel.tabs.file");
@@ -214,9 +218,13 @@ export function WorkPanel({
   const setWidth = useAppStore((s) => s.setWorkPanelWidth);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const tools = workPanelTools(t, pluginViews);
+  const subagentTabs = tabs.filter((tab) => tab.kind === "subagent");
+  const subagentLabels = subagentTabDisplayLabels(subagentTabs.map((tab) => tabLabel(tab, t, pluginViews)));
+  const subagentLabelById = new Map(subagentTabs.map((tab, index) => [tab.id, subagentLabels[index]]));
   const tabSignature = JSON.stringify(
     tabs.map(({ id, kind, resource, location }) => [id, kind, resource, location]),
   );
+  const [subagentView, setSubagentView] = useState<"conversation" | "detail">("conversation");
 
   const [panelDragWidth, setPanelDragWidth] = useState<number | null>(null);
   const panelResizeState = useRef<WorkPanelResizeState | null>(null);
@@ -824,7 +832,7 @@ export function WorkPanel({
                 onWheel={onTabStripWheel}
               >
                 {tabs.map((tab) => {
-                  const label = tabLabel(tab, t, pluginViews);
+                  const label = tab.kind === "subagent" ? (subagentLabelById.get(tab.id) ?? t("panel.tabs.subagent")) : tabLabel(tab, t, pluginViews);
                   const selected = tab.id === activeTabId;
                   const Icon =
                     tab.kind === "plugin"
@@ -857,7 +865,7 @@ export function WorkPanel({
                         aria-grabbed={draggingTabId === tab.id}
                         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight"
                         className="work-panel-tab-button"
-                        title={tab.resource ?? label}
+                        title={tab.kind === "subagent" ? label : tab.resource ?? label}
                         onPointerDown={(event) => beginTabReorder(event, tab.id)}
                         onDragStart={(event) => event.preventDefault()}
                         onClick={() => activateTab(tab.id)}
@@ -927,6 +935,15 @@ export function WorkPanel({
           </div>
         </header>
         <div className="work-panel-body">
+          {!subagentPanel && activeTab?.kind === "subagent" && (
+            <div key={activeTab.id} id={`work-panel-surface-${activeTab.id}`} className="work-panel-tabpane subagent-tabpane" role="tabpanel" aria-labelledby={`work-panel-tab-${activeTab.id}`}>
+              <div className="subagent-tab-mode" role="group" aria-label={t("panel.subagent")}>
+                <button type="button" aria-pressed={subagentView === "conversation"} onClick={() => setSubagentView("conversation")}>{t("panel.subagentConversation")}</button>
+                <button type="button" aria-pressed={subagentView === "detail"} onClick={() => setSubagentView("detail")}>{t("panel.subagentDetail")}</button>
+              </div>
+              {subagentView === "conversation" ? <SubagentTranscriptTab delegationId={activeTab.resource ?? ""} /> : <SubagentPanel selection={{ sessionId: activeSessionId ?? "", delegationId: activeTab.resource ?? "" }} />}
+            </div>
+          )}
           {subagentPanel ? <SubagentPanel selection={subagentPanel} /> : null}
           {!subagentPanel && activeTab?.kind === "review" && (
             <div

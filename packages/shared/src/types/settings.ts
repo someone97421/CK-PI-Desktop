@@ -63,6 +63,8 @@ export type AppSettings = {
    * Absent and false use the bounded ten-retry policy.
    */
   infiniteProviderRetry?: boolean;
+  /** Prevent idle system sleep while this desktop app runs; off when absent. */
+  keepAwakeWhileRunning?: boolean;
   /** Configured command shell for the agent Bash protocol tool. */
   defaultCommandShell?: CommandShellId;
   /**
@@ -176,6 +178,8 @@ export type AppSettings = {
   chatContentMaxWidth?: number;
   /** Smoothly display incoming streaming text; absent enables it unless motion is reduced. */
   smoothStreaming?: boolean;
+  /** Keep the display awake while the app is running; absent defaults to false. */
+  preventScreenSleep?: boolean;
   onboardingDismissed: boolean;
 };
 

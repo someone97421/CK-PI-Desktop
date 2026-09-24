@@ -3,15 +3,14 @@ export type WorkPanelTabKind =
   | "review"
   | "file"
   | "plugin"
-  /**
-   * A follow-up conversation opened from a message. The tab id is
-   * `sidechat:<childSessionId>` and the resource is that child session, so the
-   * panel shows a real session without making it the visible one (D-LOCAL-message-quotes).
-   */
-  | "sidechat";
+  /** Side conversation backed by a child session. */
+  | "sidechat"
+  | "subagent";
 
 export type WorkPanelTab = {
   id: string;
+  /** Display name captured at open time, used by labels that have no resource. */
+  label?: string;
   kind: WorkPanelTabKind;
   resource?: string;
   /** Guest URL or workspace path for the Browser plugin view (D333). */
@@ -69,7 +68,7 @@ export function switchWorkPanelContextState(
 }
 
 export function toolWorkPanelTab(
-  kind: Exclude<WorkPanelTabKind, "new" | "file" | "plugin">,
+  kind: Exclude<WorkPanelTabKind, "new" | "file" | "plugin" | "subagent">,
 ): WorkPanelTab {
   return { id: kind, kind };
 }
@@ -98,6 +97,26 @@ export function newWorkPanelTab(): WorkPanelTab {
 export function pluginWorkPanelTab(pluginId: string, viewId: string): WorkPanelTab {
   const resource = `${pluginId}/${viewId}`;
   return { id: `plugin:${resource}`, kind: "plugin", resource };
+}
+
+/**
+ * A subagent transcript tab (ADR 0062 delegations).
+ *
+ * Keyed by the delegation id, so re-opening the same delegate reuses its tab
+ * and parallel delegates coexist as independent tabs. The agent name is
+ * captured at open time so the strip can label the tab even before the
+ * delegate produced any row.
+ */
+export function subagentWorkPanelTab(
+  delegationId: string,
+  agentName?: string,
+): WorkPanelTab {
+  return {
+    id: `subagent:${delegationId}`,
+    kind: "subagent",
+    resource: delegationId,
+    ...(agentName ? { label: agentName } : {}),
+  };
 }
 
 export const BROWSER_PLUGIN_TAB = {
@@ -189,7 +208,8 @@ export function isKnownWorkPanelTab(tab: WorkPanelTab): boolean {
   return (
     Boolean(tab) &&
     (tab.kind === "new" || tab.kind === "review" ||
-      tab.kind === "file" || tab.kind === "plugin" || tab.kind === "sidechat")
+      tab.kind === "file" || tab.kind === "plugin" ||
+      tab.kind === "sidechat" || tab.kind === "subagent")
   );
 }
 
@@ -342,4 +362,28 @@ export function closeWorkPanelTabState(
     tabs,
     activeTabId: tabs[Math.min(index, tabs.length - 1)]?.id ?? null,
   };
+}
+
+/**
+ * Display labels for the subagent tabs in strip order.
+ *
+ * Delegates with the same agent name would otherwise render identical tab
+ * labels, so a repeated base label gains a 1-based `#n` suffix within its
+ * label group; a label that occurs once stays unnumbered. Other tab kinds are
+ * unique by construction and are not passed here.
+ */
+export function subagentTabDisplayLabels(
+  baseLabels: readonly string[],
+): string[] {
+  const counts = new Map<string, number>();
+  for (const label of baseLabels) {
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  return baseLabels.map((label) => {
+    if ((counts.get(label) ?? 0) <= 1) return label;
+    const index = (seen.get(label) ?? 0) + 1;
+    seen.set(label, index);
+    return `${label}#${index}`;
+  });
 }

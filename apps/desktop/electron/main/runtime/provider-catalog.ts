@@ -184,6 +184,8 @@ export function createProviderCatalogRuntime({
       ...(value as T),
       infiniteProviderRetry: (value as T & { infiniteProviderRetry?: unknown })
         .infiniteProviderRetry === true,
+      keepAwakeWhileRunning: (value as T & { keepAwakeWhileRunning?: unknown })
+        .keepAwakeWhileRunning === true,
       defaultCommandShell: isCommandShellId(value.defaultCommandShell)
         ? value.defaultCommandShell
         : defaultCommandShellForPlatform(process.platform),
@@ -197,6 +199,7 @@ export function createProviderCatalogRuntime({
     const value = settings as T & {
       defaultCommandShell?: unknown;
       infiniteProviderRetry?: unknown;
+      keepAwakeWhileRunning?: unknown;
       networkProxy?: unknown;
       appearance?: unknown;
     };
@@ -218,6 +221,14 @@ export function createProviderCatalogRuntime({
       typeof value.infiniteProviderRetry !== "boolean"
     ) {
       throw Object.assign(new Error("infiniteProviderRetry is invalid"), {
+        errorCode: ErrorCodes.INVALID_PARAMS,
+      });
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value, "keepAwakeWhileRunning") &&
+      typeof value.keepAwakeWhileRunning !== "boolean"
+    ) {
+      throw Object.assign(new Error("keepAwakeWhileRunning is invalid"), {
         errorCode: ErrorCodes.INVALID_PARAMS,
       });
     }

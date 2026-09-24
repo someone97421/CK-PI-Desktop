@@ -5,7 +5,8 @@ import type {
   UiMessage,
 } from "@pi-desktop/shared";
 import { hostedSearchRounds } from "@pi-desktop/shared";
-import { isDelegationStartTool } from "./tool-display";
+import { delegationExecutionKey, isDelegationStartTool } from "./tool-display";
+import { toolResultPayload } from "./tool-presentation";
 
 export type AssistantActivityItem =
   | { kind: "thinking"; message: UiMessage }
@@ -114,6 +115,45 @@ function collectSubagentRuns(
     }
   }
   return runs;
+}
+
+/**
+ * The delegation-chain structure of one transcript (ADR 0279).
+ *
+ * `callByDelegationId` maps each Task result's `delegationId` to the call that
+ * returned it; `childOf` links a resumed call to the call it resumed. Shared
+ * by the delegation card grouping and the subagent transcript tab so both read
+ * the same chain semantics from one place.
+ */
+export function delegationChainMaps(messages: readonly UiMessage[]): {
+  callByDelegationId: Map<string, string>;
+  childOf: Map<string, string>;
+} {
+  const callByDelegationId = new Map<string, string>();
+  const childOf = new Map<string, string>();
+  for (const message of messages) {
+    if (message.role !== "tool" || !isDelegationStartTool(message.toolName)) {
+      continue;
+    }
+    const toolCallId = message.toolCallId;
+    if (!toolCallId) continue;
+    const args = message.toolArgs;
+    const input = args && typeof args === "object" && !Array.isArray(args)
+      ? args as { resume?: unknown; delegationId?: unknown }
+      : null;
+    const resume = input?.resume ?? (message.toolName?.split(".").at(-1) === "TaskResume" ? input?.delegationId : undefined);
+    const prior = typeof resume === "string" && resume.trim()
+      ? callByDelegationId.get(resume.trim())
+      : undefined;
+    if (prior) childOf.set(prior, toolCallId);
+    const payload = toolResultPayload(message);
+    const executionId = delegationExecutionKey(payload);
+    if (executionId) callByDelegationId.set(executionId, toolCallId);
+    if (payload && typeof payload === "object" && "delegationId" in payload && typeof payload.delegationId === "string") {
+      callByDelegationId.set(payload.delegationId, toolCallId);
+    }
+  }
+  return { callByDelegationId, childOf };
 }
 
 /**

@@ -150,7 +150,7 @@ export function SubagentStrip({ sessionId }: { sessionId: string }) {
 
   function open(message: UiMessage) {
     const state = useAppStore.getState();
-    if (state.activeSessionId === sessionId) state.toggleSubagentPanel(delegationIdForMessage(message));
+    if (state.activeSessionId === sessionId) state.openSubagentTab(delegationIdForMessage(message), message.agentName);
   }
 
   if (!tasks.length && !error) return null;
@@ -186,9 +186,8 @@ function SubagentCapsule({ message, name, outcome, onOpen }: {
 }) {
   const { t } = useTranslation();
   const execution = useSubagentExecution(message);
-  const selection = useAppStore((state) => state.subagentPanel);
+  const selected = useAppStore((state) => state.workPanelOpen && state.activeWorkPanelTabId === `subagent:${delegationIdForMessage(message)}`);
   const id = delegationIdForMessage(message);
-  const selected = selection?.sessionId === execution.sessionId && selection.delegationId === id;
   const historical = outcome === "running" && !execution.live;
   const tone = historical ? "stopped" : outcome;
   const label = historical ? t("chat.subagentHistorical")
@@ -199,7 +198,7 @@ function SubagentCapsule({ message, name, outcome, onOpen }: {
   return <div role="listitem" className="subagent-capsule-item">
     <button type="button" className={`subagent-capsule is-${tone}${selected ? " is-selected" : ""}`}
       title={`${title} · ${label}`} aria-label={`${title} · ${label}`} aria-expanded={selected}
-      aria-controls={selected ? "subagent-panel" : undefined} data-subagent-trigger={id} onClick={onOpen}>
+      aria-controls={selected ? `work-panel-surface-subagent:${id}` : undefined} data-subagent-trigger={id} onClick={onOpen}>
       <span className="subagent-capsule-status" aria-hidden="true">
         {tone === "running" ? <span className="subagent-capsule-dot" /> : tone === "completed" ? <IconCheck size={12} />
           : tone === "stopped" || tone === "aborted" ? <IconStop size={12} /> : <IconCircleAlert size={12} />}

@@ -40,13 +40,13 @@ import type {
   QueuedPromptDirection,
   QueuedPrompts,
 } from "../lib/queued-prompts";
-import type { SubagentPanelSelection } from "../lib/subagent-panel";
 import type {
   ComposerDraftSnapshot,
   ComposerPrefill,
 } from "../lib/composer-smart-stop";
 import type { SidebarSessionOutcome } from "../lib/sidebar-session-status";
 import type { WorkPanelContext, WorkPanelTab } from "../lib/work-panel-tabs";
+import type { SubagentPanelSelection } from "../lib/subagent-panel";
 
 export type { WorkPanelTab } from "../lib/work-panel-tabs";
 
@@ -352,8 +352,6 @@ export type AppState = {
   dismissToast: (id: number) => void;
   composerPrefill: ComposerPrefill | null;
   clearComposerPrefill: () => void;
-  /** Renderer-only subagent details selected from the transcript. */
-  subagentPanel: SubagentPanelSelection | null;
   workPanelOpen: boolean;
   workPanelTabs: WorkPanelTab[];
   activeWorkPanelTabId: string | null;
@@ -362,6 +360,7 @@ export type AppState = {
   workPanelWidth: number;
   /** Chat-initiated "preview this file" request consumed by the files viewer. */
   workPanelFileRequest: { path: string; seq: number; mimeType?: string } | null;
+  subagentPanel: SubagentPanelSelection | null;
   /** Toggle the selected subagent detail. */
   toggleSubagentPanel: (delegationId: string) => void;
   closeSubagentPanel: () => void;
@@ -421,6 +420,8 @@ export type AppState = {
   closeSideChat: (sessionId: string) => void;
   /** Quote a side chat's newest answer into the main conversation's draft. */
   addSideChatReplyToMain: (sessionId: string) => void;
+  /** Open (or activate) the transcript tab of one delegated subagent. */
+  openSubagentTab: (delegationId: string, agentName?: string) => void;
   /** Abort one session's running turn, visible or not. */
   abortSession: (sessionId: string) => Promise<void>;
   openWorkPanel: () => void;
