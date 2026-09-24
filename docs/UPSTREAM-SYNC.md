@@ -10,7 +10,7 @@
 
 - 最后核对的上游 SHA：`03e03d4cc172964e5cc39479787db72461cdaf07`。
 - 最后正式合入的上游 SHA：`03e03d4cc172964e5cc39479787db72461cdaf07`。
-- 对应本地合并提交：本轮以 `ad59dd3f4a4cffa8a067c8f7741a5efc35c17e2c` 为第一父提交、上述上游 SHA 为第二父提交的正式合并节点；可用 `git log --merges --ancestry-path ad59dd3f..main` 定位。
+- 对应本地合并提交：`36e01e1f7dfe2e1c0b6361dd3656c842dfb7f4a7`，第一父提交为 `ad59dd3f4a4cffa8a067c8f7741a5efc35c17e2c`，第二父提交为上述上游 SHA；已核对双亲与祖先关系。
 - 合并前已有 19 个未提交文件，通过 stash 单独保留并在合并后恢复，不混入本次上游合并提交。
 - 本轮范围见文末“本轮增量：运行恢复、模型匹配与聊天交互”。采用正常 `git merge --no-ff --no-commit`，保持既定 fork 边界。
 - 下次从上述正式合入节点查看新增提交，复查各轮保留边界。云同步和远程主机入口常显；继续保留 TaskResume、当前轮引导、自定义外观、单文件便携 EXE 及其他既定定制。
@@ -417,3 +417,5 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 - 品牌、图标、日期版本、fork 更新源、单文件便携 EXE、统一构建入口、独立缓存与共用业务目录互斥、Google fetch、模型导入导出和插件托管隔离、技能扩展路径、终端及局域网远控保持现有边界。schema 19 / protocol 11 不变。
 
 范围说明：本轮为源码适配和差异审阅，未运行测试、typecheck、构建或应用服务，未做实机回归。前序尝试 `pnpm install --lockfile-only --ignore-scripts` 超时；最终依赖声明及锁文件维持 fork 原版本，未引入语音依赖。上游的 `disable-renderer-accessibility` 崩溃规避已吸收，它会关闭 Chromium renderer 无障碍树，依赖该树的 Computer Use 影响尚未实机验证。未操作实际业务数据库或发布、推送。
+
+正式合并提交为 `36e01e1f7dfe2e1c0b6361dd3656c842dfb7f4a7`，两个父提交及目标祖先关系已核对。子任务执行过所负责差异的 `git diff --check`；该检查不等于类型检查或运行验证。
