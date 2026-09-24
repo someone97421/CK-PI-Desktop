@@ -949,21 +949,6 @@ export function Sidebar({
     () => temporarySessions.filter((session) => !pinnedSessionIds.has(session.id)),
     [temporarySessions, pinnedSessionIds],
   );
-  // Flat ordered list of every visible session id — used for Shift+click range selection.
-  const flatSessionOrder = useMemo(() => {
-    const ids: string[] = [];
-    // Pinned first (same order as rendered)
-    for (const s of pinnedSessions) ids.push(s.id);
-    // Then project sessions
-    for (const entry of projectEntries) {
-      for (const s of entry.sessions) {
-        if (!pinnedSessionIds.has(s.id)) ids.push(s.id);
-      }
-    }
-    // Then temporary (standalone) sessions
-    for (const s of temporarySessionHistory) ids.push(s.id);
-    return ids;
-  }, [pinnedSessions, projectEntries, pinnedSessionIds, temporarySessionHistory]);
 
   /** Handle multi-select click on a session row. Returns true if the click was consumed by multi-select. */
   const handleMultiSelectClick = (event: React.MouseEvent, sessionId: string): boolean => {
@@ -996,6 +981,13 @@ export function Sidebar({
         lastClickedIdRef.current = sessionId;
         return true;
       }
+      // 从当前侧栏取实际显示顺序，排除折叠区域与未展开记录。
+      const sidebar = event.currentTarget.closest("aside");
+      const flatSessionOrder = Array.from(
+        sidebar?.querySelectorAll<HTMLElement>("[data-sidebar-session-row]") ?? [],
+      )
+        .filter((row) => !row.closest('[aria-hidden="true"], [inert]') && row.getClientRects().length > 0)
+        .map((row) => row.dataset.sidebarSessionRow!);
       const startIdx = flatSessionOrder.indexOf(anchor);
       const endIdx = flatSessionOrder.indexOf(sessionId);
       if (startIdx === -1 || endIdx === -1) {
