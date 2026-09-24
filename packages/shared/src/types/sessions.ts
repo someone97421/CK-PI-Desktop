@@ -47,6 +47,8 @@ export type SessionSummary = {
   supportsVision?: boolean;
   supportedThinkingLevels?: ThinkingLevel[];
   updatedAt: string;
+  /** Timestamp of the latest user-authored message; absent for empty sessions/older hosts. */
+  lastUserMessageAt?: string;
   createdAt: string;
 };
 

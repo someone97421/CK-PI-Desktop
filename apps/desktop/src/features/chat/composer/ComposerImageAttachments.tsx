@@ -2,17 +2,18 @@ import { useTranslation } from "react-i18next";
 import { IconClose, IconImage } from "../../../components/icons";
 import type { ComposerImagePreviewController } from "./hooks/useComposerImagePreview";
 
-/** Attachment controls stay outside both the editable draft and its shell. */
+/** Fallback controls for saved attachments without an inline draft token. */
 export function ComposerImageAttachments({ controller, onRemove, disabled }: {
   controller: ComposerImagePreviewController;
   onRemove: (id: string) => void;
   disabled: boolean;
 }) {
   const { t } = useTranslation();
-  if (!controller.images.length) return null;
+  const attachments = controller.images.filter((reference) => !reference.token);
+  if (!attachments.length) return null;
   return (
     <div className="composer-image-attachments">
-      {controller.images.map((reference) => {
+      {attachments.map((reference) => {
         const source = controller.sources?.get(reference.id);
         return (
           <div key={reference.id} className="composer-image-attachment">

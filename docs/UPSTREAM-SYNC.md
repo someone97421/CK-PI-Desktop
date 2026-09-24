@@ -419,3 +419,11 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 范围说明：本轮为源码适配和差异审阅，未运行测试、typecheck、构建或应用服务，未做实机回归。前序尝试 `pnpm install --lockfile-only --ignore-scripts` 超时；最终依赖声明及锁文件维持 fork 原版本，未引入语音依赖。上游的 `disable-renderer-accessibility` 崩溃规避已吸收，它会关闭 Chromium renderer 无障碍树，依赖该树的 Computer Use 影响尚未实机验证。未操作实际业务数据库或发布、推送。
 
 正式合并提交为 `36e01e1f7dfe2e1c0b6361dd3656c842dfb7f4a7`，两个父提交及目标祖先关系已核对。子任务执行过所负责差异的 `git diff --check`；该检查不等于类型检查或运行验证。
+
+## Windows 主程序构建（2026-09-24）
+
+按用户要求，通过统一入口 `pnpm --filter @pi-desktop/desktop dist:win` 完成 Windows x64 构建，版本为 `20260924-165149`（内部版本 `2609.2416.5149`）。安装 EXE、单文件便携 EXE、解包目录、`latest.yml` 与 blockmap 位于 `apps/desktop/release/20260924-165149-HJDGjz/`；成功后由构建入口执行历史产物清理。
+
+首次编译发现 `steeringWaitAbort` 为上游专用字段，已移除三处不适用于 fork 的引用；取消与错误路径沿用现有 `delegationWaitWakeups` 唤醒机制。修复后复用同一构建时间，工作区依赖 TypeScript、Rust release、sidecar、Electron 主进程/预加载/界面及安装包构建均完成，最终退出码为 0。
+
+构建包含原有未提交修改，版本文件由构建入口自动更新。存在 Rust 未使用方法、混合导入和前端较大分块等非阻断警告；未另跑测试套件或启动应用实机验证，未提交、推送或发布更新。

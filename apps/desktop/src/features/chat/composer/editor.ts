@@ -271,6 +271,7 @@ function buildChipElement(
   removeLabel: string,
   onRemove: (token: string) => void,
   onExpandText: (token: string) => void,
+  onOpenImage?: (reference: ComposerFileReference) => void,
 ): HTMLElement {
   const chip = document.createElement("span");
   chip.className = "composer-chip";
@@ -278,12 +279,15 @@ function buildChipElement(
   chip.dataset.token = token;
   chip.title = reference.path;
   const editableText = isEditableTextReference(reference);
-  const activate = editableText ? () => onExpandText(token) : undefined;
+  const imageReference = chipIconKey(reference) === "image";
+  const activate = imageReference && onOpenImage
+    ? () => onOpenImage(reference)
+    : editableText ? () => onExpandText(token) : undefined;
   chip.setAttribute("role", activate ? "button" : "listitem");
   chip.setAttribute("aria-label", `${reference.name} — ${reference.path}`);
   if (activate) {
     chip.tabIndex = 0;
-    chip.dataset.action = "expand-text-reference";
+    chip.dataset.action = imageReference ? "preview-image-reference" : "expand-text-reference";
     chip.addEventListener("click", activate);
     chip.addEventListener("keydown", (event) => {
       if (event.target !== chip) return;
@@ -297,6 +301,19 @@ function buildChipElement(
   const icon = document.createElement("span");
   icon.className = "composer-chip-icon";
   icon.innerHTML = chipSvg(chipIconKey(reference));
+  if (imageReference) {
+    const thumbnail = document.createElement("img");
+    thumbnail.dataset.imageReference = reference.id;
+    thumbnail.alt = "";
+    thumbnail.draggable = false;
+    thumbnail.hidden = true;
+    thumbnail.width = 24;
+    thumbnail.height = 24;
+    thumbnail.style.objectFit = "cover";
+    thumbnail.style.borderRadius = "3px";
+    thumbnail.addEventListener("error", () => { thumbnail.hidden = true; });
+    chip.appendChild(thumbnail);
+  }
 
   const nameSpan = document.createElement("span");
   nameSpan.className = "composer-chip-name";
@@ -331,6 +348,7 @@ export function paintEditorValue(
   removeLabelFor: (name: string) => string,
   onRemove: (token: string) => void,
   onExpandText: (token: string) => void,
+  onOpenImage?: (reference: ComposerFileReference) => void,
 ): void {
   el.replaceChildren();
   let textBuffer = "";
@@ -352,6 +370,7 @@ export function paintEditorValue(
             removeLabelFor(reference.name),
             onRemove,
             onExpandText,
+            onOpenImage,
           ),
         );
         continue;

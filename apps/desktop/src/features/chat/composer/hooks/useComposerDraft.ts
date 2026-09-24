@@ -41,7 +41,6 @@ import {
 } from "../editor";
 import type { ComposerPrefill } from "../model";
 import { useComposerImagePreview, type ComposerImagePreviewController } from "./useComposerImagePreview";
-import { detachImageTokens, isImageReference } from "../image-attachments";
 
 type ComposerSession = { id: string };
 
@@ -260,6 +259,7 @@ export function useComposerDraft({
       (name) => t("chat.removeFileReference", { name }),
       (token) => removeChipByTokenRef.current(token),
       (token) => expandTextReferenceRef.current(token),
+      (reference) => imagePreview.open(reference),
     );
     editorValueRef.current = nextValue;
   };
@@ -267,17 +267,6 @@ export function useComposerDraft({
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
-    if (fileReferences.some((reference) => isImageReference(reference) && reference.token)) {
-      const detached = detachImageTokens(value, fileReferences, pendingEditorCaretRef.current ?? cursor);
-      valueRef.current = detached.text;
-      fileReferencesRef.current = detached.references;
-      pendingEditorCaretRef.current = detached.caret;
-      editorValueRef.current = null;
-      setValue(detached.text);
-      setCursor(detached.caret);
-      setFileReferences(detached.references);
-      return;
-    }
     if (editorValueRef.current === value) return;
     paintCurrentDraft(element, value);
     const pendingCaret = pendingEditorCaretRef.current;
@@ -287,6 +276,18 @@ export function useComposerDraft({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- callback closes over refs
   }, [value, referenceByToken]);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    for (const image of element.querySelectorAll<HTMLImageElement>("img[data-image-reference]")) {
+      const source = imagePreview.sources?.get(image.dataset.imageReference ?? "");
+      image.hidden = source?.status !== "ready";
+      if (source?.status === "ready" && image.getAttribute("src") !== source.src) {
+        image.src = source.src;
+      }
+    }
+  }, [value, referenceByToken, imagePreview.sources]);
 
   useEffect(() => {
     const handler = () => {
@@ -533,10 +534,6 @@ export function useComposerDraft({
     nextReferences: ComposerFileReference[],
     caret: number,
   ) => {
-    const detached = detachImageTokens(nextText, nextReferences, caret);
-    nextText = detached.text;
-    nextReferences = detached.references;
-    caret = detached.caret;
     markComposerDraftEdited(draftKeyRef.current);
     // A token may now refer to a different attachment even when text is equal.
     editorValueRef.current = null;

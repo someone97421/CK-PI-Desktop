@@ -4470,7 +4470,6 @@ Delegation rules:
     this.turnHadError = true;
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptingSteering = false;
-    this.steeringWaitAbort?.abort();
     this.retainPendingSteering();
     this.abortRunningDelegations();
     this.delegationWaitTargets = undefined;
@@ -8541,7 +8540,6 @@ Delegation rules:
     this.acceptingSteering = false;
     this.gracefulStopRequested = false;
     this.runCancelled = true;
-    this.steeringWaitAbort?.abort();
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.extensionRunner?.cancelPending();
     this.resolvePendingAskTools();
@@ -8589,7 +8587,6 @@ Delegation rules:
     this.disposed = true;
     this.acceptingSteering = false;
     this.runCancelled = true;
-    this.steeringWaitAbort?.abort();
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptedSteering.clear();
     this.resolvePendingAskTools();

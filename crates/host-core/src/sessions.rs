@@ -112,6 +112,8 @@ pub struct SessionSummary {
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_user_message_at: Option<String>,
     pub created_at: String,
 }
 
@@ -1156,7 +1158,9 @@ fn session_created_at(db: &Database, session_id: &str) -> Result<String> {
 
 const SUMMARY_SELECT: &str =
     "SELECT s.id, s.title, s.last_seq, p.path, s.model_id, s.provider_id, s.mode,
-            s.thinking_level, s.permission_mode, s.updated_at, s.created_at
+            s.thinking_level, s.permission_mode, s.updated_at, s.created_at,
+            (SELECT MAX(m.created_at) FROM messages m
+             WHERE m.session_id = s.id AND m.role = 'user')
      FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
      WHERE s.deleted_at IS NULL";
 
@@ -1173,6 +1177,7 @@ pub(crate) fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Sess
         permission_mode: row.get(8)?,
         updated_at: ms_to_ts(row.get(9)?),
         created_at: ms_to_ts(row.get(10)?),
+        last_user_message_at: row.get::<_, Option<i64>>(11)?.map(ms_to_ts),
     })
 }
 
@@ -1337,6 +1342,7 @@ pub fn create_session_with_options(
         thinking_level,
         permission_mode,
         updated_at: ms_to_ts(now),
+        last_user_message_at: None,
         created_at: ms_to_ts(now),
     })
 }
@@ -1812,6 +1818,8 @@ pub fn fork_session_through(
         thinking_level: source.summary.thinking_level,
         permission_mode: source.summary.permission_mode,
         updated_at: created_at.clone(),
+        last_user_message_at: records.iter().rev().find(|record| record.role == "user")
+            .map(|record| record.created_at.clone()),
         created_at,
     };
     let messages = records.into_iter().map(record_to_ui).collect();
@@ -4499,6 +4507,7 @@ mod tests {
             permission_mode: "inherit".into(),
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-02T00:00:00Z".into(),
+            last_user_message_at: None,
         };
         let messages = vec![user_msg("m1", "hello", "2025-01-01T00:00:01Z")];
 
@@ -4549,6 +4558,7 @@ mod tests {
             permission_mode: "inherit".into(),
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),
+            last_user_message_at: None,
         };
         assert!(import_session(&db, &base, &[]).unwrap());
 
@@ -5294,6 +5304,7 @@ mod tests {
             permission_mode: "inherit".into(),
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),
+            last_user_message_at: None,
         };
         let mut message = user_msg("m1", "prompt", "2025-01-01T00:00:01Z");
         message.role = "assistant".into();

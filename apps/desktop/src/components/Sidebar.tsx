@@ -14,8 +14,6 @@ import {
 import { TooltipButton, cx } from "./ui";
 import { RemoteAccessButton } from "./RemoteAccessButton";
 
-/** Default number of most-recent sessions shown per project group before the rest fold. */
-const MAX_VISIBLE_SESSIONS = 10;
 import { portalToBody } from "../lib/portal-visibility";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
@@ -44,10 +42,9 @@ import {
   type SidebarSessionStatus,
 } from "../lib/sidebar-session-status";
 import { ErrorCodes } from "@pi-desktop/shared";
-import type { SessionSummary } from "@pi-desktop/shared";
+import type { ProjectRecord, SessionSummary } from "@pi-desktop/shared";
 import type {
   ProjectMeta,
-  ProjectSort,
   SessionSort,
 } from "../lib/sidebar-preferences";
 import {
@@ -86,6 +83,7 @@ import {
   IconTrash,
   IconX,
 } from "./icons";
+const MAX_VISIBLE_SESSIONS = 3;
 
 type ProjectEntry = {
   path: string;
@@ -167,22 +165,9 @@ function projectDomId(path: string): string {
   return `sidebar-project-${(hash >>> 0).toString(36)}`;
 }
 
-function firstSessionDate(
-  sessions: SessionSummary[],
-  field: "createdAt" | "updatedAt",
-): number | null {
+function lastUserMessageDate(sessions: SessionSummary[]): number | null {
   const values = sessions
-    .map((session) => timestamp(session[field]))
-    .filter((value) => value > 0);
-  return values.length ? Math.min(...values) : null;
-}
-
-function lastSessionDate(
-  sessions: SessionSummary[],
-  field: "createdAt" | "updatedAt",
-): number | null {
-  const values = sessions
-    .map((session) => timestamp(session[field]))
+    .map((session) => timestamp(session.lastUserMessageAt))
     .filter((value) => value > 0);
   return values.length ? Math.max(...values) : null;
 }
@@ -268,7 +253,8 @@ export function Sidebar({
   // const setSettingsAnchor = useAppStore((s) => s.setSettingsAnchor);
   // const update = useUpdateState();
 
-  const [sortOpen, setSortOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState<"sessions" | "projects" | null>(null);
+  const [projectRecords, setProjectRecords] = useState<ProjectRecord[]>([]);
   const [sessionMenu, setSessionMenu] = useState<string | null>(null);
   const [renameFor, setRenameFor] = useState<SessionSummary | null>(null);
   const [editProjectFor, setEditProjectFor] = useState<ProjectEntry | null>(null);
@@ -425,7 +411,8 @@ export function Sidebar({
   const sessionSort = sessionView.sort;
   const displaySessionSort: Exclude<SessionSort, "manual"> =
     sessionSort === "manual" ? "recent" : sessionSort;
-  const displayProjectSort: ProjectSort = projectSort;
+  const displayProjectSort: "manual" | "created" | "recent" =
+    projectSort === "manual" || projectSort === "created" ? projectSort : "recent";
   const activeProjectPath = normalizeProjectPath(activeProjectPathState ?? workspace?.path);
   const selectedSessionId = selectingSessionId ?? activeSessionId;
   const openProjectPaths = useMemo(
@@ -435,10 +422,26 @@ export function Sidebar({
         .filter((path): path is string => Boolean(path)),
     [openProjectPathsState],
   );
+  useEffect(() => {
+    let canceled = false;
+    void api.listProjects()
+      .then(({ projects }) => { if (!canceled) setProjectRecords(projects); })
+      .catch(() => { if (!canceled) setProjectRecords([]); });
+    return () => { canceled = true; };
+  }, [openProjectPaths]);
+
+  const projectCreatedAt = useMemo(() => {
+    const dates = new Map<string, number>();
+    for (const project of projectRecords) {
+      const key = normalizeProjectPath(project.path);
+      if (key && Number.isFinite(project.createdAt)) dates.set(key, project.createdAt);
+    }
+    return dates;
+  }, [projectRecords]);
 
   const closeMenus = useCallback((restoreFocus = true) => {
     const trigger = menuTriggerRef.current;
-    setSortOpen(false);
+    setSortOpen(null);
     setSessionMenu(null);
     setProjectMenu(null);
     setSectionMenu(null);
@@ -472,7 +475,7 @@ export function Sidebar({
   const openSessionRowMenu = useCallback(
     (sessionId: string, trigger: HTMLButtonElement | null) => {
       menuTriggerRef.current = trigger;
-      setSortOpen(false);
+      setSortOpen(null);
       setProjectMenu(null);
       setSectionMenu(null);
       hideSessionHoverCard();
@@ -484,7 +487,7 @@ export function Sidebar({
   const openProjectRowMenu = useCallback(
     (projectKey: string, trigger: HTMLButtonElement | null) => {
       menuTriggerRef.current = trigger;
-      setSortOpen(false);
+      setSortOpen(null);
       setSessionMenu(null);
       setSectionMenu(null);
       setProjectMenu(projectKey);
@@ -495,7 +498,7 @@ export function Sidebar({
   const openSectionMenu = useCallback(
     (section: "sessions" | "projects", x: number, y: number) => {
       menuTriggerRef.current = null;
-      setSortOpen(false);
+      setSortOpen(null);
       setSessionMenu(null);
       setProjectMenu(null);
       placeMenuAtPoint(x, y);
@@ -696,27 +699,19 @@ export function Sidebar({
           (a.meta.order ?? Number.MAX_SAFE_INTEGER) -
           (b.meta.order ?? Number.MAX_SAFE_INTEGER);
         if (byOrder !== 0) return byOrder;
-      } else if (displayProjectSort === "name") {
-        const byName = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-        if (byName !== 0) return byName;
-      } else if (
-        displayProjectSort === "oldest" ||
-        displayProjectSort === "created"
-      ) {
-        const dateForProject =
-          displayProjectSort === "oldest" ? firstSessionDate : lastSessionDate;
-        const aCreated = dateForProject(a.sessions, "createdAt");
-        const bCreated = dateForProject(b.sessions, "createdAt");
+      } else if (displayProjectSort === "created") {
         const byCreated = compareOptionalDate(
-          aCreated,
-          bCreated,
-          displayProjectSort === "created",
+          projectCreatedAt.get(a.key) ?? null,
+          projectCreatedAt.get(b.key) ?? null,
+          true,
         );
         if (byCreated !== 0) return byCreated;
       } else {
-        const aRecent = lastSessionDate(a.sessions, "updatedAt");
-        const bRecent = lastSessionDate(b.sessions, "updatedAt");
-        const byRecent = compareOptionalDate(aRecent, bRecent, true);
+        const byRecent = compareOptionalDate(
+          lastUserMessageDate(a.sessions),
+          lastUserMessageDate(b.sessions),
+          true,
+        );
         if (byRecent !== 0) return byRecent;
       }
       return a.key.localeCompare(b.key);
@@ -731,6 +726,7 @@ export function Sidebar({
     projectMeta,
     showArchived,
     displayProjectSort,
+    projectCreatedAt,
     sessionMeta,
     compareSessions,
   ]);
@@ -1057,6 +1053,10 @@ export function Sidebar({
 
   const setSort = (next: SessionSort) => {
     setSessionSort(next);
+    closeMenus();
+  };
+
+  const setProjectOrder = (next: "manual" | "created" | "recent") => {
     setProjectSort(next);
     closeMenus();
   };
@@ -1612,9 +1612,7 @@ export function Sidebar({
     const projectId = projectDomId(entry.key);
     const isMenuOpen = projectMenu === entry.key;
 
-    // Show the most recent MAX_VISIBLE_SESSIONS rows by default; the remaining
-    // sessions stay folded behind the same load-more affordance used for the
-    // time-grouped overflow and expand on click.
+    // Keep the first three unpinned rows visible; the rest expand on demand.
     const sessionsExpanded = expandedProjectSessions[entry.key] ?? false;
     const history = entry.sessions.filter((session) => !pinnedSessionIds.has(session.id));
     const visibleSessions = sessionsExpanded ? history : history.slice(0, MAX_VISIBLE_SESSIONS);
@@ -1848,7 +1846,27 @@ export function Sidebar({
         </div>,
       );
     }
-    if (sortOpen) {
+    if (sortOpen === "projects") {
+      return portalToBody(
+        <div className="sidebar-popover sidebar-sort-menu sidebar-floating-menu" role="menu"
+          aria-label={t("nav.sortProjects")}
+          onKeyDown={onMenuKeyDown}
+          style={{ top: menuPosition.top, left: menuPosition.left }}
+        >
+          {(["manual", "created", "recent"] as const).map((value, index) => (
+            <button ref={index === 0 ? menuFirstItemRef : undefined} key={value}
+              type="button" role="menuitemradio" aria-checked={displayProjectSort === value}
+              className={displayProjectSort === value ? "selected" : ""}
+              onClick={() => setProjectOrder(value)}
+            >
+              <span>{t(value === "manual" ? "nav.projectSortManual" : value === "created" ? "nav.projectSortCreated" : "nav.projectSortActive")}</span>
+              {displayProjectSort === value ? <span className="sidebar-sort-check">✓</span> : null}
+            </button>
+          ))}
+        </div>,
+      );
+    }
+    if (sortOpen === "sessions") {
       return portalToBody(
         <div
           className="sidebar-popover sidebar-sort-menu sidebar-floating-menu"
@@ -2145,23 +2163,20 @@ export function Sidebar({
               <div className="sidebar-menu-wrap">
                 <TooltipButton
                   type="button"
-                  className={`sidebar-toolbar-button ${sortOpen ? "active" : ""}`}
+                  className={`sidebar-toolbar-button ${sortOpen === "sessions" ? "active" : ""}`}
                   data-action="session-sort"
                   ariaLabel={t("nav.sortSessions", { defaultValue: "Sort sessions" })}
                   tooltip={t("nav.sortSessions", { defaultValue: "Sort sessions" })}
                   aria-haspopup="menu"
-                  aria-expanded={sortOpen}
+                  aria-expanded={sortOpen === "sessions"}
                   onClick={(event) => {
-                    if (sortOpen) {
-                      closeMenus();
-                      return;
-                    }
+                    if (sortOpen === "sessions") { closeMenus(); return; }
                     placeMenu(event);
                     menuTriggerRef.current = event.currentTarget;
                     setSessionMenu(null);
                     setProjectMenu(null);
                     setSectionMenu(null);
-                    setSortOpen(true);
+                    setSortOpen("sessions");
                   }}
                 >
                   <IconArrowUpDown size={14} />
@@ -2212,6 +2227,26 @@ export function Sidebar({
           }}
         >
           <span className="sidebar-list-label">{t("nav.projects")}</span>
+          <TooltipButton
+            type="button"
+            className={`sidebar-toolbar-button ${sortOpen === "projects" ? "active" : ""}`}
+            data-action="project-sort"
+            tooltip={t("nav.sortProjects")}
+            ariaLabel={t("nav.sortProjects")}
+            aria-haspopup="menu"
+            aria-expanded={sortOpen === "projects"}
+            onClick={(event) => {
+              if (sortOpen === "projects") { closeMenus(); return; }
+              placeMenu(event);
+              menuTriggerRef.current = event.currentTarget;
+              setSessionMenu(null);
+              setProjectMenu(null);
+              setSectionMenu(null);
+              setSortOpen("projects");
+            }}
+          >
+            <IconArrowUpDown size={14} />
+          </TooltipButton>
           <TooltipButton
             type="button"
             className="sidebar-toolbar-button"
