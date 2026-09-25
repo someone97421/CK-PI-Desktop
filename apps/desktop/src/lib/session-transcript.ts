@@ -205,6 +205,25 @@ export function mergeLiveSessionMessages(
     lastSharedLive = index;
   }
 
+  // 两个窗口没有共同消息时，按创建时间交织，保持各自内部的记录顺序。
+  // 切回长任务可能只读到较新的过程；旧提问不能被追加到这些过程之后。
+  if (firstSharedLive < 0) {
+    const merged: UiMessage[] = [];
+    let liveIndex = 0;
+    for (const message of durable) {
+      const createdAt = Date.parse(message.createdAt);
+      while (
+        liveIndex < liveNormalized.length
+        && Date.parse(liveNormalized[liveIndex].createdAt) < createdAt
+      ) {
+        merged.push(liveNormalized[liveIndex++]);
+      }
+      merged.push(message);
+    }
+    merged.push(...liveNormalized.slice(liveIndex));
+    return merged;
+  }
+
   const used = new Set<string>();
   const merged: UiMessage[] = [];
   const push = (message: UiMessage) => {
@@ -219,15 +238,12 @@ export function mergeLiveSessionMessages(
     }
   }
 
-  // A previous append-after-page merge left older live rows after the durable
-  // window. Restore them in front when their timestamps precede the page.
-  const windowStartAt = durable[0]?.createdAt;
-  if (lastSharedLive >= 0 && windowStartAt) {
-    for (const message of liveNormalized.slice(lastSharedLive + 1)) {
-      if (durableIds.has(message.id)) continue;
-      if (message.createdAt && message.createdAt < windowStartAt) {
-        push(message);
-      }
+  // 修复旧合并结果中的错位消息。新的流式消息到来后，旧提问可能已
+  // 夹在共同消息之间，因此不能只检查最后一个共同消息之后的尾部。
+  const windowStartAt = Date.parse(durable[0].createdAt);
+  for (const message of liveNormalized) {
+    if (!durableIds.has(message.id) && Date.parse(message.createdAt) < windowStartAt) {
+      push(message);
     }
   }
 

@@ -280,3 +280,37 @@ test("缺少任务字段的回执与历史页保留已确认的引导归属", ()
   const authoritative = { ...durable, taskId: "turn-2", steering: false };
   assert.strictEqual(upsertLiveSessionMessage([live], authoritative)[0], authoritative);
 });
+
+test("切回较新的消息窗口时，无共同 ID 的旧提问与流式输出仍按时间合并", () => {
+  const prompt = at("prompt", "2026-09-25T01:00:00.000Z", { role: "user", taskId: "task" });
+  const firstTool = at("tool-1", "2026-09-25T01:00:01.000Z", { role: "tool", taskId: "task" });
+  const commentary = at("commentary", "2026-09-25T01:00:02.000Z", { taskId: "task" });
+  const secondTool = at("tool-2", "2026-09-25T01:00:03.000Z", { role: "tool", taskId: "task" });
+  const streaming = at("streaming", "2026-09-25T01:00:04.000Z", {
+    taskId: "task", status: "streaming", content: "正在继续处理",
+  });
+  const durable = [firstTool, secondTool];
+  const live = [prompt, commentary, streaming];
+
+  const merged = mergeLiveSessionMessages(durable, live);
+  assert.deepEqual(merged, [prompt, firstTool, commentary, secondTool, streaming]);
+  assert.strictEqual(merged.at(-1), streaming);
+  assert.deepEqual(mergeLiveSessionMessages(durable, merged), merged);
+  assert.deepEqual(live, [prompt, commentary, streaming]);
+  assert.deepEqual(durable, [firstTool, secondTool]);
+});
+
+test("旧提问错位到共同消息之间后，切回会话仍能恢复提问在前的顺序", () => {
+  const prompt = at("prompt", "2026-09-25T01:00:00.000Z", { role: "user", taskId: "task" });
+  const firstTool = at("tool-1", "2026-09-25T01:00:01.000Z", { role: "tool", taskId: "task" });
+  const secondTool = at("tool-2", "2026-09-25T01:00:02.000Z", { role: "tool", taskId: "task" });
+  const streaming = at("streaming", "2026-09-25T01:00:03.000Z", {
+    taskId: "task", status: "streaming",
+  });
+  const durable = [firstTool, secondTool];
+  const live = [firstTool, prompt, secondTool, streaming];
+
+  const merged = mergeLiveSessionMessages(durable, live);
+  assert.deepEqual(merged, [prompt, firstTool, secondTool, streaming]);
+  assert.deepEqual(mergeLiveSessionMessages(durable, merged), merged);
+});

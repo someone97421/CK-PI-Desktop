@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/desktop",
-  "version": "2609.2422.3134",
+  "version": "2609.2510.45",
   "desktopName": "this-is-a-agent.desktop",
   "private": true,
   "description": "这是一个助手 — local-first AI coding agent desktop app",
@@ -125,7 +125,7 @@
     ],
     "mac": {
       "identity": "-",
-      "artifactName": "this-is-a-agent-20260924-223134-${arch}-mac.${ext}",
+      "artifactName": "this-is-a-agent-20260925-100045-${arch}-mac.${ext}",
       "target": [
         {
           "target": "dmg"
@@ -164,10 +164,10 @@
         "this-is-a-agent-macOS-open.command",
         "this-is-a-agent-macOS-opening-help.txt"
       ],
-      "bundleVersion": "2609.2422.3134"
+      "bundleVersion": "2609.2510.45"
     },
     "dmg": {
-      "artifactName": "this-is-a-agent-20260924-223134-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-20260925-100045-${arch}.${ext}",
       "window": {
         "width": 720,
         "height": 500
@@ -227,22 +227,22 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "这是一个助手",
-      "artifactName": "this-is-a-agent-Setup-20260924-223134-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-Setup-20260925-100045-${arch}.${ext}",
       "uninstallDisplayName": "这是一个助手",
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "this-is-a-agent-Portable-20260924-223134-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-Portable-20260925-100045-${arch}.${ext}",
       "requestExecutionLevel": "user",
       "unpackDirName": "this-is-a-agent-Portable"
     },
     "deb": {
       "packageName": "this-is-a-agent",
-      "artifactName": "this-is-a-agent-20260924-223134-${arch}.${ext}"
+      "artifactName": "this-is-a-agent-20260925-100045-${arch}.${ext}"
     },
     "rpm": {
       "packageName": "this-is-a-agent",
-      "artifactName": "this-is-a-agent-20260924-223134-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-20260925-100045-${arch}.${ext}",
       "fpm": [
         "--rpm-rpmbuild-define",
         "_build_id_links none"
@@ -286,15 +286,15 @@
           "Comment": "这是一个助手"
         }
       },
-      "artifactName": "this-is-a-agent-20260924-223134-${arch}.${ext}"
+      "artifactName": "this-is-a-agent-20260925-100045-${arch}.${ext}"
     },
     "asar": {
       "smartUnpack": false
     },
-    "buildVersion": "2609.2422.3134.0",
+    "buildVersion": "2609.2510.45.0",
     "extraMetadata": {
       "name": "this-is-a-agent"
     }
   },
-  "buildVersionLabel": "20260924-223134"
+  "buildVersionLabel": "20260925-100045"
 }
