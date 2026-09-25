@@ -19,6 +19,7 @@ import {
 import { catalogs, resolveLocale } from "@pi-desktop/i18n";
 import { installApplicationMenu } from "../application-menu";
 import { createTraySessions } from "../tray-sessions";
+import { createTaskbarUnreadBadge } from "../taskbar-unread-badge";
 import { createWindow, type WindowLifecycleState } from "./window";
 import { windowToggleAction } from "./window-visibility";
 import type { BrowserPane } from "../browser-view";
@@ -115,6 +116,12 @@ export function createApplicationLifecycle({
     getRunningSessionIds,
     isQuitting: () => state.quitting,
     onChanged: () => updateTrayMenu(),
+    logger,
+  });
+  const taskbarUnreadBadge = createTaskbarUnreadBadge({
+    getHost,
+    getMainWindow: () => state.mainWindow,
+    isQuitting: () => state.quitting,
     logger,
   });
   let trayActivationGeneration = 0;
@@ -310,6 +317,9 @@ export function createApplicationLifecycle({
     state.tray.on("double-click", restoreMainWindow);
     updateTrayMenu();
     void traySessions.refresh();
+    void taskbarUnreadBadge.refresh();
+    // Window is live here; force-paint any count learned before the BrowserWindow existed.
+    taskbarUnreadBadge.replay();
   }
 
 
@@ -696,6 +706,7 @@ export function createApplicationLifecycle({
 
   return {
     traySessions,
+    taskbarUnreadBadge,
     applyDevelopmentBranding,
     hasVisibleWindow,
     restoreMainWindow,

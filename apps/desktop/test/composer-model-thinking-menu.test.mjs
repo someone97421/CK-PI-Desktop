@@ -102,17 +102,17 @@ test("the combined chip and menu meet the compact accessible visual contract", (
   assert.match(composerSource, /event\.key === "Escape"/);
   assert.match(stylesSource, /\.composer-model-thinking-menu\s*\{[\s\S]*?position:\s*fixed;/);
   assert.match(stylesSource, /\.composer-model-thinking-menu\s*\{[\s\S]*?top:\s*0;/);
-  assert.match(stylesSource, /\.composer-model-thinking-menu\s*\{[\s\S]*?width:\s*min\(300px,\s*calc\(100vw - 24px\)\)/);
+  assert.match(stylesSource, /\.composer-model-thinking-menu\s*\{[\s\S]*?width:\s*min\(280px,\s*calc\(100vw - 24px\)\)/);
   assert.match(composerSource, /className="composer-model-thinking-icon"[\s\S]*?<IconBot size=\{14\} \/>/);
   assert.doesNotMatch(stylesSource, /\.composer-model-thinking-icon\.is-off/);
   assert.match(stylesSource, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test("model options are visually nested under their provider heading", () => {
+test("model options share the compact provider heading inset", () => {
   assert.match(composerSource, /composer-plus-item composer-model-option/);
   assert.match(
     stylesSource,
-    /\.composer-model-group \.composer-model-option\s*\{[\s\S]*?padding-left:\s*22px/,
+    /\.composer-model-group \.composer-model-option\s*\{[\s\S]*?padding-left:\s*8px/,
   );
 });
 
@@ -126,11 +126,11 @@ test("model groups use the account-aware display name", () => {
 test("provider headings establish a stronger type level than model rows", () => {
   assert.match(
     stylesSource,
-    /\.composer-model-group-label\s*\{[\s\S]*?font-size:\s*var\(--text-md\)/,
+    /\.composer-model-group-label\s*\{[^}]*font-size:\s*var\(--text-xs-plus\)[^}]*font-weight:\s*var\(--font-weight-strong\)/,
   );
   assert.match(
     stylesSource,
-    /\.composer-model-group \.composer-model-option\s*\{[\s\S]*?font-size:\s*var\(--text-sm\)[\s\S]*?font-weight:\s*var\(--font-weight-normal\)/,
+    /\.composer-model-group \.composer-model-option\s*\{[^}]*font-size:\s*var\(--text-sm\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
   );
   assert.match(
     stylesSource,
