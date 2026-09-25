@@ -16,6 +16,7 @@ import type { IpcRegistrar } from "./types";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 import { withPromptEnhancementTimeout } from "../prompt-enhancement-timeout";
 
+import { getSessionCompactionModel, setSessionCompactionModel, type SessionCompactionModel } from "../runtime/session-compaction-models";
 export type AgentIpcDependencies = {
   registrar: IpcRegistrar;
   getHost: () => HostProcess | null;
@@ -670,6 +671,38 @@ export function registerAgentIpc({
     } finally {
       releaseSessionOperation();
     }
+  });
+
+  handle(IPC.invoke.sessionCompactionModelGet, async (req: { sessionId: string }) => {
+    if (typeof req?.sessionId !== "string" || !req.sessionId.trim()) {
+      throw Object.assign(new Error("sessionId is required"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+    }
+    return getSessionCompactionModel(dataDir, req.sessionId);
+  });
+
+  handle(IPC.invoke.sessionCompactionModelSet, async (req: { sessionId: string; model: SessionCompactionModel | null }) => {
+    rejectNativeAgentOperation(req?.sessionId ?? "");
+    if (!host || typeof req?.sessionId !== "string" || !req.sessionId.trim()) {
+      throw Object.assign(new Error("sessionId is required"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+    }
+    const detail = await host.call<{ session?: unknown }>("session.get", { id: req.sessionId });
+    if (!detail.session) throw Object.assign(new Error("Session not found"), { errorCode: ErrorCodes.NOT_FOUND });
+    if (req.model !== null) {
+      const model = req.model;
+      if (!model || typeof model.providerId !== "string" || typeof model.modelId !== "string" ||
+          !model.providerId.trim() || !model.modelId.trim()) {
+        throw Object.assign(new Error("Invalid compaction model"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+      }
+      const result = await host.call<{ providers: Array<{ id: string; enabled?: boolean; models?: Array<{ id: string }>; defaultModelId?: string }> }>(
+        "providers.list", { includeDisabled: false },
+      );
+      const provider = result.providers.find((row) => row.id === model.providerId && row.enabled !== false);
+      if (!provider || !(provider.models?.some((entry) => entry.id === model.modelId) ||
+          (!provider.models?.length && provider.defaultModelId === model.modelId))) {
+        throw Object.assign(new Error("Compaction model is unavailable"), { errorCode: ErrorCodes.MODEL_NOT_CONFIGURED });
+      }
+    }
+    return setSessionCompactionModel(dataDir, req.sessionId, req.model);
   });
 
   handle(IPC.invoke.agentCompact, async (req: { sessionId: string }) => {

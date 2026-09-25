@@ -216,3 +216,36 @@ test("latest turn inspector keeps last-request usage beside the turn sum", () =>
   assert.equal(inspector?.turnUsage.cacheReadTokens, 51_500);
   assert.equal(inspector?.turnUsage.inputTokens, 57_300);
 });
+
+test("compaction context updates the ring until a later provider usage arrives", () => {
+  const before = message("a1", "assistant", "before", {
+    providerId: "provider",
+    modelId: "catalog-model",
+    usage: { inputTokens: 80_000, outputTokens: 4_000, totalTokens: 84_000 },
+  });
+  const mark = {
+    id: "mark-1",
+    generation: 1,
+    summaryTokens: 4_000,
+    contextTokens: 12_000,
+    throughMessageId: "a1",
+    summarized: true,
+  };
+  const compacted = latestTurnContextInspector(
+    [message("u1", "user", "before"), before], providerModels, providers, [mark],
+  );
+  assert.equal(compacted?.compactedContextTokens, 12_000);
+  assert.equal(compacted?.usage.totalTokens, 84_000);
+
+  const after = latestTurnContextInspector(
+    [message("u1", "user", "before"), before, message("u2", "user", "after"),
+      message("a2", "assistant", "done", {
+        providerId: "provider",
+        modelId: "catalog-model",
+        usage: { inputTokens: 14_000, outputTokens: 1_000, totalTokens: 15_000 },
+      })],
+    providerModels, providers, [mark],
+  );
+  assert.equal(after?.compactedContextTokens, undefined);
+  assert.equal(after?.usage.totalTokens, 15_000);
+});

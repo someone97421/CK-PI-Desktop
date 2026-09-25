@@ -950,6 +950,10 @@ export const api = {
     invoke<SpeechSynthesizeResult>(IPC.invoke.speechSynthesize, req),
   compact: (req: AgentCompactRequest) =>
     invoke<AgentCompactResponse>(IPC.invoke.agentCompact, req),
+  getSessionCompactionModel: (sessionId: string) =>
+    invoke<{ providerId: string; modelId: string } | null>(IPC.invoke.sessionCompactionModelGet, { sessionId }),
+  setSessionCompactionModel: (sessionId: string, model: { providerId: string; modelId: string } | null) =>
+    invoke<{ providerId: string; modelId: string } | null>(IPC.invoke.sessionCompactionModelSet, { sessionId, model }),
   abort: (sessionId: string) =>
     invoke(IPC.invoke.agentAbort, { sessionId }),
   stop: (sessionId: string) =>

@@ -6984,6 +6984,8 @@ Delegation rules:
     this.contextReminderClaimed = false;
     this.contextFallbackReminderClaimed = false;
     this.setAgentMessages(this.liveSessionContext().messages);
+    const mark = contextCompactionMark(checkpoint);
+    mark.contextTokens = compactedBudget.tokens;
     this.emit({
       type: "compaction_end",
       reason,
@@ -6992,7 +6994,7 @@ Delegation rules:
       firstKeptMessageId: checkpoint.firstKeptMessageId,
       willRetry,
       ...(fallback ? { fallback } : {}),
-      mark: contextCompactionMark(checkpoint),
+      mark,
     });
     return "persisted";
   }

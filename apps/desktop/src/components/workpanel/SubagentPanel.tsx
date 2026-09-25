@@ -18,7 +18,7 @@ import {
 import { delegationIdForMessage, type SubagentPanelSelection } from "../../lib/subagent-panel";
 import { useAppStore } from "../../stores/app-store";
 import { useFollowScroll } from "../../hooks/use-follow-scroll";
-import { useTranscriptView } from "../../hooks/use-transcript-view";
+import { useSubagentTranscriptView } from "../../hooks/use-subagent-transcript-view";
 import { useTranscriptSearchFocus } from "../../hooks/use-transcript-search-focus";
 import { IconArrowDown } from "../icons";
 import { DisclosureAnchorContext } from "../../lib/disclosure-anchor-context";
@@ -62,7 +62,7 @@ export function SubagentPanel({ selection }: { selection: SubagentPanelSelection
 function SubagentPanelSurface({ selection }: { selection: SubagentPanelSelection }) {
   const { t } = useTranslation();
   const activeSessionId = useAppStore((state) => state.activeSessionId);
-  const transcript = useTranscriptView(selection.sessionId);
+  const transcript = useSubagentTranscriptView(selection.sessionId);
   const { messages } = transcript;
   const searchTarget = selection.searchRequestId === transcript.focus?.requestId ? transcript.focus : null;
   const isRunning = useAppStore(
@@ -142,6 +142,12 @@ function SubagentPanelSurface({ selection }: { selection: SubagentPanelSelection
         tabIndex={0}
       >
         <div ref={contentRef}>
+          {transcript.historyLoading || transcript.historyError ? (
+            <div className="subagent-panel-empty" role="status">
+              {t(transcript.historyLoading ? "panel.subagentLoading" : "panel.subagentLoadError")}
+              {transcript.historyError ? <button type="button" onClick={transcript.retryHistory}>{t("panel.subagentRetry")}</button> : null}
+            </div>
+          ) : null}
           {selected ? (
             <SubagentDetail
               message={selected.item.message}
@@ -152,11 +158,11 @@ function SubagentPanelSurface({ selection }: { selection: SubagentPanelSelection
               delegationFailures={delegationFailures}
               delegationTimings={delegationTimings}
             />
-          ) : (
+          ) : !transcript.historyLoading && !transcript.historyError ? (
             <div className="subagent-panel-empty" role="status">
               {t("panel.subagentEmpty")}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
       {showJump ? (

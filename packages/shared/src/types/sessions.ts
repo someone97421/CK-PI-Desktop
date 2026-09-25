@@ -113,6 +113,8 @@ export type ContextCompactionStatus = {
  * tail, which is far too much payload for a stream event.
  */
 export type ContextCompactionMark = ContextCompactionStatus & {
+  /** Estimated context tokens after this checkpoint was installed. */
+  contextTokens?: number;
   id: string;
   /** Last message the checkpoint covers; the row renders right after it. */
   throughMessageId: string;

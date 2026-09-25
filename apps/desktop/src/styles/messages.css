@@ -1655,6 +1655,77 @@
   font-weight: var(--font-weight-medium);
 }
 
+.context-inspector-model {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+}
+
+.context-inspector-model label {
+  flex: 0 0 auto;
+  color: var(--ds-text-muted);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.context-inspector-model select {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--ds-bg-elevated-opaque);
+  color: var(--ds-text-primary);
+  padding: 5px 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.context-inspector-model select:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.context-inspector-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.context-inspector-compact-btn {
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--ds-bg-elevated-opaque);
+  color: var(--ds-text-primary);
+  cursor: pointer;
+  padding: 5px 10px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font: inherit;
+}
+
+@media (max-width: 420px) {
+  .context-inspector-model label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+.context-inspector-compact-btn:hover:not(:disabled) {
+  background: var(--ds-bg-hover);
+}
+
+.context-inspector-compact-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* One transcript row per compaction: a quiet centred label the eye can skip.
  * The flanking pseudo-elements only centre it — no rule is drawn (D297). */
 .transcript-compaction-row {

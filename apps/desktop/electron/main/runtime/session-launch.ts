@@ -44,6 +44,7 @@ import type { PluginRuntime } from "../plugin-runtime";
 import type { UserMcpRuntime } from "../user-mcp";
 import type { RuntimeState } from "./context";
 import type { RuntimeProvider } from "./provider-catalog";
+import { getSessionCompactionModel } from "./session-compaction-models";
 
 const ErrorCodes = {
   ...SharedErrorCodes,
@@ -432,7 +433,14 @@ export function createSessionLaunchRuntime({
           storedModel?.defaultThinkingLevel,
       ),
     );
-    const compactionProvider = await resolveCompactionProvider(providers.providers, settings);
+    const sessionCompactionModel = getSessionCompactionModel(dataDir, sessionId);
+    const compactionProvider = sessionCompactionModel
+      ? await resolveCompactionProvider(providers.providers, {
+          ...settings,
+          compactionProviderId: sessionCompactionModel.providerId,
+          compactionModelId: sessionCompactionModel.modelId,
+        }) ?? await resolveCompactionProvider(providers.providers, settings)
+      : await resolveCompactionProvider(providers.providers, settings);
     const projectPath =
       typeof session.projectPath === "string" && session.projectPath.trim()
         ? session.projectPath.trim()

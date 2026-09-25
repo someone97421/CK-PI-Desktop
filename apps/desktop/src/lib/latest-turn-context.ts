@@ -18,6 +18,7 @@ import { latestMessageUsage, resolveContextWindow } from "./context-usage";
 
 export type LatestTurnContextInspector = {
   usage: MessageUsage;
+  compactedContextTokens?: number;
   turnUsage: MessageUsage;
   contextWindow: number;
   tools: UiMessage[];
@@ -52,11 +53,23 @@ export function latestTurnContextInspector(
   const latestUsageMessage = [...parentMessages]
     .reverse()
     .find((message) => message.usage);
+  const latestCompaction = compactions.at(-1);
+  const compactionIndex = latestCompaction
+    ? messages.findIndex((message) => message.id === latestCompaction.throughMessageId)
+    : -1;
+  const latestUsageIndex = messages.findIndex(
+    (message) => message.id === latestUsageMessage?.id,
+  );
+  const compactedContextTokens =
+    compactionIndex >= latestUsageIndex && latestUsageIndex >= 0
+      ? latestCompaction?.contextTokens
+      : undefined;
 
   return {
     // Occupancy and provider cache/input/output use this last request.
     // turnUsage remains the visual-turn sum for completed-turn speed.
     usage: latestUsage,
+    compactedContextTokens,
     turnUsage:
       (latestTurn ? assistantTurnUsage(latestTurn) : undefined) ?? latestUsage,
     contextWindow: resolveContextWindow(

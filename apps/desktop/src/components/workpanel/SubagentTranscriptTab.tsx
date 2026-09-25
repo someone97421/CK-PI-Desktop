@@ -2,7 +2,7 @@ import { Fragment, useLayoutEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../../stores/app-store";
 import { useFollowScroll } from "../../hooks/use-follow-scroll";
-import { useTranscriptView } from "../../hooks/use-transcript-view";
+import { useSubagentTranscriptView } from "../../hooks/use-subagent-transcript-view";
 import { useTranscriptSearchFocus } from "../../hooks/use-transcript-search-focus";
 import { IconArrowDown } from "../icons";
 import { Textarea, TooltipButton } from "../ui";
@@ -34,8 +34,9 @@ import { Markdown } from "../Markdown";
  * deliberately no send path.
  */
 export function SubagentTranscriptTab({ delegationId }: { delegationId: string }) {
+  const sessionId = useAppStore((state) => state.activeSessionId);
   return (
-    <TranscriptDisclosureProvider key={delegationId}>
+    <TranscriptDisclosureProvider key={`${sessionId}:${delegationId}`}>
       <SubagentTranscriptSurface delegationId={delegationId} />
     </TranscriptDisclosureProvider>
   );
@@ -46,7 +47,7 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   // A tab only renders inside a presented panel, which always has a session;
   // the empty key keeps the hook's contract while nothing is active.
-  const transcript = useTranscriptView(activeSessionId ?? "");
+  const transcript = useSubagentTranscriptView(activeSessionId ?? "");
   const { messages } = transcript;
   const isRunning = useAppStore(
     (state) => (activeSessionId ? state.runningSessions[activeSessionId] ?? false : false),
@@ -110,6 +111,12 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
           tabIndex={0}
         >
           <div ref={contentRef} className="subagent-transcript-list">
+            {transcript.historyLoading || transcript.historyError ? (
+              <div className="subagent-transcript-empty" role="status">
+                {t(transcript.historyLoading ? "panel.subagentLoading" : "panel.subagentLoadError")}
+                {transcript.historyError ? <button type="button" onClick={transcript.retryHistory}>{t("panel.subagentRetry")}</button> : null}
+              </div>
+            ) : null}
             {transcriptResult ? (
               transcriptResult.turns.map((turn, turnIndex) => (
                 <Fragment key={`turn-${turnIndex}`}>
@@ -157,11 +164,11 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
                   )}
                 </Fragment>
               ))
-            ) : (
+            ) : !transcript.historyLoading && !transcript.historyError ? (
               <div className="subagent-transcript-empty" role="status">
                 {t("panel.subagentEmpty")}
               </div>
-            )}
+            ) : null}
           </div>
         </div>
         {showJump ? (

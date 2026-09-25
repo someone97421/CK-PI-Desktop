@@ -14,6 +14,9 @@ import {
   type UiMessage,
 } from "@pi-desktop/shared";
 import { useAppStore } from "../stores/app-store";
+import { imageGenerationBindings, modelWireIdsEqual } from "@pi-desktop/shared";
+import { api } from "../lib/api";
+import { defaultModelOptions, providerServesChatModels } from "./settings/default-model";
 import { TooltipButton } from "./ui";
 import {
   aggregateToolTokenUsage,
@@ -35,6 +38,7 @@ const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS;
 export function ContextUsageInspector({
   usage,
   turnUsage,
+  compactedContextTokens,
   contextWindow,
   tools,
   responseDurationMs,
@@ -44,6 +48,7 @@ export function ContextUsageInspector({
   usage: MessageUsage;
   turnUsage: MessageUsage;
   contextWindow: number;
+  compactedContextTokens?: number;
   tools: UiMessage[];
   responseDurationMs?: number;
   responseOutputTokens?: number;
@@ -58,12 +63,65 @@ export function ContextUsageInspector({
       ? state.sessionCompactions[state.activeSessionId]?.at(-1)
       : undefined,
   );
+  const compactContext = useAppStore((state) => state.compactContext);
+  const sessionId = useAppStore((state) => state.activeSessionId);
+  const localSessionId = sessionId && !sessionId.startsWith("remote:") && !sessionId.startsWith("native-pi:") ? sessionId : undefined;
+  const providers = useAppStore((state) => state.providers);
+  const settings = useAppStore((state) => state.settings);
+  const showToast = useAppStore((state) => state.showToast);
+  const [selectedModel, setSelectedModel] = useState<{ providerId: string; modelId: string } | null>(null);
+  const [modelBusy, setModelBusy] = useState(false);
+  const [modelLoading, setModelLoading] = useState(false);
+  const imageModels = imageGenerationBindings(settings?.imageGenerationModels, settings?.imageGeneration);
+  const modelOptions = defaultModelOptions(
+    providers.filter((provider) => providerServesChatModels(provider, imageModels)),
+    imageModels,
+  );
+  const selectedIndex = selectedModel
+    ? modelOptions.findIndex(({ provider, modelId }) =>
+        provider.id === selectedModel.providerId && modelWireIdsEqual(modelId, selectedModel.modelId))
+    : -1;
+  useEffect(() => {
+    setSelectedModel(null);
+    if (!localSessionId) return;
+    let current = true;
+    setModelLoading(true);
+    void api.getSessionCompactionModel(localSessionId).then((model) => {
+      if (current) setSelectedModel(model);
+    }).catch((error) => {
+      if (current) showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    }).finally(() => {
+      if (current) setModelLoading(false);
+    });
+    return () => { current = false; };
+  }, [localSessionId, showToast]);
+
+  const changeCompactionModel = async (index: number) => {
+    if (!localSessionId || modelBusy) return;
+    const option = modelOptions[index];
+    const model = option ? { providerId: option.provider.id, modelId: option.modelId } : null;
+    setModelBusy(true);
+    try {
+      await api.setSessionCompactionModel(localSessionId, model);
+      if (useAppStore.getState().activeSessionId === localSessionId) setSelectedModel(model);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    } finally {
+      setModelBusy(false);
+    }
+  };
+  const isRunning = useAppStore((state) => state.isRunning);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [popoverPosition, setPopoverPosition] =
     useState<ContextInspectorPlacement | null>(null);
-  const context = calculateContextUsage(usage, contextWindow);
+  const context = calculateContextUsage(
+    compactedContextTokens !== undefined
+      ? { inputTokens: compactedContextTokens, outputTokens: 0, totalTokens: compactedContextTokens }
+      : usage,
+    contextWindow,
+  );
   // The display preference flips the leading figure only; capacity colors
   // still follow remaining space so the warning state keeps one meaning.
   const usageDisplay = useAppStore((state) =>
@@ -357,6 +415,42 @@ export function ContextUsageInspector({
           <strong title={compaction.summarized && !compaction.fallback && compaction.summary?.trim() ? compaction.summary : undefined}>~{formatCompactTokenCount(compaction.summaryTokens)}</strong>
         </div>
       ) : null}
+      <div className="context-inspector-actions">
+        {localSessionId ? (
+          <div className="context-inspector-model">
+            <label htmlFor={`${panelId}-model`}>{t("chat.sessionCompactionModel")}</label>
+            <select
+              id={`${panelId}-model`}
+              value={selectedModel ? (selectedIndex < 0 ? "unavailable" : String(selectedIndex)) : "follow"}
+              disabled={modelLoading || modelBusy}
+              onChange={(event) => void changeCompactionModel(event.target.value === "follow" ? -1 : Number(event.target.value))}
+              title={t("chat.sessionCompactionScope")}
+            >
+              <option value="follow">{t("chat.sessionCompactionFollow")}</option>
+              {selectedModel && selectedIndex < 0 ? (
+                <option value="unavailable">{t("chat.sessionCompactionUnavailable", {
+                  provider: providers.find((provider) => provider.id === selectedModel.providerId)?.name ?? selectedModel.providerId,
+                  model: selectedModel.modelId,
+                })}</option>
+              ) : null}
+              {modelOptions.map(({ provider, modelId }, index) => (
+                <option key={`${provider.id}:${modelId}`} value={index}>{provider.name} · {modelId}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          className="context-inspector-compact-btn"
+          disabled={isRunning}
+          onClick={() => {
+            closeInspector();
+            void compactContext();
+          }}
+        >
+          {t("chat.compactNow")}
+        </button>
+      </div>
     </div>
   ) : null;
 

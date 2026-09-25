@@ -6291,13 +6291,14 @@ describe("DesktopAgentRuntime inline context compaction", () => {
         type: "compaction_end",
         reason: "threshold",
         ok: true,
-        mark: {
+        mark: expect.objectContaining({
           id: expect.any(String),
           throughMessageId: "recent-user",
           generation: 1,
           summaryTokens: 7,
           summarized: true,
-        },
+          contextTokens: expect.any(Number),
+        }),
       }),
     );
     await runtime.dispose();

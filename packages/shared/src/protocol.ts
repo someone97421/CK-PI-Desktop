@@ -81,6 +81,8 @@ export const IPC = {
     speechSynthesize: "pi-desktop/speech/synthesize",
     speechGetStatus: "pi-desktop/speech/getStatus",
     agentCompact: "pi-desktop/agent/compact",
+    sessionCompactionModelGet: "pi-desktop/session/compactionModel/get",
+    sessionCompactionModelSet: "pi-desktop/session/compactionModel/set",
     agentAbort: "pi-desktop/agent/abort",
     agentStop: "pi-desktop/agent/stop",
     subagentStop: "pi-desktop/agent/subagent/stop",
