@@ -148,8 +148,8 @@ import {
   createExtensionAgentModels,
   createProviderModels,
   DEFAULT_CONTEXT_WINDOW,
+  providerRequestFetch,
   providerRequestKey,
-  providerRejectsCustomFetch,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { PathMutex } from "./path-lock.js";
@@ -1834,26 +1834,28 @@ Delegation rules:
               maxRetries: PROVIDER_REQUEST_MAX_RETRIES,
               sessionId: this.sessionId,
               // pi-ai only exposes onResponse after a request succeeds. Capture the
-              // failed response separately so a 429 can honor Retry-After headers.
-              // pi-ai's Google adapters reject any fetch that is not globalThis.fetch,
-              // so for those the wrapper is skipped entirely.
-              ...(providerRejectsCustomFetch(this.provider)
-                ? {}
-                : {
-                    fetch: captureProviderResponse(options?.fetch, (response, requestBytes, failure) => {
-                      this.providerResponseStatus = response?.status;
-                      this.providerRequestBytes = requestBytes;
-                      this.providerFetchFailure = failure;
-                      if (failure) this.recoverProviderTransport(failure);
-                      // A gateway 502/503 can also state Retry-After, so keep headers for
-                      // every status whose delay is usable instead of only for 429.
-                      this.providerRetryHeaders = carriesRetryDelayHeaders(
-                        response?.status,
-                      )
-                        ? response?.headers
-                        : undefined;
-                    }),
-                  }),
+              // failed response separately so a 429 can honor Retry-After headers,
+              // and capture the transport cause of a rejection while the original
+              // Error still exists (issue #234).
+              fetch: providerRequestFetch(
+                m.api,
+                captureProviderResponse(
+                  options?.fetch,
+                  (response, requestBytes, failure) => {
+                    this.providerResponseStatus = response?.status;
+                    this.providerRequestBytes = requestBytes;
+                    this.providerFetchFailure = failure;
+                    if (failure) this.recoverProviderTransport(failure);
+                    // A gateway 502/503 can also state Retry-After, so keep headers
+                    // for every status whose delay is usable, not only for 429.
+                    this.providerRetryHeaders = carriesRetryDelayHeaders(
+                      response?.status,
+                    )
+                      ? response?.headers
+                      : undefined;
+                  },
+                ),
+              ),
               onResponse: async (response, responseModel) => {
                 this.providerResponseStatus = response.status;
                 await options?.onResponse?.(response, responseModel);
@@ -1868,7 +1870,7 @@ Delegation rules:
             copilotRequestHeaders(this.provider, context),
             this.provider.headers,
           ),
-          !providerRejectsCustomFetch(this.provider),
+          m.api,
         );
         const hookedOptions = this.withExtensionProviderHooks(requestOptions, m);
         // The watchdog must be able to *stop* what it abandons. It wraps the

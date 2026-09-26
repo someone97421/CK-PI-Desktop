@@ -2,7 +2,7 @@ import {
   buildProviderModel,
   copilotRequestHeaders,
   createProviderModels,
-  providerRejectsCustomFetch,
+  providerRequestFetch,
   providerRequestKey,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
@@ -62,9 +62,6 @@ export function subagentModelBinding(opts: {
       retry.headers = undefined;
       retry.status = undefined;
       retry.failure = undefined;
-      // pi-ai's Google adapters reject any fetch that is not globalThis.fetch, so
-      // the 429-capture wrapper is skipped for them.
-      const rejectsCustomFetch = providerRejectsCustomFetch(opts.provider);
       const requestOptions = withProviderHeaders(
         withOpenCodeSessionHeaders(
           {
@@ -75,22 +72,18 @@ export function subagentModelBinding(opts: {
             maxTokens: clampOutputToContext(m, context, options?.maxTokens),
             maxRetries: 0,
             sessionId: opts.sessionId,
-            ...(rejectsCustomFetch
-              ? {}
-              : {
-                  fetch: captureProviderResponse(
-                    options?.fetch,
-                    (response, _bytes, failure) => {
-                      retry.failure = failure;
-                      retry.status = response?.status;
-                      retry.headers = carriesRetryDelayHeaders(
-                        response?.status,
-                      )
-                        ? response?.headers
-                        : undefined;
-                    },
-                  ),
-                }),
+            fetch: providerRequestFetch(
+              m.api,
+              captureProviderResponse(options?.fetch, (response, _bytes, failure) => {
+                retry.failure = failure;
+                retry.status = response?.status;
+                retry.headers = carriesRetryDelayHeaders(
+                  response?.status,
+                )
+                  ? response?.headers
+                  : undefined;
+              }),
+            ),
           },
           {
             ...openCodeEndpointFromProvider(opts.provider, m),
@@ -101,7 +94,7 @@ export function subagentModelBinding(opts: {
           copilotRequestHeaders(opts.provider, context),
           opts.provider.headers,
         ),
-        !rejectsCustomFetch,
+        m.api,
       );
       return createProviderRetryStream(
         m,

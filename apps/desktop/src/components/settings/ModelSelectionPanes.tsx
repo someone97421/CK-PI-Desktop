@@ -8,7 +8,7 @@
  * guarantee lives here once instead of in a convention two files had to
  * remember.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import {
   THINKING_LEVELS,
@@ -20,7 +20,7 @@ import {
   modelMatchesFilter,
   nativeWebSearchSupportedOn,
   publishedThinkingLevels,
-  resolveBindingContextWindow,
+  resolveBindingLimits,
   resolveBindingDefaultThinkingLevel,
   sortThinkingLevels,
   type ModelBinding,
@@ -44,7 +44,7 @@ import {
   customModelSeedBinding,
   type CustomModelLookupContext,
 } from "./model-custom-lookup";
-import { describeModelsFetchError } from "./model-fetch-error";
+import { ModelsFetchErrorMessage } from "./ModelsFetchErrorMessage";
 import type { ProviderModelsState } from "./useProviderModels";
 import { useModelReorder } from "./useModelReorder";
 
@@ -210,6 +210,10 @@ export type ModelSelectionPanesProps = {
    * limits; absent fields only widen the catalog search.
    */
   lookupContext?: CustomModelLookupContext;
+  /** Attached to the hand-typed id field, so a caller can focus it. */
+  customModelInputRef?: Ref<HTMLInputElement>;
+  /** The chosen list is exactly what the recommendation picked. */
+  autoPicked?: boolean;
 };
 
 /**
@@ -227,6 +231,8 @@ export function ModelSelectionPanes({
   imageModelIds,
   lookupContext,
   onImageModelChange,
+  customModelInputRef,
+  autoPicked = false,
 }: ModelSelectionPanesProps) {
   const { t } = useTranslation();
   const { rows, models, publishedLevelsById, setModels } = selection;
@@ -234,9 +240,7 @@ export function ModelSelectionPanes({
   const [chosenQuery, setChosenQuery] = useState("");
   const [customModelId, setCustomModelId] = useState("");
   const [customModelError, setCustomModelError] = useState("");
-  // Keep fetched selections scannable. Expanding the first row by default can
-  // fill the pane with its controls and push every other checked model below
-  // the fold, which makes a successful multi-select look empty.
+  // Keep selections scannable; advanced settings stay folded until requested.
   const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
 
   // The returned list is short and already local, so filtering is client-side:
@@ -357,8 +361,14 @@ export function ModelSelectionPanes({
     } catch {
       return;
     }
-    // A catalog hit for a different wire id is not metadata for this row.
-    if (info && info.modelId.toLowerCase() !== seed.id.toLowerCase()) return;
+    /*
+      The host answered for the id this row was added with, so the record is this
+      row's — including when the same model is published under another spelling
+      of it (a route prefix, a date, a marker the deployment appends). That is the
+      resolution the runtime reads for the row too, so checking the spelling again
+      here would only drop an answer the rest of the app uses. The stored wire id
+      stays exactly what the user typed.
+    */
     setModels((current) => applyCustomModelLookup(current, seed, info));
   };
 
@@ -559,6 +569,9 @@ export function ModelSelectionPanes({
             />
           </div>
         </div>
+        {autoPicked && models.length > 0 ? (
+          <div className="provider-models-summary-hint">{t("settings.modelsAutoPicked")}</div>
+        ) : null}
         {models.length === 0 ? (
           <div className="provider-chosen-empty">{t("settings.noModelsChosen")}</div>
         ) : visibleChosen.length === 0 ? (
@@ -582,7 +595,7 @@ export function ModelSelectionPanes({
                 : undefined;
               const followsCatalog =
                 publishedContextWindow != null && publishedContextWindow > 0 &&
-                resolveBindingContextWindow(
+                resolveBindingLimits(
                   { contextWindow: publishedContextWindow }, binding,
                 ).binding.contextWindowSource === "catalog";
               const publishedDocuments = info ? modelMatchesFilter(info, "pdf") : false;
@@ -975,6 +988,7 @@ export function ModelSelectionPanes({
           >
             <div className="provider-custom-model-row">
               <Input
+                ref={customModelInputRef}
                 value={customModelId}
                 placeholder={t("settings.customModelPlaceholder")}
                 className="font-mono text-sm"
@@ -996,58 +1010,6 @@ export function ModelSelectionPanes({
           </Field>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ModelsFetchErrorMessage({
-  error,
-  variant,
-}: {
-  error?: string;
-  variant: "banner" | "placeholder";
-}) {
-  const { t } = useTranslation();
-  const view = describeModelsFetchError(error);
-  let summary = t("settings.modelsFetchFailed");
-  switch (view.kind) {
-    case "unauthorized":
-      summary = t("errors.PROVIDER_UNAUTHORIZED");
-      break;
-    case "notFound":
-      summary = t("settings.modelsFetchNotFound");
-      break;
-    case "rateLimited":
-      summary = t("errors.PROVIDER_RATE_LIMITED");
-      break;
-    case "timeout":
-      summary = t("errors.TIMEOUT");
-      break;
-    case "network":
-      summary = t("errors.NETWORK_ERROR");
-      break;
-    case "invalidResponse":
-      summary = t("settings.modelsFetchInvalidResponse");
-      break;
-    case "http":
-      summary = t("settings.modelsFetchFailedStatus", {
-        status: view.summaryParams?.status ?? 0,
-      });
-      break;
-  }
-  const className =
-    variant === "placeholder"
-      ? "provider-models-placeholder is-error"
-      : "provider-models-note is-error";
-  return (
-    <div className={className} role="alert">
-      <span className="provider-models-error-summary">{summary}</span>
-      {view.detail ? (
-        <span className="provider-models-error-detail">{view.detail}</span>
-      ) : null}
-      {variant === "placeholder" ? (
-        <span className="provider-models-error-hint">{t("settings.modelsFetchHint")}</span>
-      ) : null}
     </div>
   );
 }

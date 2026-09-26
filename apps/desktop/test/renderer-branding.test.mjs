@@ -56,11 +56,15 @@ test("app chrome uses the shared brand asset without branding the composer input
   assert.match(mascotLogo, /assets\/brand\/logo-dark\.png/);
   assert.match(mascotLogo, /className="home-mascot-logo"/);
   assert.match(mascotLogo, /aria-hidden="true"/);
-  assert.match(mascotLogo, /className="home-mascot-dinosaur"/);
+  assert.match(mascotLogo, /className=\{home \? "home-mascot-media" : "home-mascot-dinosaur"\}/);
+  assert.match(mascotLogo, /useAppearanceMedia\(\)\.home/);
+  assert.match(mascotLogo, /homeMediaSize \?\? 100/);
+  assert.match(mascotLogo, /src=\{home\?\.url \?\? mascotUrl\}/);
+  assert.match(mascotLogo, /setFailedUrl\(home\.url\)/);
   assert.doesNotMatch(mascotLogo, /<svg/);
   assert.doesNotMatch(
     mascotLogo,
-    /home-mascot-groups\.png|home-mascot-orbit|Math\.random\(\)|setTimeout|backgroundPosition|onMouseEnter|onMouseLeave|useState|useEffect|matchMedia/,
+    /home-mascot-groups\.png|home-mascot-orbit|Math\.random\(\)|setTimeout|backgroundPosition|onMouseEnter|onMouseLeave|matchMedia/,
   );
   assert.doesNotMatch(chatSurface, /<BrandLogo/);
   assert.match(styles, /\.empty-hero-icon\s*\{[\s\S]*?height:\s*100px;[\s\S]*?width:\s*100px;/);

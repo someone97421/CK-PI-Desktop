@@ -60,6 +60,10 @@ import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url"
 import { absoluteImagePath, remarkLocalImagePaths } from "../lib/markdown-image-paths";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import {
+  useChatFileMenuItems,
+  type ChatFileMenuTarget,
+} from "../hooks/use-chat-file-menu";
+import {
   isLocalFileHref,
   remarkChatFileLinks,
   rehypeWindowsFileLinks,
@@ -411,6 +415,13 @@ const MarkdownBlockContext = createContext({
 });
 
 const MarkdownBaseDirContext = createContext("");
+/** 本地图片及其占位按钮共享菜单；链接和行内代码由 FileRefTarget 提供文件操作。 */
+const MarkdownFileMenuContext = createContext<OpenMarkdownFileMenu | null>(null);
+
+type OpenMarkdownFileMenu = (
+  event: React.MouseEvent<HTMLElement>,
+  target: ChatFileMenuTarget,
+) => void;
 
 function extractCode(children: ReactNode): { code: string; lang: string } | null {
   const element = Array.isArray(children)
@@ -590,8 +601,9 @@ function Anchor({
   }
 
   /*
-    A link keeps the renderer's own menu instead of the platform's so both
-    destinations the app can send it to stay one press away.
+    A link keeps the renderer's own menu so both destinations the app can send
+    it to stay one press away. File links use FileRefTarget; HTTP links
+    keep the external, work-panel, and copy actions below.
   */
   const onContextMenu = (event: React.MouseEvent<HTMLAnchorElement>) => {
     if (!href || !/^https?:\/\//i.test(href)) return;
@@ -708,6 +720,7 @@ function MarkdownImage({
   const root = useAppStore((s) => s.workspace?.path);
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
+  const openFileMenu = useContext(MarkdownFileMenuContext);
   const fileTitle = usePreviewTitle("file");
   const urlTitle = usePreviewTitle("url");
   const source = typeof src === "string" ? src : "";
@@ -724,6 +737,16 @@ function MarkdownImage({
   // Always run the hook before any branch so hook order stays stable when a
   // streaming src flips between remote and local. Remote images pass null.
   const dataUrl = useReferencedImageDataUrl(isRemote ? null : localRef);
+
+  /*
+    A file the renderer can already show is still a file whose folder the user
+    may want, so a local image carries the same menu its chip fallback does.
+  */
+  const onLocalContextMenu =
+    localRef && openFileMenu
+      ? (event: React.MouseEvent<HTMLElement>) =>
+          openFileMenu(event, { path: localRef, baseDir })
+      : undefined;
   if (isRemote) {
     return (
       <img
@@ -745,6 +768,7 @@ function MarkdownImage({
         className="chat-image-local"
         title={rel ? fileTitle : source}
         onClick={localRef ? () => openFileRef(localRef, baseDir) : undefined}
+        onContextMenu={onLocalContextMenu}
       />
     );
   }
@@ -756,6 +780,7 @@ function MarkdownImage({
         {...sourcePositionProps(rest)}
         title={fileTitle}
         onClick={() => openFileRef(localRef, baseDir)}
+        onContextMenu={onLocalContextMenu}
       >
         <IconImage size={14} aria-hidden />
         <span>{alt || localRef.split("/").pop()}</span>
@@ -996,6 +1021,18 @@ export const Markdown = memo(function Markdown({
   baseDir?: string;
 }) {
   const workspaceRoot = useAppStore((s) => s.workspace?.path);
+
+  // 图片菜单由整个 Markdown 树持有，流式块替换不会卸载菜单。
+  const fileMenuItems = useChatFileMenuItems();
+  const {
+    contextMenu: fileMenu,
+    openContextMenu: openFileMenu,
+    closeContextMenu: closeFileMenu,
+  } = useContextMenu();
+  const openMarkdownFileMenu = useCallback<OpenMarkdownFileMenu>(
+    (event, target) => openFileMenu(event, { items: fileMenuItems(target) }),
+    [fileMenuItems, openFileMenu],
+  );
   // Keep normalization length-preserving so source anchors and the bracket
   // display plugin still address the original text. Block splitting uses the
   // same math grammar as rendering, including unclosed streaming math blocks.
@@ -1006,23 +1043,26 @@ export const Markdown = memo(function Markdown({
   const blocks = useBlocks(normalizedSource);
   let sourceOffset = 0;
   return (
-    <MarkdownBaseDirContext.Provider value={baseDir ?? ""}>
-      {blocks.map((raw, i) => {
-        const start = sourceOffset;
-        sourceOffset = start + raw.length;
-        const originalRaw = source.slice(start, start + raw.length);
-        return (
-          <Block
-            key={i}
-            raw={raw}
-            originalRaw={originalRaw}
-            sourceOffset={start}
-            renderDiagrams={renderDiagrams}
-            workspaceRoot={workspaceRoot}
-            baseDir={baseDir}
-          />
-        );
-      })}
-    </MarkdownBaseDirContext.Provider>
+    <MarkdownFileMenuContext.Provider value={openMarkdownFileMenu}>
+      <MarkdownBaseDirContext.Provider value={baseDir ?? ""}>
+        {blocks.map((raw, i) => {
+          const start = sourceOffset;
+          sourceOffset = start + raw.length;
+          const originalRaw = source.slice(start, start + raw.length);
+          return (
+            <Block
+              key={i}
+              raw={raw}
+              originalRaw={originalRaw}
+              sourceOffset={start}
+              renderDiagrams={renderDiagrams}
+              workspaceRoot={workspaceRoot}
+              baseDir={baseDir}
+            />
+          );
+        })}
+      </MarkdownBaseDirContext.Provider>
+      <ContextMenu state={fileMenu} onClose={closeFileMenu} />
+    </MarkdownFileMenuContext.Provider>
   );
 });

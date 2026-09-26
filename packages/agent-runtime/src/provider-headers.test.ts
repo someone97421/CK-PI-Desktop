@@ -138,25 +138,33 @@ describe("withProviderHeaders", () => {
     expect(base).toHaveBeenCalledOnce();
   });
 
-  it("keeps the headers but forwards no fetch when wrapping is disabled", () => {
+  it("keeps the headers but drops the fetch for the Google adapters", () => {
     const base = vi.fn(async () => new Response("ok"));
     const result = withProviderHeaders(
-      { headers: { "User-Agent": "sdk" }, fetch: base },
+      { headers: { "User-Agent": "pi-desktop/0.0.0" }, fetch: base },
       { "X-Gateway": "1" },
-      false,
+      "google-generative-ai",
     );
     expect(result.headers).toMatchObject({
-      "User-Agent": "sdk",
+      "User-Agent": "pi-desktop/0.0.0",
       "X-Gateway": "1",
     });
     expect(result.fetch).toBeUndefined();
     expect(base).not.toHaveBeenCalled();
   });
 
-  it("drops a caller-supplied fetch even when no headers are configured", () => {
+  it("clears an inherited fetch for a Google adapter with no header override", () => {
     const base = vi.fn(async () => new Response("ok"));
-    const result = withProviderHeaders({ fetch: base }, undefined, false);
+    const result = withProviderHeaders({ fetch: base }, undefined, "google-generative-ai");
     expect(result.fetch).toBeUndefined();
+    expect(base).not.toHaveBeenCalled();
+  });
+
+  it("returns the caller's options untouched for every other adapter", () => {
+    const base = vi.fn(async () => new Response("ok"));
+    const options = { fetch: base };
+    expect(withProviderHeaders(options, undefined, "openai-completions")).toBe(options);
+    expect(withProviderHeaders(options, {}, "anthropic-messages")).toBe(options);
   });
 });
 

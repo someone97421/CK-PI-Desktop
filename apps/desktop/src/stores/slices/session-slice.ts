@@ -241,6 +241,7 @@ export function createSessionSlice({
         );
       }
       set({ selectingSessionId: id, page: "chat" });
+      const outcomeAcknowledgement = get().acknowledgeSessionOutcome(id);
 
       const commitSelection = (
         messages: UiMessage[],
@@ -420,7 +421,6 @@ export function createSessionSlice({
         }
         rememberSessionCompactions(id, detail.session);
         void get().restorePendingPlan(id);
-        void get().acknowledgeSessionOutcome(id);
         const selected = get().sessions.find((session) => session.id === id);
         if (
           selected &&
@@ -459,6 +459,7 @@ export function createSessionSlice({
           }
         }
       } finally {
+        await outcomeAcknowledgement;
         if (runtime.isCurrentSessionSelection(selection)) {
           runtime.clearSessionSelection(selection);
           set((state) =>

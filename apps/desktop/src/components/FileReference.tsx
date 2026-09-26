@@ -304,6 +304,9 @@ function FileRefMenu({
         ? resolution.match.absolutePath
         : resolution.relativePath;
     const displayPath = fileRefDisplayPath(rawRef, resolution, root);
+    const relativePath = resolution.status === "file"
+      ? resolution.match.root === "workspace" ? resolution.match.relativePath : null
+      : resolution.relativePath;
     body = (
       <>
         {resolution.status === "file" ? (
@@ -344,6 +347,17 @@ function FileRefMenu({
         >
           <IconCopy size={14} />
           {t("chat.fileMenuCopyPath")}
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          disabled={!relativePath}
+          onClick={() => {
+            if (relativePath) runCopy(relativePath, t("chat.filePathCopied"));
+          }}
+        >
+          <IconCopy size={14} />
+          {t("chat.copyRelativePath")}
         </button>
         <button
           type="button"

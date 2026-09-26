@@ -5,6 +5,7 @@ import { catalogs, resolveLocale } from "@pi-desktop/i18n";
 import { isNetUrlAllowed, THEME_ASSET_SCHEME } from "@pi-desktop/plugin-sdk";
 import { builtinWindowBackground } from "@pi-desktop/shared";
 import { suppressLinuxFramelessSystemMenu } from "./frameless-system-menu";
+import { PanelSenders, pageGoneWithin, resolvePanelInvocation } from "./plugin-panel-senders";
 import {
   isPluginPanelWindowControlAction,
   isPluginWidgetAction,
@@ -334,6 +335,13 @@ export class PluginPanelHost {
     id: string;
     canceled: boolean;
   }>();
+  /**
+   * Identity of the panel pages allowed to use the bridge, keyed by web
+   * contents. A page belongs to its plugin for as long as it exists, not only
+   * while `windows` still lists its surface as open, so a call that arrives
+   * while the host is closing that surface is still the panel's own call.
+   */
+  private senders = new PanelSenders();
 
   constructor(
     bridge: BridgeHandler,
@@ -369,8 +377,16 @@ export class PluginPanelHost {
     ipcMain.handle(
       "pi-plugin-panel-invoke",
       async (event, rawChannel: unknown, rawPayload: unknown) => {
-        const pluginId = this.pluginIdForSender(event.sender.id);
-        if (!pluginId) throw new Error("invalid panel invoker");
+        const invocation = resolvePanelInvocation(
+          this.pluginIdForSender(event.sender.id),
+          event.sender.isDestroyed(),
+        );
+        if (invocation.kind === "foreign") throw new Error("invalid panel invoker");
+        // A page that is already gone can never read the answer: the call is the
+        // tail of the teardown that closed its surface. Settle it rather than
+        // dispatching into a plugin runtime that may already be stopping.
+        if (invocation.kind === "gone") return;
+        const pluginId = invocation.pluginId;
         const channel = String(rawChannel ?? "");
         const payload =
           rawPayload && typeof rawPayload === "object"
@@ -425,7 +441,13 @@ export class PluginPanelHost {
       PLUGIN_PANEL_WINDOW_CONTROL_CHANNEL,
       async (event, rawAction: unknown) => {
         const window = this.windowForSender(event.sender.id);
-        if (!window) throw new Error("invalid panel window control invoker");
+        if (!window) {
+          // The capsule asks for `getState` on install and for `close` while the
+          // surface tears down; a page that is already gone cannot read either
+          // answer, so it is settled rather than reported as an invalid invoker.
+          if (event.sender.isDestroyed()) return;
+          throw new Error("invalid panel window control invoker");
+        }
         if (!isPluginPanelWindowControlAction(rawAction)) {
           throw new Error("unsupported panel window control action");
         }
@@ -465,7 +487,14 @@ export class PluginPanelHost {
     );
   }
 
+  /**
+   * The plugin a bridge call belongs to. Panel identity comes from `senders`,
+   * which outlives the host's record of open windows; the resolvers cover the
+   * docked work-panel views owned by `PluginViewHost`.
+   */
   private pluginIdForSender(senderId: number): string | null {
+    const own = this.senders.pluginFor(senderId);
+    if (own) return own;
     for (const [pluginId, win] of this.windows) {
       if (!win.isDestroyed() && win.webContents.id === senderId) return pluginId;
     }
@@ -654,10 +683,13 @@ export class PluginPanelHost {
           if (existing.isMinimized()) existing.restore();
           existing.show();
           existing.focus();
+          return;
         }
-        return;
+        // The microphone prompt is asynchronous: the panel can be closed while
+        // the user answers it, and a destroyed window has no `show`. Fall
+        // through and build the requested panel instead of reusing a window
+        // that is gone.
       }
-
       const partition = pluginSessionPartition(request.pluginId);
       const ses = session.fromPartition(partition, { cache: true });
       this.applyEgressPolicy(ses, request);
@@ -715,7 +747,6 @@ export class PluginPanelHost {
       // A panel gets exactly one web contents. `window.open` would otherwise mint
       // a chromeless window outside the egress policy applied above.
       win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-
       const sendWindowState = () => {
         if (win.isDestroyed() || win.webContents.isDestroyed()) return;
         win.webContents.send(PLUGIN_PANEL_WINDOW_STATE_CHANNEL, {
@@ -725,7 +756,6 @@ export class PluginPanelHost {
       win.on("maximize", sendWindowState);
       win.on("unmaximize", sendWindowState);
       win.webContents.on("did-finish-load", sendWindowState);
-
       // `closed` fires after the native window is gone. Copy the contents id
       // while the window is still alive; reading `webContents` later throws
       // "Object has been destroyed" and surfaces an uncaught main-process dialog.
@@ -734,6 +764,10 @@ export class PluginPanelHost {
       win.on("closed", () => {
         this.pendingDrops.delete(webContentsId);
         this.widgetLocales.delete(webContentsId);
+        this.senders.release(webContentsId);
+        // Only when this window is still the registered one: a page that closes
+        // slowly can already have been replaced by a newer panel window for the
+        // plugin, and that newer entry has to survive the predecessor's teardown.
         if (this.windows.get(request.pluginId) === win) {
           this.windows.delete(request.pluginId);
         }
@@ -745,34 +779,39 @@ export class PluginPanelHost {
           { id: PLUGIN_PANEL_PRIMARY_WIDGET_ID },
         );
       });
-
       if (token.canceled) {
         if (!win.isDestroyed()) win.destroy();
         return;
       }
-
       this.windows.set(request.pluginId, win);
-
+      // The page can call the bridge from its first script, so its identity is
+      // registered before the document loads and released only when the page is
+      // gone (see the `closed` handler above).
+      this.senders.register(webContentsId, request.pluginId);
       try {
         await win.loadURL(pathToFileURL(request.htmlPath).toString());
       } catch (err) {
-        if (token.canceled || win.isDestroyed()) return;
+        if (token.canceled || win.isDestroyed()) {
+          this.senders.release(webContentsId);
+          if (this.windows.get(request.pluginId) === win) {
+            this.windows.delete(request.pluginId);
+          }
+          return;
+        }
         throw err;
       }
-
       if (token.canceled) {
         if (!win.isDestroyed()) win.destroy();
+        this.senders.release(webContentsId);
         if (this.windows.get(request.pluginId) === win) {
           this.windows.delete(request.pluginId);
         }
         return;
       }
-
       if (!win.isDestroyed()) {
         win.show();
       }
     })();
-
     this.pendingOpens.set(request.pluginId, { token, promise });
     try {
       await promise;
@@ -782,11 +821,15 @@ export class PluginPanelHost {
       }
     }
   }
-
   /**
    * Close every window of one plugin: its primary surface and every extra
    * widget. Unload, a crash and a self-inflicted `ui.closePanel` all land here,
    * so a plugin that is going away can never leave a widget on screen.
+   *
+   * Each page close is bounded: the page may still be finishing, and
+   * its bridge calls have to reach a live plugin runtime while it does; a page
+   * that refuses to close (`beforeunload`) settles at the budget instead of
+   * holding the call forever. A refused close leaves the panel registered.
    */
   async close(pluginId: string): Promise<void> {
     const pending = this.pendingOpens.get(pluginId);
@@ -798,38 +841,47 @@ export class PluginPanelHost {
     // it must not finish by handing the plugin a window nothing can dismiss.
     this.cancelPendingWidgetOpens((entry) => entry.pluginId === pluginId);
     this.panelRequests.delete(pluginId);
+    const closingPages: Promise<void>[] = [];
     for (const [key, record] of [...this.widgetWindows]) {
       if (record.pluginId !== pluginId) continue;
-      this.widgetWindows.delete(key);
-      if (!record.win.isDestroyed()) record.win.close();
+      if (record.win.isDestroyed()) {
+        this.widgetWindows.delete(key);
+        continue;
+      }
+      const page = record.win.webContents;
+      record.win.close();
+      closingPages.push(pageGoneWithin(page));
     }
     const win = this.windows.get(pluginId);
-    if (!win || win.isDestroyed()) {
-      if (this.windows.get(pluginId) === win) {
-        this.windows.delete(pluginId);
-      }
-      return;
-    }
-    win.close();
-    if (this.windows.get(pluginId) === win) {
+    if (win && !win.isDestroyed()) {
+      const page = win.webContents;
+      win.close();
+      closingPages.push(pageGoneWithin(page));
+    } else if (this.windows.get(pluginId) === win) {
       this.windows.delete(pluginId);
     }
+    await Promise.allSettled(closingPages);
   }
-
+  /**
+   * Close every panel and widget and wait for those pages to be gone, so a
+   * caller can stop the plugin runtime and the host afterwards. Shutdown relies
+   * on that order: a call a closing page already sent is otherwise answered by a
+   * runtime that is already shutting down, and is reported as a bridge failure
+   * nobody can act on.
+   */
   async closeAll(): Promise<void> {
     for (const pending of this.pendingOpens.values()) {
       pending.token.canceled = true;
     }
     this.pendingOpens.clear();
     this.cancelPendingWidgetOpens(() => true);
-    for (const pluginId of [
+    const pluginIds = [
       ...new Set([
         ...this.windows.keys(),
         ...[...this.widgetWindows.values()].map((record) => record.pluginId),
       ]),
-    ]) {
-      await this.close(pluginId);
-    }
+    ];
+    await Promise.allSettled(pluginIds.map((pluginId) => this.close(pluginId)));
     this.widgetWindows.clear();
     this.panelRequests.clear();
   }
@@ -1093,6 +1145,8 @@ export class PluginPanelHost {
       win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       const webContentsId = win.webContents.id;
       this.widgetLocales.set(webContentsId, entry.locale);
+      this.senders.register(webContentsId, pluginId);
+      win.webContents.once("destroyed", () => this.senders.release(webContentsId));
       win.on("closed", () => {
         this.pendingDrops.delete(webContentsId);
         this.widgetLocales.delete(webContentsId);
