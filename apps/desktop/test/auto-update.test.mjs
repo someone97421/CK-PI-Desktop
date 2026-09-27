@@ -44,7 +44,7 @@ const [
   read("../../../docs/archive/github/workflows/release.yml"),
   read("../../../packages/i18n/src/locales/en/index.ts"),
   read("../../../packages/i18n/src/locales/zh-CN/index.ts"),
-  read("../../../packages/shared/src/changelog.ts"),
+  read("../../../packages/shared/src/fork-changelog.ts"),
 ]);
 
 test("update IPC channels are declared and whitelisted for the preload bridge", () => {
@@ -90,14 +90,19 @@ test("main process registers update handlers and the auto-check lifecycle", () =
   assert.match(mainSource, /updater\.dispose\(\)/);
 });
 
-test("updater gates delivery mode by platform and delivery policy", () => {
-  // macOS stays manual-delivery even for notarized artifacts; dev builds are
-  // disabled outright.
-  assert.match(updaterSource, /if \(!isPackaged\) return "disabled"/);
-  assert.match(updaterSource, /win32.*in-app|in-app.*win32/s);
-  assert.match(updaterSource, /PORTABLE_EXECUTABLE_FILE \? "manual"/);
-  assert.match(updaterSource, /APPIMAGE/);
-  assert.match(updaterSource, /autoInstallOnAppQuit = true/);
+test("updater gates delivery by platform and saved preference", () => {
+  assert.match(updaterSource, /resolveUpdateModePolicy/);
+  assert.match(updaterSource, /resolveDefaultUpdatePreference/);
+  assert.match(updaterSource, /supportsAutomaticUpdates/);
+  assert.match(updaterSource, /autoUpdater\.autoDownload = false/);
+  assert.match(updaterSource, /autoUpdater\.autoInstallOnAppQuit = false/);
+  assert.match(updaterSource, /autoUpdater\.autoDownload = mode === "in-app"/);
+  assert.match(updaterSource, /autoUpdater\.autoInstallOnAppQuit = mode === "in-app"/);
+  assert.match(updaterSource, /this\.applyPreference\(preference, false\)/);
+  assert.match(updaterSource, /manualReminderTracker/);
+  assert.match(updaterSource, /applyPreference\(this\.preference, false\)/);
+  assert.match(updaterSource, /resolveStoredUpdatePreference/);
+  assert.match(updaterSource, /if \(!preferenceChanged\) return/);
   assert.match(
     updaterSource,
     /allowPrerelease = false/,
@@ -169,13 +174,17 @@ test("renderer exposes the updates API, banner and settings row", () => {
   assert.match(bannerSource, /releaseNotes/);
   assert.match(bannerSource, /availableVersion}:\$\{update\.status/);
   assert.match(bannerSource, /className="update-notice"/);
+  assert.match(bannerSource, /manualReminder === true/);
   assert.match(bannerSource, /role="progressbar"/);
-  assert.match(settingsSource, /<UpdatesRow currentVersion=/);
+  assert.match(settingsSource, /<UpdatesRow[\s\S]*currentVersion=\{version\?\.version\}/);
+  assert.match(settingsSource, /settings=\{settings\}/);
+  assert.match(settingsSource, /saveSettings=\{saveSettings\}/);
   assert.match(settingsSource, /update-settings-notes/);
   assert.match(settingsSource, /updates\.whatsNew/);
   assert.match(settingsSource, /updates\.releaseNotes/);
   assert.match(settingsSource, /<ReleaseNotesDialog/);
   assert.match(releaseNotesDialogSource, /CHANGELOG\[locale\]/);
+  assert.match(releaseNotesDialogSource, /FORK_CHANGELOG as CHANGELOG/);
   assert.match(releaseNotesDialogSource, /new Intl\.DateTimeFormat\(locale,/);
   assert.match(releaseNotesDialogSource, /role="dialog"/);
   assert.match(releaseNotesDialogSource, /aria-modal="true"/);
@@ -214,6 +223,13 @@ test("check-for-updates is reachable from the application menu", () => {
       "closeReleaseNotes",
       "currentBadge",
       "availableBadge",
+      "preferenceTitle",
+      "preferenceDesc",
+      "automatic",
+      "manual",
+      "automaticUnsupported",
+      "automaticPortableWarning",
+      "preferenceSaveFailed",
     ]) {
       assert.match(source, new RegExp(`${key}:`), key);
     }
@@ -265,7 +281,7 @@ test("packaging publishes an electron-updater feed for GitHub Releases", () => {
   assert.equal(pkg.build.portable.requestExecutionLevel, "user");
   assert.equal(
     pkg.build.portable.unpackDirName,
-    "PI-Desktop-Portable",
+    "this-is-a-agent-Portable",
     "portable extraction path stays stable for Windows taskbar identity",
   );
   // The upload step must carry every updater feed, and the release publishes
@@ -276,18 +292,32 @@ test("packaging publishes an electron-updater feed for GitHub Releases", () => {
   assert.match(releaseWorkflowSource, /files: dist\/\*/);
 });
 
-test("shared shipped-locale changelog is the in-app notes source of truth", () => {
-  assert.match(changelogSource, /export const CHANGELOG/);
-  assert.match(changelogSource, /formatChangelogNotes/);
-  assert.match(changelogSource, /"zh-CN"/);
-  assert.match(changelogSource, /ChangelogLocale = "en" \| "zh-CN"/);
-  assert.match(changelogSource, /version: "0\.2\.7"/);
+test("fork shipped-locale changelog supplies the in-app notes", () => {
+  assert.match(changelogSource, /export const FORK_CHANGELOG/);
+  assert.match(changelogSource, /formatForkChangelogNotes/);
+  assert.match(changelogSource, /APP_VERSION, date, highlights/);
+  assert.match(updaterSource, /formatForkChangelogNotes\(version, this\.getLocale\(\)\)/);
+  assert.match(changelogSource, /"zh-CN": zh/);
   assert.match(
     mainSource,
-    /getLocale:\s*\(\)\s*=>\s*updaterLocale/,
+    /getLocale:\s*\(\)\s*=>\s*(?:updaterLocale|mainState\.updaterLocale)/,
     "Main supplies product locale to the updater for note selection",
   );
   assert.match(mainSource, /updater\.refreshReleaseNotes\(\)/);
   assert.match(stylesSource, /\.update-notice-notes/);
   assert.match(stylesSource, /\.update-settings-notes/);
+});
+
+test("update cache relocation and cleanup preserve the delta-update path", async () => {
+  const updateCacheSource = await read("../electron/main/update-cache.ts");
+  const maintenanceSource = await read("../electron/main/update-cache-maintenance.ts");
+  assert.match(updateCacheSource, /PI_DESKTOP_UPDATE_CACHE_DIR/);
+  assert.match(updaterSource, /new RelocatedNsisUpdater\(baseCachePath\)/);
+  assert.match(updaterSource, /relocateUpdateCacheBasePath\(this\.app, baseCachePath\)/);
+  assert.match(updaterSource, /forkUpdateCacheBasePath\(requestedCacheBasePath, APP_SLUG\)/);
+  assert.match(maintenanceSource, /readFileSync\([\s\S]*app-update\.yml/);
+  assert.match(mainSource, /reclaimRelocatedUpdateCache/);
+  assert.match(updateCacheSource, /UPDATE_INSTALLER_BASELINE_NAME/);
+  assert.match(updateCacheSource, /UPDATE_BLOCKMAP_BASELINE_NAME/);
+  assert.match(updateCacheSource, /UPDATE_DOWNLOAD_DIR_NAME/);
 });

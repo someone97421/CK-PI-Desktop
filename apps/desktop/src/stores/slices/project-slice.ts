@@ -1,10 +1,7 @@
 import { removeSideChatsForSessions, sideChatSessionIds, sideChatWorkPanelTab } from "../../lib/side-chat";
 import type { WorkPanelTab } from "../../lib/work-panel-tabs";
 import i18n from "i18next";
-import type {
-  ProjectWorkspace,
-  SessionSummary,
-} from "@pi-desktop/shared";
+import type { ProjectWorkspace } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import {
   rememberProject,
@@ -32,9 +29,6 @@ import {
   sortSessions,
   normalizeProjectName,
   type ProjectMeta,
-  type ProjectSort,
-  type SessionMeta,
-  type SessionSort,
 } from "../../lib/sidebar-preferences";
 import {
   normalizeProjectPath,
@@ -561,6 +555,8 @@ export function createProjectSlice({
     deleteSession: async (id) => {
       if (!id) return;
       await api.deleteSession(id);
+      void api.pluginViewClose("pi.browser", "browser", { sessionId: id })
+        .catch((error) => get().showToast(String(error), { variant: "error" }));
       clearLocalSessionState(
         { get, set, runtime, manualSessionTitles, withoutRecordKey },
         id,

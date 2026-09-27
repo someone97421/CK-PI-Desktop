@@ -6,9 +6,8 @@ import {
   normalizeChangelogVersion,
   resolveChangelogLocale,
 } from "@pi-desktop/shared";
-import { Badge, cx } from "./ui";
+import { Badge, cx, portalOverlay, TooltipButton } from "./ui";
 import { IconClose } from "./icons";
-import { TooltipButton } from "./ui";
 
 export function ReleaseNotesDialog({
   currentVersion,
@@ -77,7 +76,7 @@ export function ReleaseNotesDialog({
     };
   }, [onClose]);
 
-  return (
+  return portalOverlay(
     <div
       className="overlay release-notes-overlay"
       role="presentation"
@@ -157,6 +156,6 @@ export function ReleaseNotesDialog({
           })}
         </div>
       </div>
-    </div>
+    </div>,
   );
 }

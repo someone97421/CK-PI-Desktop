@@ -5,7 +5,6 @@ import type {
   AgentQueueChangedEvent,
   AgentPromptAttachment,
   AppError,
-  SessionSummary,
   UiMessage,
   QueuedTurnSummary,
 } from "@pi-desktop/shared";
@@ -20,7 +19,6 @@ import {
   removeQueuedPrompt,
   reorderQueuedPrompt,
   type QueuedPrompt,
-  type QueuedPromptDirection,
 } from "../../lib/queued-prompts";
 import type {
   ComposerDraftSnapshot,

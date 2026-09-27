@@ -127,13 +127,13 @@ pub struct ModelBinding {
     /// published name; `id` remains the wire identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    /// Provenance of `context_window`. `catalog` values follow the published
-    /// models.dev record, so a catalog correction still reaches a saved binding;
-    /// `user` values are the user's own number. Absent means the record predates
-    /// the marker and readers apply the historical rule (only the generic 128k
-    /// seed is inherited).
+    /// 上下文窗口来源：catalog 跟随发布目录，user 保留用户值。
+    /// 未标记的旧记录保留已保存值。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window_source: Option<String>,
+    /// 输出上限来源，独立于上下文窗口；未标记的旧记录保留已保存值。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens_source: Option<String>,
     /// Context window in tokens. Optional on the wire: an absent key reads as
     /// `0`, which `normalize_model_bindings` replaces with the generic default,
     /// so a stored record that omits it still loads as one binding instead of

@@ -14,7 +14,7 @@ import {
 import { matchNamedPreset, normalizeEndpointUrl } from "./provider-presets.js";
 import { parsePiAuthApiKeys } from "./pi-config-sync.js";
 import type {
-  ContextWindowSource,
+  ModelLimitSource,
   ModelBinding,
   ProviderCreateInput,
   ThinkingLevel,
@@ -852,9 +852,12 @@ function bindingFromGenericModel(
     // A window the file states is an explicit answer from its author; the
     // generic seed it falls back to keeps following the catalog.
     contextWindowSource:
-      importedContextWindowSource(record?.contextWindowSource) ??
+      importedModelLimitSource(record?.contextWindowSource) ??
       (contextWindow === undefined ? base.contextWindowSource : "user"),
     maxTokens: maxTokens ?? base.maxTokens,
+    maxTokensSource:
+      importedModelLimitSource(record?.maxTokensSource) ??
+      (maxTokens === undefined ? base.maxTokensSource : "user"),
     ...(record?.nativeWebSearch === true || record?.native_web_search === true
       ? { nativeWebSearch: true }
       : {}),
@@ -865,7 +868,7 @@ function bindingFromGenericModel(
  * A config exported by PI-Desktop carries the provenance marker; an older or
  * foreign config does not.
  */
-function importedContextWindowSource(value: unknown): ContextWindowSource | undefined {
+function importedModelLimitSource(value: unknown): ModelLimitSource | undefined {
   return value === "catalog" || value === "user" ? value : undefined;
 }
 

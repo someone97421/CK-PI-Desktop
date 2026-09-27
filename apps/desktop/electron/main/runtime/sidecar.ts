@@ -1,9 +1,11 @@
 import { IPC, type AgentEventEnvelope, type UiMessage } from "@pi-desktop/shared";
 import {
   findSubagentProviderSource,
-  loadInstructionChain,
   modelConfigWithBinding,
+  loadInstructionChain,
   subagentProviderLookupError,
+  classifySidecarCrash,
+  sidecarCrashErrorCode,
 } from "@pi-desktop/agent-runtime";
 import { loadBuiltinSkillBody } from "../builtin-skills";
 import { createImageGenerationTool } from "../services/image-generation-service";
@@ -19,12 +21,12 @@ import type { InflightCheckpointer } from "@pi-desktop/host-runtime";
 import { summarizeToolResult, type Logger } from "../logger";
 import type { ModelsDevCatalog } from "../models-dev-catalog";
 import type { PluginRuntime } from "../plugin-runtime";
-import type { UserMcpRuntime } from "../user-mcp";
 import type { RuntimeState } from "./context";
 import type { FinishTurn } from "./plans";
 import type { SubagentSnapshotStore } from "./subagent-snapshot-store";
 import { dispatchSubagentPersistence } from "./subagent-snapshot-rpc";
 import type { TaskTranscript } from "./task-transcript";
+import { formatSkillToolContent, type LoadedSkillDocument } from "../skill-document";
 
 export type SidecarRuntimeDependencies = {
   runtimeState: RuntimeState;
@@ -57,7 +59,10 @@ export type SidecarRuntimeDependencies = {
   browserHost: BrowserHost;
   plugins: PluginRuntime;
   sessionProjects: Map<string, string | null>;
-  loadUserSkillBody: (id: string, projectPath: string | null) => Promise<any>;
+  loadUserSkillBody: (
+    id: string,
+    projectPath: string | null,
+  ) => Promise<LoadedSkillDocument | null>;
   activeUserSkills: (projectPath: string | undefined) => Promise<any[]>;
   pluginActiveInProject: (pluginId: string, projectPath: string | null | undefined) => boolean;
   currentNetworkProxy: () => any;
@@ -138,8 +143,10 @@ export function createSidecarRuntime({
    * not be left behind. The finalizer refuses the settlement for a turn that no
    * longer owns the session and drops exactly those records.
    */
-  const releaseCrashedTurn = (sessionId: string, crashedTurnId: string) =>
-    finishTurn(sessionId, "aborted", "PLAN_APPROVAL_INTERRUPTED", {
+  // The sidecar is dead, so this release path can never be reached while the
+  // crashed sidecar's tail is unknown: callers pass the classified code down.
+  const releaseCrashedTurn = (sessionId: string, crashedTurnId: string, errorCode: string) =>
+    finishTurn(sessionId, "aborted", errorCode, {
       turnId: crashedTurnId,
     });
 
@@ -151,6 +158,10 @@ export function createSidecarRuntime({
   const settleCrashedSession = async (
     sessionId: string,
     crashedTurnId: string,
+    // Classified by the caller from the dead sidecar's stderr tail: the
+    // durable turn row names the real failure instead of an unrelated
+    // plan-approval code (issue #1077).
+    errorCode: string,
   ): Promise<void> => {
     const executionId = approvedExecutionIdsBySession.get(sessionId);
     if (runtimeState.host) {
@@ -159,7 +170,7 @@ export function createSidecarRuntime({
     // A newer turn may own the session by now; this cleanup is the old one's.
     // It must still not leave the crashed turn's records behind.
     if (activeTurns.get(sessionId) !== crashedTurnId) {
-      await releaseCrashedTurn(sessionId, crashedTurnId);
+      await releaseCrashedTurn(sessionId, crashedTurnId, errorCode);
       return;
     }
     // No final row is coming from a dead sidecar: keep whatever the reply had
@@ -170,11 +181,11 @@ export function createSidecarRuntime({
     // so it is reached only for the turn that still owns the session, and it is
     // called synchronously right after this check: no await in between.
     if (activeTurns.get(sessionId) !== crashedTurnId) {
-      await releaseCrashedTurn(sessionId, crashedTurnId);
+      await releaseCrashedTurn(sessionId, crashedTurnId, errorCode);
       return;
     }
     inflightCheckpointer.settle(sessionId);
-    await finishTurn(sessionId, "aborted", "PLAN_APPROVAL_INTERRUPTED", {
+    await finishTurn(sessionId, "aborted", errorCode, {
       recoverInflight: true,
       turnId: crashedTurnId,
     });
@@ -293,6 +304,11 @@ export function createSidecarRuntime({
         },
       });
     }
+    // Classify the exit once, from the child's own stderr tail, and carry the
+    // verdict into every settlement and log line below: a heap-exhaustion death
+    // must not read as an unrelated plan-approval interruption (issue #1077).
+    const crash = classifySidecarCrash(stderrTail);
+    const crashErrorCode = sidecarCrashErrorCode(crash.kind);
     // A sidecar crash closes live approval waiters before the replacement
     // sidecar starts. This prevents an old renderer response from waking a
     // dead runtime and records the durable turn as interrupted.
@@ -302,7 +318,7 @@ export function createSidecarRuntime({
       // late cleanup must not settle or abort that newer turn.
       const crashedTurnId = activeTurns.get(sessionId);
       if (!crashedTurnId) continue;
-      void settleCrashedSession(sessionId, crashedTurnId).catch((error: unknown) => {
+      void settleCrashedSession(sessionId, crashedTurnId, crashErrorCode).catch((error: unknown) => {
         // The crash handler cannot await this and the sidecar is already gone:
         // log the failure instead of leaving the rejection unhandled.
         logger.app("runtime", "warn", "crashed-turn settlement failed", {
@@ -319,7 +335,13 @@ export function createSidecarRuntime({
       );
     }
     logger.app("runtime", "error", "agent sidecar exited unexpectedly", {
-      data: { exitCode: code, signal, stderrTail },
+      data: {
+        exitCode: code,
+        signal,
+        stderrTail,
+        crashKind: crash.kind,
+        ...(crash.marker ? { crashMarker: crash.marker } : {}),
+      },
     });
     sendToRenderer(IPC.event.hostStatus, {
       ok: false,
@@ -563,7 +585,7 @@ export function createSidecarRuntime({
     });
     return {
       ok: true,
-      content: `Previewing ${raw} in the work-panel Browser plugin. Live reload is active — subsequent edits to the file or sibling assets re-render automatically.`,
+      content: `Requested a new Browser tab for ${raw}. Once loaded, live reload updates the page when the file or sibling assets change.`,
     };
   });
   // Plugin skills (D174): the model loads a declared skill document by id.
@@ -583,13 +605,13 @@ export function createSidecarRuntime({
       // Bundled skills answer first; they are not owned by any plugin. A user
       // skill is looked up next, and only then a plugin's — the ids cannot
       // collide, since a plugin skill id always carries a `<pluginId>/` prefix.
-      const skill =
+      const skill: LoadedSkillDocument =
         loadBuiltinSkillBody(id) ??
         (await loadUserSkillBody(id, projectPath)) ??
         plugins.loadSkillBody(id);
       return {
         ok: true,
-        content: `# Skill: ${skill.name} (${skill.id})\n\n${skill.body}`,
+        content: formatSkillToolContent(skill),
       };
     } catch (error) {
       const userIds = (await activeUserSkills(projectPath ?? undefined)).map(

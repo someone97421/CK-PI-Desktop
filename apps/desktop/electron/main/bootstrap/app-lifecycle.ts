@@ -22,7 +22,7 @@ import { createTraySessions } from "../tray-sessions";
 import { createTaskbarUnreadBadge } from "../taskbar-unread-badge";
 import { createWindow, type WindowLifecycleState } from "./window";
 import { windowToggleAction } from "./window-visibility";
-import type { BrowserPane } from "../browser-view";
+import type { BrowserHost } from "../browser-host";
 import type { Logger } from "../logger";
 import type { PluginRuntime } from "../plugin-runtime";
 import type { PluginViewHost } from "../plugin-view-host";
@@ -67,7 +67,7 @@ export type ApplicationLifecycleDependencies = {
   showPluginLauncher: () => Promise<void>;
   askCloseBehavior: (window: BrowserWindow) => Promise<CloseBehavior | null>;
   applyCloseBehavior: (behavior: CloseBehavior) => void;
-  browserPane: BrowserPane;
+  browserHost: BrowserHost;
   pluginViews: PluginViewHost;
   plugins: PluginRuntime;
   logger: Pick<Logger, "app">;
@@ -100,7 +100,7 @@ export function createApplicationLifecycle({
   showPluginLauncher,
   askCloseBehavior,
   applyCloseBehavior,
-  browserPane,
+  browserHost,
   pluginViews,
   plugins,
   logger,
@@ -374,16 +374,13 @@ export function createApplicationLifecycle({
       observedWorkPanelBaseBounds,
       classifyDisplayTransition,
       resetMenuRendererReady,
-      markMenuRendererReady,
-      sendToRenderer,
       safeOpenExternal,
       showPluginLauncher,
       askCloseBehavior,
       applyCloseBehavior,
       createTray,
-      browserPane,
+      browserHost,
       pluginViews,
-      plugins,
       logger,
     });
   }

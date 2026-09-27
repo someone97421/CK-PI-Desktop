@@ -58,6 +58,7 @@ import {
 import { useAppStore } from "../stores/app-store";
 import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url";
 import { absoluteImagePath, remarkLocalImagePaths } from "../lib/markdown-image-paths";
+import { remarkNormalizeWrappedMarkdownLinkDestinations } from "../lib/markdown-link-destinations";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import {
   useChatFileMenuItems,
@@ -913,7 +914,13 @@ function remarkAnnotationMarkers() {
   };
 }
 
-const staticRemarkPlugins = [...markdownRemarkPlugins, remarkAnnotationMarkers, remarkLocalImagePaths];
+// 渲染阶段的链接规范化与批注转换都不改变分块边界。
+const staticRemarkPlugins = [
+  ...markdownRemarkPlugins,
+  remarkNormalizeWrappedMarkdownLinkDestinations,
+  remarkAnnotationMarkers,
+  remarkLocalImagePaths,
+];
 
 // Extend the default schema only for the media elements rendered above, plus
 // `remark-math`'s math classes on `<code>`: the default `language-*` allow list

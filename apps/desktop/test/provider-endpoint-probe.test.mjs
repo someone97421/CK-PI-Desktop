@@ -16,7 +16,7 @@ const {
   DISCOVERY_SWEEP_BUDGET_MS,
   probeDiscoveryCandidates,
 } = await import("../electron/main/provider-endpoint-probe.ts");
-const { probeModelList } = await import("../electron/main/model-discovery.ts");
+const { probeModelList, probeProviderEndpoint } = await import("../electron/main/model-discovery.ts");
 
 function jsonResponse(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
@@ -30,7 +30,12 @@ async function withFetch(handler, fn) {
   const original = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (url, init) => {
-    calls.push({ url: String(url), headers: init?.headers ?? {}, redirect: init?.redirect });
+    calls.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      headers: init?.headers ?? {},
+      redirect: init?.redirect,
+    });
     return handler(String(url), init);
   };
   try {
@@ -182,6 +187,28 @@ test("a cross-origin redirect is refused before the credential travels", async (
   );
   assert.equal(calls.length, 1, "a refused redirect must not be followed");
   assert.equal(calls[0].redirect, "manual");
+});
+
+test("Anthropic token-plan endpoints can pass connection testing without a model list", async () => {
+  const { calls, result } = await withFetch((url, init) => {
+    if (init?.method === "OPTIONS" && url.endsWith("/anthropic/v1/messages")) {
+      return new Response("", { status: 200 });
+    }
+    return new Response("not found", { status: 404 });
+  }, () => probeProviderEndpoint({
+    baseUrl: "https://token-plan-cn.xiaomimimo.com/anthropic",
+    apiStyle: "anthropic_messages",
+    apiKey: "sk-secret",
+  }));
+
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.models, []);
+  assert.deepEqual(calls.map((call) => call.url), [
+    "https://token-plan-cn.xiaomimimo.com/anthropic/v1/models?limit=1000",
+    "https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages",
+  ]);
+  assert.equal(calls[1].method, "OPTIONS");
+  assert.equal(calls[1].headers["x-api-key"], undefined);
 });
 
 test("a same-origin redirect is followed with the same credential", async () => {

@@ -12,6 +12,7 @@ import type {
 } from "@pi-desktop/shared";
 import {
   initialThinkingLevelForBinding,
+  initialThinkingLevelForUnmatchedModel,
   imageGenerationBindings,
   isImageGenerationModel,
   normalizeLargePasteThreshold,
@@ -24,7 +25,6 @@ import { headAsk, queuedAskCount } from "../lib/pending-asks";
 import type { QueuedPrompt } from "../lib/queued-prompts";
 import { composerModelDisplayName, sameComposerModelId } from "../lib/composer-models";
 import {
-  providerThinkingLevels,
   resolveComposerThinkingProvider,
 } from "../lib/session-thinking";
 import {
@@ -42,7 +42,6 @@ import {
   isThinkingLevel,
   thinkingLevelForProvider,
   thinkingProviderForModel,
-  THINKING_LEVELS,
   type ComposerPrefill,
 } from "../features/chat/composer/model";
 import {
@@ -356,12 +355,20 @@ export function Composer({
   const selectedBinding = provider?.models.find((candidate) =>
     sameComposerModelId(candidate.id, modelId ?? ""),
   );
+  const selectedModelInfo = selectedModelCatalog?.find((candidate) =>
+    sameComposerModelId(candidate.modelId, modelId ?? ""),
+  );
   // A draft without a session starts at the selected model's stored default
   // thinking level, clamped onto that binding's enabled ladder.
-  const draftThinkingLevel = initialThinkingLevelForBinding(
-    selectedBinding,
-    thinkingProvider?.supportedThinkingLevels,
-  );
+  const draftThinkingLevel = selectedModelInfo
+    ? initialThinkingLevelForBinding(
+        selectedBinding,
+        thinkingProvider?.supportedThinkingLevels,
+      )
+    : initialThinkingLevelForUnmatchedModel(
+        selectedBinding,
+        thinkingProvider?.supportedThinkingLevels,
+      );
   const sessionThinkingLevel =
     activeSession?.thinkingLevel ??
     (!activeSession ? draftConfiguration?.thinkingLevel : undefined) ??
@@ -369,15 +376,11 @@ export function Composer({
   const configuredThinkingLevel = isThinkingLevel(sessionThinkingLevel)
     ? sessionThinkingLevel
     : "off";
-  const availableThinkingLevels = providerThinkingLevels(thinkingProvider);
   const thinkingLevel = thinkingLevelForProvider(
     thinkingProvider,
     configuredThinkingLevel,
   );
   const thinkingLabel = thinkingLevel;
-  const selectedModelInfo = selectedModelCatalog?.find((candidate) =>
-    sameComposerModelId(candidate.modelId, modelId ?? ""),
-  );
   const modelLabel = modelId
     ? composerModelDisplayName(provider, modelId, selectedModelInfo?.displayName)
     : t("chat.model");
@@ -616,7 +619,6 @@ export function Composer({
             enhancementUndoText={enhancementUndoText}
             enhancePrompt={enhancePrompt}
             undoPromptEnhancement={undoPromptEnhancement}
-            clearEnhancementError={clearEnhancementError}
             runActive={runActive}
             hasDraftContent={hasDraftContent}
             abort={abort}

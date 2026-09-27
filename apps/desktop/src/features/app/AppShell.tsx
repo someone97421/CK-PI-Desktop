@@ -113,7 +113,6 @@ export function AppShell() {
             className="app-chat-shell"
             hidden={page === "settings"}
             inert={page === "settings" ? true : undefined}
-            aria-hidden={page === "settings" ? true : undefined}
           >
             {!sidebarCollapsed || sidebarExiting ? (
               <Sidebar

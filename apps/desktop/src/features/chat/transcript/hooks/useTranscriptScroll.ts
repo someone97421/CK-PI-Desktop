@@ -36,7 +36,6 @@ import {
   isRecentScrollGesture,
   isScrollGestureInput,
   reduceTranscriptScroll,
-  SCROLL_OWNER_ATTRIBUTE,
   transcriptHasLayout,
   TRANSCRIPT_SCROLL_ROUNDING_TOLERANCE_PX,
   type ScrollInputType,

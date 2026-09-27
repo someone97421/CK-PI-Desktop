@@ -97,19 +97,23 @@ const networkProxySource = await readFile(
   "utf8",
 );
 
-test("Basics and AI tabs expose their respective app and AI controls", () => {
+test("基础、外观和 AI 设置各自显示对应控件", () => {
   const generalStart = settingsPageSource.indexOf('{tab === "general" && settings && (');
+  const appearanceStart = settingsPageSource.indexOf('{tab === "appearance" && settings && (');
   const aiStart = settingsPageSource.indexOf('{tab === "ai" && settings && (');
   const shortcutsStart = settingsPageSource.indexOf(
     '{tab === "shortcuts" && settings && (',
   );
-  const generalSource = settingsPageSource.slice(generalStart, aiStart);
+  assert.ok(generalStart >= 0 && appearanceStart > generalStart && aiStart > appearanceStart);
+  const generalSource = settingsPageSource.slice(generalStart, appearanceStart);
+  const appearanceSource = settingsPageSource.slice(appearanceStart, aiStart);
   const aiSource = settingsPageSource.slice(aiStart, shortcutsStart);
 
-  assert.match(generalSource, /<ThemeRow /);
+  assert.match(appearanceSource, /<ThemeRow /);
   assert.match(generalSource, /<LanguageRow /);
-  assert.match(generalSource, /<AppearancePanels /);
-  assert.match(generalSource, /<FontSizeRow /);
+  assert.match(appearanceSource, /<AppearancePanels /);
+  assert.match(appearanceSource, /<FontSizeRow /);
+  assert.doesNotMatch(generalSource, /<ThemeRow |<AppearancePanels |<FontSizeRow /);
   assert.match(generalSource, /<NetworkProxySection /);
   assert.doesNotMatch(generalSource, /\(\["auto", "zh-CN", "en"\] as const\)/);
   assert.doesNotMatch(generalSource, /defaultMode: value/);
