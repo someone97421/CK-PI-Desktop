@@ -116,7 +116,17 @@ export function createSessionSlice({
 > {
   const refreshSessionList = createRefreshCoordinator(async () => {
     const result = await api.listSessions();
-    set({ sessions: decorateSessions(result.sessions, get().sessionMeta) });
+    set((state) => {
+      // 保留发送时的即时排序时间，避免较早发出的列表请求将它覆盖。
+      const previous = new Map(state.sessions.map((session) => [session.id, session.lastUserMessageAt]));
+      const sessions = result.sessions.map((session) => {
+        const sentAt = previous.get(session.id);
+        return sentAt && Date.parse(sentAt) > (Date.parse(session.lastUserMessageAt ?? "") || 0)
+          ? { ...session, lastUserMessageAt: sentAt }
+          : session;
+      });
+      return { sessions: decorateSessions(sessions, state.sessionMeta) };
+    });
     return result;
   });
 

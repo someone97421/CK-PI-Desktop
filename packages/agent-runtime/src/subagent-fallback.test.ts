@@ -224,6 +224,26 @@ describe("subagent model fallback over real transport", () => {
     expect(changes).toEqual(["high"]);
     expect(f.requests[1].reasoning_effort).toBe("high");
   });
+
+  it.each(["high", "omit"] as const)("uses fallback effort %s ahead of the primary and session settings", async (level) => {
+    const f = await fixture();
+    const next: RuntimeProviderConfig = {
+      ...f.provider("secondary"), supportsReasoning: true, supportedThinkingLevels: ["off", "high"],
+      modelConfig: { ...genericModelConfig("secondary", f.provider("secondary").baseUrl!), reasoning: true, supportedThinkingLevels: ["off", "high"] as const },
+    };
+    const result = await f.run({
+      definition: {
+        name: "worker", description: "Fixture", tools: ["Edit"], prompt: "Finish.", source: "user",
+        thinkingLevel: "off", fallbackThinkingLevels: { "s/secondary": level },
+      },
+      inheritedThinkingLevel: "off",
+      fallbackModels: [{ key: "s/secondary", provider: next }],
+    });
+    expect(result.status).toBe("completed");
+    expect(result.thinkingLevel).toBe(level);
+    expect(f.requests[1].reasoning_effort).toBe(level === "omit" ? undefined : level);
+  });
+
   it("does not retry a host tool failure through another model", async () => {
     const f = await fixture({ editFirst: true });
     await f.run({ resolveToolOutcome: () => ({ isError: true, terminate: true }) });

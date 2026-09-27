@@ -2795,7 +2795,8 @@ importConfirm: "Imported extensions run inside the agent process with the same a
     },
     subagents: {
       fallbackModels: "Fallback models",
-      fallbackModelsHint: "Try in order after model retries fail. Completed tool results are kept; Stop cancels the whole task.",
+      fallbackModelsHint: "Try in order after model retries fail, keeping completed tool results. Each fallback can override thinking effort, adjusted to the model's supported levels at runtime. Stop cancels the whole task.",
+      fallbackThinkingInherit: "Follow subagent thinking effort",
       fallbackAdd: "Add fallback model",
       fallbackMoveUp: "Move {{model}} up",
       fallbackMoveDown: "Move {{model}} down",

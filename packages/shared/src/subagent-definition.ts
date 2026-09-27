@@ -51,6 +51,7 @@ export type SubagentDefinition = {
   model?: SubagentModelPin;
   /** Ordered, definition-scoped alternatives after a provider failure. */
   fallbackModels?: SubagentModelPin[];
+  fallbackThinkingLevels?: Record<string, SubagentThinkingLevel>;
   /**
    * Reasoning level for the delegate, clamped against the model in main.
    * omit leaves the provider's own default untouched.
@@ -421,6 +422,19 @@ export function parseSubagentDefinition(
       fallbackModels.push(pin);
     }
   }
+  const fallbackThinkingLevels: Record<string, SubagentThinkingLevel> = {};
+  for (const value of asList(frontmatter.get("fallbackthinkinglevels"))) {
+    const separator = value.lastIndexOf("=");
+    const pin = value.slice(0, separator).trim();
+    const level = value.slice(separator + 1).trim().toLowerCase();
+    if (separator < 1 || !pin) {
+      errors.push(`invalid fallback thinking level "${value}"`);
+    } else if (!(SUBAGENT_THINKING_LEVELS as readonly string[]).includes(level)) {
+      warnings.push(`ignoring unknown fallback thinking level "${level}"`);
+    } else if (fallbackModels.some((model) => subagentModelKey(model) === pin)) {
+      fallbackThinkingLevels[pin] = level as SubagentThinkingLevel;
+    }
+  }
 
   const declaredThinking = asScalar(frontmatter.get("thinkinglevel"));
   let thinkingLevel: SubagentThinkingLevel | undefined;
@@ -492,6 +506,7 @@ export function parseSubagentDefinition(
       ...(inheritTools ? { inheritTools: true } : {}),
       ...(model ? { model } : {}),
       ...(fallbackModels.length ? { fallbackModels } : {}),
+      ...(Object.keys(fallbackThinkingLevels).length ? { fallbackThinkingLevels } : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
       ...(permission ? { permission } : {}),
       ...(maxTokens !== undefined ? { maxTokens } : {}),

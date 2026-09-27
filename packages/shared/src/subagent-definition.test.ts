@@ -654,6 +654,23 @@ describe("definition fallback models", () => {
     expect(legacy.ok && legacy.definition.fallbackModels).toBeUndefined();
   });
 
+  it("reads per-model effort by full pin and keeps legacy inheritance", () => {
+    for (const field of [
+      "fallbackThinkingLevels: [vendor/model=revision=high, Other Gateway/second=omit, missing/model=low]",
+      "fallback-thinking-levels:\n  - vendor/model=revision=high\n  - Other Gateway/second=omit\n  - missing/model=low",
+    ]) {
+      const result = parse(`---\ndescription: Fixture.\nfallbackModels: [vendor/model=revision, Other Gateway/second]\n${field}\n---\nFinish.`);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.definition.fallbackThinkingLevels).toEqual({
+        "vendor/model=revision": "high",
+        "Other Gateway/second": "omit",
+      });
+    }
+    const legacy = parse("---\ndescription: Fixture.\nfallbackModels: [vendor/model]\n---\nFinish.");
+    expect(legacy.ok && legacy.definition.fallbackThinkingLevels).toBeUndefined();
+  });
+
   it("rejects a malformed fallback rather than silently changing the requested chain", () => {
     const result = parse("---\ndescription: Bad fallback.\nfallbackModels: [vendor/valid, bare-model]\n---\nFinish.");
     expect(result.ok).toBe(false);

@@ -1122,7 +1122,8 @@ export class SubagentRun {
       const identity = `${next.provider.id}/${next.provider.modelId}`;
       if (this.attemptedModels.has(identity)) continue;
       this.attemptedModels.add(identity);
-      const requested = this.opts.definition.thinkingLevel ?? this.opts.inheritedThinkingLevel ?? this.opts.thinkingLevel;
+      const requested = this.opts.definition.fallbackThinkingLevels?.[next.key]
+        ?? this.opts.definition.thinkingLevel ?? this.opts.inheritedThinkingLevel ?? this.opts.thinkingLevel;
       const thinking = requested === "omit" ? "omit" : clampThinkingLevel(next.provider, requested);
       const binding = this.bindingFor(next.provider, thinking);
       const budget = contextBudgetFor(binding.model, carried);

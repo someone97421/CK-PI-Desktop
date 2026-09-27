@@ -249,3 +249,30 @@ test("compaction context updates the ring until a later provider usage arrives",
   assert.equal(after?.compactedContextTokens, undefined);
   assert.equal(after?.usage.totalTokens, 15_000);
 });
+
+test("live compaction supersedes usage after its runtime history boundary", () => {
+  const aborted = message("aborted", "assistant", "stopped", {
+    status: "aborted",
+    usage: { inputTokens: 80_000, outputTokens: 100, totalTokens: 80_100 },
+  });
+  const messages = [message("u1", "user", "work"), aborted];
+  for (const throughMessageId of ["u1", "internal-tool-id"]) {
+    const mark = {
+      id: "mark-1", generation: 1, summaryTokens: 2_000,
+      contextTokens: 12_000, throughMessageId, summarized: true,
+      contextUsageMessageId: "aborted",
+    };
+    const inspect = (rows) => latestTurnContextInspector(rows, providerModels, providers, [mark]);
+    assert.equal(inspect(messages)?.compactedContextTokens, 12_000);
+    assert.equal(inspect([...messages, message("stream", "assistant", "working", {
+      status: "streaming",
+    })])?.compactedContextTokens, 12_000);
+    assert.equal(inspect([...messages, message("delegate", "assistant", "child", {
+      parentToolCallId: "task-1",
+      usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+    })])?.compactedContextTokens, 12_000);
+    assert.equal(inspect([...messages, message("next", "assistant", "done", {
+      usage: { inputTokens: 14_000, outputTokens: 100, totalTokens: 14_100 },
+    })])?.compactedContextTokens, undefined);
+  }
+});

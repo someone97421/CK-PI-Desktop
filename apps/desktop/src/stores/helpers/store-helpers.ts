@@ -196,6 +196,11 @@ export function withCompactionMark(
   mark: AppState["sessionCompactions"][string][number],
 ): AppState["sessionCompactions"][string] {
   const existing = marks?.find((m) => m.id === mark.id);
-  const merged = { ...mark, summary: mark.summary ?? existing?.summary };
+  const merged = {
+    ...mark,
+    summary: mark.summary ?? existing?.summary,
+    contextTokens: mark.contextTokens ?? existing?.contextTokens,
+    contextUsageMessageId: mark.contextUsageMessageId ?? existing?.contextUsageMessageId,
+  };
   return [...(marks ?? []).filter((m) => m.id !== mark.id), merged];
 }

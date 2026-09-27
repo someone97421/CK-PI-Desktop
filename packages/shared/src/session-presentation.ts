@@ -61,15 +61,15 @@ export function sortSessions(
       if (byOrder) return byOrder;
     } else {
       const byUpdated = compareOptionalNumber(
-        timestamp(a.updatedAt) || undefined,
-        timestamp(b.updatedAt) || undefined,
+        timestamp(a.lastUserMessageAt ?? a.createdAt) || undefined,
+        timestamp(b.lastUserMessageAt ?? b.createdAt) || undefined,
         true,
       );
       if (byUpdated) return byUpdated;
     }
     return compareOptionalNumber(
-      timestamp(a.updatedAt) || undefined,
-      timestamp(b.updatedAt) || undefined,
+      timestamp(a.lastUserMessageAt ?? a.createdAt) || undefined,
+      timestamp(b.lastUserMessageAt ?? b.createdAt) || undefined,
       true,
     ) || a.id.localeCompare(b.id);
   });

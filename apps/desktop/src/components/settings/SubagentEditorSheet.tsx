@@ -46,6 +46,7 @@ export type SubagentDraft = {
   /** `<provider>/<model>`, or empty for "same model as this session". */
   model: string;
   fallbackModels: string[];
+  fallbackThinkingLevels: Record<string, SubagentThinkingLevel>;
   /** Empty means "whatever the session uses". */
   thinkingLevel: SubagentThinkingLevel | "";
   /**
@@ -140,6 +141,7 @@ export function emptySubagentDraft(): SubagentDraft {
     inheritTools: false,
     model: "",
     fallbackModels: [],
+    fallbackThinkingLevels: {},
     thinkingLevel: "",
     maxTokens: 0,
     reportIntervalSteps: "",
@@ -159,6 +161,7 @@ export function draftFromRecord(record: UserSubagentRecord, body: string): Subag
     inheritTools: grant.inheritTools,
     model: record.model ?? "",
     fallbackModels: [...(record.fallbackModels ?? [])],
+    fallbackThinkingLevels: { ...record.fallbackThinkingLevels },
     thinkingLevel: record.thinkingLevel ?? "",
     maxTokens: record.maxTokens ?? 0,
     reportIntervalSteps: record.reportIntervalSteps === undefined ? "" : String(record.reportIntervalSteps),
@@ -186,6 +189,7 @@ export function draftFromDefinition(definition: SubagentDefinition): SubagentDra
       ? `${definition.model.providerId}/${definition.model.modelId}`
       : "",
     fallbackModels: (definition.fallbackModels ?? []).map((pin) => `${pin.providerId}/${pin.modelId}`),
+    fallbackThinkingLevels: { ...definition.fallbackThinkingLevels },
     thinkingLevel: definition.thinkingLevel ?? "",
     maxTokens: definition.maxTokens ?? 0,
     reportIntervalSteps: definition.reportIntervalSteps === undefined ? "" : String(definition.reportIntervalSteps),
@@ -476,7 +480,20 @@ function ModelField({
         primary={draft.model}
         values={draft.fallbackModels}
         choices={modelChoices}
-        onChange={(fallbackModels) => setDraft({ ...draft, fallbackModels })}
+        thinkingLevels={draft.fallbackThinkingLevels}
+        onThinkingChange={(pin, level) => {
+          const fallbackThinkingLevels = { ...draft.fallbackThinkingLevels };
+          if (level) fallbackThinkingLevels[pin] = level;
+          else delete fallbackThinkingLevels[pin];
+          setDraft({ ...draft, fallbackThinkingLevels });
+        }}
+        onChange={(fallbackModels) => setDraft({
+          ...draft,
+          fallbackModels,
+          fallbackThinkingLevels: Object.fromEntries(
+            Object.entries(draft.fallbackThinkingLevels).filter(([pin]) => fallbackModels.includes(pin)),
+          ),
+        })}
       />
     </>
   );

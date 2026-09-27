@@ -118,6 +118,7 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
             ...(request.sessionMessageId ? { sessionMessageId: request.sessionMessageId } : {}),
             ...(request.attachments ? { attachments: request.attachments } : {}),
           },
+          request.submittedAt,
         ])) as { accepted?: boolean; turnId: string };
         return { turnId: result.turnId };
       } catch (error) {

@@ -353,7 +353,7 @@ export class RuntimeService implements RuntimePort {
       role: "user",
       content,
       ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
-      createdAt: new Date(this.now()).toISOString(),
+      createdAt: new Date(request.submittedAt ?? this.now()).toISOString(),
       status: "complete",
       ...(command ? { command } : {}),
     };

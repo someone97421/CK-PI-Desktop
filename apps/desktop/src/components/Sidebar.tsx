@@ -644,8 +644,8 @@ export function Sidebar({
       if (byCreated !== 0) return byCreated;
     } else {
       const byRecent = compareOptionalDate(
-        optionalTimestamp(a.updatedAt),
-        optionalTimestamp(b.updatedAt),
+        optionalTimestamp(a.lastUserMessageAt ?? a.createdAt),
+        optionalTimestamp(b.lastUserMessageAt ?? b.createdAt),
         true,
       );
       if (byRecent !== 0) return byRecent;

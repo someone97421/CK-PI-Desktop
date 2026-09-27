@@ -159,7 +159,19 @@ export function createSessionCoordination({
     set((state) => ({
       sessionCompactions:
         marks.length > 0
-          ? { ...state.sessionCompactions, [sessionId]: marks }
+          ? {
+              ...state.sessionCompactions,
+              [sessionId]: marks.map((mark) => {
+                const existing = state.sessionCompactions[sessionId]
+                  ?.find((candidate) => candidate.id === mark.id);
+                // Durable records omit the live post-compaction estimate.
+                return {
+                  ...mark,
+                  contextTokens: existing?.contextTokens,
+                  contextUsageMessageId: existing?.contextUsageMessageId,
+                };
+              }),
+            }
           : withoutRecordKey(state.sessionCompactions, sessionId),
     }));
   }

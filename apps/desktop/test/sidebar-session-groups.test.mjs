@@ -17,6 +17,7 @@ function session(overrides) {
     mode: "agent",
     createdAt: "2026-07-25T10:00:00.000Z",
     updatedAt: "2026-07-25T11:00:00.000Z",
+    lastUserMessageAt: overrides?.updatedAt ?? "2026-07-25T11:00:00.000Z",
     ...overrides,
   };
 }
@@ -158,4 +159,15 @@ test("ordinary date groups retain their order after pins are removed", () => {
     groupSidebarSessionsByTime(rows, new Date(2026, 8, 13, 12)).map((group) => group.group),
     ["today", "yesterday", "thisWeek", "older14d", "archived"],
   );
+});
+
+test("助手跨日回复不改变用户消息的日期分组", () => {
+  const groups = groupSidebarSessionsByTime([
+    session({ id: "previous", lastUserMessageAt: "2026-07-25T12:00:00", updatedAt: "2026-07-26T12:00:00" }),
+    session({ id: "current", lastUserMessageAt: "2026-07-26T10:00:00", updatedAt: "2026-07-26T10:00:00" }),
+  ], new Date("2026-07-26T14:00:00"));
+  assert.deepEqual(groups.map(({ group, sessions }) => [group, sessions.map((row) => row.id)]), [
+    ["today", ["current"]],
+    ["yesterday", ["previous"]],
+  ]);
 });

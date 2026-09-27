@@ -8,7 +8,7 @@ use crate::agent_capabilities::{
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -63,6 +63,8 @@ pub struct UserSubagentRecord {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallback_models: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fallback_thinking_levels: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +88,8 @@ pub struct UserSubagentInput {
     pub tools: Option<Vec<String>>,
     pub model: Option<String>,
     pub fallback_models: Option<Vec<String>>,
+    #[serde(default)]
+    pub fallback_thinking_levels: Option<BTreeMap<String, String>>,
     pub thinking_level: Option<String>,
     pub max_tokens: Option<u32>,
     #[serde(default, deserialize_with = "deserialize_report_interval")]
@@ -233,6 +237,9 @@ fn parse_record(path: &Path, state: &CapabilityState) -> Option<UserSubagentReco
         Some(_) => return None,
         None => None,
     };
+    let fallback_models = model_fallbacks::parse(&raw).ok()?;
+    let fallback_thinking_levels =
+        model_fallbacks::parse_thinking_levels(&raw, &fallback_models).ok()?;
     Some(UserSubagentRecord {
         id: name.clone(),
         name,
@@ -245,7 +252,8 @@ fn parse_record(path: &Path, state: &CapabilityState) -> Option<UserSubagentReco
             .get("model")
             .cloned()
             .filter(|value| !value.is_empty()),
-        fallback_models: model_fallbacks::parse(&raw).ok()?,
+        fallback_models,
+        fallback_thinking_levels,
         thinking_level: normalize_thinking(front.get("thinkinglevel").map(String::as_str)),
         max_tokens,
         report_interval_steps,
@@ -275,6 +283,17 @@ fn render_document(record: &UserSubagentRecord, body: &str) -> String {
         output.push_str(&format!(
             "fallbackModels: [{}]\n",
             record.fallback_models.join(", ")
+        ));
+    }
+    if !record.fallback_thinking_levels.is_empty() {
+        output.push_str(&format!(
+            "fallbackThinkingLevels: [{}]\n",
+            record
+                .fallback_thinking_levels
+                .iter()
+                .map(|(pin, level)| format!("{pin}={level}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     if let Some(level) = &record.thinking_level {
@@ -372,6 +391,14 @@ impl UserSubagentRegistry {
         if tools.is_empty() {
             bail!("SUBAGENT_INVALID: grant at least one known tool");
         }
+        let fallback_models = model_fallbacks::normalize(
+            input.fallback_models.as_deref().unwrap_or(&[]),
+        )?;
+        let fallback_thinking_levels = input
+            .fallback_thinking_levels
+            .as_ref()
+            .map(|levels| model_fallbacks::normalize_thinking_levels(levels, &fallback_models))
+            .unwrap_or_default();
         let record = UserSubagentRecord {
             id: name.clone(),
             name,
@@ -381,9 +408,8 @@ impl UserSubagentRegistry {
             scope: ActivationScope::default(),
             tools,
             model: normalize_model(input.model.as_deref())?,
-            fallback_models: model_fallbacks::normalize(
-                input.fallback_models.as_deref().unwrap_or(&[]),
-            )?,
+            fallback_models,
+            fallback_thinking_levels,
             thinking_level: normalize_thinking(input.thinking_level.as_deref()),
             max_tokens: input
                 .max_tokens
@@ -463,6 +489,15 @@ impl UserSubagentRegistry {
         if let Some(values) = input.fallback_models {
             next.fallback_models = model_fallbacks::normalize(&values)?;
         }
+        next.fallback_thinking_levels = match input.fallback_thinking_levels {
+            Some(values) => {
+                model_fallbacks::normalize_thinking_levels(&values, &next.fallback_models)
+            }
+            None => model_fallbacks::normalize_thinking_levels(
+                &current.fallback_thinking_levels,
+                &next.fallback_models,
+            ),
+        };
         next.thinking_level = match input.thinking_level {
             Some(value) if value.trim().is_empty() => None,
             Some(value) => normalize_thinking(Some(value.as_str())),
@@ -488,7 +523,7 @@ impl UserSubagentRegistry {
         let mut document = render_document(&next, &body);
         // 保留权限等由其他版本/手工维护的前置字段，编辑间隔不应清掉它们。
         let (old_front, _) = parse_front_matter(&raw);
-        let known = ["name", "description", "tools", "model", "fallbackmodels", "thinkinglevel", "maxtokens", "reportintervalsteps", "report-interval-steps", "report_interval_steps"];
+        let known = ["name", "description", "tools", "model", "fallbackmodels", "fallbackthinkinglevels", "thinkinglevel", "maxtokens", "reportintervalsteps", "report-interval-steps", "report_interval_steps"];
         let extra = old_front.iter().filter(|(key, _)| !known.contains(&key.as_str()))
             .map(|(key, value)| format!("{key}: {value}\n")).collect::<String>();
         if !extra.is_empty() { document = document.replacen("---\n\n", &format!("{extra}---\n\n"), 1); }
@@ -642,39 +677,86 @@ mod tests {
     fn fallback_pins_survive_record_document_round_trips() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("worker.md");
-        fs::write(&path, "---\nname: worker\ndescription: Fixture.\nmodel: primary/model\nfallbackModels: [backup/one, Other Gateway/vendor/two]\n---\n\nKeep the body.\n").unwrap();
+        fs::write(
+            &path,
+            r#"---
+name: worker
+description: Fixture.
+model: primary/model
+fallbackModels: [backup/one, Other Gateway/vendor/two]
+fallbackThinkingLevels: [backup/one=high, Other Gateway/vendor/two=omit]
+---
+
+Keep the body.
+"#,
+        )
+        .unwrap();
         let state = CapabilityState::new(dir.path(), SUBAGENT_KIND);
         let mut record = parse_record(&path, &state).unwrap();
         assert_eq!(
             record.fallback_models,
             vec!["backup/one", "Other Gateway/vendor/two"]
         );
+        assert_eq!(
+            record.fallback_thinking_levels.get("backup/one").map(String::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            record
+                .fallback_thinking_levels
+                .get("Other Gateway/vendor/two")
+                .map(String::as_str),
+            Some("omit")
+        );
         let wire = serde_json::to_value(&record).unwrap();
         assert_eq!(
             wire["fallbackModels"],
             serde_json::json!(["backup/one", "Other Gateway/vendor/two"])
         );
-        fs::write(&path, render_document(&record, "Keep the body.")).unwrap();
         assert_eq!(
-            parse_record(&path, &state).unwrap().fallback_models,
-            record.fallback_models
+            wire["fallbackThinkingLevels"],
+            serde_json::json!({"backup/one": "high", "Other Gateway/vendor/two": "omit"})
         );
+
+        fs::write(&path, render_document(&record, "Keep the body.")).unwrap();
+        let round_trip = parse_record(&path, &state).unwrap();
+        assert_eq!(round_trip.fallback_models, record.fallback_models);
+        assert_eq!(round_trip.fallback_thinking_levels, record.fallback_thinking_levels);
+
         record.fallback_models.clear();
+        record.fallback_thinking_levels = model_fallbacks::normalize_thinking_levels(
+            &record.fallback_thinking_levels,
+            &record.fallback_models,
+        );
         let cleared = render_document(&record, "Keep the body.");
         assert!(!cleared.contains("fallbackModels"));
+        assert!(!cleared.contains("fallbackThinkingLevels"));
         fs::write(&path, cleared).unwrap();
-        assert!(parse_record(&path, &state)
-            .unwrap()
-            .fallback_models
-            .is_empty());
+        let cleared_record = parse_record(&path, &state).unwrap();
+        assert!(cleared_record.fallback_models.is_empty());
+        assert!(cleared_record.fallback_thinking_levels.is_empty());
+
         let old: UserSubagentInput = serde_json::from_str("{}").unwrap();
         assert!(old.fallback_models.is_none());
+        assert!(old.fallback_thinking_levels.is_none());
         let clear: UserSubagentInput = serde_json::from_str(r#"{"fallbackModels":[]}"#).unwrap();
         assert_eq!(clear.fallback_models, Some(vec![]));
     }
 
     #[test]
-    fn omit_is_a_valid_thinking_override() {
+    fn thinking_override_input_accepts_existing_levels() {
+        let override_input: UserSubagentInput = serde_json::from_value(serde_json::json!({
+            "fallbackThinkingLevels": {"backup/one": "high"}
+        }))
+        .unwrap();
+        assert_eq!(
+            override_input
+                .fallback_thinking_levels
+                .as_ref()
+                .and_then(|levels| levels.get("backup/one"))
+                .map(String::as_str),
+            Some("high")
+        );
         assert_eq!(normalize_thinking(Some("omit")), Some("omit".into()));
         assert_eq!(normalize_thinking(Some(" OMIT ")), Some("omit".into()));
     }
@@ -715,6 +797,7 @@ mod tests {
             tools: vec!["Read".into()],
             model: None,
             fallback_models: Vec::new(),
+            fallback_thinking_levels: BTreeMap::new(),
             thinking_level: None,
             max_tokens: None,
             report_interval_steps: None,
@@ -738,6 +821,7 @@ mod tests {
             tools: vec!["Read".into()],
             model: None,
             fallback_models: Vec::new(),
+            fallback_thinking_levels: BTreeMap::new(),
             thinking_level: None,
             max_tokens: Some(16_000),
             report_interval_steps: None,

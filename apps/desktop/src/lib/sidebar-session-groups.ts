@@ -105,7 +105,7 @@ const TIME_GROUP_ORDER: TimeGroup[] = ["today", "yesterday", "thisWeek", "older1
 export function groupSidebarSessionsByTime(sessions: SessionSummary[], now = new Date()) {
   const grouped = new Map<TimeGroup, SessionSummary[]>();
   for (const session of sessions) {
-    const group = getTimeGroup(session.updatedAt, now);
+    const group = getTimeGroup(session.lastUserMessageAt ?? session.createdAt, now);
     if (!grouped.has(group)) grouped.set(group, []);
     grouped.get(group)!.push(session);
   }

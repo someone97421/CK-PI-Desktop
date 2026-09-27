@@ -98,7 +98,7 @@ function parseFile(raw: string): ConfigExportFile {
     const s = file.subagents;
     if (!record(s) || !Array.isArray(s.owned) || !Array.isArray(s.disabledBuiltins) || s.disabledBuiltins.some((id) => typeof id !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id) || id.length > 40)) invalid("子智能体配置不正确");
     const seen = new Set<string>();
-    const keys = ["id", "name", "description", "body", "tools", "model", "fallbackModels", "thinkingLevel", "maxTokens", "reportIntervalSteps", "enabled"];
+    const keys = ["id", "name", "description", "body", "tools", "model", "fallbackModels", "fallbackThinkingLevels", "thinkingLevel", "maxTokens", "reportIntervalSteps", "enabled"];
     for (const agent of s.owned) {
       if (!record(agent) || typeof agent.id !== "string" || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(agent.id) || agent.id.length > 40 || seen.has(agent.id) ||
         Object.keys(agent).some((k) => !keys.includes(k)) || agent.name !== agent.id ||
@@ -108,6 +108,11 @@ function parseFile(raw: string): ConfigExportFile {
         !Array.isArray(agent.fallbackModels) || agent.fallbackModels.some((m) => typeof m !== "string") ||
         typeof agent.thinkingLevel !== "string" || !["", ...SUBAGENT_THINKING_LEVELS].includes(agent.thinkingLevel) ||
         typeof agent.maxTokens !== "number" || !Number.isInteger(agent.maxTokens) || agent.maxTokens < 0) invalid("子智能体字段无效或名称重复");
+      const fallbackPins = agent.fallbackModels;
+      if (agent.fallbackThinkingLevels !== undefined && (!record(agent.fallbackThinkingLevels) ||
+        Object.entries(agent.fallbackThinkingLevels).some(([pin, level]) =>
+          !fallbackPins.includes(pin) || typeof level !== "string" ||
+          !(SUBAGENT_THINKING_LEVELS as readonly string[]).includes(level)))) invalid("备用模型思考强度配置不正确");
       seen.add(agent.id);
       if (agent.reportIntervalSteps !== undefined && agent.reportIntervalSteps !== null && !isReportIntervalSteps(agent.reportIntervalSteps)) invalid("子智能体汇报间隔必须为正安全整数");
     }
@@ -148,6 +153,7 @@ export async function exportConfig({ host, appearanceMedia }: Dependencies, scop
       const { body } = await host.call<{ body: string }>("agents.read", { id: agent.id });
       file.subagents.owned.push({ id: agent.id, name: agent.id, description: agent.description, body,
         tools: agent.tools, model: agent.model ?? "", fallbackModels: agent.fallbackModels ?? [],
+        fallbackThinkingLevels: agent.fallbackThinkingLevels ?? {},
         thinkingLevel: agent.thinkingLevel ?? "", maxTokens: agent.maxTokens ?? 0,
         ...(agent.reportIntervalSteps !== undefined ? { reportIntervalSteps: agent.reportIntervalSteps } : {}), enabled: agent.enabled });
     }
@@ -252,7 +258,14 @@ export async function importConfig({ host, saveSettings, appearanceMedia }: Depe
     };
     for (const agent of file.subagents.owned) add(`子智能体 · ${agent.id}`, existing.has(agent.id), async () => {
       const { id, ...input } = agent;
-      const subagent = { ...input, model: pin(input.model ?? ""), fallbackModels: (input.fallbackModels ?? []).map(pin) };
+      const subagent = {
+        ...input,
+        model: pin(input.model ?? ""),
+        fallbackModels: (input.fallbackModels ?? []).map(pin),
+        fallbackThinkingLevels: Object.fromEntries(
+          Object.entries(input.fallbackThinkingLevels ?? {}).map(([model, level]) => [pin(model), level]),
+        ),
+      };
       const saved = await host.call<{ subagent: UserSubagentRecord | null }>(existing.has(id) ? "agents.update" : "agents.create", { id, subagent });
       if (!saved.subagent) throw new Error("子智能体保存失败");
     });

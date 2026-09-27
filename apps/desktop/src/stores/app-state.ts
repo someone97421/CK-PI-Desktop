@@ -149,7 +149,7 @@ export type AppState = {
   /** Latest terminal outcome per session for compact sidebar feedback. */
   sessionOutcomes: Record<string, SidebarSessionOutcome>;
   /** Every checkpoint a session has installed, oldest first. */
-  sessionCompactions: Record<string, (ContextCompactionMark & { summary?: string })[]>;
+  sessionCompactions: Record<string, (ContextCompactionMark & { summary?: string; contextUsageMessageId?: string })[]>;
   providers: ProviderPublic[];
   /** Discovered model lists per provider id (composer model menu). */
   providerModels: Record<string, ModelInfo[]>;

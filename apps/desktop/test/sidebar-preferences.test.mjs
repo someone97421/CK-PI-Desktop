@@ -27,6 +27,7 @@ function session(overrides = {}) {
     mode: "agent",
     createdAt: "2026-07-25T10:00:00.000Z",
     updatedAt: "2026-07-25T11:00:00.000Z",
+    lastUserMessageAt: overrides.updatedAt ?? "2026-07-25T11:00:00.000Z",
     ...overrides,
   };
 }
@@ -55,6 +56,14 @@ test("pinned sessions sort before the selected secondary order", () => {
     ).map((row) => row.id),
     ["active", "archived"],
   );
+});
+
+test("活跃排序只跟随用户发送，助手回复不改变顺序", () => {
+  const earlier = session({ id: "earlier", lastUserMessageAt: "2026-07-25T12:00:00.000Z", updatedAt: "2026-07-26T12:00:00.000Z" });
+  const later = session({ id: "later", lastUserMessageAt: "2026-07-25T13:00:00.000Z", updatedAt: "2026-07-25T13:00:00.000Z" });
+  assert.deepEqual(sortSessions([earlier, later], {}).map((row) => row.id), ["later", "earlier"]);
+  earlier.lastUserMessageAt = "2026-07-25T14:00:00.000Z";
+  assert.deepEqual(sortSessions([later, earlier], {}).map((row) => row.id), ["earlier", "later"]);
 });
 
 test("keeps archived sessions after active sessions when archive visibility is enabled", () => {
@@ -250,7 +259,7 @@ test("project time sort modes keep missing timestamps stable at the end", () => 
 
 test("session time sort modes keep missing timestamps stable at the end", () => {
   const sessions = [
-    session({ id: "missing", createdAt: undefined, updatedAt: undefined }),
+    session({ id: "missing", createdAt: undefined, updatedAt: undefined, lastUserMessageAt: undefined }),
     session({
       id: "new",
       createdAt: "2026-07-26T10:00:00.000Z",

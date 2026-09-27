@@ -1,6 +1,8 @@
 import { useTranslation } from "react-i18next";
+import { SUBAGENT_THINKING_LEVELS, type SubagentThinkingLevel } from "@pi-desktop/shared";
 import { Button, Field } from "../ui";
 import { SubagentModelPicker } from "./SubagentModelPicker";
+import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import {
   groupSubagentModelChoices,
   subagentModelSelectValue,
@@ -8,10 +10,12 @@ import {
 } from "./subagent-models";
 
 /** Ordered alternatives use the same configured-model catalog as the primary. */
-export function SubagentFallbackModels({ primary, values, choices, onChange }: {
+export function SubagentFallbackModels({ primary, values, choices, thinkingLevels, onChange, onThinkingChange }: {
   primary: string;
   values: string[];
   choices: SubagentModelChoice[];
+  thinkingLevels: Record<string, SubagentThinkingLevel>;
+  onThinkingChange: (pin: string, level: SubagentThinkingLevel | "") => void;
   onChange: (values: string[]) => void;
 }) {
   const { t } = useTranslation();
@@ -26,7 +30,7 @@ export function SubagentFallbackModels({ primary, values, choices, onChange }: {
     <Field label={t("extensions.subagents.fallbackModels")} hint={t("extensions.subagents.fallbackModelsHint")}>
       <ol className="space-y-2">
         {values.map((pin, index) => (
-          <li key={`${index}:${pin}`} className="flex items-center gap-2">
+          <li key={pin} className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
             <span className="min-w-0 flex-1 break-all text-sm">{index + 1}. {pin}</span>
             <Button size="sm" variant="secondary" disabled={index === 0} onClick={() => move(index, -1)}
               aria-label={t("extensions.subagents.fallbackMoveUp", { model: pin })}>↑</Button>
@@ -34,6 +38,21 @@ export function SubagentFallbackModels({ primary, values, choices, onChange }: {
               aria-label={t("extensions.subagents.fallbackMoveDown", { model: pin })}>↓</Button>
             <Button size="sm" variant="secondary" onClick={() => onChange(values.filter((_, position) => position !== index))}
               aria-label={t("extensions.subagents.fallbackRemove", { model: pin })}>×</Button>
+            <div className="w-full">
+              <SettingsMenuSelect
+                fullWidth
+                label={`${pin} · ${t("extensions.subagents.thinking")}`}
+                value={thinkingLevels[pin] ?? ""}
+                onChange={(level) => onThinkingChange(pin, level as SubagentThinkingLevel | "")}
+                options={[
+                  { id: "", label: t("extensions.subagents.fallbackThinkingInherit") },
+                  { id: "omit", label: t("extensions.subagents.thinkingOmit") },
+                  ...SUBAGENT_THINKING_LEVELS.filter((level) => level !== "omit").map(
+                    (level) => ({ id: level, label: level }),
+                  ),
+                ]}
+              />
+            </div>
           </li>
         ))}
       </ol>

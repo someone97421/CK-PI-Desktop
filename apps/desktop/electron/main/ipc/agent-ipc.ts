@@ -348,7 +348,7 @@ export function registerAgentIpc({
     }
   });
 
-  handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest) => {
+  handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest, submittedAt?: number) => {
     if (!sidecar) throw new Error("sidecar unavailable");
     if (req.sessionId.startsWith("native-pi:")) {
       if (req.sessionMessageId || req.truncateFromMessageId || req.truncateBefore !== undefined || req.attachments?.length) {
@@ -595,7 +595,7 @@ export function registerAgentIpc({
       taskId: durableTurnId,
       content: promptContent,
       ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(submittedAt ?? Date.now()).toISOString(),
       status: "complete" as const,
       ...(preparedAttachments.length
         ? { attachments: preparedAttachments.map((attachment) => attachment.message) }

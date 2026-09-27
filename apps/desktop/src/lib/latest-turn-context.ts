@@ -36,7 +36,7 @@ export function latestTurnContextInspector(
   messages: UiMessage[],
   providerModels: Record<string, ModelInfo[]>,
   providers: ProviderPublic[],
-  compactions: readonly ContextCompactionMark[] = [],
+  compactions: readonly (ContextCompactionMark & { contextUsageMessageId?: string })[] = [],
 ): LatestTurnContextInspector | undefined {
   // Delegate rows carry their own usage; remaining capacity is a parent-session
   // number, so those snapshots must not steal the composer ring.
@@ -60,10 +60,14 @@ export function latestTurnContextInspector(
   const latestUsageIndex = messages.findIndex(
     (message) => message.id === latestUsageMessage?.id,
   );
-  const compactedContextTokens =
-    compactionIndex >= latestUsageIndex && latestUsageIndex >= 0
-      ? latestCompaction?.contextTokens
-      : undefined;
+  // A live estimate supersedes the usage visible when compaction finished,
+  // even when that response was aborted and omitted from runtime history.
+  const usesCompactedContext = latestCompaction?.contextUsageMessageId !== undefined
+    ? latestCompaction.contextUsageMessageId === latestUsageMessage?.id
+    : compactionIndex >= latestUsageIndex && latestUsageIndex >= 0;
+  const compactedContextTokens = usesCompactedContext
+    ? latestCompaction?.contextTokens
+    : undefined;
 
   return {
     // Occupancy and provider cache/input/output use this last request.

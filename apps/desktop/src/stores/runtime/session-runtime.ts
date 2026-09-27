@@ -80,6 +80,7 @@ export type SessionRuntime = {
     },
   ) => ReturnType<typeof api.getSession>;
   loadFullSessionMessages: (id: string, cache?: boolean) => Promise<UiMessage[] | null>;
+  recordUserActivity: (sessionId: string, createdAt?: string) => void;
   insertOptimisticUserMessage: (sessionId: string, message: UiMessage) => void;
   retractOptimisticUserMessage: (sessionId: string, message: UiMessage) => void;
   cacheBackgroundTranscriptEvent: (envelope: AgentEventEnvelope) => void;
@@ -221,7 +222,20 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
     return messages;
   }
 
+  function recordUserActivity(sessionId: string, createdAt = new Date().toISOString()): void {
+    const sentAt = Date.parse(createdAt);
+    if (!Number.isFinite(sentAt)) return;
+    set((state) => ({
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId && sentAt > (Date.parse(session.lastUserMessageAt ?? "") || 0)
+          ? { ...session, lastUserMessageAt: createdAt }
+          : session,
+      ),
+    }));
+  }
+
   function insertOptimisticUserMessage(sessionId: string, message: UiMessage): void {
+    recordUserActivity(sessionId, message.createdAt);
     const state = get();
     if (state.sideChatTranscripts[sessionId]) {
       set((current) => ({
@@ -450,6 +464,7 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
     cacheSessionTranscript,
     loadSessionDetail,
     loadFullSessionMessages,
+    recordUserActivity,
     insertOptimisticUserMessage,
     retractOptimisticUserMessage,
     cacheBackgroundTranscriptEvent,

@@ -1190,8 +1190,13 @@ fn session_created_at(db: &Database, session_id: &str) -> Result<String> {
 const SUMMARY_SELECT: &str =
     "SELECT s.id, s.title, s.last_seq, p.path, s.model_id, s.provider_id, s.mode,
             s.thinking_level, s.permission_mode, s.updated_at, s.created_at,
-            (SELECT MAX(m.created_at) FROM messages m
-             WHERE m.session_id = s.id AND m.role = 'user')
+            (SELECT MAX(sent_at) FROM (
+                SELECT MAX(m.created_at) AS sent_at FROM messages m
+                WHERE m.session_id = s.id AND m.role = 'user'
+                UNION ALL
+                SELECT MAX(q.created_at) AS sent_at FROM turn_queue q
+                WHERE q.session_id = s.id AND q.session_message_id IS NULL
+            ))
      FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
      WHERE s.deleted_at IS NULL";
 

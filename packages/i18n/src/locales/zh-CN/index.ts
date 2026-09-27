@@ -2742,7 +2742,8 @@ sklm: {
     },
     subagents: {
       fallbackModels: "备用模型",
-      fallbackModelsHint: "当前模型重试失败后按顺序切换，保留已完成的工具结果；停止会取消整个子任务。",
+      fallbackModelsHint: "当前模型重试失败后按顺序切换，保留已完成的工具结果。每个备用模型可单独设置思考强度，运行时按模型支持的档位适配；停止会取消整个子任务。",
+      fallbackThinkingInherit: "跟随子代理思考强度",
       fallbackAdd: "添加备用模型",
       fallbackMoveUp: "上移 {{model}}",
       fallbackMoveDown: "下移 {{model}}",

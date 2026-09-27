@@ -37,6 +37,8 @@ export type TurnStartRequest = {
   sessionMessageId?: string;
   /** Client-chosen id for the durable user row (D288); the runtime mints one otherwise. */
   userMessageId?: string;
+  /** 用户入队时间；自动出队时保留发送顺序。 */
+  submittedAt?: number;
   attachments?: AgentPromptAttachment[];
   effectivePermissionMode: RacpPermissionMode;
   idempotencyKey?: string;

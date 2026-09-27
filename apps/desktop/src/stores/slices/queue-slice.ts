@@ -163,6 +163,7 @@ export function createQueueSlice({
         draft: queuedDraft,
         createdAt: Date.now(),
       };
+      runtime.recordUserActivity(sessionId, new Date(item.createdAt).toISOString());
       set((state) => ({
         queuedPrompts: enqueueQueuedPrompt(state.queuedPrompts, item),
       }));
@@ -305,6 +306,7 @@ export function createQueueSlice({
         return;
       }
       pendingQueueSends.set(sessionId, promptId);
+      runtime.recordUserActivity(sessionId);
       set((state) => ({
         queuedPrompts: markQueuedPromptSendPending(
           state.queuedPrompts,

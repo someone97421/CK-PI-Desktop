@@ -176,6 +176,7 @@ export function createEventsSlice({
       }
       if (event.type === "user_message_persisted") {
         const sessionId = envelope.sessionId;
+        runtime.recordUserActivity(sessionId, event.message.createdAt);
         const reconcile = (messages: UiMessage[]) =>
           reconcilePersistedUserMessage(messages, event.optimisticMessageId, event.message);
         runtime.liveSessionTranscripts.add(sessionId);
@@ -203,6 +204,10 @@ export function createEventsSlice({
         return;
       }
       runtime.projectSideChatEvent(envelope);
+      if ((event.type === "message_start" || event.type === "message_end") &&
+          event.message.role === "user" && !envelope.parentToolCallId && !event.message.sessionMessage) {
+        runtime.recordUserActivity(envelope.sessionId, event.message.createdAt);
+      }
       if (event.type === "message_end" && event.replacesMessageId) {
         // Exact native stream re-key: the durable SDK entry replaces its own
         // provisional row in the caches a reselect can paint from, while a
@@ -396,7 +401,15 @@ export function createEventsSlice({
             ...state.sessionCompactions,
             [envelope.sessionId]: withCompactionMark(
               state.sessionCompactions[envelope.sessionId],
-              mark,
+              {
+                ...mark,
+                // Usage belongs to the last request; the checkpoint boundary
+                // can precede an aborted response or use an internal tool id.
+                contextUsageMessageId: [...(state.activeSessionId === envelope.sessionId
+                  ? state.messages
+                  : runtime.sessionTranscriptCache.get(envelope.sessionId) ?? [])]
+                  .reverse().find((message) => !message.parentToolCallId && message.usage)?.id,
+              },
             ),
           },
         }));

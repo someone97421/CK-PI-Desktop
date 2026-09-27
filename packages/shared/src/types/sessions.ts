@@ -47,7 +47,7 @@ export type SessionSummary = {
   supportsVision?: boolean;
   supportedThinkingLevels?: ThinkingLevel[];
   updatedAt: string;
-  /** Timestamp of the latest user-authored message; absent for empty sessions/older hosts. */
+  /** 用户最后发送时间（含等待中的队列消息）；空会话或旧宿主可省略。 */
   lastUserMessageAt?: string;
   createdAt: string;
 };

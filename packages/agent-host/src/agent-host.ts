@@ -1069,6 +1069,7 @@ export class AgentHost {
           const started = await this.runtime.prompt({
             sessionId,
             content: record.content,
+            submittedAt: record.createdAt,
             ...(record.sessionMessageId ? { sessionMessageId: record.sessionMessageId } : {}),
             ...(record.userMessageId ? { userMessageId: record.userMessageId } : {}),
             ...(record.attachments ? { attachments: record.attachments } : {}),
