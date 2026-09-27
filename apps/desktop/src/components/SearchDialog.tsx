@@ -207,7 +207,11 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
   }, [query, t]);
 
   const settingsHits = useMemo<SettingsSearchHit[]>(
-    () => searchSettings(query, t, { developerMode }),
+    () =>
+      searchSettings(query, t, {
+        developerMode,
+        includeDevelopmentOnly: import.meta.env.DEV,
+      }),
     [query, t, developerMode],
   );
 

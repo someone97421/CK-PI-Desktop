@@ -76,6 +76,7 @@ export function modelConfigWithBinding(
         | "contextWindowSource"
         | "maxTokens"
         | "thinkingLevels"
+        | "thinkingProtocol"
         | "supportsImages"
         | "supportsDocuments"
         | "nativeWebSearch"
@@ -87,6 +88,12 @@ export function modelConfigWithBinding(
     binding.thinkingLevels.includes(level),
   );
   const thinkingLevelMap = { ...(model.thinkingLevelMap ?? {}) };
+  const compat = binding.thinkingProtocol
+    ? {
+        ...(model.compat ?? {}),
+        forceAdaptiveThinking: binding.thinkingProtocol === "adaptive",
+      }
+    : model.compat;
   // pi-ai treats xhigh/max as unsupported when their adapter-facing mapping
   // is absent or null. The explicit binding is authoritative, so an enabled
   // extended level without a catalog translation must pass through as-is.
@@ -123,6 +130,10 @@ export function modelConfigWithBinding(
     maxTokens: binding.maxTokens,
     reasoning: enabledThinkingLevels.some((level) => level !== "off"),
     supportedThinkingLevels: enabledThinkingLevels,
+    ...(binding.thinkingProtocol
+      ? { thinkingProtocol: binding.thinkingProtocol }
+      : {}),
+    ...(compat ? { compat } : {}),
     ...(Object.keys(thinkingLevelMap).length > 0 ? { thinkingLevelMap } : {}),
     ...modalityOverride(model, binding),
     ...(binding.nativeWebSearch === true ? { webSearch: true } : {}),

@@ -27,6 +27,7 @@ import {
   type ModelInfo,
   type SessionThinkingLevel,
   type ThinkingLevel,
+  type ThinkingProtocol,
 } from "@pi-desktop/shared";
 import {
   CONTEXT_WINDOW_PRESETS,
@@ -812,34 +813,63 @@ export function ModelSelectionPanes({
                             <HelpIcon label={t("settings.thinkingManualOverrideHint")} />
                           ) : null}
                         </span>
-                        {bindingDefaultThinkingMenuLevels(enabledLevels).length > 1 ? (
-                          <div className="provider-chosen-thinking-default">
+                        <div className="provider-chosen-thinking-controls">
+                          <div className="provider-chosen-thinking-protocol">
                             <span className="provider-chosen-thinking-label">
-                              {t("settings.defaultThinkingLevel")}
+                              {t("settings.thinkingProtocol")}
                             </span>
                             <SettingsMenuSelect
                               className="provider-chosen-thinking-select"
-                              label={t("settings.defaultThinkingLevel")}
+                              label={t("settings.thinkingProtocol")}
                               value={
-                                resolveBindingDefaultThinkingLevel(
-                                  binding.defaultThinkingLevel,
-                                  enabledLevels,
-                                ) ?? ""
+                                binding.thinkingProtocol ?? info?.thinkingProtocol ?? "legacy"
                               }
                               onChange={(id) =>
                                 updateBinding(binding.id, {
-                                  defaultThinkingLevel: id as SessionThinkingLevel,
+                                  thinkingProtocol: id as ThinkingProtocol,
                                 })
                               }
-                              options={bindingDefaultThinkingMenuLevels(enabledLevels).map(
-                                (level) => ({
-                                  id: level,
-                                  label: level,
-                                }),
-                              )}
+                              options={[
+                                {
+                                  id: "legacy",
+                                  label: t("settings.thinkingProtocolLegacy"),
+                                },
+                                {
+                                  id: "adaptive",
+                                  label: t("settings.thinkingProtocolAdaptive"),
+                                },
+                              ]}
                             />
                           </div>
-                        ) : null}
+                          {bindingDefaultThinkingMenuLevels(enabledLevels).length > 1 ? (
+                            <div className="provider-chosen-thinking-default">
+                              <span className="provider-chosen-thinking-label">
+                                {t("settings.defaultThinkingLevel")}
+                              </span>
+                              <SettingsMenuSelect
+                                className="provider-chosen-thinking-select"
+                                label={t("settings.defaultThinkingLevel")}
+                                value={
+                                  resolveBindingDefaultThinkingLevel(
+                                    binding.defaultThinkingLevel,
+                                    enabledLevels,
+                                  ) ?? ""
+                                }
+                                onChange={(id) =>
+                                  updateBinding(binding.id, {
+                                    defaultThinkingLevel: id as SessionThinkingLevel,
+                                  })
+                                }
+                                options={bindingDefaultThinkingMenuLevels(enabledLevels).map(
+                                  (level) => ({
+                                    id: level,
+                                    label: level,
+                                  }),
+                                )}
+                              />
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                       <div
                         className="provider-chosen-thinking-chips"

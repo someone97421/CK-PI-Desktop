@@ -7,6 +7,7 @@ pub(crate) const PROVIDER_SELECT: &str =
 
 pub(crate) const CANONICAL_THINKING_LEVELS: &[&str] =
     &["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const THINKING_PROTOCOLS: &[&str] = &["legacy", "adaptive"];
 /// Recognised per-limit provenance markers. Anything else is dropped so a
 /// row always falls back to the documented rule instead of a third state no
 /// reader understands.
@@ -37,6 +38,11 @@ pub(crate) fn normalize_model_bindings(bindings: &[ModelBinding]) -> Vec<ModelBi
                 return None;
             }
             let thinking_levels = normalize_thinking_levels(&binding.thinking_levels);
+            let thinking_protocol = binding
+                .thinking_protocol
+                .as_deref()
+                .filter(|protocol| THINKING_PROTOCOLS.contains(protocol))
+                .map(str::to_string);
             let default_thinking_level = binding
                 .default_thinking_level
                 .as_deref()
@@ -70,6 +76,7 @@ pub(crate) fn normalize_model_bindings(bindings: &[ModelBinding]) -> Vec<ModelBi
                 },
                 thinking_levels,
                 default_thinking_level,
+                thinking_protocol,
                 supports_images: binding.supports_images,
                 supports_documents: binding.supports_documents,
                 available_for_subagents: binding.available_for_subagents,
@@ -92,6 +99,7 @@ fn legacy_model_binding(model_id: Option<String>) -> Vec<ModelBinding> {
                 max_tokens: DEFAULT_MAX_TOKENS,
                 thinking_levels: Vec::new(),
                 default_thinking_level: None,
+                thinking_protocol: None,
                 supports_images: None,
                 supports_documents: None,
                 available_for_subagents: None,
@@ -376,6 +384,7 @@ mod tests {
             max_tokens: DEFAULT_MAX_TOKENS,
             thinking_levels: Vec::new(),
             default_thinking_level: None,
+            thinking_protocol: None,
             supports_images: None,
             supports_documents: None,
             available_for_subagents: None,

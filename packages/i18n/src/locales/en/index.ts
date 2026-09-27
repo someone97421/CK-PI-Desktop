@@ -1772,6 +1772,9 @@ sklm: {
     maxOutputShort: "out",
     supportedThinkingLevels: "Thinking levels",
     defaultThinkingLevel: "Default thinking level",
+    thinkingProtocol: "Thinking protocol",
+    thinkingProtocolLegacy: "Standard",
+    thinkingProtocolAdaptive: "Adaptive",
     modelCapabilities: "Capabilities",
     imageInput: "Images",
     documentInput: "PDF",
@@ -2287,6 +2290,7 @@ sklm: {
       reveal: "Reveal in Finder",
       binary: "Binary file — preview unavailable",
       tooLarge: "File is too large to preview",
+      openFailed: "Could not open the file with its default application.",
     },
   },
   palette: {

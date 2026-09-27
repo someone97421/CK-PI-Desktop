@@ -182,6 +182,10 @@ pub(crate) fn declared_providers(manifest: &PluginManifest) -> Vec<DeclaredPlugi
                                     .unwrap_or(0),
                                 thinking_levels: declared_thinking_levels(model),
                                 default_thinking_level: declared_default_thinking_level(model),
+                                thinking_protocol: model
+                                    .get("thinkingProtocol")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string),
                                 supports_images: model
                                     .get("supportsImages")
                                     .and_then(Value::as_bool),

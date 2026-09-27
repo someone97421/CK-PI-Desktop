@@ -105,10 +105,18 @@ export function SettingsPage() {
   const refreshProviders = useAppStore((s) => s.refreshProviders);
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
 
-  // Settings destinations remain available in both normal and developer mode.
+  // Experimental feature surfaces remain available in development builds only.
+  const includeDevelopmentOnly = import.meta.env.DEV;
   const developerMode = settings?.developerMode === true;
-  const navEntries = useMemo(() => visibleSettingsNav(developerMode), [developerMode]);
-  const tabHidden = isSettingsDestinationHidden(tab, developerMode);
+  const navEntries = useMemo(
+    () => visibleSettingsNav(developerMode, includeDevelopmentOnly),
+    [developerMode, includeDevelopmentOnly],
+  );
+  const tabHidden = isSettingsDestinationHidden(
+    tab,
+    developerMode,
+    includeDevelopmentOnly,
+  );
 
   const [query, setQuery] = useState("");
   const saveError = useSyncExternalStore(subscribeSettingsSaveError, getSettingsSaveError);

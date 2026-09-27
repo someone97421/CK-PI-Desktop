@@ -417,13 +417,15 @@ export function FileRefChip({
   name,
   path,
   kind,
+  mimeType,
   onOpen,
   ...position
 }: {
   name: string;
   path: string;
   kind?: "image" | "file";
-  onOpen: (path: string) => void;
+  mimeType?: string;
+  onOpen: (path: string, baseDir?: string, mimeType?: string) => void;
 } & SourcePositionProps) {
   const { t } = useTranslation();
   const Icon = fileChipIcon(name, kind);
@@ -437,7 +439,7 @@ export function FileRefChip({
         {...position}
         title={`${html ? t("chat.previewUrl") : t("chat.openFile")} — ${path}`}
         aria-label={`${name} — ${path}`}
-        onClick={() => onOpen(path)}
+        onClick={() => onOpen(path, undefined, mimeType)}
         onContextMenu={(event) => openFileMenu(event, { path })}
       >
         <span className="composer-chip-icon" aria-hidden>
@@ -460,7 +462,7 @@ export function MessageAttachmentImage({
   onOpenFile,
 }: {
   attachment: MessageAttachment;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, baseDir?: string, mimeType?: string) => void;
 }) {
   const { fileMenu, openFileMenu, closeFileMenu } = useChatFileMenu();
   const dataUrl = useReferencedImageDataUrl(attachment.ref, attachment.mimeType);
@@ -470,6 +472,7 @@ export function MessageAttachmentImage({
         name={attachment.name}
         path={attachment.ref}
         kind="image"
+        mimeType={attachment.mimeType}
         onOpen={onOpenFile}
       />
     );

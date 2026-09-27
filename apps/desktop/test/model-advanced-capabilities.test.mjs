@@ -47,6 +47,17 @@ test("advanced settings choose the default thinking level among omit and the ena
   assert.match(pickerSource, /bindingDefaultThinkingMenuLevels\(enabledLevels\)\.length > 1 \?/);
 });
 
+test("advanced settings expose the model thinking protocol", () => {
+  assert.match(pickerSource, /settings\.thinkingProtocol/);
+  assert.match(pickerSource, /settings\.thinkingProtocolLegacy/);
+  assert.match(pickerSource, /settings\.thinkingProtocolAdaptive/);
+  assert.match(
+    pickerSource,
+    /binding\.thinkingProtocol\s*\?\?\s*info\?\.thinkingProtocol\s*\?\?\s*"legacy"/,
+  );
+  assert.match(pickerSource, /thinkingProtocol: id as ThinkingProtocol/);
+});
+
 test("the capability checkboxes show and follow the published value", () => {
   assert.match(pickerSource, /settings\.imageInput/);
   assert.match(pickerSource, /settings\.documentInput/);

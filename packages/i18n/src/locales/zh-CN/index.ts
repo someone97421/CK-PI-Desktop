@@ -1738,6 +1738,9 @@ sklm: {
     maxOutputShort: "输出",
     supportedThinkingLevels: "思考等级",
     defaultThinkingLevel: "默认思考等级",
+    thinkingProtocol: "思考协议",
+    thinkingProtocolLegacy: "标准",
+    thinkingProtocolAdaptive: "自适应",
     modelCapabilities: "能力",
     imageInput: "图片",
     documentInput: "PDF",
@@ -2252,6 +2255,7 @@ sklm: {
       reveal: "在 Finder 中显示",
       binary: "二进制文件，无法预览",
       tooLarge: "文件过大，无法预览",
+      openFailed: "无法使用系统默认应用打开文件。",
     },
   },
   palette: {
