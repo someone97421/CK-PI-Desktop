@@ -1,5 +1,5 @@
 import type { SessionDetail, UiMessage } from "@pi-desktop/shared";
-import { dedupeSessionMessages, mergeLiveSessionMessages } from "./session-transcript";
+import { dedupeSessionMessages } from "./session-transcript";
 
 export type TranscriptSearchTarget = {
   sessionId: string;
@@ -41,16 +41,55 @@ export function transcriptViewFromSession(
   };
 }
 
+/**
+ * 阅读窗口可能同时保留旧提问和最新页，中间并不连续。以共同消息为边界
+ * 合并各段，只在段内交织缺失消息；不按时间全局排序，以免打乱工具记录
+ * 的原始顺序。相同时间优先保留 first 的位置，同 ID 的字段由 second 更新。
+ */
+function mergeReadingMessages(first: UiMessage[], second: UiMessage[]): UiMessage[] {
+  const left = dedupeSessionMessages(first);
+  const right = dedupeSessionMessages(second);
+  const values = new Map(dedupeSessionMessages([...left, ...right]).map((message) =>
+    [message.id, message]));
+  const rightPositions = new Map(right.map((message, index) => [message.id, index]));
+  const merged: UiMessage[] = [];
+  const used = new Set<string>();
+  const push = (message: UiMessage) => {
+    if (used.has(message.id)) return;
+    used.add(message.id);
+    merged.push(values.get(message.id)!);
+  };
+  let leftStart = 0;
+  let rightStart = 0;
+  const mergeUntil = (leftEnd: number, rightEnd: number) => {
+    while (leftStart < leftEnd && rightStart < rightEnd) {
+      if (Date.parse(right[rightStart].createdAt) < Date.parse(left[leftStart].createdAt)) {
+        push(right[rightStart++]);
+      } else {
+        push(left[leftStart++]);
+      }
+    }
+    while (leftStart < leftEnd) push(left[leftStart++]);
+    while (rightStart < rightEnd) push(right[rightStart++]);
+  };
+  for (let index = 0; index < left.length; index++) {
+    const anchor = rightPositions.get(left[index].id);
+    if (anchor === undefined || anchor < rightStart) continue;
+    mergeUntil(index, anchor);
+    push(left[index]);
+    leftStart = index + 1;
+    rightStart = anchor + 1;
+  }
+  mergeUntil(left.length, right.length);
+  return merged;
+}
+
 /** Live output remains authoritative outside an explicit historical search. */
 export function transcriptViewMessages(live: UiMessage[], view?: TranscriptView): UiMessage[] {
   if (!view) return live;
-  const liveById = new Map(live.map((message) => [message.id, message]));
   const messages = view.focus
     ? view.messages
-    : mergeLiveSessionMessages(view.messages, live)
-        // A reading snapshot can contain an older streaming row. Its status must
-        // never outrank the canonical row, including a just-completed reply.
-        .map((message) => liveById.get(message.id) ?? message);
+    : mergeReadingMessages(view.messages, live);
   const parent = view.parentMessage;
   if (!parent) return messages;
   const index = messages.findIndex((message) => message.id === parent.id);
@@ -65,11 +104,9 @@ export function extendTranscriptView(
   session: SessionDetail,
   direction: "before" | "after",
 ): TranscriptView {
-  const messages = dedupeSessionMessages(
-    direction === "before"
-      ? [...session.messages, ...view.messages]
-      : [...view.messages, ...session.messages],
-  );
+  const messages = direction === "before"
+    ? mergeReadingMessages(session.messages, view.messages)
+    : mergeReadingMessages(view.messages, session.messages);
   const focused = view.messages.find((message) => message.id === view.focus?.messageId);
   if (focused) messages[messages.findIndex((message) => message.id === focused.id)] = focused;
   return {

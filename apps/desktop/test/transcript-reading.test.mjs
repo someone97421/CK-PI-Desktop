@@ -6,7 +6,7 @@ register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 const { createTranscriptReadingRuntime } = await import(
   "../src/stores/runtime/transcript-reading-runtime.ts"
 );
-const { transcriptViewMessages } = await import("../src/lib/transcript-reading.ts");
+const { extendTranscriptView, transcriptViewMessages } = await import("../src/lib/transcript-reading.ts");
 const { buildTranscriptEntries } = await import("../src/lib/assistant-turns.ts");
 const { prepareTranscriptAction } = await import("../src/stores/runtime/transcript-action.ts");
 
@@ -175,6 +175,66 @@ test("ordinary history uses the same page ownership and keeps receiving live out
     ["oldest", "older", "tail", "stream"],
   );
   assert.equal(r.visible().at(-1).content, "partial");
+});
+
+test("历史分页补齐旧提问与最新过程之间的缺口，任务仍位于提问之后", async () => {
+  const task = { id: "turn", status: "running" };
+  const prompt = message("prompt", "继续", {
+    taskId: task.id, createdAt: "2026-09-28T09:00:00Z",
+  });
+  const process = (id, minute) => message(id, id, {
+    role: "assistant", taskId: task.id, task,
+    createdAt: `2026-09-28T09:${minute}:00Z`,
+  });
+  const earlier = process("earlier", "01");
+  const latest = process("latest", "02");
+  for (const fetched of [[earlier], [earlier, latest]]) {
+    const r = reader(async () => page(fetched, { messageStart: 1 }), {
+      messages: [prompt, latest], runningSessions: { s: true },
+    });
+    await r.loadTranscriptPage("s", "before");
+    assert.deepEqual(r.visible().map((row) => row.id), ["prompt", "earlier", "latest"]);
+    const { entries } = buildTranscriptEntries(r.visible());
+    assert.equal(entries[0].message.id, "prompt");
+    assert.equal(entries.at(-1).id, "task:turn");
+    assert.deepEqual(entries.at(-1).sourceMessages.map((row) => row.id),
+      ["prompt", "earlier", "latest"]);
+    assert.deepEqual(r.get().messages, [prompt, latest], "补页不改写实时消息缓存");
+  }
+});
+
+test("实时窗口补入共同消息之前的过程时，仍保留更早的历史提问", () => {
+  const prompt = message("prompt", "继续", { createdAt: "2026-09-28T09:00:00Z" });
+  const earlier = message("earlier", "过程", {
+    role: "assistant", createdAt: "2026-09-28T09:01:00Z",
+  });
+  const latest = message("latest", "完成", {
+    role: "assistant", status: "complete", createdAt: "2026-09-28T09:02:00Z",
+  });
+  const visible = transcriptViewMessages([earlier, latest], {
+    messages: [prompt, { ...latest, content: "旧正文", status: "streaming" }], focus: null,
+  });
+  assert.deepEqual(visible.map((row) => row.id), ["prompt", "earlier", "latest"]);
+  assert.equal(visible.at(-1), latest, "实时正文和完成状态覆盖旧快照");
+});
+
+test("向后补页保留分页内部顺序、同时间位置和搜索原文", () => {
+  const focused = message("focus", "完整搜索原文", { createdAt: "2026-09-28T09:00:00Z" });
+  const later = message("later", "稍后消息", { createdAt: "2026-09-28T09:03:00Z" });
+  const middle = message("middle", "过程", { createdAt: "2026-09-28T09:01:00Z" });
+  const sameTime = message("same-time", "同时间消息", { createdAt: focused.createdAt });
+  const result = extendTranscriptView({
+    messages: [focused, later], messageStart: 0, messageEnd: 4,
+    hasMoreBefore: false, hasMoreAfter: true, loading: "after", focus: target("focus"),
+  }, page([
+    { ...focused, content: "截断原文" }, sameTime, middle, later,
+    message("clock-backwards", "工具时间回退", { createdAt: middle.createdAt }),
+  ], { messageStart: 0, messageEnd: 5, hasMoreAfter: false }).session, "after");
+  assert.deepEqual(result.messages.map((row) => row.id),
+    ["focus", "same-time", "middle", "later", "clock-backwards"]);
+  assert.equal(result.messages[0], focused);
+  assert.equal(result.hasMoreAfter, false);
+  assert.equal(result.messageEnd, 5);
 });
 
 test("search supersedes an ordinary page and return-to-latest cancels historical paging", async () => {

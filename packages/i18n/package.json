@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/i18n",
-  "version": "2609.2809.2743",
+  "version": "2609.2819.2734",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
