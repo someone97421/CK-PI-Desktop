@@ -818,7 +818,7 @@ export function WorkPanel({
       />
       <div className="work-panel-main">
         <header className="work-panel-header">
-          <div className="work-panel-tab-strip-wrap no-drag">
+          <div className="work-panel-tab-strip-wrap">
             {subagentPanel ? (
               <div className="work-panel-subagent-heading" aria-label={t("panel.subagent")}>
                 <IconBot size={15} />
@@ -844,7 +844,7 @@ export function WorkPanel({
                   return (
                     <div
                       className={cx(
-                        "work-panel-tab",
+                        "work-panel-tab no-drag",
                         selected && "active",
                         draggingTabId === tab.id && "is-dragging",
                         dropIndicator?.tabId === tab.id &&
