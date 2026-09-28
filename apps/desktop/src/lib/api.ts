@@ -1626,6 +1626,10 @@ export const api = {
       listener((payload as { notification: AppNotification }).notification),
     );
   },
+  onNotificationSound: (listener: () => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.notificationSound, () => listener());
+  },
 
   // --- Remote hosts (R2b pairing UX) -----------------------------------------
   /** Paired remote `pi-host` list, redacted so no device token reaches here. */

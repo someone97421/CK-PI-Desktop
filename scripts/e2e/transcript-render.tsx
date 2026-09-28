@@ -380,8 +380,9 @@ globalThis.transcriptRuntimeSlotProbe = async () => {
     if (!passed) failures.push(message);
   };
   const sessionId = "runtime-slot";
-  const messages: UiMessage[] = [message("user", "user", "Inspect the workspace")];
+  const messages: UiMessage[] = [];
   for (let index = 0; index < 8; index++) {
+    messages.push(message(`user-${index}`, "user", `Inspect step ${index} in the workspace`));
     messages.push(
       message(`tool-${index}`, "tool", "done", {
         toolName: "Bash",
@@ -395,17 +396,9 @@ globalThis.transcriptRuntimeSlotProbe = async () => {
       message(`answer-${index}`, "assistant", `Finished step ${index}.`),
     );
   }
-  // A completed tool row does not finish the turn: the fallback remains until
-  // the runtime reports the next phase or the turn reaches a terminal state.
-  messages.push(
-    message("tool-tail", "tool", "done", {
-      toolName: "Bash",
-      toolCallId: "call-tail",
-      toolStatus: "success",
-      toolArgs: { command: "printf tail" },
-      toolResult: { details: { stdout: "done", exitCode: 0 } },
-    }),
-  );
+  messages.push(message("live-user", "user", "Inspect the next step"));
+  // The live user turn exercises the runtime lane without an active process
+  // disclosure changing geometry when that lane settles.
 
   const frame = () =>
     new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));

@@ -499,6 +499,18 @@ export async function createWindow({
   // null, so F12 is wired here; macOS additionally inherits Cmd+Alt+I from
   // the View menu role (see application-menu.ts).
   window.webContents.on("before-input-event", (event, input) => {
+    const isReloadChord =
+      input.type === "keyDown" &&
+      input.code === "KeyR" &&
+      input.control &&
+      !input.meta &&
+      !input.alt &&
+      !input.shift;
+    if (isReloadChord) {
+      // Keep an accidental browser reload from discarding transient app-shell state.
+      event.preventDefault();
+      return;
+    }
     const isPluginLauncherChord =
       process.platform === "win32" &&
       windowState.pluginLauncherBinding === "Alt+Space" &&

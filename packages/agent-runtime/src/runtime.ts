@@ -100,6 +100,7 @@ import {
   contextCompactionMark,
   cumulativeDelta,
   DEFAULT_SUBAGENT_PERMISSION,
+  askToolOptionLabel,
   formatAskToolOutput,
   formatSessionMessage,
   hostedSearchFromMessage,
@@ -107,6 +108,7 @@ import {
   isToolsOutputParams,
   isReportIntervalSteps,
   MAX_SUBAGENT_CONCURRENCY,
+  normalizeAskToolOption,
   normalizeSubagentName,
   proposalKindForMode,
   resolveSubagentToolNames,
@@ -664,6 +666,8 @@ const PATH_MUTATING_TOOLS = new Set(["Write", "Edit"]);
 const CHAT_CORE_TOOL_NAMES = new Set(["Read", "Glob", "Grep", ASK_TOOL_NAME]);
 const AGENT_CORE_TOOL_NAMES = new Set([
   "Read",
+  "Glob",
+  "Grep",
   "Write",
   "Edit",
   "Bash",
@@ -2895,7 +2899,7 @@ Delegation rules:
         case "Bash":
           return `${commandShellToolDescription(this.commandShell, this.scratchDir)} Use Edit or Write instead of apply_patch, git apply, or patch; do not retry a failed shell patch command repeatedly.`;
         case ASK_TOOL_NAME:
-          return "Ask the user one or more questions. Each question has selectable options and the desktop card always provides a custom user-input option; unanswered questions are returned as empty answers.";
+          return "Ask the user one or more questions. Question text and option labels support Markdown. Options accept strings or { label, description? }; descriptions stay plain text and answers return source labels. The card always provides custom input; unanswered questions return empty answers.";
         case "PluginScaffold":
           return "Create a PI-Desktop plugin from a template and load it for development. `directory` is workspace-relative and must be empty or new; `template` is one of panel-basic, agent-tool-basic, skill-pack, full-demo. Use this instead of hand-writing plugin files.";
         case "PluginCheck":
@@ -3316,7 +3320,15 @@ Delegation rules:
         questions: Type.Array(
           Type.Object({
             question: Type.String(),
-            options: Type.Array(Type.String()),
+            options: Type.Array(
+              Type.Union([
+                Type.String(),
+                Type.Object({
+                  label: Type.String(),
+                  description: Type.Optional(Type.String()),
+                }),
+              ]),
+            ),
             multiSelect: Type.Optional(Type.Boolean()),
           }),
         ),
@@ -5724,17 +5736,22 @@ Delegation rules:
     for (const raw of params.questions) {
       if (!isRecord(raw)) return undefined;
       const question = typeof raw.question === "string" ? raw.question.trim() : "";
-      const options = Array.isArray(raw.options)
-        ? raw.options
-            .filter((option): option is string => typeof option === "string")
-            .map((option) => option.trim())
-            .filter(Boolean)
-        : [];
+      const options: AskToolQuestion["options"] = [];
+      const seenLabels = new Set<string>();
+      if (Array.isArray(raw.options)) {
+        for (const rawOption of raw.options) {
+          const option = normalizeAskToolOption(rawOption);
+          if (!option) continue;
+          const label = askToolOptionLabel(option);
+          if (seenLabels.has(label)) continue;
+          seenLabels.add(label);
+          options.push(option);
+        }
+      }
       if (!question || options.length === 0) return undefined;
-      const uniqueOptions = [...new Set(options)];
       questions.push({
         question,
-        options: uniqueOptions,
+        options,
         ...(raw.multiSelect === true ? { multiSelect: true } : {}),
       });
     }

@@ -821,7 +821,7 @@
   border: 2px solid var(--ds-bg-sidebar);
   border-radius: var(--radius-full);
   background: var(--ds-error);
-  color: var(--gray-0);
+  color: var(--ds-bg-primary);
   font-size: var(--text-3xs);
   font-weight: var(--font-weight-semibold);
   line-height: var(--leading-none);
@@ -1148,7 +1148,7 @@
 }
 
 .window-control-btn.window-control-close:hover {
-  color: var(--gray-0);
+  color: var(--ds-bg-primary);
   background: var(--ds-error);
 }
 

@@ -2,7 +2,13 @@ import { createLoginView } from "./views/connect.js";
 import { el, button, copyText, iconButton, createSheet, closeAllSheets, confirmAction, autoGrow, inlineSpinner } from "./dom.js";
 import { createProjectHome } from "./home.js";
 import { RemoteClient, EventSocket } from "./transport.js";
-import { uuid, TOKEN_STORAGE_KEY, describeError } from "./protocol.js";
+import {
+  uuid,
+  TOKEN_STORAGE_KEY,
+  describeError,
+  askOptionLabel,
+  askOptionDescription,
+} from "./protocol.js";
 import { renderMarkdown } from "./markdown.js";
 import {
   responseAnnotationPrompt,
@@ -938,13 +944,20 @@ function renderPending() {
         el("legend", { text: question.question }),
       );
       const choices = (question.options || []).map((option) => {
-        const label = typeof option === "string" ? option : option.label;
+        const label = askOptionLabel(option);
+        const description = askOptionDescription(option);
         const field = el("input", {
           type: question.multiSelect ? "checkbox" : "radio",
           value: label,
           attrs: { name: `ask-${q.inputId}-${index}` },
         });
-        group.append(el("label", {}, field, label));
+        const labelChildren = [field, " ", label];
+        if (description) {
+          labelChildren.push(
+            el("span", { className: "option-desc", text: `（${description}）` }),
+          );
+        }
+        group.append(el("label", {}, ...labelChildren));
         return field;
       });
       const other = el("textarea", {

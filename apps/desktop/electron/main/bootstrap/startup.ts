@@ -431,7 +431,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     }, 300);
 
     // Headless boot probe for automated e2e (scripts/e2e-electron-boot.mjs):
-    // verifies sandboxed preload bridge + a full IPC round-trip, then quits.
+    // verifies the preload bridge, IPC round-trips, and Ctrl+R guard, then quits.
     if (process.env.PI_DESKTOP_BOOT_PROBE === "1") {
       setTimeout(() => {
         void (async () => {
@@ -471,6 +471,42 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
                };
              })()`,
             );
+            let ctrlRPrevented = false;
+            const observeCtrlR = (
+              event: Electron.Event,
+              input: Electron.Input,
+            ) => {
+              if (
+                input.type === "keyDown" &&
+                input.code === "KeyR" &&
+                input.control &&
+                !input.meta &&
+                !input.alt &&
+                !input.shift
+              ) {
+                ctrlRPrevented = event.defaultPrevented;
+              }
+            };
+            window!.webContents.on("before-input-event", observeCtrlR);
+            try {
+              window!.webContents.sendInputEvent({
+                type: "keyDown",
+                keyCode: "R",
+                modifiers: ["control"],
+              });
+              window!.webContents.sendInputEvent({
+                type: "keyUp",
+                keyCode: "R",
+                modifiers: ["control"],
+              });
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            } finally {
+              window!.webContents.removeListener(
+                "before-input-event",
+                observeCtrlR,
+              );
+            }
+            probe.ctrlRBlocked = ctrlRPrevented;
             probe.appName = app.getName();
             probe.menuCount = Menu.getApplicationMenu()?.items.length ?? 0;
             if (!host || !window) throw new Error("session-list probe requires a healthy desktop");

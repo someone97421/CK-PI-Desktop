@@ -25,7 +25,10 @@ try {
     format: "iife",
     jsx: "automatic",
     loader: { ".woff": "file", ".woff2": "file", ".ttf": "file" },
-    define: { "process.env.NODE_ENV": '"production"' },
+    define: {
+      "import.meta.env.DEV": "false",
+      "process.env.NODE_ENV": '"production"',
+    },
     alias: {
       "@pi-desktop/i18n": join(root, "packages/i18n/src/index.ts"),
       react: join(root, "apps/desktop/node_modules/react"),
@@ -133,6 +136,32 @@ ipcMain.handle("pi-desktop/clipboard/recordPaste", (_event, input) => {
   return { ok: true, data: null };
 });
 app.whenReady().then(async () => {
+  if (process.argv.includes("--history-check")) {
+    try {
+      const window = new BrowserWindow({ show: false, webPreferences: {
+        preload: ${JSON.stringify(join(root, "apps/desktop/out/preload/index.cjs"))},
+        sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false,
+      } });
+      window.webContents.on("console-message", (event) => {
+        if (!event.message.startsWith("PI_PREVIEW_KEY:")) return;
+        const key = event.message.slice("PI_PREVIEW_KEY:".length);
+        assert(["Escape", "Tab", "ArrowUp", "ArrowDown", "Enter"].includes(key));
+        const keyCode = key === "ArrowUp" ? "Up" : key === "ArrowDown" ? "Down" : key;
+        window.webContents.sendInputEvent({ type: "keyDown", keyCode });
+        window.webContents.sendInputEvent({ type: "keyUp", keyCode });
+      });
+      await window.loadFile(path.join(__dirname, "index.html"));
+      await window.webContents.executeJavaScript('globalThis.composerPreviewPressKey = key => new Promise(resolve => { document.addEventListener("keyup", () => requestAnimationFrame(resolve), { once: true }); console.log("PI_PREVIEW_KEY:" + key); }); void 0');
+      const result = await window.webContents.executeJavaScript('globalThis.composerHistoryProbe("verify")');
+      assert.equal(result.ok, true, JSON.stringify(result));
+      console.log("COMPOSER_HISTORY_RESTART " + JSON.stringify(result));
+      app.quit();
+    } catch (error) {
+      console.error("COMPOSER_HISTORY_RESTART " + JSON.stringify({ ok: false, error: String(error), stack: error?.stack }));
+      app.exit(1);
+    }
+    return;
+  }
   await fs.mkdir(path.join(__dirname, "attachments"));
   await fs.writeFile(path.join(__dirname, "attachments", "a".repeat(64)), Buffer.alloc(512 * 1024 + 1));
   await fs.writeFile(path.join(__dirname, "attachments", "b".repeat(64)), Buffer.from([0, 1, 2, 0]));
@@ -150,9 +179,10 @@ app.whenReady().then(async () => {
     window.webContents.on("console-message", async (event) => {
       if (!event.message.startsWith("PI_PREVIEW_KEY:")) return;
       const key = event.message.slice("PI_PREVIEW_KEY:".length);
-      assert(["Escape", "Tab"].includes(key));
-      window.webContents.sendInputEvent({ type: "keyDown", keyCode: key });
-      window.webContents.sendInputEvent({ type: "keyUp", keyCode: key });
+      assert(["Escape", "Tab", "ArrowUp", "ArrowDown", "Enter"].includes(key));
+      const keyCode = key === "ArrowUp" ? "Up" : key === "ArrowDown" ? "Down" : key;
+      window.webContents.sendInputEvent({ type: "keyDown", keyCode });
+      window.webContents.sendInputEvent({ type: "keyUp", keyCode });
     });
     await window.webContents.executeJavaScript('globalThis.composerPreviewPressKey = key => new Promise(resolve => { document.addEventListener("keyup", () => requestAnimationFrame(resolve), { once: true }); console.log("PI_PREVIEW_KEY:" + key); }); void 0');
     if (process.env.PI_COMPOSER_PREVIEW_SCREENSHOT) {
@@ -208,6 +238,9 @@ app.whenReady().then(async () => {
     assert.equal(mimeSets.filter((mimes) => mimes === "video/mp4").length, 1);
     assert(history.some(text => text.includes("Word paragraph")), "short text missing from clipboard history");
     console.log("COMPOSER_PASTE_PROBE " + JSON.stringify({ ...result, scratchBytesVerified: true }));
+    const historyResult = await window.webContents.executeJavaScript('globalThis.composerHistoryProbe("prepare")');
+    assert.equal(historyResult.ok, true, JSON.stringify(historyResult));
+    console.log("COMPOSER_HISTORY_PREPARE " + JSON.stringify(historyResult));
     app.quit();
   } catch (error) {
     console.error("COMPOSER_PASTE_PROBE " + JSON.stringify({ ok: false, error: String(error), stack: error?.stack, savedCount: saved.length }));
@@ -218,36 +251,53 @@ app.whenReady().then(async () => {
   );
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn(electronBinary, [join(temp, "main.cjs")], {
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let output = "";
-  for (const stream of [child.stdout, child.stderr])
-    stream.on("data", (data) => {
-      output += data;
+  const runElectron = async (args = []) => {
+    const child = spawn(electronBinary, [join(temp, "main.cjs"), ...args], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
     });
-  const timeout = setTimeout(() => child.kill("SIGKILL"), 45_000);
-  let code;
-  try {
-    code = await new Promise((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", resolve);
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-  const line = output
+    let output = "";
+    for (const stream of [child.stdout, child.stderr])
+      stream.on("data", (data) => {
+        output += data;
+      });
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 45_000);
+    let code;
+    try {
+      code = await new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    return { code, output };
+  };
+  const firstRun = await runElectron();
+  const pasteLine = firstRun.output
     .split(/\r?\n/)
     .find((line) => line.startsWith("COMPOSER_PASTE_PROBE "));
   assert(
-    line,
-    `renderer returned no result (exit=${code}): ${output.slice(-3000)}`,
+    pasteLine,
+    `renderer returned no paste result (exit=${firstRun.code}): ${firstRun.output.slice(-3000)}`,
   );
-  const result = JSON.parse(line.slice("COMPOSER_PASTE_PROBE ".length));
-  console.log("COMPOSER_PASTE_PROBE " + JSON.stringify(result));
-  assert.equal(code, 0, output.slice(-4000));
-  assert.equal(result.ok, true);
+  const pasteResult = JSON.parse(pasteLine.slice("COMPOSER_PASTE_PROBE ".length));
+  console.log("COMPOSER_PASTE_PROBE " + JSON.stringify(pasteResult));
+  assert.equal(firstRun.code, 0, firstRun.output.slice(-4000));
+  assert.equal(pasteResult.ok, true);
+
+  const restartRun = await runElectron(["--history-check"]);
+  const restartLine = restartRun.output
+    .split(/\r?\n/)
+    .find((line) => line.startsWith("COMPOSER_HISTORY_RESTART "));
+  assert(
+    restartLine,
+    `renderer returned no restart result (exit=${restartRun.code}): ${restartRun.output.slice(-3000)}`,
+  );
+  const restartResult = JSON.parse(restartLine.slice("COMPOSER_HISTORY_RESTART ".length));
+  console.log("COMPOSER_HISTORY_RESTART " + JSON.stringify(restartResult));
+  assert.equal(restartRun.code, 0, restartRun.output.slice(-4000));
+  assert.equal(restartResult.ok, true);
 } finally {
   await rm(temp, { recursive: true, force: true });
 }

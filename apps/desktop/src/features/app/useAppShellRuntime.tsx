@@ -23,6 +23,7 @@ import {
   MAIN_PANE_MIN_WIDTH,
   workPanelWidthForSidebarReopen,
 } from "../../lib/work-panel-resize";
+import { playNotificationChime } from "../../lib/notification-sound";
 import {
   clampSidebarWidth,
   loadSidebarWidth,
@@ -574,6 +575,7 @@ export function useAppShellRuntime() {
     const offPlansChanged = api.onPlansChanged(handlePlansChanged);
     // Host-pushed toasts (plugin runtime etc.) are informational.
     const offToast = api.onToast((message) => showToast(message));
+    const offNotificationSound = api.onNotificationSound(playNotificationChime);
     // The first plaintext hop to an endpoint the user typed. The shell owns the
     // wording, and recording `insecureNoticeAcknowledged` keeps it to once; a
     // failed write only means the notice shows again.
@@ -630,6 +632,7 @@ export function useAppShellRuntime() {
       // to a row that is already present/acknowledged. Do not surface a native
       // banner for an event the store intentionally rejected.
       if (!accepted) return;
+      playNotificationChime();
       const failed = notification.kind === "task.failed";
       const title = t(
         failed ? "notifications.failedTitle" : "notifications.completedTitle",
@@ -797,6 +800,7 @@ export function useAppShellRuntime() {
       offQueueChanged();
       offPlansChanged();
       offToast();
+      offNotificationSound();
       offInsecureEndpoint();
       offBrowserPreview();
       offBrowserState();

@@ -321,8 +321,6 @@ globalThis.providerApiStyleProbe = async () => {
       const codexAccount = { ...fixture("openai_codex_responses"), id: "codex-account", name: "OpenAI OAuth", vendorKey: "openai-codex", type: "native", protocol: "openai", authKind: "oauth" } satisfies ProviderPublic;
       let savedCodexAccount: VendorAccountForm | undefined;
       flushSync(() => root.render(<I18nextProvider i18n={i18n}><VendorAccountDialog provider={codexAccount} initialName={codexAccount.name} onClose={() => { closes++; }} onSave={(form) => { savedCodexAccount = structuredClone(form); }} saving={false} /></I18nextProvider>));
-      const accountAdvanced = document.querySelector<HTMLButtonElement>(".provider-chosen-advanced-toggle");
-      if (accountAdvanced?.getAttribute("aria-expanded") === "false") click(accountAdvanced);
       await pause(650);
       // The account editor opens straight on the model panel (D625): the
       // per-model controls sit behind the row's own Advanced disclosure.

@@ -5,7 +5,12 @@
  */
 
 import { button, createSheet, el, inlineSpinner, prettyJson, stateBlock } from "../dom.js";
-import { DECISION_LABELS, PERMISSION_MODE_LABELS } from "../protocol.js";
+import {
+  DECISION_LABELS,
+  PERMISSION_MODE_LABELS,
+  askOptionLabel,
+  askOptionDescription,
+} from "../protocol.js";
 
 const DECISION_ORDER = ["allow-once", "allow-session", "deny"];
 const RISK_LABELS = { low: "低风险", medium: "中风险", high: "高风险" };
@@ -83,11 +88,25 @@ export function openQuestionSheet(ctx, request) {
     const options = el("div", { className: "question-options" });
     const buttons = [];
     question.options.forEach((option) => {
+      const label = askOptionLabel(option);
+      const description = askOptionDescription(option);
+      if (!label) return;
       const node = el("button", {
         className: "question-option",
         attrs: { type: "button", "aria-pressed": "false" },
-        text: option,
       });
+      if (description) {
+        node.append(
+          el(
+            "div",
+            { className: "option-main" },
+            el("span", { className: "option-title", text: label }),
+            el("span", { className: "option-desc", text: description }),
+          ),
+        );
+      } else {
+        node.textContent = label;
+      }
       let selected = false;
       node.addEventListener("click", () => {
         if (question.multiSelect) {
@@ -97,15 +116,15 @@ export function openQuestionSheet(ctx, request) {
             other.setAttribute("aria-pressed", "false");
             other.dataset.selected = "false";
           }
-          answers[questionIndex] = [option];
+          answers[questionIndex] = [label];
           selected = true;
         }
         node.setAttribute("aria-pressed", selected ? "true" : "false");
         node.dataset.selected = selected ? "true" : "false";
         if (question.multiSelect) {
           const current = new Set(answers[questionIndex] || []);
-          if (selected) current.add(option);
-          else current.delete(option);
+          if (selected) current.add(label);
+          else current.delete(label);
           answers[questionIndex] = [...current];
         }
         updateSubmit();

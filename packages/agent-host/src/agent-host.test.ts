@@ -572,11 +572,29 @@ describe("AgentHost approvals and inputs", () => {
     host.ingest(
       envelope("s1", "rt_1", {
         type: "asktool_request",
-        request: { requestId: "ask_1", sessionId: "s1", toolCallId: "c9", questions: [{ question: "Which?", options: ["a", "b"], multiSelect: true }, { question: "Why?", options: [] }] },
+        request: {
+          requestId: "ask_1",
+          sessionId: "s1",
+          toolCallId: "c9",
+          questions: [
+            {
+              question: "Which?",
+              options: [
+                { label: "a", description: "First choice" },
+                { label: "b", description: "Second choice" },
+              ],
+              multiSelect: true,
+            },
+            { question: "Why?", options: [] },
+          ],
+        },
       }),
     );
     const raised = received.find((event) => event.kind === "input.requested")!;
     expect((raised.payload as { questions: unknown[] }).questions).toHaveLength(2);
+    expect(
+      (raised.payload as { questions: Array<{ options: string[] }> }).questions[0]?.options,
+    ).toEqual(["a", "b"]);
     expect(host.getTurn("rt_1").status).toBe("waiting_input");
     await expect(host.respondInput(controller, { inputId: "ask_1", answers: [["a"]], context: { requestId: "r" } })).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",

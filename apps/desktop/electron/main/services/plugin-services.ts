@@ -220,8 +220,18 @@ export function createPluginServices({
         message: `${input.title}${input.body ? `: ${input.body}` : ""}`,
       }),
     getNotificationPermission: getPluginNotificationPermission,
-    requestNotificationPermission: requestPluginNotificationPermission,
-    showNativeNotification: showPluginNativeNotification,
+    requestNotificationPermission: async () => {
+      const permission = await requestPluginNotificationPermission();
+      if (permission === "granted") {
+        sendToRenderer(IPC.event.notificationSound, {});
+      }
+      return permission;
+    },
+    showNativeNotification: async (input) => {
+      const result = await showPluginNativeNotification(input);
+      if (result.shown) sendToRenderer(IPC.event.notificationSound, {});
+      return result;
+    },
     openExternal: async (url) => {
       await safeOpenExternal(url);
     },

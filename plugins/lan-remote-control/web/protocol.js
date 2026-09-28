@@ -569,6 +569,29 @@ export function normalizeApprovalRequest(raw) {
   };
 }
 
+export function normalizeAskOption(value) {
+  if (typeof value === "string") {
+    const label = value.trim();
+    return label || null;
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const label = asString(value.label).trim();
+  if (!label) return null;
+  const description = asString(value.description).trim();
+  return description ? { label, description } : { label };
+}
+
+export function askOptionLabel(option) {
+  if (typeof option === "string") return option;
+  if (option && typeof option === "object") return asString(option.label);
+  return "";
+}
+
+export function askOptionDescription(option) {
+  if (typeof option === "string" || !option || typeof option !== "object") return "";
+  return asString(option.description).trim();
+}
+
 /** 智能体提问（AgentEvent.asktool_request.request）。 */
 export function normalizeAskRequest(raw) {
   if (!raw || typeof raw !== "object") return null;
@@ -577,7 +600,7 @@ export function normalizeAskRequest(raw) {
   const questions = asArray(pick(raw, ["questions"])).map((question, index) => ({
     id: `${id}:${index}`,
     question: asString(pick(question, ["question", "text"])) || "需要输入",
-    options: asArray(pick(question, ["options", "choices"])).map((option) => asString(option)).filter(Boolean),
+    options: asArray(pick(question, ["options", "choices"])).map((option) => normalizeAskOption(option)).filter(Boolean),
     multiSelect: asBool(pick(question, ["multiSelect"]), false),
   }));
   if (!questions.length) {

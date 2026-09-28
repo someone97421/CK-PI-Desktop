@@ -32,6 +32,7 @@ import {
   RACP_DEFAULT_LIMITS,
   RACP_DEFAULT_POLICY,
   applyMessageUpdate,
+  askToolOptionLabel,
   deltaStreamPayloadFits,
   effectiveRemotePermissionMode,
   racpKindForAgentEvent,
@@ -1313,7 +1314,9 @@ export class AgentHost {
       questions: request.questions.map((question, index) => ({
         id: `${request.requestId}:${index}`,
         question: question.question,
-        options: question.options,
+        // RACP v1 keeps answer choices as labels; the desktop-only description
+        // remains local to the inline asktool card.
+        options: question.options.map(askToolOptionLabel),
         multiSelect: question.multiSelect ?? false,
       })),
     };

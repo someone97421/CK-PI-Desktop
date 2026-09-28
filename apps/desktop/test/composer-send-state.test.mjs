@@ -291,18 +291,22 @@ test("mode slash prefixes send the trailing prompt and retain failed drafts", ()
   );
   assert.match(
     submit,
-    /const submittedDraftRevision = draft\.draftRevision\(submittedDraftKey\);\s*const submittedDraft = draft\.draftSnapshot\(text\);[\s\S]*?draft\.clearDraftForKey\(submittedDraftKey, submittedDraftRevision, submittedDraft\);\s*const accepted = steering[\s\S]*?await steerPrompt\(inlineContent, submittedDraft\)[\s\S]*?await sendPrompt\(inlineContent, submittedDraft\);\s*if \(!accepted\) draft\.restoreDraftForKey\(submittedDraftKey, submittedDraft\);/,
+    /const submittedDraftRevision = draft\.draftRevision\(submittedDraftKey\);\s*const submittedDraft = draft\.draftSnapshot\(text\);[\s\S]*?draft\.clearDraftForKey\(submittedDraftKey, submittedDraftRevision, submittedDraft\);\s*const accepted = steering\s*\?\s*await steerPrompt\(inlineContent, submittedDraft\)\s*:\s*await sendPrompt\(\s*inlineContent,\s*submittedDraft,\s*activeSessionId \?\? undefined,\s*captureAcceptedSession,\s*\);\s*if \(!accepted\) draft\.restoreDraftForKey\(submittedDraftKey, submittedDraft\);/,
   );
   assert.match(store, /draft\?: ComposerDraftSnapshot/);
   const sendPrompt = queueSlice.slice(
-    queueSlice.indexOf("sendPrompt: async (content, draft, requestedSessionId)"),
+    queueSlice.indexOf("sendPrompt: async (content, draft, requestedSessionId, onAccepted)"),
   );
   assert.match(sendPrompt, /return false;/);
   assert.match(
     sendPrompt,
     // An annotated send ships the block the model reads, not the bare draft
     // text, so the prompt call carries the composed prompt (D-LOCAL-response-annotations).
-    /await api\.prompt\(\{[\s\S]*?sessionId,[\s\S]*?content: outgoing,[\s\S]*?attachments:[\s\S]*?promptAttachmentsFromDraft\(draft\.fileReferences\)[\s\S]*?\}\);[\s\S]*?return true;/,
+    /await api\.prompt\(\{[\s\S]*?sessionId,[\s\S]*?content: outgoing,[\s\S]*?attachments:[\s\S]*?promptAttachmentsFromDraft\(draft\.fileReferences\)[\s\S]*?\}\);[\s\S]*?onAccepted\?\.\(startedIn\);\s*return true/,
+  );
+  assert.match(
+    sendPrompt,
+    /const accepted = await get\(\)\.enqueuePrompt\(outgoing, draft, sessionId\);\s*if \(accepted\) consumeAnnotations\(\);\s*if \(accepted\) onAccepted\?\.\(sessionId\);\s*return accepted/,
   );
 });
 
@@ -359,7 +363,7 @@ test("draft attachment routing keeps image chips structured and file chips textu
 
 test("the user row is inserted before the host round trip and echoed under the same id (D288)", () => {
   const sendPrompt = queueSlice.slice(
-    queueSlice.indexOf("sendPrompt: async (content, draft, requestedSessionId)"),
+    queueSlice.indexOf("sendPrompt: async (content, draft, requestedSessionId, onAccepted)"),
   );
   assert.ok(sendPrompt.length > 0, "sendPrompt not found");
   const insertAt = sendPrompt.indexOf("insertOptimisticUserMessage(startedIn, optimisticMessage)");
