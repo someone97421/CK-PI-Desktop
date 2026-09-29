@@ -38,6 +38,7 @@ import {
 import {
   addUsage,
   cumulativeDelta,
+  GEMINI_INLINE_REQUEST_BYTES,
   isCertificateVerificationError,
   subagentCanMutate,
   subagentToolsLabel,
@@ -81,6 +82,7 @@ import {
   apiBindingForStyle,
   buildProviderModel,
   createProviderModels,
+  mediaCapabilitiesForProvider,
   DEFAULT_CONTEXT_WINDOW,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
@@ -107,6 +109,8 @@ import {
   subagentContextOverflowError,
 } from "./subagent-context.js";
 import { clampThinkingLevel } from "./thinking-level.js";
+import { visionFromModelConfig } from "./model-capabilities.js";
+import type { ToolInputCapabilities } from "./read-media.js";
 import {
   subagentModelBinding,
   type SubagentProviderRetryState,
@@ -337,6 +341,14 @@ export class SubagentRun {
   private pendingOverflowCompaction = false;
   /** Set when the context could not be reduced: the run fails visibly. */
   private contextFailure?: { code: string; message: string };
+
+  /** 工具读取随当前绑定及故障切换模型更新，不继承主代理的媒体开关。 */
+  get inputCapabilities(): ToolInputCapabilities {
+    return {
+      supportsVision: visionFromModelConfig(this.provider.modelConfig),
+      ...mediaCapabilitiesForProvider(this.provider),
+    };
+  }
 
   constructor(opts: SubagentRunOptions) {
     this.opts = opts;
@@ -857,6 +869,7 @@ export class SubagentRun {
       thinkingLevel,
       sessionId: this.opts.sessionId,
       maxTokens: this.opts.definition.maxTokens,
+      requestLimitBytes: this.opts.definition.name === "media-analyst" ? GEMINI_INLINE_REQUEST_BYTES : undefined,
     }, this.retryState);
   }
 
@@ -903,7 +916,8 @@ export class SubagentRun {
     return {
       provider,
       model,
-      models: createProviderModels(provider, model),
+      models: createProviderModels(provider, model,
+        this.opts.definition.name === "media-analyst" ? GEMINI_INLINE_REQUEST_BYTES : undefined),
       thinkingLevel: compactionThinkingLevel(provider, this.thinkingLevel),
     };
   }

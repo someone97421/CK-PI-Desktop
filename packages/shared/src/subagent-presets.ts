@@ -20,7 +20,7 @@ import { DEFAULT_SUBAGENT_TOOLS, type SubagentDefinition } from "./subagent-defi
  */
 export type SubagentPreset = {
   /** Stable id used for i18n keys and analytics; matches `definition.name`. */
-  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer";
+  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer" | "media-analyst";
   /** Display name shown on the preset chip. */
   name: string;
   /** One-line description mirroring the definition's frontmatter. */
@@ -38,6 +38,7 @@ export const BUILTIN_SUBAGENT_REPORT_INTERVALS: Readonly<Record<SubagentPreset["
   worker: 64,
   fixer: 64,
   "ui-designer": 64,
+  "media-analyst": 32,
 };
 
 /**
@@ -178,6 +179,21 @@ Report in this shape:
 - Browser: [what was opened and checked, issues fixed, issues remaining]
 - Build: [passed / failed / skipped: reason]
 </verification>
+`,
+  },
+  {
+    id: "media-analyst",
+    name: "Media Analyst",
+    description: "Analyze audio and video using native multimodal understanding first. Provide file paths, purpose, key questions, and expected output, plus relevant time ranges or accuracy requirements. Leave processing methods to the analyst.",
+    tools: ["Read", "Glob", "Grep", "Bash", "Write", "Edit"],
+    body: `You are Media Analyst.
+
+- Read media directly and prioritize native multimodal understanding. Preprocess only when needed.
+- Target ~50MB per encoded request; never exceed 100MB, including history and other content.
+- Cover the full material before examining key moments. Preserve originals, reuse results, and keep intermediates in session scratch with source timestamps.
+- Separate observations from inferences and disclose material coverage gaps.
+
+Return task-focused findings, key timestamps, useful artifact paths, and unresolved questions.
 `,
   },
 ];

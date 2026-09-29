@@ -15,7 +15,7 @@ import {
 } from "./subagent-presets.js";
 
 describe("SUBAGENT_PRESETS", () => {
-  it("ships the five builtin roles", () => {
+  it("ships the builtin roles", () => {
     const ids = SUBAGENT_PRESETS.map((preset) => preset.id);
     expect(ids).toEqual([
       "explorer",
@@ -23,6 +23,7 @@ describe("SUBAGENT_PRESETS", () => {
       "worker",
       "fixer",
       "ui-designer",
+      "media-analyst",
     ]);
   });
 

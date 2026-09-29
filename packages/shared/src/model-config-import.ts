@@ -858,6 +858,8 @@ function bindingFromGenericModel(
     maxTokensSource:
       importedModelLimitSource(record?.maxTokensSource) ??
       (maxTokens === undefined ? base.maxTokensSource : "user"),
+    ...(typeof record?.supportsAudio === "boolean" ? { supportsAudio: record.supportsAudio } : {}),
+    ...(typeof record?.supportsVideo === "boolean" ? { supportsVideo: record.supportsVideo } : {}),
     ...(record?.nativeWebSearch === true || record?.native_web_search === true
       ? { nativeWebSearch: true }
       : {}),

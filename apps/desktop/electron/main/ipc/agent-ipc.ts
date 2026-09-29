@@ -1,6 +1,8 @@
 import { IPC, ErrorCodes, compactionRecordId, findSkillMentions, isRpcTimeoutError, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest, type VoiceOrigin, canonicalThinkingLevel, type SessionThinkingLevel } from "@pi-desktop/shared";
 import type { FinishTurn } from "../runtime/plans";
 import { expandSlashInvocation, enhancePromptDraft, summarizeSessionTitle, visionFromModelConfig, type ComposerTemplate, type RuntimeProviderConfig } from "@pi-desktop/agent-runtime";
+import { mediaCapabilitiesForProvider } from "@pi-desktop/agent-runtime";
+import type { MediaInputCapabilities } from "@pi-desktop/shared";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
 import { appendPromptFallbackPaths, durableUserMessageId, preparePromptAttachments, type PreparedPromptAttachment } from "../prompt-attachments";
 import { executionFromResponse, resolveSessionMessageInput } from "@pi-desktop/host-runtime";
@@ -294,11 +296,12 @@ export function registerAgentIpc({
         errorCode: ErrorCodes.TURN_NOT_FOUND,
       });
     }
-    const context = await sidecar.call<{ projectPath?: string; supportsVision: boolean }>(
+    const context = await sidecar.call<{ projectPath?: string; supportsVision: boolean } & MediaInputCapabilities>(
       "agent.steeringContext", { sessionId: req.sessionId, expectedTurnId: req.expectedTurnId },
     );
     const prepared = await preparePromptAttachments(
       dataDir, req.sessionId, context.projectPath, req.attachments ?? [], context.supportsVision,
+      context,
     );
     const session = await host.call<{ session?: { messages?: UiMessage[] } }>("session.get", {
       id: req.sessionId, messageLimit: 1,
@@ -590,6 +593,7 @@ export function registerAgentIpc({
           : undefined,
         req.attachments ?? [],
         supportsVision,
+        mediaCapabilitiesForProvider(launch.sidecarParams.provider),
       );
     } catch (error) {
       await finishTurn(req.sessionId, "error", (error as any)?.errorCode, {

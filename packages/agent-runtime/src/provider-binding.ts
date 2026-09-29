@@ -38,9 +38,11 @@ import {
   deepseekRequestCompat,
   zhipuRequestCompat,
   type ThinkingLevel,
+  type MediaInputCapabilities,
 } from "@pi-desktop/shared";
 import { genericModelConfig } from "./model-capabilities.js";
 import type { ModelConfig } from "./thinking-level.js";
+import { withMediaInput } from "./media-provider.js";
 
 export type RuntimeProviderConfig = {
   id: string;
@@ -189,6 +191,14 @@ export function providerRequestKey(provider: RuntimeProviderConfig): string {
  */
 export function apiBindingForProviderModel(provider: RuntimeProviderConfig): ApiBinding {
   return apiBindingForStyle(providerRequestTransport(provider).apiStyle);
+}
+
+export function mediaCapabilitiesForProvider(provider: RuntimeProviderConfig): MediaInputCapabilities {
+  const gemini = apiBindingForProviderModel(provider).api === "google-generative-ai";
+  return {
+    supportsAudio: gemini && provider.modelConfig?.supportsAudio === true,
+    supportsVideo: gemini && provider.modelConfig?.supportsVideo === true,
+  };
 }
 
 function providerRequestTransport(provider: RuntimeProviderConfig) {
@@ -384,6 +394,7 @@ export function buildProviderModel(
 export function createProviderModels(
   provider: RuntimeProviderConfig,
   model: Model<Api>,
+  requestLimitBytes?: number,
 ): Models {
   const requestKey = providerRequestKey(provider);
   const resolveAuth = provider.resolveAuth;
@@ -415,7 +426,7 @@ export function createProviderModels(
         },
       },
       models: [model],
-      api: apiBindingForProviderModel(provider).adapter(),
+      api: withMediaInput(apiBindingForProviderModel(provider).adapter(), mediaCapabilitiesForProvider(provider), requestLimitBytes),
     }),
   );
   return models;

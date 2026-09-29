@@ -9,7 +9,7 @@ import type {
   SessionSummary,
   UiMessage,
 } from "@pi-desktop/shared";
-import { modeForProposalKind } from "@pi-desktop/shared";
+import { modeForProposalKind, mediaMimeType } from "@pi-desktop/shared";
 import type { ComposerDraftSnapshot } from "../../lib/composer-smart-stop";
 import { normalizeProjectPath } from "../../lib/sidebar-session-groups";
 import {
@@ -30,10 +30,9 @@ export function promptAttachmentsFromDraft(
       (/\.(avif|bmp|gif|heic|jpe?g|png|tiff?|webp)$/i.test(reference.path)
         ? "image"
         : "file");
-    // Inline chips use tokens for both files and images. Ordinary file chips
-    // already serialize to @path text (the model can Read them); only image
-    // chips need the structured transport for vision/fallback handling.
-    if (reference.token && kind !== "image") return [];
+    // 图片和音视频需要结构化附件，普通文件仍使用输入框中的路径引用。
+    if (reference.token && kind !== "image" &&
+      !mediaMimeType(reference.mimeType, reference.name, reference.path)) return [];
     return [
       {
         path: reference.path,

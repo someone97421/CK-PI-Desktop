@@ -583,7 +583,7 @@ describe("DesktopAgentRuntime configuration matching", () => {
       "paginates any supported text file however large",
     );
     expect(prompt).toContain(
-      "Read accepts only an existing regular text file, never a directory",
+      "Read accepts existing regular text and supported media files, never a directory",
     );
     expect(prompt).toContain(
       "in Agent mode, activate it with ToolSearch for the current prompt",
@@ -7076,7 +7076,7 @@ describe("DesktopAgentRuntime subagents", () => {
     );
     expect(readOnly).toContain("prefer Read, Grep, and Glob");
     expect(readOnly).toContain(
-      "Read accepts only an existing regular text file, never a directory",
+      "Read accepts existing regular text and supported media files, never a directory",
     );
     expect(readOnly).toContain("Grep takes a file-or-directory `path`");
     expect(readOnly).not.toContain("use Edit for one small unique replacement");

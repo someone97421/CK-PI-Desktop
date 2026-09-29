@@ -28,6 +28,23 @@ function userMessage(
 }
 
 describe("hydrateAttachmentHistory", () => {
+  it("restores audio independently of vision and leaves disabled video as a file reference", async () => {
+    await withTempDir(async (tmp) => {
+      const audio = resolve(tmp, "audio-blob");
+      const video = resolve(tmp, "video-blob");
+      await writeFile(audio, "audio-bytes");
+      await writeFile(video, "video-bytes");
+      const hydrated = await hydrateAttachmentHistory([userMessage("media", [
+        { name: "sample.mp3", ref: audio, kind: "file", mimeType: "application/octet-stream" },
+        { name: "sample.mp4", ref: video, kind: "file", mimeType: "video/mp4" },
+      ])], { projectPath: tmp, supportsVision: false, supportsAudio: true, supportsVideo: false });
+      expect(hydrated[0].attachments?.[0]).toMatchObject({
+        kind: "file", mimeType: "audio/mpeg", data: Buffer.from("audio-bytes").toString("base64"),
+      });
+      expect(hydrated[0].attachments?.[1].data).toBeUndefined();
+      expect(hydrated[0].content).toContain(video);
+    });
+  });
   it("inlines image attachments when supportsVision is true and within per-image byte limits", async () => {
     await withTempDir(async (tmp) => {
       const imgPath = resolve(tmp, "sample.png");

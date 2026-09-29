@@ -79,6 +79,8 @@ pub(crate) fn normalize_model_bindings(bindings: &[ModelBinding]) -> Vec<ModelBi
                 thinking_protocol,
                 supports_images: binding.supports_images,
                 supports_documents: binding.supports_documents,
+                supports_audio: binding.supports_audio,
+                supports_video: binding.supports_video,
                 available_for_subagents: binding.available_for_subagents,
                 native_web_search: binding.native_web_search,
             })
@@ -102,6 +104,8 @@ fn legacy_model_binding(model_id: Option<String>) -> Vec<ModelBinding> {
                 thinking_protocol: None,
                 supports_images: None,
                 supports_documents: None,
+                supports_audio: None,
+                supports_video: None,
                 available_for_subagents: None,
                 native_web_search: None,
             }]
@@ -387,6 +391,8 @@ mod tests {
             thinking_protocol: None,
             supports_images: None,
             supports_documents: None,
+            supports_audio: None,
+            supports_video: None,
             available_for_subagents: None,
             native_web_search: None,
         }

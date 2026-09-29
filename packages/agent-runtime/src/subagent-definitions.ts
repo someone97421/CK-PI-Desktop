@@ -18,6 +18,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   BUILTIN_SUBAGENT_REPORT_INTERVALS,
+  SUBAGENT_PRESETS,
   mergeSubagentDefinitions,
   parseSubagentDefinition,
   subagentModelKey,
@@ -183,6 +184,9 @@ Report in this shape:
 - Browser: [what was opened and checked, issues fixed, issues remaining]
 - Build: [passed / failed / skipped: reason]
 </verification>`,
+  ...SUBAGENT_PRESETS.filter((preset) => preset.id === "media-analyst").map((preset) =>
+    `---\nname: ${preset.id}\ndescription: ${preset.description}\ntools: [${preset.tools.join(", ")}]\nreportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS[preset.id]}\n---\n\n${preset.body}`,
+  ),
 ];
 
 /** Parsed builtins, rebuilt per call so a bad constant surfaces as a

@@ -1263,6 +1263,20 @@ fn tool_read(
     let extension = resolved
         .extension()
         .map(|ext| ext.to_string_lossy().to_lowercase());
+    // 媒体沿用 Read 的路径授权；只传引用，由运行时按实际模型能力读取。
+    if matches!(extension.as_deref(), Some(
+        "png" | "jpg" | "jpeg" | "webp" | "gif" |
+        "wav" | "mp3" | "aiff" | "aif" | "aac" | "ogg" | "oga" | "flac" |
+        "m4a" | "opus" | "mp4" | "m4v" | "mpeg" | "mpg" | "mov" | "avi" |
+        "flv" | "webm" | "wmv" | "3gp"
+    )) {
+        return Ok(json!({
+            "path": display,
+            "root": root_label(root_kind),
+            "fileBytes": meta.len(),
+            "mediaFile": { "path": resolved.to_string_lossy() }
+        }));
+    }
     if let Some(ext) = &extension {
         if BINARY_EXTENSIONS.contains(&ext.as_str()) {
             return Err((
@@ -2733,11 +2747,11 @@ pub fn builtin_tool_defs() -> Value {
         {
             "name": "Read",
             "description": format!(
-                "Read a window of an existing regular text file inside the workspace or the session scratch directory. \
+                "Read an existing regular text, image, audio or video file inside the workspace or the session scratch directory. Media returns an authorized file reference for the runtime; offset and limit apply only to text. \
                  Read never accepts a directory; activate and use Glob when a directory must be listed or the file name is uncertain. \
                  Returns at most {} lines ({}KB) starting at `offset`; lines longer than {} characters are cut. \
                  `content` is line-numbered (`N:`) under a `[path#TAG]` header; `tag` is the whole-file 4-hex Edit anchor. \
-                 `totalLines` is always reported so you know the file scale upfront. \
+                 `totalLines` is always reported for text so you know the file scale upfront. \
                  `truncated` is true only when this window was cut short (budget or a clipped line), not merely because the file continues. \
                  For files beyond the default window, Grep to locate the target, then Read the range with offset/limit. \
                  Prefer this over `cat`/`sed`/`head` in Bash.",

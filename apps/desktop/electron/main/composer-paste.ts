@@ -11,13 +11,14 @@ import { basename, extname, isAbsolute, join } from "node:path";
 import {
   isSvgAttachment,
   SVG_MIME_TYPE,
+  MEDIA_MIME_BY_EXTENSION,
   type ComposerPasteFile,
   type ComposerPastedFile,
 } from "@pi-desktop/shared";
 
 const SAFE_SESSION_ID = /^[A-Za-z0-9_-]+$/;
 const MAX_FILES = 20;
-const MAX_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_FILE_BYTES = 100_000_000;
 const MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const IMAGE_EXTENSIONS = new Set([
   ".avif",
@@ -33,6 +34,7 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 
 const MIME_EXTENSIONS: Record<string, string> = {
+  ...Object.fromEntries(Object.entries(MEDIA_MIME_BY_EXTENSION).map(([extension, mime]) => [mime, `.${extension}`])),
   [SVG_MIME_TYPE]: ".svg",
   "image/gif": ".gif",
   "image/jpeg": ".jpg",
@@ -52,6 +54,7 @@ const MIME_BY_EXTENSION: Record<string, string> = Object.fromEntries(
 );
 
 Object.assign(MIME_BY_EXTENSION, {
+  ...Object.fromEntries(Object.entries(MEDIA_MIME_BY_EXTENSION).map(([extension, mime]) => [`.${extension}`, mime])),
   ".avif": "image/avif",
   ".bmp": "image/bmp",
   ".heic": "image/heic",

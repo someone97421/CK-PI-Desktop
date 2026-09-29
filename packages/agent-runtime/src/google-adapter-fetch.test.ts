@@ -3,6 +3,7 @@ import { normalizeContext } from "@earendil-works/pi-ai";
 import { completeOneShot } from "./one-shot-complete.js";
 import { subagentModelBinding } from "./subagent-model-binding.js";
 import type { RuntimeProviderConfig } from "./provider-binding.js";
+import { genericModelConfig } from "./model-capabilities.js";
 
 /**
  * The Google adapter refuses any `fetch` that is not `globalThis.fetch`
@@ -23,7 +24,7 @@ const googleProvider: RuntimeProviderConfig = {
   headers: { "X-Team": "platform" },
 };
 
-type Captured = { url: string; headers: Record<string, string> };
+type Captured = { url: string; headers: Record<string, string>; body: any };
 
 function googleStreamResponse(): Response {
   const chunk = (body: unknown) => `data: ${JSON.stringify(body)}\n\n`;
@@ -46,7 +47,8 @@ async function withStubbedGoogle<T>(
     new Headers(init?.headers).forEach((value, key) => {
       headers[key.toLowerCase()] = value;
     });
-    captured.push({ url: input instanceof Request ? input.url : String(input), headers });
+    const body = init?.body ?? (input instanceof Request ? await input.text() : "{}");
+    captured.push({ url: input instanceof Request ? input.url : String(input), headers, body: JSON.parse(String(body)) });
     return googleStreamResponse();
   });
   try {
@@ -57,6 +59,64 @@ async function withStubbedGoogle<T>(
 }
 
 describe("Google Generative AI requests", () => {
+  it.each(["audio/mpeg", "video/mp4"])("sends %s as official inlineData with image input disabled", async (mimeType) => {
+    await withStubbedGoogle(async (captured) => {
+      await completeOneShot({
+        ...googleProvider,
+        baseUrl: "https://gemini-gateway.example/v1beta",
+        modelConfig: { ...genericModelConfig("media-model"), supportsAudio: true, supportsVideo: true },
+      }, { messages: [{ role: "user", timestamp: 0, content: [
+        { type: "text", text: "总结附件" },
+        { type: "image", mimeType, data: "AQID" },
+      ] }] }, "off");
+      expect(captured).toHaveLength(1);
+      expect(captured[0].url).toContain("https://gemini-gateway.example/");
+      expect(captured[0].body.contents[0].parts).toEqual([
+        { text: "总结附件" }, { inlineData: { mimeType, data: "AQID" } },
+      ]);
+    });
+  });
+
+  it("keeps audio and video opt-ins independent for replayed messages", async () => {
+    await withStubbedGoogle(async (captured) => {
+      await completeOneShot({
+        ...googleProvider,
+        modelConfig: { ...genericModelConfig("media-model"), supportsAudio: true, supportsVideo: false },
+      }, { messages: [{ role: "user", timestamp: 0, content: [
+        { type: "image", mimeType: "audio/wav", data: "AQID" },
+        { type: "image", mimeType: "video/mp4", data: "BAUG" },
+        { type: "image", mimeType: "image/png", data: "BwgJ" },
+      ] }] }, "off");
+      expect(captured[0].body.contents[0].parts).toEqual([
+        { inlineData: { mimeType: "audio/wav", data: "AQID" } },
+        { text: expect.stringContaining("未启用") },
+        { text: expect.stringContaining("未启用图片") },
+      ]);
+    });
+  });
+  it("keeps media from Read in user inlineData after the tool response", async () => {
+    await withStubbedGoogle(async (captured) => {
+      await completeOneShot({
+        ...googleProvider,
+        modelConfig: { ...genericModelConfig("media-model"), supportsVideo: true },
+      }, { messages: [
+        { role: "user", timestamp: 0, content: "分析片段" },
+        { role: "assistant", timestamp: 1, api: "google-generative-ai", provider: "google",
+          model: googleProvider.modelId, stopReason: "toolUse",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          content: [{ type: "toolCall", id: "read-clip", name: "Read", arguments: { path: "clip.mp4" } }] },
+        { role: "toolResult", timestamp: 2, toolCallId: "read-clip", toolName: "Read", isError: false,
+          content: [{ type: "text", text: "clip.mp4" }, { type: "image", mimeType: "video/mp4", data: "AQID" }] },
+      ] }, "off");
+      const parts = captured[0].body.contents.flatMap((entry: any) => entry.parts);
+      expect(parts).toContainEqual({ inlineData: { mimeType: "video/mp4", data: "AQID" } });
+      const response = parts.find((part: any) => part.functionResponse)?.functionResponse;
+      expect(response?.name).toBe("Read");
+      expect(response?.parts).toBeUndefined();
+    });
+  });
+
   it("completes a one-shot completion through the native endpoint", async () => {
     const result = await withStubbedGoogle(async (captured) => {
       const oneShot = await completeOneShot(

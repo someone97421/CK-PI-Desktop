@@ -79,6 +79,8 @@ export function modelConfigWithBinding(
         | "thinkingProtocol"
         | "supportsImages"
         | "supportsDocuments"
+        | "supportsAudio"
+        | "supportsVideo"
         | "nativeWebSearch"
       >
     | null,
@@ -151,6 +153,8 @@ export function modelConfigWithBinding(
     ...(compat ? { compat } : {}),
     ...(Object.keys(thinkingLevelMap).length > 0 ? { thinkingLevelMap } : {}),
     ...modalityOverride(model, binding),
+    supportsAudio: binding.supportsAudio === true,
+    supportsVideo: binding.supportsVideo === true,
     ...(binding.nativeWebSearch === true ? { webSearch: true } : {}),
   };
 }

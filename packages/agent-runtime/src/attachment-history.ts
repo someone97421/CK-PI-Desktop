@@ -9,6 +9,11 @@ import {
   MAX_INLINE_IMAGE_BYTES,
   MAX_INLINED_IMAGE_HISTORY_BYTES,
   SVG_MIME_TYPE,
+  mediaMimeType,
+  supportsMediaMime,
+  base64ByteLength,
+  GEMINI_INLINE_REQUEST_BYTES,
+  type MediaInputCapabilities,
   type MessageAttachment,
   type UiMessage,
 } from "@pi-desktop/shared";
@@ -21,7 +26,7 @@ type ResolvedAttachment = {
   inlined?: boolean;
 };
 
-export type AttachmentHistoryContext = {
+export type AttachmentHistoryContext = MediaInputCapabilities & {
   scratchDir?: string;
   projectPath?: string;
   attachmentsDir?: string;
@@ -127,6 +132,7 @@ export async function hydrateAttachmentHistory(
     const cleanAttachment: MessageAttachment = {
       ...sourceAttachment,
       data: undefined,
+      mimeType: mediaMimeType(sourceAttachment.mimeType, sourceAttachment.name, sourceAttachment.ref) ?? sourceAttachment.mimeType,
     };
     const attachment: MessageAttachment = isSvgAttachment(
       sourceAttachment.mimeType,
@@ -152,10 +158,10 @@ export async function hydrateAttachmentHistory(
         return { attachment };
       }
       const size = (await stat(canonical)).size;
-      const canInline =
-        supportsVision &&
-        attachment.kind === "image" &&
-        size <= MAX_INLINE_IMAGE_BYTES;
+      const media = supportsMediaMime(attachment.mimeType, params);
+      const canInline = media
+        ? base64ByteLength(size) < GEMINI_INLINE_REQUEST_BYTES
+        : supportsVision && attachment.kind === "image" && size <= MAX_INLINE_IMAGE_BYTES;
       if (canInline) return { attachment, canonicalPath: canonical, size };
       return {
         attachment,
@@ -181,6 +187,7 @@ export async function hydrateAttachmentHistory(
   // order within a message. This preserves every image when the history fits while
   // keeping the most recent visual context when the aggregate exceeds the cap.
   let remainingBytes = maxInlinedImageBytes;
+  let remainingMediaBytes = GEMINI_INLINE_REQUEST_BYTES;
   const selectedForInlining: ResolvedAttachment[] = [];
   for (let messageIndex = resolvedHistory.length - 1; messageIndex >= 0; messageIndex--) {
     const resolved = resolvedHistory[messageIndex];
@@ -190,11 +197,13 @@ export async function hydrateAttachmentHistory(
       if (
         !item?.canonicalPath ||
         item.size === undefined ||
-        item.size > remainingBytes
+        base64ByteLength(item.size) >= remainingMediaBytes ||
+        (!supportsMediaMime(item.attachment.mimeType, params) && item.size > remainingBytes)
       ) {
         continue;
       }
-      remainingBytes -= item.size;
+      if (!supportsMediaMime(item.attachment.mimeType, params)) remainingBytes -= item.size;
+      remainingMediaBytes -= base64ByteLength(item.size);
       selectedForInlining.push(item);
     }
   }

@@ -928,6 +928,26 @@ export function ModelSelectionPanes({
                             updateBinding(binding.id, { supportsDocuments: next })
                           }
                         />
+                        {apiStyle === "google_generative_ai" ? (
+                          <>
+                            <CapabilityToggle
+                              label={t("settings.videoInput")}
+                              published={false}
+                              value={binding.supportsVideo}
+                              onChange={(next) =>
+                                updateBinding(binding.id, { supportsVideo: next })
+                              }
+                            />
+                            <CapabilityToggle
+                              label={t("settings.audioInput")}
+                              published={false}
+                              value={binding.supportsAudio}
+                              onChange={(next) =>
+                                updateBinding(binding.id, { supportsAudio: next })
+                              }
+                            />
+                          </>
+                        ) : null}
                         {onImageModelChange ? (
                           <label className="provider-chosen-capability">
                             <input

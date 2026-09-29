@@ -24,6 +24,11 @@ import {
   isSvgAttachment,
   SVG_MIME_TYPE,
   MAX_INLINE_IMAGE_BYTES,
+  mediaMimeType,
+  supportsMediaMime,
+  base64ByteLength,
+  GEMINI_INLINE_REQUEST_BYTES,
+  type MediaInputCapabilities,
   type AgentPromptAttachment,
   type MessageAttachment,
 } from "@pi-desktop/shared";
@@ -90,6 +95,8 @@ function canonicalPath(path: string): string | undefined {
 
 function promptMimeType(path: string, supplied?: string, name?: string): string {
   if (isSvgAttachment(supplied, path, name)) return SVG_MIME_TYPE;
+  const media = mediaMimeType(supplied, name, path);
+  if (media) return media;
   const value = supplied?.trim().toLowerCase();
   if (value) return value;
   const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
@@ -228,8 +235,10 @@ export async function preparePromptAttachments(
   projectPath: string | undefined,
   attachments: readonly AgentPromptAttachment[],
   supportsVision: boolean,
+  mediaCapabilities: MediaInputCapabilities = {},
 ): Promise<PreparedPromptAttachment[]> {
   const prepared: PreparedPromptAttachment[] = [];
+  let inlineBytes = 0;
   for (const attachment of attachments) {
     const source = resolvePromptPath(dataRoot, sessionId, projectPath, attachment.path);
     if (!source) {
@@ -240,7 +249,8 @@ export async function preparePromptAttachments(
     const name = attachment.name.trim() || source.absolute.split(/[\\/]/).at(-1) || "attachment";
     const mimeType = promptMimeType(source.absolute, attachment.mimeType, name);
     const isImage = isImagePromptAttachment(attachment, source.absolute);
-    if (!isImage) {
+    const isMedia = Boolean(mediaMimeType(mimeType, name));
+    if (!isImage && !isMedia) {
       prepared.push({
         message: {
           kind: "file",
@@ -257,7 +267,14 @@ export async function preparePromptAttachments(
     }
 
     const size = statSync(source.absolute).size;
-    const inline = supportsVision && size <= MAX_INLINE_IMAGE_BYTES;
+    const mediaEnabled = isMedia && supportsMediaMime(mimeType, mediaCapabilities);
+    const inline = (isImage && supportsVision && size <= MAX_INLINE_IMAGE_BYTES) || mediaEnabled;
+    if (inline) {
+      inlineBytes += base64ByteLength(size);
+      if ((mediaCapabilities.supportsAudio || mediaCapabilities.supportsVideo) && inlineBytes >= GEMINI_INLINE_REQUEST_BYTES) {
+        throw new Error("附件的 Base64 合计已达到 Gemini 100MB 请求上限，请减少附件或缩小文件。");
+      }
+    }
     const bytes = inline ? await readFile(source.absolute) : undefined;
     const ref =
       source.root === "attachment" && attachment.path.trim().startsWith("attachments/")
@@ -275,7 +292,7 @@ export async function preparePromptAttachments(
         );
     prepared.push({
       message: {
-        kind: "image",
+        kind: isImage ? "image" : "file",
         name,
         ref,
         mimeType,

@@ -28,6 +28,8 @@ export type ModelConfig = {
   description?: string;
   family?: string;
   attachment?: boolean;
+  supportsAudio?: boolean;
+  supportsVideo?: boolean;
   reasoning: boolean;
   reasoningOptions?: ModelReasoningOption[];
   thinkingProtocol?: ThinkingProtocol;

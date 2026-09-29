@@ -171,6 +171,8 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     thinking_protocol: Some("adaptive".into()),
                     supports_images: Some(true),
                     supports_documents: None,
+                    supports_audio: Some(true),
+                    supports_video: Some(false),
                     available_for_subagents: Some(true),
                     native_web_search: None,
                 },
@@ -186,6 +188,8 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     thinking_protocol: None,
                     supports_images: None,
                     supports_documents: Some(false),
+                    supports_audio: None,
+                    supports_video: None,
                     available_for_subagents: None,
                     native_web_search: None,
                 },
@@ -240,6 +244,12 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
     assert!(config["models"][1].get("supportsImages").is_none());
     assert_eq!(provider.models[0].supports_images, Some(true));
     assert_eq!(provider.models[1].supports_documents, Some(false));
+    assert_eq!(config["models"][0]["supportsAudio"], true);
+    assert_eq!(config["models"][0]["supportsVideo"], false);
+    assert_eq!(provider.models[0].supports_audio, Some(true));
+    assert_eq!(provider.models[0].supports_video, Some(false));
+    assert!(config["models"][1].get("supportsAudio").is_none());
+    assert!(config["models"][1].get("supportsVideo").is_none());
 
     let legacy = create_provider(
         &db,
@@ -295,6 +305,8 @@ fn binding_with_alias(id: &str, alias: Option<&str>) -> ModelBinding {
         thinking_protocol: None,
         supports_images: None,
         supports_documents: None,
+        supports_audio: None,
+        supports_video: None,
         available_for_subagents: None,
         native_web_search: None,
     }
@@ -1209,6 +1221,8 @@ fn binding_with_limits(id: &str, context_window: u32, max_tokens: u32) -> ModelB
         thinking_protocol: None,
         supports_images: None,
         supports_documents: None,
+        supports_audio: None,
+        supports_video: None,
         available_for_subagents: None,
         native_web_search: None,
     }

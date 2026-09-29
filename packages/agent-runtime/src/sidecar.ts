@@ -1,3 +1,4 @@
+import { mediaCapabilitiesForProvider } from "./provider-binding.js";
 /**
  * Node pi agent sidecar.
  * Protocol: NDJSON JSON-RPC on stdio with Electron main.
@@ -288,6 +289,7 @@ async function runtimeFor(
       projectPath: params.projectPath,
       attachmentsDir: params.attachmentsDir,
       supportsVision,
+      ...mediaCapabilitiesForProvider(params.provider),
     });
     compaction = detail?.session?.compaction;
   } catch {

@@ -35,6 +35,7 @@ export function subagentModelBinding(opts: {
   thinkingLevel: SubagentThinkingLevel;
   sessionId: string;
   maxTokens?: number;
+  requestLimitBytes?: number;
 }, retry: SubagentProviderRetryState) {
   // A definition may cap the delegate's own output (issue #171). The
   // catalog's published limit keeps applying otherwise, so this is an
@@ -47,7 +48,7 @@ export function subagentModelBinding(opts: {
     opts.maxTokens !== undefined
       ? { ...builtModel, maxTokens: opts.maxTokens }
       : builtModel;
-  const models = createProviderModels(opts.provider, model);
+  const models = createProviderModels(opts.provider, model, opts.requestLimitBytes);
   const omitThinking = opts.thinkingLevel === "omit";
   const agentThinkingLevel = agentThinkingLevelFor(opts.thinkingLevel);
   // The Responses adapter's low-level stream still uses a model-level

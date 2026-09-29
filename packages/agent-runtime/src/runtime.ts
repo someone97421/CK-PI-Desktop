@@ -146,6 +146,7 @@ import {
 } from "./tool-call-dedupe.js";
 import {
   apiBindingForProviderModel,
+  mediaCapabilitiesForProvider,
   buildProviderModel,
   copilotRequestHeaders,
   createExtensionAgentModels,
@@ -156,6 +157,7 @@ import {
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { PathMutex } from "./path-lock.js";
+import { readMediaToolResult, type ToolInputCapabilities } from "./read-media.js";
 import { clampOutputToContext, effectiveModelContextWindow, estimateOutputCapInputTokens } from "./output-cap.js";
 import {
   contextBudgetFor,
@@ -281,6 +283,8 @@ import {
 
 export type { RuntimeProviderConfig } from "./provider-binding.js";
 
+import { mediaMimeType, supportsMediaMime, type MediaInputCapabilities } from "@pi-desktop/shared";
+
 export type RuntimePromptAttachment = AgentPromptAttachment & {
   /** Base64 payload is transient and only crosses the sidecar for this turn. */
   data?: string;
@@ -292,39 +296,26 @@ export type RuntimePrompt = {
   attachments?: RuntimePromptAttachment[];
 };
 
-function promptContent(input: string | RuntimePrompt): UserMessage["content"] {
+function promptContent(input: string | RuntimePrompt, capabilities: MediaInputCapabilities = {}): UserMessage["content"] {
   if (typeof input === "string") return input;
-  const text = input.text;
-  const images = (input.attachments ?? []).filter(
-    (attachment) =>
-      attachment.kind === "image" &&
-      typeof attachment.data === "string" &&
-      attachment.data.length > 0,
-  );
-  if (!images.length) return text;
+  const blocks = promptMedia(input, capabilities);
+  if (!blocks.length) return input.text;
   return [
-    ...(text.trim() ? [{ type: "text" as const, text }] : []),
-    ...images.map((attachment) => ({
-      type: "image" as const,
-      data: attachment.data!,
-      mimeType: attachment.mimeType || "image/png",
-    })),
+    ...(input.text.trim() ? [{ type: "text" as const, text: input.text }] : []),
+    ...blocks,
   ];
 }
 
-function promptImages(input: RuntimePrompt): ImageContent[] {
-  return (input.attachments ?? [])
-    .filter(
-      (attachment) =>
-        attachment.kind === "image" &&
-        typeof attachment.data === "string" &&
-        attachment.data.length > 0,
-    )
-    .map((attachment) => ({
+function promptMedia(input: RuntimePrompt, capabilities: MediaInputCapabilities): ImageContent[] {
+  return (input.attachments ?? []).flatMap((attachment) => {
+    const media = mediaMimeType(attachment.mimeType, attachment.name, attachment.path);
+    if (!attachment.data || (media ? !supportsMediaMime(media, capabilities) : attachment.kind !== "image")) return [];
+    return [{
       type: "image" as const,
-      data: attachment.data!,
-      mimeType: attachment.mimeType || "image/png",
-    }));
+      data: attachment.data,
+      mimeType: media ?? attachment.mimeType ?? "image/png",
+    }];
+  });
 }
 
 function runtimeAttachmentFromMessage(
@@ -1546,6 +1537,7 @@ export class DesktopAgentRuntime {
    * resolves the delegate's permission under it instead of the session mode.
    */
   private delegatePermissionScopes = new Map<string, SubagentPermission>();
+  private delegateInputCapabilities = new Map<string, ToolInputCapabilities>();
   /** Serializes same-path mutations across the parent and its delegates. */
   private writeLocks = new PathMutex();
   /** Complete tool registry; only the active subset is sent to the provider. */
@@ -1791,7 +1783,7 @@ Delegation rules:
       // Search-tool steering. Read/Grep/Glob are host-bounded and scopeable;
       // hand-rolled shell pipelines are not, and unbounded shell output is
       // what exhausted context and forced repeated re-searching.
-      "Searching and reading: prefer the Read, Grep, and Glob tools over shell `cat`, `sed`, `head`, `grep`, or `find`. Read accepts only an existing regular text file, never a directory. If a file name is uncertain or a directory must be listed, use Glob instead of guessing a file name or calling Read on the directory; in Agent mode, activate it with ToolSearch for the current prompt when it is unavailable. Scope every search with the native parameters: Grep takes a file-or-directory `path` plus `include`, `outputMode`, and `headLimit`; Glob takes a directory `path` and `limit`; Read takes `offset` and `limit`, always reports `totalLines`, and paginates any supported text file however large; for files beyond the default window, use Grep to locate the target lines first, then Read the relevant range. Use `outputMode: \"filesWithMatches\"` or `\"count\"` when file contents are not needed, and use `include` to avoid scanning generated or vendor trees. These tools bound their own output; a shell pipeline does not, and one unscoped search over a whole workspace costs context you will need later. Workspace-relative paths are portable across macOS, Linux, and Windows; an explicit path outside the workspace and session scratch roots asks for permission unless the effective mode is Auto, so do not retry a denied path blindly. Grep uses the system's `rg` when it is installed and an in-process searcher otherwise — call Grep, do not shell out to `rg`. When a search genuinely needs Bash, use the active shell's syntax and a bounded command, and never assume POSIX utilities, `/`-based paths, or PowerShell commands on every platform. Do not re-run a search whose answer you already have.",
+      "Searching and reading: prefer the Read, Grep, and Glob tools over shell `cat`, `sed`, `head`, `grep`, or `find`. Read accepts existing regular text and supported media files, never a directory; media understanding follows the current model's capabilities. If a file name is uncertain or a directory must be listed, use Glob instead of guessing a file name or calling Read on the directory; in Agent mode, activate it with ToolSearch for the current prompt when it is unavailable. Scope every search with the native parameters: Grep takes a file-or-directory `path` plus `include`, `outputMode`, and `headLimit`; Glob takes a directory `path` and `limit`; for text, Read takes `offset` and `limit`, always reports `totalLines`, and paginates any supported text file however large; for files beyond the default window, use Grep to locate the target lines first, then Read the relevant range. Use `outputMode: \"filesWithMatches\"` or `\"count\"` when file contents are not needed, and use `include` to avoid scanning generated or vendor trees. These tools bound their own output; a shell pipeline does not, and one unscoped search over a whole workspace costs context you will need later. Workspace-relative paths are portable across macOS, Linux, and Windows; an explicit path outside the workspace and session scratch roots asks for permission unless the effective mode is Auto, so do not retry a denied path blindly. Grep uses the system's `rg` when it is installed and an in-process searcher otherwise — call Grep, do not shell out to `rg`. When a search genuinely needs Bash, use the active shell's syntax and a bounded command, and never assume POSIX utilities, `/`-based paths, or PowerShell commands on every platform. Do not re-run a search whose answer you already have.",
       // Observed leak: OpenAI-style models sometimes emit the internal
       // `multi_tool_use.parallel` wrapper as assistant text. PI-Desktop has no
       // such tool, so the whole batch is silently lost as prose.
@@ -2708,7 +2700,7 @@ Delegation rules:
         const content = promptContent({
           text: m.sessionMessage ? formatSessionMessage(m.content, m.sessionMessage) : m.content,
           attachments,
-        });
+        }, mediaCapabilitiesForProvider(this.provider));
         if (
           !(m.content || "").trim() &&
           !attachments.some((attachment) => attachment.data)
@@ -2873,8 +2865,8 @@ Delegation rules:
           return "Open a workspace HTML file in PI-Desktop's built-in browser panel. `path` is workspace-relative (e.g. \"demo/index.html\"). The preview live-reloads on later edits to the file or its sibling assets, so call once per page.";
         case "Read":
           return (
-            "Read a bounded window from an existing regular text file, never a directory. " +
-            "The result always includes `totalLines` so you know the file\'s scale upfront. " +
+            "Read an existing regular text, image, audio or video file, never a directory. Media is delivered according to the current model's capabilities; offset and limit apply only to text. " +
+            "For text, the result always includes `totalLines` so you know the file\'s scale upfront. " +
             "`content` is line-numbered (`N:`) under a `[path#TAG]` header; `tag` is the whole-file 4-hex Edit anchor. " +
             "`truncated` is true only when this window was cut short, not merely because the file continues. " +
             "For files beyond the default window, use Grep to locate the target content first, then Read " +
@@ -3247,6 +3239,16 @@ Delegation rules:
           };
         }
         const rawContent = result.content;
+        const inputCapabilities = this.delegateInputCapabilities.get(toolCallId) ?? {
+          supportsVision: visionFromModelConfig(this.provider.modelConfig),
+          ...mediaCapabilitiesForProvider(this.provider),
+        };
+        if (toolName === "Read" && result.ok && isRecord(rawContent) &&
+            isRecord(rawContent.mediaFile) && typeof rawContent.mediaFile.path === "string") {
+          const mediaResult = await readMediaToolResult(rawContent.mediaFile.path, inputCapabilities, signal);
+          if (mediaResult.isError) this.failedHostToolCalls.add(toolCallId);
+          return mediaResult;
+        }
         const imageBlocks: Array<{ type: "image"; data: string; mimeType: string }> = [];
         let text: string;
         let details: unknown = rawContent;
@@ -3261,7 +3263,7 @@ Delegation rules:
                   null,
                   2,
                 );
-          const vision = visionFromModelConfig(this.provider.modelConfig);
+          const vision = inputCapabilities.supportsVision;
           for (const image of rawContent.images) {
             if (
               !isRecord(image) ||
@@ -3876,7 +3878,7 @@ Delegation rules:
     const blocks: string[] = [];
     if (tools.has("Read") || tools.has("Grep") || tools.has("Glob")) {
       blocks.push(
-        "Searching and reading: prefer Read, Grep, and Glob over shell text utilities. Read accepts only an existing regular text file, never a directory. If a file name is uncertain or a directory must be listed, use Glob when it is available; otherwise use a bounded available search or listing tool instead of guessing a file name or reading the directory. Scope every call — Grep takes a file-or-directory `path` plus `include`, `outputMode`, and `headLimit`; Glob takes a directory `path` and `limit`; Read takes `offset` and `limit` and always reports `totalLines`; use Grep to locate content in large files before reading a targeted range. Use `outputMode: \"filesWithMatches\"` or `\"count\"` when contents are not needed. Grep uses the system's `rg` when installed and an in-process searcher otherwise — call Grep rather than shelling out to `rg`. Your context is finite too: an unscoped search over the whole workspace costs the tokens you need to finish.",
+        "Searching and reading: prefer Read, Grep, and Glob over shell text utilities. Read accepts existing regular text and supported media files, never a directory; media understanding follows the current model's capabilities. If a file name is uncertain or a directory must be listed, use Glob when it is available; otherwise use a bounded available search or listing tool instead of guessing a file name or reading the directory. Scope every call — Grep takes a file-or-directory `path` plus `include`, `outputMode`, and `headLimit`; Glob takes a directory `path` and `limit`; for text, Read takes `offset` and `limit` and always reports `totalLines`; use Grep to locate content in large files before reading a targeted range. Use `outputMode: \"filesWithMatches\"` or `\"count\"` when contents are not needed. Grep uses the system's `rg` when installed and an in-process searcher otherwise — call Grep rather than shelling out to `rg`. Your context is finite too: an unscoped search over the whole workspace costs the tokens you need to finish.",
       );
     }
     if (tools.has("Edit") || tools.has("Write")) {
@@ -4151,7 +4153,10 @@ Delegation rules:
           record.pendingBegin = undefined;
         }
         try {
-          const scopedTools = this.scopeDelegateTools(tools, definition);
+          const scopedTools = this.scopeDelegateTools(tools, definition, () => record.run?.inputCapabilities ?? {
+            supportsVision: visionFromModelConfig(provider.modelConfig),
+            ...mediaCapabilitiesForProvider(provider),
+          });
           record.run = new SubagentRun({
           delegationId,
           reportIntervalSteps,
@@ -4261,17 +4266,19 @@ Delegation rules:
   private scopeDelegateTools(
     tools: AgentTool[],
     definition: SubagentDefinition,
+    getInputCapabilities: () => ToolInputCapabilities,
   ): AgentTool[] {
     const scope = definition.permission ?? DEFAULT_SUBAGENT_PERMISSION;
-    if (scope === DEFAULT_SUBAGENT_PERMISSION) return tools;
     return tools.map((tool) => ({
       ...tool,
       execute: async (toolCallId, args, signal, onUpdate) => {
-        this.delegatePermissionScopes.set(toolCallId, scope);
+        if (scope !== DEFAULT_SUBAGENT_PERMISSION) this.delegatePermissionScopes.set(toolCallId, scope);
+        this.delegateInputCapabilities.set(toolCallId, getInputCapabilities());
         try {
           return await tool.execute(toolCallId, args, signal, onUpdate);
         } finally {
           this.delegatePermissionScopes.delete(toolCallId);
+          this.delegateInputCapabilities.delete(toolCallId);
         }
       },
     }));
@@ -5196,7 +5203,10 @@ Delegation rules:
             const tools = declaredToolNames
               .map((name) => this.toolCatalog.get(name))
               .filter((tool): tool is AgentTool => tool !== undefined);
-            const scopedTools = this.scopeDelegateTools(tools, definition);
+            const scopedTools = this.scopeDelegateTools(tools, definition, () => record.run?.inputCapabilities ?? {
+              supportsVision: visionFromModelConfig(provider!.modelConfig),
+              ...mediaCapabilitiesForProvider(provider!),
+            });
 
             const currentCanMutate = subagentCanMutate(definition, declaredToolNames);
             if (currentCanMutate !== cp.config.permissions.subagentCanMutate) {
@@ -8319,7 +8329,7 @@ Delegation rules:
     this.requestStartedAt = Date.now();
     this.setAgentActivity({ phase: "starting", since: Date.now() });
     try {
-      const content = promptContent(modelInput);
+      const content = promptContent(modelInput, mediaCapabilitiesForProvider(this.provider));
       const incomingUserMessage: AgentMessage = {
         role: "user",
         content,
@@ -8369,7 +8379,7 @@ Delegation rules:
       if (typeof modelInput === "string") {
         await this.agent.prompt(modelInput);
       } else {
-        await this.agent.prompt(modelInput.text, promptImages(modelInput));
+        await this.agent.prompt(modelInput.text, promptMedia(modelInput, mediaCapabilitiesForProvider(this.provider)));
       }
       await this.waitForIdleAndSteering();
       void this.extensionRunner?.emit("agent_settled", { type: "agent_settled" });
@@ -8486,7 +8496,7 @@ Delegation rules:
   }
 
   /** Resolve attachments against the configuration of the running turn. */
-  steeringContext(expectedTurnId: string): { projectPath?: string; supportsVision: boolean } {
+  steeringContext(expectedTurnId: string): { projectPath?: string; supportsVision: boolean } & MediaInputCapabilities {
     if (
       this.disposed || !this.acceptingSteering || this.runCancelled ||
       this.turnHadError || !this.getStatus().isRunning ||
@@ -8497,7 +8507,7 @@ Delegation rules:
         errorCode: "TURN_NOT_FOUND",
       });
     }
-    return { projectPath: this.projectPath, supportsVision: this.model.input.includes("image") };
+    return { projectPath: this.projectPath, supportsVision: this.model.input.includes("image"), ...mediaCapabilitiesForProvider(this.provider) };
   }
 
   steer(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): { accepted: boolean; turnId: string } {
@@ -8518,7 +8528,7 @@ Delegation rules:
       return { accepted: true, turnId: previous.turnId };
     }
     this.steeringContext(expectedTurnId);
-    const queued: AgentMessage = { role: "user", content: promptContent(input), timestamp: Date.now() };
+    const queued: AgentMessage = { role: "user", content: promptContent(input, mediaCapabilitiesForProvider(this.provider)), timestamp: Date.now() };
     this.pendingSteering.set(queued, message.id);
     this.agent.steer(queued);
     this.acceptedSteering.set(message.id, { turnId: expectedTurnId, fingerprint });
