@@ -32,7 +32,7 @@ const appearanceOf = (s: AppSettings): NonNullable<ConfigExportFile["appearance"
   language: !s.language || s.language === "auto" ? "auto" : resolveLocale(s.language),
   fontFamily: s.fontFamily ?? "",
   fontScale: s.fontScale ?? 1, appearance: s.appearance ?? {},
-  homeMediaSize: s.homeMediaSize ?? 100,
+  homeMediaSize: s.homeMediaSize ?? 256,
 });
 async function readInstructions() {
   try { return await fs.readFile(globalInstructionPath(), "utf8"); }
@@ -67,7 +67,7 @@ function parseFile(raw: string): ConfigExportFile {
       if (a.fontFamily !== undefined && typeof a.fontFamily !== "string") delete a.fontFamily;
       if (a.fontScale !== undefined && (typeof a.fontScale !== "number" || !Number.isFinite(a.fontScale) || a.fontScale < 0.8 || a.fontScale > 1.5)) delete a.fontScale;
       if (a.appearance !== undefined && !isAppearanceSettings(a.appearance)) delete a.appearance;
-      if (a.homeMediaSize !== undefined && (typeof a.homeMediaSize !== "number" || !Number.isInteger(a.homeMediaSize) || a.homeMediaSize < 64 || a.homeMediaSize > 200)) delete a.homeMediaSize;
+      if (a.homeMediaSize !== undefined && (typeof a.homeMediaSize !== "number" || !Number.isInteger(a.homeMediaSize) || a.homeMediaSize < 64 || a.homeMediaSize > 500)) delete a.homeMediaSize;
       if (a.media !== undefined && !record(a.media)) delete a.media;
     }
   }

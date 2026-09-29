@@ -78,11 +78,11 @@ export function AppearanceMediaSection({ settings, saveSettings }: {
       })}
       <SettingsRow title={t("settings.customMediaSize")}>
         <div className="appearance-media-size">
-          <input type="range" min={64} max={200} step={4}
+          <input type="range" min={64} max={500} step={4}
             aria-label={t("settings.customMediaSize")}
-            value={settings.homeMediaSize ?? 100}
+            value={settings.homeMediaSize ?? 256}
             onChange={(event) => void saveSettings({ homeMediaSize: Number(event.target.value) }).catch(() => undefined)} />
-          <span>{settings.homeMediaSize ?? 100} px</span>
+          <span>{settings.homeMediaSize ?? 256} px</span>
         </div>
       </SettingsRow>
     </SettingsCard>

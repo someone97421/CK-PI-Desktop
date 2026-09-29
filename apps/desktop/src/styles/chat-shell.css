@@ -729,8 +729,8 @@
 .home-mascot-logo {
   display: block;
   position: relative;
-  width: 100px;
-  height: 100px;
+  width: 256px;
+  height: 256px;
   flex: 0 0 auto;
   overflow: hidden;
 }

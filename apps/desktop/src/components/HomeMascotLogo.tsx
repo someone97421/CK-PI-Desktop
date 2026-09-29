@@ -7,7 +7,7 @@ export function HomeMascotLogo() {
   const asset = useAppearanceMedia().home;
   const [failedUrl, setFailedUrl] = useState<string>();
   const home = asset?.url === failedUrl ? null : asset;
-  const size = useAppStore((state) => state.settings?.homeMediaSize ?? 100);
+  const size = useAppStore((state) => state.settings?.homeMediaSize ?? 256);
   return (
     <span
       className="home-mascot-logo"
@@ -16,11 +16,11 @@ export function HomeMascotLogo() {
       aria-hidden="true"
     >
       {home?.mimeType.startsWith("video/") ? (
-        <video key={home.url} className="home-mascot-media" src={home.url} width={100} height={100}
+        <video key={home.url} className="home-mascot-media" src={home.url} width={size} height={size}
           autoPlay muted loop playsInline disablePictureInPicture onError={() => setFailedUrl(home.url)} />
       ) : (
         <img className={home ? "home-mascot-media" : "home-mascot-dinosaur"}
-          src={home?.url ?? mascotUrl} alt="" width={100} height={100} draggable={false}
+          src={home?.url ?? mascotUrl} alt="" width={size} height={size} draggable={false}
           onError={() => { if (home) setFailedUrl(home.url); }} />
       )}
     </span>

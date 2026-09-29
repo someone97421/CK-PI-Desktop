@@ -53,12 +53,12 @@ test("app chrome uses the shared brand asset without branding the composer input
   assert.doesNotMatch(icons, /IconCodexHome|IconCompose|IconPiMark|IconPiHome/);
   await access(new URL("../src/assets/brand/logo-dark.png", import.meta.url));
   assert.match(chatSurface, /<HomeMascotLogo \/>/);
-  assert.match(mascotLogo, /assets\/brand\/logo-dark\.png/);
+  assert.match(mascotLogo, /assets\/brand\/home-mascot\.webp/);
   assert.match(mascotLogo, /className="home-mascot-logo"/);
   assert.match(mascotLogo, /aria-hidden="true"/);
   assert.match(mascotLogo, /className=\{home \? "home-mascot-media" : "home-mascot-dinosaur"\}/);
   assert.match(mascotLogo, /useAppearanceMedia\(\)\.home/);
-  assert.match(mascotLogo, /homeMediaSize \?\? 100/);
+  assert.match(mascotLogo, /homeMediaSize \?\? 256/);
   assert.match(mascotLogo, /src=\{home\?\.url \?\? mascotUrl\}/);
   assert.match(mascotLogo, /setFailedUrl\(home\.url\)/);
   assert.doesNotMatch(mascotLogo, /<svg/);
@@ -70,7 +70,7 @@ test("app chrome uses the shared brand asset without branding the composer input
   assert.match(styles, /\.empty-hero-icon\s*\{[\s\S]*?height:\s*100px;[\s\S]*?width:\s*100px;/);
   assert.match(
     styles,
-    /\.home-mascot-logo\s*\{[\s\S]*?display:\s*block;[\s\S]*?width:\s*100px;[\s\S]*?height:\s*100px;/,
+    /\.home-mascot-logo\s*\{[\s\S]*?display:\s*block;[\s\S]*?width:\s*256px;[\s\S]*?height:\s*256px;/,
   );
   assert.match(styles, /\.home-mascot-dinosaur\s*\{\s*image-rendering:\s*pixelated;/);
   assert.doesNotMatch(styles, /@keyframes home-mascot-orbit|@keyframes home-mascot-breathe|@keyframes home-mascot-blink/);
