@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/voice-runtime",
-  "version": "2609.2911.1835",
+  "version": "2609.2915.3710",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",

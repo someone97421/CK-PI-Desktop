@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAppStore } from "../stores/app-store";
 import { useAppearanceMedia } from "../lib/appearance-media";
-import mascotUrl from "../assets/brand/logo-dark.png";
+import mascotUrl from "../assets/brand/home-mascot.webp";
 
 export function HomeMascotLogo() {
   const asset = useAppearanceMedia().home;

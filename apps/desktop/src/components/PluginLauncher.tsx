@@ -77,7 +77,7 @@ export function PluginLauncher() {
     const mediaQuery = window.matchMedia("(prefers-color-scheme: light)");
     const applyTheme = () => {
       if (disposed) return;
-      const preference = settings.theme ?? "system";
+      const preference = settings.theme ?? "dark";
       const resolvedTheme = isThemeColorScheme(preference)
         ? preference
         : mediaQuery.matches

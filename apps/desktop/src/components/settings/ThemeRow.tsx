@@ -40,7 +40,7 @@ export function ThemeRow({
   const [activeId, setActiveId] = useState<ThemePreference>(settings.theme);
   const optionRefs = useRef(new Map<string, HTMLButtonElement>());
 
-  const selectedId: ThemePreference = settings.theme ?? "system";
+  const selectedId: ThemePreference = settings.theme ?? "dark";
 
   const options = useMemo<ThemeOption[]>(() => {
     const builtins: ThemeOption[] = BUILTIN_THEME_PREFERENCES.map((id) => {

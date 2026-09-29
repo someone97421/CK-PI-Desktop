@@ -465,7 +465,7 @@ export function useAppShellRuntime() {
   }, [ready, projectPath]);
 
   useLayoutEffect(() => {
-    const preference = settings?.theme ?? "system";
+    const preference = settings?.theme ?? "dark";
     const pluginTheme = preference.startsWith("plugin:")
       ? pluginThemes.find((entry) => entry.id === preference)
       : undefined;
