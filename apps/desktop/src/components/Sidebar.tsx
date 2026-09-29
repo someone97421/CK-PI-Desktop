@@ -84,6 +84,7 @@ import {
   IconX,
 } from "./icons";
 const MAX_VISIBLE_SESSIONS = 3;
+const SESSION_LOAD_MORE_COUNT = 5;
 
 type ProjectEntry = {
   path: string;
@@ -277,7 +278,7 @@ export function Sidebar({
     scheduleHide: scheduleSessionHoverCardHide,
     keepVisible: keepSessionHoverCardVisible,
   } = useSessionHoverCard();
-  const [expandedProjectSessions, setExpandedProjectSessions] = useState<Record<string, boolean>>({});
+  const [projectSessionLimits, setProjectSessionLimits] = useState<Record<string, number>>({});
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
   const [dropProjectKey, setDropProjectKey] = useState<string | null>(null);
   const [projectsDropActive, setProjectsDropActive] = useState(false);
@@ -1140,6 +1141,13 @@ export function Sidebar({
   const setCollapsed = (path: string, value: boolean) => {
     const normalized = normalizeProjectPath(path) || path;
     setProjectCollapsed(normalized, value);
+    if (value) {
+      setProjectSessionLimits((prev) => {
+        const next = { ...prev };
+        delete next[normalized];
+        return next;
+      });
+    }
   };
 
   const setSort = (next: SessionSort) => {
@@ -1159,7 +1167,10 @@ export function Sidebar({
   };
 
   const expandProjectSessions = (projectKey: string) => {
-    setExpandedProjectSessions((prev) => ({ ...prev, [projectKey]: true }));
+    setProjectSessionLimits((prev) => ({
+      ...prev,
+      [projectKey]: (prev[projectKey] ?? MAX_VISIBLE_SESSIONS) + SESSION_LOAD_MORE_COUNT,
+    }));
   };
 
   const toggleSessionPin = (session: SessionSummary) => {
@@ -1768,10 +1779,10 @@ export function Sidebar({
     const projectId = projectDomId(entry.key);
     const isMenuOpen = projectMenu === entry.key;
 
-    // Keep the first three unpinned rows visible; the rest expand on demand.
-    const sessionsExpanded = expandedProjectSessions[entry.key] ?? false;
+    // 初始显示三条未置顶会话，每次加载再追加五条。
+    const sessionLimit = projectSessionLimits[entry.key] ?? MAX_VISIBLE_SESSIONS;
     const history = entry.sessions.filter((session) => !pinnedSessionIds.has(session.id));
-    const visibleSessions = sessionsExpanded ? history : history.slice(0, MAX_VISIBLE_SESSIONS);
+    const visibleSessions = history.slice(0, sessionLimit);
     const hiddenCount = history.length - visibleSessions.length;
 
     const renderTimeGroupedSessions = (sessions: SessionSummary[]) => {

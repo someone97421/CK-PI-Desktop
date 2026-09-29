@@ -1775,7 +1775,7 @@ export class DesktopAgentRuntime {
       ...(this.subagents.length
         ? [
             `## Delegation
-Default to direct execution for a clear task on one dependency chain. Delegate when the user requests it, or when parallel progress, isolated investigation, or independent judgment has a concrete benefit greater than the added context, coordination, and acceptance cost. Choose the smallest useful team; an available specialist or a separable step alone does not justify a handoff.
+单线程、单一依赖链任务必须由主代理亲自执行，此要求优先于一般委派原则；用户明确要求委派时除外。 Delegate when the user requests it, or when parallel progress, isolated investigation, or independent judgment has a concrete benefit greater than the added context, coordination, and acceptance cost. Choose the smallest useful team; an available specialist or a separable step alone does not justify a handoff.
 
 Delegation rules:
 - Give each delegate a bounded question or deliverable, necessary context, constraints including testing limits, completion criteria, and a short \`description\`. Read the delegate's report interval from the Task catalog for reporting cadence; specify reportIntervalSteps unless user-fixed. Choose a convergence estimate suited to task complexity using these reference tiers: short 32, medium 64, medium-long 96, long 128 tool calls. End the task brief with the approximate estimate, allowing early completion and reasonable variation; ask for current findings and remaining work if substantially more effort is needed. These tiers are pacing references, not quotas or hard limits; the report interval controls reporting frequency, not expected task size.

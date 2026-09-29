@@ -151,8 +151,6 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     labelKey: "liveVoice.title",
     titleKey: "liveVoice.title",
     group: "preferences",
-    developerOnly: true,
-    developmentOnly: true,
     experimentalBadgeKey: "settings.voiceExperimental",
     keywordKeys: [
       "liveVoice.title",
