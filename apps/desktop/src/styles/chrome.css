@@ -546,8 +546,6 @@
 
 .conversation-topbar .ct-left,
 .conversation-topbar .ct-right {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -558,12 +556,16 @@
   flex: 1 1 auto;
   min-width: 0;
   margin-right: auto;
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 .conversation-topbar .ct-right {
   flex: 0 0 auto;
   justify-content: flex-end;
   padding-right: 36px;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .conversation-topbar.ct-work-panel-open .ct-right {
@@ -758,10 +760,8 @@
   display: flex;
   align-items: center;
   /*
-   * Out of flow, so .ct-left's no-drag box no longer covers it: .ct-left starts
-   * at the padding edge (x=124 collapsed) while this sits at x=88. Without its
-   * own carve-out the button falls inside the top bar's drag region, which on
-   * macOS swallows the click and keeps the arrow cursor instead of the pointer.
+   * The sidebar toggle sits inside the draggable top bar and needs its own
+   * no-drag region so it continues receiving clicks.
    */
   -webkit-app-region: no-drag;
   app-region: no-drag;
