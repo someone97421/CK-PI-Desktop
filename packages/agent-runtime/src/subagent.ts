@@ -19,6 +19,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { mediaStore } from "./media-store.js";
 import {
   Agent,
   convertToLlm,
@@ -1321,8 +1322,10 @@ export class SubagentRun {
   ): Promise<AfterToolCallResult | undefined> {
     const parent = this.opts.resolveToolOutcome?.(context);
     const terminate = parent?.terminate === true;
-    if (!parent?.isError && !terminate) return undefined;
+    const result = await mediaStore.externalize(context.result);
     return {
+      content: result.content,
+      details: result.details,
       ...(parent?.isError ? { isError: true } : {}),
       ...(terminate ? { terminate: true } : {}),
     };

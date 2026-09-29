@@ -105,7 +105,8 @@ test("mixed SVG and PNG paste keeps PNG image bytes and SVG file references", as
   assert.deepEqual(prepared.map((item) => item.message.kind), ["file", "image"]);
   assert.equal(prepared[0].inlineData, undefined);
   assert.equal(prepared[1].message.mimeType, "image/png");
-  assert.deepEqual(Buffer.from(prepared[1].inlineData, "base64"), png);
+  assert.equal(prepared[1].inlineData, undefined);
+  assert.deepEqual(await readFile(join(data, prepared[1].mediaRef.ref)), png);
   const text = appendPromptFallbackPaths("Compare", prepared);
   assert.ok(text.startsWith("Compare\n"));
   assert.ok(text.includes(saved[0].path));
@@ -235,6 +236,7 @@ test("existing non-SVG image metadata is not narrowed to a new provider allowlis
     const [prepared] = await preparePromptAttachments(data, sessionId, undefined, [saved], true);
     assert.equal(prepared.message.kind, "image");
     assert.equal(prepared.message.mimeType, mimeType);
-    assert.deepEqual(Buffer.from(prepared.inlineData, "base64"), bytes);
+    assert.equal(prepared.inlineData, undefined);
+    assert.deepEqual(await readFile(join(data, prepared.mediaRef.ref)), bytes);
   }
 });

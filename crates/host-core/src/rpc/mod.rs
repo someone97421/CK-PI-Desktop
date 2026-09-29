@@ -185,12 +185,18 @@ fn spawn_stdin_reader(tx: mpsc::UnboundedSender<StdinEvent>) -> io::Result<threa
                         // replaceMessages cannot kill the control pipe. The
                         // serve loop answers LIMIT_EXCEEDED and keeps running.
                         if !line.ends_with('\n') {
-                            let mut discard = [0u8; 8192];
                             loop {
-                                match reader.read(&mut discard) {
-                                    Ok(0) => break,
-                                    Ok(n) if discard[..n].contains(&b'\n') => break,
-                                    Ok(_) => {}
+                                match reader.fill_buf() {
+                                    Ok([]) => break,
+                                    Ok(buffer) => {
+                                        // 只丢弃当前记录，保留同一缓冲区中的下一条请求。
+                                        let end = buffer.iter().position(|byte| *byte == b'\n');
+                                        let consumed = end.map_or(buffer.len(), |index| index + 1);
+                                        reader.consume(consumed);
+                                        if end.is_some() {
+                                            break;
+                                        }
+                                    }
                                     Err(error) if error.kind() == io::ErrorKind::Interrupted => {
                                         continue;
                                     }

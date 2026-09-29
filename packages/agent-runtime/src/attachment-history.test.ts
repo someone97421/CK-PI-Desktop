@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { MediaStore } from "./media-store.js";
 import { hydrateAttachmentHistory } from "./attachment-history.js";
 import type { UiMessage } from "@pi-desktop/shared";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
 
@@ -37,15 +38,15 @@ describe("hydrateAttachmentHistory", () => {
       const hydrated = await hydrateAttachmentHistory([userMessage("media", [
         { name: "sample.mp3", ref: audio, kind: "file", mimeType: "application/octet-stream" },
         { name: "sample.mp4", ref: video, kind: "file", mimeType: "video/mp4" },
-      ])], { projectPath: tmp, supportsVision: false, supportsAudio: true, supportsVideo: false });
+      ])], { projectPath: tmp, attachmentsDir: join(tmp, "attachments"), supportsVision: false, supportsAudio: true, supportsVideo: false });
       expect(hydrated[0].attachments?.[0]).toMatchObject({
-        kind: "file", mimeType: "audio/mpeg", data: Buffer.from("audio-bytes").toString("base64"),
+        kind: "file", mimeType: "audio/mpeg", mediaRef: { size: 11, mimeType: "audio/mpeg" },
       });
       expect(hydrated[0].attachments?.[1].data).toBeUndefined();
-      expect(hydrated[0].content).toContain(video);
+      expect(hydrated[0].content).toContain(await realpath(video));
     });
   });
-  it("inlines image attachments when supportsVision is true and within per-image byte limits", async () => {
+  it("按文件引用恢复支持的图片，发送时可读取原始内容", async () => {
     await withTempDir(async (tmp) => {
       const imgPath = resolve(tmp, "sample.png");
       await writeFile(imgPath, "fake-png-bytes");
@@ -62,11 +63,11 @@ describe("hydrateAttachmentHistory", () => {
       ];
 
       const hydrated = await hydrateAttachmentHistory(history, {
-        projectPath: tmp,
+        projectPath: tmp, attachmentsDir: join(tmp, "attachments"),
         supportsVision: true,
       });
 
-      expect(hydrated[0]?.attachments?.[0]?.data).toBe(
+      expect(await new MediaStore(join(tmp, "attachments")).read(hydrated[0]!.attachments![0].mediaRef!)).toBe(
         Buffer.from("fake-png-bytes").toString("base64"),
       );
     });
@@ -95,12 +96,12 @@ describe("hydrateAttachmentHistory", () => {
       }
 
       const hydrated = await hydrateAttachmentHistory(history, {
-        projectPath: tmp,
+        projectPath: tmp, attachmentsDir: join(tmp, "attachments"),
         supportsVision: true,
       });
 
       for (let i = 0; i < payloads.length; i++) {
-        expect(hydrated[i]?.attachments?.[0]?.data).toBe(
+        expect(await new MediaStore(join(tmp, "attachments")).read(hydrated[i]!.attachments![0].mediaRef!)).toBe(
           Buffer.from(payloads[i]!).toString("base64"),
         );
       }
@@ -126,17 +127,17 @@ describe("hydrateAttachmentHistory", () => {
       const history = [userMessage("msg-burst", attachments)];
 
       const hydrated = await hydrateAttachmentHistory(history, {
-        projectPath: tmp,
+        projectPath: tmp, attachmentsDir: join(tmp, "attachments"),
         supportsVision: true,
         maxInlinedImageBytes: 250,
       });
       const result = hydrated[0];
-      expect(result?.attachments?.map((attachment) => attachment.data)).toEqual([
+      expect(result?.attachments?.map((attachment) => attachment.mediaRef?.size)).toEqual([
         undefined,
         undefined,
         undefined,
-        Buffer.from("x".repeat(100)).toString("base64"),
-        Buffer.from("x".repeat(100)).toString("base64"),
+        100,
+        100,
       ]);
       for (let i = 1; i <= 3; i++) {
         expect(result?.content).toContain(`burst-${i}.png`);
@@ -162,7 +163,7 @@ describe("hydrateAttachmentHistory", () => {
       ];
 
       const hydrated = await hydrateAttachmentHistory(history, {
-        projectPath: tmp,
+        projectPath: tmp, attachmentsDir: join(tmp, "attachments"),
         supportsVision: true,
         maxInlinedImageBytes: 0,
       });

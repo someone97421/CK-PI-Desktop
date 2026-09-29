@@ -1,8 +1,9 @@
 /** Session-root-confined attachment hydration for restored user messages. */
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { copyFile, mkdir, open, realpath, stat } from "node:fs/promises";
+import { copyFile, mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import { MediaStore } from "./media-store.js";
 import {
   formatFileInsert,
   isSvgAttachment,
@@ -69,33 +70,6 @@ async function replayedAttachmentPath(
   return target;
 }
 
-/** Read only the size already admitted by the history budget. */
-async function readFileAtRecordedSize(
-  path: string,
-  expectedSize: number,
-): Promise<Buffer | undefined> {
-  const file = await open(path, "r");
-  try {
-    const current = await file.stat();
-    if (!current.isFile() || current.size !== expectedSize) return undefined;
-    const bytes = Buffer.allocUnsafe(expectedSize);
-    let offset = 0;
-    while (offset < expectedSize) {
-      const { bytesRead } = await file.read(
-        bytes,
-        offset,
-        expectedSize - offset,
-        offset,
-      );
-      if (bytesRead === 0) return undefined;
-      offset += bytesRead;
-    }
-    return bytes;
-  } finally {
-    await file.close();
-  }
-}
-
 export async function hydrateAttachmentHistory(
   history: UiMessage[],
   params: AttachmentHistoryContext,
@@ -132,6 +106,7 @@ export async function hydrateAttachmentHistory(
     const cleanAttachment: MessageAttachment = {
       ...sourceAttachment,
       data: undefined,
+      mediaRef: undefined,
       mimeType: mediaMimeType(sourceAttachment.mimeType, sourceAttachment.name, sourceAttachment.ref) ?? sourceAttachment.mimeType,
     };
     const attachment: MessageAttachment = isSvgAttachment(
@@ -208,21 +183,20 @@ export async function hydrateAttachmentHistory(
     }
   }
 
-  await Promise.all(
-    selectedForInlining.map(async (item) => {
+  const store = new MediaStore(params.attachmentsDir);
+  for (const item of selectedForInlining) {
       try {
-        const bytes = await readFileAtRecordedSize(item.canonicalPath!, item.size!);
-        if (!bytes) return;
+        if ((await stat(item.canonicalPath!)).size !== item.size) continue;
+        const mediaRef = await store.putFile(item.canonicalPath!, item.attachment.mimeType ?? "image/png", item.size!);
         item.attachment = {
           ...item.attachment,
-          data: bytes.toString("base64"),
+          mediaRef,
         };
         item.inlined = true;
       } catch {
         // A failed transient read should not prevent the remaining history restoring.
       }
-    }),
-  );
+  }
 
   const fallbackTasks: Promise<void>[] = [];
   for (const resolved of resolvedHistory) {

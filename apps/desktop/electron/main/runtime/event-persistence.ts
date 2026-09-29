@@ -1,4 +1,4 @@
-import { applyMessageUpdate, type AgentEventEnvelope, type UiMessage } from "@pi-desktop/shared";
+import { applyMessageUpdate, toolResultText, type AgentEventEnvelope, type UiMessage } from "@pi-desktop/shared";
 import type { FinishTurn } from "./plans";
 import type { RuntimeState } from "./context";
 import type { InflightCheckpointer } from "@pi-desktop/host-runtime";
@@ -337,10 +337,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
       id: event.toolCallId,
       role: "tool",
       ...(taskId || started?.turnId ? { taskId: taskId ?? started.turnId } : {}),
-      content:
-        typeof event.result === "string"
-          ? event.result
-          : JSON.stringify(event.result),
+      content: toolResultText(event.result),
       createdAt: started?.createdAt ?? new Date(envelope.ts).toISOString(),
       toolCallId: event.toolCallId,
       toolName: started?.toolName,

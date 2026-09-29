@@ -1,4 +1,4 @@
-import type { UiMessage } from "@pi-desktop/shared";
+import { toolResultText, type UiMessage } from "@pi-desktop/shared";
 import {
   delegationLifecycleKind,
   getToolAction,
@@ -437,7 +437,7 @@ function recordBlocks(
 
 function safeJson(value: unknown): string {
   try {
-    return JSON.stringify(value, null, 2) ?? String(value);
+    return toolResultText(value, 2);
   } catch {
     return String(value);
   }

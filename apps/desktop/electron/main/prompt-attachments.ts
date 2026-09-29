@@ -16,8 +16,9 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { copyFile, readFile } from "node:fs/promises";
+import { copyFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { MediaStore } from "@pi-desktop/agent-runtime/media-store";
 import {
   ErrorCodes,
   formatFileInsert,
@@ -31,6 +32,7 @@ import {
   type MediaInputCapabilities,
   type AgentPromptAttachment,
   type MessageAttachment,
+  type MediaReference,
 } from "@pi-desktop/shared";
 
 export { MAX_INLINE_IMAGE_BYTES } from "@pi-desktop/shared";
@@ -78,6 +80,7 @@ export type PreparedPromptAttachment = {
   message: MessageAttachment;
   fallbackPath: string;
   inlineData?: string;
+  mediaRef?: MediaReference;
 };
 
 function pathInside(root: string, candidate: string): boolean {
@@ -266,7 +269,7 @@ export async function preparePromptAttachments(
       continue;
     }
 
-    const size = statSync(source.absolute).size;
+    let size = statSync(source.absolute).size;
     const mediaEnabled = isMedia && supportsMediaMime(mimeType, mediaCapabilities);
     const inline = (isImage && supportsVision && size <= MAX_INLINE_IMAGE_BYTES) || mediaEnabled;
     if (inline) {
@@ -275,13 +278,14 @@ export async function preparePromptAttachments(
         throw new Error("附件的 Base64 合计已达到 Gemini 100MB 请求上限，请减少附件或缩小文件。");
       }
     }
-    const bytes = inline ? await readFile(source.absolute) : undefined;
-    const ref =
+    const stored = inline
+      ? await new MediaStore(join(dataRoot, "attachments")).putFile(source.absolute, mimeType, size)
+      : undefined;
+    if (stored) size = stored.size;
+    const ref = stored?.ref ?? (
       source.root === "attachment" && attachment.path.trim().startsWith("attachments/")
         ? attachment.path.trim()
-        : bytes
-          ? ensureAttachmentBlob(dataRoot, bytes)
-          : await ensureAttachmentBlobFromFile(dataRoot, source.absolute);
+        : await ensureAttachmentBlobFromFile(dataRoot, source.absolute));
     const fallbackPath = inline
       ? displayPromptPath(source, projectPath)
       : await fallbackPathForStoredAttachment(
@@ -299,8 +303,8 @@ export async function preparePromptAttachments(
         size,
       },
       fallbackPath,
-      ...(bytes
-        ? { inlineData: bytes.toString("base64") }
+      ...(inline
+        ? { mediaRef: stored! }
         : {}),
     });
   }
@@ -334,7 +338,7 @@ export function appendPromptFallbackPaths(
   attachments: readonly PreparedPromptAttachment[],
 ): string {
   const paths = attachments
-    .filter((attachment) => !attachment.inlineData)
+    .filter((attachment) => !attachment.inlineData && !attachment.mediaRef)
     .map((attachment) => formatFileInsert(attachment.fallbackPath, "file"))
     .join("")
     .trim();

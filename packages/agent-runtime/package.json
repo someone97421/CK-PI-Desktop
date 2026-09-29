@@ -17,6 +17,10 @@
     "./proxy-tunnel": {
       "types": "./dist/socks5.d.ts",
       "import": "./dist/socks5.js"
+    },
+    "./media-store": {
+      "types": "./dist/media-store.d.ts",
+      "import": "./dist/media-store.js"
     }
   },
   "scripts": {

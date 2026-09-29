@@ -9,6 +9,7 @@ import type { ModelAuth } from "@earendil-works/pi-ai";
 import { ParentHostProxy } from "./parent-host-proxy.js";
 import { visionFromModelConfig } from "./model-capabilities.js";
 import { hydrateAttachmentHistory } from "./attachment-history.js";
+import { mediaStore } from "./media-store.js";
 import { classifyAgentError } from "./agent-errors.js";
 import { readLocalRequestErrorDetails } from "./local-request-errors.js";
 import {
@@ -274,7 +275,15 @@ async function runtimeFor(
         compaction?: ContextCompactionRecord;
       } | null;
     }>("session.get", { id: sessionId });
-    let restoredMessages = detail?.session?.messages ?? [];
+    let restoredMessages: UiMessage[] = [];
+    for (const message of detail?.session?.messages ?? []) {
+      try {
+        restoredMessages.push(await mediaStore.externalize(message));
+      } catch {
+        // 单个媒体落盘失败时保留旧内联记录，不清空整段历史。
+        restoredMessages.push(message);
+      }
+    }
     // The current prompt is sent separately below. Exclude its persisted row
     // before attachment hydration so it cannot consume the history byte budget.
     if (currentPrompt !== undefined && params.userMessageId) {

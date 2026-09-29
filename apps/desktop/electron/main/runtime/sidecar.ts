@@ -354,7 +354,7 @@ export function createSidecarRuntime({
   const startSidecar = async (): Promise<void> => {
   await subagentSnapshots.initialize();
 
-  const s = new AgentSidecar((text) => logger.child("agent", text));
+  const s = new AgentSidecar((text) => logger.child("agent", text), dataDir);
   wireSidecar(s);
   s.setSubagentPersistenceHandler(async (params) => {
     if (runtimeState.sidecar !== s) throw new Error("Stale subagent persistence owner");

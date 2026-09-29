@@ -339,9 +339,10 @@ export function registerAgentIpc({
     const result = await sidecar.call<{ accepted: boolean; turnId: string }>("agent.steer", {
       sessionId: req.sessionId, expectedTurnId: req.expectedTurnId, message,
       content: appendPromptFallbackPaths(req.content, prepared),
-      attachments: prepared.filter((attachment) => attachment.inlineData).map((attachment) => ({
+      attachments: prepared.filter((attachment) => attachment.inlineData || attachment.mediaRef).map((attachment) => ({
         path: attachment.message.ref, name: attachment.message.name, kind: attachment.message.kind,
         mimeType: attachment.message.mimeType, size: attachment.message.size, data: attachment.inlineData,
+        mediaRef: attachment.mediaRef,
       })),
     });
     if (result.accepted && durability === QUEUED_STEERING_DURABILITY && transferId) {
@@ -686,7 +687,7 @@ export function registerAgentIpc({
           content: modelContent,
           ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
           attachments: preparedAttachments
-            .filter((attachment) => attachment.inlineData)
+            .filter((attachment) => attachment.inlineData || attachment.mediaRef)
             .map((attachment) => ({
               path: attachment.message.ref,
               name: attachment.message.name,
@@ -694,6 +695,7 @@ export function registerAgentIpc({
               mimeType: attachment.message.mimeType,
               size: attachment.message.size,
               data: attachment.inlineData,
+              mediaRef: attachment.mediaRef,
             })),
           userMessageId: userMessage.id,
           // Per-turn permission ceiling override (R1 leftover; spec §7.3). The

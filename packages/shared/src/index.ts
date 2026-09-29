@@ -79,3 +79,5 @@ export * from "./native-web-search.js";
 export * from "./native-web-search-transport.js";
 export * from "./appearance-media.js";
 export * from "./header-value.js";
+export * from "./tool-result-text.js";
+export * from "./media-reference.js";

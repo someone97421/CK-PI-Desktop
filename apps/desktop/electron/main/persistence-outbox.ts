@@ -1,6 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { HostProcess } from "./host-process";
+import { compactToolMessage } from "@pi-desktop/shared";
+import { MediaStore } from "@pi-desktop/agent-runtime/media-store";
 
 type MessageAppend = {
   key: string;
@@ -22,6 +24,7 @@ export class PersistenceOutbox {
   private readonly path: string;
   private readonly tempPath: string;
   private readonly logger: OutboxLogger;
+  private readonly mediaStore: MediaStore;
   private entries: MessageAppend[] = [];
   private flushing: Promise<void> | null = null;
   private persistChain = Promise.resolve();
@@ -33,6 +36,7 @@ export class PersistenceOutbox {
     this.path = join(dataDir, "session-message-outbox.json");
     this.tempPath = `${this.path}.tmp`;
     this.logger = logger;
+    this.mediaStore = new MediaStore(join(dataDir, "attachments"));
     this.loaded = this.load();
   }
 
@@ -55,6 +59,7 @@ export class PersistenceOutbox {
     getHost: () => HostProcess | null,
   ): Promise<void> {
     await this.loaded;
+    entry = { ...entry, message: await this.mediaStore.externalize(compactToolMessage(entry.message)) };
     const existing = this.entries.findIndex((item) => item.key === entry.key);
     if (existing >= 0) this.entries[existing] = entry;
     else {
@@ -188,7 +193,15 @@ export class PersistenceOutbox {
             typeof entry.sessionId === "string" &&
             "message" in entry
           );
-        });
+        }).map((entry) => ({ ...entry, message: compactToolMessage(entry.message) }));
+        for (const entry of this.entries) {
+          // 先成功保存媒体再替换该条；失败时仍保留可重试的完整消息。
+          try {
+            entry.message = await this.mediaStore.externalize(entry.message);
+          } catch (error) {
+            this.logger("warn", "outbox media externalization failed", { key: entry.key, error: String(error) });
+          }
+        }
       }
     } catch (error: any) {
       if (error?.code !== "ENOENT") {
@@ -225,12 +238,13 @@ function isDuplicateMessageIdError(error: unknown): boolean {
  * provenance prefix in the JSON-RPC message body (append maps those failures
  * as INTERNAL). Do not treat PLUGIN_PERMISSION_DENIED or schema
  * INVALID_PARAMS as poison — those are a different surface, and serde
- * failures do not even put INVALID_PARAMS in the message text.
+ * failures do not even put INVALID_PARAMS in the message text. A request
+ * exceeding the transport's existing size limit also cannot succeed on retry.
  * 注意：判为 poison 也只是延后隔离，不得视为成功、不得调成功回执、
  * 不得丢弃消息。
  */
 function isPoisonMessageError(error: unknown): boolean {
-  return /(?<![A-Z_])PERMISSION_DENIED:/i.test(String(error));
+  return /(?<![A-Z_])PERMISSION_DENIED:|request line exceeds 64 MiB/i.test(String(error));
 }
 
 /**

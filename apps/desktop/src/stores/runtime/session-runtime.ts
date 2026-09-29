@@ -3,7 +3,7 @@ import type {
   SessionSummary,
   UiMessage,
 } from "@pi-desktop/shared";
-import { applyMessageUpdate } from "@pi-desktop/shared";
+import { applyMessageUpdate, toolResultText } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { createNavigationIntentController } from "../../lib/navigation-intent";
 import {
@@ -347,10 +347,7 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
           id: event.toolCallId,
           role: "tool",
           ...(envelope.turnId ? { taskId: envelope.turnId } : {}),
-          content:
-            typeof event.result === "string"
-              ? event.result
-              : JSON.stringify(event.result, null, 2),
+          content: toolResultText(event.result, 2),
           createdAt: toolStart?.createdAt ?? completedAt,
           toolCallId: event.toolCallId,
           ...(toolStart?.toolName ? { toolName: toolStart.toolName } : {}),

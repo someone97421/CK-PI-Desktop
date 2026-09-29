@@ -41,7 +41,7 @@ export class AgentSidecar extends RuntimeAgentSidecar {
   private snapshotSessions = new Set<string>();
   private snapshotHandler?: (params: Record<string, unknown>) => Promise<unknown>;
 
-  constructor(onStderr?: StderrHandler) {
+  constructor(onStderr?: StderrHandler, dataDir?: string) {
     super({
       launch: {
         command: process.execPath,
@@ -51,6 +51,7 @@ export class AgentSidecar extends RuntimeAgentSidecar {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",
+          ...(dataDir ? { PI_DESKTOP_DATA_DIR: dataDir } : {}),
         },
       },
       onStderr: onStderr ?? fallbackStderrLogger,

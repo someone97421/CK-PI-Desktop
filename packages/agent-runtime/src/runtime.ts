@@ -49,6 +49,11 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   APP_VERSION,
+  toolResultText,
+  mediaReferenceOf,
+  mediaReferenceBlock,
+  type MediaReference,
+  type MediaReferenceBlock,
   DEFAULT_COMMAND_TIMEOUT_MS,
   OAUTH_AUTH_KIND,
   subagentCanMutate,
@@ -158,6 +163,7 @@ import {
 } from "./provider-binding.js";
 import { PathMutex } from "./path-lock.js";
 import { readMediaToolResult, type ToolInputCapabilities } from "./read-media.js";
+import { mediaStore } from "./media-store.js";
 import { clampOutputToContext, effectiveModelContextWindow, estimateOutputCapInputTokens } from "./output-cap.js";
 import {
   contextBudgetFor,
@@ -288,6 +294,7 @@ import { mediaMimeType, supportsMediaMime, type MediaInputCapabilities } from "@
 export type RuntimePromptAttachment = AgentPromptAttachment & {
   /** Base64 payload is transient and only crosses the sidecar for this turn. */
   data?: string;
+  mediaRef?: MediaReference;
 };
 
 export type RuntimePrompt = {
@@ -306,13 +313,14 @@ function promptContent(input: string | RuntimePrompt, capabilities: MediaInputCa
   ];
 }
 
-function promptMedia(input: RuntimePrompt, capabilities: MediaInputCapabilities): ImageContent[] {
-  return (input.attachments ?? []).flatMap((attachment) => {
+function promptMedia(input: RuntimePrompt, capabilities: MediaInputCapabilities): Array<ImageContent | MediaReferenceBlock> {
+  return (input.attachments ?? []).flatMap<ImageContent | MediaReferenceBlock>((attachment) => {
     const media = mediaMimeType(attachment.mimeType, attachment.name, attachment.path);
-    if (!attachment.data || (media ? !supportsMediaMime(media, capabilities) : attachment.kind !== "image")) return [];
+    if ((!attachment.data && !attachment.mediaRef) || (media ? !supportsMediaMime(media, capabilities) : attachment.kind !== "image")) return [];
+    if (attachment.mediaRef) return [mediaReferenceBlock(attachment.mediaRef)];
     return [{
       type: "image" as const,
-      data: attachment.data,
+      data: attachment.data!,
       mimeType: media ?? attachment.mimeType ?? "image/png",
     }];
   });
@@ -329,6 +337,7 @@ function runtimeAttachmentFromMessage(
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     ...(attachment.size !== undefined ? { size: attachment.size } : {}),
     ...(data ? { data } : {}),
+    ...(attachment.mediaRef ? { mediaRef: attachment.mediaRef } : {}),
   };
 }
 
@@ -1376,7 +1385,8 @@ function toolResultFromUi(
     for (const b of rawBlocks) {
       if (!isRecord(b)) continue;
       if (b.type === "text" && typeof b.text === "string") {
-        blocks.push({ type: "text", text: b.text });
+        const mediaRef = mediaReferenceOf(b);
+        blocks.push({ type: "text", text: b.text, ...(mediaRef ? { mediaRef } : {}) });
       } else if (
         b.type === "image" &&
         typeof b.data === "string" &&
@@ -1459,7 +1469,7 @@ function estimateToolTokenUsage(
   const toolRow = {
     id: toolCallId,
     role: "tool" as const,
-    content: safeJson(result),
+    content: toolResultText(result),
     createdAt: new Date(timestamp).toISOString(),
     toolCallId,
     toolName,
@@ -2177,8 +2187,9 @@ Delegation rules:
   ): Promise<AfterToolCallResult | undefined> {
     const own = this.resolveOwnToolOutcome(context);
     const fromExtensions = await this.extensionToolResult(context, own);
-    if (!fromExtensions) return own;
-    return { ...(own ?? {}), ...fromExtensions };
+    const outcome = { ...(own ?? {}), ...fromExtensions };
+    const result = await mediaStore.externalize({ ...context.result, ...outcome });
+    return { ...outcome, content: result.content, details: result.details };
   }
 
   /** `tool_call` hook: an extension may block a call with a reason (spec 16 §6). */
@@ -2703,7 +2714,7 @@ Delegation rules:
         }, mediaCapabilitiesForProvider(this.provider));
         if (
           !(m.content || "").trim() &&
-          !attachments.some((attachment) => attachment.data)
+          !attachments.some((attachment) => attachment.data || attachment.mediaRef)
         ) {
           continue;
         }
@@ -5163,7 +5174,7 @@ Delegation rules:
               delegationId: record.delegationId,
               generation: record.durableGeneration,
             });
-            const cp = loadRes.checkpoint;
+            const cp = await mediaStore.externalize(loadRes.checkpoint);
 
             // Project real path check
             let currentRealProjectPath = "";
@@ -8379,7 +8390,7 @@ Delegation rules:
       if (typeof modelInput === "string") {
         await this.agent.prompt(modelInput);
       } else {
-        await this.agent.prompt(modelInput.text, promptMedia(modelInput, mediaCapabilitiesForProvider(this.provider)));
+        await this.agent.prompt({ role: "user", content: promptContent(modelInput, mediaCapabilitiesForProvider(this.provider)), timestamp: Date.now() });
       }
       await this.waitForIdleAndSteering();
       void this.extensionRunner?.emit("agent_settled", { type: "agent_settled" });

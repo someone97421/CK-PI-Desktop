@@ -1,12 +1,14 @@
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { extname } from "node:path";
 import {
   base64ByteLength,
   GEMINI_INLINE_REQUEST_BYTES,
   mediaMimeType,
   supportsMediaMime,
+  mediaReferenceBlock,
   type MediaInputCapabilities,
 } from "@pi-desktop/shared";
+import { mediaStore } from "./media-store.js";
 
 export type ToolInputCapabilities = MediaInputCapabilities & { supportsVision: boolean };
 
@@ -40,18 +42,18 @@ export async function readMediaToolResult(
   if (encodedBytes >= GEMINI_INLINE_REQUEST_BYTES) {
     return textResult(`媒体 ${path} 编码后约 ${(encodedBytes / 1_000_000).toFixed(2)}MB，已无法放入 100MB 完整请求。请裁剪、转码或分段；单次完整请求目标约 50MB，历史媒体与其他内容也计入预算。`, true);
   }
-  const bytes = await readFile(path, { signal });
+  const ref = await mediaStore.putFile(path, mimeType, Math.floor((GEMINI_INLINE_REQUEST_BYTES - 1) / 4) * 3, signal);
   signal?.throwIfAborted();
-  const actualEncodedBytes = base64ByteLength(bytes.length);
+  const actualEncodedBytes = base64ByteLength(ref.size);
   if (actualEncodedBytes >= GEMINI_INLINE_REQUEST_BYTES) {
     return textResult(`媒体读取期间体积变化，编码后达到 100MB 请求上限，请缩小素材后重试。`, true);
   }
   return {
     content: [
-      { type: "text" as const, text: `已读取媒体 ${path}（${mimeType}），文件 ${bytes.length} 字节，Base64 ${actualEncodedBytes} 字节。完整请求目标约 50MB，100MB 硬封顶，历史媒体与其他请求内容计入总量。${actualEncodedBytes > TARGET_REQUEST_BYTES ? " 本素材已超过预期预算，可按任务需要裁剪或分段。" : ""}` },
-      { type: "image" as const, data: bytes.toString("base64"), mimeType },
+      { type: "text" as const, text: `已读取媒体 ${path}（${mimeType}），文件 ${ref.size} 字节，Base64 ${actualEncodedBytes} 字节。完整请求目标约 50MB，100MB 硬封顶，历史媒体与其他请求内容计入总量。${actualEncodedBytes > TARGET_REQUEST_BYTES ? " 本素材已超过预期预算，可按任务需要裁剪或分段。" : ""}` },
+      mediaReferenceBlock(ref),
     ],
-    details: { ...details, fileBytes: bytes.length, encodedBytes: actualEncodedBytes },
+    details: { ...details, fileBytes: ref.size, encodedBytes: actualEncodedBytes },
     isError: false,
   };
 }

@@ -1,3 +1,5 @@
+import { toolResultText } from "@pi-desktop/shared";
+
 export type ToolAction =
   | "read"
   | "list"
@@ -47,7 +49,7 @@ function compact(value: string, limit = 220) {
 export function formatToolValue(value: unknown): string {
   if (typeof value === "string") return value;
   try {
-    return JSON.stringify(value, null, 2);
+    return toolResultText(value, 2);
   } catch {
     return String(value);
   }

@@ -61,6 +61,8 @@ export type MessageAttachment = {
   size?: number;
   /** Sidecar-only hydrated image data; never persisted or sent by the host. */
   data?: string;
+  /** 运行时按需装载的媒体引用；持久化仍沿用 ref/mimeType/size。 */
+  mediaRef?: import("../media-reference.js").MediaReference;
 };
 
 /** Estimated context footprint for one tool call and its returned result. */

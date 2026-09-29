@@ -7,6 +7,7 @@ import type {
 } from "@pi-desktop/shared";
 import {
   applyMessageUpdate,
+  toolResultText,
   mergeAgentEventEnvelopes,
 } from "@pi-desktop/shared";
 import { createFrameBatcher } from "../../lib/frame-batcher";
@@ -597,10 +598,7 @@ export function createEventsSlice({
               id: event.toolCallId,
               role: "tool" as const,
               ...(envelope.turnId ? { taskId: envelope.turnId } : {}),
-              content:
-                typeof event.result === "string"
-                  ? event.result
-                  : JSON.stringify(event.result, null, 2),
+              content: toolResultText(event.result, 2),
               createdAt: toolStart?.createdAt ?? completedAt,
               toolCallId: event.toolCallId,
               ...(toolStart?.toolName ? { toolName: toolStart.toolName } : {}),
