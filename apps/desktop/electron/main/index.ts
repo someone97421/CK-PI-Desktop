@@ -3,8 +3,6 @@ import {
   BrowserWindow,
   ipcMain,
   safeStorage,
-  powerMonitor,
-  session,
 } from "electron";
 import { join } from "node:path";
 import { configureApplicationIdentity } from "./application-identity";
@@ -49,9 +47,6 @@ import { InflightCheckpointer } from "@pi-desktop/host-runtime";
 import { withGitBranch } from "./workspace-git";
 import { createPlanUiProbe } from "./plan-ui-probe";
 import { registerIpcHandlers } from "./ipc/register";
-import { MicrophoneLeaseRegistry } from "./live-voice/microphone-lease";
-import { createLiveCallService } from "./live-voice/runtime";
-import { installLiveMicrophonePermissionHandlers } from "./live-voice/microphone-permissions";
 import { MainProcessState } from "./bootstrap/main-state";
 import { registerApplicationActivation } from "./bootstrap/app-activation";
 import { createHostRuntime } from "./runtime/host";
@@ -840,22 +835,6 @@ runtimeLifecycle = createRuntimeLifecycle({
 });
 const { bootHostStatus, bootBackends } = runtimeLifecycle;
 
-const microphoneLeases = new MicrophoneLeaseRegistry();
-const liveCallService = createLiveCallService({
-  getHost,
-  getMainWindow,
-  getAgentHostBridge: () => mainState.agentHostBridge,
-  vendorOAuth,
-  microphoneLeases,
-  resolveAgentRuntimeLaunch: (sessionId, session, settings, overrides) => {
-    if (!sessionLaunchRuntime) return Promise.reject(new Error("session launch runtime is not initialized"));
-    return sessionLaunchRuntime.resolveAgentRuntimeLaunch(sessionId, session, settings, {
-      ...overrides,
-      mode: "agent",
-    });
-  },
-});
-
 function registerIpc() {
   return registerIpcHandlers({
     traySessions: applicationLifecycle!.traySessions,
@@ -954,7 +933,6 @@ function registerIpc() {
     getPluginPanelTheme: () => mainState.pluginPanelTheme,
     isDeveloperMode: () => mainState.developerMode,
     sendToRenderer,
-    liveCallService,
   });
 }
 
@@ -967,36 +945,6 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("will-attach-webview", (event) => {
     event.preventDefault();
   });
-});
-
-const liveLifecycleWindows = new WeakSet<BrowserWindow>();
-app.on("browser-window-created", (_event, window) => {
-  queueMicrotask(() => {
-    if (getMainWindow() !== window || liveLifecycleWindows.has(window)) return;
-    liveLifecycleWindows.add(window);
-    const contentsId = window.webContents.id;
-    window.on("hide", () => {
-      void liveCallService.endForWebContents(contentsId, "window-hidden");
-    });
-    window.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
-      if (isMainFrame) void liveCallService.endForWebContents(contentsId, "window-navigated", true);
-    });
-    window.webContents.once("render-process-gone", () => {
-      void liveCallService.endForWebContents(contentsId, "renderer-gone", true);
-    });
-    window.webContents.once("destroyed", () => {
-      void liveCallService.endForWebContents(contentsId, "renderer-gone", true);
-    });
-  });
-});
-app.once("ready", () => {
-  installLiveMicrophonePermissionHandlers({
-    targetSession: session.defaultSession,
-    getMainWindow,
-    hasReservation: (owner) => liveCallService.hasMicrophoneReservation(owner),
-  });
-  powerMonitor.on("suspend", () => void liveCallService.endForLifecycle("app-suspended"));
-  powerMonitor.on("lock-screen", () => void liveCallService.endForLifecycle("app-suspended"));
 });
 
 registerApplicationStartup({
@@ -1061,7 +1009,6 @@ registerShutdownHandlers({
   logger,
   confirmQuitDialog,
   disposePowerSaveBlockers,
-  liveCallService,
 });
 
 registerApplicationActivation({

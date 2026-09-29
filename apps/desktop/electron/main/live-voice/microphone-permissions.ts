@@ -26,6 +26,10 @@ export function installLiveMicrophonePermissionHandlers(input: {
 }): void {
   input.targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
     const owner = requestOwner(input.getMainWindow(), contents, details.requestingUrl, details.isMainFrame);
+    if (permission === "clipboard-sanitized-write") {
+      callback(owner !== null);
+      return;
+    }
     const allowed = allowsLiveMicrophonePermission({
       permission,
       ownerValid: owner !== null,
@@ -38,6 +42,7 @@ export function installLiveMicrophonePermissionHandlers(input: {
 
   input.targetSession.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
     const owner = contents ? checkOwner(input.getMainWindow(), contents, requestingOrigin) : null;
+    if (permission === "clipboard-sanitized-write") return owner !== null;
     return allowsLiveMicrophonePermission({
       permission,
       ownerValid: owner !== null,

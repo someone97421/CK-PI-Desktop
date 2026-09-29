@@ -147,21 +147,6 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     ],
   },
   {
-    id: "voice",
-    labelKey: "liveVoice.title",
-    titleKey: "liveVoice.title",
-    group: "preferences",
-    experimentalBadgeKey: "settings.voiceExperimental",
-    keywordKeys: [
-      "liveVoice.title",
-      "liveVoice.description",
-      "liveVoice.enable",
-      "liveVoice.provider",
-      "liveVoice.model",
-      "liveVoice.voice",
-    ],
-  },
-  {
     id: "shortcuts",
     labelKey: "settings.nav.shortcuts",
     titleKey: "settings.shortcuts",

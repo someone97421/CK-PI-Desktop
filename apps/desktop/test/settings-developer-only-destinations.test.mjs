@@ -59,8 +59,6 @@ test("packaged builds hide cloud sync and remote hosts", () => {
     assert.equal(isSettingsDestinationHidden(id, true, false), true);
   }
   assert.equal(isSettingsDestinationHidden("general", true, false), false);
-  assert.ok(visibleSettingsNav(false, false).some((entry) => entry.id === "voice"));
-  assert.equal(isSettingsDestinationHidden("voice", false, false), false);
 });
 
 test("settings search mirrors developer and packaged visibility", () => {
@@ -86,10 +84,6 @@ test("settings search mirrors developer and packaged visibility", () => {
       [],
     );
   }
-  assert.ok(searchSettings("liveVoice.enable", identity, {
-    developerMode: false,
-    includeDevelopmentOnly: false,
-  }).some((hit) => hit.tab === "voice"));
   assert.equal(searchSettings("settings", identity, { limit: 2 }).length, 2);
 });
 
@@ -103,6 +97,17 @@ test("settings routes, global search, and composer use build visibility", () => 
   assert.match(searchDialog, /includeDevelopmentOnly: import\.meta\.env\.DEV/);
   assert.doesNotMatch(composer, /useVoiceInput/);
   assert.doesNotMatch(composer, /VoiceOverlay|voiceEnabled/);
-  assert.match(composerToolbar, /<LiveVoiceControls t=\{t\} workSessionId=\{workSessionId\} workSessionLabel=\{workSessionLabel\} \/>/);
+  assert.doesNotMatch(composerToolbar, /LiveVoiceControls/);
+  assert.doesNotMatch(settingsPage, /VoiceSettingsSection/);
   assert.doesNotMatch(composerToolbar, /VoiceMicButton|voicePhase|onVoiceToggle|onVoiceCancel/);
+});
+
+test("实时语音在所有构建模式下均不提供导航、搜索和页面入口", () => {
+  for (const developerMode of [false, true]) {
+    for (const includeDevelopmentOnly of [false, true]) {
+      assert.equal(visibleSettingsNav(developerMode, includeDevelopmentOnly).some((entry) => entry.id === "voice"), false);
+      assert.equal(isSettingsDestinationHidden("voice", developerMode, includeDevelopmentOnly), true);
+      assert.deepEqual(searchSettings("liveVoice.enable", identity, { developerMode, includeDevelopmentOnly }), []);
+    }
+  }
 });

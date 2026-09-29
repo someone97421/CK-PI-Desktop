@@ -61,7 +61,6 @@ import { AgentSkillsPage } from "../../components/settings/AgentSkillsPage";
 import { AgentMcpPage } from "../../components/settings/AgentMcpPage";
 import { AgentSubagentsPage } from "../../components/settings/AgentSubagentsPage";
 import { RemoteHostsPage } from "../../components/settings/RemoteHostsPage";
-import { VoiceSettingsSection } from "./voice/VoiceSettingsSection";
 import {
   CommandShellRow,
   ContextUsageDisplayRow,
@@ -564,14 +563,6 @@ export function SettingsPage() {
               />
             </div>
           )}
-          {tab === "voice" && !tabHidden && settings && (
-            <VoiceSettingsSection
-              t={t}
-              settings={settings}
-              saveSettings={saveSettings}
-            />
-          )}
-
           {tab === "shortcuts" && settings && (
             <div className="settings-stack">
               <KeyboardShortcutsSection

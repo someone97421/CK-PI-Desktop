@@ -59,4 +59,12 @@ test("Live Voice media permission requires the trusted main frame and an active 
   leaseActive = false;
   assert.equal(requestDecision({ requestingUrl: trustedUrl, isMainFrame: true, mediaTypes: ["audio"] }), false);
   assert.equal(checkDecision({ mediaType: "audio" }), false);
+
+  // 主界面复制不依赖语音租约，权限请求和预检查都必须放行。
+  assert.equal(requestDecision({ requestingUrl: trustedUrl, isMainFrame: true }, "clipboard-sanitized-write"), true);
+  assert.equal(checkDecision({}, "http://localhost:5173", "clipboard-sanitized-write"), true);
+  assert.equal(requestDecision({ requestingUrl: trustedUrl, isMainFrame: false }, "clipboard-sanitized-write"), false);
+  assert.equal(requestDecision({ requestingUrl: "https://outside.example", isMainFrame: true }, "clipboard-sanitized-write"), false);
+  assert.equal(checkDecision({}, "https://outside.example", "clipboard-sanitized-write"), false);
+  assert.equal(checkDecision({}, "http://localhost:5173", "clipboard-sanitized-write", null), false);
 });
