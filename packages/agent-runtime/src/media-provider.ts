@@ -1,6 +1,8 @@
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEventStream, type TranscriptContext, type Model, type Api, type Message, type ImageContent, type ProviderStreams, type StreamOptions } from "@earendil-works/pi-ai";
-import { GEMINI_INLINE_REQUEST_BYTES, base64ByteLength, mediaReferenceOf, mediaMimeType, supportsMediaMime, type MediaInputCapabilities } from "@pi-desktop/shared";
+import { randomUUID } from "node:crypto";
+import { GEMINI_INLINE_REQUEST_BYTES, base64ByteLength, mediaReferenceOf, externalMediaReferenceOf, mediaMimeType, supportsMediaMime, type ExternalMediaReference, type MediaInputCapabilities } from "@pi-desktop/shared";
 import { mediaStore, type MediaStore } from "./media-store.js";
+import { applyGoogleMediaUrls } from "./google-media-url.js";
 
 /** pi-ai 用 image 内容块承载二进制；只在 Gemini 适配边界放行音视频 MIME。 */
 export function withMediaInput(
@@ -12,11 +14,28 @@ export function withMediaInput(
   function prepare(model: Model<Api>, context: TranscriptContext) {
     const gemini = model.api === "google-generative-ai";
     let hasMedia = false;
+    const externalFiles = new Map<string, ExternalMediaReference>();
+    let externalError: Error | undefined;
     let messages: Message[] = context.messages.map((message) => {
       if ((message.role !== "user" && message.role !== "toolResult") || typeof message.content === "string") return message;
       return { ...message, content: message.content.map((part) => {
         const mediaRef = mediaReferenceOf(part);
         if (mediaRef) part = { type: "image", data: "", mimeType: mediaRef.mimeType, ...{ mediaRef } };
+        const mediaUrl = externalMediaReferenceOf(part);
+        if (mediaUrl) {
+          if (mediaUrl.expiresAt !== undefined && mediaUrl.expiresAt <= Date.now()) {
+            return { type: "text" as const, text: `[外部媒体 ${mediaUrl.mimeType} 的临时链接已过期，本次未附带素材；需要继续理解时请重新上传原文件。]` };
+          }
+          const supported = mediaUrl.mimeType.startsWith("image/")
+            ? model.input.includes("image") : supportsMediaMime(mediaUrl.mimeType, capabilities);
+          if (!gemini || !supported || /^gemini-2\.0(?:-|$)/i.test(model.id)) {
+            externalError = new Error("当前模型不支持此媒体的 Gemini 外部 URL 输入，请切换支持的 Gemini 模型或使用本地附件。");
+          }
+          const marker = `pi-external-media:${randomUUID()}`;
+          externalFiles.set(marker, mediaUrl);
+          hasMedia = true;
+          part = { type: "image", data: marker, mimeType: mediaUrl.mimeType };
+        }
         if (part.type !== "image") return part;
         if (!mediaMimeType(part.mimeType)) {
           return !model.input.includes("image")
@@ -60,6 +79,22 @@ export function withMediaInput(
       });
     }
 
+    // 外链虽不占 JSON 体积，Google 获取的文件总量仍有限；优先保留最新批次。
+    let fetchedBytes = [...externalFiles.values()].reduce((sum, ref) => sum + (ref.size ?? 0), 0);
+    const newestExternal = messages.findLastIndex((message) =>
+      (message.role === "user" || message.role === "toolResult") && Array.isArray(message.content) &&
+      message.content.some((part) => part.type === "image" && externalFiles.has(part.data)));
+    messages = messages.map((message, index) => {
+      if (fetchedBytes <= GEMINI_INLINE_REQUEST_BYTES || index === newestExternal ||
+          (message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) return message;
+      return { ...message, content: message.content.map((part) => {
+        const ref = part.type === "image" ? externalFiles.get(part.data) : undefined;
+        if (!ref || fetchedBytes <= GEMINI_INLINE_REQUEST_BYTES) return part;
+        fetchedBytes -= ref.size ?? 0;
+        return { type: "text" as const, text: `[为控制 Gemini 获取文件总量，本次未附带较早的 ${ref.mimeType} 外链媒体；需要重新理解时请再次附加链接。]` };
+      }) };
+    });
+
     if (gemini && hasMedia) {
       // 音视频统一使用普通 user inlineData，避免 SDK 按模型名称将其嵌入
       // 图片专用的多模态 functionResponse 路径；同批工具回执保持相邻。
@@ -69,7 +104,7 @@ export function withMediaInput(
       const flush = () => {
         if (pending.length === 0) return;
         lifted.push({ role: "user", content: [
-          { type: "text", text: "以下是前述工具读取的音视频素材，来源和文件顺序见工具结果。" },
+          { type: "text", text: "以下是前述工具提供的媒体素材，来源和文件顺序见工具结果。" },
           ...pending,
         ], timestamp });
         pending = [];
@@ -82,7 +117,7 @@ export function withMediaInput(
         }
         timestamp = message.timestamp;
         lifted.push({ ...message, content: message.content.filter((part) => {
-          if (part.type !== "image" || !mediaMimeType(part.mimeType)) return true;
+          if (part.type !== "image" || (!mediaMimeType(part.mimeType) && !externalFiles.has(part.data))) return true;
           pending.push(part);
           return false;
         }) });
@@ -94,20 +129,28 @@ export function withMediaInput(
     const wireModel = hasMedia && !model.input.includes("image")
       ? { ...model, input: [...model.input, "image" as const] }
       : model;
-    return { model: wireModel, context: { ...context, messages }, hasMedia: hasMedia || (gemini && hasPayload), budget };
+    // 已裁减的旧媒体不能继续要求出现在请求体中。
+    const retained = new Set(messages.flatMap((message) =>
+      (message.role === "user" || message.role === "toolResult") && Array.isArray(message.content)
+        ? message.content.flatMap((part) => part.type === "image" ? [part.data] : []) : []));
+    for (const marker of externalFiles.keys()) if (!retained.has(marker)) externalFiles.delete(marker);
+    const externalBytes = [...externalFiles.values()].reduce((sum, ref) => sum + (ref.size ?? 0), 0);
+    if (externalBytes > GEMINI_INLINE_REQUEST_BYTES) externalError = new Error("外部媒体文件合计超过 Gemini 100MB 获取上限，请减少素材。");
+    return { model: wireModel, context: { ...context, messages }, hasMedia: hasMedia || (gemini && hasPayload), budget, externalFiles, externalError };
   }
 
   function hydrateAndStream(
-    model: Model<Api>, context: TranscriptContext, options: StreamOptions | undefined, budget: number | undefined,
+    model: Model<Api>, context: TranscriptContext, options: StreamOptions | undefined, budget: number | undefined, preparationError: Error | undefined,
     start: (context: TranscriptContext) => AssistantMessageEventStream,
   ): AssistantMessageEventStream {
     const hasRefs = context.messages.some((message) =>
       (message.role === "user" || message.role === "toolResult") &&
       Array.isArray(message.content) && message.content.some((part) => mediaReferenceOf(part)));
-    if (!hasRefs) return start(context);
+    if (!hasRefs && !preparationError) return start(context);
     const output = createAssistantMessageEventStream();
     void (async () => {
       try {
+        if (preparationError) throw preparationError;
         // 引用的大小也计入预算，在分配大块 base64 之前拒绝装不下的请求。
         if (budget !== undefined) {
           let bytes = Buffer.byteLength(JSON.stringify(context), "utf8");
@@ -154,19 +197,20 @@ export function withMediaInput(
     return output;
   }
 
-  function requestOptions<T extends StreamOptions>(options: T | undefined, hasMedia: boolean): T | undefined {
+  function requestOptions<T extends StreamOptions>(options: T | undefined, hasMedia: boolean, externalFiles: ReadonlyMap<string, ExternalMediaReference>): T | undefined {
     const limit = requestLimitBytes ?? (hasMedia ? GEMINI_INLINE_REQUEST_BYTES : undefined);
     if (limit === undefined) return options;
     return {
       ...options,
       onPayload: async (payload: unknown, model: Model<Api>) => {
-        const replaced = await options?.onPayload?.(payload, model);
-        const current = replaced ?? payload;
+        const translated = applyGoogleMediaUrls(payload, externalFiles);
+        const replaced = await options?.onPayload?.(translated, model);
+        const current = replaced ?? translated;
         const bytes = Buffer.byteLength(JSON.stringify(current), "utf8");
         if (bytes > limit) {
           throw new Error(`媒体请求 ${(bytes / 1_000_000).toFixed(2)}MB 超过 ${(limit / 1_000_000).toFixed(0)}MB 上限（包含 Base64、历史消息及其他请求内容），请裁剪、转码或分段后重试。`);
         }
-        return replaced;
+        return externalFiles.size ? current : replaced;
       },
     } as T;
   }
@@ -175,13 +219,13 @@ export function withMediaInput(
     ...adapter,
     stream(model, context, options) {
       const prepared = prepare(model, context);
-      return hydrateAndStream(prepared.model, prepared.context, options, prepared.budget,
-        (hydrated) => adapter.stream(prepared.model, hydrated, requestOptions(options, prepared.hasMedia)));
+      return hydrateAndStream(prepared.model, prepared.context, options, prepared.budget, prepared.externalError,
+        (hydrated) => adapter.stream(prepared.model, hydrated, requestOptions(options, prepared.hasMedia, prepared.externalFiles)));
     },
     streamSimple(model, context, options) {
       const prepared = prepare(model, context);
-      return hydrateAndStream(prepared.model, prepared.context, options, prepared.budget,
-        (hydrated) => adapter.streamSimple(prepared.model, hydrated, requestOptions(options, prepared.hasMedia)));
+      return hydrateAndStream(prepared.model, prepared.context, options, prepared.budget, prepared.externalError,
+        (hydrated) => adapter.streamSimple(prepared.model, hydrated, requestOptions(options, prepared.hasMedia, prepared.externalFiles)));
     },
   };
 }

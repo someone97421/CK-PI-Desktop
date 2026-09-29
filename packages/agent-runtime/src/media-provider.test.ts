@@ -2,10 +2,62 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeContext, type Message, type ProviderStreams } from "@earendil-works/pi-ai";
 import { buildProviderModel } from "./provider-binding.js";
 import { withMediaInput } from "./media-provider.js";
+import * as google from "@earendil-works/pi-ai/api/google-generative-ai";
+import { externalMediaBlock } from "@pi-desktop/shared";
+import { applyGoogleMediaUrls } from "./google-media-url.js";
+import { encodeAgentMessages, decodeAgentMessages } from "./subagent-checkpoint.js";
 
 const model = buildProviderModel({
   id: "test", name: "Test", apiStyle: "google_generative_ai",
   modelId: "gemini-test", apiKey: "test", supportsReasoning: false, supportedThinkingLevels: [],
+});
+
+describe("Gemini 外链媒体", () => {
+  const media = { url: "https://litter.catbox.moe/test.mp4", mimeType: "video/mp4", size: 1234 };
+  it("真实 SDK 请求构造将标记转换为 fileData，不发送 base64", async () => {
+    let payload: unknown;
+    const controller = new AbortController();
+    const result = withMediaInput(google, { supportsVideo: true }).streamSimple(model,
+      normalizeContext({ messages: [{ role: "user", content: [externalMediaBlock(media)], timestamp: 0 }] }), {
+        apiKey: "test-not-a-real-key",
+        signal: controller.signal,
+        onPayload(value) { payload = value; throw new Error("测试在网络请求之前停止"); },
+      });
+    await result.result();
+    expect(payload).toMatchObject({ contents: [{ parts: [{ fileData: { fileUri: media.url, mimeType: media.mimeType } }] }] });
+    expect(JSON.stringify(payload)).not.toContain("inlineData");
+    expect(JSON.stringify(payload)).not.toContain("pi-external-media");
+    expect((payload as { config: { abortSignal: AbortSignal } }).config.abortSignal).toBe(controller.signal);
+  });
+  it("旧链接到期后保留提示，新上传可以继续", () => {
+    const message: Message = { role: "user", content: [externalMediaBlock({ ...media, expiresAt: 1 }), externalMediaBlock(media)], timestamp: 0 };
+    const { sent } = capture([message], 10000);
+    expect(JSON.stringify(sent)).toContain("已过期");
+    expect(sent.messages.reduce((count, m) => count + (Array.isArray(m.content) ? m.content.filter(p => p.type === "image").length : 0), 0)).toBe(1);
+  });
+  it("不支持 URL 的 Gemini 2.0 在请求前明确失败", async () => {
+    const adapter = { stream: vi.fn(), streamSimple: vi.fn() };
+    const result = withMediaInput(adapter, { supportsVideo: true }).streamSimple({ ...model, id: "gemini-2.0-flash" },
+      normalizeContext({ messages: [{ role: "user", content: [externalMediaBlock(media)], timestamp: 0 }] }));
+    expect((await result.result()).errorMessage).toContain("不支持");
+    expect(adapter.streamSimple).not.toHaveBeenCalled();
+  });
+  it("标记丢失时失败，普通内联数据保持原样", () => {
+    const refs = new Map([["marker", media]]);
+    expect(() => applyGoogleMediaUrls({}, refs)).toThrow("未包含全部");
+    const result = applyGoogleMediaUrls({ contents: [{ parts: [{ inlineData: { data: "marker" } }, { inlineData: { data: "AAAA", mimeType: "image/png" } }] }] }, refs);
+    expect(result).toMatchObject({ contents: [{ parts: [{ fileData: { fileUri: media.url } }, { inlineData: { data: "AAAA" } }] }] });
+  });
+  it("外链快照恢复保留结构化信息，获取预算优先保留最新素材", () => {
+    const messages = decodeAgentMessages(encodeAgentMessages([
+      { role: "user", timestamp: 0, content: [externalMediaBlock({ ...media, size: 60_000_000 })] },
+      { role: "user", timestamp: 1, content: [externalMediaBlock({ ...media, url: "https://litter.catbox.moe/new.mp4", size: 60_000_000 })] },
+    ])) as Message[];
+    expect(JSON.stringify(messages)).toContain('"mediaUrl"');
+    const { sent } = capture(messages, 10000);
+    expect(JSON.stringify(sent)).toContain("本次未附带较早");
+    expect(sent.messages.reduce((count, m) => count + (Array.isArray(m.content) ? m.content.filter(p => p.type === "image").length : 0), 0)).toBe(1);
+  });
 });
 
 function capture(messages: Message[], limit: number) {

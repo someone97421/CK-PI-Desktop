@@ -51,6 +51,8 @@ import {
   APP_VERSION,
   toolResultText,
   mediaReferenceOf,
+  externalMediaReferenceOf,
+  externalMediaBlock,
   mediaReferenceBlock,
   type MediaReference,
   type MediaReferenceBlock,
@@ -1386,7 +1388,8 @@ function toolResultFromUi(
       if (!isRecord(b)) continue;
       if (b.type === "text" && typeof b.text === "string") {
         const mediaRef = mediaReferenceOf(b);
-        blocks.push({ type: "text", text: b.text, ...(mediaRef ? { mediaRef } : {}) });
+        const mediaUrl = externalMediaReferenceOf(b);
+        blocks.push({ type: "text", text: b.text, ...(mediaRef ? { mediaRef } : {}), ...(mediaUrl ? { mediaUrl } : {}) });
       } else if (
         b.type === "image" &&
         typeof b.data === "string" &&
@@ -3259,6 +3262,14 @@ Delegation rules:
           const mediaResult = await readMediaToolResult(rawContent.mediaFile.path, inputCapabilities, signal);
           if (mediaResult.isError) this.failedHostToolCalls.add(toolCallId);
           return mediaResult;
+        }
+        const hostedMedia = externalMediaReferenceOf(rawContent);
+        if (result.ok && hostedMedia) {
+          return {
+            content: [{ type: "text" as const, text: toolResultText(rawContent) }, externalMediaBlock(hostedMedia)],
+            details: rawContent,
+            isError: false,
+          };
         }
         const imageBlocks: Array<{ type: "image"; data: string; mimeType: string }> = [];
         let text: string;

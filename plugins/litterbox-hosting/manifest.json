@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "local.litterbox-hosting",
+  "name": "Litterbox 临时文件托管",
+  "version": "0.1.0",
+  "description": "分块上传文件到 Litterbox，并将媒体公网链接交给 Gemini 原生理解。",
+  "main": "main.cjs",
+  "safetyNotes": "上传的文件可被持有链接的任何人访问，保留 1 至 72 小时；请勿上传机密内容。通过 Node 流式请求访问固定 Litterbox 上传端点。",
+  "ui": { "panel": "panel/index.html", "width": 650, "height": 580 },
+  "permissions": ["fs.read", "ui.panel", "agent.tool.register", "clipboard.write", "net.fetch"],
+  "fs": { "read": { "root": "workspace", "scope": ["**/*"] } },
+  "net": { "domains": ["litterbox.catbox.moe", "litter.catbox.moe"] },
+  "activationEvents": ["onStartup", "onCommand:litterbox.open"],
+  "contributes": {
+    "commands": [{ "id": "litterbox.open", "title": "Litterbox 文件托管" }],
+    "agentTools": [{
+      "name": "upload_file",
+      "description": "将指定本地文件上传到 Litterbox，生成公开的临时链接。图片、音频、视频在 100 MB 内自动作为 Gemini 外链媒体输入；使用启用对应媒体能力的 Gemini 2.5 或更新模型。默认保留 24 小时，过期需重新上传原文件。",
+      "risk": "high",
+      "schema": { "type": "object", "properties": {
+        "path": { "type": "string", "description": "本地文件路径，优先绝对路径。" },
+        "expiration": { "type": "string", "enum": ["1h", "12h", "24h", "72h"] },
+        "mimeType": { "type": "string", "description": "可选 MIME 类型；默认按文件扩展名推断。" }
+      }, "required": ["path"], "additionalProperties": false }
+    }, {
+      "name": "attach_media_url",
+      "description": "将已有公网 HTTPS 图片、音频或视频直链附加到 Gemini 原生媒体上下文。传入媒体文件本身的直链和 MIME 类型，Google 会直接获取该文件。每次媒体总量最多 100 MB。",
+      "risk": "low",
+      "schema": { "type": "object", "properties": {
+        "url": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "size": { "type": "integer", "minimum": 0, "maximum": 100000000 }
+      }, "required": ["url", "mimeType"], "additionalProperties": false }
+    }]
+  }
+}

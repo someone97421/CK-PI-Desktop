@@ -1,0 +1,28 @@
+import { createRequire } from 'node:module';
+import { mkdir, mkdtemp, cp, rename } from 'node:fs/promises';
+import { dirname, resolve, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { retainArtifacts } from '../../../scripts/artifact-retention.mjs';
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repo = resolve(root, '../..');
+const require = createRequire(join(repo, 'packages/agent-runtime/package.json'));
+const { build } = require('esbuild');
+const buildRoot = join(root, '.build');
+await mkdir(buildRoot, { recursive:true });
+const staging = await mkdtemp(join(buildRoot, 'plugin-'));
+for (const name of ['manifest.json', 'main.cjs', 'upload.cjs', 'panel', 'README.md']) await cp(join(root, name), join(staging, name), { recursive:true });
+const tooling = join(buildRoot, 'tools/devkit.mjs');
+await build({ entryPoints:[join(repo, 'packages/plugin-devkit/src/index.ts')], outfile:tooling, bundle:true, platform:'node', target:'node22', format:'esm', alias:{ '@pi-desktop/plugin-sdk':join(repo, 'packages/plugin-sdk/src/index.ts') } });
+const { check, pack } = await import(pathToFileURL(tooling).href);
+const result = await check(staging);
+for (const warning of result.warnings) console.warn(warning.message);
+if (!result.ok) throw new Error(JSON.stringify(result.errors));
+// 先在新批次中写完整包，成功后才替换发布路径，写入失败时保留上一份。
+const artifact = await pack(staging, { outDir:join(staging, 'artifact') });
+const dist = join(root, 'dist');
+await mkdir(dist, { recursive:true });
+const packagePath = join(dist, artifact.fileName);
+await rename(artifact.packagePath, packagePath);
+await retainArtifacts(dist, [packagePath], (entry) => entry.isFile() && entry.name.endsWith('.piplug'));
+await retainArtifacts(buildRoot, [staging], (entry) => entry.isDirectory() && entry.name.startsWith('plugin-'));
+console.log(`插件包：${packagePath}\nSHA-256：${artifact.shasum}`);

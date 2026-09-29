@@ -21,7 +21,7 @@ import type {
   SubagentThinkingLevel,
 } from "@pi-desktop/shared";
 
-import { isMediaReference, type MediaReference } from "@pi-desktop/shared";
+import { isMediaReference, isExternalMediaReference, type MediaReference, type ExternalMediaReference } from "@pi-desktop/shared";
 
 export const SUBAGENT_CHECKPOINT_FORMAT_VERSION = 1;
 export const SUBAGENT_CONTEXT_CODEC_VERSION = 1;
@@ -131,12 +131,17 @@ function assertKnownKeys(obj: Record<string, unknown>, allowedKeys: readonly str
   }
 }
 
-function checkedMediaReference(part: Record<string, unknown>): { mediaRef?: MediaReference } {
-  if (part.mediaRef === undefined) return {};
-  if (!isMediaReference(part.mediaRef)) {
+function checkedMediaReference(part: Record<string, unknown>): { mediaRef?: MediaReference; mediaUrl?: ExternalMediaReference } {
+  if (part.mediaRef !== undefined && !isMediaReference(part.mediaRef)) {
     throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", "Invalid media reference");
   }
-  return { mediaRef: part.mediaRef };
+  if (part.mediaUrl !== undefined && !isExternalMediaReference(part.mediaUrl)) {
+    throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", "Invalid external media reference");
+  }
+  return {
+    ...(isMediaReference(part.mediaRef) ? { mediaRef: part.mediaRef } : {}),
+    ...(isExternalMediaReference(part.mediaUrl) ? { mediaUrl: part.mediaUrl } : {}),
+  };
 }
 
 /* Whitelisted Content Part Definitions */
@@ -145,6 +150,7 @@ export type SerializedTextContent = {
   text: string;
   textSignature?: string;
   mediaRef?: MediaReference;
+  mediaUrl?: ExternalMediaReference;
 };
 
 export type SerializedThinkingContent = {
@@ -453,7 +459,7 @@ export function encodeAgentMessages(
             }
             const partObj = part as unknown as Record<string, unknown>;
             if (partObj.type === "text" && typeof partObj.text === "string") {
-              assertKnownKeys(partObj, ["type", "text", "textSignature", "mediaRef"], `messages[${idx}].content[${pIdx}]`);
+              assertKnownKeys(partObj, ["type", "text", "textSignature", "mediaRef", "mediaUrl"], `messages[${idx}].content[${pIdx}]`);
               return {
                 type: "text" as const,
                 text: partObj.text,
@@ -612,7 +618,7 @@ export function encodeAgentMessages(
           content = t.content.map((part, pIdx) => {
             const partObj = part as unknown as Record<string, unknown>;
             if (partObj.type === "text" && typeof partObj.text === "string") {
-              assertKnownKeys(partObj, ["type", "text", "textSignature", "mediaRef"], `messages[${idx}].content[${pIdx}]`);
+              assertKnownKeys(partObj, ["type", "text", "textSignature", "mediaRef", "mediaUrl"], `messages[${idx}].content[${pIdx}]`);
               return {
                 type: "text" as const,
                 text: partObj.text,
