@@ -93,18 +93,26 @@ before it is ever sent to the UI:
   the parser cannot resolve, `javascript:`, `expression(`, and markup sequences
   (`<style`, `</style`, `<!--`); an empty sheet is refused too
 - Capped at 256KB per file, 8 themes per plugin
-- A theme may declare `assets` (absolute paths, whitelisted image and font
-  extensions, 4MB summed). Each matching `url()` is rewritten to
-  `plugin-asset://<pluginId>/<path>` and served by a host handler that resolves
-  only through the loaded plugin's own registered list: read-only, `nosniff`,
-  and revoked when the plugin unloads. `pi.themes.upsert` registers the same
-  kind of path at runtime. An unregistered reference is still refused, and the
-  raw path never reaches the renderer
-- `contributes.windowAppearance` (`#rrggbb` / `#rrggbbaa`) requires
+ - A theme may declare `assets` using whitelisted image/font extensions: either
+  package-relative paths (resolved inside the plugin root; traversal and `node_modules`
+  references are rejected) or absolute paths. The total is capped at 4MB.
+  Each matching `url()` is rewritten to `plugin-asset://<pluginId>/<path>`
+  and served read-only through the loaded plugin's registered list with `nosniff`;
+  the registration is revoked when the plugin unloads. `pi.themes.upsert` may
+  register the same kind of path at runtime. An unregistered reference is refused,
+  and the raw path never reaches the renderer
+ - `contributes.windowAppearance` (`#rrggbb` / `#rrggbbaa` background and an
+  integer `cornerRadius` of 0..24 DIP) requires
   `ui.window.appearance` and applies only while one of that plugin's themes is
   the selected one; leaving the theme restores the host background, because the
-  colour is derived from the live catalog rather than remembered. macOS keeps
-  `vibrancy` and is never sent one
+  appearance is derived from the live catalog rather than remembered. macOS
+  keeps `vibrancy` and its native corner behavior; Linux retains native corner
+  behavior; Windows defaults to 4 DIP
+  `ui.window.appearance` and applies only while one of that plugin's themes is
+  the selected one; leaving the theme restores the host background, because the
+  appearance is derived from the live catalog rather than remembered. macOS
+  keeps `vibrancy` and its native corner behavior; Linux retains native corner
+  behavior; Windows defaults to 4 DIP
 - The CSS is read from disk at load time and delivered whole over IPC; the
   renderer injects it into a single dedicated `<style>` element appended after
   the app's own stylesheets, so it can override tokens but never inject markup

@@ -1691,7 +1691,17 @@ platform, and minimize-to-tray needs it whichever close behavior is stored.
 Maximize/unmaximize changes also emit
 `window/event/maximized`. Unknown actions fail. These Electron-only channels
 do not cross into host-core and do not change the host RPC protocol version.
-The preload intentionally exposes no arbitrary BrowserWindow resize channel.
+The preload exposes no arbitrary BrowserWindow bounds or resize channel.
+Windows retains Electron's native frameless edge/corner hit testing with
+`thickFrame: false`; the renderer does not submit window geometry.
+The Windows borderless fullscreen fallback is tracked in Main because Electron
+reports `isFullScreen() === false` while it uses display bounds for that mode;
+the window-control state and fullscreen event use the tracked value.
+`window/setBackgroundColor` remains Electron-local and main-renderer-only. Its
+optional `cornerRadius` is an integer from 0 to 24 DIP; omission restores the
+Windows main-window default of 4. Main applies the native shape on theme
+selection and resize, and clears the corner cutouts during maximize/fullscreen.
+Malformed values fail with `INVALID_ARGUMENT` before changing the background.
 Plugin panel chrome uses a separate Electron-local
 `pi-plugin-panel-window-control` channel with the same four semantic actions,
 but the handler resolves the target strictly from the sender's live panel

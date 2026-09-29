@@ -2603,7 +2603,7 @@ importConfirm: "Imported extensions run inside the agent process with the same a
       "net.fetch": "Use the network",
       "shell.openExternal": "Open external links",
       "ui.theme": "Provide a theme",
-      "ui.window.appearance": "Set the window background",
+      "ui.window.appearance": "Customize window appearance",
       "mcp.server.local": "Run a local MCP server",
       "mcp.server.remote": "Reach a remote MCP server",
       "background.service": "Keep a background service running",
@@ -2654,7 +2654,7 @@ importConfirm: "Imported extensions run inside the agent process with the same a
       "net.fetch": "Can make outbound network requests.",
       "shell.openExternal": "Can open links in your default browser.",
       "ui.theme": "Adds a theme you can pick in Settings; only styling, no data.",
-      "ui.window.appearance": "Paints the native window background to match this plugin's theme. Only styling, no data.",
+      "ui.window.appearance": "Matches the native window background and Windows corner radius to this plugin's theme. Styling only, no data.",
       "mcp.server.local": "Starts a program on this computer to serve extra agent tools.",
       "mcp.server.remote":
         "Sends tool calls to a remote MCP endpoint the plugin declared. The endpoint may use unencrypted HTTP.",

@@ -129,9 +129,10 @@ destination, chat as the home surface, tools and permissions inline.
   panel across the client area beside the sidebar; leaving preview restores the
   prior panel width and sidebar state without changing native bounds. The
   renderer-measured panel
-  rectangle continues to position the native Browser view. Native window edges
+  rectangle continues to position the native Browser view. Window edges
   resize the app window only; they do not change the panel target. The outer
-  window remains natively resizable from all OS edges and corners, with a
+  window remains resizable from all native edges and corners, including
+  Electron's frameless hit regions on Windows, with a
   minimum supported size of 1040×700. Replaces
   the former context-panel overlay; workspace/model/status info lives in the
   composer chips and Settings instead.

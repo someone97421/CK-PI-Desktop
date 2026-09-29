@@ -71,7 +71,9 @@ Outer frame that positions Topbar, Sidebar, MainChat, and WorkPanel. Owns resize
 - Work panel resize: its inner left-edge handle changes the committed panel
   width in the renderer, so dragging left gives the panel more internal space
   and dragging right returns space to MainChat (§5.4)
-- Window resize: native edges and corners resize the fixed application window;
+- Window resize: native edges and corners on all platforms resize the fixed
+  application window; Windows keeps Electron's frameless hit test without its
+  painted thick-frame rim;
   they never resize or reserve the work panel. Responsive layout follows
   [07-ui-design-system.md](07-ui-design-system.md) §10.1
 
@@ -912,7 +914,7 @@ entirely inside the plugin's isolated page:
 | Preview (maximize) | MainChat is unmounted and the panel fills the client area beside the sidebar. The mode is transient and restores the prior panel width and sidebar state when left. |
 | Multiple artifacts | The header keeps a horizontally scrollable tab strip. The fixed `+` action creates a new launcher tab; its buttons open Review and all in-scope plugin views without duplicating open resource tabs. |
 | Session switch | The destination session's retained open state, tabs, active tab, and Browser resource replace the previous session's panel context atomically; neither context is deleted |
-| Resizing | The inner left divider follows anchored pointer delta or keyboard input for the panel target; pointer changes are frame-coalesced and committed in the renderer. Escape, pointer cancellation, or lost capture restores the prior panel width. Native window edges resize only the fixed application window. |
+| Resizing | The inner left divider follows anchored pointer delta or keyboard input for the panel target; pointer changes are frame-coalesced and committed in the renderer. Escape, pointer cancellation, or lost capture restores the prior panel width. Native window edges resize only the fixed application window on every platform. |
 | No workspace | Each tab renders its own "open a project" empty state |
 | Open with no resource | `Cmd/Ctrl + J` reveals the panel without creating a tab, so the body renders the New launcher. Clicking `+` creates an explicit, closable New tab with the same launcher rows. Activating a row from that tab replaces it with or selects the singleton view. Closing the final tab leaves the panel open in the no-resource state. |
 | Constrained work area | The panel is capped by the shared three-column budget inside the existing client area; MainChat never drops below its 450px floor and the expanded sidebar yields at the threshold |

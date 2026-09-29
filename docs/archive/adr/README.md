@@ -284,3 +284,10 @@ Each ADR includes:
 | 0253 | [Remove the subagent turn limit](0253-remove-subagent-turn-limit.md) | Accepted (supersedes the `maxTurns` clauses of 0062 / 0063 / 0119 / 0126 / 0166 / 0210) |
 | 0254 | [Continue native Pi sessions in their canonical JSONL](0254-native-pi-session-continuation.md) | Accepted (amends baseline D007; D421) |
 | 0257 | [Manual bidirectional sync with the system pi CLI configuration](0257-pi-config-manual-sync.md) | Proposed (D425 proposed) |
+| 0310 | [Preserve Windows resizing without the native frameless rim](0310-windows-borderless-window-resize.md) | Accepted (D635) |
+| turn-process-and-thinking-display | [Turn process and thinking presentation](turn-process-and-thinking-display.md) | Accepted |
+| provider-display-order | [Provider display order](provider-display-order.md) | Accepted |
+| registry-header-variable-spelling | [Remote header variables accept the registry's `{name}` spelling](registry-header-variable-spelling.md) | Proposed |
+| provider-system-certificates | [Desktop sidecar uses OS-trusted certificates](provider-system-certificates.md) | Accepted |
+| image-generation-capability | [Image generation as a configured Agent capability](image-generation-capability.md) | Accepted |
+| retained-browser-pages-per-tab | [Retain a host-owned browser page per resource tab](retained-browser-pages-per-tab.md) | Accepted
