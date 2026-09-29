@@ -116,9 +116,11 @@ CREATE TABLE turn_queue (
   content          TEXT NOT NULL,
   attachments_json TEXT,
   session_message_id TEXT,
+  user_message_id TEXT,
   permission_mode  TEXT NOT NULL,
   position         INTEGER NOT NULL,
   priority         INTEGER,
+  voice_origin_json TEXT,
   created_at       INTEGER NOT NULL
 );
 CREATE INDEX idx_turn_queue_session ON turn_queue(session_id, position);

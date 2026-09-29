@@ -83,10 +83,25 @@ export function modelConfigWithBinding(
       >
     | null,
 ): ModelConfig {
+  // A generic discovery row carries no trusted capability restriction. Keep
+  // all levels selectable unless the user stored a non-empty override.
+  // This is an effective runtime policy, not published catalog metadata.
+  if (model.source === "generic" && !binding?.thinkingLevels.length) {
+    model = {
+      ...model,
+      reasoning: true,
+      supportedThinkingLevels: [...THINKING_LEVELS],
+      thinkingLevelMap: {
+        ...model.thinkingLevelMap,
+        xhigh: model.thinkingLevelMap?.xhigh ?? "xhigh",
+        max: model.thinkingLevelMap?.max ?? "max",
+      },
+    };
+  }
   if (!binding) return model;
-  const enabledThinkingLevels = THINKING_LEVELS.filter((level) =>
-    binding.thinkingLevels.includes(level),
-  );
+  const enabledThinkingLevels = model.source === "generic" && binding.thinkingLevels.length === 0
+    ? [...THINKING_LEVELS]
+    : THINKING_LEVELS.filter((level) => binding.thinkingLevels.includes(level));
   const thinkingLevelMap = { ...(model.thinkingLevelMap ?? {}) };
   const compat = binding.thinkingProtocol
     ? {

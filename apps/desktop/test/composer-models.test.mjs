@@ -145,9 +145,19 @@ test("a configured alias labels its row while displayName shows the wire id", ()
 
   assert.equal(models[0].modelId, "deepseek-v4-pro");
   assert.equal(models[0].displayName, "deepseek-v4-pro");
-  assert.equal(composerModelDisplayName(provider, "deepseek-v4-pro", models[0].displayName), "pro");
+  assert.equal(composerModelDisplayName(provider, "deepseek-v4-pro"), "pro");
   assert.equal(composerModelMatchesQuery(models[0], "provider", "PRO", "pro"), true);
   assert.equal(composerModelMatchesQuery(models[0], "provider", "DeepSeek V4 Pro", "pro"), false);
+});
+
+test("a catalog friendly name never replaces the selected wire id without an alias", () => {
+  assert.equal(
+    composerModelDisplayName(
+      { id: "custom", models: [binding("ag/claude-sonnet-4-6")] },
+      "ag/claude-sonnet-4-6",
+    ),
+    "ag/claude-sonnet-4-6",
+  );
 });
 test("a configured alias is visible before discovery data is available", () => {
   const provider = {
@@ -158,7 +168,7 @@ test("a configured alias is visible before discovery data is available", () => {
 
   assert.equal(models[0].displayName, "gpt-5.3-codex-spark");
   assert.equal(
-    composerModelDisplayName(provider, models[0].modelId, models[0].displayName),
+    composerModelDisplayName(provider, models[0].modelId),
     "Spark",
   );
 });
@@ -169,7 +179,6 @@ test("the display name prefers a configured alias while preserving model identit
     composerModelDisplayName(
       { id: "openai", models: [{ ...binding("openai/gpt-5.3-codex-spark"), alias: "Spark" }] },
       "openai/gpt-5.3-codex-spark",
-      "GPT-5.3 Codex Spark",
     ),
     "Spark",
   );
@@ -186,7 +195,6 @@ test("an exact binding alias wins over a broader equivalent id match", () => {
         ],
       },
       "openai/gpt-5.3-codex-spark",
-      "GPT-5.3 Codex Spark",
     ),
     "Namespaced",
   );
@@ -205,7 +213,6 @@ test("a blank alias leaves the wire id as display name", () => {
   assert.equal(
     composerModelDisplayName(
       { id: "deepseek", models: [{ ...binding("deepseek-v4-pro"), alias: "   " }] },
-      "deepseek-v4-pro",
       "deepseek-v4-pro",
     ),
     "deepseek-v4-pro",
@@ -303,7 +310,7 @@ test("prefixed and unprefixed wire ids remain separate even with one catalog nam
     ["proxy/model", "proxy/model"],
     ["model", "model"],
   ]);
-  assert.equal(composerModelDisplayName(provider, "proxy/model", rows[0].displayName), "Short");
+  assert.equal(composerModelDisplayName(provider, "proxy/model"), "Short");
   assert.equal(composerModelMatchesQuery(rows[0], "relay", "Short", "Short"), true);
   assert.deepEqual(composerModelBadges(rows[0], provider), []);
   assert.deepEqual(composerModelBadges(rows[1], provider), ["reasoning", "vision"]);
@@ -320,4 +327,34 @@ test("legacy unprefixed selection does not borrow a prefixed route's metadata", 
   assert.deepEqual(rows[0].capabilities, ["text"]);
   assert.equal(composerModelBinding(provider, "model"), undefined);
   assert.equal(composerModelDisplayName(provider, "model"), "model");
+});
+
+test("discovery rows without a trusted match keep the full ladder after loading", () => {
+  const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  for (const source of ["discovered", "user", "bundled"]) {
+    const row = { ...model("route/model"), source, reasoning: false, supportedThinkingLevels: [] };
+    for (const models of [[], [binding("route/model")]]) {
+      const provider = { id: "custom", models, supportsReasoning: false, supportedThinkingLevels: ["off"] };
+      const before = thinkingProviderForModel(provider, "route/model", undefined);
+      const after = thinkingProviderForModel(provider, "route/model", [row]);
+      assert.deepEqual(after, before);
+      assert.deepEqual(after.supportedThinkingLevels, levels);
+      assert.equal(after.supportsReasoning, true);
+    }
+    for (const thinkingLevels of [["off"], ["low", "high"]]) {
+      const provider = { id: "custom", models: [{ ...binding("route/model"), thinkingLevels }] };
+      const result = thinkingProviderForModel(provider, "route/model", [row]);
+      assert.deepEqual(result.supportedThinkingLevels, thinkingLevels);
+      assert.equal(result.supportsReasoning, thinkingLevels.includes("high"));
+    }
+  }
+});
+
+test("trusted matches retain published capabilities and explicit empty bindings", () => {
+  const row = { ...model("route/model"), catalogSource: "models.dev", reasoning: false, supportedThinkingLevels: [] };
+  const provider = { id: "custom", models: [] };
+  assert.equal(thinkingProviderForModel(provider, "route/model", [row]).supportsReasoning, false);
+  const reasoning = { ...row, reasoning: true, supportedThinkingLevels: ["low", "high"] };
+  assert.deepEqual(thinkingProviderForModel(provider, "route/model", [reasoning]).supportedThinkingLevels, ["low", "high"]);
+  assert.equal(thinkingProviderForModel({ ...provider, models: [binding("route/model")] }, "route/model", [reasoning]).supportsReasoning, false);
 });

@@ -147,9 +147,10 @@ test("provider headings establish a stronger type level than model rows", () => 
   );
 });
 
-test("Composer uses alias labels while preserving the exact selected wire id", async () => {
+test("Composer preserves aliases but never shows a catalog friendly name for an unaliased model", async () => {
   const chipSource = await readFile(new URL("../src/components/Composer.tsx", import.meta.url), "utf8");
-  assert.match(chipSource, /composerModelDisplayName\(provider, modelId, selectedModelInfo\?\.displayName\)/);
+  assert.match(chipSource, /composerModelDisplayName\(provider, modelId\)/);
+  assert.doesNotMatch(chipSource, /composerModelDisplayName\(provider, modelId, selectedModelInfo\?\.displayName\)/);
   assert.match(listSource, /const optionTitle = model\.modelId/);
   assert.match(listSource, /sameComposerModelId\(selectedModelId \?\? "", model\.modelId\)/);
   assert.match(modelMenuSource, /modelId: nextModelId/);

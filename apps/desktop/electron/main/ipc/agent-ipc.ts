@@ -1,4 +1,4 @@
-import { IPC, ErrorCodes, compactionRecordId, findSkillMentions, isRpcTimeoutError, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest, canonicalThinkingLevel, type SessionThinkingLevel } from "@pi-desktop/shared";
+import { IPC, ErrorCodes, compactionRecordId, findSkillMentions, isRpcTimeoutError, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest, type VoiceOrigin, canonicalThinkingLevel, type SessionThinkingLevel } from "@pi-desktop/shared";
 import type { FinishTurn } from "../runtime/plans";
 import { expandSlashInvocation, enhancePromptDraft, summarizeSessionTitle, visionFromModelConfig, type ComposerTemplate, type RuntimeProviderConfig } from "@pi-desktop/agent-runtime";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
@@ -60,6 +60,25 @@ function rejectNativeAgentOperation(sessionId: string): void {
   if (sessionId.startsWith("native-pi:")) {
     throw Object.assign(new Error("Operation is unsupported for native Pi sessions"), { errorCode: "NATIVE_PI_UNSUPPORTED" });
   }
+}
+
+function parseVoiceOrigin(value: unknown): VoiceOrigin | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw Object.assign(new Error("voiceOrigin is invalid"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+  }
+  const origin = value as Record<string, unknown>;
+  const keys = Object.keys(origin);
+  if (
+    keys.length !== 2 ||
+    !keys.includes("callId") ||
+    !keys.includes("operationId") ||
+    typeof origin.callId !== "string" || !origin.callId.trim() || origin.callId.length > 128 ||
+    typeof origin.operationId !== "string" || !origin.operationId.trim() || origin.operationId.length > 128
+  ) {
+    throw Object.assign(new Error("voiceOrigin is invalid"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+  }
+  return { callId: origin.callId, operationId: origin.operationId };
 }
 
 /** Register prompt, agent lifecycle, queue, approval and plan channels. */
@@ -267,6 +286,7 @@ export function registerAgentIpc({
         errorCode: ErrorCodes.INVALID_ARGUMENT,
       });
     }
+    const voiceOrigin = parseVoiceOrigin(req.voiceOrigin);
     // A steering input belongs to the turn it names: it is refused once that
     // turn was cancelled, has started finalizing, or no longer owns the session.
     if (!isTurnDispatchable(req.sessionId, req.expectedTurnId)) {
@@ -293,6 +313,7 @@ export function registerAgentIpc({
       createdAt: new Date().toISOString(),
       steering: true,
       ...(prepared.length ? { attachments: prepared.map((attachment) => attachment.message) } : {}),
+      ...(voiceOrigin ? { voiceOrigin } : {}),
     };
     // Revalidate inside the runtime after all file/host IO. A stale target must
     // never turn into a normal prompt or alter the next turn's configuration.
@@ -350,7 +371,13 @@ export function registerAgentIpc({
 
   handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest, submittedAt?: number) => {
     if (!sidecar) throw new Error("sidecar unavailable");
+    const voiceOrigin = parseVoiceOrigin(req.voiceOrigin);
     if (req.sessionId.startsWith("native-pi:")) {
+      if (voiceOrigin) {
+        throw Object.assign(new Error("Live Voice work is unsupported for native Pi sessions"), {
+          errorCode: "NATIVE_PI_UNSUPPORTED",
+        });
+      }
       if (req.sessionMessageId || req.truncateFromMessageId || req.truncateBefore !== undefined || req.attachments?.length) {
         throw Object.assign(new Error("Native Pi continuation currently supports text prompts only"), {
           errorCode: ErrorCodes.INVALID_ARGUMENT,
@@ -600,6 +627,7 @@ export function registerAgentIpc({
       ...(preparedAttachments.length
         ? { attachments: preparedAttachments.map((attachment) => attachment.message) }
         : {}),
+      ...(voiceOrigin ? { voiceOrigin } : {}),
       ...(slashCommand ? { command: slashCommand } : {}),
       ...(skillMentions ? { skillMentions } : {}),
       ...(revisionMeta?.revisionCount
@@ -863,8 +891,13 @@ export function registerAgentIpc({
 
   handle(IPC.invoke.agentStop, async (req: AgentStopRequest) => {
     if (!sidecar) throw new Error("sidecar unavailable");
+    const activeTurnId = activeTurns.get(req.sessionId);
+    if (req.turnId && activeTurnId !== req.turnId) {
+      return { requested: false };
+    }
     logger.app("session", "info", "prompt graceful stop requested", {
       sessionId: req.sessionId,
+      ...(req.turnId ? { turnId: req.turnId } : {}),
     });
     // The runtime owns the boundary decision. Do not close the durable turn
     // here: agent_end must arrive after the current reply/tool batch completes

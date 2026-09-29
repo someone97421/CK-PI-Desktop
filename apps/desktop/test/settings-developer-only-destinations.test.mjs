@@ -1,3 +1,8 @@
+/**
+ * Experimental settings destinations are retained in development builds but
+ * omitted from packaged builds. Navigation, search, and stale-page handling
+ * must all honor the same build visibility.
+ */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -16,10 +21,19 @@ const searchDialog = readFileSync(
   new URL("../src/components/SearchDialog.tsx", import.meta.url),
   "utf8",
 );
-const identity = (key) => key;
-const experimentalIds = ["sync", "remoteHosts"];
+const composer = readFileSync(
+  new URL("../src/components/Composer.tsx", import.meta.url),
+  "utf8",
+);
+const composerToolbar = readFileSync(
+  new URL("../src/features/chat/composer/ComposerToolbar.tsx", import.meta.url),
+  "utf8",
+);
 
-test("developer mode controls cloud sync and remote hosts in development", () => {
+const identity = (key) => key;
+const experimentalIds = ["voice", "sync", "remoteHosts"];
+
+test("developer mode retains the experimental destinations in development", () => {
   const off = visibleSettingsNav(false).map((entry) => entry.id);
   const on = visibleSettingsNav(true).map((entry) => entry.id);
 
@@ -38,7 +52,7 @@ test("developer mode controls cloud sync and remote hosts in development", () =>
   );
 });
 
-test("packaged builds hide cloud sync and remote hosts", () => {
+test("packaged builds hide voice, cloud sync, and remote hosts", () => {
   const packaged = visibleSettingsNav(true, false).map((entry) => entry.id);
   for (const id of experimentalIds) {
     assert.equal(packaged.includes(id), false);
@@ -57,13 +71,10 @@ test("settings search mirrors developer and packaged visibility", () => {
       .some((hit) => hit.tab === "sync"),
   );
 
-  for (const [query, tab] of [
-    ["configSync.connectionTitle", "sync"],
-    ["remotehosts", "remoteHosts"],
-  ]) {
+  for (const query of ["liveVoice.enable", "configSync.connectionTitle", "remotehosts"]) {
     assert.ok(
       searchSettings(query, identity, { developerMode: true })
-        .some((hit) => hit.tab === tab),
+        .some((hit) => experimentalIds.includes(hit.tab)),
     );
     assert.deepEqual(
       searchSettings(query, identity, {
@@ -76,7 +87,7 @@ test("settings search mirrors developer and packaged visibility", () => {
   assert.equal(searchSettings("settings", identity, { limit: 2 }).length, 2);
 });
 
-test("settings routes and global search honor build visibility", () => {
+test("settings routes, global search, and composer use build visibility", () => {
   assert.match(settingsPage, /const includeDevelopmentOnly = import\.meta\.env\.DEV/);
   assert.match(settingsPage, /visibleSettingsNav\(developerMode, includeDevelopmentOnly\)/);
   assert.match(settingsPage, /isSettingsDestinationHidden\([\s\S]*includeDevelopmentOnly/);
@@ -84,4 +95,8 @@ test("settings routes and global search honor build visibility", () => {
   assert.match(settingsPage, /tab === "sync" && !tabHidden && <ConfigSyncPage \/>/);
   assert.match(settingsPage, /tab === "remoteHosts" && !tabHidden && <RemoteHostsPage \/>/);
   assert.match(searchDialog, /includeDevelopmentOnly: import\.meta\.env\.DEV/);
+  assert.match(composer, /useVoiceInput/);
+  assert.doesNotMatch(composer, /VoiceOverlay|voiceEnabled/);
+  assert.match(composerToolbar, /<LiveVoiceControls t=\{t\} workSessionId=\{workSessionId\} workSessionLabel=\{workSessionLabel\} \/>/);
+  assert.doesNotMatch(composerToolbar, /VoiceMicButton|voicePhase|onVoiceToggle|onVoiceCancel/);
 });

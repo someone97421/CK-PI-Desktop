@@ -6716,6 +6716,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn settings_set_round_trips_live_voice_without_changing_dictation_settings() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let mut app_state = AppState::open(data_dir.path()).unwrap();
+        app_state.handshook = true;
+        let state = Arc::new(Mutex::new(app_state));
+        let tx = mpsc::unbounded_channel().0;
+        let live_voice = json!({
+            "enabled": false,
+            "selectedBindingId": "codex-main",
+            "bindings": [{
+                "id": "codex-main",
+                "adapterId": "codex-live",
+                "providerId": "codex-account-a",
+                "voice": "cove"
+            }]
+        });
+        let dictation = json!({
+            "enabled": true,
+            "deviceId": "microphone-1",
+            "languages": ["en"],
+            "chineseVariant": "simplified",
+            "modelId": "local-model"
+        });
+
+        handle_request(
+            state.clone(),
+            "settings.set",
+            json!({ "liveVoice": live_voice, "voice": dictation }),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        handle_request(
+            state.clone(),
+            "settings.set",
+            json!({ "theme": "light" }),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        let stored = handle_request(state, "settings.get", json!({}), tx)
+            .await
+            .unwrap();
+
+        assert_eq!(stored["liveVoice"], live_voice);
+        assert_eq!(stored["voice"], dictation);
+        assert_eq!(stored["theme"], "light");
+    }
+
+    #[tokio::test]
     async fn settings_set_preserves_stored_shell_when_shell_is_omitted() {
         let Some(current_shell) = available_test_shell_id() else {
             return;

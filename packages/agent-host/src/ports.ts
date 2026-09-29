@@ -1,6 +1,7 @@
 import type {
   AgentPromptAttachment,
   AskToolResolution,
+  VoiceOrigin,
   RacpItemSummary,
   RacpPermissionMode,
   RacpPlanningState,
@@ -39,6 +40,7 @@ export type TurnStartRequest = {
   userMessageId?: string;
   /** 用户入队时间；自动出队时保留发送顺序。 */
   submittedAt?: number;
+  voiceOrigin?: VoiceOrigin;
   attachments?: AgentPromptAttachment[];
   effectivePermissionMode: RacpPermissionMode;
   idempotencyKey?: string;
@@ -60,6 +62,8 @@ export type TurnSteerRequest = {
    * on every retry, so the runtime can deduplicate a repeated delivery.
    */
   sessionMessageId?: string;
+  userMessageId?: string;
+  voiceOrigin?: VoiceOrigin;
   attachments?: AgentPromptAttachment[];
   /** Set for a queue transfer: the durable queue entry this input comes from. */
   queuedTurnId?: string;
@@ -118,6 +122,7 @@ export type QueuedTurnRecord = {
   sessionMessageId?: string;
   /** Client-chosen id for the durable user row (D288). */
   userMessageId?: string;
+  voiceOrigin?: VoiceOrigin;
   attachments?: AgentPromptAttachment[];
   effectivePermissionMode: RacpPermissionMode;
   idempotencyKey?: string;

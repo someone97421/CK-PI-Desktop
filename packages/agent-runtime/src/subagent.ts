@@ -161,6 +161,8 @@ export type SubagentRunResult = {
   /** True when older working history had to be discarded without a summary. */
   contextDegraded?: boolean;
   modelFailures?: Array<{ model: string; code: string; message: string }>;
+  /** True when the delegate response hit the model's output token limit. */
+  outputTruncated?: boolean;
   error?: { code: string; message: string };
 };
 
@@ -297,6 +299,7 @@ export class SubagentRun {
   private readonly opts: SubagentRunOptions;
   private currentAssistant?: UiMessage;
   private lastReportText = "";
+  private lastReportTruncated = false;
   private turns = 0;
   private toolCalls = 0;
   private usage?: MessageUsage;
@@ -456,6 +459,7 @@ export class SubagentRun {
     this.opts.parentToolCallId = parentToolCallId;
     this.executionUsage = undefined;
     this.lastReportText = "";
+    this.lastReportTruncated = false;
     this.streamError = undefined;
     this.pendingProviderRetry = undefined;
     this.providerTransientRetryAttempt = 0;
@@ -828,6 +832,13 @@ export class SubagentRun {
         message: "The subagent finished without writing a report.",
       });
     }
+    if (this.lastReportTruncated) {
+      return this.result("failed", this.lastReportText, {
+        code: "SUBAGENT_OUTPUT_TRUNCATED",
+        message:
+          "The subagent response exceeded the model's output token limit and was truncated.",
+      });
+    }
     return this.result("completed", this.lastReportText);
   }
 
@@ -1145,6 +1156,7 @@ export class SubagentRun {
       this.providerTransientRetryAttempt = 0;
       this.providerRateLimitRetryAttempt = 0;
       this.lastReportText = "";
+      this.lastReportTruncated = false;
       this.opts.onModelChange?.(this.provider, this.thinkingLevel);
       return !this.runSignal().aborted;
     }
@@ -1284,6 +1296,7 @@ export class SubagentRun {
       ...(this.usage ? { usage: this.usage } : {}),
       executionUsage: this.executionUsage,
       ...(this.modelFailures.length ? { modelFailures: [...this.modelFailures] } : {}),
+      ...(this.lastReportTruncated ? { outputTruncated: true } : {}),
       ...(error ? { error } : {}),
     };
   }
@@ -1533,6 +1546,8 @@ export class SubagentRun {
         if (content.hasText && content.text.trim() && !failed) {
           this.lastReportText = content.text;
           this.observation.noteStatement(content.text);
+          this.lastReportTruncated =
+            stopReason === "length" || stopReason === "max_tokens";
         }
         if (retryAttempt !== undefined) {
           this.currentAssistant = {

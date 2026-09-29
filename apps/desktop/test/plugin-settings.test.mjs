@@ -52,3 +52,12 @@ test("settings writes validate values, notify the plugin, and never use global s
   assert.doesNotMatch(runtime, /globalShortcut\.(?:register|unregister)\(/);
   assert.match(runtime, /assertPermission\(loaded, "keyboard\.globalShortcut"\)/);
 });
+
+test("host plugin modals hide docked native plugin views via blocking-overlay", async () => {
+  assert.match(sheet, /useBlockingOverlay/);
+  const installDialog = await read("../src/components/plugins/PluginInstallDialog.tsx");
+  assert.match(installDialog, /useBlockingOverlay/);
+  const dialogs = await read("../src/features/plugins/PluginDialogs.tsx");
+  assert.match(dialogs, /useBlockingOverlay/);
+  assert.match(dialogs, /PluginModalBlockingHost/);
+});

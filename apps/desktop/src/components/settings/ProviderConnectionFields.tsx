@@ -15,7 +15,7 @@ import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import { ServiceMonogram } from "./ServiceMonogram";
 import { ModelsFetchErrorMessage } from "./ModelsFetchErrorMessage";
 import { canRecommendFrom } from "./recommended-models";
-import { hostOf } from "./service-catalog";
+import { endpointLabel } from "./service-catalog";
 import type { ProviderModelsState } from "./useProviderModels";
 import { API_STYLE_LABEL_KEYS, CUSTOM_PROVIDER_API_STYLES } from "./provider-api-style";
 
@@ -138,7 +138,7 @@ export function ProviderConnectionFields({
               <span className="provider-service-chip-name">{serviceLabel}</span>
               {serviceBaseUrl ? (
                 <span className="provider-service-chip-host" title={serviceBaseUrl}>
-                  {hostOf(serviceBaseUrl)}
+                  {endpointLabel(serviceBaseUrl)}
                 </span>
               ) : null}
             </span>

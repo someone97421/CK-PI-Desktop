@@ -4,6 +4,12 @@ import type { AppError } from "../errors.js";
 
 export type UiMessageRole = "user" | "assistant" | "system" | "tool";
 
+/** Minimal provenance for an accepted Live Voice work input. */
+export type VoiceOrigin = {
+  callId: string;
+  operationId: string;
+};
+
 export type MessageUsage = {
   inputTokens: number;
   outputTokens: number;
@@ -90,6 +96,8 @@ export type UiMessage = {
   task?: MessageTask;
   /** Authenticated agent-to-agent provenance; never inferred from message text. */
   sessionMessage?: SessionMessageOrigin;
+  /** Present only on the durable user row created by a Live Voice operation. */
+  voiceOrigin?: VoiceOrigin;
   /** Files or images associated with a user turn, kept separate from text. */
   attachments?: MessageAttachment[];
   /** Accepted input to an existing turn; Stop must preserve it after reload. */

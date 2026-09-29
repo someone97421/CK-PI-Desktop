@@ -3,7 +3,7 @@ import type { AppError } from "../errors.js";
 import type { PlanExecution, PlanningStateEvent } from "./plans.js";
 import type { ContextCompactionFallback, ContextCompactionMark, ContextCompactionReason } from "./sessions.js";
 import type { AgentStatus } from "./sessions.js";
-import type { MessageUsage, ToolTokenUsage, UiMessage } from "./messages.js";
+import type { MessageUsage, ToolTokenUsage, UiMessage, VoiceOrigin } from "./messages.js";
 import type { PermissionDecision, Risk } from "./permissions.js";
 import type { SessionThinkingLevel } from "./models.js";
 import type { RacpPermissionMode } from "../racp.js";
@@ -39,6 +39,8 @@ export type AgentPromptRequest = {
    * mints its own.
    */
   messageId?: string;
+  /** Main-trusted source metadata for a Live Voice work admission. */
+  voiceOrigin?: VoiceOrigin;
   /**
    * Renderer snapshot of the chat session visible when the prompt was sent.
    * Electron installs it before asynchronous turn setup for notification
@@ -68,7 +70,7 @@ export type AgentPromptAttachment = {
 
 export type AgentSteerRequest = Pick<
   AgentPromptRequest,
-  "sessionId" | "content" | "attachments" | "messageId"
+  "sessionId" | "content" | "attachments" | "messageId" | "voiceOrigin"
 > & {
   expectedTurnId: string;
 };
@@ -144,6 +146,8 @@ export type QueuedTurnSummary = {
   sessionId: string;
   content: string;
   sessionMessageId?: string;
+  userMessageId?: string;
+  voiceOrigin?: VoiceOrigin;
   attachments?: AgentPromptAttachment[];
   position: number;
   /** Set only for promoted entries; entries arrive in delivery order. */
@@ -155,6 +159,8 @@ export type AgentQueuePushRequest = {
   sessionId: string;
   content: string;
   sessionMessageId?: string;
+  userMessageId?: string;
+  voiceOrigin?: VoiceOrigin;
   attachments?: AgentPromptAttachment[];
   idempotencyKey?: string;
 };

@@ -68,6 +68,7 @@ import {
   isAllowedKeybinding,
   isReservedKeybinding,
   normalizeKeybinding,
+  type PluginRendererDescriptor,
   type PluginServiceStatus,
   type PluginSettingDefinition,
   type PluginWorkspaceInfo,
@@ -89,6 +90,11 @@ import {
 import { McpServerClient, type McpServerClientOptions } from "./plugin-mcp";
 import { PluginToolInvocations, type PluginToolInvocation } from "./plugin-tool-invocations";
 import { McpCallRegistry } from "./mcp-call-registry";
+import {
+  RendererCallRelay,
+  rendererDescriptorFor,
+  resolveRendererSourcePath,
+} from "./plugin-renderer-extension";
 import { DevPluginWatcher, type DevPluginWatcherDeps } from "./plugin-watcher";
 import { parseAllowedExternalUrl } from "./safe-open-external";
 import type { PluginAppearance } from "../shared/plugin-panel-chrome";
@@ -1340,6 +1346,7 @@ export class PluginRuntime {
    */
   private desktopSubscriptions = new Map<string, DesktopSubscription>();
   private readonly toolInvocations = new PluginToolInvocations();
+  private readonly rendererCalls = new RendererCallRelay();
   private completeRate = new Map<string, { windowStart: number; count: number }>();
   /**
    * File accesses the user allowed for the rest of the run, keyed
@@ -1584,6 +1591,36 @@ export class PluginRuntime {
       ts: Date.now(),
     });
     return { id: skill.id, name: skill.name, body: parsed.body, location: skill.path };
+  }
+
+  /**
+   * Source resolver behind the `plugin-renderer://` scheme: the current load
+   * of a permission-granted plugin serves module files from inside its own
+   * package, and nothing else (`docs/plugin-plan/ui/`).
+   */
+  resolveRendererSource(pluginId: string, generation: number, requestPath: string): string | null {
+    return resolveRendererSourcePath(this.loaded.get(pluginId), generation, requestPath);
+  }
+
+  /** What the renderer host loads for this plugin, while it may load anything. */
+  rendererDescriptor(pluginId: string): PluginRendererDescriptor | undefined {
+    return rendererDescriptorFor(this.loaded.get(pluginId));
+  }
+
+  /**
+   * The `plugin.call` relay: a renderer slot component asks its own plugin
+   * for one JSON answer (`docs/plugin-plan/render/plugin-call/`).
+   */
+  async callRenderer(pluginId: string, method: string, args: unknown): Promise<unknown> {
+    const loaded = this.loaded.get(pluginId);
+    return this.rendererCalls.call(
+      pluginId,
+      loaded?.child ? loaded : undefined,
+      method,
+      args,
+      (plugin, payload, timeoutMs) =>
+        this.sendToChild(plugin, { t: "call", method: "renderer.call", payload }, timeoutMs),
+    );
   }
 
   getLoaded(pluginId: string): LoadedPlugin | undefined {

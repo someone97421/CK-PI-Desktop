@@ -42,6 +42,7 @@ import {
   IconSliders,
   IconSparkles,
   IconCloudDown,
+  IconMic,
 } from "../../components/icons";
 import { Badge, Button, cx, SegmentedControl, SettingsToggle } from "../../components/ui";
 import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
@@ -60,6 +61,7 @@ import { AgentSkillsPage } from "../../components/settings/AgentSkillsPage";
 import { AgentMcpPage } from "../../components/settings/AgentMcpPage";
 import { AgentSubagentsPage } from "../../components/settings/AgentSubagentsPage";
 import { RemoteHostsPage } from "../../components/settings/RemoteHostsPage";
+import { VoiceSettingsSection } from "./voice/VoiceSettingsSection";
 import {
   CommandShellRow,
   ContextUsageDisplayRow,
@@ -246,6 +248,7 @@ export function SettingsPage() {
       appearance: <IconPalette size={14} />,
       general: <IconSliders size={14} />,
       ai: <IconSparkles size={14} />,
+      voice: <IconMic size={14} />,
       shortcuts: <IconKeyboard size={14} />,
       instructions: <IconFileText size={14} />,
       agent: <IconBot size={14} />,
@@ -561,7 +564,13 @@ export function SettingsPage() {
               />
             </div>
           )}
-
+          {tab === "voice" && !tabHidden && settings && (
+            <VoiceSettingsSection
+              t={t}
+              settings={settings}
+              saveSettings={saveSettings}
+            />
+          )}
 
           {tab === "shortcuts" && settings && (
             <div className="settings-stack">

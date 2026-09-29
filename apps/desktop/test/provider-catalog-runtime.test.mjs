@@ -200,3 +200,19 @@ test("full wire IDs isolate configured bindings while catalog aliases remain met
   const otherProvider = { ...provider, id: "other-provider", models: [binding(modelId, 48_000, ["off"])] };
   assert.deepEqual(runtime.enrichSession(session, [otherProvider, provider]).supportedThinkingLevels, ["low", "medium", "high"]);
 });
+
+test("unmatched models expose selectable thinking in providers, sessions and subagents", async () => {
+  const { runtime } = await fixtureRuntime();
+  const modelId = "ag/gemini-pro-agent";
+  const full = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const binding = { id: modelId, contextWindow: 128_000, maxTokens: 8_192, thinkingLevels: [] };
+  for (const models of [[], [binding], [{ ...binding, thinkingLevels: ["off"] }]]) {
+    const provider = { id: "custom", name: "Custom", models, defaultModelId: modelId };
+    const expected = models[0]?.thinkingLevels.length ? ["off"] : full;
+    const session = { providerId: provider.id, modelId, thinkingLevel: "off" };
+    assert.deepEqual(runtime.enrichProvider(provider).supportedThinkingLevels, expected);
+    assert.deepEqual(runtime.enrichSession(session, [provider]).supportedThinkingLevels, expected);
+    assert.equal(runtime.enrichSession(session, [provider]).thinkingLevel, "off");
+    assert.deepEqual(runtime.effectiveSubagentModelConfig(provider, modelId, genericModelConfig(modelId)).capabilities.supportedThinkingLevels, expected);
+  }
+});

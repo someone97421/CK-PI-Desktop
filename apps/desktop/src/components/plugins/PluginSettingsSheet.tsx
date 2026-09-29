@@ -14,6 +14,7 @@ import {
   type ShortcutPlatform,
 } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
+import { useBlockingOverlay } from "../../lib/blocking-overlay";
 import { useAppStore } from "../../stores/app-store";
 import {
   Button,
@@ -67,6 +68,9 @@ function serializeJson(value: unknown): string {
 }
 
 export function PluginSettingsSheet({ plugin, platform, onClose, onSaved }: Props) {
+  // Native plugin views composite above the renderer; hide them while this
+  // host sheet is open so the right edge of the dialog stays clickable.
+  useBlockingOverlay();
   const { t } = useTranslation();
   const appKeybindings = useAppStore((state) => state.settings?.keybindings);
   const settings = plugin.settings ?? [];

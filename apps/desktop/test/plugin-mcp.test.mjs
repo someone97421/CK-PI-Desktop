@@ -393,6 +393,57 @@ test("a remote MCP tool can run longer than the connection timeout", async (t) =
   const result = await client.callTool("slow", {});
   assert.equal(describeMcpContent(result.content), "finished");
 });
+test("an SSE reply is dispatched before the server closes the stream", async (t) => {
+  // A streamable-HTTP server may answer immediately and still hold the body
+  // open — gitmcp.io replies in ~2s and ends the stream ~12s later. Waiting for
+  // the body to end used to spend the whole connect budget on that gap.
+  const encoder = new TextEncoder();
+  let closeStream;
+  const keepOpen = new Promise((resolve) => {
+    closeStream = resolve;
+  });
+  const fetchImpl = async (_url, options) => {
+    const message = JSON.parse(options.body);
+    if (message.method === "notifications/initialized") {
+      return new Response(null, { status: 202 });
+    }
+    const result =
+      message.method === "initialize"
+        ? { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {} }
+        : { tools: [{ name: "streamed" }] };
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n\n`,
+          ),
+        );
+        void keepOpen.then(() => controller.close());
+      },
+    });
+    return new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  };
+  const client = new McpServerClient({
+    rootPath: mkdtempSync(join(tmpdir(), "pi-mcp-sse-")),
+    server: { id: "streaming", transport: "http", url: "https://streaming.example/mcp" },
+    values: {},
+    connectTimeoutMs: 500,
+    discoveryTimeoutMs: 500,
+    fetchImpl,
+  });
+  t.after(() => {
+    closeStream();
+    client.close();
+  });
+
+  assert.deepEqual(
+    (await client.connect()).map((tool) => tool.name),
+    ["streamed"],
+  );
+});
 test("aborting one HTTP MCP call cancels its request", async (t) => {
   let callStarted;
   let cancellationReceived;

@@ -234,6 +234,7 @@ fn parse_message(
         command: None,
         skill_mentions: None,
         attachments: None,
+        voice_origin: None,
         steering: None,
         created_at,
         thinking: None,

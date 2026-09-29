@@ -117,7 +117,8 @@ test("Composer owns the mode and model controls", () => {
   // default thinking level instead of pinning the draft to its current value.
   assert.match(scheduledModelPickerSource, /activeSessionId: null/);
   assert.doesNotMatch(scheduledModelPickerSource, /useId\(/);
-  assert.match(
+  assert.match(scheduledModelPickerSource, /composerModelDisplayName\(provider, value\.modelId \?\? ""\)/);
+  assert.doesNotMatch(
     scheduledModelPickerSource,
     /composerModelDisplayName\(provider, value\.modelId \?\? "", selected\.displayName\)/,
   );
@@ -199,11 +200,13 @@ test("draft Composer thinking follows the exact model selected in its menu", () 
   assert.match(composerSource, /const selectedBinding = provider\?\.models\.find/);
   assert.match(
     composerSource,
-    /const draftThinkingLevel = selectedModelInfo\s*\?\s*initialThinkingLevelForBinding\(/,
+    /const draftThinkingLevel = selectedModelInfo\?\.catalogSource === "models\.dev"\s*\?\s*initialThinkingLevelForBinding\(/,
   );
   assert.match(composerSource, /initialThinkingLevelForUnmatchedModel\(/);
   assert.match(modelMenuSource, /initialThinkingLevelForUnmatchedModel\(/);
   assert.match(sessionCoordinationSource, /initialThinkingLevelForUnmatchedModel\(/);
+  assert.match(modelMenuSource, /nextModel\?\.catalogSource === "models\.dev"/);
+  assert.match(sessionCoordinationSource, /catalogModel\?\.catalogSource === "models\.dev"/);
   assert.doesNotMatch(composerSource, /highestSupportedThinkingLevel/);
 });
 

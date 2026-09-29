@@ -1,0 +1,237 @@
+/* Voice input styles. Every colour rides a --ds-* token: the old --color-*
+   aliases never existed in tokens.css, so each value below used to fall back
+   to a hardcoded literal that no contributed theme could reach. */
+
+.voice-active {
+  color: var(--ds-error) !important;
+}
+
+.voice-mic-active {
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Voice overlay */
+.voice-overlay {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  padding: 0 8px 4px;
+  z-index: 10;
+  pointer-events: auto;
+}
+
+.voice-overlay-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-radius: var(--radius-xs);
+  background: var(--ds-bg-elevated-opaque);
+  border: 1px solid var(--ds-border-default);
+  font-size: var(--text-md);
+  gap: 12px;
+}
+
+.voice-overlay-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-overlay-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voice-recording-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-round);
+  background: var(--ds-error);
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-duration {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.voice-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ds-border-strong);
+  border-top-color: var(--ds-text-primary);
+  border-radius: var(--radius-round);
+  animation: voice-spin 0.8s linear infinite;
+}
+
+@keyframes voice-spin {
+  to { transform: rotate(360deg); }
+}
+
+.voice-volume-bar {
+  width: 80px;
+  height: 4px;
+  border-radius: var(--radius-3xs);
+  background: var(--ds-bg-active);
+  overflow: hidden;
+}
+
+.voice-volume-fill {
+  height: 100%;
+  background: var(--ds-accent);
+  border-radius: var(--radius-3xs);
+  transition: width 100ms ease-out;
+}
+
+.voice-cancel-btn {
+  padding: 2px 8px;
+  border-radius: var(--radius-3xs);
+  font-size: var(--text-sm);
+  background: transparent;
+  color: var(--ds-text-secondary);
+  border: 1px solid var(--ds-border-strong);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.voice-cancel-btn:hover {
+  background: var(--ds-bg-hover);
+}
+
+.voice-error {
+  color: var(--ds-error);
+}
+
+/* ---- Voice settings: wider control column ---- */
+.voice-settings .settings-row-control {
+  max-width: none;
+}
+
+.live-voice-control {
+  position: relative;
+}
+
+.live-voice-panel {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: min(360px, calc(100vw - 32px));
+}
+
+.live-voice-panel .live-voice-panel-surface {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--ds-bg-elevated-opaque);
+  box-shadow: var(--ds-shadow-dialog);
+  color: var(--ds-text-primary);
+}
+
+.live-voice-panel-heading,
+.live-voice-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-voice-panel-heading {
+  justify-content: space-between;
+}
+
+.live-voice-actions {
+  justify-content: flex-end;
+}
+
+.live-voice-panel-heading strong {
+  color: var(--ds-text-primary);
+  font-size: var(--text-md);
+}
+
+.live-voice-provider,
+.live-voice-hint {
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.live-voice-work-setup,
+.live-voice-work-operations {
+  display: grid;
+  gap: 8px;
+}
+
+.live-voice-field-label {
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.live-voice-work-operation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--ds-text-primary);
+  font-size: var(--text-sm);
+}
+
+.live-voice-work-operation-content {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.live-voice-work-selections {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.live-voice-work-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.live-voice-work-summary {
+  color: var(--ds-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.live-voice-error {
+  color: var(--ds-error);
+  font-size: var(--text-sm);
+}
+
+.live-voice-transcripts {
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--ds-tile);
+  color: var(--ds-text-primary);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+}
+
+.live-voice-transcripts p {
+  margin: 0;
+}
+
+.live-voice-transcripts p[data-role="user"] {
+  color: var(--ds-text-secondary);
+}

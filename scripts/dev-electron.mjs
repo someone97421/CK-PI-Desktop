@@ -133,8 +133,10 @@ export function prepareMacDevelopmentBundle({
 
 function run() {
   const env = { ...process.env, PI_DESKTOP_DEV: "1" };
+  // Electron 43+ downloads its platform binary when its package is resolved.
+  // electron-vite requires the resulting path.txt marker on every platform.
+  const electron = resolveElectronInstallation();
   if (process.platform === "darwin") {
-    const electron = resolveElectronInstallation();
     env.ELECTRON_EXEC_PATH = prepareMacDevelopmentBundle({
       electronExecutable: electron.executablePath,
       electronVersion: electron.version,

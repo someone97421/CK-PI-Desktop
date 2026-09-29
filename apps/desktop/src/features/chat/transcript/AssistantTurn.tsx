@@ -58,6 +58,9 @@ import {
 } from "./TranscriptMenu";
 import { useSmoothText } from "../../../hooks/useSmoothText";
 import { TurnProcess } from "./TurnProcess";
+import { ActionSlotSide } from "./ActionBarSlots";
+import { EntryExtraStack } from "./EntryExtraStack";
+import { slotMessage } from "../../../plugins/renderer-slots/slot-message";
 
 type AssistantTurnProps = {
   entry: AssistantTurnEntry;
@@ -301,6 +304,12 @@ export const AssistantTurn = memo(function AssistantTurn({
   const complete = task
     ? task.status === "completed" && Boolean(content) && Boolean(actionMessage)
     : !isActive && !hasError && Boolean(content) && Boolean(actionMessage);
+  // Plugins see a finished reply as the host keys act on it: the id of its
+  // answer message and the text Copy copies.
+  const slotReply =
+    complete && actionMessage
+      ? slotMessage("assistant", { ...actionMessage, content })
+      : undefined;
   const streaming = !settledTask &&
     isActive && messages.some((message) => message.status === "streaming");
   /*
@@ -444,6 +453,7 @@ export const AssistantTurn = memo(function AssistantTurn({
         {(content || hasError) && actionMessage && !transcriptReadOnly ? (
           <div className="message-actions">
             <MessageTimestamp createdAt={actionMessage.createdAt} />
+            <ActionSlotSide slot="assistantAction" side="left" message={slotReply} />
             {complete ? (
               <CopyButton text={content} label={t("chat.copy")} />
             ) : null}
@@ -502,9 +512,11 @@ export const AssistantTurn = memo(function AssistantTurn({
                 <IconChat size={13} />
               </TooltipButton>
             ) : null}
+            <ActionSlotSide slot="assistantAction" side="right" message={slotReply} />
           </div>
         ) : null}
         {settledTask ? <TaskReviewCard messages={entry.sourceMessages ?? messages} /> : null}
+        {slotReply ? <EntryExtraStack message={slotReply} /> : null}
       </div>
     </div>
   );

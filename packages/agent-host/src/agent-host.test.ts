@@ -78,10 +78,12 @@ class FakeRuntime implements RuntimePort {
 class FakeSessions implements SessionPort {
   summaries = new Map<string, SessionSummary>();
   items: RacpItemSummary[] = [];
+  historyReads = 0;
   async get(sessionId: string): Promise<SessionSummary | null> {
     return this.summaries.get(sessionId) ?? null;
   }
   async history(): Promise<{ items: RacpItemSummary[]; hasMore: boolean }> {
+    this.historyReads += 1;
     return { items: this.items, hasMore: false };
   }
 }
@@ -148,6 +150,17 @@ function build(options: { permissionMode?: SessionSummary["permissionMode"]; que
 }
 
 describe("AgentHost ingest", () => {
+  it("provides live work state without reading transcript history", async () => {
+    const { host, sessions } = build();
+    expect(await host.workSnapshot("s1")).toMatchObject({ sessionId: "s1", mode: "agent", state: "idle", queue: [] });
+    expect(sessions.historyReads).toBe(0);
+
+    await host.startTurn(owner, { sessionId: "s1", input: { text: "current" }, context: { requestId: "work-1" } });
+    await host.startTurn(owner, { sessionId: "s1", admission: "queue", input: { text: "later" }, context: { requestId: "work-2" } });
+    expect(await host.workSnapshot("s1")).toMatchObject({ state: "running", activeTurnId: "rt_1", queue: [{ position: 1 }] });
+    expect(sessions.historyReads).toBe(0);
+  });
+
   it("reconciles only a matching optimistic user item and ignores duplicate, unknown and wrong-turn acknowledgements", async () => {
     const { host, received, sessions } = build();
     sessions.summaries.set("s2", summary("s2"));
@@ -246,6 +259,27 @@ describe("AgentHost ingest", () => {
 });
 
 describe("AgentHost turns", () => {
+  it("can append an idle session's turn directly to the Host queue with voice provenance", async () => {
+    const { host, runtime } = build({ queueStore: new MemoryQueueStore() });
+    const result = await host.enqueueTurn(owner, {
+      sessionId: "s1",
+      idempotencyKey: "voice:call-1:operation-1",
+      input: {
+        text: "Check the login flow",
+        userMessageId: "message-1",
+        voiceOrigin: { callId: "call-1", operationId: "operation-1" },
+      },
+      context: { requestId: "voice-enqueue-1" },
+    });
+
+    expect(result.turn.status).toBe("queued");
+    expect(runtime.prompts).toEqual([]);
+    expect(host.queueEntries("s1")[0]).toMatchObject({
+      userMessageId: "message-1",
+      voiceOrigin: { callId: "call-1", operationId: "operation-1" },
+    });
+  });
+
   it("serializes same-session admission while independent sessions can start", async () => {
     const { host, runtime, sessions } = build();
     sessions.summaries.set("s2", summary("s2"));

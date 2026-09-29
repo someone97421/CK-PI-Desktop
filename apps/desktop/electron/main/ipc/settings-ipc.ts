@@ -12,6 +12,8 @@ import { AppearanceMediaStore, readAppearanceIconPath } from "../appearance-medi
 import type { AgentSidecar } from "../agent-sidecar";
 import type { HostProcess } from "../host-process";
 import type { IpcRegistrar } from "./types";
+import type { LiveCallService } from "../live-voice/call-service";
+import type { AppSettings } from "@pi-desktop/shared";
 
 export type SettingsIpcDependencies = {
   registrar: IpcRegistrar;
@@ -35,6 +37,7 @@ export type SettingsIpcDependencies = {
   applyUpdatePreference: (preference: UpdatePreference) => void;
   resolveEffectiveCommandShell: () => Promise<unknown>;
   applyAppearanceIcon: (path: string | null) => void;
+  liveCallService?: Pick<LiveCallService, "beginSettingsWrite" | "settingsWritten">;
 };
 
 /** Register app settings and command-shell channels. */
@@ -55,6 +58,7 @@ export function registerSettingsIpc({
   applyUpdatePreference,
   resolveEffectiveCommandShell,
   applyAppearanceIcon,
+  liveCallService,
 }: SettingsIpcDependencies): void {
   const appearanceMedia = new AppearanceMediaStore(dataDir, (state) => {
     applyAppearanceIcon(readAppearanceIconPath(dataDir));
@@ -93,7 +97,18 @@ export function registerSettingsIpc({
   const saveSettings = async (settings: unknown) => {
     if (!host) throw new Error("host unavailable");
     const validatedSettings = validateSettingsWrite(settings);
-    const result = await host.call("settings.set", validatedSettings);
+    const currentSettings = await host.call<AppSettings>("settings.get");
+    const prospectiveSettings = validatedSettings && typeof validatedSettings === "object" && !Array.isArray(validatedSettings)
+      ? { ...currentSettings, ...(validatedSettings as Partial<AppSettings>) }
+      : currentSettings;
+    const releaseSettingsWrite = liveCallService?.beginSettingsWrite(prospectiveSettings);
+    let result: AppSettings;
+    try {
+      result = await host.call<AppSettings>("settings.set", validatedSettings);
+      await liveCallService?.settingsWritten(result);
+    } finally {
+      releaseSettingsWrite?.();
+    }
     const updatePreference = (validatedSettings as { updatePreference?: unknown })
       .updatePreference;
     if (updatePreference === "automatic" || updatePreference === "manual") {

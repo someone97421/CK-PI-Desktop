@@ -323,6 +323,7 @@ declare global {
     piDesktop?: {
       invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<Result<T>>;
       on: (channel: string, listener: (...args: unknown[]) => void) => () => void;
+      onLiveVoicePort?: () => () => void;
       channels: typeof IPC;
       platform: NodeJS.Platform;
       /** Authoritative OS locale passed from the main process at window creation. */
@@ -985,8 +986,8 @@ export const api = {
     invoke<{ providerId: string; modelId: string } | null>(IPC.invoke.sessionCompactionModelSet, { sessionId, model }),
   abort: (sessionId: string) =>
     invoke(IPC.invoke.agentAbort, { sessionId }),
-  stop: (sessionId: string) =>
-    invoke<AgentStopResponse>(IPC.invoke.agentStop, { sessionId }),
+  stop: (sessionId: string, turnId?: string) =>
+    invoke<AgentStopResponse>(IPC.invoke.agentStop, { sessionId, ...(turnId ? { turnId } : {}) }),
   stopSubagent: (sessionId: string, delegationId: string, expectedExecution?: number) =>
     invoke<SubagentStopResult>(IPC.invoke.subagentStop, { sessionId, delegationId, expectedExecution }),
   subagentRecallStatus: (sessionId: string, delegationId: string) =>
@@ -1039,6 +1040,9 @@ export const api = {
     invoke<PlanResolutionResult>(IPC.invoke.plansResolve, resolution),
   listPlugins: () =>
     invoke<{ plugins: PluginSummary[] }>(IPC.invoke.pluginList),
+  /** One renderer slot component asking its own plugin for one JSON answer. */
+  pluginRendererCall: (pluginId: string, method: string, args?: unknown) =>
+    invoke(IPC.invoke.pluginRendererCall, pluginId, method, args),
   /**
    * Picking a folder only reports what it declares; the load happens in
    * `confirmLoadDevPlugin` once the user has seen that.

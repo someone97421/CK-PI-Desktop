@@ -32,6 +32,7 @@ import {
   useTranscriptMenu,
 } from "./TranscriptMenu";
 import { conversationMenuItems } from "./menu-items";
+import { SlotSessionProvider } from "../../../plugins/renderer-slots/use-slots";
 
 type ChatTranscriptProps = {
   sessionId: string | undefined;
@@ -227,6 +228,7 @@ function TranscriptBody({
   return (
     <TranscriptSearchContext.Provider value={searchTarget}>
     <DisclosureAnchorContext.Provider value={disclosureAnchorNotifier}>
+    <SlotSessionProvider sessionId={sessionId ?? ""}>
     <div
       className="thread-wrap"
       ref={wrapRef}
@@ -371,6 +373,7 @@ function TranscriptBody({
         </TooltipButton>
       ) : null}
     </div>
+    </SlotSessionProvider>
     </DisclosureAnchorContext.Provider>
     </TranscriptSearchContext.Provider>
   );

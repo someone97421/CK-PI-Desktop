@@ -26,6 +26,7 @@ import type {
   RacpTurn,
   RacpTurnAdmission,
   UiMessage,
+  VoiceOrigin,
 } from "@pi-desktop/shared";
 import {
   RACP_ACTIVE_TURN_STATUSES,
@@ -83,6 +84,8 @@ export type QueueEntryView = {
   turn: RacpTurn;
   content: string;
   sessionMessageId?: string;
+  userMessageId?: string;
+  voiceOrigin?: VoiceOrigin;
   attachments?: AgentPromptAttachment[];
   /** Set only for promoted entries; entries are already in delivery order. */
   priority?: number;
@@ -98,11 +101,22 @@ export type StartTurnParams = {
     sessionMessageId?: string;
     /** Client-chosen id for the durable user row (D288). */
     userMessageId?: string;
+    voiceOrigin?: VoiceOrigin;
   };
   context: RacpRequestContext;
 };
 
 export type StartTurnResult = { accepted: true; turn: RacpTurn; cursor: RacpCursor };
+
+export type AgentWorkSnapshot = {
+  sessionId: string;
+  mode: "agent" | "plan" | "goal";
+  state: "idle" | "running" | "waiting-permission" | "waiting-input" | "finalizing";
+  activeTurnId?: string;
+  activeTurnStatus?: RacpTurn["status"];
+  queue: Array<{ queueEntryId: string; position: number }>;
+  revision: number;
+};
 
 export type AttachParams = {
   sessionId: string;
@@ -452,7 +466,17 @@ export class AgentHost {
     return this.withAdmission(params.sessionId, () => this.startTurnAdmitted(principal, params));
   }
 
-  private async startTurnAdmitted(principal: Principal, params: StartTurnParams): Promise<StartTurnResult> {
+  /** Append to the shared Host queue even when no turn is currently running. */
+  async enqueueTurn(principal: Principal, params: StartTurnParams): Promise<StartTurnResult> {
+    this.requireRole(principal, "turn/start");
+    return this.withAdmission(params.sessionId, () => this.startTurnAdmitted(principal, params, true));
+  }
+
+  private async startTurnAdmitted(
+    principal: Principal,
+    params: StartTurnParams,
+    forceQueue = false,
+  ): Promise<StartTurnResult> {
     const summary = await this.requireSession(params.sessionId);
     const state = this.state(summary.id);
     state.permissionMode = summary.permissionMode;
@@ -480,10 +504,10 @@ export class AgentHost {
       pairedDevice: principal.pairedDevice ?? false,
       approverOverride: principal.approverOverride ?? false,
     });
-    const admission: RacpTurnAdmission = params.admission ?? "reject_if_busy";
+    const admission: RacpTurnAdmission = forceQueue ? "queue" : params.admission ?? "reject_if_busy";
     const busy = this.isBusy(state);
     let turn: TurnRecord;
-    if (busy) {
+    if (busy || forceQueue) {
       if (admission === "reject_if_busy") {
         throw racpError("AGENT_BUSY", "the session already has an active turn");
       }
@@ -494,6 +518,7 @@ export class AgentHost {
         content: params.input.text,
         ...(params.input.sessionMessageId ? { sessionMessageId: params.input.sessionMessageId } : {}),
         ...(params.input.userMessageId ? { userMessageId: params.input.userMessageId } : {}),
+        ...(params.input.voiceOrigin ? { voiceOrigin: params.input.voiceOrigin } : {}),
         ...(params.input.attachments ? { attachments: params.input.attachments } : {}),
         effectivePermissionMode,
         ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -516,6 +541,7 @@ export class AgentHost {
         content: params.input.text,
         ...(params.input.sessionMessageId ? { sessionMessageId: params.input.sessionMessageId } : {}),
         ...(params.input.userMessageId ? { userMessageId: params.input.userMessageId } : {}),
+        ...(params.input.voiceOrigin ? { voiceOrigin: params.input.voiceOrigin } : {}),
         ...(params.input.attachments ? { attachments: params.input.attachments } : {}),
         effectivePermissionMode,
         ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -537,6 +563,40 @@ export class AgentHost {
   getTurn(turnId: string): RacpTurn {
     const state = this.stateForTurn(turnId);
     return this.toRacpTurn(state, state.turns.get(turnId)!);
+  }
+
+  /** Resolve a logical work turn for runtime IPC and persisted transcript lookup. */
+  runtimeTurnId(sessionId: string, turnId: string): string {
+    const state = this.stateForTurn(turnId);
+    if (state.id !== sessionId) throw racpError("NOT_FOUND", `turn ${turnId} is unknown in session ${sessionId}`);
+    return state.turns.get(turnId)!.runtimeTurnId ?? turnId;
+  }
+
+  /** Read live work state without loading transcript history or message text. */
+  async workSnapshot(sessionId: string): Promise<AgentWorkSnapshot> {
+    const summary = await this.requireSession(sessionId);
+    const state = this.state(summary.id);
+    state.permissionMode = summary.permissionMode;
+    const active = state.activeTurnId ? state.turns.get(state.activeTurnId) : undefined;
+    const queue = this.queue.list(state.id).map((record, index) => ({ queueEntryId: record.id, position: index + 1 }));
+    const pendingApprovals = this.approvals.list(sessionId).length > 0;
+    const pendingInputs = state.pendingInputs.size > 0;
+    const activeStatus = active?.status;
+    const workState: AgentWorkSnapshot["state"] = pendingApprovals || activeStatus === "waiting_approval"
+      ? "waiting-permission"
+      : pendingInputs || activeStatus === "waiting_input"
+        ? "waiting-input"
+        : activeStatus !== undefined && isActive(activeStatus)
+          ? "running"
+          : "idle";
+    return {
+      sessionId: state.id,
+      mode: summary.mode,
+      state: workState,
+      ...(active ? { activeTurnId: active.id, activeTurnStatus: active.status } : {}),
+      queue,
+      revision: state.revision,
+    };
   }
 
   async stopTurn(principal: Principal, turnId: string): Promise<RacpTurn> {
@@ -631,7 +691,7 @@ export class AgentHost {
       if (receipt?.state === "accepted") {
         // Nothing is steered again: only the durable steps are retried.
         await this.settleReceipt(receipt);
-        this.completeTransferredTurn(state, queuedTurnId);
+        this.completeTransferredTurn(state, queuedTurnId, receipt.turnId ?? expectedTurnId);
         void this.drain(sessionId);
         return { accepted: true, turnId: receipt.turnId ?? expectedTurnId };
       }
@@ -667,7 +727,7 @@ export class AgentHost {
         throw racpError("FORBIDDEN", "queued permission mode differs from the active session or caller ceiling");
       }
       const transfer: SteeringTransfer =
-        previous ?? { sessionId, expectedTurnId, messageId: globalThis.crypto.randomUUID() };
+        previous ?? { sessionId, expectedTurnId, messageId: record.userMessageId ?? globalThis.crypto.randomUUID() };
       this.steeringTransfers.set(queuedTurnId, transfer);
       try {
         if (!transfer.accepted) {
@@ -679,6 +739,7 @@ export class AgentHost {
             // journals it, the runtime deduplicates it, and the transcript echo
             // keeps the same outbox key.
             sessionMessageId: transfer.messageId,
+            ...(record.voiceOrigin ? { voiceOrigin: record.voiceOrigin } : {}),
             ...(record.attachments ? { attachments: record.attachments } : {}),
             queuedTurnId,
             principal: { subject: record.principalSubject, roles: ["controller"] },
@@ -719,7 +780,7 @@ export class AgentHost {
       this.steeringTransfers.delete(queuedTurnId);
       await this.completeReceipt(queuedTurnId);
       this.steeringReceipts.delete(queuedTurnId);
-      this.completeTransferredTurn(state, queuedTurnId);
+      this.completeTransferredTurn(state, queuedTurnId, transfer.accepted?.turnId ?? expectedTurnId);
       // queued drain still goes through admission after this transfer finishes.
 
       void this.drain(sessionId);
@@ -731,13 +792,16 @@ export class AgentHost {
    * Mark one fulfilled queue admission: its input was delivered into the turn
    * that was already running, so it is `completed`, never a runtime alias.
    */
-  private completeTransferredTurn(state: SessionState, turnId: string): void {
+  private completeTransferredTurn(state: SessionState, turnId: string, deliveredIntoTurnId?: string): void {
     const turn = state.turns.get(turnId);
     if (!turn || isTerminal(turn.status)) return;
     turn.status = "completed";
     turn.queuePosition = undefined;
     turn.endedAt = new Date(this.clock.now()).toISOString();
-    this.emit(state, "turn.completed", { turn: this.toRacpTurn(state, turn) }, { turnId });
+    this.emit(state, "turn.completed", {
+      turn: this.toRacpTurn(state, turn),
+      ...(deliveredIntoTurnId ? { deliveredIntoTurnId: this.resolveTurnId(state, deliveredIntoTurnId) } : {}),
+    }, { turnId });
     this.renumberQueue(state);
     this.notifyQueue(state.id);
   }
@@ -763,7 +827,7 @@ export class AgentHost {
     await this.runtime.settleSteeringReceipt?.(receipt.queuedTurnId);
     if (this.queue.find(receipt.queuedTurnId)) {
       await this.queue.remove(receipt.sessionId, receipt.queuedTurnId);
-      this.completeTransferredTurn(this.state(receipt.sessionId), receipt.queuedTurnId);
+      this.completeTransferredTurn(this.state(receipt.sessionId), receipt.queuedTurnId, receipt.turnId);
     }
     await this.completeReceipt(receipt.queuedTurnId);
     this.steeringReceipts.delete(receipt.queuedTurnId);
@@ -957,6 +1021,8 @@ export class AgentHost {
       turn: this.toRacpTurn(state, this.ensureTurn(state, record.id)),
       content: record.content,
       ...(record.sessionMessageId ? { sessionMessageId: record.sessionMessageId } : {}),
+      ...(record.userMessageId ? { userMessageId: record.userMessageId } : {}),
+      ...(record.voiceOrigin ? { voiceOrigin: record.voiceOrigin } : {}),
       ...(record.attachments ? { attachments: record.attachments } : {}),
       ...(record.priority !== undefined ? { priority: record.priority } : {}),
     }));
@@ -1073,6 +1139,7 @@ export class AgentHost {
             submittedAt: record.createdAt,
             ...(record.sessionMessageId ? { sessionMessageId: record.sessionMessageId } : {}),
             ...(record.userMessageId ? { userMessageId: record.userMessageId } : {}),
+            ...(record.voiceOrigin ? { voiceOrigin: record.voiceOrigin } : {}),
             ...(record.attachments ? { attachments: record.attachments } : {}),
             effectivePermissionMode: record.effectivePermissionMode,
             ...(record.idempotencyKey ? { idempotencyKey: record.idempotencyKey } : {}),

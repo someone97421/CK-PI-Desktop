@@ -12,6 +12,7 @@ import {
   sessionThinkingMenuLevels,
 } from "@pi-desktop/shared";
 import { sameComposerModelId } from "../../../lib/composer-models.ts";
+import type { ComposerPluginPart } from "../../../lib/composer-smart-stop";
 import { providerThinkingLevels } from "../../../lib/session-thinking.ts";
 
 export const COMPOSER_MIN_HEIGHT_PX = 28;
@@ -63,6 +64,7 @@ export type ComposerFileReference = {
   kind: "image" | "file";
   mimeType?: string;
   token?: string;
+  plugin?: ComposerPluginPart;
 };
 
 export type ComposerMenuView = "root" | "model";
@@ -135,8 +137,8 @@ export function thinkingProviderForModel(
     ? THINKING_LEVELS.filter((level) => binding.thinkingLevels.includes(level))
     : undefined;
 
-  if (!model) {
-    // No catalog match: all thinking levels selectable, default off.
+  if (model?.catalogSource !== "models.dev") {
+    // Discovery/user rows are not trusted capability matches.
     // A binding override still takes precedence when present.
     // An empty binding is the generic seed for an unknown model, not an
     // explicit disable; `off` is the persisted opt-out for that case.

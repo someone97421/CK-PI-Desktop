@@ -251,7 +251,7 @@ test("app quit waits for one idempotent teardown before allowing the follow-up q
 
 test("settings writes validate without applying read defaults", () => {
   assert.match(mainSource, /validateSettingsWrite\(settings\)/);
-  assert.match(mainSource, /host\.call\("settings\.set", validatedSettings\)/);
+  assert.match(mainSource, /host\.call(?:<AppSettings>)?\("settings\.set", validatedSettings\)/);
   assert.doesNotMatch(mainSource, /host\.call\("settings\.set", normalizedSettings\)/);
   assert.match(apiSource, /export function validateSettingsWrite/);
   assert.match(apiSource, /invoke\(IPC\.invoke\.settingsSet, validateSettingsWrite\(settings\)\)/);

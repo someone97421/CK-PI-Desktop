@@ -56,14 +56,13 @@ export function composerModelsForProvider(
   });
 }
 
-/** The Composer uses the configured alias when set, otherwise the wire id. */
+/** The Composer uses the configured alias when set, otherwise the complete wire id. */
 export function composerModelDisplayName(
   provider: ConfiguredProvider | undefined,
   modelId: string,
-  fallback?: string,
 ): string {
   const alias = provider ? composerModelBinding(provider, modelId)?.alias?.trim() : undefined;
-  return alias || fallback?.trim() || modelId;
+  return alias || modelId;
 }
 
 /** Find only the binding for this complete wire id. */

@@ -839,3 +839,42 @@ pub(crate) fn migrate_v18_to_v19(conn: &Connection, path: &Path) -> Result<()> {
     let _ = conn.pragma_update(None, "foreign_keys", true);
     result
 }
+
+/// v20 persists stable user-message identity and Live Voice provenance on
+/// queued turns so a restart cannot lose source metadata before dispatch.
+pub(crate) fn migrate_v19_to_v20_tx(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    let has_queue: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'turn_queue')",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_queue {
+        for (column, definition) in [("user_message_id", "TEXT"), ("voice_origin_json", "TEXT")] {
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('turn_queue') WHERE name = ?1)",
+                [column],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                tx.execute_batch(&format!(
+                    "ALTER TABLE turn_queue ADD COLUMN {column} {definition};"
+                ))?;
+            }
+        }
+    }
+    tx.pragma_update(None, "user_version", 20i64)?;
+    Ok(())
+}
+
+pub(crate) fn migrate_v19_to_v20(conn: &Connection, path: &Path) -> Result<()> {
+    let backup = create_migration_backup(conn, path, 19)?;
+    let tx = conn.unchecked_transaction()?;
+    migrate_v19_to_v20_tx(&tx)?;
+    tx.commit().with_context(|| {
+        format!(
+            "commit schema v19 to v20 migration; backup {} remains",
+            backup.display()
+        )
+    })?;
+    Ok(())
+}

@@ -309,7 +309,7 @@ export function createSessionCoordination({
           sameComposerModelId(candidate.modelId, inherited.modelId ?? ""),
         )
       : undefined;
-    const defaultThinkingLevel = catalogModel
+    const defaultThinkingLevel = catalogModel?.catalogSource === "models.dev"
       ? initialThinkingLevelForBinding(
           inheritedBinding,
           defaultProvider?.supportedThinkingLevels,

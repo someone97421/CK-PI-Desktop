@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Api, Model, Models } from "@earendil-works/pi-ai";
+import type { Api, Model, Models, ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
 import {
   OPENCODE_CLIENT_HEADER,
   OPENCODE_CLIENT_VALUE,
@@ -135,5 +135,127 @@ describe("withCompactionRequestHeaders", () => {
     // Every other member is still the collection's own.
     expect(wrapped.getModel("row-uuid", "glm-5.3-flash")).toBe(model);
     expect(getModel).toHaveBeenCalledWith("row-uuid", "glm-5.3-flash");
+  });
+});
+
+describe("compaction summary conversation key", () => {
+  /** A collection whose one request hands its own payload to the option hook. */
+  function recordPayload(api: string, seed: Record<string, unknown> = {}) {
+    const summaryModel = { ...model, api } as Model<Api>;
+    const calls: { payload: Record<string, unknown>; result: unknown }[] = [];
+    const collection = {
+      completeSimple: async (
+        _model: unknown,
+        _context: unknown,
+        options: ModelsSimpleStreamOptions,
+      ) => {
+        const payload: Record<string, unknown> = { input: [], ...seed };
+        const result = await options.onPayload?.(payload, summaryModel);
+        calls.push({ payload, result });
+        return "assistant-message";
+      },
+    } as unknown as Models;
+    return {
+      model: summaryModel,
+      calls,
+      wrapped: withCompactionRequestHeaders(collection, provider, "session-1"),
+    };
+  }
+
+  it.each(["openai-responses", "openai-codex-responses"])(
+    "carries the session id as the prompt cache key for %s",
+    async (api) => {
+      const { model: summaryModel, calls, wrapped } = recordPayload(api);
+
+      await wrapped.completeSimple(summaryModel, context as never, { maxTokens: 4_096 });
+
+      const [call] = calls;
+      const sent = (call?.result === undefined ? call?.payload : call?.result) as Record<string, unknown>;
+      expect(sent.prompt_cache_key).toBe("session-1");
+      // The adapter's own object stays untouched; the key rides the replacement.
+      expect(call?.payload.prompt_cache_key).toBeUndefined();
+    },
+  );
+
+  it.each(["openai-completions", "anthropic-messages", "google-generative-ai"])(
+    "leaves a %s payload exactly as the adapter built it",
+    async (api) => {
+      const { model: summaryModel, calls, wrapped } = recordPayload(api);
+
+      await wrapped.completeSimple(summaryModel, context as never, { maxTokens: 4_096 });
+
+      const [call] = calls;
+      expect(call?.result).toBeUndefined();
+      expect(call?.payload).not.toHaveProperty("prompt_cache_key");
+    },
+  );
+
+  it("keeps a prompt cache key the adapter already set", async () => {
+    const { model: summaryModel, calls, wrapped } = recordPayload("openai-responses", {
+      prompt_cache_key: "explicit-key",
+    });
+
+    await wrapped.completeSimple(summaryModel, context as never, { maxTokens: 4_096 });
+
+    const [call] = calls;
+    expect(call?.result).toBeUndefined();
+    expect(call?.payload.prompt_cache_key).toBe("explicit-key");
+  });
+
+  it("clamps a long session id the way the Responses adapter does", async () => {
+    const collection = {
+      completeSimple: async (
+        _model: unknown,
+        _context: unknown,
+        options: ModelsSimpleStreamOptions,
+      ) => {
+        const payload: Record<string, unknown> = { input: [] };
+        const result = await options.onPayload?.(
+          payload,
+          { ...model, api: "openai-responses" } as Model<Api>,
+        );
+        return result === undefined ? payload : result;
+      },
+    } as unknown as Models;
+    const summaryModel = { ...model, api: "openai-responses" } as Model<Api>;
+    const wrapped = withCompactionRequestHeaders(collection, provider, "s".repeat(80));
+
+    const sent = (await wrapped.completeSimple(summaryModel, context as never, {
+      maxTokens: 4_096,
+    })) as unknown as Record<string, unknown>;
+
+    expect(sent.prompt_cache_key).toBe("s".repeat(64));
+  });
+
+  it("keeps an existing hook's replacement and mutation semantics", async () => {
+    const replaced = { input: [], replaced: true };
+    const { model: summaryModel, calls, wrapped } = recordPayload("openai-responses");
+
+    await wrapped.completeSimple(summaryModel, context as never, {
+      maxTokens: 4_096,
+      onPayload: () => replaced,
+    });
+
+    const [call] = calls;
+    const sent = (call?.result === undefined ? call?.payload : call?.result) as Record<string, unknown>;
+    expect(sent.replaced).toBe(true);
+    expect(sent.prompt_cache_key).toBe("session-1");
+    expect(replaced).not.toHaveProperty("prompt_cache_key");
+
+    const second = recordPayload("openai-responses");
+    await second.wrapped.completeSimple(second.model, context as never, {
+      maxTokens: 4_096,
+      onPayload: (payload) => {
+        (payload as Record<string, unknown>).mutated = true;
+        return undefined;
+      },
+    });
+
+    const [mutated] = second.calls;
+    const sentMutation = (mutated?.result === undefined
+      ? mutated?.payload
+      : mutated?.result) as Record<string, unknown>;
+    expect(sentMutation.mutated).toBe(true);
+    expect(sentMutation.prompt_cache_key).toBe("session-1");
   });
 });

@@ -96,18 +96,22 @@ const networkProxySource = await readFile(
   new URL("../src/components/settings/NetworkProxySection.tsx", import.meta.url),
   "utf8",
 );
+const voiceSettingsSource = await readFile(
+  new URL("../src/features/settings/voice/VoiceSettingsSection.tsx", import.meta.url),
+  "utf8",
+);
 
 test("基础、外观和 AI 设置各自显示对应控件", () => {
   const generalStart = settingsPageSource.indexOf('{tab === "general" && settings && (');
   const appearanceStart = settingsPageSource.indexOf('{tab === "appearance" && settings && (');
   const aiStart = settingsPageSource.indexOf('{tab === "ai" && settings && (');
-  const shortcutsStart = settingsPageSource.indexOf(
-    '{tab === "shortcuts" && settings && (',
+  const voiceStart = settingsPageSource.indexOf(
+    '{tab === "voice" && !tabHidden && settings && (',
   );
-  assert.ok(generalStart >= 0 && appearanceStart > generalStart && aiStart > appearanceStart);
+  assert.ok(generalStart >= 0 && appearanceStart > generalStart && aiStart > appearanceStart && voiceStart > aiStart);
   const generalSource = settingsPageSource.slice(generalStart, appearanceStart);
   const appearanceSource = settingsPageSource.slice(appearanceStart, aiStart);
-  const aiSource = settingsPageSource.slice(aiStart, shortcutsStart);
+  const aiSource = settingsPageSource.slice(aiStart, voiceStart);
 
   assert.match(appearanceSource, /<ThemeRow /);
   assert.match(generalSource, /<LanguageRow /);
@@ -159,7 +163,13 @@ test("基础、外观和 AI 设置各自显示对应控件", () => {
   // The AI tab keeps the Settings picker control: a native <select> popup is
   // platform-drawn and cannot carry the shared menu surface or its check mark.
   assert.doesNotMatch(aiSource, /<select/);
-  assert.doesNotMatch(settingsPageSource, /VoiceSettingsCard|VoiceSettingsSection|voice-settings/);
+  // Voice owns a separate destination; the AI tab does not duplicate it.
+  assert.doesNotMatch(aiSource, /VoiceSettingsCard|VoiceSettingsSection|voice-settings/);
+  assert.match(settingsPageSource, /tab === "voice" && !tabHidden && settings && [\s\S]*?<VoiceSettingsSection/);
+  assert.match(voiceSettingsSource, /LiveVoiceSettings as VoiceSettingsSection/);
+  assert.doesNotMatch(voiceSettingsSource, /voiceIpc|voiceEnable|voiceMicrophone|voiceModel/);
+  assert.doesNotMatch(settingsSearchSource, /settings\.voiceEnable|settings\.voiceMicrophone|settings\.voiceModel/);
+  assert.match(settingsSearchSource, /liveVoice\.enable/);
   assert.doesNotMatch(settingsSearchSource, /settings\.speech/);
   assert.doesNotMatch(stylesSource, /\.settings-speech/);
   assert.doesNotMatch(enLocaleSource, /speechTitle:|speechVoicePlaceholder:/);

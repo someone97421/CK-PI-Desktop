@@ -474,6 +474,12 @@ pub fn copy_directory_tree(from: &Path, to: &Path, skip_skill_document: bool) ->
     fs::create_dir_all(to).map_err(|error| anyhow::anyhow!("create {}: {error}", to.display()))?;
     let entries = fs::read_dir(from).with_context(|| format!("read {}", from.display()))?;
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
         let Some(name) = path.file_name() else {
             continue;
@@ -482,9 +488,9 @@ pub fn copy_directory_tree(from: &Path, to: &Path, skip_skill_document: bool) ->
             continue;
         }
         let target = to.join(name);
-        if path.is_dir() {
+        if file_type.is_dir() {
             copy_directory_tree(&path, &target, false)?;
-        } else {
+        } else if file_type.is_file() {
             fs::copy(&path, &target)
                 .map_err(|error| anyhow::anyhow!("copy {}: {error}", path.display()))?;
         }
@@ -1072,6 +1078,26 @@ mod tests {
         let whole = dir.path().join("whole");
         copy_directory_tree(&from, &whole, false).unwrap();
         assert_eq!(fs::read_to_string(whole.join("SKILL.md")).unwrap(), "doc");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_directory_tree_ignores_symlinks() {
+        let dir = tempdir().unwrap();
+        let from = dir.path().join("from");
+        let to = dir.path().join("to");
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.txt"), from.join("linked.txt")).unwrap();
+        std::os::unix::fs::symlink(&outside, from.join("linked_dir")).unwrap();
+        fs::write(from.join("normal.txt"), "normal").unwrap();
+
+        copy_directory_tree(&from, &to, false).unwrap();
+        assert_eq!(fs::read_to_string(to.join("normal.txt")).unwrap(), "normal");
+        assert!(!to.join("linked.txt").exists());
+        assert!(!to.join("linked_dir").exists());
     }
 
     #[test]

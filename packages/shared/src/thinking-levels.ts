@@ -127,7 +127,14 @@ export function initialThinkingLevelForUnmatchedModel(
   binding: ThinkingLevelBindingSource | null | undefined,
   fallbackLevels?: readonly ThinkingLevel[],
 ): SessionThinkingLevel {
-  return initialThinkingLevelForBindingInternal(binding, fallbackLevels, true);
+  // An empty generic seed is not an explicit restriction. The same effective
+  // ladder is used by Composer and runtime; non-empty bindings still win.
+  return initialThinkingLevelForBindingInternal({
+    ...binding,
+    thinkingLevels: binding?.thinkingLevels?.length
+      ? binding.thinkingLevels
+      : THINKING_LEVELS,
+  }, fallbackLevels, true);
 }
 
 /** Published record a thinking-level candidate list can be derived from. */

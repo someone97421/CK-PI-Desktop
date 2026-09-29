@@ -13,10 +13,9 @@ import {
   type NativeMenuAction,
 } from "@pi-desktop/shared";
 import { installApplicationMenu } from "../application-menu";
-import {
-  installPluginAssetProtocol,
-  registerPluginAssetScheme,
-} from "../plugin-asset-protocol";
+import { installPluginAssetProtocol } from "../plugin-asset-protocol";
+import { installPluginRendererProtocol } from "../plugin-renderer-protocol";
+import { registerPluginSchemes } from "../plugin-schemes";
 import { applyNetworkProxyFromAppSettings } from "../network-proxy";
 import {
   installAppearanceMediaProtocol,
@@ -131,7 +130,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
 
   // Electron only accepts scheme privileges before the app is ready, and this
   // runs from the composition root, before the `whenReady` promise can settle.
-  registerPluginAssetScheme();
+  registerPluginSchemes();
   registerAppearanceMediaScheme();
   // Crashpad ships with Electron, so the reporter needs no native dependency.
   // Dumps stay local (`uploadToServer: false`) under the fork's independent
@@ -204,6 +203,11 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       plugins.resolveThemeAsset(pluginId, assetPath),
     );
     installAppearanceMediaProtocol(dataDir);
+    // Serve renderer entry modules the same way — the current load of a
+    // plugin that declared `manifest.renderer` and holds `renderer.extension`.
+    installPluginRendererProtocol((pluginId, generation, requestPath) =>
+      plugins.resolveRendererSource(pluginId, generation, requestPath),
+    );
     // Load the close-behavior preference before the first window exists: the
     // close handler reads `closeBehavior` synchronously, and a window created
     // while it still held the "ask" default would prompt a user who already

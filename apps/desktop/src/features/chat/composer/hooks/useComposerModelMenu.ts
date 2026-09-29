@@ -266,7 +266,7 @@ export function useComposerModelMenu({
         sameComposerModelId(modelId ?? "", nextModelId);
       const nextThinkingLevel = selectedSameModel
         ? thinkingLevelForProvider(nextModelProvider, thinkingLevel)
-        : (nextModel
+        : (nextModel?.catalogSource === "models.dev"
           ? initialThinkingLevelForBinding(
               nextBinding,
               nextModelProvider?.supportedThinkingLevels,

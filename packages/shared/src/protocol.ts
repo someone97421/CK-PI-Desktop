@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 11 as const;
-export const SCHEMA_VERSION = 19 as const;
+export const SCHEMA_VERSION = 20 as const;
 export { APP_ID, APP_NAME, APP_SLUG, APP_REPOSITORY, APP_VERSION, APP_DISPLAY_VERSION,
   APP_BUILD_TIME, APP_BUILD_TIMEZONE, APP_LEGACY_LOCK_NAME } from "./app-build.js";
 
@@ -80,6 +80,17 @@ export const IPC = {
     speechTranscribe: "pi-desktop/speech/transcribe",
     speechSynthesize: "pi-desktop/speech/synthesize",
     speechGetStatus: "pi-desktop/speech/getStatus",
+    liveVoiceStatus: "pi-desktop/voice/live/status",
+    liveVoicePrepare: "pi-desktop/voice/live/prepare",
+    liveVoiceConnect: "pi-desktop/voice/live/connect",
+    liveVoiceSetMuted: "pi-desktop/voice/live/setMuted",
+    liveVoiceReportMedia: "pi-desktop/voice/live/reportMedia",
+    liveVoiceReportPlayback: "pi-desktop/voice/live/reportPlayback",
+    liveVoiceReportDelegation: "pi-desktop/voice/live/reportDelegation",
+    liveVoiceReportControlApplied: "pi-desktop/voice/live/reportControlApplied",
+    liveVoiceEnd: "pi-desktop/voice/live/end",
+    liveVoiceHeartbeat: "pi-desktop/voice/live/heartbeat",
+    liveVoiceResolveWorkSelection: "pi-desktop/voice/live/work/resolveSelection",
     agentCompact: "pi-desktop/agent/compact",
     sessionCompactionModelGet: "pi-desktop/session/compactionModel/get",
     sessionCompactionModelSet: "pi-desktop/session/compactionModel/set",
@@ -237,6 +248,8 @@ export const IPC = {
     providersOauthCancel: "pi-desktop/providers/oauth/cancel",
     providersOauthDelete: "pi-desktop/providers/oauth/delete",
     pluginList: "pi-desktop/plugin/list",
+    /** A renderer slot component asking its own plugin for one JSON answer. */
+    pluginRendererCall: "pi-desktop/plugin/rendererCall",
     /** Plugin-contributed agent extensions (D387/D388, ADR 0214). */
     pluginImportExtension: "pi-desktop/plugin/importExtension",
     extensionsCommandRun: "pi-desktop/extensions/commands/run",
@@ -402,6 +415,10 @@ export const IPC = {
     providersOauth: "pi-desktop/providers/oauth/event",
     mcpOauth: "pi-desktop/mcp/oauth/event",
     updatesState: "pi-desktop/updates/event/state",
+    liveVoiceChanged: "pi-desktop/voice/live/event/changed",
+    liveVoicePort: "pi-desktop/voice/live/event/port",
+    liveVoiceControl: "pi-desktop/voice/live/event/control",
+    liveVoiceTranscript: "pi-desktop/voice/live/event/transcript",
   },
   agent: {
     subagentPersistenceGet: "agent:subagent-persistence:get",

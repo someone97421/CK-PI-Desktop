@@ -110,6 +110,13 @@ test("macOS icon derivation preserves the canonical renderer asset", () => {
   );
 });
 
+test("development launcher resolves Electron before platform-specific setup", () => {
+  assert.match(
+    devScriptSource,
+    /const electron = resolveElectronInstallation\(\);\s+if \(process\.platform === "darwin"\)/,
+  );
+});
+
 test("macOS development launches from a branded host bundle", () => {
   assert.equal(packageJson.scripts.dev, "node ../../scripts/build.mjs dev");
   assert.match(devScriptSource, /process\.platform === "darwin"/);

@@ -162,7 +162,7 @@
 
 /*
   The chosen service is a settled fact, not an open menu: its letter tile,
-  name and host on the field tone, with Change leading back to the chooser.
+  name and endpoint on the field tone, with Change leading back to the chooser.
 */
 .provider-service-chip {
   display: flex;
@@ -185,11 +185,10 @@
 .provider-service-chip-copy {
   display: flex;
   flex: 1;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 2px 8px;
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
 }
 
 .provider-service-chip-name {
@@ -202,12 +201,11 @@
 
 .provider-service-chip-host {
   min-width: 0;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   color: var(--ds-text-muted);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
   line-height: var(--leading-tight);
-  text-overflow: ellipsis;
 }
 
 .provider-service-chip-change,

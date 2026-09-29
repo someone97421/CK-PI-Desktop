@@ -96,6 +96,14 @@ describe("initialThinkingLevelForUnmatchedModel", () => {
         defaultThinkingLevel: "low",
       }),
     ).toBe("low");
+    for (const defaultThinkingLevel of [null, "off", "high", "omit"] as const) {
+      expect(initialThinkingLevelForUnmatchedModel({
+        thinkingLevels: [], defaultThinkingLevel,
+      }, ["off"])).toBe(defaultThinkingLevel ?? "off");
+    }
+    expect(initialThinkingLevelForUnmatchedModel({
+      thinkingLevels: ["off"], defaultThinkingLevel: "high",
+    })).toBe("off");
   });
 });
 

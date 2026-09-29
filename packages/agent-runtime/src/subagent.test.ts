@@ -368,6 +368,62 @@ describe("SubagentRun reporting", () => {
     expect(result.error?.code).toBe("SUBAGENT_NO_REPORT");
   });
 
+  it("reports truncated output as a failure rather than a clean completion", async () => {
+    const { run } = createRun();
+    run.handleEvent({
+      type: "message_end",
+      message: assistantMessage({
+        content: [{ type: "text", text: "Analysis report cut off mid-sentence..." }],
+        stopReason: "length",
+      }),
+    });
+    run.agent = {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      waitForIdle: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn(),
+    };
+
+    const result = await (run as unknown as SubagentRun).run();
+
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe("SUBAGENT_OUTPUT_TRUNCATED");
+    expect(result.outputTruncated).toBe(true);
+    expect(result.report).toContain("The explorer subagent failed");
+    expect(result.report).toContain(
+      "The subagent response exceeded the model's output token limit and was truncated.",
+    );
+    expect(result.report).toContain("Analysis report cut off mid-sentence...");
+  });
+
+  it("clears truncated output state if a subsequent turn finishes cleanly", async () => {
+    const { run } = createRun();
+    run.handleEvent({
+      type: "message_end",
+      message: assistantMessage({
+        content: [{ type: "text", text: "Initial attempt" }],
+        stopReason: "length",
+      }),
+    });
+    run.handleEvent({
+      type: "message_end",
+      message: assistantMessage({
+        content: [{ type: "text", text: "Complete final report." }],
+        stopReason: "stop",
+      }),
+    });
+    run.agent = {
+      prompt: vi.fn().mockResolvedValue(undefined),
+      waitForIdle: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn(),
+    };
+
+    const result = await (run as unknown as SubagentRun).run();
+
+    expect(result.status).toBe("completed");
+    expect(result.outputTruncated).toBeUndefined();
+    expect(result.report).toBe("Complete final report.");
+  });
+
   it("returns aborted without prompting when the parent call is already aborted", async () => {
     const controller = new AbortController();
     controller.abort();

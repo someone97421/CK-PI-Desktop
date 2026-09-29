@@ -8,7 +8,7 @@ import type {
   SessionSummary,
 } from "@pi-desktop/agent-host";
 import { RacpError } from "@pi-desktop/agent-host";
-import type { RacpItemSummary, RacpPermissionMode, UiMessage } from "@pi-desktop/shared";
+import type { RacpItemSummary, RacpPermissionMode, UiMessage, VoiceOrigin } from "@pi-desktop/shared";
 
 /** Rust host-core over stdio JSON-RPC, as the ports below need it. */
 export type HostRpc = {
@@ -56,7 +56,7 @@ export function toSessionSummary(record: HostSessionRecord): SessionSummary {
 }
 
 export function toRacpItem(message: UiMessage): RacpItemSummary {
-  const turnId = (message as { turnId?: string }).turnId ?? "";
+  const turnId = message.taskId ?? (message as { turnId?: string }).turnId ?? "";
   return {
     id: message.id,
     turnId,
@@ -104,6 +104,8 @@ export type HostQueueEntry = {
   inputHash: string;
   content: string;
   sessionMessageId?: string;
+  userMessageId?: string;
+  voiceOrigin?: VoiceOrigin;
   attachments?: unknown;
   permissionMode: string;
   position: number;
@@ -120,6 +122,8 @@ export function fromHostQueueEntry(entry: HostQueueEntry): QueuedTurnRecord {
     principalSubject: entry.principal,
     content: entry.content,
     ...(entry.sessionMessageId ? { sessionMessageId: entry.sessionMessageId } : {}),
+    ...(entry.userMessageId ? { userMessageId: entry.userMessageId } : {}),
+    ...(entry.voiceOrigin ? { voiceOrigin: entry.voiceOrigin } : {}),
     ...(Array.isArray(entry.attachments) ? { attachments: entry.attachments as QueuedTurnRecord["attachments"] } : {}),
     effectivePermissionMode: permissionMode,
     ...(entry.idempotencyKey ? { idempotencyKey: entry.idempotencyKey } : {}),
@@ -147,6 +151,8 @@ export function createHostQueueStore(getHost: () => HostRpc | null): QueueStore 
         inputHash: record.inputHash,
         content: record.content,
         ...(record.sessionMessageId ? { sessionMessageId: record.sessionMessageId } : {}),
+        ...(record.userMessageId ? { userMessageId: record.userMessageId } : {}),
+        ...(record.voiceOrigin ? { voiceOrigin: record.voiceOrigin } : {}),
         ...(record.attachments ? { attachments: record.attachments } : {}),
         permissionMode: record.effectivePermissionMode,
       });

@@ -13,6 +13,10 @@
     "./sidecar": {
       "types": "./dist/sidecar.d.ts",
       "import": "./dist/sidecar.js"
+    },
+    "./proxy-tunnel": {
+      "types": "./dist/socks5.d.ts",
+      "import": "./dist/socks5.js"
     }
   },
   "scripts": {

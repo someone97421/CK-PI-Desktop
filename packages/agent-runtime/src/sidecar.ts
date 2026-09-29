@@ -25,6 +25,7 @@ import {
   normalizeSupportedThinkingLevels,
   normalizeThinkingLevel,
 } from "./sidecar-config.js";
+import { matchesExpectedTurnId } from "./turn-target.js";
 import { applyNodeNetworkProxy } from "./node-proxy.js";
 import { NATIVE_PI_SESSION_PREFIX, nativePiService } from "./native-pi-session.js";
 import { SubagentPersistenceClient } from "./subagent-persistence-client.js";
@@ -583,9 +584,9 @@ async function handle(method: string, params: any): Promise<unknown> {
       }
       const runtime = runtimes.get(sessionId);
       const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
-      if (turnId && runtime?.getStatus().currentTurnId !== turnId) return { ok: false, aborted: false };
+      if (!matchesExpectedTurnId(runtime?.getStatus().currentTurnId, turnId)) return { ok: false, aborted: false };
       await hostProxy.call("plans.abort", { sessionId, ...(turnId ? { turnId } : {}) }).catch(() => undefined);
-      if (runtime && runtimes.get(sessionId) === runtime && (!turnId || runtime.getStatus().currentTurnId === turnId)) {
+      if (runtime && runtimes.get(sessionId) === runtime && matchesExpectedTurnId(runtime.getStatus().currentTurnId, turnId)) {
         await runtime.abort();
       }
       return { ok: true };
@@ -596,6 +597,10 @@ async function handle(method: string, params: any): Promise<unknown> {
         return nativePiService().abort(sessionId);
       }
       const runtime = runtimes.get(sessionId);
+      const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+      if (!matchesExpectedTurnId(runtime?.getStatus().currentTurnId, turnId)) {
+        return { requested: false };
+      }
       return runtime?.requestGracefulStop() ?? { requested: false };
     }
     case "asktool.resolve": {
