@@ -106,6 +106,14 @@ export function useTranscriptScroll({
     const el = scrollRef.current;
     if (!el || !transcriptHasLayout(el)) return;
     const targetTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    if (
+      behavior === "auto" &&
+      Math.abs(el.scrollTop - targetTop) <= TRANSCRIPT_SCROLL_ROUNDING_TOLERANCE_PX
+    ) {
+      lastScrollTopRef.current = el.scrollTop;
+      lastLaidOutScrollTopRef.current = el.scrollTop;
+      return;
+    }
     el.scrollTo({ top: targetTop, behavior });
     // `scrollTo({ behavior: "auto" })` is synchronous. Record the position the
     // scroller actually reached, not the one that was asked for: at a
@@ -419,7 +427,6 @@ export function useTranscriptScroll({
   useLayoutEffect(() => {
     scheduleFollowScroll();
   }, [
-    messages,
     isRunning,
     pendingPermission?.requestId,
     askPending,

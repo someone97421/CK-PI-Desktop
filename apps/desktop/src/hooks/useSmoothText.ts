@@ -3,12 +3,11 @@ import { useEffect, useRef, useState } from "react";
 /**
  * Progressively reveals `source` text at an adaptive rate.
  *
- * When `enabled` is false or `streaming` is false the full source is
- * returned immediately — no rAF loop runs.
+ * Streaming display commits are coalesced to 50 ms. Disabling the reveal
+ * animation still batches incoming chunks; finished text is returned immediately.
  *
- * The release speed adapts to the backlog so the display never falls
- * more than ~500ms behind real content. On unmount or when streaming
- * ends, all remaining text is flushed instantly.
+ * The release speed adapts to the backlog. When streaming ends, all
+ * remaining text is shown immediately; unmount cancels pending frames.
  */
 export function useSmoothText(
   source: string,
@@ -21,9 +20,9 @@ export function useSmoothText(
   const lastFrameRef = useRef(0);
   const fractionalAdvanceRef = useRef(0);
 
-  // When not enabled or not streaming, always show full text
+  // A completed message always shows the full source.
   useEffect(() => {
-    if (!enabled || !streaming) {
+    if (!streaming) {
       revealedRef.current = source.length;
       lastFrameRef.current = 0;
       fractionalAdvanceRef.current = 0;
@@ -33,11 +32,11 @@ export function useSmoothText(
         rafRef.current = null;
       }
     }
-  }, [enabled, streaming, source.length]);
+  }, [streaming, source.length]);
 
   // Core release loop
   useEffect(() => {
-    if (!enabled || !streaming) return;
+    if (!streaming) return;
 
     const tick = (now: number) => {
       const backlog = source.length - revealedRef.current;
@@ -50,8 +49,8 @@ export function useSmoothText(
       }
 
       const elapsed = now - lastFrameRef.current;
-      // Keep React and Markdown commits at or below 60 Hz on high-refresh screens.
-      if (elapsed < 1000 / 60) {
+      // Batch Markdown layout updates, including when reveal animation is off.
+      if (elapsed < 50) {
         rafRef.current = requestAnimationFrame(tick);
         return;
       }
@@ -69,8 +68,8 @@ export function useSmoothText(
       const dt = Math.min(elapsed, 100) / 1000; // cap dt to avoid big jumps
       // Carry fractional characters so skipped frames do not slow the reveal.
       const exactAdvance = fractionalAdvanceRef.current + speed * dt;
-      const advance = Math.floor(exactAdvance);
-      fractionalAdvanceRef.current = exactAdvance - advance;
+      const advance = enabled ? Math.floor(exactAdvance) : backlog;
+      fractionalAdvanceRef.current = enabled ? exactAdvance - advance : 0;
       if (advance === 0) {
         rafRef.current = requestAnimationFrame(tick);
         return;
@@ -96,7 +95,7 @@ export function useSmoothText(
     };
   }, [enabled, streaming, source]);
 
-  // Flush on unmount
+  // Cancel any pending release on unmount.
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) {
@@ -106,7 +105,7 @@ export function useSmoothText(
     };
   }, []);
 
-  if (!enabled || !streaming) return source;
+  if (!streaming) return source;
   // Avoid slicing in the middle of a UTF-16 surrogate pair.
   let end = revealed;
   if (end < source.length && end > 0) {
