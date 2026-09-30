@@ -166,11 +166,18 @@ try {
   ))
     drafts.set(id, draft);
 } catch {}
+function persistParents() {
+  try {
+    localStorage.setItem("lan-remote-parents", JSON.stringify([...parents].slice(-100)));
+  } catch {}
+}
 try {
-  for (const [id, parent] of JSON.parse(
-    sessionStorage.getItem("lan-remote-parents") || "[]",
-  ))
-    parents.set(id, parent);
+  // 父子关系持久化在 localStorage；旧版本存在 sessionStorage 的数据迁移一次。
+  const stored = localStorage.getItem("lan-remote-parents") || sessionStorage.getItem("lan-remote-parents");
+  for (const [id, value] of JSON.parse(stored || "[]"))
+    parents.set(id, typeof value === "string" ? { parent: value } : value);
+  if (parents.size) persistParents();
+  sessionStorage.removeItem("lan-remote-parents");
 } catch {}
 window.addEventListener("pagehide", saveDraft);
 const notice = el("p", {
@@ -235,7 +242,6 @@ window.addEventListener("resize", growInput);
 const attachmentList = el("div"),
   annotationList = el("div");
 const send = button("发送", { variant: "primary", type: "submit", className: "composer-send" });
-const attachButton = iconButton("attach", { title: "添加附件", className: "composer-attach", onClick: () => fileInput.click() });
 const stopButton = button("停止", {
   className: "composer-stop",
   onClick: () => action(async () => {
@@ -257,7 +263,7 @@ const modelChip = button("模型", {
   className: "composer-model",
   onClick: openSessionSettings,
 });
-const moreButton = iconButton("more", { title: "更多操作", className: "composer-more", onClick: openComposerMore });
+const moreButton = iconButton("plus", { title: "更多操作", className: "composer-more", onClick: openComposerMore });
 const modelLabels = new Map();
 function currentModelLabel() {
   const key = snapshot?.session?.modelKey;
@@ -410,6 +416,22 @@ async function mutate(op, data) {
 }
 let resetHistory = false;
 
+// 任务过程的展开状态：drawChat 渲染与“会话操作”菜单共用同一份判定。
+function processState(timeline = buildProcessTimeline(messages, liveTools)) {
+  const entries = timeline.entries.filter((entry) => entry.rows);
+  const running = !!(snapshot?.session?.running || snapshot?.status?.running);
+  const isOpen = (entry) =>
+    disclosureState.get(`${current}:task:${entry.key}`) ??
+    (entry.task?.status === "running" || (running && !entry.task && entry === entries.at(-1)));
+  return { entries, isOpen, anyOpen: entries.some(isOpen) };
+}
+function toggleProcesses() {
+  const { entries, anyOpen } = processState();
+  const open = !anyOpen;
+  for (const entry of entries) disclosureState.set(`${current}:task:${entry.key}`, open);
+  void action(drawChat);
+}
+
 function layout() {
   root.replaceChildren(
     header,
@@ -540,20 +562,7 @@ async function drawChat() {
   const timeline = buildProcessTimeline(messages, liveTools);
   const cards = new Map();
   const running = !!(snapshot?.session?.running || snapshot?.status?.running);
-  const taskEntries = timeline.entries.filter((entry) => entry.rows);
-  const isProcessOpen = (entry) => disclosureState.get(`${current}:task:${entry.key}`)
-    ?? (entry.task?.status === "running" || (running && !entry.task && entry === taskEntries.at(-1)));
-  const processOpen = taskEntries.some(isProcessOpen);
-  const processToggle = button(processOpen ? "收起过程" : "展开过程", {
-    iconName: "info",
-    className: "remote-process-toggle",
-    onClick: () => {
-      const open = !processOpen;
-      for (const entry of taskEntries) disclosureState.set(`${current}:task:${entry.key}`, open);
-      action(drawChat);
-    },
-  });
-  processToggle.setAttribute("aria-pressed", String(processOpen));
+  const { entries: taskEntries, isOpen: isProcessOpen } = processState(timeline);
   if (snapshot?.messages?.hasMoreBefore)
     container.append(
       button("加载更早消息", {
@@ -703,17 +712,20 @@ async function drawChat() {
           onClick: () =>
             action(async () => {
               const parent = current;
+              const parentTitle = snapshot?.session?.title || "主对话";
+              const excerpt = (m.content || "").replace(/\s+/g, " ").trim().slice(0, 24);
               const version = navigationVersion;
               const r = await mutate("sessions.fork", {
                 sessionId: parent,
                 throughMessageId: m.id,
-                title: "侧边对话",
+                title: `侧边 · ${excerpt || parentTitle}`,
               });
-              parents.set(r.session.id, parent);
-              sessionStorage.setItem(
-                "lan-remote-parents",
-                JSON.stringify([...parents]),
-              );
+              parents.set(r.session.id, {
+                parent,
+                title: r.session.title || `侧边 · ${parentTitle}`,
+                parentTitle,
+              });
+              persistParents();
               if (version === navigationVersion && !loginVisible) await openSession(r.session.id);
             }),
         }),
@@ -782,16 +794,22 @@ async function drawChat() {
   const title = snapshot?.session?.title || "对话";
   const status = running ? "正在处理" : "就绪";
   const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
-  chatHeading.replaceChildren(el("div", { className: "remote-chat-titlebar" },
-    el("span", { className: `remote-run-status${running ? " is-running" : ""}`, attrs: { title: status, "aria-label": status } }),
-    el("h2", { text: title, attrs: { title } }),
-    processToggle,
-    iconButton("sidechat", { title: subagentObserver.buttonLabel(), onClick: () => subagentObserver.open() }),
-    ...(pendingCount ? [button(String(pendingCount), {
-      iconName: "warning", preserveLabel: true, className: "remote-pending-chip", title: `待处理 ${pendingCount}`,
-      onClick: () => transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" }),
-    })] : []),
-    iconButton("more", { title: "会话操作", onClick: openChatMore })));
+  const sidechatLink = parents.get(current);
+  chatHeading.replaceChildren(
+    el("div", { className: "remote-chat-titlebar" },
+      el("span", { className: `remote-run-status${running ? " is-running" : ""}`, attrs: { title: status, "aria-label": status } }),
+      el("h2", { text: title, attrs: { title } }),
+      ...(pendingCount ? [button(String(pendingCount), {
+        iconName: "warning", preserveLabel: true, className: "remote-pending-chip", title: `待处理 ${pendingCount}`,
+        onClick: () => transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" }),
+      })] : []),
+      iconButton("more", { title: "会话操作", onClick: openChatMore })),
+    ...(sidechatLink ? [el("div", { className: "remote-sidechat-bar" },
+      button(`返回主对话${sidechatLink.parentTitle ? `：${sidechatLink.parentTitle}` : ""}`, {
+        iconName: "back", preserveLabel: true, className: "remote-sidechat-back",
+        onClick: () => action(returnToParent),
+      }))] : []),
+  );
   updateComposerState();
   transcript.replaceChildren(container);
   renderPending();
@@ -803,6 +821,20 @@ async function drawChat() {
   else transcript.scrollTop = scroll;
   updateJump();
 }
+async function returnToParent() {
+  const link = parents.get(current);
+  if (!link) return;
+  const child = current;
+  try {
+    await openSession(link.parent);
+  } catch (error) {
+    // 父会话可能已被删除：清除失效关系并回到原侧边会话。
+    parents.delete(child);
+    persistParents();
+    if (current !== child) await openSession(child).catch(() => {});
+    throw error;
+  }
+}
 function openChatMore() {
   if (!current) return;
   const sheet = openSheetPanel({ title: snapshot?.session?.title || "会话", subtitle: "会话操作" });
@@ -813,13 +845,24 @@ function openChatMore() {
       ...options,
       onClick: () => { sheet.close(); options.onClick(); },
     }));
-  add("刷新", { iconName: "refresh", onClick: () => action(refresh) });
-  if (parents.has(current))
-    add("返回主对话", { iconName: "back", onClick: () => action(() => openSession(parents.get(current))) });
-  for (const [child, parent] of parents)
-    if (parent === current)
-      add("打开侧边对话", { iconName: "sidechat", onClick: () => action(() => openSession(child)) });
+  const section = (text) => list.append(el("p", { className: "sheet-section", text }));
+  const { entries: taskEntries, anyOpen } = processState();
+  if (taskEntries.length)
+    add(anyOpen ? "收起过程" : "展开过程", { iconName: "info", onClick: toggleProcesses });
   add(subagentObserver.buttonLabel(), { iconName: "sidechat", onClick: () => subagentObserver.open() });
+  const link = parents.get(current);
+  const children = [...parents].filter(([, value]) => value.parent === current);
+  if (link || children.length) {
+    section("侧边对话");
+    if (link)
+      add(`返回主对话${link.parentTitle ? `：${link.parentTitle}` : ""}`, {
+        iconName: "back", onClick: () => action(returnToParent),
+      });
+    for (const [child, value] of children)
+      add(value.title || "打开侧边对话", { iconName: "sidechat", onClick: () => action(() => openSession(child)) });
+  }
+  section("会话");
+  add("刷新", { iconName: "refresh", onClick: () => action(refresh) });
   const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
   if (pendingCount)
     add(`待处理 ${pendingCount}`, { iconName: "warning", onClick: () => {
@@ -1284,8 +1327,8 @@ async function queue() {
 composer.append(
   annotationList,
   attachmentList,
-  el("div", { className: "remote-composer-main" }, attachButton, input, stopButton, send),
-  el("div", { className: "remote-composer-tools" }, modelChip, moreButton),
+  el("div", { className: "remote-composer-main" }, moreButton, input, stopButton, send),
+  el("div", { className: "remote-composer-tools" }, modelChip),
   fileInput,
 );
 composer.addEventListener("submit", (event) => {

@@ -20,6 +20,9 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .remote-run-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .remote-run-status.is-running { color: var(--ds-accent); }
 .remote-pending-chip { color: var(--ds-warning); background: var(--ds-bg-tertiary); }
+.remote-sidechat-bar { display: flex; min-width: 0; }
+.remote-sidechat-back { min-width: 0; max-width: 100%; font-size: 12px; color: var(--ds-text-secondary); }
+.remote-sidechat-back .btn-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .remote-transcript { min-height: 0; overflow: auto; padding: 12px 20px; overscroll-behavior: contain; overflow-anchor: none; }
 .remote-message { max-width: 880px; margin: 16px auto; padding: 12px 0; overflow-wrap: anywhere; }
 .remote-message-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
@@ -46,8 +49,8 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .remote-composer-tools { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .composer-model { min-width: 0; flex: 0 1 auto; max-width: 72%; }
 .composer-model .btn-label { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-more { margin-left: auto; flex: none; }
-.composer-send, .composer-stop, .composer-attach, .composer-more { min-width: 44px; min-height: 44px; }
+.composer-more { flex: none; }
+.composer-send, .composer-stop, .composer-more { min-width: 44px; min-height: 44px; }
 .composer-stop { color: var(--ds-error); }
 .remote-composer > div:empty { display: none; }
 .btn svg { flex: none; }
@@ -111,7 +114,7 @@ dialog label select { width: 100%; margin-top: 6px; }
   .remote-composer { flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 4px; padding-top: 6px; padding-left: 10px; padding-right: 10px; max-height: calc(var(--rc-visible-height, 100dvh) * .5); overscroll-behavior: contain; }
   .remote-composer > div:not(.remote-composer-main):not(.remote-composer-tools) { flex-basis: 100%; }
   .remote-composer-main { flex: 1 1 0; gap: 4px; }
-  .remote-composer-tools { flex: none; }
-  .remote-composer .composer-attach, .remote-composer .composer-model { display: none; }
+  .remote-composer-tools { display: none; }
+  .remote-composer .composer-model { display: none; }
   .remote-composer textarea { min-height: 44px; max-height: calc(var(--rc-visible-height, 100dvh) * .28); padding: 10px; font-size: 16px; border-radius: 8px; }
 }
