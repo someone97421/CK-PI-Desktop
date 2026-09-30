@@ -81,8 +81,8 @@ jobs:
           test -n "$app"
           native_arch="$EXPECTED_ARCH"
           if [ "$native_arch" = x64 ]; then native_arch=x86_64; fi
-          lipo -verify_arch "$native_arch" "$app/Contents/MacOS/this-is-a-agent"
-          lipo -verify_arch "$native_arch" "$app/Contents/Resources/bin/pi-desktop-host-core"
+          lipo "$app/Contents/MacOS/this-is-a-agent" -verify_arch "$native_arch"
+          lipo "$app/Contents/Resources/bin/pi-desktop-host-core" -verify_arch "$native_arch"
           mkdir -p "$RUNNER_TEMP/downloads"
           find "$THIS_IS_A_AGENT_OUTPUT_DIR" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' \) -exec cp {} "$RUNNER_TEMP/downloads/" \;
           find "$THIS_IS_A_AGENT_OUTPUT_DIR" -type f -name 'latest-mac*.yml' -exec cp {} "$RUNNER_TEMP/downloads/latest-mac-$EXPECTED_ARCH.yml" \;
