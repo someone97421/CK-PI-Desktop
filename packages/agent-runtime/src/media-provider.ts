@@ -4,6 +4,13 @@ import { GEMINI_INLINE_REQUEST_BYTES, base64ByteLength, mediaReferenceOf, extern
 import { mediaStore, type MediaStore } from "./media-store.js";
 import { applyGoogleMediaUrls } from "./google-media-url.js";
 
+function findLastMessageIndex(messages: readonly Message[], predicate: (message: Message) => boolean): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (predicate(messages[index])) return index;
+  }
+  return -1;
+}
+
 /** pi-ai 用 image 内容块承载二进制；只在 Gemini 适配边界放行音视频 MIME。 */
 export function withMediaInput(
   adapter: ProviderStreams,
@@ -65,7 +72,8 @@ export function withMediaInput(
           if (ref) estimatedBytes += base64ByteLength(ref.size);
         }
       }
-      const newestRead = messages.findLastIndex((message) => message.role === "toolResult" && message.toolName === "Read");
+      const newestRead = findLastMessageIndex(messages, (message) =>
+        message.role === "toolResult" && message.toolName === "Read");
       messages = messages.map((message, index) => {
         if (estimatedBytes <= budget || index === newestRead || message.role !== "toolResult" || message.toolName !== "Read") return message;
         return { ...message, content: message.content.map((part) => {
@@ -81,7 +89,7 @@ export function withMediaInput(
 
     // 外链虽不占 JSON 体积，Google 获取的文件总量仍有限；优先保留最新批次。
     let fetchedBytes = [...externalFiles.values()].reduce((sum, ref) => sum + (ref.size ?? 0), 0);
-    const newestExternal = messages.findLastIndex((message) =>
+    const newestExternal = findLastMessageIndex(messages, (message) =>
       (message.role === "user" || message.role === "toolResult") && Array.isArray(message.content) &&
       message.content.some((part) => part.type === "image" && externalFiles.has(part.data)));
     messages = messages.map((message, index) => {
