@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "litterbox": {
-      "command": "node",
-      "args": ["E:/CodingProject/CK-PI-Desktop/tools/litterbox-mcp/server.mjs"]
-    }
-  }
-}
