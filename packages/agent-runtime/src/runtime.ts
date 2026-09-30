@@ -3263,7 +3263,8 @@ Delegation rules:
           if (mediaResult.isError) this.failedHostToolCalls.add(toolCallId);
           return mediaResult;
         }
-        const hostedMedia = externalMediaReferenceOf(rawContent);
+        const hostedMedia = externalMediaReferenceOf(rawContent) ??
+          externalMediaReferenceOf(isRecord(rawContent) ? rawContent.structuredContent : undefined);
         if (result.ok && hostedMedia) {
           return {
             content: [{ type: "text" as const, text: toolResultText(rawContent) }, externalMediaBlock(hostedMedia)],

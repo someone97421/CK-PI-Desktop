@@ -1,1 +1,0 @@
-{ "name": "pi-plugin-litterbox-hosting", "version": "0.1.0", "private": true, "scripts": { "pack": "node scripts/pack.mjs" } }

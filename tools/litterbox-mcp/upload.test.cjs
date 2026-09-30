@@ -39,17 +39,3 @@ test('上传期间文件变化会中止', async () => {
     for await (const _chunk of options.body) {} return new Response('https://litter.catbox.moe/a.mp4');
   }), /变化/);
 });
-test('插件注册已有公网链接入口，返回结构化媒体结果', async () => {
-  const registered = new Map();
-  global.pi = { commands:{register:async () => {}, unregister:async () => {}}, agent:{registerTool:async t => registered.set(t.name,t), unregisterTool:async name => registered.delete(name)} };
-  const plugin = require('./main.cjs');
-  try {
-    await plugin.onLoad();
-    const attach = registered.get('attach_media_url');
-    const result = await attach.execute({url:'https://example.com/clip.mp4', mimeType:'video/mp4', size:100});
-    assert.equal(result.mediaUrl.url,'https://example.com/clip.mp4');
-    await assert.rejects(attach.execute({url:'http://example.com/clip.mp4',mimeType:'video/mp4'}), /HTTPS/);
-    await plugin.onUnload();
-    assert.equal(registered.size,0);
-  } finally { delete global.pi; }
-});

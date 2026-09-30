@@ -1,6 +1,7 @@
 "use strict";
 const { randomUUID } = require("node:crypto");
-const { basename, extname } = require("node:path");
+const { basename, extname, isAbsolute } = require("node:path");
+const { open } = require("node:fs/promises");
 const ENDPOINT = "https://litterbox.catbox.moe/resources/internals/api.php";
 const TYPES = { ".mp4":"video/mp4", ".webm":"video/webm", ".mov":"video/quicktime", ".mpeg":"video/mpeg", ".mpg":"video/mpeg", ".avi":"video/avi", ".wmv":"video/wmv", ".flv":"video/x-flv", ".3gp":"video/3gpp", ".mp3":"audio/mpeg", ".wav":"audio/wav", ".ogg":"audio/ogg", ".flac":"audio/flac", ".m4a":"audio/mp4", ".aac":"audio/aac", ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".webp":"image/webp", ".bmp":"image/bmp", ".gif":"image/gif", ".pdf":"application/pdf" };
 
@@ -9,7 +10,7 @@ async function uploadFile(fs, args, signal, fetcher = fetch) {
   const expiration = args.expiration || "24h";
   if (!path) throw new Error("请提供文件路径。");
   if (!["1h", "12h", "24h", "72h"].includes(expiration)) throw new Error("有效期必须为 1h、12h、24h 或 72h。");
-  const mimeType = args.mimeType || TYPES[extname(path).toLowerCase()] || "application/octet-stream";
+  const mimeType = String(args.mimeType || TYPES[extname(path).toLowerCase()] || "application/octet-stream").toLowerCase();
   if (!/^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/i.test(mimeType)) throw new Error("无效 MIME 类型。");
   const combined = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(10 * 60 * 1000)]);
   combined.throwIfAborted();
@@ -64,4 +65,29 @@ async function uploadFile(fs, args, signal, fetcher = fetch) {
     ...(media && size > 100_000_000 ? { warning:"上传成功，但文件超过 Gemini 外链媒体 100 MB 上限；请裁剪后重新上传。" } : {}),
   };
 }
-module.exports = { uploadFile };
+/** 独立 MCP 直接使用同一个本地文件句柄，路径替换不会切换正在上传的文件。 */
+async function uploadLocalFile(args, signal, fetcher = fetch) {
+  if (!isAbsolute(args.path)) throw new Error("请提供文件的绝对路径，例如 E:/Videos/clip.mp4 或 /home/user/clip.mp4。");
+  signal?.throwIfAborted();
+  const file = await open(args.path, "r");
+  try {
+    const stat = await file.stat();
+    if (!stat.isFile()) throw new Error("上传路径必须指向普通文件。");
+    return await uploadFile({
+      stat: async () => file.stat(),
+      readRange: async (_path, offset, length) => {
+        const buffer = Buffer.allocUnsafe(length);
+        // FileHandle.read 允许短读，补齐该块后再交给 multipart。
+        let bytesRead = 0;
+        while (bytesRead < length) {
+          signal?.throwIfAborted();
+          const part = await file.read(buffer, bytesRead, length - bytesRead, offset + bytesRead);
+          if (part.bytesRead === 0) break;
+          bytesRead += part.bytesRead;
+        }
+        return { bytes: buffer.subarray(0, bytesRead), totalSize: (await file.stat()).size };
+      },
+    }, args, signal, fetcher);
+  } finally { await file.close(); }
+}
+module.exports = { uploadFile, uploadLocalFile };
