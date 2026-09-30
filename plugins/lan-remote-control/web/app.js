@@ -85,7 +85,6 @@ const positions = new Map();
 // UI 状态独立于流式替换的消息对象，按会话和稳定 ID 保存。
 const disclosureState = new Map();
 let navigationVersion = 0;
-const processVisibility = new Map();
 function openSheetPanel({ title, subtitle, onClose } = {}) {
   const sheet = createSheet({
     title,
@@ -277,6 +276,8 @@ function openComposerMore() {
   if (!current) return;
   const sheet = openSheetPanel({ title: "更多操作", subtitle: "命令、技能与待发队列" });
   const list = el("div", { className: "sheet-list" },
+    button("添加附件", { preserveLabel: true, iconName: "attach", onClick: () => { sheet.close(); fileInput.click(); } }),
+    button(modelChip.title || "模型设置", { preserveLabel: true, iconName: "model", onClick: () => { sheet.close(); openSessionSettings(); } }),
     button("命令/技能", { preserveLabel: true, iconName: "commands", onClick: () => { sheet.close(); action(commands); } }),
     button("队列", { preserveLabel: true, iconName: "queue", onClick: () => { sheet.close(); action(queue); } }));
   sheet.body.append(list);
@@ -538,17 +539,21 @@ async function drawChat() {
   const container = document.createDocumentFragment();
   const timeline = buildProcessTimeline(messages, liveTools);
   const cards = new Map();
-  const processToggle = button(processVisibility.get(current) ? "收起过程" : "展开过程", {
+  const running = !!(snapshot?.session?.running || snapshot?.status?.running);
+  const taskEntries = timeline.entries.filter((entry) => entry.rows);
+  const isProcessOpen = (entry) => disclosureState.get(`${current}:task:${entry.key}`)
+    ?? (entry.task?.status === "running" || (running && !entry.task && entry === taskEntries.at(-1)));
+  const processOpen = taskEntries.some(isProcessOpen);
+  const processToggle = button(processOpen ? "收起过程" : "展开过程", {
     iconName: "info",
-    preserveLabel: true,
+    className: "remote-process-toggle",
     onClick: () => {
-      const open = !processVisibility.get(current);
-      processVisibility.set(current, open);
-      for (const entry of timeline.entries) if (entry.rows) disclosureState.set(`${current}:task:${entry.key}`, open);
+      const open = !processOpen;
+      for (const entry of taskEntries) disclosureState.set(`${current}:task:${entry.key}`, open);
       action(drawChat);
     },
   });
-  processToggle.setAttribute("aria-pressed", String(!!processVisibility.get(current)));
+  processToggle.setAttribute("aria-pressed", String(processOpen));
   if (snapshot?.messages?.hasMoreBefore)
     container.append(
       button("加载更早消息", {
@@ -587,6 +592,8 @@ async function drawChat() {
       cards.set(m.id, detail);
       continue;
     }
+    if (m.role === "assistant" && !m.content?.trim() && !m.thinking?.trim()
+      && !m.attachments?.length && !m.error) continue;
     const card = el(
       "article",
       { className: `remote-message ${m.role}` },
@@ -596,11 +603,11 @@ async function drawChat() {
         })),
     );
     card.id = `message-${m.id}`;
-    card.append(
+    if (m.content?.trim()) card.append(
       await renderMarkdown(
         m.role === "user"
-          ? requestTextWithoutAnnotations(m.content || "")
-          : m.content || "",
+          ? requestTextWithoutAnnotations(m.content)
+          : m.content,
       ),
     );
     if (m.role === "assistant") {
@@ -742,11 +749,16 @@ async function drawChat() {
         menuSheet.body.append(el("div", { className: "sheet-list" }, actions));
       },
     }));
-    cards.set(m.id, card);
+    if (m.role === "assistant" && !m.content?.trim() && m.thinking?.trim() && !m.attachments?.length) {
+      const thinking = card.querySelector(".remote-process");
+      thinking.id = card.id;
+      thinking.querySelector(".remote-process-body").prepend(card.querySelector(".remote-message-heading"));
+      cards.set(m.id, thinking);
+    } else cards.set(m.id, card);
   }
   for (const entry of timeline.entries) {
     if (entry.message) { container.append(cards.get(entry.message.id)); continue; }
-    const process = entry.rows.filter((m) => m.id !== entry.finalId).map((m) => cards.get(m.id));
+    const process = entry.rows.filter((m) => m.id !== entry.finalId).map((m) => cards.get(m.id)).filter(Boolean);
     const finalCard = entry.finalId ? cards.get(entry.finalId) : null;
     const thinking = finalCard?.querySelector(".remote-process");
     if (thinking) process.push(thinking);
@@ -756,6 +768,7 @@ async function drawChat() {
         ...(summary.breakdown ? [el("p", { className: "connection-banner", text: summary.breakdown })] : []),
         ...process);
       detail.classList.add("remote-task-process");
+      detail.open = isProcessOpen(entry);
       detail.dataset.error = String(entry.task?.status === "failed");
       container.append(detail);
     }
@@ -767,20 +780,18 @@ async function drawChat() {
   const nearBottom = transcript.scrollHeight - scroll - transcript.clientHeight < 100;
   const focusedDisclosure = document.activeElement?.closest("details")?.dataset.disclosureKey;
   const title = snapshot?.session?.title || "对话";
+  const status = running ? "正在处理" : "就绪";
+  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
   chatHeading.replaceChildren(el("div", { className: "remote-chat-titlebar" },
+    el("span", { className: `remote-run-status${running ? " is-running" : ""}`, attrs: { title: status, "aria-label": status } }),
     el("h2", { text: title, attrs: { title } }),
     processToggle,
+    iconButton("sidechat", { title: subagentObserver.buttonLabel(), onClick: () => subagentObserver.open() }),
+    ...(pendingCount ? [button(String(pendingCount), {
+      iconName: "warning", preserveLabel: true, className: "remote-pending-chip", title: `待处理 ${pendingCount}`,
+      onClick: () => transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" }),
+    })] : []),
     iconButton("more", { title: "会话操作", onClick: openChatMore })));
-  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
-  const running = !!(snapshot?.session?.running || snapshot?.status?.running);
-  const statusRow = el("div", { className: "remote-chat-status" },
-    el("span", { className: `remote-run-status${running ? " is-running" : ""}`, text: running ? "正在处理" : "就绪" }),
-    button(subagentObserver.buttonLabel(), { iconName: "sidechat", preserveLabel: true, onClick: () => subagentObserver.open() }));
-  if (pendingCount) statusRow.append(button(`待处理 ${pendingCount}`, {
-    iconName: "warning", preserveLabel: true, className: "remote-pending-chip",
-    onClick: () => transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" }),
-  }));
-  chatHeading.append(statusRow);
   updateComposerState();
   transcript.replaceChildren(container);
   renderPending();
@@ -1366,7 +1377,7 @@ async function start() {
       notice.textContent = `连接状态：${status}`;
     },
     onReady: () => {
-      notice.textContent = "已连接电脑";
+      notice.textContent = "";
       if (current) socket.subscribe(current);
     },
     onEvent,

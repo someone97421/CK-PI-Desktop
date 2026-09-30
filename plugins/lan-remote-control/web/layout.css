@@ -16,10 +16,7 @@ html, body { overflow: hidden; overscroll-behavior: none; }
 .remote-chat-titlebar { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .remote-chat-titlebar h2 { min-width: 0; flex: 1 1 auto; font-size: 14px; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .remote-chat-titlebar .btn, .remote-chat-titlebar .icon-btn { flex: none; }
-.remote-chat-status { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; }
-.remote-chat-status > * { flex: none; }
-.remote-chat-status .btn { font-size: 12px; }
-.remote-run-status { display: inline-flex; align-items: center; gap: 6px; color: var(--ds-text-muted); font-size: 12px; margin-right: auto; white-space: nowrap; }
+.remote-run-status { display: inline-flex; align-items: center; flex: none; color: var(--ds-text-muted); font-size: 12px; white-space: nowrap; }
 .remote-run-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .remote-run-status.is-running { color: var(--ds-accent); }
 .remote-pending-chip { color: var(--ds-warning); background: var(--ds-bg-tertiary); }
@@ -97,7 +94,7 @@ dialog label select { width: 100%; margin-top: 6px; }
   .remote-transcript { padding: 8px 14px; }
   .remote-message { margin: 10px auto; padding: 4px 0; font-size: 15px; line-height: 1.65; }
   .remote-message.user { margin-left: 8%; padding: 10px 12px; border-radius: 14px; }
-  .remote-message-heading { min-height: 36px; margin-bottom: 4px; }
+  .remote-message-heading { margin-bottom: 4px; }
   .remote-message-heading > small { font-size: 12px; }
   .remote-process { margin: 6px auto; border-radius: 8px; }
   .remote-process > summary { min-height: 44px; padding: 8px; gap: 6px; font-size: 12px; line-height: 20px; }
@@ -105,10 +102,16 @@ dialog label select { width: 100%; margin-top: 6px; }
   .remote-task-process > summary .remote-process-label { font-size: 13px; }
   .remote-task-process > summary .remote-process-excerpt { font-size: 12px; }
   .remote-process-body { padding: 0 8px 8px; }
-  .remote-chat-heading { gap: 0; padding: 3px 12px 5px; }
-  .remote-chat-titlebar h2 { font-size: 16px; }
-  .remote-chat-titlebar .btn { font-size: 12px; padding: 8px; }
-  .remote-jump { min-height: 40px; margin: 0; padding: 6px 12px; font-size: 12px; }
-  .remote-composer { max-height: calc(var(--rc-visible-height, 100dvh) * .5); overscroll-behavior: contain; }
-  .remote-composer textarea { min-height: 44px; max-height: calc(var(--rc-visible-height, 100dvh) * .28); padding: 10px; font-size: 16px; }
+  .remote-chat-heading { gap: 0; padding: 0 10px; }
+  .remote-chat-titlebar { min-height: 44px; gap: 2px; }
+  .remote-chat-titlebar h2 { margin: 0 4px; font-size: 14px; }
+  .remote-chat-titlebar .btn { font-size: 12px; padding: 0 8px; }
+  .remote-chat-titlebar .btn-icon-action { padding: 12px; }
+  .remote-jump { min-height: 32px; margin: 0; padding: 2px 12px; font-size: 12px; }
+  .remote-composer { flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 4px; padding-top: 6px; padding-left: 10px; padding-right: 10px; max-height: calc(var(--rc-visible-height, 100dvh) * .5); overscroll-behavior: contain; }
+  .remote-composer > div:not(.remote-composer-main):not(.remote-composer-tools) { flex-basis: 100%; }
+  .remote-composer-main { flex: 1 1 0; gap: 4px; }
+  .remote-composer-tools { flex: none; }
+  .remote-composer .composer-attach, .remote-composer .composer-model { display: none; }
+  .remote-composer textarea { min-height: 44px; max-height: calc(var(--rc-visible-height, 100dvh) * .28); padding: 10px; font-size: 16px; border-radius: 8px; }
 }

@@ -2429,36 +2429,38 @@ export function Sidebar({
           }}
         >
           <span className="sidebar-list-label">{t("nav.projects")}</span>
-          <TooltipButton
-            type="button"
-            className={`sidebar-toolbar-button ${sortOpen === "projects" ? "active" : ""}`}
-            data-action="project-sort"
-            tooltip={t("nav.sortProjects")}
-            ariaLabel={t("nav.sortProjects")}
-            aria-haspopup="menu"
-            aria-expanded={sortOpen === "projects"}
-            onClick={(event) => {
-              if (sortOpen === "projects") { closeMenus(); return; }
-              placeMenu(event);
-              menuTriggerRef.current = event.currentTarget;
-              setSessionMenu(null);
-              setProjectMenu(null);
-              setSectionMenu(null);
-              setSortOpen("projects");
-            }}
-          >
-            <IconArrowUpDown size={14} />
-          </TooltipButton>
-          <TooltipButton
-            type="button"
-            className="sidebar-toolbar-button"
-            data-action="new-project"
-            tooltip={t("nav.newProject")}
-            ariaLabel={t("nav.newProject")}
-            onClick={() => void openProjectPicker()}
-          >
-            <IconNewProject size={14} />
-          </TooltipButton>
+          <div className="sidebar-toolbar-actions">
+            <TooltipButton
+              type="button"
+              className={`sidebar-toolbar-button ${sortOpen === "projects" ? "active" : ""}`}
+              data-action="project-sort"
+              tooltip={t("nav.sortProjects")}
+              ariaLabel={t("nav.sortProjects")}
+              aria-haspopup="menu"
+              aria-expanded={sortOpen === "projects"}
+              onClick={(event) => {
+                if (sortOpen === "projects") { closeMenus(); return; }
+                placeMenu(event);
+                menuTriggerRef.current = event.currentTarget;
+                setSessionMenu(null);
+                setProjectMenu(null);
+                setSectionMenu(null);
+                setSortOpen("projects");
+              }}
+            >
+              <IconArrowUpDown size={14} />
+            </TooltipButton>
+            <TooltipButton
+              type="button"
+              className="sidebar-toolbar-button"
+              data-action="new-project"
+              tooltip={t("nav.newProject")}
+              ariaLabel={t("nav.newProject")}
+              onClick={() => void openProjectPicker()}
+            >
+              <IconNewProject size={14} />
+            </TooltipButton>
+          </div>
         </div>
 
         <div
