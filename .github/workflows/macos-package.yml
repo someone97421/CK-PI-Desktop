@@ -1,0 +1,139 @@
+name: macOS 双架构打包
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/macos-package.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: 统一构建版本
+    runs-on: ubuntu-latest
+    outputs:
+      time: ${{ steps.stamp.outputs.time }}
+      version: ${{ steps.stamp.outputs.version }}
+      display: ${{ steps.stamp.outputs.display }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: stamp
+        name: 生成北京时间版本
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          import { buildStamp } from './scripts/prepare-build.mjs';
+          const stamp = buildStamp();
+          appendFileSync(process.env.GITHUB_OUTPUT, `time=${stamp.builtAt}\nversion=${stamp.version}\ndisplay=${stamp.displayVersion}\n`);
+          NODE
+
+  build:
+    name: macOS ${{ matrix.arch }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      THIS_IS_A_AGENT_BUILD_TIME: ${{ needs.version.outputs.time }}
+      THIS_IS_A_AGENT_OUTPUT_DIR: ${{ runner.temp }}/macos-package
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 配置 Rust
+        run: |
+          rustup default stable
+          rustc --version
+          cargo --version
+      - name: 原生编译并生成 DMG
+        run: |
+          node -e "if(process.arch !== '${{ matrix.arch }}') throw new Error('runner 架构不匹配: '+process.arch)"
+          pnpm --filter @pi-desktop/desktop dist:mac
+      - name: 检查架构并整理下载文件
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          app=$(find "$THIS_IS_A_AGENT_OUTPUT_DIR" -maxdepth 3 -name 'this-is-a-agent.app' -type d -print -quit)
+          test -n "$app"
+          native_arch="$EXPECTED_ARCH"
+          if [ "$native_arch" = x64 ]; then native_arch=x86_64; fi
+          lipo -verify_arch "$native_arch" "$app/Contents/MacOS/this-is-a-agent"
+          lipo -verify_arch "$native_arch" "$app/Contents/Resources/bin/pi-desktop-host-core"
+          mkdir -p "$RUNNER_TEMP/downloads"
+          find "$THIS_IS_A_AGENT_OUTPUT_DIR" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' \) -exec cp {} "$RUNNER_TEMP/downloads/" \;
+          find "$THIS_IS_A_AGENT_OUTPUT_DIR" -type f -name 'latest-mac*.yml' -exec cp {} "$RUNNER_TEMP/downloads/latest-mac-$EXPECTED_ARCH.yml" \;
+          test -f "$RUNNER_TEMP/downloads/this-is-a-agent-${{ needs.version.outputs.display }}-$EXPECTED_ARCH.dmg"
+          for dmg in "$RUNNER_TEMP/downloads/"*.dmg; do hdiutil verify "$dmg"; done
+          cd "$RUNNER_TEMP/downloads"
+          shasum -a 256 *.dmg *.zip > "SHA256SUMS-$EXPECTED_ARCH.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.arch }}-${{ needs.version.outputs.display }}
+          path: ${{ runner.temp }}/downloads/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    name: 发布双架构下载
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: macos-*-${{ needs.version.outputs.display }}
+          path: downloads
+          merge-multiple: true
+      - name: 创建 macOS 预发布
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_VERSION: ${{ needs.version.outputs.version }}
+          DISPLAY_VERSION: ${{ needs.version.outputs.display }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -f "downloads/this-is-a-agent-$DISPLAY_VERSION-arm64.dmg"
+          test -f "downloads/this-is-a-agent-$DISPLAY_VERSION-x64.dmg"
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          macOS 双架构安装包，版本 $DISPLAY_VERSION。
+
+          - Apple Silicon（M 系列）：选择 arm64.dmg。
+          - Intel：选择 x64.dmg。
+          - 临时签名，未经过 Apple 公证。首次打开可能需要在系统设置的“隐私与安全性”中允许打开。
+          - 附带 ZIP、分架构更新描述文件及 SHA-256 校验文件。
+          - 源码提交：$SOURCE_SHA。
+
+          此版本为 macOS 预发布，不替换稳定版更新入口。
+          EOF
+          gh release create "v$BUILD_VERSION" downloads/* \
+            --target "$SOURCE_SHA" \
+            --title "这是一个助手 $DISPLAY_VERSION · macOS ARM64 / x64" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --prerelease --latest=false
+          gh release view "v$BUILD_VERSION" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"
