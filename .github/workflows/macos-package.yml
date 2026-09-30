@@ -52,13 +52,14 @@ jobs:
     timeout-minutes: 60
     env:
       THIS_IS_A_AGENT_BUILD_TIME: ${{ needs.version.outputs.time }}
-      THIS_IS_A_AGENT_OUTPUT_DIR: ${{ runner.temp }}/macos-package
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+      - name: 设置产物目录
+        run: echo "THIS_IS_A_AGENT_OUTPUT_DIR=$RUNNER_TEMP/macos-package" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v6
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
