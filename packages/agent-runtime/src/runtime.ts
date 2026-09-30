@@ -551,6 +551,9 @@ function delegationSummary(record: DelegationRecord): Record<string, unknown> {
     ...(record.completedAt ? { completedAt: record.completedAt } : {}),
     ...(record.result?.modelFailures ? { modelFailures: record.result.modelFailures } : {}),
     ...(record.result?.error ? { error: record.result.error } : {}),
+    ...(record.result?.scratchReportPath
+      ? { scratchReportPath: record.result.scratchReportPath }
+      : {}),
   };
 }
 
@@ -4187,6 +4190,7 @@ Delegation rules:
           sessionId: this.sessionId,
           turnId: this.turnId,
           parentToolCallId: toolCallId,
+          scratchDir: this.scratchDir,
           task,
           provider,
           infiniteProviderRetry: this.infiniteProviderRetry,
@@ -4802,6 +4806,9 @@ Delegation rules:
           startedAt: record.startedAt,
           ...(record.completedAt ? { completedAt: record.completedAt } : {}),
           ...(record.result?.error ? { error: record.result.error } : {}),
+          ...(record.result?.scratchReportPath
+            ? { scratchReportPath: record.result.scratchReportPath }
+            : {}),
           report:
             record.status === "running"
               ? formatDelegationHeartbeat(record)
@@ -5249,6 +5256,7 @@ Delegation rules:
             const restoredRun = SubagentRun.restore(cp, {
               sessionId: this.sessionId,
               parentToolCallId: toolCallId,
+              scratchDir: this.scratchDir,
               turnId: this.turnId,
               definition,
               provider,
@@ -8449,19 +8457,11 @@ Delegation rules:
     }
     if (!runner.hasHandlers("before_agent_start")) return;
     const base = this.composeSystemPrompt();
-    const result = await runner.emit<{ systemPrompt?: string }>(
-      "before_agent_start",
-      {
-        type: "before_agent_start",
-        prompt: typeof input === "string" ? input : input.text,
-        systemPrompt: base,
-        systemPromptOptions: {},
-      },
-      (acc, next) => ({ ...(acc ?? {}), ...next }),
+    const prompt = await runner.emitBeforeAgentStart(
+      typeof input === "string" ? input : input.text,
+      base,
     );
-    this.setAgentSystemPrompt(
-      typeof result?.systemPrompt === "string" ? result.systemPrompt : base,
-    );
+    this.setAgentSystemPrompt(prompt ?? base);
   }
 
   /**

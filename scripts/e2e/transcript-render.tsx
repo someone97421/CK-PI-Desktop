@@ -1,3 +1,4 @@
+import { transcriptLongHistoryProbe as runLongHistoryProbe } from "./transcript-long-history";
 import { transcriptEditProbe } from "./transcript-edit";
 import { turnProcessProbe } from "./turn-process";
 import { transcriptStatusProbe } from "./transcript-status";
@@ -20,7 +21,10 @@ declare global {
   var transcriptRenderProbe: () => Promise<unknown>;
   var transcriptRuntimeSlotProbe: () => Promise<unknown>;
   var smoothTextThrottleProbe: () => Promise<unknown>;
+  var transcriptLongHistoryProbe: typeof runLongHistoryProbe;
 }
+
+globalThis.transcriptLongHistoryProbe = runLongHistoryProbe;
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);

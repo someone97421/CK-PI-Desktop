@@ -528,11 +528,14 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
 
                 request_tasks.spawn(async move {
                     let _permit = permit;
-                    let result = if DirectConfigReads::handles(&method) {
-                        direct_config.read(&method, params).await
-                    } else {
-                        handle_request(state, &method, params, tx.clone()).await
-                    };
+                    let budget = request_budget_ms(&method, &params);
+                    let result = with_request_budget(budget, async {
+                        if DirectConfigReads::handles(&method) {
+                            direct_config.read(&method, params).await
+                        } else {
+                            handle_request(state, &method, params, tx.clone()).await
+                        }
+                    }).await;
                     if method == "app.handshake" && result.is_ok() {
                         direct_config.handshook.store(true, Ordering::Release);
                     }
@@ -601,6 +604,62 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
     input_error
         .map(|error| Err(anyhow!("{error}")))
         .unwrap_or(Ok(()))
+}
+
+/// Wall-clock budget for a single non-tool RPC request. The JS client gives
+/// its calls ~130s before it rejects locally without ever telling the host
+/// (issue #1071), so a request stuck waiting on the global state lock keeps
+/// its in-flight slot after the caller has moved on. 135s sits just past that
+/// client budget: the slot is guaranteed to come back within seconds of the
+/// client giving up, instead of never.
+const RPC_REQUEST_BUDGET_MS: u64 = 135_000;
+
+// Match the longer client deadlines in packages/shared/src/rpc-timeouts.ts,
+// with the same 5s host grace used by ordinary requests.
+const RPC_COMPACT_BUDGET_MS: u64 = 749_000;
+const RPC_CONFIG_SYNC_BUDGET_MS: u64 = 1_805_000;
+
+/// Approval has no deadline. Tool queueing and execution remain bounded by
+/// their existing inner budgets, and cancellation/shutdown settles the wait.
+fn request_budget_ms(method: &str, _params: &Value) -> Option<u64> {
+    match method {
+        "tools.execute" => None,
+        "agent.compact" => Some(RPC_COMPACT_BUDGET_MS),
+        "configSync.syncNow" => Some(RPC_CONFIG_SYNC_BUDGET_MS),
+        _ => Some(RPC_REQUEST_BUDGET_MS),
+    }
+}
+
+/// Wrap one request's handler future in its wall-clock budget (issue #1071).
+///
+/// The timeout can only fire at an `await` point, so a handler stuck inside a
+/// long *synchronous* call is not interrupted — that class needs the sync work
+/// moved off the async workers instead. What this does guarantee is that a
+/// handler waiting on the global state lock (the dominant queueing case) is
+/// cut loose with its slot, and that one wedged request can no longer hold
+/// every other caller forever: each waiting request fails with its own
+/// `HOST_RPC_TIMEOUT` instead of piling up until `HOST_OVERLOADED`.
+async fn with_request_budget<F>(budget: Option<u64>, fut: F) -> Result<Value, JsonRpcError>
+where
+    F: std::future::Future<Output = Result<Value, JsonRpcError>>,
+{
+    let Some(budget) = budget else {
+        return fut.await;
+    };
+    match tokio::time::timeout(Duration::from_millis(budget), fut).await {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!(
+                budget_ms = budget,
+                "rpc request exceeded its wall-clock budget; slot released"
+            );
+            Err(JsonRpcError {
+                code: -32030,
+                message: format!("host rpc budget of {budget}ms exceeded"),
+                data: Some(json!({ "errorCode": "HOST_RPC_TIMEOUT" })),
+            })
+        }
+    }
 }
 
 fn rpc_err(code: i64, message: impl Into<String>, error_code: &str) -> JsonRpcError {
@@ -3629,7 +3688,6 @@ async fn handle_request(
                     if st.shutting_down {
                         return Err(rpc_err(1001, "host is shutting down", "HOST_SHUTTING_DOWN"));
                     }
-                    st.permissions.expire_stale();
                     // Effective permission mode (D115): per-session override
                     // unless it is `inherit`, then the global settings default,
                     // then `ask`. A subagent's tool call carries its own scope
@@ -3777,8 +3835,7 @@ async fn handle_request(
                             "toolName": req.tool_name,
                             "risk": req.risk,
                             "argsPreview": req.args_preview,
-                            "reason": req.reason,
-                            "timeoutMs": req.timeout_ms
+                            "reason": req.reason
                         });
                         if let Some(shell_id) = req.command_shell_id.as_deref() {
                             permission_params["commandShellId"] = json!(shell_id);
@@ -3804,14 +3861,9 @@ async fn handle_request(
                         d
                     }
                 } else if let Some(rx) = pending_rx {
-                    let permission_wait = tokio::time::timeout(
-                        std::time::Duration::from_millis(crate::permissions::PERMISSION_TIMEOUT_MS),
-                        rx,
-                    );
-                    tokio::pin!(permission_wait);
                     tokio::select! {
-                        outcome = &mut permission_wait => match outcome {
-                            Ok(Ok(d)) => d,
+                        outcome = rx => match outcome {
+                            Ok(d) => d,
                             _ => PermissionDecision::Deny,
                         },
                         _ = wait_for_bash_cancellation(&mut permission_cancellation) => {
@@ -4993,14 +5045,191 @@ mod tests {
 
     use super::{
         capability_err, handle_request, parse_capability_query, parse_capability_target,
-        peek_jsonrpc_id, provider_rpc_err, resolve_plan_workspace, resolve_tool_workspace,
-        resolve_tool_workspace_for_call, scope_err, skill_err,
+        peek_jsonrpc_id, provider_rpc_err, request_budget_ms, resolve_plan_workspace,
+        resolve_tool_workspace, resolve_tool_workspace_for_call, scope_err, skill_err,
+        with_request_budget, JsonRpcError, RPC_REQUEST_BUDGET_MS,
+        RPC_COMPACT_BUDGET_MS, RPC_CONFIG_SYNC_BUDGET_MS,
     };
     use crate::agent_capabilities::CapabilityLevel;
     use crate::plans::{PlanResolveParams, PlanSubmitParams};
     use crate::scheduled;
     use crate::sessions;
     use crate::state::AppState;
+    use std::time::Duration;
+
+    // Issue #1071: the per-request wall-clock budget must cut loose requests
+    // stuck on the global state lock (the dominant queueing case) so their
+    // in-flight slots come back, without ever shortening a legitimate
+    // long-running tool execution.
+
+    #[test]
+    fn request_budget_is_fixed_for_non_tool_methods() {
+        assert_eq!(
+            request_budget_ms("session.get", &json!({})),
+            Some(RPC_REQUEST_BUDGET_MS)
+        );
+        assert_eq!(
+            request_budget_ms("providers.list", &json!({})),
+            Some(RPC_REQUEST_BUDGET_MS)
+        );
+    }
+
+    #[test]
+    fn tool_approval_wait_is_not_limited_by_the_rpc_budget() {
+        for params in [
+            json!({"toolName": "Bash", "timeoutMs": 60000}),
+            json!({"toolName": "Bash"}),
+            json!({"tool_name": "Bash", "timeout_ms": 60000}),
+            json!({"toolName": "Read"}),
+        ] {
+            assert_eq!(request_budget_ms("tools.execute", &params), None);
+        }
+    }
+
+    #[test]
+    fn long_methods_keep_their_client_deadlines_and_host_grace() {
+        assert_eq!(request_budget_ms("agent.compact", &json!({})), Some(RPC_COMPACT_BUDGET_MS));
+        assert_eq!(RPC_COMPACT_BUDGET_MS, 4 * 180_000 + 14_000 + 10_000 + 5_000);
+        assert_eq!(request_budget_ms("configSync.syncNow", &json!({})), Some(RPC_CONFIG_SYNC_BUDGET_MS));
+        assert_eq!(RPC_CONFIG_SYNC_BUDGET_MS, 1_800_000 + 5_000);
+    }
+
+    #[tokio::test]
+    async fn budget_passes_fast_results_through() {
+        let result = with_request_budget(Some(1_000), async {
+            Ok::<_, JsonRpcError>(json!({"ok": true}))
+        })
+        .await
+        .expect("fast future must pass through untouched");
+        assert_eq!(result, json!({"ok": true}));
+    }
+
+    #[tokio::test]
+    async fn budget_ends_slow_request_with_host_rpc_timeout() {
+        let started = std::time::Instant::now();
+        let error = with_request_budget(Some(50), async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok::<_, JsonRpcError>(json!(null))
+        })
+        .await
+        .expect_err("a future past its budget must end with HOST_RPC_TIMEOUT");
+        assert_eq!(error.code, -32030);
+        assert_eq!(
+            error
+                .data
+                .as_ref()
+                .and_then(|d| d.get("errorCode"))
+                .and_then(|c| c.as_str()),
+            Some("HOST_RPC_TIMEOUT")
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "timeout must fire at the budget, not the inner future's own duration"
+        );
+    }
+
+    #[tokio::test]
+    async fn budget_cuts_loose_a_request_waiting_on_the_global_lock() {
+        let state = Arc::new(Mutex::new(()));
+        // Hold the global lock like a wedged handler would.
+        let holder = state.clone();
+        let guard = holder.lock().await;
+
+        // A queued request waiting for that lock: with the budget it fails
+        // on its own instead of piling up behind the wedged holder.
+        let waiter_state = state.clone();
+        let error = with_request_budget(Some(50), async move {
+            let _st = waiter_state.lock().await;
+            Ok::<_, JsonRpcError>(json!(null))
+        })
+        .await
+        .expect_err("a lock waiter past its budget must fail with HOST_RPC_TIMEOUT");
+        assert_eq!(error.code, -32030);
+
+        // The cancelled waiter held no guard: once the wedged holder lets go,
+        // the lock is immediately available again for everyone else.
+        drop(guard);
+        let lock_state = state.clone();
+        let acquired = tokio::time::timeout(Duration::from_millis(500), lock_state.lock()).await;
+        assert!(
+            acquired.is_ok(),
+            "lock must be acquirable right after the holder drops; a cancelled waiter must not be holding it"
+        );
+    }
+
+    // Deep-dive: issue #1071's failure mode is many requests queueing on one
+    // wedged handler. Every queued request must time out **independently** —
+    // one waiter's timeout must not extend or reset another's — and after the
+    // wedged holder lets go, a fresh request must go straight through.
+
+    #[tokio::test]
+    async fn budget_times_out_concurrent_lock_waiters_independently() {
+        let state = Arc::new(Mutex::new(()));
+        let holder = state.clone();
+        let guard = holder.lock().await;
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let waiter_state = state.clone();
+            handles.push(tokio::spawn(with_request_budget(Some(60), async move {
+                let _st = waiter_state.lock().await;
+                Ok::<_, JsonRpcError>(json!(null))
+            })));
+        }
+        for (index, handle) in handles.into_iter().enumerate() {
+            let result = handle.await.expect("budgeted task must not panic");
+            assert_eq!(
+                result.as_ref().err().map(|e| e.code),
+                Some(-32030),
+                "waiter #{index} must fail with HOST_RPC_TIMEOUT, got {:?}",
+                result
+            );
+        }
+        drop(guard);
+        let lock_state = state.clone();
+        let acquired = tokio::time::timeout(Duration::from_millis(500), lock_state.lock()).await;
+        assert!(acquired.is_ok(), "lock must be free after holder drops");
+    }
+
+    #[tokio::test]
+    async fn budget_recovery_lets_a_fresh_request_through_after_the_holder_releases() {
+        let state = Arc::new(Mutex::new(()));
+        let holder = state.clone();
+
+        // First: a wedged holder starves one budgeted request.
+        {
+            let guard = holder.lock().await;
+            let waiter_state = state.clone();
+            let error = with_request_budget(Some(40), async move {
+                let _st = waiter_state.lock().await;
+                Ok::<_, JsonRpcError>(json!(null))
+            })
+            .await
+            .expect_err("starved while the holder wedges the lock");
+            assert_eq!(error.code, -32030);
+        }
+
+        // Then the holder releases: the very next request must succeed on the
+        // normal path — the budget must not have left any lingering damage.
+        let recovered = {
+            let request_state = state.clone();
+            with_request_budget(Some(1_000), async move {
+                let _st = request_state.lock().await;
+                Ok::<_, JsonRpcError>(json!({ "recovered": true }))
+            })
+            .await
+            .expect("a request after the holder releases must succeed")
+        };
+        assert_eq!(recovered, json!({ "recovered": true }));
+    }
+
+    #[test]
+    fn tool_requests_do_not_inherit_the_ordinary_rpc_deadline() {
+        let six_hours = json!({"toolName": "Bash", "timeoutMs": 21600000});
+        assert_eq!(request_budget_ms("tools.execute", &six_hours), None);
+        let unbounded = json!({"toolName": "Glob"});
+        assert_eq!(request_budget_ms("tools.execute", &unbounded), None);
+    }
 
     #[test]
     fn capability_errors_keep_their_protocol_code() {
@@ -7552,6 +7781,7 @@ mod tests {
             .unwrap();
         let permission: Value = serde_json::from_str(&permission).unwrap();
         assert_eq!(permission["method"], "permissions.request");
+        assert!(permission["params"].get("timeoutMs").is_none());
         let request_id = permission["params"]["requestId"]
             .as_str()
             .unwrap()
@@ -7570,11 +7800,9 @@ mod tests {
         assert_eq!(requests[0]["requestId"], request_id);
         assert_eq!(requests[0]["sessionId"], session.id);
         assert_eq!(requests[0]["toolName"], "Bash");
-        assert_eq!(requests[0]["timeoutMs"], 120000);
-        assert!(
-            requests[0]["expiresAt"].as_str().unwrap() > requests[0]["createdAt"].as_str().unwrap()
-        );
-        assert!(requests[0]["remainingMs"].as_u64().unwrap() <= 120000);
+        assert!(requests[0].get("timeoutMs").is_none());
+        assert!(requests[0].get("expiresAt").is_none());
+        assert!(requests[0].get("remainingMs").is_none());
 
         let other = handle_request(
             state.clone(),

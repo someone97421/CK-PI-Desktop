@@ -743,12 +743,21 @@ export function registerWorkspaceIpc({
    * or synced folder). The two entries name the same directory, and every
    * candidate is still re-checked through `realpath` before a read is allowed.
    */
-  const fsExtraRoots = async (workspaceRoot: string | null): Promise<string[]> => {
+  const fsExtraRoots = async (workspaceRoot: string | null, requested: string): Promise<string[]> => {
     const roots = [
       join(dataDir, "scratch"),
       join(dataDir, "attachments"),
       ...projectFolderPaths(workspaceRoot).filter((path) => path !== workspaceRoot),
     ];
+    // Explicit desktop file references may name files outside the project.
+    if (isAbsolute(requested)) {
+      roots.push(dirname(requested));
+      try {
+        roots.push(dirname(await realpath(requested)));
+      } catch {
+        // The read/open operation reports a missing or unreadable target.
+      }
+    }
     const canonical = await Promise.all(
       roots.map(async (root) => {
         try {
@@ -826,7 +835,7 @@ export function registerWorkspaceIpc({
       return readOpenableFile(
         requested,
         workspaceRoot,
-        await fsExtraRoots(workspaceRoot),
+        await fsExtraRoots(workspaceRoot, requested),
         input.mimeType,
       );
     },
@@ -840,7 +849,7 @@ export function registerWorkspaceIpc({
       return readOpenableImage(
         requested,
         workspaceRoot,
-        await fsExtraRoots(workspaceRoot),
+        await fsExtraRoots(workspaceRoot, requested),
         input.mimeType,
       );
     },
@@ -859,7 +868,7 @@ export function registerWorkspaceIpc({
     const target = await resolveRealOpenablePath(
       requested,
       workspaceRoot,
-      await fsExtraRoots(workspaceRoot),
+      await fsExtraRoots(workspaceRoot, requested),
     );
     if (!target) {
       throw Object.assign(new Error("path outside allowed roots"), {
@@ -876,7 +885,7 @@ export function registerWorkspaceIpc({
     const target = await resolveRealOpenablePath(
       requested,
       workspaceRoot,
-      await fsExtraRoots(workspaceRoot),
+      await fsExtraRoots(workspaceRoot, requested),
     );
     if (!target) {
       throw Object.assign(new Error("path is not openable"), {
@@ -916,13 +925,12 @@ export function registerWorkspaceIpc({
       const ref = String(input.ref ?? "").trim();
       if (!ref) return { match: null };
       const workspaceRoot = await optionalWorkspaceRoot();
-      return {
-        match: await resolveChatFileRef(ref, {
-          project: projectRootsFor(workspaceRoot),
-          scratch: await sessionScratchRoot(input.sessionId),
-          attachments: join(dataDir, "attachments"),
-        }),
+      const roots = {
+        project: projectRootsFor(workspaceRoot),
+        scratch: await sessionScratchRoot(input.sessionId),
+        attachments: join(dataDir, "attachments"),
       };
+      return { match: await resolveChatFileRef(ref, roots) };
     },
   );
 

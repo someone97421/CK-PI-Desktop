@@ -1551,7 +1551,11 @@ export const PLUGIN_PERMISSIONS = [
   // Read-only usage facts (pi.usage.listTurns):
   // completed-turn counters and session titles, never message bodies.
   "usage.read",
+  // Install-time escape hatch from the net.domains allowlist (issue #1201):
+  // user-typed endpoints, e.g. a self-hosted server, that no manifest written
+  // ahead of time can name. Enforced by net-policy's grant-aware checks.
   "net.fetch",
+  "net.anyHost",
   "shell.openExternal",
   "mcp.server.local",
   "mcp.server.remote",
@@ -2366,11 +2370,14 @@ export {
 } from "./mcp-config.js";
 export {
   isLocalNetDomain,
+  isMetadataNetHost,
   isNetHostAllowed,
+  isNetSocketUrlAllowedWithGrant,
   isNetUrlAllowed,
-  isNetSocketUrlAllowed,
+  isNetUrlAllowedWithGrant,
   parseNetDomains,
   type PluginNetDomain,
+  type PluginNetEgressGrant,
 } from "./net-policy.js";
 export {
   fsGlobIgnoresCase,

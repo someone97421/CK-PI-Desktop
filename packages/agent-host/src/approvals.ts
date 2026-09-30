@@ -32,7 +32,7 @@ export interface ApprovalPort {
 
 export type PendingToolRequest = ToolPermissionRequest & {
   createdAt: string;
-  expiresAt: string;
+  expiresAt?: string;
 };
 
 type PendingApproval = {
@@ -120,7 +120,10 @@ export class ApprovalBroker {
   ): Promise<RacpApprovalRequest[]> {
     const open = await this.port.listPendingTools(sessionId);
     return open.map((request) =>
-      this.fromToolPermission(request, { ...context, expiresAt: request.expiresAt }),
+      this.fromToolPermission(
+        request,
+        request.expiresAt ? { ...context, expiresAt: request.expiresAt } : context,
+      ),
     );
   }
 

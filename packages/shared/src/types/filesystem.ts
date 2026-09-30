@@ -100,9 +100,9 @@ export type FsChatRefProjectRoot = {
  * `root` names which store answered, because the caller routes on it: a project
  * file is expressed to the work panel as a path relative to the project's
  * **primary** folder, while any other project folder — and every scratch or
- * attachment file — can only be addressed by its absolute path.
+ * attachment or external file — can only be addressed by its absolute path.
  */
-export type FsChatRefRoot = "workspace" | "scratch" | "attachments";
+export type FsChatRefRoot = "workspace" | "scratch" | "attachments" | "external";
 
 /** Which rule produced the match; the shallow tiers are informational. */
 export type FsChatRefMatchKind =
@@ -113,7 +113,7 @@ export type FsChatRefMatchKind =
 
 export type FsChatRefMatch = {
   root: FsChatRefRoot;
-  /** POSIX path relative to the matched root. */
+  /** POSIX path relative to the matched root; basename for an external file. */
   relativePath: string;
   /** Native absolute path of the matched regular file. */
   absolutePath: string;
@@ -128,4 +128,6 @@ export type FsChatRefMatch = {
 
 export type FsChatRefResolveResult = {
   match: FsChatRefMatch | null;
+  /** The supplied absolute path is not inside a project, scratch, or attachment root. */
+  reason?: "outside-allowed-roots";
 };

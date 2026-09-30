@@ -1189,16 +1189,20 @@ export const api = {
   createUserSkill: (skill: UserSkillInput) =>
     invoke<{ skill: UserSkillRecord }>(IPC.invoke.skillCreate, skill),
   /**
-   * Opens a native picker for one file or (when `sourceKind === "dir"`) a
-   * folder; `canceled` when the user backed out. `mode: "link"` swaps copy
-   * for a symlink import.
+   * Opens a native picker for one file or multiple skill folders.
+   * Folder results report successful and failed imports independently.
    */
   importUserSkill: (
     query?: AgentCapabilityQuery & {
       sourceKind?: "file" | "dir";
       mode?: "copy" | "link";
     },
-  ) => invoke<{ canceled?: boolean; skill?: UserSkillRecord }>(IPC.invoke.skillImport, query),
+  ) => invoke<{
+    canceled?: boolean;
+    skill?: UserSkillRecord;
+    imported?: UserSkillRecord[];
+    failed?: Array<{ path: string; error: string }>;
+  }>(IPC.invoke.skillImport, query),
   /**
    * Scan third-party AI-tool skill directories. The scanner never throws;
    * a source that failed to read is reported with an `error` on its row.

@@ -18,6 +18,8 @@
  *   already stopped calling tools. Only user Stop or `TaskStop` aborts it.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { mediaStore } from "./media-store.js";
 import {
@@ -168,7 +170,13 @@ export type SubagentRunResult = {
   modelFailures?: Array<{ model: string; code: string; message: string }>;
   /** True when the delegate response hit the model's output token limit. */
   outputTruncated?: boolean;
-  error?: { code: string; message: string };
+  /** File path in session scratch where the unclipped report was preserved (ADR 0062). */
+  scratchReportPath?: string;
+  error?: {
+    code: string;
+    message: string;
+    charactersProduced?: number;
+  };
 };
 
 export type SubagentToolOutcome = {
@@ -183,6 +191,8 @@ export type SubagentRunOptions = {
   turnId?: string;
   /** `Task` call that owns this delegate. */
   parentToolCallId: string;
+  /** Session scratch workspace root for persistent spillover artifacts (ADR 0062). */
+  scratchDir?: string;
   /** The delegated instruction, written by the parent model. */
   task: string;
   /** Provider resolved by Electron main (the definition's pin, or the
@@ -283,6 +293,14 @@ function boundedReport(value: string): string {
   const head = Math.ceil(available / 2);
   const tail = Math.floor(available / 2);
   return `${text.slice(0, head)}${marker}${text.slice(-tail)}`;
+}
+
+/** Keep opaque provider/tool-call ids inside the session scratch directory. */
+function scratchPathSegment(value: string): string {
+  if (/^[A-Za-z0-9._-]+$/.test(value) && value !== "." && value !== "..") {
+    return value;
+  }
+  return `id-${encodeURIComponent(value)}`;
 }
 
 export { addUsage };
@@ -846,10 +864,13 @@ export class SubagentRun {
       });
     }
     if (this.lastReportTruncated) {
+      const produced = this.lastReportText.length;
+      const stats = ` (${produced} characters produced before truncation)`;
       return this.result("failed", this.lastReportText, {
         code: "SUBAGENT_OUTPUT_TRUNCATED",
         message:
-          "The subagent response exceeded the model's output token limit and was truncated.",
+          `The subagent response exceeded the model's output token limit and was truncated${stats}.`,
+        charactersProduced: produced,
       });
     }
     return this.result("completed", this.lastReportText);
@@ -1260,10 +1281,34 @@ export class SubagentRun {
     return error;
   }
 
+  private saveScratchReport(text: string): string | undefined {
+    if (!this.opts.scratchDir || text.length <= MAX_SUBAGENT_REPORT_CHARS) {
+      return undefined;
+    }
+    try {
+      const dir = join(
+        this.opts.scratchDir,
+        "delegations",
+        scratchPathSegment(this.opts.parentToolCallId),
+        `execution-${this.observation.snapshot().execution ?? 1}`,
+      );
+      mkdirSync(dir, { recursive: true });
+      const target = join(dir, "report.md");
+      writeFileSync(target, text, "utf8");
+      return target;
+    } catch {
+      return undefined;
+    }
+  }
+
   private result(
     status: SubagentRunStatus,
     report: string,
-    error?: { code: string; message: string },
+    error?: {
+      code: string;
+      message: string;
+      charactersProduced?: number;
+    },
   ): SubagentRunResult {
     this.executing = false;
     this.lastStatus = status;
@@ -1285,23 +1330,31 @@ export class SubagentRun {
               `The ${name} subagent failed after ${this.turns} turn(s): ${error?.message ?? "unknown error"}.`,
               ...(body ? ["Its last output was:", body] : []),
             ].join("\n\n");
+    const preamble = [
+      ...this.modelFailures.map(
+        (failure) =>
+          `Model ${failure.model} failed (${failure.code}): ${failure.message}`,
+      ),
+      ...(degradationNote ? [degradationNote] : []),
+      ...(this.contextCompactions > 0
+        ? [`Context: the delegate's own context was checkpointed ${this.contextCompactions} time(s) in memory; earlier history was summarized and every tool record is still in the transcript.`]
+        : []),
+    ];
+    const scratchReportPath = this.saveScratchReport(text);
+    let finalReport: string;
+    if (scratchReportPath) {
+      const notice = `Complete subagent report (${text.length} characters) was saved to: ${scratchReportPath}`;
+      finalReport =
+        preamble.length > 0 ? `${preamble.join("\n\n")}\n\n${notice}` : notice;
+    } else {
+      finalReport = boundedReport([...preamble, text].join("\n\n"));
+    }
     return {
       agentName: name,
       modelId: this.provider.modelId,
       thinkingLevel: this.thinkingLevel,
       status,
-      report: boundedReport([
-        ...this.modelFailures.map((failure) => `Model ${failure.model} failed (${failure.code}): ${failure.message}`),
-        ...(degradationNote ? [degradationNote] : []),
-        // The parent has no other way to learn a delegate was checkpointed; one
-        // line per run keeps it out of the progress stream.
-        ...(this.contextCompactions > 0
-          ? [
-              `Context: the delegate's own context was checkpointed ${this.contextCompactions} time(s) in memory; earlier history was summarized and every tool record is still in the transcript.`,
-            ]
-          : []),
-        text,
-      ].join("\n\n")),
+      report: finalReport,
       turns: this.turns,
       ...(this.contextDegraded ? { contextDegraded: true } : {}),
       toolCalls: this.toolCalls,
@@ -1312,6 +1365,7 @@ export class SubagentRun {
       executionUsage: this.executionUsage,
       ...(this.modelFailures.length ? { modelFailures: [...this.modelFailures] } : {}),
       ...(this.lastReportTruncated ? { outputTruncated: true } : {}),
+      ...(scratchReportPath ? { scratchReportPath } : {}),
       ...(error ? { error } : {}),
     };
   }

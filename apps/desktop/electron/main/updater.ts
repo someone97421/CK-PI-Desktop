@@ -5,20 +5,18 @@
  * Discovery always tracks the latest stable
  * release (`allowPrerelease = false`) so RC installs still graduate to newer
  * stables. Delivery mode per install:
- *  - Windows NSIS / Linux AppImage → full in-app flow: silent background
- *    download, "restart to update" prompt, install-on-quit fallback.
- *  - Windows portable (`PORTABLE_EXECUTABLE_FILE`) → notify + link. The
- *    NSIS installer must not replace a no-install run.
- *  - macOS → manual discovery and a releases-page link. In-app installation
- *    remains disabled pending a separate delivery-policy qualification.
- *  - Linux deb (no $APPIMAGE in env) → notify + link, like macOS.
+ *  - Windows NSIS / Linux AppImage -> in-app download and install.
+ *  - Windows ZIP / portable EXE -> manual update by default.
+ *  - macOS and Linux deb -> notify and open the fork's release page.
  *  - Unpackaged dev runs → disabled (no app-update.yml in resources).
  *
  * The installer download cache lives in a fork-specific user cache directory;
  * `PI_DESKTOP_UPDATE_CACHE_DIR` relocates Windows NSIS downloads, and
  * `./update-cache` owns what may be reclaimed from it (#1098).
  */
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { app, shell } from "electron";
 import electronUpdaterPkg from "electron-updater";
 import type { AppUpdater, UpdateInfo, ProgressInfo } from "electron-updater";
@@ -50,10 +48,11 @@ import {
   resolveStoredUpdatePreference,
   resolveUpdateMode as resolveUpdateModePolicy,
   supportsAutomaticUpdates,
+  type WindowsDistribution,
 } from "./update-policy";
 import { ManualUpdateReminderTracker } from "./manual-update-reminder";
-
 export { resolveUpdateMode } from "./update-policy";
+export type { WindowsDistribution } from "./update-policy";
 
 const { NsisUpdater, autoUpdater } = electronUpdaterPkg;
 
@@ -102,6 +101,7 @@ export type UpdaterOptions = {
   /** Overrides for tests. */
   platform?: NodeJS.Platform;
   isPackaged?: boolean;
+  distribution?: WindowsDistribution;
 };
 
 
@@ -112,6 +112,7 @@ export class AppUpdaterController {
   private readonly platform: NodeJS.Platform;
   private readonly isPackaged: boolean;
   private readonly env: NodeJS.ProcessEnv;
+  private readonly distribution?: WindowsDistribution;
   private readonly defaultPreference: UpdatePreference;
   private readonly automaticSupported: boolean;
   private readonly readUpdateSettings?: () => Promise<UpdaterSettings>;
@@ -138,16 +139,51 @@ export class AppUpdaterController {
   private readonly autoUpdater: AppUpdater;
   private readonly cacheMaintenance: UpdateCacheMaintenance;
 
+  private readPackagedDistribution(
+    isPackaged: boolean,
+  ): WindowsDistribution | undefined {
+    if (!isPackaged) return undefined;
+    try {
+      const packageJson = JSON.parse(
+        readFileSync(join(app.getAppPath(), "package.json"), "utf8"),
+      ) as unknown;
+      if (typeof packageJson !== "object" || packageJson === null) {
+        return undefined;
+      }
+      const distribution = (packageJson as Record<string, unknown>)
+        .piDistribution;
+      return distribution === "installed" || distribution === "zip" || distribution === "portable"
+        ? distribution
+        : undefined;
+    } catch (error) {
+      this.logger.app(
+        "updater",
+        "warn",
+        "packaged distribution metadata unavailable",
+        { data: { detail: String(error) } },
+      );
+      return undefined;
+    }
+  }
   constructor(options: UpdaterOptions) {
     this.logger = options.logger;
     this.send = options.send;
     this.getLocale = options.getLocale ?? (() => "en");
     const platform = options.platform ?? process.platform;
     const isPackaged = options.isPackaged ?? app.isPackaged;
+    const distribution =
+      options.distribution ??
+      (platform === "win32" ? this.readPackagedDistribution(isPackaged) : undefined);
     this.platform = platform;
     this.isPackaged = isPackaged;
     this.env = process.env;
-    this.defaultPreference = resolveDefaultUpdatePreference(platform, isPackaged, this.env);
+    this.distribution = distribution;
+    this.defaultPreference = resolveDefaultUpdatePreference(
+      platform,
+      isPackaged,
+      this.env,
+      distribution,
+    );
     this.preference = this.defaultPreference;
     this.automaticSupported = supportsAutomaticUpdates(
       platform,
@@ -156,7 +192,13 @@ export class AppUpdaterController {
     );
     this.readUpdateSettings = options.readUpdateSettings;
     this.persistLastNotifiedVersion = options.persistLastNotifiedVersion;
-    const mode = resolveUpdateModePolicy(platform, isPackaged, this.env, this.preference);
+    const mode = resolveUpdateModePolicy(
+      platform,
+      isPackaged,
+      this.env,
+      this.distribution,
+      this.preference,
+    );
     const defaultCacheBasePath = forkUpdateCacheBasePath(
       defaultUpdateCacheBasePath({
         platform,
@@ -275,6 +317,7 @@ export class AppUpdaterController {
       this.platform,
       this.isPackaged,
       this.env,
+      this.distribution,
       effectivePreference,
     );
     const preferenceChanged =

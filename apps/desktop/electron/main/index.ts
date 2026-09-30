@@ -42,7 +42,11 @@ import {
 } from "./models-dev-catalog";
 import { VendorOAuth } from "./oauth";
 import { AppUpdaterController } from "./updater";
-import type { WorkPanelReservationState } from "./work-panel-window";
+import {
+  WINDOW_MIN_HEIGHT,
+  WINDOW_MIN_WIDTH,
+  type WorkPanelReservationState,
+} from "./work-panel-window";
 import { InflightCheckpointer } from "@pi-desktop/host-runtime";
 import { withGitBranch } from "./workspace-git";
 import { createPlanUiProbe } from "./plan-ui-probe";
@@ -99,9 +103,6 @@ if (process.platform === "win32") {
   app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`);
 }
 
-
-const WINDOW_MIN_WIDTH = 640;
-const WINDOW_MIN_HEIGHT = 700;
 // Native resize streams can pause briefly while the pointer crosses a display
 // scale boundary. Keep recovery out of that gesture and only run it after the
 // bounds have been stable for one short interaction window.

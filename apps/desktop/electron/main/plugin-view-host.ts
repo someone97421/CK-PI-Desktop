@@ -59,6 +59,8 @@ export type PluginViewOpenRequest = {
   htmlPath: string;
   /** Egress allowlist from `manifest.net.domains`. */
   netDomains?: readonly string[];
+  /** The install-time `net.anyHost` grant, passed through to the egress policy. */
+  netAnyHost?: boolean;
   /**
    * What this view should show, when the opener knows (D320 follow-up).
    *
@@ -414,6 +416,7 @@ export class PluginViewHost {
     applyPluginEgressPolicy(ses, {
       pluginId: request.pluginId,
       netDomains: request.netDomains,
+      netAnyHost: request.netAnyHost,
       onBlockedRequest: this.onBlockedRequest,
     });
 

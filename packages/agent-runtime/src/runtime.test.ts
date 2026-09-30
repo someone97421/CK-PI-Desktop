@@ -7339,6 +7339,7 @@ describe("DesktopAgentRuntime subagents", () => {
       report: "The explorer subagent failed after 1 turn(s): no route.",
       turns: 1,
       toolCalls: 0,
+      scratchReportPath: "/tmp/session-scratch/delegations/task-1/report.md",
       error: { code: "NETWORK_ERROR", message: "no route" },
     };
     const task = taskTool(runtime);
@@ -7376,6 +7377,7 @@ describe("DesktopAgentRuntime subagents", () => {
           status: "failed",
           startedAt: expect.any(Number),
           completedAt: expect.any(Number),
+          scratchReportPath: "/tmp/session-scratch/delegations/task-1/report.md",
         },
       ],
     });

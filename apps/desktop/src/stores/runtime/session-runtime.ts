@@ -14,6 +14,7 @@ import {
   removeLiveSessionMessage,
   upsertLiveSessionMessage,
 } from "../../lib/session-transcript";
+import { getSessionMessageSnapshot, getSessionToolMessagePositions } from "../../lib/session-transcript-updates";
 import { sessionReadLooksEmpty } from "../../lib/session-transcript-read";
 import { sessionIsArchived, type SessionMeta } from "../../lib/sidebar-preferences";
 import {
@@ -295,11 +296,12 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
         next = upsertLiveSessionMessage(current, event.message);
         break;
       case "message_update": {
-        const previous = current.find((message) => message.id === event.message.id);
-        next = upsertLiveSessionMessage(current, applyMessageUpdate(previous, event));
+        const normalized = dedupeSessionMessages(current);
+        const index = getSessionMessageSnapshot(normalized).positions.get(event.message.id);
+        const previous = index === undefined ? undefined : normalized[index];
+        next = upsertLiveSessionMessage(normalized, applyMessageUpdate(previous, event));
         break;
       }
-        break;
       case "message_end": {
         next = projectMessageEnd(current, event);
         break;
@@ -324,12 +326,10 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
         break;
       case "tool_update": {
         if (event.partialResult === undefined) return current;
-        const existing = current.find(
-          (message) =>
-            message.toolCallId === event.toolCallId &&
-            message.toolStatus === "running",
-        );
-        if (!existing) return current;
+        const index = getSessionToolMessagePositions(current, event.toolCallId)
+          .find((position) => current[position].toolStatus === "running");
+        if (index === undefined) return current;
+        const existing = current[index];
         next = upsertLiveSessionMessage(current, {
           ...existing,
           content:
@@ -369,6 +369,7 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
           ? upsertLiveSessionMessage(current, {
               ...existing,
               ...completed,
+              id: existing.id,
               toolName: existing.toolName ?? completed.toolName,
               toolArgs: existing.toolArgs ?? completed.toolArgs,
               createdAt: existing.createdAt || completed.createdAt,

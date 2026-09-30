@@ -252,7 +252,7 @@ test("transcript keeps assistant thinking in a separate disclosure", () => {
   assert.match(transcriptSource, /thinking-prose[\s\S]*?Markdown source=\{text\}/);
   assert.match(transcriptSource, /CopyButton text=\{content\}/);
   assert.match(transcriptSource, /messageThinking as thinkingText/);
-  assert.match(transcriptSource, /onlyThinking = items\.every/);
+  assert.match(transcriptSource, /onlyThinking = useMemo\(\(\) => items\.every/);
   assert.match(stylesSource, /\.thinking-prose/);
 });
 
@@ -284,11 +284,11 @@ test("detailed mode opens the last tool while compact keeps payloads collapsed",
   assert.match(transcriptSource, /useAutomaticDisclosure\(\s*hasSubagentTopology \? live : visibleItems\.length <= 1/);
   assert.match(
     transcriptSource,
-    /<ThinkingRow[\s\S]*?autoOpen=\{live && itemIndex === items.length - 1\}/,
+    /<ThinkingRow[\s\S]*?autoOpen=\{live && item === lastItem\}/,
   );
   assert.match(
     transcriptSource,
-    /const autoOpenLatest =\s*!compact && isLast && itemIndex === items.length - 1/,
+    /const autoOpenLatest =\s*!compact && isLast && item === lastItem/,
   );
   assert.match(transcriptSource, /<ToolRow[\s\S]*?autoOpen=\{autoOpenLatest\}/);
   assert.match(transcriptToolRowSource, /const disclosure = useAutomaticDisclosure\(\s*autoOpen && !failed && status !== "denied",\s*revealRequest/);

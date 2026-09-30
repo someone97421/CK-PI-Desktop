@@ -1,5 +1,15 @@
 import i18n from "i18next";
-import { projectMessageEnd, reconcilePersistedUserMessage } from "../../lib/session-transcript";
+import {
+  dedupeSessionMessages,
+  projectMessageEnd,
+  reconcilePersistedUserMessage,
+  upsertLiveSessionMessage,
+} from "../../lib/session-transcript";
+import {
+  getSessionMessageSnapshot,
+  getSessionToolMessagePositions,
+  registerSessionMessageReplacements,
+} from "../../lib/session-transcript-updates";
 import type {
   AgentEventEnvelope,
   PlanningStateEvent,
@@ -426,7 +436,6 @@ export function createEventsSlice({
           set((state) => ({
             pendingPermissions: enqueuePermission(state.pendingPermissions, {
               ...event.request,
-              receivedAt: envelope.ts,
             }),
           }));
           notifyInteractivePrompt(envelope.sessionId, "permission", {
@@ -515,28 +524,21 @@ export function createEventsSlice({
             event.message.taskId = envelope.turnId;
           }
           set((state) =>
-            state.messages.some((message) => message.id === event.message.id)
+            getSessionMessageSnapshot(state.messages).positions.has(event.message.id)
               ? state
-              : { messages: [...state.messages, event.message] },
+              : { messages: upsertLiveSessionMessage(state.messages, event.message) },
           );
           break;
         case "message_update":
           set((state) => {
-            const index = state.messages.findIndex(
-              (message) => message.id === event.message.id,
-            );
+            const normalized = dedupeSessionMessages(state.messages);
+            const index = getSessionMessageSnapshot(normalized).positions.get(event.message.id);
             const nextMessage = applyMessageUpdate(
-              index >= 0 ? state.messages[index] : undefined,
+              index === undefined ? undefined : normalized[index],
               event,
             );
-            if (index >= 0 && state.messages[index] === nextMessage) return state;
-            const messages =
-              index >= 0
-                ? state.messages.map((message, messageIndex) =>
-                    messageIndex === index ? nextMessage : message,
-                  )
-                : [...state.messages, nextMessage];
-            return { messages };
+            const messages = upsertLiveSessionMessage(normalized, nextMessage);
+            return messages === state.messages ? state : { messages };
           });
           break;
         case "message_end":
@@ -570,21 +572,19 @@ export function createEventsSlice({
           break;
         case "tool_update":
           if (event.partialResult === undefined) break;
-          set((state) => ({
-            messages: state.messages.map((message) =>
-              message.toolCallId === event.toolCallId &&
-              message.toolStatus === "running"
-                ? {
-                    ...message,
-                    content:
-                      typeof event.partialResult === "string"
-                        ? event.partialResult
-                        : formatToolValue(event.partialResult),
-                    toolResult: event.partialResult,
-                  }
-                : message,
-            ),
-          }));
+          set((state) => {
+            const indices = getSessionToolMessagePositions(state.messages, event.toolCallId)
+              .filter((index) => state.messages[index].toolStatus === "running");
+            if (indices.length === 0) return state;
+            const content = typeof event.partialResult === "string"
+              ? event.partialResult
+              : formatToolValue(event.partialResult);
+            const messages = state.messages.slice();
+            for (const index of indices) {
+              messages[index] = { ...messages[index], content, toolResult: event.partialResult };
+            }
+            return { messages: registerSessionMessageReplacements(state.messages, messages, indices) };
+          });
           break;
         case "tool_end":
           set((state) => {
@@ -639,7 +639,6 @@ export function createEventsSlice({
           set((state) => ({
             pendingPermissions: enqueuePermission(state.pendingPermissions, {
               ...event.request,
-              receivedAt: envelope.ts,
             }),
           }));
           notifyInteractivePrompt(envelope.sessionId, "permission", {

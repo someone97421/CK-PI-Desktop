@@ -2,10 +2,14 @@ import { BrowserWindow, ipcMain, Menu, screen, session, systemPreferences } from
 import { pathToFileURL } from "node:url";
 import { join, resolve } from "node:path";
 import { catalogs, resolveLocale } from "@pi-desktop/i18n";
-import { isNetUrlAllowed, THEME_ASSET_SCHEME } from "@pi-desktop/plugin-sdk";
+import {
+  isNetUrlAllowedWithGrant,
+  THEME_ASSET_SCHEME,
+} from "@pi-desktop/plugin-sdk";
 import { builtinWindowBackground } from "@pi-desktop/shared";
 import { suppressLinuxFramelessSystemMenu } from "./frameless-system-menu";
 import { PanelSenders, pageGoneWithin, resolvePanelInvocation } from "./plugin-panel-senders";
+import { PanelOperationSerializer } from "./plugin-panel-senders";
 import {
   isPluginPanelWindowControlAction,
   isPluginWidgetAction,
@@ -54,6 +58,12 @@ export type PluginPanelOpenRequest = {
    * an unmetered outbound channel that bypasses the `net.fetch` permission.
    */
   netDomains?: readonly string[];
+  /**
+   * The install-time `net.anyHost` grant. It lifts the same allowlist for the
+   * panel page, so every egress path answers to one decision, except cloud
+   * metadata hosts, which stay refused.
+   */
+  netAnyHost?: boolean;
   /** Allows microphone audio for plugins with the explicit ui.microphone grant. */
   allowMicrophone?: boolean;
   /** Adds a development-only reminder for the non-clickable drag band. */
@@ -205,7 +215,8 @@ export type PluginPanelBlockedRequest = (input: {
 }) => void;
 
 /**
- * Confine everything a plugin's web contents can reach to its declared domains.
+ * Confine everything a plugin's web contents can reach to its declared
+ * domains, lifted by the install-time `net.anyHost` grant when present.
  *
  * Shared by the detached panel window and the docked work-panel view: both are
  * full web pages under the same plugin identity, so one policy governs both.
@@ -218,11 +229,13 @@ export function applyPluginEgressPolicy(
   input: {
     pluginId: string;
     netDomains?: readonly string[];
+    netAnyHost?: boolean;
     allowMicrophone?: boolean;
     onBlockedRequest?: PluginPanelBlockedRequest;
   },
 ): void {
   const domains = input.netDomains ?? [];
+  const grant = { domains, anyHost: input.netAnyHost === true };
   ses.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
     let scheme = "";
     try {
@@ -236,7 +249,7 @@ export function applyPluginEgressPolicy(
       callback({ cancel: false });
       return;
     }
-    if (isNetUrlAllowed(details.url, domains)) {
+    if (isNetUrlAllowedWithGrant(details.url, grant)) {
       callback({ cancel: false });
       return;
     }
@@ -307,6 +320,7 @@ export class PluginPanelHost {
    * context menu it did not ask for.
    */
   private widgetLocales = new Map<number, string>();
+  private serializer = new PanelOperationSerializer();
   /**
    * Extra windows of one plugin beyond its primary surface, keyed by plugin and
    * widget id. A widget is reachable only through its own plugin's key, so a
@@ -658,6 +672,7 @@ export class PluginPanelHost {
     applyPluginEgressPolicy(ses, {
       pluginId: request.pluginId,
       netDomains: request.netDomains,
+      netAnyHost: request.netAnyHost,
       allowMicrophone: request.allowMicrophone,
       onBlockedRequest: this.onBlockedRequest,
     });
@@ -669,7 +684,7 @@ export class PluginPanelHost {
     if (pending) return pending.promise;
 
     const token = { canceled: false };
-    const promise = (async () => {
+    const promise = this.serializer.run(request.pluginId, async () => {
       // The plugin's own entry, as the host resolved it. Extra widget windows
       // are seeded from this record when the plugin asks for one before its
       // surface was seen by the resolver.
@@ -780,7 +795,9 @@ export class PluginPanelHost {
         );
       });
       if (token.canceled) {
-        if (!win.isDestroyed()) win.destroy();
+        if (!win.isDestroyed()) {
+          win.destroy();
+        }
         return;
       }
       this.windows.set(request.pluginId, win);
@@ -801,7 +818,9 @@ export class PluginPanelHost {
         throw err;
       }
       if (token.canceled) {
-        if (!win.isDestroyed()) win.destroy();
+        if (!win.isDestroyed()) {
+          win.destroy();
+        }
         this.senders.release(webContentsId);
         if (this.windows.get(request.pluginId) === win) {
           this.windows.delete(request.pluginId);
@@ -811,7 +830,7 @@ export class PluginPanelHost {
       if (!win.isDestroyed()) {
         win.show();
       }
-    })();
+    });
     this.pendingOpens.set(request.pluginId, { token, promise });
     try {
       await promise;
@@ -829,9 +848,10 @@ export class PluginPanelHost {
    * Each page close is bounded: the page may still be finishing, and
    * its bridge calls have to reach a live plugin runtime while it does; a page
    * that refuses to close (`beforeunload`) settles at the budget instead of
-   * holding the call forever. A refused close leaves the panel registered.
+   * holding the call forever. A refused close leaves the panel registered unless
+   * `force` is specified, as during a development reload.
    */
-  async close(pluginId: string): Promise<void> {
+  async close(pluginId: string, options?: { force?: boolean }): Promise<void> {
     const pending = this.pendingOpens.get(pluginId);
     if (pending) {
       pending.token.canceled = true;
@@ -840,27 +860,40 @@ export class PluginPanelHost {
     // An open that is still waiting has no window to close, so cancel it here:
     // it must not finish by handing the plugin a window nothing can dismiss.
     this.cancelPendingWidgetOpens((entry) => entry.pluginId === pluginId);
-    this.panelRequests.delete(pluginId);
-    const closingPages: Promise<void>[] = [];
-    for (const [key, record] of [...this.widgetWindows]) {
-      if (record.pluginId !== pluginId) continue;
-      if (record.win.isDestroyed()) {
-        this.widgetWindows.delete(key);
-        continue;
+    return this.serializer.run(pluginId, async () => {
+      this.panelRequests.delete(pluginId);
+      const closingPages: Promise<void>[] = [];
+      for (const [key, record] of [...this.widgetWindows]) {
+        if (record.pluginId !== pluginId) continue;
+        if (record.win.isDestroyed()) {
+          this.widgetWindows.delete(key);
+          continue;
+        }
+        const page = record.win.webContents;
+        record.win.close();
+        closingPages.push(
+          (async () => {
+            await pageGoneWithin(page);
+            if (options?.force && !record.win.isDestroyed()) record.win.destroy();
+          })(),
+        );
       }
-      const page = record.win.webContents;
-      record.win.close();
-      closingPages.push(pageGoneWithin(page));
-    }
-    const win = this.windows.get(pluginId);
-    if (win && !win.isDestroyed()) {
-      const page = win.webContents;
-      win.close();
-      closingPages.push(pageGoneWithin(page));
-    } else if (this.windows.get(pluginId) === win) {
-      this.windows.delete(pluginId);
-    }
-    await Promise.allSettled(closingPages);
+      const win = this.windows.get(pluginId);
+      if (win?.isDestroyed()) {
+        this.windows.delete(pluginId);
+      }
+      if (win && !win.isDestroyed()) {
+        const page = win.webContents;
+        win.close();
+        closingPages.push(
+          (async () => {
+            await pageGoneWithin(page);
+            if (options?.force && !win.isDestroyed()) win.destroy();
+          })(),
+        );
+      }
+      await Promise.allSettled(closingPages);
+    });
   }
   /**
    * Close every panel and widget and wait for those pages to be gone, so a
@@ -870,6 +903,10 @@ export class PluginPanelHost {
    * nobody can act on.
    */
   async closeAll(): Promise<void> {
+    const pendingPluginIds = [
+      ...this.pendingOpens.keys(),
+      ...[...this.pendingWidgetOpens].map((entry) => entry.pluginId),
+    ];
     for (const pending of this.pendingOpens.values()) {
       pending.token.canceled = true;
     }
@@ -877,6 +914,7 @@ export class PluginPanelHost {
     this.cancelPendingWidgetOpens(() => true);
     const pluginIds = [
       ...new Set([
+        ...pendingPluginIds,
         ...this.windows.keys(),
         ...[...this.widgetWindows.values()].map((record) => record.pluginId),
       ]),

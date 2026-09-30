@@ -9,15 +9,9 @@ import { useTranslation } from "react-i18next";
 import type {
   AgentActivity,
   ContextCompactionMark,
-  UiMessage,
 } from "@pi-desktop/shared";
 import { formatCompactTokenCount } from "@pi-desktop/shared";
 import {
-  assistantTurnContent,
-  assistantTurnMessages,
-  assistantTurnResponseDuration,
-  assistantTurnResponseOutputTokens,
-  assistantTurnUsage,
   reuseReadonlyMap,
   type AssistantTurnEntry,
   type TranscriptEntry,
@@ -27,8 +21,6 @@ import {
   collectDelegationTimings,
 } from "../../../lib/subagent-topology";
 import {
-  isLastActivityPart,
-  projectTurnProcess,
   resolveThinkingDisplayMode,
   shouldGroupTurnProcess,
 } from "../../../lib/turn-process";
@@ -37,16 +29,14 @@ import { TranscriptReadOnlyContext } from "./context";
 import { selectionMarkdownWithinRow } from "../../../lib/selection-quote";
 import { selectionAnnotationAnchorWithinRow } from "../../../lib/response-annotation-anchor";
 import { IconQuote, IconChat } from "../../../components/icons";
-import { Markdown } from "../../../components/Markdown";
 import { IconBranch, IconReview } from "../../../components/icons";
 import { TooltipButton } from "../../../components/ui";
 import {
-  AssistantErrorMessage,
   CopyButton,
   MessageMeta,
   MessageTimestamp,
 } from "./shared";
-import { activityItemsEqual, ActivityGroup } from "./ActivityGroup";
+import { activityItemsEqual } from "./ActivityGroup";
 import { GeneratedImages } from "./GeneratedImages";
 import { MessageRow } from "./MessageRow";
 import { TaskProcessDrawer } from "./TaskProcessDrawer";
@@ -56,7 +46,12 @@ import {
   useChatTextActions,
   useTranscriptMenu,
 } from "./TranscriptMenu";
-import { useSmoothText } from "../../../hooks/useSmoothText";
+import {
+  getAssistantTurnSummary,
+  getAssistantTurnContent,
+  reuseReferences,
+} from "../../../lib/transcript-summary";
+import { AssistantTurnParts } from "./AssistantTurnParts";
 import { TurnProcess } from "./TurnProcess";
 import { ActionSlotSide } from "./ActionBarSlots";
 import { EntryExtraStack } from "./EntryExtraStack";
@@ -72,9 +67,10 @@ function assistantTurnPropsEqual(
   previous: AssistantTurnProps,
   next: AssistantTurnProps,
 ) {
+  if (previous.isActive !== next.isActive || previous.runtimeActivity !== next.runtimeActivity) return false;
+  if (previous.entry === next.entry) return true;
   if (
-    previous.isActive !== next.isActive ||
-    previous.runtimeActivity !== next.runtimeActivity ||
+    previous.entry.id !== next.entry.id ||
     previous.entry.anchorId !== next.entry.anchorId ||
     previous.entry.task !== next.entry.task ||
     previous.entry.sourceMessages !== next.entry.sourceMessages ||
@@ -83,8 +79,10 @@ function assistantTurnPropsEqual(
   ) {
     return false;
   }
+  if (previous.entry.parts === next.entry.parts) return true;
   return previous.entry.parts.every((part, index) => {
     const nextPart = next.entry.parts[index];
+    if (part === nextPart) return true;
     if (part.kind !== nextPart.kind) return false;
     if (part.kind === "compaction" && nextPart.kind === "compaction") {
       return compactionMarksEqual(part.mark, nextPart.mark);
@@ -96,9 +94,9 @@ function assistantTurnPropsEqual(
       return (
         part.endedAt === nextPart.endedAt &&
         part.items.length === nextPart.items.length &&
-        part.items.every((item, itemIndex) =>
+        (part.items === nextPart.items || part.items.every((item, itemIndex) =>
           activityItemsEqual(item, nextPart.items[itemIndex]),
-        )
+        ))
       );
     }
     return false;
@@ -206,6 +204,7 @@ export const TranscriptHistory = memo(function TranscriptHistory({
   ) {
     return false;
   }
+  if (previous.entries === next.entries) return true;
   return previous.entries.every((entry, index) =>
     transcriptEntryEqual(entry, next.entries[index]),
   );
@@ -237,20 +236,6 @@ export const TranscriptTail = memo(function TranscriptTail({
   transcriptEntryEqual(previous.entry, next.entry)
 );
 
-const SmoothMessageBubble = memo(function SmoothMessageBubble({ message, streaming }: { message: UiMessage; streaming: boolean }) {
-  const smoothStreaming = useAppStore((s) => s.settings?.smoothStreaming !== false);
-  const reducedMotion = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const enabled = smoothStreaming && !reducedMotion;
-  const displayContent = useSmoothText(message.content || "", streaming, enabled);
-  const showCursor = streaming && enabled && displayContent.length < (message.content || "").length;
-  return (
-    <div className={`message-bubble assistant-turn-fragment${streaming ? " streaming" : ""}${showCursor ? " smooth-cursor" : ""}`} data-message-id={message.id}>
-      {displayContent ? <div className="prose-chat"><Markdown source={displayContent} /></div> : null}
-      {message.error ? <AssistantErrorMessage message={message} /> : null}
-    </div>
-  );
-});
-
 export const AssistantTurn = memo(function AssistantTurn({
   entry,
   isActive,
@@ -273,45 +258,26 @@ export const AssistantTurn = memo(function AssistantTurn({
   const sessionRunning = useAppStore((s) =>
     s.activeSessionId ? s.runningSessions[s.activeSessionId] === true : false,
   );
-  const messages = assistantTurnMessages(entry);
   const task = entry.task;
   const settledTask = task && task.status !== "running" ? task : undefined;
-  const { process, responses } = projectTurnProcess(entry);
-  const finalMessage = task ? responses.at(-1)?.message : undefined;
-  const content = task
-    ? responses.map((part) => part.message.content).join("\n\n")
-    : assistantTurnContent(entry);
-  const actionMessage = task ? finalMessage : [...messages]
-    .reverse()
-    .find((message) => message.role === "assistant" && (message.content || "").trim());
-  const metaMessage = [...messages]
-    .reverse()
-    .find(
-      (message) =>
-        message.modelId ||
-        message.usage ||
-        message.responseDurationMs ||
-        message.responseOutputTokens,
-    );
-  const latestUsageMessage = [...messages]
-    .reverse()
-    .find((message) => message.usage);
-  const usage = assistantTurnUsage(entry);
-  const responseDurationMs = assistantTurnResponseDuration(entry);
-  const responseOutputTokens = assistantTurnResponseOutputTokens(entry);
+  const summary = getAssistantTurnSummary(entry);
+  const messages = summary.messages;
+  const hasError = summary.hasError;
+  const { actionMessage, metaMessage, latestUsageMessage, usage, responseDurationMs, responseOutputTokens } = summary;
   const modelId = metaMessage?.modelId ?? latestUsageMessage?.modelId;
-  const hasError = messages.some((message) => Boolean(message.error));
   const complete = task
-    ? task.status === "completed" && Boolean(content) && Boolean(actionMessage)
-    : !isActive && !hasError && Boolean(content) && Boolean(actionMessage);
-  // Plugins see a finished reply as the host keys act on it: the id of its
-  // answer message and the text Copy copies.
-  const slotReply =
-    complete && actionMessage
-      ? slotMessage("assistant", { ...actionMessage, content })
-      : undefined;
-  const streaming = !settledTask &&
-    isActive && messages.some((message) => message.status === "streaming");
+    ? task.status === "completed" && summary.hasContent && Boolean(actionMessage)
+    : !isActive && !summary.hasError && summary.hasContent && Boolean(actionMessage);
+  // A live reply is joined only on menu/copy demand. Finished reply plugins
+  // still receive exactly the text that the completed turn's Copy action uses.
+  const content = useMemo(
+    () => complete ? getAssistantTurnContent(entry) : "",
+    [complete, entry],
+  );
+  const slotReply = useMemo(() => complete && actionMessage
+    ? slotMessage("assistant", { ...actionMessage, content }) : undefined,
+  [complete, actionMessage, content]);
+  const streaming = !settledTask && isActive && summary.streaming;
   /*
     The turn owns the menu for its whole subtree, the answer rows it renders
     included: Regenerate and Branch act on the turn's answer message, so a menu
@@ -322,7 +288,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       label: t("chat.messageMenu"),
       items: assistantTurnMenuItems({
         t,
-        answer: content,
+        answer: complete ? content : getAssistantTurnContent(entry),
         selectTarget:
           [
             ...event.currentTarget.querySelectorAll<HTMLElement>(
@@ -343,21 +309,22 @@ export const AssistantTurn = memo(function AssistantTurn({
 
   // Collect delegation statuses across ALL activity parts of this turn so that
   // a TaskWait in one part can inform the Task cards in a different part.
-  const turnAllActivityItems = useMemo(
-    () =>
-      entry.parts.flatMap((part) =>
-        part.kind === "activity" ? part.items : [],
-      ),
-    [entry.parts],
-  );
+  const toolsRef = useRef(summary.tools);
+  const tools = reuseReferences(toolsRef.current, summary.tools);
+  toolsRef.current = tools;
+  const generatedImages = useMemo(() => tools
+    .filter((message) => message.toolName === "GenerateImages")
+    .map((message) => <GeneratedImages key={message.id} message={message} />), [tools]);
+  // Delegation status/timing depends on actual tool messages, never on thinking
+  // or text and never on a Task's attached child transcript identity.
+  const delegationItems = useMemo(() => tools.map((message) => ({ kind: "tool" as const, message })), [tools]);
   const rawDelegationStatuses = useMemo(
-    () =>
-      collectDelegationStatuses(turnAllActivityItems, { turnLive: isActive && !settledTask }),
-    [turnAllActivityItems, isActive, settledTask],
+    () => collectDelegationStatuses(delegationItems, { turnLive: isActive && !settledTask }),
+    [delegationItems, isActive, settledTask],
   );
   const rawDelegationTimings = useMemo(
-    () => collectDelegationTimings(turnAllActivityItems),
-    [turnAllActivityItems],
+    () => collectDelegationTimings(delegationItems),
+    [delegationItems],
   );
   const statusesRef = useRef(rawDelegationStatuses);
   const timingsRef = useRef(rawDelegationTimings);
@@ -379,31 +346,13 @@ export const AssistantTurn = memo(function AssistantTurn({
       resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode),
     ),
   );
+  const { process, responses, lastActivityPart } = summary;
   const turnProcessActive = !settledTask && isActive;
   const activePart = turnProcessActive ? entry.parts.at(-1) : undefined;
-  const renderPart = (part: AssistantTurnEntry["parts"][number], index: number) => {
-    if (part.kind === "compaction") return <CompactionRow key={part.mark.id} mark={part.mark} />;
-    if (part.kind === "activity") return (
-      <ActivityGroup
-        key={`activity-${part.items[0]?.message.id ?? index}-${part.items[0]?.kind ?? "activity"}${part.items[0]?.kind === "hostedSearch" ? `-${part.items[0].round.id}` : ""}`}
-        items={part.items}
-        endedAt={part.endedAt}
-        isActive={part === activePart}
-        isLast={isLastActivityPart(entry.parts, part)}
-        runtimeActivity={part === activePart ? runtimeActivity : undefined}
-        turnDelegationStatuses={turnDelegationStatuses}
-        turnDelegationTimings={turnDelegationTimings}
-        embedded={Boolean(settledTask) || isPlainHistory}
-      />
-    );
-    if (part.message.role !== "assistant") return (
-      <div className="task-steering-message" key={part.message.id}>
-        {part.message.role === "user" && part.message.steering
-          ? <p className="task-steering-label">{t("chat.taskDelivery.steering")}</p> : null}
-        <MessageRow message={part.message} isRunning={!settledTask && isActive} />
-      </div>
-    );
-    return <SmoothMessageBubble key={part.message.id} message={part.message} streaming={!settledTask && isActive && part.message.status === "streaming"} />;
+  const partContext = {
+    isActive: turnProcessActive, activePart, lastActivityPart, runtimeActivity,
+    turnDelegationStatuses, turnDelegationTimings,
+    embedded: Boolean(settledTask) || isPlainHistory,
   };
 
   return (
@@ -419,29 +368,21 @@ export const AssistantTurn = memo(function AssistantTurn({
         {settledTask ? (
           <>
             <TaskProcessDrawer key={settledTask.id} task={settledTask} processParts={process}>
-              {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}
+              <AssistantTurnParts parts={process} {...partContext} />
             </TaskProcessDrawer>
-            {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}
+            <AssistantTurnParts parts={responses} {...partContext} />
           </>
         ) : isPlainHistory && groupProcess ? (
           <>
-            <TurnProcess
-              turnId={entry.id}
-              processParts={process}
-              turnParts={entry.parts}
-              isActive={turnProcessActive}
-              delegationStatuses={turnDelegationStatuses}
-            >
-              {process.map((part) => renderPart(part, entry.parts.indexOf(part)))}
+            <TurnProcess turnId={entry.id} processParts={process} turnParts={entry.parts} isActive={turnProcessActive} delegationStatuses={turnDelegationStatuses}>
+              <AssistantTurnParts parts={process} {...partContext} />
             </TurnProcess>
-            {responses.map((part) => renderPart(part, entry.parts.indexOf(part)))}
+            <AssistantTurnParts parts={responses} {...partContext} />
           </>
         ) : (
-          entry.parts.map(renderPart)
+          <AssistantTurnParts parts={entry.parts} {...partContext} />
         )}
-        {turnAllActivityItems.filter((item) => item.kind === "tool" && item.message.toolName === "GenerateImages").map((item) => (
-          <GeneratedImages key={item.message.id} message={item.message} />
-        ))}
+        {generatedImages}
         {!task && !isActive && metaMessage ? (
           <MessageMeta
             modelId={modelId}

@@ -3,7 +3,7 @@
 // this only affects a new profile without a saved preference.
 export const WORK_PANEL_MIN_WIDTH = 244;
 export const WORK_PANEL_DEFAULT_WIDTH = 360;
-export const WORK_PANEL_CHAT_MIN_WIDTH = 640;
+export const WORK_PANEL_CHAT_MIN_WIDTH = 800;
 export const WORK_PANEL_CHAT_MAX_WIDTH = 10000;
 /**
  * 三栏布局的聊天区域下限，侧栏优先收起，工作面板不能挤占此宽度。

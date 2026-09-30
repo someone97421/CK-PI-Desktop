@@ -20,8 +20,8 @@ import {
   isFsPathInScope,
   isValidBusTopic,
   isValidBusTopicPattern,
-  isNetUrlAllowed,
-  isNetSocketUrlAllowed,
+  isNetSocketUrlAllowedWithGrant,
+  isNetUrlAllowedWithGrant,
   matchesBusTopic,
   matchFsGlob,
   normalizeFsPath,
@@ -59,6 +59,7 @@ import {
   type PluginNativeNotificationInput,
   type PluginNativeNotificationResult,
   type PluginNotificationPermission,
+  type PluginNetEgressGrant,
   type PluginServiceContrib,
   type PluginSettingContrib,
   type PluginSkillContrib,
@@ -224,6 +225,8 @@ export type PluginPanelRequest = {
   resizable?: boolean;
   /** The plugin's egress allowlist; the panel session is confined to it. */
   netDomains?: readonly string[];
+  /** The install-time `net.anyHost` grant lifts the panel's allowlist too. */
+  netAnyHost?: boolean;
   /** Allows the isolated panel to request microphone audio, never camera access. */
   allowMicrophone?: boolean;
   /** Development panels show the host drag-band reminder in their chrome. */
@@ -420,7 +423,7 @@ export type PluginHostServices = {
     name: string;
     ok: boolean;
     message?: string;
-  }) => void;
+  }) => Promise<void> | void;
   /** Work-panel guest + CDP, gated by `browser.cdp` in the runtime. */
   browser?: {
     navigate: (
@@ -2157,7 +2160,7 @@ export class PluginRuntime {
         ok: true,
         ts: Date.now(),
       });
-      this.services.onPluginReloaded?.({ pluginId, name: manifest.name, ok: true });
+      await this.services.onPluginReloaded?.({ pluginId, name: manifest.name, ok: true });
     } catch (error) {
       const message = (error as Error).message;
       this.services.audit?.({
@@ -2167,7 +2170,7 @@ export class PluginRuntime {
         message,
         ts: Date.now(),
       });
-      this.services.onPluginReloaded?.({ pluginId, name, ok: false, message });
+      await this.services.onPluginReloaded?.({ pluginId, name, ok: false, message });
     } finally {
       this.reloading.delete(pluginId);
     }
@@ -3656,10 +3659,11 @@ export class PluginRuntime {
         continue;
       }
       // An http MCP endpoint is an outbound channel like any other, so it
-      // answers to the same allowlist rather than to its permission alone.
+      // answers to the same egress decision as pi.net.fetch: the allowlist,
+      // plus the install-time net.anyHost grant.
       if (server.transport === "http") {
         const url = String(server.url ?? "");
-        if (!isNetUrlAllowed(url, this.netDomains(loaded))) {
+        if (!isNetUrlAllowedWithGrant(url, this.netEgressGrant(loaded))) {
           this.skipMcpServer(
             pluginId,
             server.id,
@@ -4205,14 +4209,27 @@ export class PluginRuntime {
   }
 
   /**
+   * The plugin's egress decision input: its allowlist plus whether the user
+   * granted `net.anyHost` at install. One shape for every chokepoint so the
+   * grant means the same thing everywhere.
+   */
+  private netEgressGrant(loaded: LoadedPlugin): PluginNetEgressGrant {
+    return {
+      domains: this.netDomains(loaded),
+      anyHost: loaded.permissions.has("net.anyHost"),
+    };
+  }
+
+  /**
    * Confine one outbound URL to the allowlist. Reading a secret only becomes a
    * leak when it can leave, so every host-owned egress path funnels through
-   * here — and an undeclared `net.domains` means nothing leaves at all.
+   * here — an undeclared `net.domains` means nothing leaves at all, unless the
+   * install-time `net.anyHost` grant lifted the allowlist.
    */
   private assertEgress(loaded: LoadedPlugin, url: string, api: string): void {
-    const domains = this.netDomains(loaded);
-    if (isNetUrlAllowed(url, domains)) return;
-    this.refuseEgress(loaded, url, api, domains);
+    const grant = this.netEgressGrant(loaded);
+    if (isNetUrlAllowedWithGrant(url, grant)) return;
+    this.refuseEgress(loaded, url, api, grant.domains);
   }
 
   /**
@@ -4221,9 +4238,9 @@ export class PluginRuntime {
    * the transport never opens a connection to an undeclared host.
    */
   private assertSocketEgress(loaded: LoadedPlugin, url: string): void {
-    const domains = this.netDomains(loaded);
-    if (isNetSocketUrlAllowed(url, domains)) return;
-    this.refuseEgress(loaded, url, "net.websocket.connect", domains);
+    const grant = this.netEgressGrant(loaded);
+    if (isNetSocketUrlAllowedWithGrant(url, grant)) return;
+    this.refuseEgress(loaded, url, "net.websocket.connect", grant.domains);
   }
 
   /** One refusal path for both schemes: same audit shape, same message. */
@@ -5135,6 +5152,7 @@ export class PluginRuntime {
             height: loaded.manifest.ui?.height ?? 360,
             htmlPath,
             netDomains: this.netDomains(loaded),
+            netAnyHost: loaded.permissions.has("net.anyHost"),
             allowMicrophone: loaded.permissions.has("ui.microphone"),
             ...(loaded.development ? { development: true } : {}),
           });

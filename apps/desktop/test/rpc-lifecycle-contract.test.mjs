@@ -154,13 +154,12 @@ test("host disposal closes stdin, observes exit, and force-kills only after grac
   );
 });
 
-test("Bash defaults are finite and the tool advertises the effective timeout", () => {
+test("Bash execution remains bounded while permission transport has no deadline", () => {
   assert.match(runtimeSource, /DEFAULT_COMMAND_TIMEOUT_MS/);
   assert.match(runtimeSource, /defaults to a 60-second timeout/);
   assert.match(runtimeSource, /timeoutMs,\n\s+}/);
-  assert.match(rpcTimeoutSource, /DEFAULT_BASH_RPC_TIMEOUT_MS/);
-  assert.match(rpcTimeoutSource, /return DEFAULT_BASH_RPC_TIMEOUT_MS/);
-  assert.doesNotMatch(rpcTimeoutSource, /return undefined/);
+  assert.doesNotMatch(rpcTimeoutSource, /DEFAULT_BASH_RPC_TIMEOUT_MS/);
+  assert.match(rpcTimeoutSource, /if \(method === "tools\.execute"\) return undefined/);
 });
 
 test("turn ownership and execution queue wake only after durable turn settlement", () => {

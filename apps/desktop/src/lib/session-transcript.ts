@@ -1,4 +1,10 @@
 import type { AgentEvent, MessageAttachment, UiMessage } from "@pi-desktop/shared";
+import {
+  getSessionMessageSnapshot,
+  registerSessionMessageAppend,
+  registerSessionMessageReplacement,
+  registerSessionMessageRewrite,
+} from "./session-transcript-updates";
 
 type OptimisticFileReference = {
   path: string;
@@ -72,7 +78,9 @@ export function projectMessageEnd(
         message.id === replacesMessageId && message.role === "assistant",
     );
     if (index >= 0) {
-      next = [...messages.slice(0, index), ...messages.slice(index + 1)];
+      next = registerSessionMessageRewrite(messages, [
+        ...messages.slice(0, index), ...messages.slice(index + 1),
+      ]);
     }
   }
   const failed =
@@ -102,6 +110,7 @@ function preserveSteeringAttribution(message: UiMessage, previous?: UiMessage): 
  * position, but use the last value, matching host-core's keep-last policy.
  */
 export function dedupeSessionMessages(messages: UiMessage[]): UiMessage[] {
+  if (getSessionMessageSnapshot(messages).unique) return messages;
   const positions = new Map<string, number>();
   let next: UiMessage[] | undefined;
   for (const [index, message] of messages.entries()) {
@@ -118,7 +127,7 @@ export function dedupeSessionMessages(messages: UiMessage[]): UiMessage[] {
     if (!next) next = messages.slice(0, index);
     next[previous] = preserveSteeringAttribution(message, next[previous]);
   }
-  return next ?? messages;
+  return next ? registerSessionMessageRewrite(messages, next) : messages;
 }
 
 /**
@@ -130,12 +139,12 @@ export function upsertLiveSessionMessage(
   message: UiMessage,
 ): UiMessage[] {
   const normalized = dedupeSessionMessages(messages);
-  const index = normalized.findIndex((candidate) => candidate.id === message.id);
-  if (index < 0) return [...normalized, message];
+  const index = getSessionMessageSnapshot(normalized).positions.get(message.id);
+  if (index === undefined) return registerSessionMessageAppend(normalized, [...normalized, message]);
   if (normalized[index] === message) return normalized;
   const next = normalized.slice();
   next[index] = preserveSteeringAttribution(message, normalized[index]);
-  return next;
+  return registerSessionMessageReplacement(normalized, next, index);
 }
 
 /** Replace only the acknowledged submission identity, never an equal-text row. */
@@ -148,7 +157,8 @@ export function reconcilePersistedUserMessage(
   if (message.role !== "user" || !optimistic) return messages;
   const acknowledged = preserveSteeringAttribution(message, optimistic);
   return upsertLiveSessionMessage(
-    messages.map((row) => row.id === optimisticMessageId ? acknowledged : row),
+    registerSessionMessageRewrite(messages,
+      messages.map((row) => row.id === optimisticMessageId ? acknowledged : row)),
     acknowledged,
   );
 }
@@ -162,9 +172,11 @@ export function removeLiveSessionMessage(
   messageId: string,
 ): UiMessage[] {
   const normalized = dedupeSessionMessages(messages);
-  const index = normalized.findIndex((message) => message.id === messageId);
-  if (index < 0) return normalized;
-  return [...normalized.slice(0, index), ...normalized.slice(index + 1)];
+  const index = getSessionMessageSnapshot(normalized).positions.get(messageId);
+  if (index === undefined) return normalized;
+  return registerSessionMessageRewrite(normalized, [
+    ...normalized.slice(0, index), ...normalized.slice(index + 1),
+  ]);
 }
 
 /**

@@ -37,6 +37,8 @@ export type RiskTier = "high" | "medium" | "low";
 /** Mirrors the risk column of docs/spec/07-plugins/13-plugin-permissions-matrix.md. */
 export const PERMISSION_RISK: Record<string, RiskTier> = {
   "net.fetch": "high",
+  // Reaches any host the user types in; same tier as the outbound paths.
+  "net.anyHost": "high",
   "fs.write": "high",
   "fs.delete": "high",
   "fs.write.workspace": "high",
