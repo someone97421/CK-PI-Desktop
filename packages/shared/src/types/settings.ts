@@ -66,6 +66,8 @@ export type AppSettings = {
   /** App-owned real-time voice bindings; separate from local dictation. */
   liveVoice?: LiveVoiceSettings;
   defaultMode: Mode;
+  /** Add a user-level Windows Explorer entry for temporary sessions. */
+  temporaryWorkspaceContextMenu?: boolean;
   /**
    * Keep retryable provider/network failures retrying until the request succeeds.
    * Absent and false use the bounded ten-retry policy.
@@ -73,7 +75,6 @@ export type AppSettings = {
   infiniteProviderRetry?: boolean;
   /** Prevent idle system sleep while this desktop app runs; off when absent. */
   keepAwakeWhileRunning?: boolean;
-  /** Configured command shell for the agent Bash protocol tool. */
   defaultCommandShell?: CommandShellId;
   /**
    * Whether the stored user template replaces the built-in one (ADR 0121).

@@ -168,6 +168,7 @@ fn handle_with_workspace_policy(
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?
                 .unwrap_or_else(|| json!({}));
             let options = sessions::SessionCreateOptions {
+                draft_id: None,
                 title: Some(task.title.clone()),
                 mode: Some("agent".into()),
                 thinking_level: task.thinking_level.clone(),
@@ -188,6 +189,7 @@ fn handle_with_workspace_policy(
                 } else {
                     st.workspace.get().map(|w| w.path)
                 },
+                temporary_workspace_path: None,
                 permission_mode: task
                     .permission_mode
                     .clone()

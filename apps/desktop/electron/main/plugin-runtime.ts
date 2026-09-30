@@ -236,6 +236,8 @@ export type PluginPanelRequest = {
 export type PluginPanelBridgeContext = {
   /** Absolute path recorded by the panel preload for a real drop gesture. */
   droppedPath?: string;
+  senderId?: number;
+  workspaceScope?: { path: string; name: string } | null;
 };
 
 /** Transport to one plugin host process (ADR 0008). */
@@ -2351,7 +2353,7 @@ export class PluginRuntime {
           {
             t: "call",
             method: "panel.invoke",
-            payload: { channel, payload: payload ?? {} },
+            payload: { channel, payload: payload ?? {}, workspaceScope: context?.workspaceScope },
           },
           PLUGIN_PANEL_TIMEOUT_MS,
         );

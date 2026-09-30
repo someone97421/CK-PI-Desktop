@@ -21,12 +21,13 @@ export function createSubagentSessionAuthority(
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error("Invalid snapshot session identity");
     const host = getHost();
     if (!host) throw new Error("会话服务尚未就绪，暂不能校验快照。");
-    const result = await host.call<{ session?: { id: string; projectPath?: string | null; createdAt?: string; messageCount?: number } | null }>(
+    const result = await host.call<{ session?: { id: string; projectPath?: string | null; temporaryWorkspacePath?: string | null; createdAt?: string; messageCount?: number } | null }>(
       "session.get", { id: sessionId, messageLimit: 1, contentLimit: 1 },
     );
     if (!result.session) return null;
     const session = result.session;
-    const projectRealPath = session.projectPath ? await realpath(session.projectPath) : "";
+    const workspacePath = session.projectPath || session.temporaryWorkspacePath;
+    const projectRealPath = workspacePath ? await realpath(workspacePath) : "";
     const digest = createHash("sha256");
     digest.update(JSON.stringify({ id: session.id, createdAt: session.createdAt, projectRealPath, messageCount: session.messageCount }));
     const directory = join(dataDir, "sessions");

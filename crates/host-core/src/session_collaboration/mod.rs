@@ -148,6 +148,7 @@ fn spawn(db: &Database, input: &Value) -> Result<Value> {
     let created = sessions::create_session_with_options(
         db,
         sessions::SessionCreateOptions {
+            draft_id: None,
             title: Some(
                 input
                     .get("title")
@@ -165,6 +166,7 @@ fn spawn(db: &Database, input: &Value) -> Result<Value> {
                 .and_then(Value::as_str)
                 .map(str::to_owned),
             project_path: parent.summary.project_path,
+            temporary_workspace_path: parent.summary.temporary_workspace_path,
             thinking_level: Some(parent.summary.thinking_level),
             permission_mode: Some(parent.summary.permission_mode),
         },

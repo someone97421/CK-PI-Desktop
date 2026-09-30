@@ -12,7 +12,7 @@ function canonicalPath(path: string): string {
 }
 
 /** 共用业务目录，独立 Chromium 配置；锁的路径在 Electron 创建锁对象时固定。 */
-export function configureApplicationIdentity(app: App, options: { home?: string; dataDir?: string } = {}): { dataDir: string; hasSingleInstanceLock: boolean } {
+export function configureApplicationIdentity(app: App, options: { home?: string; dataDir?: string; temporaryWorkspacePath?: string | null } = {}): { dataDir: string; hasSingleInstanceLock: boolean } {
   const defaultDataDir = join(options.home ?? homedir(), ".pi-desktop");
   const dataDir = resolve((options.dataDir ?? process.env.PI_DESKTOP_DATA_DIR)?.trim() || defaultDataDir);
   mkdirSync(dataDir, { recursive: true });
@@ -28,7 +28,9 @@ export function configureApplicationIdentity(app: App, options: { home?: string;
   mkdirSync(lockDir, { recursive: true });
   app.setName(APP_LEGACY_LOCK_NAME);
   app.setPath("userData", lockDir);
-  const hasSingleInstanceLock = app.requestSingleInstanceLock();
+  const hasSingleInstanceLock = app.requestSingleInstanceLock({
+    temporaryWorkspacePath: options.temporaryWorkspacePath ?? null,
+  });
   if (!hasSingleInstanceLock) {
     return { dataDir, hasSingleInstanceLock: false };
   }

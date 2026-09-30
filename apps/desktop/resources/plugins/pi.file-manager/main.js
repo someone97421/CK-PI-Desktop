@@ -37,6 +37,13 @@
 
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { AsyncLocalStorage } = require("node:async_hooks");
+const workspaceScope = new AsyncLocalStorage();
+
+async function scopedWorkspace() {
+  const scope = workspaceScope.getStore();
+  return scope === undefined ? pi.workspace.get() : scope;
+}
 
 // ── 上限 ────────────────────────────────────────────────────────────────────
 
@@ -207,7 +214,7 @@ async function exists(target) {
  * projectGroup()：两者刻意分开，免得视图把「基点」当成「组的身份」来记忆。
  */
 async function currentRoot() {
-  const workspace = await pi.workspace.get();
+  const workspace = await scopedWorkspace();
   if (!workspace?.path) return null;
   return rootPayload(workspace, selectedRootOf(workspace));
 }
@@ -218,7 +225,7 @@ async function currentRoot() {
  * 一共有哪些 folder」，当前看的是哪个由 prefs.projectRoots 推导。
  */
 async function projectGroup() {
-  const workspace = await pi.workspace.get();
+  const workspace = await scopedWorkspace();
   if (!workspace?.path) return null;
   return rootPayload(workspace, primaryRootOf(rootsOf(workspace)));
 }
@@ -380,7 +387,7 @@ async function resolveTarget(payload, mode) {
  * 项目外路径，那条路仍归 resolveExternal 管。
  */
 async function resolveGroupAbsolute(rawPath, mode) {
-  const workspace = await pi.workspace.get();
+  const workspace = await scopedWorkspace();
   if (!workspace?.path) throw fail("NO_WORKSPACE", "no project is open");
 
   const abs = path.resolve(rawPath);
@@ -1034,12 +1041,14 @@ async function handleSearch(payload) {
   const limit = Math.min(Math.max(Number(payload?.limit) || MAX_SEARCH_MATCHES, 1), 200);
 
   let session = cursor ? searchSessions.get(cursor) : null;
+  if (session && (session.rootPath !== rootPath || session.needle !== query.toLowerCase())) session = null;
   if (!session) {
     // 栈里是「目录帧」而不是目录路径：帧被完整扫完才出栈，否则命中上限时
     // 该目录剩余条目会被永久丢掉（分页会漏结果）。
     session = {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: Date.now(),
+      rootPath,
       needle: query.toLowerCase(),
       stack: [{ dir: "", entries: null, index: 0, rules: [] }],
       scanned: 0,
@@ -1382,12 +1391,12 @@ async function sqliteHandle(relPath) {
     if (now - entry.usedAt > SQLITE_IDLE_MS) closeSqliteHandle(key);
   }
 
-  const cached = sqliteHandles.get(rel);
+  const cached = sqliteHandles.get(abs);
   if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
     cached.usedAt = Date.now();
     return { db: cached.db, rel, abs, stat };
   }
-  if (cached) closeSqliteHandle(rel);
+  if (cached) closeSqliteHandle(abs);
 
   const db = new sqlite.DatabaseSync(abs, { readOnly: true });
   try {
@@ -1407,7 +1416,7 @@ async function sqliteHandle(relPath) {
     throw error;
   }
 
-  sqliteHandles.set(rel, { db, mtimeMs: stat.mtimeMs, size: stat.size, usedAt: Date.now() });
+  sqliteHandles.set(abs, { db, mtimeMs: stat.mtimeMs, size: stat.size, usedAt: Date.now() });
   pruneSqliteHandles();
   return { db, rel, abs, stat };
 }
@@ -1658,7 +1667,7 @@ async function handlePrefsSet(payload) {
   let key = null;
   let previous;
   if (touchesRoots) {
-    const workspace = await pi.workspace.get().catch(() => null);
+    const workspace = await scopedWorkspace().catch(() => null);
     key = workspace?.path ? projectKeyOf(workspace) : null;
     if (key) previous = (prefs.projectRoots ?? {})[key];
   }
@@ -1711,7 +1720,7 @@ async function onPanelInvoke(channel, payload) {
   const handler = CHANNELS[channel];
   if (!handler) return { ok: false, code: "UNSUPPORTED", message: `unknown channel: ${channel}` };
   try {
-    return await handler(payload ?? {});
+    return await workspaceScope.run(payload?.__workspaceScope, () => handler(payload ?? {}));
   } catch (error) {
     return toFailure(error);
   }

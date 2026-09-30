@@ -12,7 +12,7 @@ import {
 } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { sameComposerModelId } from "../../lib/composer-models";
-import { scheduleHomeDraftAdopt } from "../../lib/composer-draft-cache";
+import { scheduleHomeDraftAdopt, temporaryDraftKey } from "../../lib/composer-draft-cache";
 import {
   commitForkedSessionState,
   forkedSessionMessages,
@@ -37,6 +37,7 @@ export type PersistSessionOptions = {
   intent?: number;
   projectPath?: string | null;
   draftConfiguration?: DraftSessionConfiguration | null;
+  temporaryWorkspacePath?: string | null;
 };
 
 export type SessionCoordination = {
@@ -246,12 +247,21 @@ export function createSessionCoordination({
   ): void {
     const messages: UiMessage[] = [];
     runtime.cacheSessionTranscript(summary.id, messages, EMPTY_SESSION_WINDOW);
-    if (options.activate) scheduleHomeDraftAdopt(summary.id);
+    if (options.activate) {
+      const current = get();
+      const sourceKey = !current.workspace?.path && current.draftSessionId
+        ? temporaryDraftKey(current.draftSessionId) : undefined;
+      scheduleHomeDraftAdopt(summary.id, sourceKey);
+    }
     set((current) => {
       const commit = commitForkedSessionState(current, summary, {
         activate: options.activate,
       });
       const shared: Partial<AppState> = {
+        temporaryDrafts: Object.fromEntries(Object.entries(current.temporaryDrafts)
+          .filter(([id]) => id !== summary.id)),
+        lastTemporaryDraftId: current.lastTemporaryDraftId === summary.id
+          ? null : current.lastTemporaryDraftId,
         sessions: decorateSessions(commit.sessions, current.sessionMeta),
         sessionHistory: {
           ...current.sessionHistory,
@@ -270,10 +280,14 @@ export function createSessionCoordination({
         activeSessionId: summary.id,
         selectingSessionId: undefined,
         draftConfiguration: null,
+        draftTemporaryWorkspacePath: null,
+        draftSessionKind: null,
+        draftSessionId: null,
         messages,
         page: "chat" as const,
         isRunning: current.runningSessions[summary.id] ?? false,
-        navStack: commit.navStack as AppState["navStack"],
+        navStack: (commit.navStack as AppState["navStack"]).map((entry) =>
+          entry.draftId === summary.id ? { page: "chat" as const, sessionId: summary.id } : entry),
         navIndex: commit.navIndex,
       };
     });
@@ -293,6 +307,14 @@ export function createSessionCoordination({
       options && "draftConfiguration" in options
         ? options.draftConfiguration
         : state.draftConfiguration;
+    const temporaryWorkspacePath =
+      options && "temporaryWorkspacePath" in options
+        ? options.temporaryWorkspacePath
+        : state.draftTemporaryWorkspacePath;
+    const draftSessionId =
+      !projectPath && state.draftSessionKind === "temporary"
+        ? state.draftSessionId
+        : null;
     const inherited = inheritedSessionModelBinding({
       draft: draftConfig,
       settings,
@@ -326,6 +348,8 @@ export function createSessionCoordination({
         title: untitledTaskTitle(),
         mode: draftConfig?.mode ?? normalizeMode(settings?.defaultMode),
         thinkingLevel: draftConfig?.thinkingLevel ?? defaultThinkingLevel,
+        ...(!projectPath && draftSessionId ? { draftId: draftSessionId } : {}),
+        ...(projectPath ? {} : temporaryWorkspacePath ? { temporaryWorkspacePath } : {}),
         permissionMode: draftConfig?.permissionMode,
         providerId: inherited.providerId,
         modelId: inherited.modelId,
@@ -351,8 +375,17 @@ export function createSessionCoordination({
   async function materializeDraftSession(
     intent?: number,
   ): Promise<string | null> {
-    const state = get();
-    const scopeKey = runtime.newSessionScopeKey(state.workspace?.path ?? null);
+    let state = get();
+    if (
+      !state.activeSessionId &&
+      state.draftSessionKind === "temporary" &&
+      !state.draftSessionId
+    ) {
+      set({ draftSessionId: crypto.randomUUID() });
+      state = get();
+    }
+    const scopeKey = runtime.newSessionScopeKey(!state.workspace?.path && state.draftSessionId
+      ? `draft:${state.draftSessionId}` : state.workspace?.path ?? null);
     const pending = runtime.pendingNewSessionRequests.get(scopeKey);
     if (pending) {
       await pending;

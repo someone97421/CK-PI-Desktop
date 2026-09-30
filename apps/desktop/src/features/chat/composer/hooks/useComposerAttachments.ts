@@ -5,7 +5,7 @@ import {
   type DragEvent as ReactDragEvent,
 } from "react";
 import type { TFunction } from "i18next";
-import { materializeDraftSession, useAppStore } from "../../../../stores/app-store";
+import { ensureDraftSession, useAppStore } from "../../../../stores/app-store";
 import { api } from "../../../../lib/api";
 import {
   HOME_DRAFT_KEY,
@@ -89,6 +89,18 @@ export function useComposerAttachments({
   const snapshotReferences = (sourceSessionId: string) =>
     draft.snapshotReferences(sourceSessionId);
 
+  const resolveAttachmentOwner = async (sourceSessionId: string | null | undefined) => {
+    if (sourceSessionId) return { sessionId: sourceSessionId, draftId: undefined };
+    const state = useAppStore.getState();
+    const temporaryDraft = state.draftSessionKind === "temporary" || !state.workspace?.path;
+    const ownerId = await ensureDraftSession();
+    if (!ownerId) throw new Error("session unavailable");
+    return {
+      sessionId: temporaryDraft ? undefined : ownerId,
+      draftId: temporaryDraft ? ownerId : undefined,
+    };
+  };
+
   const pickAndAttach = async () => {
     // The ref closes the gap before React re-renders the disabled button.
     if (pickerInFlight.current || isInputBlocked) return;
@@ -108,16 +120,15 @@ export function useComposerAttachments({
       const sourceSessionId = activeSessionId;
       const sourceDraftKey = draftKey;
       const previousReferences = snapshotReferences(sourceSessionId ?? "");
-      // A picker action is real input, so a home draft gets a durable owner
-      // before native paths are copied into scratch.
-      const sessionId = sourceSessionId ?? (await materializeDraftSession());
-      if (!sessionId) throw new Error("session unavailable");
-      const imported = await api.importFiles(sessionId, result.token);
+      const { sessionId: targetSessionId, draftId } = await resolveAttachmentOwner(sourceSessionId);
+      const referenceSessionId = targetSessionId ?? "";
+      const imported = await api.importFiles(targetSessionId, result.token, draftId);
+      if (draftId && useAppStore.getState().draftSessionId !== draftId) return;
       const chips = imported.files.map((file) => {
         const token = nextChipToken();
         return {
           token,
-          reference: createFileReference(file.path, file.name, sessionId, {
+          reference: createFileReference(file.path, file.name, referenceSessionId, {
             kind: file.kind,
             mimeType: file.mimeType,
             token,
@@ -132,11 +143,11 @@ export function useComposerAttachments({
         sourceValue.slice(selectionEnd);
       const nextReferences = [
         ...previousReferences.map((reference) =>
-          createFileReference(reference.path, reference.name, sessionId, reference),
+          createFileReference(reference.path, reference.name, referenceSessionId, reference),
         ),
         ...chips.map((chip) => chip.reference),
       ];
-      writeComposerDraft(sessionId, {
+      writeComposerDraft(targetSessionId ?? sourceDraftKey, {
         text: nextText,
         fileReferences: [
           ...previousReferences,
@@ -144,7 +155,7 @@ export function useComposerAttachments({
         ],
       });
       const currentSessionId = useAppStore.getState().activeSessionId;
-      if (currentSessionId === sessionId) {
+      if (currentSessionId === targetSessionId) {
         draft.applyEditorDraft(nextText, nextReferences, selectionStart + inserted.length);
       } else if (sourceDraftKey === HOME_DRAFT_KEY) {
         deleteComposerDraft(HOME_DRAFT_KEY);
@@ -177,6 +188,7 @@ export function useComposerAttachments({
       const previousReferences = snapshotReferences(sourceSessionId ?? "");
       setPasting(true);
       try {
+        const { sessionId: targetSessionId, draftId } = await resolveAttachmentOwner(sourceSessionId);
         const payload = files.length
           ? await Promise.all(
               files.map(async (file) => ({
@@ -199,16 +211,14 @@ export function useComposerAttachments({
                 },
               ];
             })();
-        let sessionId = sourceSessionId;
-        if (!sessionId) sessionId = (await materializeDraftSession()) ?? "";
-        if (!sessionId) throw new Error("session unavailable");
-
-        const result = await api.pasteFiles(sessionId, payload);
+        const referenceSessionId = targetSessionId ?? "";
+        const result = await api.pasteFiles(targetSessionId, payload, draftId);
+        if (draftId && useAppStore.getState().draftSessionId !== draftId) return;
         const chips = result.files.map((file) => {
           const token = nextChipToken();
           return {
             token,
-            reference: createFileReference(file.path, file.name, sessionId, {
+            reference: createFileReference(file.path, file.name, referenceSessionId, {
               kind: file.kind,
               mimeType: file.mimeType,
               token,
@@ -222,11 +232,11 @@ export function useComposerAttachments({
           sourceValue.slice(selectionEnd);
         const nextReferences = [
           ...previousReferences.map((reference) =>
-            createFileReference(reference.path, reference.name, sessionId!, reference),
+            createFileReference(reference.path, reference.name, referenceSessionId, reference),
           ),
           ...chips.map((chip) => chip.reference),
         ];
-        writeComposerDraft(sessionId, {
+        writeComposerDraft(targetSessionId ?? sourceDraftKey, {
           text: nextText,
           fileReferences: [
             ...previousReferences,
@@ -234,7 +244,7 @@ export function useComposerAttachments({
           ],
         });
         const currentSessionId = useAppStore.getState().activeSessionId;
-        if (currentSessionId === sessionId) {
+        if (currentSessionId === targetSessionId) {
           draft.applyEditorDraft(nextText, nextReferences, selectionStart + inserted.length);
         } else if (sourceDraftKey === HOME_DRAFT_KEY) {
           deleteComposerDraft(HOME_DRAFT_KEY);
@@ -287,14 +297,14 @@ export function useComposerAttachments({
     const fileItems = items.filter((item) => !item.isDirectory);
     setPasting(true);
     try {
-      let sessionId = sourceSessionId;
-      if (fileItems.length && !sessionId) sessionId = (await materializeDraftSession()) ?? "";
-      if (fileItems.length && !sessionId) throw new Error("session unavailable");
-
+      const { sessionId: targetSessionId, draftId } = fileItems.length
+        ? await resolveAttachmentOwner(sourceSessionId)
+        : { sessionId: sourceSessionId, draftId: undefined };
+      const referenceSessionId = targetSessionId ?? "";
       const pasted = fileItems.length
         ? await api
             .pasteFiles(
-              sessionId!,
+              targetSessionId,
               await Promise.all(
                 fileItems.map(async ({ file }) => ({
                   name: file.name || undefined,
@@ -302,14 +312,16 @@ export function useComposerAttachments({
                   data: await file.arrayBuffer(),
                 })),
               ),
+              draftId,
             )
             .then((result) => result.files)
         : [];
+      if (draftId && useAppStore.getState().draftSessionId !== draftId) return;
       const chips = pasted.map((file) => {
         const token = nextChipToken();
         return {
           token,
-          reference: createFileReference(file.path, file.name, sessionId ?? "", {
+          reference: createFileReference(file.path, file.name, referenceSessionId, {
             kind: file.kind,
             mimeType: file.mimeType,
             token,
@@ -332,15 +344,13 @@ export function useComposerAttachments({
         sourceValue.slice(0, selectionStart) +
         inserted +
         sourceValue.slice(selectionEnd);
-      const ownerSessionId = sessionId ?? "";
       const nextReferences = [
         ...previousReferences.map((reference) =>
-          createFileReference(reference.path, reference.name, ownerSessionId, reference),
+          createFileReference(reference.path, reference.name, referenceSessionId, reference),
         ),
         ...chips.map((chip) => chip.reference),
       ];
-      const targetKey = sessionId || sourceDraftKey;
-      writeComposerDraft(targetKey, {
+      writeComposerDraft(targetSessionId ?? sourceDraftKey, {
         text: nextText,
         fileReferences: [
           ...previousReferences,
@@ -348,9 +358,9 @@ export function useComposerAttachments({
         ],
       });
       const currentSessionId = useAppStore.getState().activeSessionId;
-      if (currentSessionId === sessionId) {
+      if (currentSessionId === targetSessionId) {
         draft.applyEditorDraft(nextText, nextReferences, selectionStart + inserted.length);
-      } else if (sourceDraftKey === HOME_DRAFT_KEY && sessionId) {
+      } else if (sourceDraftKey === HOME_DRAFT_KEY) {
         deleteComposerDraft(HOME_DRAFT_KEY);
       }
       if (chips.length) showToast(t, "chat.filesAttached", { count: chips.length }, "success");

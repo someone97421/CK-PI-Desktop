@@ -74,12 +74,15 @@ export type PluginViewOpenRequest = {
    * instead and never receives this.
    */
   location?: string;
+  workspacePath?: string | null;
 };
 
 export type { PluginViewBounds };
 
 type LiveView = {
   key: string;
+  logicalKey: string;
+  workspacePath?: string | null;
   pluginId: string;
   view: WebContentsView;
   /** Absolute path to this view's HTML entry; its URL is rebuilt from it. */
@@ -102,6 +105,8 @@ export function pluginViewKey(pluginId: string, viewId: string): string {
 
 export class PluginViewHost {
   private views = new Map<string, LiveView>();
+  private selectedKeys = new Map<string, string>();
+  private senderWorkspaces = new Map<number, string | null>();
   private window: BrowserWindow | null = null;
   /** The one view currently attached to the window, if any. */
   private visibleKey: string | null = null;
@@ -143,6 +148,7 @@ export class PluginViewHost {
   broadcast(event: string, payload: unknown): void {
     const channel = `pi-plugin-panel-event:${event}`;
     for (const entry of this.views.values()) {
+      if (event === "workspace:changed" && entry.workspacePath !== undefined) continue;
       const wc = entry.view.webContents;
       if (wc.isDestroyed()) continue;
       try {
@@ -206,6 +212,10 @@ export class PluginViewHost {
     return this.senders.pluginFor(senderId);
   }
 
+  workspacePathForSender(senderId: number): string | null | undefined {
+    return this.senderWorkspaces.get(senderId);
+  }
+
   /**
    * Create the view if needed and mark it as the most recently used. Nothing is
    * attached here: the renderer follows with `setBounds` / `setVisible` once it
@@ -217,7 +227,10 @@ export class PluginViewHost {
    * not discarded by navigation.
    */
   open(request: PluginViewOpenRequest): void {
-    const key = pluginViewKey(request.pluginId, request.viewId);
+    const logicalKey = pluginViewKey(request.pluginId, request.viewId);
+    const key = request.workspacePath !== undefined
+      ? `${logicalKey}:${JSON.stringify(request.workspacePath)}` : logicalKey;
+    this.selectedKeys.set(logicalKey, key);
     const location = normalizeLocation(request.location);
     const existing = this.views.get(key);
     if (existing) {
@@ -228,6 +241,8 @@ export class PluginViewHost {
     const view = this.createView(request);
     const entry: LiveView = {
       key,
+      logicalKey,
+      workspacePath: request.workspacePath,
       pluginId: request.pluginId,
       view,
       htmlPath: request.htmlPath,
@@ -241,7 +256,11 @@ export class PluginViewHost {
     // gone — never when the host merely drops the cached surface around it.
     const senderId = view.webContents.id;
     this.senders.register(senderId, request.pluginId);
-    view.webContents.once("destroyed", () => this.senders.release(senderId));
+    if (request.workspacePath !== undefined) this.senderWorkspaces.set(senderId, request.workspacePath);
+    view.webContents.once("destroyed", () => {
+      this.senders.release(senderId);
+      this.senderWorkspaces.delete(senderId);
+    });
     view.webContents.once("did-finish-load", () => {
       entry.loaded = true;
     });
@@ -312,7 +331,8 @@ export class PluginViewHost {
    * from lingering above the renderer when the user switches tabs quickly.
    */
   setVisible(pluginId: string, viewId: string, visible: boolean): void {
-    const key = pluginViewKey(pluginId, viewId);
+    const logicalKey = pluginViewKey(pluginId, viewId);
+    const key = this.selectedKeys.get(logicalKey) ?? logicalKey;
     if (!visible) {
       if (this.visibleKey === key) this.detachVisible();
       return;
@@ -332,7 +352,8 @@ export class PluginViewHost {
   }
 
   close(pluginId: string, viewId: string): void {
-    this.destroy(pluginViewKey(pluginId, viewId));
+    const logicalKey = pluginViewKey(pluginId, viewId);
+    this.destroy(this.selectedKeys.get(logicalKey) ?? logicalKey);
   }
 
   /** Drop every view a plugin owns — disable, uninstall, reload, or crash. */
@@ -384,14 +405,15 @@ export class PluginViewHost {
       this.onSurface(null);
       return;
     }
-    const separator = this.visibleKey.indexOf("/");
+    const logicalKey = this.views.get(this.visibleKey)?.logicalKey ?? this.visibleKey;
+    const separator = logicalKey.indexOf("/");
     if (separator <= 0) {
       this.onSurface(null);
       return;
     }
     this.onSurface({
-      pluginId: this.visibleKey.slice(0, separator),
-      viewId: this.visibleKey.slice(separator + 1),
+      pluginId: logicalKey.slice(0, separator),
+      viewId: logicalKey.slice(separator + 1),
       visible: true,
       bounds: this.bounds,
     });

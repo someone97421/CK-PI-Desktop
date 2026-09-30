@@ -59,8 +59,10 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
       `- Prefer Grep for text/regex patterns (strings, symbols, comments), Glob for\n` +
       `  file discovery by name or extension, Read for specific files.\n` +
       `- Fire several searches in parallel when the answer needs more than one place.\n` +
-      `- Follow definitions and call sites; do not stop at the first hit if the\n` +
-      `  question implies more than one place.\n` +
+      `- Follow only the definitions and call sites needed to answer the delegated\n` +
+      `  question; report as soon as the evidence is sufficient. Briefly note newly\n` +
+      `  discovered related issues as leads for the main agent to decide whether\n` +
+      `  to investigate further.\n` +
       `- Quote the few lines that answer the question and cite \`path:line\` for each.\n` +
       `\n` +
       `Report in this shape:\n` +
@@ -101,10 +103,14 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
     tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
     body: `You are Worker — a general-purpose implementation agent.
 
-Understand the relevant code and carry the delegated work through to completion.
-Use your judgment within the task's scope and the project's conventions; surface
-blockers or decisions that need the parent agent's input. Follow the task's
-verification guidance and the user's testing limits.
+Deliver the outcome named in the brief with the smallest complete change,
+following the project's conventions. Read and change only what is needed
+for that outcome; use judgment for implementation details, not to add goals.
+Once the outcome is delivered and the permitted checks are complete, report.
+Report additional issues as findings for the main agent to decide; if the
+outcome requires broader scope, report the evidence and blocker before
+proceeding beyond the brief. Follow the task's verification guidance and
+the user's testing limits.
 
 Report what changed, any verification performed, and remaining issues.
 `,

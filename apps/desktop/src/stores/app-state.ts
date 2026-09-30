@@ -129,7 +129,18 @@ export type AppState = {
   projectSort: ProjectSort;
   activeSessionId?: string;
   /** Composer toolbar choices retained on the draft while it has no session. */
+  /** Directory retained by a temporary draft until its first send. */
   draftConfiguration: DraftSessionConfiguration | null;
+  draftTemporaryWorkspacePath: string | null;
+  /** In-memory owner used for temporary-draft attachment scratch files. */
+  draftSessionId: string | null;
+  /** Distinguishes an explicit temporary draft from the initial home screen. */
+  draftSessionKind: "temporary" | null;
+  temporaryDrafts: Record<string, {
+    workspacePath: string | null;
+    configuration: DraftSessionConfiguration | null;
+  }>;
+  lastTemporaryDraftId: string | null;
   /** Latest user-selected session while its transcript/workspace is resolving. */
   selectingSessionId?: string;
   messages: UiMessage[];
@@ -186,7 +197,7 @@ export type AppState = {
   settingsAnchor: string | null;
   /** Bumped by every setSettingsTab so a same-tab navigation is observable. */
   settingsTabNonce: number;
-  navStack: Array<{ page: AppState["page"]; sessionId?: string }>;
+  navStack: Array<{ page: AppState["page"]; sessionId?: string; draftId?: string }>;
   navIndex: number;
   error?: string | null;
   errorCode?: string | null;
@@ -202,7 +213,12 @@ export type AppState = {
     id: string,
     opts?: { record?: boolean } & NavigationOptions,
   ) => Promise<void>;
-  newSession: (options?: { projectPath?: string | null }) => Promise<void>;
+  newSession: (options?: {
+    projectPath?: string | null;
+    temporaryWorkspacePath?: string | null;
+    draftId?: string;
+    record?: boolean;
+  }) => Promise<void>;
   forkSession: (id: string) => Promise<void>;
   forkAssistantMessage: (messageId: string) => Promise<void>;
   configureActiveSession: (config: {
@@ -335,6 +351,8 @@ export type AppState = {
   acknowledgeSessionOutcome: (sessionId: string) => Promise<void>;
   restorePendingPlan: (sessionId: string) => Promise<PendingPlanRefreshResult>;
   refreshPlanCheckpoints: () => Promise<void>;
+  /** Set the directory retained by an unpersisted temporary draft. */
+  setDraftTemporaryWorkspacePath: (path: string | null) => void;
   handleAgentEvent: (envelope: AgentEventEnvelope) => void;
   handlePlansChanged: (event: PlanningStateEvent) => void;
   setPage: (page: AppState["page"], opts?: { record?: boolean }) => void;

@@ -315,9 +315,10 @@ export const AssistantTurn = memo(function AssistantTurn({
   const generatedImages = useMemo(() => tools
     .filter((message) => message.toolName === "GenerateImages")
     .map((message) => <GeneratedImages key={message.id} message={message} />), [tools]);
-  // Delegation status/timing depends on actual tool messages, never on thinking
-  // or text and never on a Task's attached child transcript identity.
-  const delegationItems = useMemo(() => tools.map((message) => ({ kind: "tool" as const, message })), [tools]);
+  // 保留子记录，TaskExecution 回执可能先于父 Task 行刷新到达。
+  const delegationItemsRef = useRef(summary.toolItems);
+  const delegationItems = reuseReferences(delegationItemsRef.current, summary.toolItems);
+  delegationItemsRef.current = delegationItems;
   const rawDelegationStatuses = useMemo(
     () => collectDelegationStatuses(delegationItems, { turnLive: isActive && !settledTask }),
     [delegationItems, isActive, settledTask],

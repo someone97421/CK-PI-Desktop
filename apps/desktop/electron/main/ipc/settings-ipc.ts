@@ -34,6 +34,7 @@ export type SettingsIpcDependencies = {
   applyDeveloperMode: (settings?: { developerMode?: unknown } | null) => void;
   applyPreventScreenSleep: (settings?: { preventScreenSleep?: unknown } | null) => void;
   applyKeepAwakeWhileRunning: (settings?: { keepAwakeWhileRunning?: unknown } | null) => void;
+  applyTemporaryWorkspaceContextMenu: (settings?: { temporaryWorkspaceContextMenu?: unknown } | null) => Promise<void>;
   applyUpdatePreference: (preference: UpdatePreference) => void;
   resolveEffectiveCommandShell: () => Promise<unknown>;
   applyAppearanceIcon: (path: string | null) => void;
@@ -54,6 +55,7 @@ export function registerSettingsIpc({
   applyApplicationMenuSettings,
   applyDeveloperMode,
   applyPreventScreenSleep,
+  applyTemporaryWorkspaceContextMenu,
   applyKeepAwakeWhileRunning,
   applyUpdatePreference,
   resolveEffectiveCommandShell,
@@ -101,11 +103,22 @@ export function registerSettingsIpc({
     const prospectiveSettings = validatedSettings && typeof validatedSettings === "object" && !Array.isArray(validatedSettings)
       ? { ...currentSettings, ...(validatedSettings as Partial<AppSettings>) }
       : currentSettings;
+    const temporaryWorkspaceSettingChanged =
+      validatedSettings && typeof validatedSettings === "object" && !Array.isArray(validatedSettings) &&
+      Object.prototype.hasOwnProperty.call(validatedSettings, "temporaryWorkspaceContextMenu");
+    if (temporaryWorkspaceSettingChanged) {
+      await applyTemporaryWorkspaceContextMenu(prospectiveSettings);
+    }
     const releaseSettingsWrite = liveCallService?.beginSettingsWrite(prospectiveSettings);
     let result: AppSettings;
     try {
       result = await host.call<AppSettings>("settings.set", validatedSettings);
       await liveCallService?.settingsWritten(result);
+    } catch (error) {
+      if (temporaryWorkspaceSettingChanged) {
+        try { await applyTemporaryWorkspaceContextMenu(currentSettings); } catch { }
+      }
+      throw error;
     } finally {
       releaseSettingsWrite?.();
     }

@@ -127,10 +127,15 @@ export function registerComposerIpc({
   ...serviceDependencies
 }: ComposerIpcDependencies): ComposerCommandService {
   const service = createComposerCommandService(serviceDependencies);
-  registrar.handle(IPC.invoke.composerCommands, async (input?: { sessionId?: string }) => {
+  registrar.handle(IPC.invoke.composerCommands, async (input?: {
+    sessionId?: string;
+    temporaryWorkspacePath?: string | null;
+  }) => {
     const root = input?.sessionId
       ? await sessionWorkspaceRoot?.(input.sessionId)
-      : await optionalWorkspaceRoot();
+      : input && "temporaryWorkspacePath" in input
+        ? input.temporaryWorkspacePath?.trim() || null
+        : await optionalWorkspaceRoot();
     if (input?.sessionId && root === undefined) throw new Error("session command scope unavailable");
     return { commands: await service.buildComposerCommands(root ?? null) };
   });

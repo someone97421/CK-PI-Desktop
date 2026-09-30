@@ -509,6 +509,15 @@ export function registerSessionIpc({
     rejectNativeMutation(input?.sessionId, "scratch access");
     if (!host) throw new Error("host unavailable");
     const sessionId = String(input?.sessionId || "").trim();
+    const { session } = await host.call<{ session?: { projectPath?: string | null; temporaryWorkspacePath?: string | null } }>(
+      "session.get", { id: sessionId, messageLimit: 1, contentLimit: 1 },
+    );
+    const workspacePath = !session?.projectPath && session?.temporaryWorkspacePath?.trim();
+    if (workspacePath) {
+      const openError = await shell.openPath(stripWinLongPrefix(workspacePath));
+      if (openError) throw new Error(openError);
+      return { ok: true, path: workspacePath };
+    }
     const result = await host.call<{ path: string }>("session.getScratchPath", {
       sessionId,
     });

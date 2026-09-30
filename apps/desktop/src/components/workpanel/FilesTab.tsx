@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import type { FsEntry, FsReadResult } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
+import { sessionWorkspacePath } from "../../lib/session-workspace";
 import { Markdown } from "../Markdown";
 import { fileDirOf } from "../../lib/chat-links";
 import { Button, cx } from "../ui";
@@ -155,9 +156,35 @@ let handledFileRequestSeq = 0;
 export function FilesTab() {
   const { t } = useTranslation();
   const workspace = useAppStore((s) => s.workspace);
+  const activeSession = useAppStore((s) =>
+    s.activeSessionId ? s.sessions.find((session) => session.id === s.activeSessionId) : undefined,
+  );
   const fileRequest = useAppStore((s) => s.workPanelFileRequest);
   const showToast = useAppStore((s) => s.showToast);
-  const root = workspace?.path ?? null;
+  const draftKind = useAppStore((s) => s.draftSessionKind);
+  const draftWorkspacePath = useAppStore((s) => s.draftTemporaryWorkspacePath);
+  const [scratchRoot, setScratchRoot] = useState<{ sessionId: string; path: string } | null>(null);
+  const sessionId = activeSession?.id;
+  const scope = useMemo(() => sessionId
+    ? { sessionId }
+    : draftKind === "temporary" ? { temporaryWorkspacePath: draftWorkspacePath } : {},
+  [sessionId, draftKind, draftWorkspacePath]);
+  const root = activeSession
+    ? sessionWorkspacePath(activeSession) ?? (scratchRoot && scratchRoot.sessionId === sessionId ? scratchRoot.path : null)
+    : draftKind === "temporary" ? draftWorkspacePath : workspace?.path ?? null;
+  const scopeKey = JSON.stringify({ ...scope, root: activeSession ? sessionWorkspacePath(activeSession) : root });
+  const currentScopeKey = useRef(scopeKey);
+  currentScopeKey.current = scopeKey;
+  const fileReadSeq = useRef(0);
+
+  useEffect(() => {
+    if (!sessionId || sessionWorkspacePath(activeSession)) return;
+    let canceled = false;
+    void api.getSessionScratchPath(sessionId).then(({ path }) => {
+      if (!canceled) setScratchRoot({ sessionId, path });
+    }).catch(() => undefined);
+    return () => { canceled = true; };
+  }, [sessionId, activeSession]);
 
   const [dirs, setDirs] = useState<Record<string, DirState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -166,33 +193,32 @@ export function FilesTab() {
   const [file, setFile] = useState<FsReadResult | null>(null);
   const [fileError, setFileError] = useState(false);
 
-  // Workspace switches reset all browsing state. Guarded so it only fires on
-  // an actual root change: an unconditional [root] effect also runs on the
-  // StrictMode remount, wiping the selection a chat file request just made
-  // (first click landed on the tree instead of the file).
-  const prevRoot = useRef(root);
+  // Scope changes reset browsing state; StrictMode remounts keep chat previews.
+  const prevScopeKey = useRef(scopeKey);
   useEffect(() => {
-    if (prevRoot.current === root) return;
-    prevRoot.current = root;
+    if (prevScopeKey.current === scopeKey) return;
+    prevScopeKey.current = scopeKey;
     setDirs({});
     setExpanded(new Set());
     setSelected(null);
     setSelectedMimeType(undefined);
     setFile(null);
     setFileError(false);
-  }, [root]);
+  }, [scopeKey]);
 
   const loadDir = useCallback(
     async (rel: string) => {
       if (!root) return;
       try {
-        const res = await api.fsList(rel);
+        const res = await api.fsList(rel, scope);
+        if (currentScopeKey.current !== scopeKey) return;
         setDirs((prev) => ({ ...prev, [rel]: { entries: res.entries } }));
       } catch {
+        if (currentScopeKey.current !== scopeKey) return;
         setDirs((prev) => ({ ...prev, [rel]: { entries: [], error: true } }));
       }
     },
-    [root],
+    [root, scope, scopeKey],
   );
 
   useEffect(() => {
@@ -216,25 +242,27 @@ export function FilesTab() {
   );
 
   const openFile = useCallback(async (rel: string, mimeType?: string) => {
+    const seq = ++fileReadSeq.current;
     setSelected(rel);
     setSelectedMimeType(mimeType);
     setFile(null);
     setFileError(false);
     try {
-      setFile(await api.fsRead(rel, mimeType));
+      const result = await api.fsRead(rel, mimeType, scope);
+      if (seq === fileReadSeq.current && currentScopeKey.current === scopeKey) setFile(result);
     } catch {
-      setFileError(true);
+      if (seq === fileReadSeq.current && currentScopeKey.current === scopeKey) setFileError(true);
     }
-  }, []);
+  }, [scope, scopeKey]);
 
   const openMp4 = useCallback(async () => {
     if (!selected) return;
     try {
-      await api.fsOpen(selected, selectedMimeType);
+      await api.fsOpen(selected, selectedMimeType, scope);
     } catch {
       showToast(t("panel.files.openFailed"), { variant: "error" });
     }
-  }, [selected, selectedMimeType, showToast, t]);
+  }, [selected, selectedMimeType, scope, showToast, t]);
 
   // Chat-initiated previews: open the file and expand its ancestor folders
   // so "back" lands on a tree that reveals it. Attachment blobs and absolute
@@ -351,7 +379,7 @@ export function FilesTab() {
             className="icon-btn icon-btn-square"
             tooltip={t("panel.files.reveal")}
             ariaLabel={t("panel.files.reveal")}
-            onClick={() => void api.fsReveal(selected)}
+            onClick={() => void api.fsReveal(selected, scope)}
           >
             <IconExternal size={14} />
           </TooltipButton>

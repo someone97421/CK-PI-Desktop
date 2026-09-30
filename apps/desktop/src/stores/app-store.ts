@@ -435,7 +435,10 @@ export const useAppStore = create<AppState>((set, get) => {
         // must not create a history row merely because the app was opened.
         set((s) => {
           const stack = s.navStack.slice(0, s.navIndex + 1);
-          const nextStack = [...stack, { page: "chat" as const }].slice(-50);
+          const nextStack = [...stack, {
+            page: "chat" as const,
+            draftId: !s.workspace?.path ? s.draftSessionId ?? undefined : undefined,
+          }].slice(-50);
           return {
             ...switchWorkPanelSession(s, undefined),
             ...clearSessionPanes(),
@@ -486,4 +489,17 @@ export async function materializeDraftSession(
   intent?: number,
 ): Promise<string | null> {
   return sessionCoordination.materializeDraftSession(intent);
+}
+
+/** Return a real session id, or the in-memory owner for a temporary draft. */
+export async function ensureDraftSession(): Promise<string | null> {
+  const state = useAppStore.getState();
+  if (state.activeSessionId) return state.activeSessionId;
+  if (!state.workspace?.path) {
+    if (!state.draftSessionId) {
+      state.setDraftTemporaryWorkspacePath(state.draftTemporaryWorkspacePath);
+    }
+    return useAppStore.getState().draftSessionId;
+  }
+  return materializeDraftSession();
 }

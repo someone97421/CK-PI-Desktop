@@ -560,6 +560,41 @@ export function useAppShellRuntime() {
     void api.menuRendererReady().catch(() => undefined);
   }, [ready]);
 
+  useEffect(() => {
+    if (!ready || platform !== "win32") return;
+    let disposed = false;
+    let draining = false;
+    let requested = false;
+    const drain = async () => {
+      requested = true;
+      if (draining) return;
+      draining = true;
+      try {
+        while (requested && !disposed) {
+          requested = false;
+          const { workspacePaths } = await api.takeTemporaryWorkspaces();
+          for (const temporaryWorkspacePath of workspacePaths) {
+            await useAppStore.getState().newSession({
+              projectPath: null,
+              temporaryWorkspacePath,
+            });
+          }
+        }
+      } catch (error) {
+        useAppStore.getState().showToast(String(error), { variant: "error" });
+      } finally {
+        draining = false;
+      }
+    };
+    // 先订阅再取队列，覆盖界面就绪期间到达的外部启动请求。
+    const unsubscribe = api.onTemporaryWorkspacePending(() => void drain());
+    void drain();
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [ready, platform]);
+
   // The Host owns the prompt queue (D375); mirror it whenever the visible
   // session changes so a reload or a switch shows the durable entries.
   useEffect(() => {

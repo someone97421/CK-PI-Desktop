@@ -22,6 +22,7 @@ import {
   sessionNeedsModelPin,
 } from "../../lib/session-model";
 import {
+  clearSessionPanes,
   retainSessionPane,
 } from "../../lib/session-panes";
 import {
@@ -33,6 +34,7 @@ import {
   sessionIsPinned,
   type SessionMeta,
 } from "../../lib/sidebar-preferences";
+import { retainedTemporaryDrafts } from "../../lib/temporary-drafts";
 import { api } from "../../lib/api";
 import { createRefreshCoordinator } from "../../lib/refresh-coordinator";
 import {
@@ -88,6 +90,7 @@ export type SessionSliceDependencies = StoreAccess & {
     intent: number;
     projectPath?: string | null;
     draftConfiguration?: DraftSessionConfiguration | null;
+    temporaryWorkspacePath?: string | null;
   }) => Promise<string | null>;
 };
 
@@ -113,6 +116,7 @@ export function createSessionSlice({
   | "forkSession"
   | "forkAssistantMessage"
   | "configureActiveSession"
+  | "setDraftTemporaryWorkspacePath"
 > {
   const refreshSessionList = createRefreshCoordinator(async () => {
     const result = await api.listSessions();
@@ -131,6 +135,26 @@ export function createSessionSlice({
   });
 
   return {
+    setDraftTemporaryWorkspacePath: (path) => {
+      const state = get();
+      if (state.activeSessionId) return;
+      const normalized = path?.trim() || null;
+      const draftId = state.draftSessionId ?? crypto.randomUUID();
+      set({
+        draftTemporaryWorkspacePath: normalized,
+        draftSessionKind: "temporary",
+        draftSessionId: draftId,
+        lastTemporaryDraftId: draftId,
+        temporaryDrafts: {
+          ...state.temporaryDrafts,
+          [draftId]: { workspacePath: normalized, configuration: state.draftConfiguration },
+        },
+        navStack: state.navStack.map((entry, index) =>
+          index === state.navIndex && entry.page === "chat" && !entry.sessionId
+            ? { ...entry, draftId }
+            : entry),
+      });
+    },
     refreshSessions: async (options) => {
       const previousSessions = get().sessions;
       const sessions = await refreshSessionList();
@@ -246,7 +270,7 @@ export function createSessionSlice({
           stateAtStart.sessionHistory[stateAtStart.activeSessionId],
         );
       }
-      set({ selectingSessionId: id, page: "chat" });
+      set({ selectingSessionId: id, page: "chat", temporaryDrafts: retainedTemporaryDrafts(stateAtStart) });
       const outcomeAcknowledgement = get().acknowledgeSessionOutcome(id);
 
       const commitSelection = (
@@ -261,6 +285,11 @@ export function createSessionSlice({
         const record = opts?.record !== false;
         const commit = (state: AppState) => ({
           ...(state.activeSessionId === id ? {} : switchWorkPanelSession(state, id)),
+          temporaryDrafts: retainedTemporaryDrafts(state),
+          draftConfiguration: null,
+          draftTemporaryWorkspacePath: null,
+          draftSessionKind: null,
+          draftSessionId: null,
           ...retainSessionPane(state, id, messages),
           activeSessionId: id,
           selectingSessionId: revalidating ? id : undefined,
@@ -482,7 +511,19 @@ export function createSessionSlice({
         options && "projectPath" in options
           ? options.projectPath ?? null
           : get().workspace?.path ?? null;
-      const scopeKey = runtime.newSessionScopeKey(requestedProjectPath);
+      const stateAtStart = get();
+      const retainedDrafts = retainedTemporaryDrafts(stateAtStart);
+      const explicitWorkspace = requestedProjectPath === null && !!options && "temporaryWorkspacePath" in options;
+      const draftId = options?.draftId ?? (explicitWorkspace
+        ? crypto.randomUUID()
+        : stateAtStart.lastTemporaryDraftId ?? crypto.randomUUID());
+      const savedDraft = retainedDrafts[draftId];
+      const requestedTemporaryWorkspacePath = explicitWorkspace
+        ? options?.temporaryWorkspacePath?.trim() || null
+        : savedDraft?.workspacePath ?? null;
+      const scopeKey = runtime.newSessionScopeKey(
+        requestedProjectPath === null ? `draft:${draftId}` : requestedProjectPath,
+      );
       const pending = runtime.pendingNewSessionRequests.get(scopeKey);
       if (pending) {
         await pending;
@@ -491,6 +532,45 @@ export function createSessionSlice({
 
       const intent = runtime.beginNavigationIntent();
       const request = (async () => {
+        if (requestedProjectPath === null) {
+          if (get().workspace) {
+            await get().clearProject({ navigationIntent: intent });
+            if (!runtime.navigationIntentIsCurrent(intent)) return;
+          }
+          set((state) => {
+            const stack = state.navStack.slice(0, state.navIndex + 1);
+            const last = stack[stack.length - 1];
+            const same = last?.page === "chat" && last.draftId === draftId;
+            const nextStack = options?.record === false
+              ? state.navStack
+              : same ? stack : [...stack, { page: "chat" as const, draftId }].slice(-50);
+            return {
+              ...switchWorkPanelSession(state, undefined),
+              ...clearSessionPanes(),
+              activeSessionId: undefined,
+              selectingSessionId: undefined,
+              messages: [],
+              page: "chat" as const,
+              isRunning: false,
+              draftTemporaryWorkspacePath: requestedTemporaryWorkspacePath,
+              draftSessionKind: "temporary" as const,
+              draftSessionId: draftId,
+              draftConfiguration: savedDraft?.configuration ?? null,
+              lastTemporaryDraftId: draftId,
+              temporaryDrafts: {
+                ...retainedDrafts,
+                [draftId]: {
+                  workspacePath: requestedTemporaryWorkspacePath,
+                  configuration: savedDraft?.configuration ?? null,
+                },
+              },
+              navStack: nextStack,
+              navIndex: options?.record === false ? state.navIndex : nextStack.length - 1,
+            };
+          });
+          return;
+        }
+
         if (
           requestedProjectPath &&
           !sessionMatchesProject(
@@ -503,10 +583,6 @@ export function createSessionSlice({
           });
           if (!runtime.navigationIntentIsCurrent(intent)) return;
           if (!workspace) throw new Error(i18n.t("errors.workspaceActivationFailed"));
-        }
-        if (requestedProjectPath === null && get().workspace) {
-          await get().clearProject({ navigationIntent: intent });
-          if (!runtime.navigationIntentIsCurrent(intent)) return;
         }
 
         const latest = runtime.latestSessionInScope(

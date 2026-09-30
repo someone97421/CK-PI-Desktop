@@ -7,6 +7,7 @@ import {
 import { Composer } from "./Composer";
 import { HomeMascotLogo } from "./HomeMascotLogo";
 import { HomeProjectSwitcher } from "./HomeProjectSwitcher";
+import { TemporaryWorkspacePicker } from "./TemporaryWorkspacePicker";
 import { IconX } from "./icons";
 import { TooltipButton } from "./ui";
 import { OnboardingChecklist } from "./OnboardingChecklist";
@@ -52,6 +53,10 @@ export const ChatSurface = memo(function ChatSurface({
 }) {
   const { t } = useTranslation();
   const activeSessionId = useAppStore((state) => state.activeSessionId);
+  const draftSessionKind = useAppStore((state) => state.draftSessionKind);
+  const draftTemporaryWorkspacePath = useAppStore(
+    (state) => state.draftTemporaryWorkspacePath,
+  );
   const selectingSessionId = useAppStore((state) => state.selectingSessionId);
   const retainedSessionIds = useAppStore((state) => state.retainedSessionIds);
   const messages = useAppStore((state) => state.messages);
@@ -95,8 +100,11 @@ export const ChatSurface = memo(function ChatSurface({
     [activeSession?.projectPath, workspace?.name],
   );
   const isTemporarySession = Boolean(
-    activeSessionId && activeSession && !activeSession.projectPath?.trim(),
+    (activeSessionId && activeSession && !activeSession.projectPath?.trim()) ||
+      (!activeSessionId && !workspace?.path && draftSessionKind === "temporary"),
   );
+  const temporaryWorkspacePath =
+    activeSession?.temporaryWorkspacePath?.trim() || draftTemporaryWorkspacePath;
   const emptyTitleParts = useMemo(() => {
     const marker = "__PROJECT__";
     const template = t("chat.emptyTitleInProject", { project: marker });
@@ -184,6 +192,12 @@ export const ChatSurface = memo(function ChatSurface({
                     t("chat.emptyTitle")
                   )}
                 </h1>
+                {isTemporarySession ? (
+                  <TemporaryWorkspacePicker
+                    path={temporaryWorkspacePath}
+                    editable={!activeSessionId}
+                  />
+                ) : null}
               </div>
               <OnboardingChecklist />
             </div>

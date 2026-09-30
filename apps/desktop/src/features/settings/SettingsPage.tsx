@@ -453,8 +453,22 @@ export function SettingsPage() {
                     onChange={() => void saveSettings({ preventScreenSleep: !settings.preventScreenSleep })}
                   />
                 </SettingsRow>
-              </SettingsCard>
+                {platform === "win32" && (
+                  <SettingsRow
+                    title={t("settings.temporaryWorkspaceContextMenu")}
+                    description={t("settings.temporaryWorkspaceContextMenuDesc")}
+                  >
+                    <SettingsToggle
+                      checked={settings.temporaryWorkspaceContextMenu === true}
+                      label={t("settings.temporaryWorkspaceContextMenu")}
+                      onChange={() => void saveSettings({
+                        temporaryWorkspaceContextMenu: settings.temporaryWorkspaceContextMenu !== true,
+                      })}
+                    />
+                  </SettingsRow>
+                )}
 
+              </SettingsCard>
               {platform !== "darwin" && <CloseBehaviorSection />}
               <ConfigTransferSection />
             </div>

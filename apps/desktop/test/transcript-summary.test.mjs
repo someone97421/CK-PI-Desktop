@@ -143,6 +143,40 @@ test("text and delegate-child changes keep tool inputs stable; cross-part TaskWa
   assert.equal(collectDelegationStatuses(getAssistantTurnSummary(first).toolItems, { turnLive: false }).get("d"), "aborted");
 });
 
+test("子代理完成回执先于父 Task 刷新时，主聊天状态和耗时同步收尾", () => {
+  const task = { kind: "tool", message: message("task", "", {
+    role: "tool", toolName: "Task",
+    toolResult: { details: { delegationId: "d", status: "running", startedAt: 1000 } },
+  }) };
+  const first = { kind: "assistant-turn", id: "turn", parts: [
+    { kind: "activity", items: [task] },
+    { kind: "message", message: message("progress", "继续工作", { status: "streaming" }) },
+  ] };
+  const initial = getAssistantTurnSummary(first);
+  const receipt = { kind: "tool", message: message("execution", "", {
+    role: "tool", toolName: "TaskExecution",
+    toolResult: { details: { delegationId: "d", status: "completed", startedAt: 1000, completedAt: 6000 } },
+  }) };
+  const settledTask = { ...task, delegate: { agentName: "worker", items: [receipt] } };
+  const settled = { ...first, parts: [
+    { kind: "activity", items: [settledTask] }, first.parts[1],
+  ] };
+  const summary = getAssistantTurnSummary(settled);
+  assert.equal(reuseReferences(initial.tools, summary.tools), initial.tools);
+  const inputs = reuseReferences(initial.toolItems, summary.toolItems);
+  assert.notEqual(inputs, initial.toolItems);
+  assert.equal(inputs[0].delegate.items[0], receipt);
+  assert.equal(collectDelegationStatuses(initial.toolItems, { turnLive: true }).get("d"), undefined);
+  assert.equal(collectDelegationStatuses(inputs, { turnLive: true }).get("d"), "completed");
+  assert.deepEqual(delegationTimingBounds([settledTask], collectDelegationTimings(inputs)), {
+    startedAt: 1000, completedAt: 6000,
+  });
+  const textChanged = { ...settled, parts: [settled.parts[0], {
+    kind: "message", message: message("progress", "继续工作中", { status: "streaming" }),
+  }] };
+  assert.equal(reuseReferences(inputs, getAssistantTurnSummary(textChanged).toolItems), inputs);
+});
+
 test("cached activity timing exactly preserves invalid timestamps and fallback durations", () => {
   const sets = [[], [message("a", "")], [message("bad", "", { createdAt: "invalid", toolDurationMs: 300 })],
     [message("epoch", "", { createdAt: "1970-01-01T00:00:00Z", toolDurationMs: -300 }), message("a", "", { toolCompletedAt: "2026-09-17T00:00:02Z" })]];

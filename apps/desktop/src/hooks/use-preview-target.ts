@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../stores/app-store";
+import { sessionWorkspacePath } from "../lib/session-workspace";
 import { api } from "../lib/api";
 import { isHtmlFilePath, toWorkspaceRel, type ChatPreviewTarget } from "../lib/chat-links";
 import { openHttpUrl } from "../lib/open-http-url";
@@ -70,7 +71,12 @@ export type ResolvedChatFileRef = {
 
 function useResolveChatFileRef() {
   const { t } = useTranslation();
-  const workspacePath = useAppStore((s) => s.workspace?.path ?? null);
+  const activeSession = useAppStore((s) =>
+    s.activeSessionId ? s.sessions.find((session) => session.id === s.activeSessionId) : undefined,
+  );
+  const workspacePath = useAppStore((s) =>
+    sessionWorkspacePath(activeSession, s.workspace?.path),
+  );
   const sessionId = useAppStore((s) => s.activeSessionId);
   const showToast = useAppStore((s) => s.showToast);
 
@@ -163,7 +169,7 @@ export function useOpenChatFileRef() {
           return;
         }
         if (resolved.inProject && fileViewAvailable) {
-          openTab(fileManagerPluginTab(resolved.path));
+          openTab(fileManagerPluginTab(resolved.absolutePath));
           return;
         }
         openFile(resolved.path, mimeType);
@@ -192,7 +198,7 @@ export function useRevealChatFileRef() {
         const resolved = await resolveRef(path, baseDir);
         if (!resolved) return;
         try {
-          await api.fsReveal(resolved.path);
+          await api.fsReveal(resolved.absolutePath);
         } catch {
           showToast(t("chat.fileRevealFailed"), { variant: "error" });
         }

@@ -218,6 +218,7 @@ export function registerPluginUiIpc({
       sessionId?: string;
       location?: string;
       tabId?: string;
+      workspacePath?: string | null;
     }) => {
       const pluginId = String(payload?.pluginId ?? "");
       const viewId = String(payload?.viewId ?? "");
@@ -253,6 +254,8 @@ export function registerPluginUiIpc({
         // location keeps going through `browserHost`; every other contributed
         // view receives the opener's subject untouched (D320 follow-up).
         ...(isBrowserView || !location ? {} : { location }),
+        ...(pluginId === "pi.file-manager" && payload.workspacePath !== undefined
+          ? { workspacePath: payload.workspacePath } : {}),
       });
       return { ok: true };
     },

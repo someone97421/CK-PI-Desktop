@@ -142,6 +142,8 @@ export const IPC = {
     settingsSet: "pi-desktop/settings/set",
     settingsExportConfig: "pi-desktop/settings/exportConfig",
     settingsImportConfig: "pi-desktop/settings/importConfig",
+    /** Take queued Windows Explorer temporary-workspace launches. */
+    temporaryWorkspaceTake: "pi-desktop/temporaryWorkspace/take",
     appearanceMediaGet: "pi-desktop/appearanceMedia/get",
     appearanceMediaSelect: "pi-desktop/appearanceMedia/select",
     appearanceMediaReset: "pi-desktop/appearanceMedia/reset",
@@ -379,6 +381,8 @@ export const IPC = {
     pluginChanged: "pi-desktop/event/pluginChanged",
     /** Progress of an install or update, while it is still running. */
     pluginInstallProgress: "pi-desktop/plugin/event/installProgress",
+    /** A queued Windows Explorer temporary-workspace launch arrived after renderer readiness. */
+    temporaryWorkspacePending: "pi-desktop/temporaryWorkspace/event/pending",
     /** Host-originated app settings mutation (e.g. plugin `app.setTheme`). */
     settingsChanged: "pi-desktop/app/event/settingsChanged",
     appearanceMediaChanged: "pi-desktop/app/event/appearanceMediaChanged",

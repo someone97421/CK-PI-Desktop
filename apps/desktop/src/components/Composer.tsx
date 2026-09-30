@@ -19,6 +19,7 @@ import {
   stripInlineComposerFileReferenceTokens,
 } from "@pi-desktop/shared";
 import { useAppStore } from "../stores/app-store";
+import { sessionWorkspacePath } from "../lib/session-workspace";
 import { latestTurnContextInspector } from "../lib/latest-turn-context";
 import { isActivePlanExecution } from "../lib/plan-mode-state";
 import { headAsk, queuedAskCount } from "../lib/pending-asks";
@@ -100,7 +101,12 @@ export function Composer({
   const hasAnnotations = useAppStore((s) =>
     Boolean(s.activeSessionId && s.responseAnnotations[s.activeSessionId]?.length),
   );
-  const workspacePath = useAppStore((s) => s.workspace?.path ?? "");
+  const hostWorkspacePath = useAppStore((s) => s.workspace?.path ?? null);
+  const draftTemporaryWorkspacePath = useAppStore((s) => s.draftTemporaryWorkspacePath);
+  const workspacePath = sessionWorkspacePath(
+    activeSessionSummary,
+    draftTemporaryWorkspacePath ?? hostWorkspacePath,
+  ) ?? "";
   const providers = useAppStore((s) => s.providers);
   const providerModels = useAppStore((s) => s.providerModels);
   const liveMessages = useAppStore((s) => s.messages);

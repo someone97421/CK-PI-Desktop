@@ -14,10 +14,12 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../../../stores/app-store";
 import { api } from "../../../../lib/api";
+import { activeComposerDraftKey } from "../../../../lib/temporary-drafts";
 import type { ComposerDraftSnapshot } from "../../../../lib/composer-smart-stop";
 import {
   HOME_DRAFT_KEY,
   captureComposerDraft,
+  temporaryDraftKey,
   deleteComposerDraft,
   draftFileReference,
   draftKeyForSession,
@@ -129,7 +131,10 @@ export function useComposerDraft({
   invalidatePromptEnhancement,
   inputBlocked,
 }: UseComposerDraftOptions): ComposerDraftController {
-  const draftKey = draftKeyForSession(activeSessionId);
+  const draftSessionId = useAppStore((state) => !state.workspace?.path ? state.draftSessionId : null);
+  const temporaryDrafts = useAppStore((state) => state.temporaryDrafts);
+  const draftKey = !activeSessionId && draftSessionId
+    ? temporaryDraftKey(draftSessionId) : draftKeyForSession(activeSessionId);
   const referenceSessionId = activeSessionId ?? "";
   const initialDraft = readComposerDraft(draftKey);
   const [value, setValue] = useState(() => initialDraft?.text ?? "");
@@ -150,7 +155,6 @@ export function useComposerDraft({
   const placeholderContextRef = useRef(`${variant}:${activeSessionId ?? HOME_DRAFT_KEY}`);
   const draftKeyRef = useRef(draftKey);
   const workspacePathRef = useRef(workspacePath);
-  workspacePathRef.current = workspacePath;
   const previousWorkspacePathRef = useRef(initialDraft?.workspacePath ?? workspacePath);
 
   // Keep one guidance copy stable until the user changes page or session.
@@ -389,15 +393,17 @@ export function useComposerDraft({
     if (previousKey !== draftKey) {
       invalidatePromptEnhancement();
       persistDraft(previousKey);
-      if (previousKey === HOME_DRAFT_KEY) flushScheduledHomeDraftAdopt(draftKey);
+      flushScheduledHomeDraftAdopt(draftKey, previousKey);
       draftKeyRef.current = draftKey;
       const nextDraft = readComposerDraft(draftKey);
-      setValue(nextDraft?.text ?? "");
-      setFileReferences(
-        nextDraft?.fileReferences.map((fileReference) =>
-          createFileReferenceFromSnapshot(fileReference, referenceSessionId),
-        ) ?? [],
-      );
+      const nextReferences = nextDraft?.fileReferences.map((fileReference) =>
+        createFileReferenceFromSnapshot(fileReference, referenceSessionId)) ?? [];
+      valueRef.current = nextDraft?.text ?? "";
+      fileReferencesRef.current = nextReferences;
+      workspacePathRef.current = workspacePath;
+      previousWorkspacePathRef.current = nextDraft?.workspacePath ?? workspacePath;
+      setValue(valueRef.current);
+      setFileReferences(nextReferences);
       setCursor(nextDraft?.text.length ?? 0);
       return;
     }
@@ -406,10 +412,11 @@ export function useComposerDraft({
   }, [draftKey, referenceSessionId]);
 
   useEffect(() => {
+    workspacePathRef.current = workspacePath;
     captureComposerDraft(
       draftKey,
       valueRef.current,
-      fileReferences,
+      fileReferencesRef.current,
       workspacePath,
     );
   }, [draftKey, fileReferences, referenceSessionId, workspacePath]);
@@ -418,9 +425,10 @@ export function useComposerDraft({
     pruneComposerDrafts([
       HOME_DRAFT_KEY,
       draftKey,
+      ...Object.keys(temporaryDrafts).map(temporaryDraftKey),
       ...sessions.map((session) => session.id),
     ]);
-  }, [draftKey, sessions]);
+  }, [draftKey, sessions, temporaryDrafts]);
 
   useLayoutEffect(() => {
     return () => {
@@ -617,7 +625,7 @@ export function useComposerDraft({
     expectedRevision?: number,
     submitted?: ComposerDraftSnapshot,
   ) => {
-    const currentKey = draftKeyForSession(useAppStore.getState().activeSessionId);
+    const currentKey = activeComposerDraftKey(useAppStore.getState());
     if (expectedRevision !== undefined && readComposerDraftRevision(key) !== expectedRevision) return;
     // Command completion owns only its submitted draft, including when the
     // user has left this session and its newer draft now lives in the cache.
@@ -647,7 +655,7 @@ export function useComposerDraft({
 
   const restoreDraftForKey = (key: string, snapshot: ComposerDraftSnapshot) => {
     const currentActiveSessionId = useAppStore.getState().activeSessionId;
-    const currentKey = draftKeyForSession(currentActiveSessionId);
+    const currentKey = activeComposerDraftKey(useAppStore.getState());
     if (currentKey !== key) {
       const cached = readComposerDraft(key);
       if (!cached?.text && !cached?.fileReferences.length) {

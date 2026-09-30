@@ -48,10 +48,13 @@ let pluginModule = null;
 const pending = new Map();
 const invocations = new Map();
 const invocationContext = new AsyncLocalStorage();
+const panelWorkspaceContext = new AsyncLocalStorage();
 let nextCallId = 1;
 
 /** Proxy a host API call to the broker and await its verdict. */
 function call(api, args = []) {
+  const workspace = panelWorkspaceContext.getStore();
+  if (api === "workspace.get" && workspace !== undefined) return Promise.resolve(workspace);
   const invocation = invocationContext.getStore();
   if (invocation && (invocation.controller.signal.aborted || invocations.get(invocation.id) !== invocation)) {
     return Promise.reject(invocation.controller.signal.reason ?? toolAbortedError("Plugin tool invocation finished"));
@@ -513,7 +516,9 @@ async function handleParentCall(method, payload, invocationId) {
         error.code = "UNSUPPORTED";
         throw error;
       }
-      return invoke(String(payload?.channel ?? ""), payload?.payload ?? {});
+      return panelWorkspaceContext.run(payload?.workspaceScope, () =>
+        invoke(String(payload?.channel ?? ""), payload?.payload ?? {}),
+      );
     }
     case "command.run": {
       const run = commands.get(String(payload?.id ?? ""));

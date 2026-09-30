@@ -344,9 +344,9 @@ export function registerSkillsIpc({
     let projectPath: string | undefined;
     if (input?.sessionId) {
       if (!host) throw new Error("host unavailable");
-      const result = await host.call("session.get", { id: input.sessionId, messageLimit: 1 }) as { session?: { projectPath?: string } };
+      const result = await host.call("session.get", { id: input.sessionId, messageLimit: 1 }) as { session?: { projectPath?: string; temporaryWorkspacePath?: string } };
       if (!result.session) throw new Error("session not found");
-      projectPath = result.session.projectPath;
+      projectPath = result.session.projectPath ?? result.session.temporaryWorkspacePath;
     } else {
       projectPath = (await optionalWorkspaceRoot()) ?? undefined;
     }

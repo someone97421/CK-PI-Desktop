@@ -110,6 +110,7 @@ export type StartupDependencies = {
   applyDeveloperMode: (settings?: { developerMode?: unknown } | null) => void;
   applyPreventScreenSleep: (settings?: { preventScreenSleep?: unknown } | null) => void;
   applyKeepAwakeWhileRunning: (settings?: { keepAwakeWhileRunning?: unknown } | null) => void;
+  applyTemporaryWorkspaceContextMenu: (settings?: { temporaryWorkspaceContextMenu?: unknown } | null) => Promise<void>;
   applyPluginLauncherShortcut: (keybindings?: KeybindingOverrides) => void;
   applyToggleWindowShortcut: (keybindings?: KeybindingOverrides) => void;
   ensureWindow: () => Promise<boolean>;
@@ -174,6 +175,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       applyDeveloperMode,
       applyPreventScreenSleep,
       applyKeepAwakeWhileRunning,
+      applyTemporaryWorkspaceContextMenu,
       applyPluginLauncherShortcut,
       applyToggleWindowShortcut,
       ensureWindow,
@@ -377,13 +379,16 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
           developerMode?: unknown;
           preventScreenSleep?: unknown;
           keepAwakeWhileRunning?: unknown;
+          temporaryWorkspaceContextMenu?: unknown;
         } | null;
         applyApplicationMenuSettings(stored);
         applyDeveloperMode(stored);
         applyPreventScreenSleep(stored);
         applyKeepAwakeWhileRunning(stored);
+        await applyTemporaryWorkspaceContextMenu(stored);
         await applyNetworkProxyFromAppSettings(stored);
       } catch {
+        await applyTemporaryWorkspaceContextMenu();
         // Keep the OS-locale menu until settings can be read again, while
         // retaining the historical default launcher fallback for this failure.
         applyPluginLauncherShortcut();
@@ -391,6 +396,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
         applyToggleWindowShortcut();
       }
     } else {
+      await applyTemporaryWorkspaceContextMenu();
       // If the backend never started, retain the default focused/global path.
       applyPluginLauncherShortcut();
       applyToggleWindowShortcut();

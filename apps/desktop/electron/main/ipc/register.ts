@@ -43,6 +43,8 @@ export type RegisterIpcDependencies = {
   isQuitting: () => boolean;
   ipcMain: IpcMain;
   getMainWindow: () => BrowserWindow | null;
+  /** Renderer-ready handoff for queued Windows Explorer launches. */
+  takeTemporaryWorkspaces?: () => { workspacePaths: string[] };
   getHost: () => HostProcess | null;
   traySessions: ReturnType<typeof createTraySessions>;
   taskbarUnreadBadge: ReturnType<typeof createTaskbarUnreadBadge>;
@@ -113,6 +115,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyDeveloperMode,
     applyPreventScreenSleep,
     applyKeepAwakeWhileRunning,
+    applyTemporaryWorkspaceContextMenu,
     resolveEffectiveCommandShell,
     applyAppearanceIcon,
     modelsDevCatalog,
@@ -231,6 +234,11 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     assertMainWindowSender,
   };
 
+  if (dependencies.takeTemporaryWorkspaces) {
+    registrar.handle(IPC.invoke.temporaryWorkspaceTake, async () =>
+      dependencies.takeTemporaryWorkspaces!(),
+    );
+  }
   registerAppIpc({
     registrar,
     getHost,
@@ -276,6 +284,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyApplicationMenuSettings,
     applyDeveloperMode,
     applyPreventScreenSleep,
+    applyTemporaryWorkspaceContextMenu,
     applyKeepAwakeWhileRunning,
     applyUpdatePreference: (preference) => updater.setPreference(preference),
     resolveEffectiveCommandShell,
@@ -316,9 +325,9 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     sessionWorkspaceRoot: async (sessionId) => {
       const host = getHost();
       if (!host) throw new Error("host unavailable");
-      const result = await host.call("session.get", { id: sessionId, messageLimit: 1 }) as { session?: { projectPath?: string } };
+      const result = await host.call("session.get", { id: sessionId, messageLimit: 1 }) as { session?: { projectPath?: string; temporaryWorkspacePath?: string } };
       if (!result.session) throw new Error("session not found");
-      return result.session.projectPath ?? null;
+      return result.session.projectPath ?? result.session.temporaryWorkspacePath ?? null;
     },
   });
   registerWindowIpc({

@@ -1,5 +1,7 @@
 import { dialog, globalShortcut, shell, type BrowserWindow } from "electron";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { resolveRealOpenablePath } from "@pi-desktop/host-runtime";
 import {
   IPC,
   ErrorCodes,
@@ -14,6 +16,8 @@ import {
 } from "@pi-desktop/shared";
 import {
   parseNetDomains,
+  isDeniedFsPath,
+  isFsPathInScope,
   resolvePluginLocalizedString,
   type PluginCompleteResult,
   type PluginNativeNotificationInput,
@@ -104,8 +108,36 @@ export function createPluginServices({
     (error as { errorCode?: string } | null | undefined)?.errorCode ===
     ErrorCodes.HOST_UNAVAILABLE;
   const pluginPanels = new PluginPanelHost(
-    async (pluginId, channel, payload, context) =>
-      plugins.invokePanelBridge(pluginId, channel, payload, context),
+    async (pluginId, channel, payload, context) => {
+      if (pluginId === "pi.file-manager" && context?.senderId !== undefined) {
+        const workspacePath = pluginViews.workspacePathForSender(context.senderId);
+        const workspace = workspacePath === undefined ? undefined : workspacePath
+          ? { path: workspacePath, name: basename(workspacePath) || workspacePath } : null;
+        if (channel === "workspace.get" && workspace !== undefined) return workspace;
+        if (workspacePath !== undefined && (channel === "fs.openDefault" || channel === "fs.reveal")) {
+          const loaded = plugins.getLoaded(pluginId);
+          if (!loaded?.permissions.has("fs.read")) throw new Error("PERMISSION_DENIED: fs.read");
+          if (!workspacePath) throw new Error("workspace required");
+          const target = await resolveRealOpenablePath(String(payload?.path ?? ""), workspacePath, []);
+          if (!target || !(await stat(target)).isFile()) throw new Error("file not found in workspace");
+          const rel = relative(await realpath(workspacePath), target).replace(/\\/g, "/");
+          if (isDeniedFsPath(rel) || !isFsPathInScope(rel, loaded.manifest.fs?.read?.scope ?? [])) {
+            throw new Error("PERMISSION_DENIED: file outside declared scope");
+          }
+          if (channel === "fs.reveal") shell.showItemInFolder(target);
+          else {
+            const error = await shell.openPath(target);
+            if (error) throw new Error(error);
+          }
+          return { ok: true };
+        }
+        if (channel.startsWith("fm.")) {
+          payload = { ...payload, __workspaceScope: workspace };
+          return plugins.invokePanelBridge(pluginId, channel, payload, { ...context, workspaceScope: workspace });
+        }
+      }
+      return plugins.invokePanelBridge(pluginId, channel, payload, context);
+    },
     // A panel reaching for an undeclared host is the shape an exfiltration
     // attempt takes, so it is logged like a denied API call rather than dropped
     // silently in the network layer.

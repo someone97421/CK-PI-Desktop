@@ -53,6 +53,10 @@ import { createPlanUiProbe } from "./plan-ui-probe";
 import { registerIpcHandlers } from "./ipc/register";
 import { MainProcessState } from "./bootstrap/main-state";
 import { registerApplicationActivation } from "./bootstrap/app-activation";
+import {
+  createTemporaryWorkspaceRuntime,
+  initialTemporaryWorkspaceCommandLine,
+} from "./temporary-workspace";
 import { createHostRuntime } from "./runtime/host";
 import { createSidecarRuntime } from "./runtime/sidecar";
 import { createEventPersistence } from "./runtime/event-persistence";
@@ -87,7 +91,10 @@ installMainProcessErrorHandlers();
 
 const isDevelopmentBuild =
   process.env.PI_DESKTOP_DEV === "1" || !app.isPackaged;
-const { dataDir, hasSingleInstanceLock } = configureApplicationIdentity(app);
+const initialTemporaryWorkspace = initialTemporaryWorkspaceCommandLine();
+const { dataDir, hasSingleInstanceLock } = configureApplicationIdentity(app, {
+  temporaryWorkspacePath: initialTemporaryWorkspace,
+});
 // Work around a Chromium accessibility-tree crash during streaming updates.
 // Chromium disables its renderer accessibility tree here; assess Computer Use separately.
 app.commandLine.appendSwitch("disable-renderer-accessibility");
@@ -496,6 +503,19 @@ function sendToRenderer(channel: string, payload: unknown) {
 
 installInsecureEndpointNotice(sendToRenderer);
 
+const temporaryWorkspaceRuntime = createTemporaryWorkspaceRuntime({
+  onPending: (workspacePath) =>
+    sendToRenderer(IPC.event.temporaryWorkspacePending, { workspacePath }),
+  log: (message, data) => logger.app("diagnostics", "warn", message, { data }),
+});
+if (initialTemporaryWorkspace) {
+  temporaryWorkspaceRuntime.enqueueFromCommandLine([
+    "this-is-a-agent",
+    "--temporary-workspace",
+    initialTemporaryWorkspace,
+  ]);
+}
+
 applicationLifecycle = createApplicationLifecycle({
   getRunningSessionIds: () => activeTurns.keys(),
   state: windowLifecycleState,
@@ -842,6 +862,7 @@ function registerIpc() {
     taskbarUnreadBadge: applicationLifecycle!.taskbarUnreadBadge,
     ipcMain,
     getMainWindow,
+    takeTemporaryWorkspaces: () => temporaryWorkspaceRuntime.takePending(),
     getHost,
     getSidecar,
     getAgentHostBridge: () => mainState.agentHostBridge,
@@ -877,6 +898,7 @@ function registerIpc() {
     applyDeveloperMode,
     applyPreventScreenSleep,
     applyKeepAwakeWhileRunning,
+    applyTemporaryWorkspaceContextMenu: (settings) => temporaryWorkspaceRuntime.applyContextMenu(settings),
     resolveEffectiveCommandShell,
     applyAppearanceIcon,
     modelsDevCatalog,
@@ -973,6 +995,12 @@ registerApplicationStartup({
   applyDeveloperMode,
   applyPreventScreenSleep,
   applyKeepAwakeWhileRunning,
+  applyTemporaryWorkspaceContextMenu: (settings) =>
+    temporaryWorkspaceRuntime.applyContextMenu(settings).catch((error) => {
+      logger.app("diagnostics", "warn", "Windows Explorer context menu refresh failed", {
+        data: String(error),
+      });
+    }),
   applyPluginLauncherShortcut,
   applyToggleWindowShortcut,
   ensureWindow,
@@ -1017,4 +1045,6 @@ registerApplicationActivation({
   isQuitting: () => mainState.quitting,
   isApplicationBooted: () => applicationLifecycleState.applicationBooted,
   hasVisibleWindow,
+  onTemporaryWorkspaceLaunch: (commandLine, additionalData) =>
+    temporaryWorkspaceRuntime.enqueueFromCommandLine(commandLine, additionalData),
 });

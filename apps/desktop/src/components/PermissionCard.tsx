@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import type { PendingPermission } from "../lib/pending-permissions";
 import { useAppStore } from "../stores/app-store";
+import { sessionWorkspacePath } from "../lib/session-workspace";
 import { buildToolPresentation } from "../lib/tool-presentation";
 import { ToolDetailBlocks } from "./ToolDetails";
 import { Button } from "./ui";
@@ -17,9 +18,10 @@ export function PermissionCard({
   const { t } = useTranslation();
   const resolvePermission = useAppStore((state) => state.resolvePermission);
   const showToast = useAppStore((state) => state.showToast);
-  const workspace = useAppStore((state) =>
-    state.sessions.find((session) => session.id === permission.sessionId)?.projectPath,
-  );
+  const workspace = useAppStore((state) => {
+    const session = state.sessions.find((candidate) => candidate.id === permission.sessionId);
+    return sessionWorkspacePath(session);
+  });
   const [resolving, setResolving] = useState(false);
 
   const restoreComposerFocus = () => {

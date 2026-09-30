@@ -589,9 +589,7 @@ export function registerAgentIpc({
       preparedAttachments = await preparePromptAttachments(
         dataDir,
         req.sessionId,
-        typeof session.projectPath === "string" && session.projectPath.trim()
-          ? session.projectPath.trim()
-          : undefined,
+        session.projectPath?.trim() || session.temporaryWorkspacePath?.trim() || undefined,
         req.attachments ?? [],
         supportsVision,
         mediaCapabilitiesForProvider(launch.sidecarParams.provider),

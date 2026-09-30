@@ -67,11 +67,13 @@ export function createInteractionSlice({
         const entry = {
           page,
           sessionId: page === "chat" ? state.activeSessionId : undefined,
+          draftId: page === "chat" && !state.activeSessionId && !state.workspace?.path
+            ? state.draftSessionId ?? undefined : undefined,
         };
         const stack = state.navStack.slice(0, state.navIndex + 1);
         const last = stack[stack.length - 1];
         const same =
-          last?.page === entry.page && last?.sessionId === entry.sessionId;
+          last?.page === entry.page && last?.sessionId === entry.sessionId && last?.draftId === entry.draftId;
         const nextStack = same ? stack : [...stack, entry].slice(-50);
         return {
           page,
@@ -105,6 +107,8 @@ export function createInteractionSlice({
           navigationIntent: intent,
         });
         set({ navIndex: index });
+      } else if (entry.page === "chat" && entry.draftId) {
+        void get().newSession({ projectPath: null, draftId: entry.draftId, record: false });
       }
     },
 
@@ -121,6 +125,8 @@ export function createInteractionSlice({
           navigationIntent: intent,
         });
         set({ navIndex: index });
+      } else if (entry.page === "chat" && entry.draftId) {
+        void get().newSession({ projectPath: null, draftId: entry.draftId, record: false });
       }
     },
 

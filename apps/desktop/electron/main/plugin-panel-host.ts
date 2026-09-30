@@ -205,7 +205,7 @@ type BridgeHandler = (
   pluginId: string,
   channel: string,
   payload?: Record<string, unknown>,
-  context?: { droppedPath?: string },
+  context?: { droppedPath?: string; senderId?: number },
 ) => Promise<unknown>;
 
 /** Reports an egress attempt a panel was not allowed to make. */
@@ -410,7 +410,7 @@ export class PluginPanelHost {
           channel === "fs.registerDropped"
             ? this.consumeDroppedPath(event.sender.id, payload?.path)
             : undefined;
-        return this.bridge(pluginId, channel, payload, droppedPath ? { droppedPath } : undefined);
+        return this.bridge(pluginId, channel, payload, { senderId: event.sender.id, ...(droppedPath ? { droppedPath } : {}) });
       },
     );
 
@@ -444,7 +444,7 @@ export class PluginPanelHost {
         // rejects when the plugin is unloaded or times out, and a panel page
         // can call this at will, so the rejection must be observed here
         // rather than surfacing as an unhandled rejection in main.
-        this.bridge(pluginId, channel, payload).catch((error) => {
+        this.bridge(pluginId, channel, payload, { senderId: event.sender.id }).catch((error) => {
           this.onBridgeError?.(pluginId, channel, error);
         });
         event.returnValue = { ok: true, accepted: true };

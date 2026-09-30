@@ -16,6 +16,7 @@ function withProjectDisplayName(
 
 /** Values that are stable before the first host bootstrap response arrives. */
 export function createInitialState(): AppStateData {
+  const draftId = crypto.randomUUID();
   return {
     ready: false,
     healthOk: false,
@@ -59,7 +60,12 @@ export function createInitialState(): AppStateData {
     retainedTranscripts: {},
     transcriptViews: {},
     sessionHistory: {},
+    draftTemporaryWorkspacePath: null,
     draftConfiguration: null,
+    draftSessionId: draftId,
+    draftSessionKind: "temporary",
+    temporaryDrafts: { [draftId]: { workspacePath: null, configuration: null } },
+    lastTemporaryDraftId: draftId,
     isRunning: false,
     runningSessions: {},
     agentStatuses: {},
@@ -81,7 +87,7 @@ export function createInitialState(): AppStateData {
     settingsTab: "general",
     settingsAnchor: null,
     settingsTabNonce: 0,
-    navStack: [{ page: "chat" }],
+    navStack: [{ page: "chat", draftId }],
     navIndex: 0,
     toasts: [],
     notifications: [],

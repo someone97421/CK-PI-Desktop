@@ -10,7 +10,7 @@ import {
 import type { AppState } from "../../../../stores/app-store";
 import { useAppStore } from "../../../../stores/app-store";
 import { api } from "../../../../lib/api";
-import { draftKeyForSession } from "../../../../lib/composer-draft-cache";
+import { activeComposerDraftKey } from "../../../../lib/temporary-drafts";
 import { runExtensionCommand, runPaletteCommand } from "../../../../lib/commands";
 import { resolveComposerCommand } from "../../../../hooks/use-composer-autocomplete";
 import {
@@ -130,7 +130,7 @@ export function useComposerSubmit({
         modelId,
         thinkingLevel: canonicalThinkingLevel(thinkingLevel),
       });
-      const currentKey = draftKeyForSession(useAppStore.getState().activeSessionId);
+      const currentKey = activeComposerDraftKey(useAppStore.getState());
       if (
         enhancementRequestRef.current !== requestToken ||
         currentKey !== sourceKey ||
@@ -163,7 +163,7 @@ export function useComposerSubmit({
         setEditorCaret(element, enhancedDraft.length);
       });
     } catch (error) {
-      const currentKey = draftKeyForSession(useAppStore.getState().activeSessionId);
+      const currentKey = activeComposerDraftKey(useAppStore.getState());
       if (
         enhancementRequestRef.current !== requestToken ||
         currentKey !== sourceKey ||

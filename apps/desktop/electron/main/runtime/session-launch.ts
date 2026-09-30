@@ -440,15 +440,13 @@ export function createSessionLaunchRuntime({
         }) ?? await resolveCompactionProvider(providers.providers, settings)
       : await resolveCompactionProvider(providers.providers, settings);
     const projectPath =
-      typeof session.projectPath === "string" && session.projectPath.trim()
-        ? session.projectPath.trim()
-        : undefined;
+      session.projectPath?.trim() || session.temporaryWorkspacePath?.trim() || undefined;
     let projectInstructions = await loadInstructionChain(projectPath);
     // pi-compatible SYSTEM.md / APPEND_SYSTEM.md (issue #542): resolved once
     // per launch; a change retires the runtime through the reuse match.
     const customSystemPrompt = await loadCustomSystemPrompt(projectPath);
     let projectMemory: string | undefined;
-    if (projectPath) {
+    if (session.projectPath && projectPath) {
       try {
         const result = await runtimeState.host!.call<{
           context?: {

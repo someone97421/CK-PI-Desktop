@@ -1304,6 +1304,9 @@ fn resolve_tool_workspace(
             if let Some(project_path) = detail.summary.project_path {
                 return Ok(Some(project_path));
             }
+            if let Some(path) = detail.summary.temporary_workspace_path {
+                return Ok(Some(path));
+            }
             let scratch = scratch::session_dir(&state.data_dir, session_id)
                 .ok_or_else(|| rpc_err(1000, "temporary session has an invalid id", "INTERNAL"))?;
             std::fs::create_dir_all(&scratch)
@@ -1336,6 +1339,9 @@ fn resolve_tool_workspace_for_call(
         return Ok(primary);
     };
     if !Path::new(raw_path).is_absolute() {
+        return Ok(primary);
+    }
+    if resolve_persisted_project_workspace(state, session_id)?.is_none() {
         return Ok(primary);
     }
     let group = state
@@ -1391,13 +1397,7 @@ fn requires_external_path_permission(
 /// tool compatibility resolver, a plan submission never inherits the mutable
 /// global workspace or accepts a session-less request.
 fn resolve_plan_workspace(state: &AppState, session_id: &str) -> Result<PathBuf, JsonRpcError> {
-    match sessions::get_session(&state.db, session_id) {
-        Ok(Some(_)) => {}
-        Ok(None) => return Err(plan_rpc_err("PLAN_SESSION_NOT_FOUND")),
-        Err(error) => return Err(rpc_err(1000, error.to_string(), "INTERNAL")),
-    }
-    resolve_persisted_project_workspace(state, session_id)?
-        .map(PathBuf::from)
+    resolve_plan_workspace_if_available(state, session_id)?
         .ok_or_else(|| plan_rpc_err("PLAN_WORKSPACE_REQUIRED"))
 }
 
@@ -1406,11 +1406,12 @@ fn resolve_plan_workspace_if_available(
     session_id: &str,
 ) -> Result<Option<PathBuf>, JsonRpcError> {
     match sessions::get_session(&state.db, session_id) {
-        Ok(Some(_)) => {}
-        Ok(None) => return Err(plan_rpc_err("PLAN_SESSION_NOT_FOUND")),
-        Err(error) => return Err(rpc_err(1000, error.to_string(), "INTERNAL")),
+        Ok(Some(detail)) => Ok(detail.summary.project_path
+            .or(detail.summary.temporary_workspace_path)
+            .map(PathBuf::from)),
+        Ok(None) => Err(plan_rpc_err("PLAN_SESSION_NOT_FOUND")),
+        Err(error) => Err(rpc_err(1000, error.to_string(), "INTERNAL")),
     }
-    Ok(resolve_persisted_project_workspace(state, session_id)?.map(PathBuf::from))
 }
 
 /// Push one notification line to the caller's stream.
@@ -2478,6 +2479,7 @@ async fn handle_request(
             let session = sessions::create_session_with_options(
                 &st.db,
                 sessions::SessionCreateOptions {
+                    draft_id: params.get("draftId").and_then(|v| v.as_str()).map(str::to_string),
                     title: params
                         .get("title")
                         .and_then(|v| v.as_str())
@@ -2496,6 +2498,10 @@ async fn handle_request(
                         .map(str::to_string),
                     project_path: params
                         .get("projectPath")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
+                    temporary_workspace_path: params
+                        .get("temporaryWorkspacePath")
                         .and_then(|v| v.as_str())
                         .map(str::to_string),
                     thinking_level,
@@ -6564,6 +6570,27 @@ mod tests {
             crate::workspace::simple_canonicalize(Path::new(&fallback)).unwrap(),
             crate::workspace::simple_canonicalize(&primary).unwrap()
         );
+    }
+
+    #[test]
+    fn temporary_session_uses_selected_workspace_and_plan_root() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let state = AppState::open(data_dir.path()).unwrap();
+        let session = sessions::create_session_with_options(
+            &state.db,
+            sessions::SessionCreateOptions {
+                temporary_workspace_path: Some(directory.path().to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        ).unwrap();
+        let expected = crate::workspace::simple_canonicalize(directory.path()).unwrap();
+        assert_eq!(PathBuf::from(resolve_tool_workspace(&state, &session.id).unwrap().unwrap()), expected);
+        assert_eq!(resolve_plan_workspace(&state, &session.id).unwrap(), expected);
+        assert_eq!(resolve_persisted_project_workspace(&state, &session.id).unwrap(), None);
+        let external = data_dir.path().join("outside.txt");
+        let resolved = resolve_tool_workspace_for_call(&state, &session.id, &json!({"path": external})).unwrap().unwrap();
+        assert_eq!(PathBuf::from(resolved), expected);
     }
 
     #[test]

@@ -13,6 +13,7 @@ import { api } from "../lib/api";
 import { safeDecodeUri, toWorkspaceRel } from "../lib/chat-links";
 import { useAppStore } from "../stores/app-store";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
+import { sessionWorkspacePath } from "../lib/session-workspace";
 import { PortalTooltip, useTooltip } from "./ui";
 import {
   IconCopy,
@@ -103,7 +104,10 @@ function useFileRefResolution(
   active: boolean,
 ): FileRefResolution {
   const sessionId = useAppStore((s) => s.activeSessionId);
-  const root = useAppStore((s) => s.workspace?.path ?? null);
+  const activeSession = useAppStore((s) =>
+    sessionId ? s.sessions.find((session) => session.id === sessionId) : undefined,
+  );
+  const root = useAppStore((s) => sessionWorkspacePath(activeSession, s.workspace?.path));
   const key = JSON.stringify([sessionId, root, baseDir, rawRef]);
   const [state, setState] = useState<{ key: string; value: FileRefResolution }>({ key: "", value: { status: "loading" } });
   useEffect(() => {
@@ -164,7 +168,11 @@ function FileRefMenu({
   onClose: (restoreFocus: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const root = useAppStore((s) => s.workspace?.path ?? null);
+  const sessionId = useAppStore((s) => s.activeSessionId);
+  const activeSession = useAppStore((s) =>
+    sessionId ? s.sessions.find((session) => session.id === sessionId) : undefined,
+  );
+  const root = useAppStore((s) => sessionWorkspacePath(activeSession, s.workspace?.path));
   const openFileRef = useOpenChatFileRef();
   const showToast = useAppStore((s) => s.showToast);
   const resolution = useFileRefResolution(rawRef, baseDir, true);

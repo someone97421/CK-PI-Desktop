@@ -5,6 +5,7 @@ export type ApplicationActivationDependencies = {
   isQuitting: () => boolean;
   isApplicationBooted: () => boolean;
   hasVisibleWindow: () => boolean;
+  onTemporaryWorkspaceLaunch?: (commandLine: readonly string[], additionalData?: unknown) => void;
 };
 
 /** Register activation paths that restore the existing application window. */
@@ -13,12 +14,15 @@ export function registerApplicationActivation({
   isQuitting,
   isApplicationBooted,
   hasVisibleWindow,
+  onTemporaryWorkspaceLaunch,
 }: ApplicationActivationDependencies): void {
   app.on("activate", restoreMainWindow);
 
   // 共用业务目录时，再次启动（包括兼容原版）交给锁持有者恢复窗口。
-  app.on("second-instance", restoreMainWindow);
-
+  app.on("second-instance", (_event, commandLine, _workingDirectory, additionalData) => {
+    restoreMainWindow();
+    onTemporaryWorkspaceLaunch?.(commandLine, additionalData);
+  });
   // macOS can activate the app without emitting `activate` (Cmd+Tab, App
   // Exposé, and Spotlight). Restore only when no window is visible, so opening
   // a plugin surface does not unexpectedly bring the main window forward.

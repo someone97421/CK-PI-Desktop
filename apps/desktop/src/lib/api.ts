@@ -386,6 +386,8 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     defaultMode: normalizeMode((settings as { defaultMode?: unknown }).defaultMode),
     infiniteProviderRetry:
       (settings as { infiniteProviderRetry?: unknown }).infiniteProviderRetry === true,
+    temporaryWorkspaceContextMenu:
+      (settings as { temporaryWorkspaceContextMenu?: unknown }).temporaryWorkspaceContextMenu === true,
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
     )
@@ -425,6 +427,7 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     fontScale?: unknown;
     chatContentMaxWidth?: unknown;
     infiniteProviderRetry?: unknown;
+    temporaryWorkspaceContextMenu?: unknown;
     smoothStreaming?: unknown;
     updatePreference?: unknown;
     lastNotifiedUpdateVersion?: unknown;
@@ -469,6 +472,14 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     typeof value.infiniteProviderRetry !== "boolean"
   ) {
     throw Object.assign(new Error("infiniteProviderRetry is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, "temporaryWorkspaceContextMenu") &&
+    typeof value.temporaryWorkspaceContextMenu !== "boolean"
+  ) {
+    throw Object.assign(new Error("temporaryWorkspaceContextMenu is invalid"), {
       errorCode: "INVALID_PARAMS",
     });
   }
@@ -604,7 +615,7 @@ export const api = {
       ...result,
       sessions: result.sessions.map(normalizeSession),
     })),
-  createSession: (input?: Partial<SessionSummary>) =>
+  createSession: (input?: Partial<SessionSummary> & { draftId?: string }) =>
     invoke<{ session: SessionSummary }>(IPC.invoke.sessionCreate, input ?? {}).then(
       (result) => ({ ...result, session: normalizeSession(result.session) }),
     ),
@@ -676,6 +687,8 @@ export const api = {
   getSettings: () => invoke<AppSettings>(IPC.invoke.settingsGet).then(normalizeSettings),
   setSettings: (settings: AppSettings) =>
     invoke(IPC.invoke.settingsSet, validateSettingsWrite(settings)),
+  takeTemporaryWorkspaces: () =>
+    invoke<{ workspacePaths: string[] }>(IPC.invoke.temporaryWorkspaceTake),
   getAppearanceMedia: () =>
     invoke<AppearanceMediaState>(IPC.invoke.appearanceMediaGet),
   selectAppearanceMedia: (kind: AppearanceMediaKind) =>
@@ -868,8 +881,11 @@ export const api = {
     invoke<{ workspace: ProjectWorkspace | null; canceled?: boolean }>(
       IPC.invoke.projectOpen,
     ),
-  pickProjectFolders: () =>
-    invoke<{ folders: string[]; canceled?: boolean }>(IPC.invoke.projectPickFolders),
+  pickProjectFolders: (options?: { single?: boolean; defaultPath?: string }) =>
+    invoke<{ folders: string[]; canceled?: boolean }>(
+      IPC.invoke.projectPickFolders,
+      options ?? {},
+    ),
   getProjectMemory: (projectPath: string) =>
     invoke<{ memory: ProjectMemory }>(IPC.invoke.projectMemoryGet, { projectPath }),
   saveProjectMemory: (projectPath: string, entries: ProjectMemoryEntry[]) =>
@@ -893,14 +909,20 @@ export const api = {
     window.piDesktop?.getDroppedFilePath?.(file) ?? null,
   pickPhotos: () =>
     invoke<{ token: string | null; canceled?: boolean }>(IPC.invoke.composerPickPhotos),
-  importFiles: (sessionId: string, token: string) =>
+  importFiles: (sessionId: string | null | undefined, token: string, draftId?: string) =>
     invoke<{ files: ComposerPastedFile[] }>(IPC.invoke.composerImportFiles, {
-      sessionId,
+      ...(sessionId ? { sessionId } : {}),
+      ...(draftId ? { draftId } : {}),
       token,
     }),
-  pasteFiles: (sessionId: string, files: ComposerPasteFile[]) =>
+  pasteFiles: (
+    sessionId: string | null | undefined,
+    files: ComposerPasteFile[],
+    draftId?: string,
+  ) =>
     invoke<{ files: ComposerPastedFile[] }>(IPC.invoke.composerPasteFiles, {
-      sessionId,
+      ...(sessionId ? { sessionId } : {}),
+      ...(draftId ? { draftId } : {}),
       files,
     }),
   recordClipboardPaste: (text: string) =>
@@ -1319,7 +1341,7 @@ export const api = {
   pluginViewOpen: (
     pluginId: string,
     viewId: string,
-    extra?: { sessionId?: string; location?: string; tabId?: string },
+    extra?: { sessionId?: string; location?: string; tabId?: string; workspacePath?: string | null },
   ) => invoke(IPC.invoke.pluginViewOpen, { pluginId, viewId, ...extra }),
   pluginViewClose: (pluginId: string, viewId: string, extra?: { sessionId: string; tabId?: string }) =>
     invoke(IPC.invoke.pluginViewClose, { pluginId, viewId, ...extra }),
@@ -1436,22 +1458,26 @@ export const api = {
     invoke(IPC.invoke.browserOpenExternal, url ? { url } : {}),
   browserGetState: () =>
     invoke<BrowserState | null>(IPC.invoke.browserGetState),
-  fsList: (path?: string) =>
-    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, { path: path ?? "" }),
-  fsRead: (path: string, mimeType?: string) =>
+  fsList: (path?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
+    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, { ...scope, path: path ?? "" }),
+  fsRead: (path: string, mimeType?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
     invoke<FsReadResult>(IPC.invoke.fsRead, {
+      ...scope,
       path,
       ...(mimeType ? { mimeType } : {}),
     }),
-  fsReadImageDataUrl: (ref: string, mimeType?: string) =>
+  fsReadImageDataUrl: (ref: string, mimeType?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
     invoke<FsImageDataUrlResult>(IPC.invoke.fsReadImageDataUrl, {
+      ...scope,
       ref,
       ...(mimeType ? { mimeType } : {}),
     }),
-  fsReveal: (path: string) => invoke(IPC.invoke.fsReveal, { path }),
-  fsOpen: (path: string, mimeType?: string) =>
-    invoke(IPC.invoke.fsOpen, { path, mimeType }),
-  fsIndex: () => invoke<FsIndexResult>(IPC.invoke.fsIndex),
+  fsReveal: (path: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
+    invoke(IPC.invoke.fsReveal, { ...scope, path }),
+  fsOpen: (path: string, mimeType?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
+    invoke(IPC.invoke.fsOpen, { ...scope, path, mimeType }),
+  fsIndex: (scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
+    invoke<FsIndexResult>(IPC.invoke.fsIndex, scope ?? {}),
   /**
    * Complete a file reference from chat text to a real file (D320 follow-up).
    * The main process owns the root order — project, session scratch,
@@ -1462,8 +1488,8 @@ export const api = {
       ref,
       ...(sessionId ? { sessionId } : {}),
     }),
-  composerCommands: () =>
-    invoke<{ commands: ComposerCommand[] }>(IPC.invoke.composerCommands),
+  composerCommands: (scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
+    invoke<{ commands: ComposerCommand[] }>(IPC.invoke.composerCommands, scope ?? {}),
   setWorkPanelReservation: (width: number) =>
     invoke<{ requested: number; reserved: number }>(
       IPC.invoke.windowSetWorkPanelReservation,
@@ -1710,6 +1736,15 @@ export const api = {
     return window.piDesktop.on(IPC.event.settingsChanged, (payload) =>
       listener((payload ?? {}) as Record<string, unknown>),
     );
+  },
+  onTemporaryWorkspacePending: (listener: (workspacePath: string) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.temporaryWorkspacePending, (payload) => {
+      const path = payload && typeof payload === "object"
+        ? (payload as { workspacePath?: unknown }).workspacePath
+        : undefined;
+      if (typeof path === "string" && path.trim()) listener(path);
+    });
   },
   onConfigSyncChanged: (listener: (state: ConfigSyncState) => void) => {
     if (!window.piDesktop?.on) return () => undefined;

@@ -37,6 +37,7 @@ import {
   isDelegationActivityItem,
   lifecycleKindOf,
   summarizeSubagentActivity,
+  type DelegationActivityItem,
   type SubagentOutcome,
   type SubagentTiming,
 } from "../../../lib/subagent-topology";
@@ -228,11 +229,10 @@ export const ActivityGroup = memo(function ActivityGroup({
   const delegatesRef = useRef(rawDelegateItems);
   const delegateItems = reuseReferences(delegatesRef.current, rawDelegateItems);
   delegatesRef.current = delegateItems;
-  const rawTools = useMemo(() => items.flatMap((item) => item.kind === "tool" ? [item.message] : []), [items]);
-  const toolsRef = useRef(rawTools);
-  const tools = reuseReferences(toolsRef.current, rawTools);
-  toolsRef.current = tools;
-  const delegationItems = useMemo(() => tools.map((message) => ({ kind: "tool" as const, message })), [tools]);
+  const rawDelegationItems = useMemo(() => items.filter((item): item is DelegationActivityItem => item.kind === "tool"), [items]);
+  const delegationItemsRef = useRef(rawDelegationItems);
+  const delegationItems = reuseReferences(delegationItemsRef.current, rawDelegationItems);
+  delegationItemsRef.current = delegationItems;
   // One delegation reads the same as five: the card is how a delegation is
   // presented, not a treatment reserved for fan-out. A lone `Task` rendered as
   // an ordinary tool row hid the outcome, runtime and step count that the card
@@ -252,7 +252,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   // Parent tools after a Task fan-out live in a later activity part (D319), so
   // this card is not the turn's live tail while its delegates are still running.
   const topologyLive = hasSubagentTopology && subagentSummary.running > 0;
-  const live = isActive || topologyLive;
+  const live = hasSubagentTopology ? topologyLive : isActive;
   const searchTarget = useContext(TranscriptSearchContext);
   const revealRequest = useMemo(() => searchTarget && items.some((item) => item.message.id === searchTarget.messageId)
     ? searchTarget.requestId : undefined, [items, searchTarget]);

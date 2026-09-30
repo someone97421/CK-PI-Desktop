@@ -1,5 +1,5 @@
 import { BrowserWindow, dialog, shell, type OpenDialogOptions } from "electron";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { homedir } from "node:os";
 import { existsSync, statSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
@@ -17,6 +17,8 @@ import {
   type ComposerTemplate,
 } from "@pi-desktop/agent-runtime";
 import { cloneGitRepository } from "../git-clone";
+import { resolveSessionWorkspace } from "../runtime/session-workspace";
+
 import {
   importComposerFiles,
   saveComposerPasteFiles,
@@ -52,6 +54,7 @@ import type { PluginRuntime } from "../plugin-runtime";
 import type { IpcRegistrar } from "./types";
 
 type WorkspaceRecord = { path: string; name: string };
+type FileWorkspaceScope = { sessionId?: string; temporaryWorkspacePath?: string | null };
 
 export function createComposerTemplateLoader(
   logger: Pick<Logger, "app">,
@@ -126,6 +129,25 @@ export function registerWorkspaceIpc({
   const assertMainWindowSender = registrar.assertMainWindowSender;
   let composerPickerActive = false;
   let projectPickerActive = false;
+
+  const composerStorageOwner = async (input: { sessionId?: unknown; draftId?: unknown }): Promise<string> => {
+    if (typeof input.draftId === "string" && input.draftId) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.draftId)) {
+        throw Object.assign(new Error("invalid draft id"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+      }
+      return input.draftId.toLowerCase();
+    }
+    if (!host) throw new Error("host unavailable");
+    const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+    if (!sessionId) {
+      throw Object.assign(new Error("session required"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+    }
+    const result = await host.call<{ session?: unknown }>("session.get", { id: sessionId, messageLimit: 1, contentLimit: 1 });
+    if (!result.session) {
+      throw Object.assign(new Error("session not found"), { errorCode: ErrorCodes.NOT_FOUND });
+    }
+    return sessionId;
+  };
 
   // Native composer dialogs are process-wide; reject duplicate requests while
   // one is open instead of queueing another dialog behind it.
@@ -401,9 +423,12 @@ export function registerWorkspaceIpc({
     setCurrentWorkspacePath(res.workspace?.path ?? result.filePaths[0]);
     return { workspace: await withGitBranch(res.workspace), canceled: false };
   });
-  handle(IPC.invoke.projectPickFolders, async () => {
+  handle(IPC.invoke.projectPickFolders, async (input: { single?: boolean; defaultPath?: string } = {}) => {
     const result = await openProjectPicker({
-      properties: ["openDirectory", "multiSelections", "createDirectory"],
+      defaultPath: input.defaultPath,
+      properties: input.single
+        ? ["openDirectory", "createDirectory"]
+        : ["openDirectory", "multiSelections", "createDirectory"],
     });
     if (!result || result.canceled || result.filePaths.length === 0) {
       return { folders: [], canceled: true };
@@ -542,24 +567,9 @@ export function registerWorkspaceIpc({
     IPC.invoke.composerImportFiles,
     async (
       event,
-      input: { sessionId?: unknown; token?: unknown } = {},
+      input: { sessionId?: unknown; draftId?: unknown; token?: unknown } = {},
     ) => {
-      if (!host) throw new Error("host unavailable");
-      const sessionId =
-        typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-      if (!sessionId) {
-        throw Object.assign(new Error("session required"), {
-          errorCode: ErrorCodes.INVALID_ARGUMENT,
-        });
-      }
-      const session = (await host.call("session.get", { id: sessionId })) as {
-        session?: unknown;
-      };
-      if (!session.session) {
-        throw Object.assign(new Error("session not found"), {
-          errorCode: ErrorCodes.NOT_FOUND,
-        });
-      }
+      const sessionId = await composerStorageOwner(input);
       const paths = consumeComposerPickerSelection(input.token, event.sender.id);
       return {
         files: await importComposerFiles(
@@ -587,24 +597,9 @@ export function registerWorkspaceIpc({
 
   handleWithEvent(
     IPC.invoke.composerPasteFiles,
-    async (event, input: { sessionId?: unknown; files?: unknown } = {}) => {
+    async (event, input: { sessionId?: unknown; draftId?: unknown; files?: unknown } = {}) => {
       assertMainWindowSender(event);
-      if (!host) throw new Error("host unavailable");
-      const sessionId =
-        typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-      if (!sessionId) {
-        throw Object.assign(new Error("session required"), {
-          errorCode: ErrorCodes.INVALID_ARGUMENT,
-        });
-      }
-      const session = (await host.call("session.get", { id: sessionId })) as {
-        session?: unknown;
-      };
-      if (!session.session) {
-        throw Object.assign(new Error("session not found"), {
-          errorCode: ErrorCodes.NOT_FOUND,
-        });
-      }
+      const sessionId = await composerStorageOwner(input);
       if (!Array.isArray(input.files)) {
         throw Object.assign(new Error("files must be an array"), {
           errorCode: ErrorCodes.INVALID_ARGUMENT,
@@ -724,8 +719,20 @@ export function registerWorkspaceIpc({
     return root;
   };
 
-  handle(IPC.invoke.fsList, async (input: { path?: string } = {}) => {
-    const root = await requireWorkspaceRoot();
+  const fileWorkspace = async (scope: FileWorkspaceScope) => {
+    if (scope.sessionId) {
+      if (!host) throw new Error("host unavailable");
+      return resolveSessionWorkspace(host, scope.sessionId);
+    }
+    if ("temporaryWorkspacePath" in scope) {
+      return { path: scope.temporaryWorkspacePath?.trim() || null, project: false };
+    }
+    return { path: await optionalWorkspaceRoot(), project: true };
+  };
+
+  handle(IPC.invoke.fsList, async (input: FileWorkspaceScope & { path?: string } = {}) => {
+    const { path: root } = await fileWorkspace(input);
+    if (!root) throw new Error("workspace required");
     return { entries: await listDir(root, String(input.path ?? "")) };
   });
 
@@ -743,11 +750,11 @@ export function registerWorkspaceIpc({
    * or synced folder). The two entries name the same directory, and every
    * candidate is still re-checked through `realpath` before a read is allowed.
    */
-  const fsExtraRoots = async (workspaceRoot: string | null, requested: string): Promise<string[]> => {
+  const fsExtraRoots = async (workspaceRoot: string | null, requested: string, project = true): Promise<string[]> => {
     const roots = [
       join(dataDir, "scratch"),
       join(dataDir, "attachments"),
-      ...projectFolderPaths(workspaceRoot).filter((path) => path !== workspaceRoot),
+      ...(project ? projectFolderPaths(workspaceRoot).filter((path) => path !== workspaceRoot) : []),
     ];
     // Explicit desktop file references may name files outside the project.
     if (isAbsolute(requested)) {
@@ -822,20 +829,16 @@ export function registerWorkspaceIpc({
 
   handle(
     IPC.invoke.fsRead,
-    async (input: { path?: string; mimeType?: string } = {}) => {
+    async (input: FileWorkspaceScope & { path?: string; mimeType?: string } = {}) => {
       const requested = String(input.path ?? "").trim();
-      let workspaceRoot: string | null = null;
-      try {
-        workspaceRoot = await requireWorkspaceRoot();
-      } catch (error) {
-        if (!isAbsolute(requested) && !isAttachmentBlobRef(requested)) {
-          throw error;
-        }
+      const { path: workspaceRoot, project } = await fileWorkspace(input);
+      if (!workspaceRoot && !isAbsolute(requested) && !isAttachmentBlobRef(requested)) {
+        throw new Error("workspace required");
       }
       return readOpenableFile(
         requested,
         workspaceRoot,
-        await fsExtraRoots(workspaceRoot, requested),
+        await fsExtraRoots(workspaceRoot, requested, project),
         input.mimeType,
       );
     },
@@ -843,32 +846,28 @@ export function registerWorkspaceIpc({
 
   handle(
     IPC.invoke.fsReadImageDataUrl,
-    async (input: { ref?: string; mimeType?: string } = {}) => {
-      const workspaceRoot = await optionalWorkspaceRoot();
+    async (input: FileWorkspaceScope & { ref?: string; mimeType?: string } = {}) => {
+      const { path: workspaceRoot, project } = await fileWorkspace(input);
       const requested = String(input.ref ?? "").trim();
       return readOpenableImage(
         requested,
         workspaceRoot,
-        await fsExtraRoots(workspaceRoot, requested),
+        await fsExtraRoots(workspaceRoot, requested, project),
         input.mimeType,
       );
     },
   );
 
-  handle(IPC.invoke.fsReveal, async (input: { path?: string } = {}) => {
+  handle(IPC.invoke.fsReveal, async (input: FileWorkspaceScope & { path?: string } = {}) => {
     const requested = String(input.path ?? "").trim();
-    let workspaceRoot: string | null = null;
-    try {
-      workspaceRoot = await requireWorkspaceRoot();
-    } catch (error) {
-      if (!isAbsolute(requested) && !isAttachmentBlobRef(requested)) {
-        throw error;
-      }
+    const { path: workspaceRoot, project } = await fileWorkspace(input);
+    if (!workspaceRoot && !isAbsolute(requested) && !isAttachmentBlobRef(requested)) {
+      throw new Error("workspace required");
     }
     const target = await resolveRealOpenablePath(
       requested,
       workspaceRoot,
-      await fsExtraRoots(workspaceRoot, requested),
+      await fsExtraRoots(workspaceRoot, requested, project),
     );
     if (!target) {
       throw Object.assign(new Error("path outside allowed roots"), {
@@ -879,13 +878,13 @@ export function registerWorkspaceIpc({
     return { ok: true };
   });
 
-  handle(IPC.invoke.fsOpen, async (input: { path?: string; mimeType?: string } = {}) => {
-    const workspaceRoot = await optionalWorkspaceRoot();
+  handle(IPC.invoke.fsOpen, async (input: FileWorkspaceScope & { path?: string; mimeType?: string } = {}) => {
+    const { path: workspaceRoot, project } = await fileWorkspace(input);
     const requested = String(input.path ?? "").trim();
     const target = await resolveRealOpenablePath(
       requested,
       workspaceRoot,
-      await fsExtraRoots(workspaceRoot, requested),
+      await fsExtraRoots(workspaceRoot, requested, project),
     );
     if (!target) {
       throw Object.assign(new Error("path is not openable"), {
@@ -903,8 +902,8 @@ export function registerWorkspaceIpc({
     return { ok: true };
   });
 
-  handle(IPC.invoke.fsIndex, async () => {
-    const root = await optionalWorkspaceRoot();
+  handle(IPC.invoke.fsIndex, async (input: FileWorkspaceScope = {}) => {
+    const { path: root } = await fileWorkspace(input);
     if (!root) return { entries: [], truncated: false };
     return getWorkspaceFileIndex(root);
   });
@@ -924,9 +923,19 @@ export function registerWorkspaceIpc({
     ): Promise<FsChatRefResolveResult> => {
       const ref = String(input.ref ?? "").trim();
       if (!ref) return { match: null };
-      const workspaceRoot = await optionalWorkspaceRoot();
+      let workspaceRoot = await optionalWorkspaceRoot();
+      let temporaryWorkspace = false;
+      if (input.sessionId && host) {
+        const result = await host.call<{ session?: { projectPath?: string; temporaryWorkspacePath?: string } }>(
+          "session.get", { id: input.sessionId, messageLimit: 1, contentLimit: 1 },
+        );
+        workspaceRoot = result.session?.projectPath ?? result.session?.temporaryWorkspacePath ?? null;
+        temporaryWorkspace = !result.session?.projectPath && !!result.session?.temporaryWorkspacePath;
+      }
       const roots = {
-        project: projectRootsFor(workspaceRoot),
+        project: temporaryWorkspace && workspaceRoot
+          ? [{ path: workspaceRoot, name: basename(workspaceRoot) || workspaceRoot, primary: true }]
+          : projectRootsFor(workspaceRoot),
         scratch: await sessionScratchRoot(input.sessionId),
         attachments: join(dataDir, "attachments"),
       };

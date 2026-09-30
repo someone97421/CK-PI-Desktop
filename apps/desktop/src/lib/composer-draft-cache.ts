@@ -19,6 +19,11 @@ type CachedComposerDraft = ComposerDraftSnapshot & {
  * matching the in-memory contract in the component spec.
  */
 export const HOME_DRAFT_KEY = "__home__";
+export const TEMPORARY_DRAFT_PREFIX = "__temporary__:";
+
+export function temporaryDraftKey(id: string): string {
+  return `${TEMPORARY_DRAFT_PREFIX}${id}`;
+}
 
 export type ComposerDraftFileInput = {
   sessionId?: string;
@@ -87,7 +92,7 @@ export function draftKeyForSession(sessionId: string | null | undefined): string
 
 /** Session id stored on file-reference rows for this cache key. */
 export function draftOwnerSessionId(key: string): string {
-  return key === HOME_DRAFT_KEY ? "" : key;
+  return key === HOME_DRAFT_KEY || key.startsWith(TEMPORARY_DRAFT_PREFIX) ? "" : key;
 }
 
 export function snapshotComposerDraft(
@@ -170,6 +175,7 @@ export function deleteComposerDraft(key: string): void {
  * lands on the new session and the home slot stays empty.
  */
 let scheduledHomeAdoptSessionId: string | null = null;
+let scheduledAdoptSourceKey = HOME_DRAFT_KEY;
 
 /**
  * Move typed home-composer content onto a session that was just created.
@@ -179,25 +185,26 @@ let scheduledHomeAdoptSessionId: string | null = null;
  * session, not to a later startup draft. A non-empty home snapshot wins over
  * an earlier copy of the same slot.
  */
-export function adoptHomeDraftForSession(sessionId: string): void {
+export function adoptHomeDraftForSession(sessionId: string, sourceKey = HOME_DRAFT_KEY): void {
   if (!sessionId) return;
-  const home = cache.get(HOME_DRAFT_KEY);
-  cache.delete(HOME_DRAFT_KEY);
+  const home = cache.get(sourceKey);
+  cache.delete(sourceKey);
   if (!home) return;
   if (!home.text && home.fileReferences.length === 0) return;
   writeComposerDraft(sessionId, home);
 }
 
-export function scheduleHomeDraftAdopt(sessionId: string): void {
+export function scheduleHomeDraftAdopt(sessionId: string, sourceKey = HOME_DRAFT_KEY): void {
   if (!sessionId) return;
   scheduledHomeAdoptSessionId = sessionId;
-  adoptHomeDraftForSession(sessionId);
+  scheduledAdoptSourceKey = sourceKey;
+  adoptHomeDraftForSession(sessionId, sourceKey);
 }
 
-export function flushScheduledHomeDraftAdopt(sessionId: string): void {
-  if (!sessionId || scheduledHomeAdoptSessionId !== sessionId) return;
+export function flushScheduledHomeDraftAdopt(sessionId: string, sourceKey = HOME_DRAFT_KEY): void {
+  if (!sessionId || scheduledHomeAdoptSessionId !== sessionId || scheduledAdoptSourceKey !== sourceKey) return;
   scheduledHomeAdoptSessionId = null;
-  adoptHomeDraftForSession(sessionId);
+  adoptHomeDraftForSession(sessionId, sourceKey);
 }
 
 export function pruneComposerDrafts(keep: Iterable<string>): void {

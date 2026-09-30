@@ -104,6 +104,8 @@ pub struct SessionSummary {
     #[serde(default)]
     pub message_count: i64,
     pub project_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporary_workspace_path: Option<String>,
     pub model_id: Option<String>,
     pub provider_id: Option<String>,
     pub mode: String,
@@ -1205,7 +1207,9 @@ const SUMMARY_SELECT: &str =
                 UNION ALL
                 SELECT MAX(q.created_at) AS sent_at FROM turn_queue q
                 WHERE q.session_id = s.id AND q.session_message_id IS NULL
-            ))
+            )),
+            (SELECT json_extract(value_json, '$') FROM kv
+             WHERE ns = 'session-workspace' AND key = s.id) AS temporary_workspace_path
      FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
      WHERE s.deleted_at IS NULL";
 
@@ -1215,6 +1219,7 @@ pub(crate) fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Sess
         title: row.get(1)?,
         message_count: row.get(2)?,
         project_path: row.get(3)?,
+        temporary_workspace_path: row.get("temporary_workspace_path")?,
         model_id: row.get(4)?,
         provider_id: row.get(5)?,
         mode: row.get(6)?,
@@ -1289,11 +1294,13 @@ pub fn create_session(
 /// one database operation without widening the legacy constructor signature.
 #[derive(Debug, Default)]
 pub struct SessionCreateOptions {
+    pub draft_id: Option<String>,
     pub title: Option<String>,
     pub mode: Option<String>,
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub project_path: Option<String>,
+    pub temporary_workspace_path: Option<String>,
     pub thinking_level: Option<String>,
     pub permission_mode: Option<String>,
 }
@@ -1315,32 +1322,52 @@ pub fn create_session_with_thinking(
             provider_id,
             model_id,
             project_path,
+            temporary_workspace_path: None,
             thinking_level,
             permission_mode: None,
+            draft_id: None,
         },
     )
 }
 
-/// Create a session with all optional configuration applied atomically.
-///
-/// Omitting `permission_mode` preserves the historical `inherit` default. The
-/// extra input is used by trusted desktop orchestration so a new worker can be
-/// created with its parent's permission ceiling in the same host transaction.
+// 保存点允许目录绑定操作复用调用方已有的事务。
+fn with_workspace_binding<T>(db: &Database, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    db.conn().execute_batch("SAVEPOINT session_workspace_binding")?;
+    match operation() {
+        Ok(value) => {
+            db.conn().execute_batch("RELEASE session_workspace_binding")?;
+            Ok(value)
+        }
+        Err(error) => {
+            db.conn().execute_batch(
+                "ROLLBACK TO session_workspace_binding; RELEASE session_workspace_binding",
+            )?;
+            Err(error)
+        }
+    }
+}
+
+/// 原子创建完整会话配置；草稿 ID 可让首次发送直接接续已准备的 scratch 文件。
 pub fn create_session_with_options(
     db: &Database,
     options: SessionCreateOptions,
 ) -> Result<SessionSummary> {
     let SessionCreateOptions {
+        draft_id,
         title,
         mode,
         provider_id,
         model_id,
         project_path,
+        temporary_workspace_path,
         thinking_level,
         permission_mode,
     } = options;
     let now = now_ms();
-    let id = Uuid::new_v4().to_string();
+    let id = match draft_id {
+        Some(id) => Uuid::parse_str(&id)?.to_string(),
+        None => Uuid::new_v4().to_string(),
+    };
     let title = title.unwrap_or_else(|| "New task".into());
     let mode = normalize_mode(mode.as_deref());
     let thinking_level = thinking_level.unwrap_or_else(default_thinking_level);
@@ -1358,29 +1385,50 @@ pub fn create_session_with_options(
         Some(id) => db.project_path(id)?,
         None => None,
     };
-    db.conn()
-        .prepare_cached(
-            "INSERT INTO sessions (
-                id, title, project_id, provider_id, model_id, mode, thinking_level,
-                permission_mode, created_at, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
-        )?
-        .execute(params![
-            id,
-            title,
-            project_id,
-            provider_id,
-            model_id,
-            mode,
-            thinking_level,
-            permission_mode,
-            now
-        ])?;
+    let temporary_workspace_path = if project_path.is_none() {
+        temporary_workspace_path
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| {
+                let path = crate::workspace::simple_canonicalize(std::path::Path::new(&path))?;
+                if !path.is_dir() {
+                    return Err(anyhow!("temporary workspace must be a directory"));
+                }
+                Ok(path.to_string_lossy().into_owned())
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    with_workspace_binding(db, || -> Result<()> {
+        db.conn()
+            .prepare_cached(
+                "INSERT INTO sessions (
+                    id, title, project_id, provider_id, model_id, mode, thinking_level,
+                    permission_mode, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+            )?
+            .execute(params![
+                id,
+                title,
+                project_id,
+                provider_id,
+                model_id,
+                mode,
+                thinking_level,
+                permission_mode,
+                now
+            ])?;
+        if let Some(path) = temporary_workspace_path.as_deref() {
+            db.kv_set("session-workspace", &id, &json!(path))?;
+        }
+        Ok(())
+    })?;
     Ok(SessionSummary {
         id,
         title,
         message_count: 0,
         project_path,
+        temporary_workspace_path,
         model_id,
         provider_id,
         mode,
@@ -1879,6 +1927,12 @@ pub fn fork_session_through(
         if inserted == 0 {
             return Err(anyhow!("session not found: {source_id}"));
         }
+        tx.execute(
+            "INSERT INTO kv (ns, key, value_json, updated_at)
+             SELECT ns, ?1, value_json, ?2 FROM kv
+             WHERE ns = 'session-workspace' AND key = ?3",
+            params![id, now, source_id],
+        )?;
         for (seq, record) in records.iter().enumerate() {
             insert_index_row(&tx, &id, seq as i64, None, record, texts[seq].as_deref())?;
         }
@@ -1897,6 +1951,7 @@ pub fn fork_session_through(
         title,
         message_count: records.len() as i64,
         project_path: source.summary.project_path,
+        temporary_workspace_path: source.summary.temporary_workspace_path,
         model_id: source.summary.model_id,
         provider_id: source.summary.provider_id,
         mode: source.summary.mode,
@@ -1989,10 +2044,14 @@ pub fn configure_session_with_thinking(
 }
 
 pub fn delete_session(db: &Database, id: &str) -> Result<bool> {
-    let n = db
-        .conn()
-        .prepare_cached("DELETE FROM sessions WHERE id = ?1")?
-        .execute(params![id])?;
+    let n = with_workspace_binding(db, || {
+        let n = db
+            .conn()
+            .prepare_cached("DELETE FROM sessions WHERE id = ?1")?
+            .execute(params![id])?;
+        db.kv_delete("session-workspace", id)?;
+        Ok(n)
+    })?;
     if n > 0 {
         // Here rather than in the RPC handler so every deletion path (UI,
         // failed scheduled-run cleanup) also drops the transcript files.
@@ -2050,9 +2109,13 @@ pub fn move_session_project(
         return Ok(MoveSessionProjectResult::Busy);
     }
     let project_id = db.ensure_project(project_path, false)?;
-    db.conn()
-        .prepare_cached("UPDATE sessions SET project_id = ?1, updated_at = ?2 WHERE id = ?3")?
-        .execute(params![project_id, now_ms(), id])?;
+    with_workspace_binding(db, || {
+        db.conn()
+            .prepare_cached("UPDATE sessions SET project_id = ?1, updated_at = ?2 WHERE id = ?3")?
+            .execute(params![project_id, now_ms(), id])?;
+        db.kv_delete("session-workspace", id)?;
+        Ok(())
+    })?;
     let Some(moved) = get_session(db, id)? else {
         return Ok(MoveSessionProjectResult::NotFound);
     };
@@ -3553,6 +3616,11 @@ pub fn import_session(
             ts_to_ms(&summary.created_at),
             ts_to_ms(&summary.updated_at),
         ])?;
+        if project_id.is_none() {
+            if let Some(path) = summary.temporary_workspace_path.as_deref() {
+                db.kv_set("session-workspace", &summary.id, &json!(path))?;
+            }
+        }
         for (seq, record) in records.iter().enumerate() {
             insert_index_row(
                 &tx,
@@ -4513,6 +4581,61 @@ mod tests {
     }
 
     #[test]
+    fn temporary_workspace_is_persisted_without_registering_a_project() {
+        let db = test_db();
+        let directory = tempfile::tempdir().unwrap();
+        let path = simple_canonicalize(directory.path())
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let draft_id = Uuid::new_v4().to_string();
+        let session = create_session_with_options(
+            &db,
+            SessionCreateOptions {
+                draft_id: Some(draft_id.clone()),
+                temporary_workspace_path: Some(path.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(session.id, draft_id);
+        assert_eq!(session.project_path, None);
+        assert_eq!(session.temporary_workspace_path.as_deref(), Some(path.as_str()));
+        assert_eq!(
+            get_session(&db, &session.id).unwrap().unwrap().summary.temporary_workspace_path,
+            Some(path.clone()),
+        );
+        assert_eq!(list_sessions(&db).unwrap()[0].temporary_workspace_path, Some(path.clone()));
+        let projects: i64 = db.conn()
+            .query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(projects, 0);
+        let ForkSessionResult::Created(fork) =
+            fork_session_through(&db, &session.id, None, None).unwrap()
+        else {
+            panic!("expected fork");
+        };
+        assert_eq!(fork.summary.temporary_workspace_path, Some(path));
+        delete_session(&db, &session.id).unwrap();
+        assert!(directory.path().exists());
+        assert!(db.kv_get("session-workspace", &session.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn temporary_workspace_rejects_missing_directory_before_creating_session() {
+        let db = test_db();
+        let directory = tempfile::tempdir().unwrap();
+        assert!(create_session_with_options(
+            &db,
+            SessionCreateOptions {
+                temporary_workspace_path: Some(directory.path().join("missing").to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        ).is_err());
+        assert_eq!(session_count(&db).unwrap(), 0);
+    }
+
+    #[test]
     fn rename_session_normalizes_title_without_touching_activity() {
         let db = test_db();
         let session = create_session(&db, Some("Original".into()), None, None, None, None).unwrap();
@@ -4588,6 +4711,7 @@ mod tests {
             title: "Imported".into(),
             message_count: 1,
             project_path: Some("/tmp/proj".into()),
+            temporary_workspace_path: None,
             model_id: None,
             provider_id: None,
             mode: "agent".into(),
@@ -4639,6 +4763,7 @@ mod tests {
             title: "Imported".into(),
             message_count: 0,
             project_path: Some("/tmp/project/".into()),
+            temporary_workspace_path: None,
             model_id: None,
             provider_id: None,
             mode: "agent".into(),
@@ -5394,6 +5519,7 @@ mod tests {
             title: "Thinking".into(),
             message_count: 0,
             project_path: None,
+            temporary_workspace_path: None,
             model_id: None,
             provider_id: None,
             mode: "agent".into(),

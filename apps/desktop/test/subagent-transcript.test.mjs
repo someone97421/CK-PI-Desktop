@@ -68,10 +68,13 @@ test("a delegation card reads its outcome from the lifecycle rows", () => {
   );
   assert.match(
     transcriptSource,
-    /collectDelegationStatuses\(delegationItems, \{ turnLive: isActive \}\)/,
+    /collectDelegationStatuses\(delegationItems, \{ turnLive: isActive && !settledTask \}\)/,
   );
   assert.match(transcriptSource, /const tools = reuseReferences\(toolsRef\.current, summary\.tools\)/);
-  assert.match(transcriptSource, /delegationItems = useMemo\(\(\) => tools\.map/);
+  assert.match(transcriptSource, /const delegationItems = reuseReferences\(delegationItemsRef\.current, summary\.toolItems\)/);
+  assert.match(transcriptSource, /items\.filter\(\(item\): item is DelegationActivityItem => item\.kind === "tool"\)/);
+  assert.doesNotMatch(transcriptSource, /delegationItems = useMemo\(\(\) => tools\.map/);
+  assert.match(transcriptSource, /const live = hasSubagentTopology \? topologyLive : isActive;/);
 });
 
 test("a lifecycle row summarizes by agent name, never by delegation id", () => {

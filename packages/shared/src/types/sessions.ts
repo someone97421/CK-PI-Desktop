@@ -35,6 +35,8 @@ export type SessionSummary = {
   /** Number of messages in the current canonical transcript. */
   messageCount: number;
   projectPath?: string;
+  /** 临时会话独立工作目录，不参与项目归类；未设置时使用会话 scratch。 */
+  temporaryWorkspacePath?: string;
   modelId?: string;
   providerId?: string;
   mode: Mode;

@@ -16,7 +16,7 @@ every installation has a file view out of the box (ADR 0241).
 
 The tag is pushed and the release is published, so a marketplace-installed 0.5.1
 is now offered 0.5.2 from the marketplace as well as from this bundled copy.
-Both paths ship the same bytes.
+内置副本包含下方列出的本地适配。
 
 > The published `.piplug` contains the seven files a plugin installs from
 > (`manifest.json`, `main.js`, `README.md`, `CHANGELOG.md`, `.gitignore`,
@@ -26,9 +26,8 @@ Both paths ship the same bytes.
 > such a package as four blockers before it can be submitted — pack from a copy
 > of the tagged tree with `views-src/` removed instead.
 
-The files below are byte-identical to that commit, except for the one manifest
-field listed under local changes. Line endings are LF: the upstream commit
-stores LF, and this repository's `.gitattributes` keeps it that way.
+下表记录原上游文件的校验值；本地差异及当前 `main.js` 校验值见 Local changes。
+文件使用 LF 换行。
 
 ## Upstream checksums (sha256)
 
@@ -45,7 +44,7 @@ directory carries the built view the plugin publishes, not its React source.
 
 ## Local changes
 
-Two, so a re-sync stays a copy:
+同步新版时保留以下本地适配：
 
 - `manifest.json` gains `"license": "MIT"` (after `author`), making the vendored
   copy 14191 bytes
@@ -62,6 +61,10 @@ Two, so a re-sync stays a copy:
   ancestor's `"module"`, which is why the marker cannot live one directory up.
   In a packaged app the file is inert, and deleting it only costs the developer
   experience, never a user.
+- `main.js` 使用宿主注入的 `__workspaceScope` 作为当前请求的工作目录，通过
+  `AsyncLocalStorage` 隔离并发请求；未注入时保持原项目行为，显式 `null` 表示无目录。
+  搜索游标绑定根路径，SQLite 句柄以绝对路径为键，避免临时目录之间的同名文件串用。
+  当前 SHA-256：`53e3ebe579b98b0eaaf74a1f345ba7526103872458ac20c744f605f4d1299fb0`。
 
 ## Re-syncing a newer release
 
@@ -74,6 +77,7 @@ Two, so a re-sync stays a copy:
    `git cat-file blob`) instead of from an archive.
 3. Re-apply `"license": "MIT"` to `manifest.json`, and re-create
    `package.json` — the marker is local and the tag does not carry it.
+   同时重新适配 `main.js` 的请求作用域、搜索游标根绑定与 SQLite 绝对路径缓存，更新本地校验值。
 4. Update `Origin`, the checksum table and the release section here, and the
    commit hash `bundled-plugins.test.mjs` pins, then run
    `node --test test/bundled-plugins.test.mjs` in `apps/desktop`.

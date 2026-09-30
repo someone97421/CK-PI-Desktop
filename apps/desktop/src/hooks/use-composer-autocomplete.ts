@@ -16,6 +16,19 @@ import {
 } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { useAppStore } from "../stores/app-store";
+import type { AppState } from "../stores/app-state";
+
+function composerCommandScope(state: AppState) {
+  return state.activeSessionId
+    ? { sessionId: state.activeSessionId }
+    : state.workspace?.path
+      ? {}
+      : { temporaryWorkspacePath: state.draftTemporaryWorkspacePath };
+}
+
+function composerCommandScopeKey(state: AppState): string {
+  return JSON.stringify([composerCommandScope(state), state.workspace?.path ?? ""]);
+}
 
 /**
  * Composer autocomplete state machine (D123–D125): trigger detection over
@@ -128,14 +141,16 @@ export type ComposerCommandResolution =
 export async function resolveComposerCommand(
   name: string,
 ): Promise<ComposerCommandResolution> {
-  const key = useAppStore.getState().workspace?.path ?? "";
+  const state = useAppStore.getState();
+  const scope = composerCommandScope(state);
+  const key = composerCommandScopeKey(state);
   if (
     !commandsCache ||
     commandsCache.key !== key ||
     Date.now() - commandsCache.at > SOURCE_TTL_MS
   ) {
     try {
-      const res = await api.composerCommands();
+      const res = await api.composerCommands(scope);
       commandsCache = { key, at: Date.now(), commands: res.commands };
     } catch (error) {
       // Deliberately leaves the cache cold: the next attempt re-reads the
@@ -163,6 +178,8 @@ export function useComposerAutocomplete({
 }) {
   const workspaceKey = useAppStore((s) => s.workspace?.path ?? "");
   const hasWorkspace = workspaceKey !== "";
+  const commandKey = useAppStore(composerCommandScopeKey);
+  const scope = useMemo(() => JSON.parse(commandKey)[0] as Parameters<typeof api.composerCommands>[0], [commandKey]);
   const [commands, setCommands] = useState<ComposerCommand[] | null>(null);
   const [files, setFiles] = useState<{
     entries: FsIndexEntry[];
@@ -196,9 +213,10 @@ export function useComposerAutocomplete({
     if (!trigger || dismissed) return;
     const now = Date.now();
     if (trigger.mode === "slash") {
+      setCommands(null);
       if (
         commandsCache &&
-        commandsCache.key === workspaceKey &&
+        commandsCache.key === commandKey &&
         now - commandsCache.at < SOURCE_TTL_MS
       ) {
         setCommands(commandsCache.commands);
@@ -206,10 +224,12 @@ export function useComposerAutocomplete({
       }
       let cancelled = false;
       void api
-        .composerCommands()
+        .composerCommands(scope)
         .then((res) => {
-          commandsCache = { key: workspaceKey, at: Date.now(), commands: res.commands };
-          if (!cancelled) setCommands(res.commands);
+          if (!cancelled) {
+            commandsCache = { key: commandKey, at: Date.now(), commands: res.commands };
+            setCommands(res.commands);
+          }
         })
         .catch(() => {
           if (!cancelled) setCommands([]);
@@ -248,7 +268,7 @@ export function useComposerAutocomplete({
     return () => {
       cancelled = true;
     };
-  }, [trigger?.mode, dismissed, workspaceKey, hasWorkspace]);
+  }, [trigger?.mode, dismissed, workspaceKey, hasWorkspace, commandKey, scope]);
 
   const items = useMemo<AutocompleteItem[]>(() => {
     if (!trigger || dismissed) return [];

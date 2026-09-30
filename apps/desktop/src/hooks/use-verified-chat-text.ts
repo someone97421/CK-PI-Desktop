@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { splitChatText } from "../lib/chat-links";
 import { chatFileCandidates, createChatFileVerificationQueue, verifiedChatSegments, verifyChatFiles } from "../lib/verified-chat-files";
+import { sessionWorkspacePath } from "../lib/session-workspace";
 import { useAppStore } from "../stores/app-store";
 
 const scheduleVerification = createChatFileVerificationQueue();
@@ -10,7 +11,10 @@ const EMPTY: ReadonlySet<string> = new Set();
 
 /** Confirmation belongs to this text and workspace path/session, never the next one. */
 export function useVerifiedChatText(text: string, attachments?: readonly MessageAttachment[]) {
-  const workspacePath = useAppStore((s) => s.workspace?.path);
+  const activeSession = useAppStore((s) =>
+    s.activeSessionId ? s.sessions.find((session) => session.id === s.activeSessionId) : undefined,
+  );
+  const workspacePath = useAppStore((s) => sessionWorkspacePath(activeSession, s.workspace?.path));
   const sessionId = useAppStore((s) => s.activeSessionId);
   const request = useMemo(() => {
     const segments = splitChatText(text, workspacePath);
