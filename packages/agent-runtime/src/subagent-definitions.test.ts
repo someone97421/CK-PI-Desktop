@@ -51,7 +51,7 @@ describe("builtin subagent documents", () => {
       (definition) =>
         definition.tools.includes("Write") || definition.tools.includes("Edit"),
     );
-    expect(mutating.map((d) => d.name)).toEqual(["worker", "fixer", "ui-designer", "media-analyst"]);
+    expect(mutating.map((d) => d.name)).toEqual(["worker", "fixer", "ui-designer"]);
     expect(mutating[0]?.permission ?? "inherit").toBe("inherit");
     const explorer = definitions.find((definition) => definition.name === "explorer")!;
     expect(explorer.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);

@@ -2789,7 +2789,7 @@ sklm: {
       presetUiDesignerName: "UI 设计师",
       presetUiDesignerDesc: "按需求稿设计并实现界面，浏览器预览验收。",
       presetMediaAnalystName: "Media Analyst",
-      presetMediaAnalystDesc: "围绕分析目的理解音视频，优先使用原生能力，返回结论与关键时间点。",
+      presetMediaAnalystDesc: "默认关闭，需配置 Gemini 原生音视频模型。在输入限制内一次性理解完整视频与音频，返回结论与关键时间点。",
       presetBlank: "空白开始",
       presetBlankDesc: "默认工具，自行撰写指令。",
       presetApply: "套用",

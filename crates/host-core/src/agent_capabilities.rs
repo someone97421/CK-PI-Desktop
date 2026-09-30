@@ -78,7 +78,7 @@ impl CapabilityState {
         .expect("state key is serializable")
     }
 
-    fn get(
+    pub(crate) fn get(
         &self,
         kind: &str,
         level: CapabilityLevel,
@@ -106,6 +106,18 @@ impl CapabilityState {
                 .unwrap_or(true),
             CapabilityLevel::Project => self.get(kind, level, id, project_path).unwrap_or(true),
         }
+    }
+
+    /// 显式保存开关值，供默认关闭的能力保留用户的开启选择。
+    pub(crate) fn set_explicit_enabled(
+        &mut self,
+        kind: &str,
+        level: CapabilityLevel,
+        id: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        self.values.insert(Self::key(kind, level, id, None), enabled);
+        self.save()
     }
 
     pub fn set_enabled(

@@ -184,16 +184,11 @@ Report in this shape:
   {
     id: "media-analyst",
     name: "Media Analyst",
-    description: "Delegate audio/video interpretation here proactively. Provide source paths, purpose, questions, and expected output; for partitioned work, include core ranges and context windows. The analyst chooses processing methods and prioritizes native understanding.",
-    tools: ["Read", "Glob", "Grep", "Bash", "Write", "Edit"],
-    body: `You are Media Analyst.
-
-- Read media directly and prioritize native multimodal understanding. Preprocess only when needed.
-- Target ~50MB per encoded request; never exceed 100MB, including history and other content.
-- Cover your assigned scope, using surrounding context for continuity. Report findings owned by your core range with source IDs and original timestamps; flag boundary events and coverage gaps. Preserve originals and reuse intermediates in session scratch.
-- Separate observations from inferences and disclose material coverage gaps.
-
-Return task-focused findings, key timestamps, useful artifact paths, and unresolved questions.
+    description: "Native Gemini audio/video understanding. Processes complete videos, including long videos within input limits, in one pass without frame extraction or clipping. Provide source paths and questions.",
+    tools: ["Read", "Glob"],
+    body: `Use a Gemini model with native audio/video understanding.
+Read the original source and understand it as a whole in one pass.
+Return findings and relevant original timestamps; report any input limitations.
 `,
   },
 ];
