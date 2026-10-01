@@ -850,7 +850,12 @@ export function registerAgentIpc({
 
   handle(IPC.invoke.agentAbort, async (req: { sessionId: string; turnId?: string }) => {
     if (!sidecar) throw new Error("sidecar unavailable");
-    const releaseSessionOperation = req.turnId ? await acquireSessionOperation(req.sessionId) : undefined;
+    // Prompt admission holds this same session operation until the sidecar has
+    // accepted the turn. Waiting here closes the startup window where the
+    // renderer already shows Stop but activeTurns/runtime are not ready yet.
+    // Without the wait, agent.abort can return successfully while finding no
+    // runtime, and the prompt then starts after the user's first click.
+    const releaseSessionOperation = await acquireSessionOperation(req.sessionId);
     try {
     const abortedTurnId = activeTurns.get(req.sessionId);
     if (req.turnId && abortedTurnId !== req.turnId) return { ok: false, aborted: false };
