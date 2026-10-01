@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::Instant;
 use uuid::Uuid;
 
 use crate::db::{ms_to_ts, now_ms};
@@ -88,8 +87,7 @@ pub struct PermissionEvaluationParams<'a> {
 
 #[derive(Debug)]
 struct Pending {
-    created_at: Instant,
-    /// Wall-clock twin of `created_at` for the `permissions.pending` read.
+    /// Creation time used by the `permissions.pending` read and ordering.
     created_at_ms: i64,
     /// Arrival order; two requests can share a millisecond.
     sequence: u64,
@@ -319,7 +317,6 @@ impl PermissionManager {
         self.pending.insert(
             request_id,
             Pending {
-                created_at: Instant::now(),
                 created_at_ms: now_ms(),
                 sequence: self.next_sequence,
                 session_id: session_id.to_string(),
@@ -436,10 +433,11 @@ mod tests {
             serde_json::json!({ "command": "ls" }),
             "high risk",
         );
-        pm.pending
+        let pending = pm
+            .pending
             .get_mut(&request.request_id)
-            .expect("request is pending")
-            .created_at = Instant::now() - std::time::Duration::from_secs(121);
+            .expect("request is pending");
+        pending.created_at_ms = pending.created_at_ms.saturating_sub(121_000);
 
         assert_eq!(pm.pending_requests(None).len(), 1);
         assert!(pm
