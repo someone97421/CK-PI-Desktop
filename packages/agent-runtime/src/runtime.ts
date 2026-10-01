@@ -1547,6 +1547,9 @@ export class DesktopAgentRuntime {
     reportRange?: { first: number; last: number; fromStep: number; toStep: number } }>();
   private supervisionWaiters = new Set<() => void>();
   private supervisionMessages = new Map<AgentMessage, string>();
+  private coordinationVersion = 0;
+  private coordinationConsumedVersion = 0;
+  private coordinationMessages = new WeakSet<AgentMessage>();
   /** Set by `abort` / `dispose` so a finishing delegate cannot restart the parent. */
   private runCancelled = false;
   /**
@@ -1970,6 +1973,7 @@ Delegation rules:
           convertToLlm(this.dropDuplicateToolCalls(messages)),
           this.reasoningReplayIdentity(),
         ),
+      prepareRequest: ({ context }) => this.prepareSubagentCoordination(context),
       prepareNextTurnWithContext: (context, signal) =>
         this.prepareNextTurn(context, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
@@ -2117,6 +2121,12 @@ Delegation rules:
     if (!this.agentUsesTranscriptSystemMessages()) {
       this.agent.state.messages = messages;
       return;
+    }
+    // live entries 中的协调消息只是 system 增量，重建时仍需保留原始指令与工具声明。
+    const systems = messages.filter((message) => message.role === "system");
+    if (systems.length > 0 && systems.every((message) => this.coordinationMessages.has(message))) {
+      const previous = this.agent.state.messages.filter((message) => !this.coordinationMessages.has(message));
+      messages = [...rebuildSystemTranscript(previous, []), ...messages];
     }
     this.agent.state.messages = syncSystemTools(
       rebuildSystemTranscript(this.agent.state.messages, messages),
@@ -4456,6 +4466,7 @@ Delegation rules:
     this.publishDelegationSettlement(record);
     } finally {
       record.settling = false;
+      this.markSubagentCoordination(record);
       resolveExecution();
       this.refreshDelegationWait();
       this.pruneFinishedDelegations();
@@ -5534,6 +5545,7 @@ Delegation rules:
       this.supervisionInbox.set(`subagent-guides-coalesced:${record.delegationId}`, { delegationId: record.delegationId, epoch: record.startedEpoch,
         text: `Older guidance receipts for ${record.delegationId} are in persisted TaskGuidance records (TaskInspect history). Recent receipts follow.`, priority: 1 });
     }
+    if (event.kind === "report" || event.kind === "stop") this.markSubagentCoordination(record);
     for (const wake of this.supervisionWaiters) wake();
   }
 
@@ -5584,6 +5596,55 @@ Delegation rules:
     const text = [reports, this.takeSupervision()].filter(Boolean).join("\n\n");
     if (!text) return;
     this.agent.steer(this.makeSupervisionMessage(text));
+  }
+
+  /** 只记录当前轮的回报/终态事件；相同内容的不同回报也会刷新版本。 */
+  private markSubagentCoordination(record: DelegationRecord): void {
+    if (!this.disposed && !this.runCancelled && !this.turnHadError && record.startedEpoch === this.turnEpoch) {
+      this.coordinationVersion += 1;
+    }
+  }
+
+  private subagentCoordinationSnapshot(): string {
+    const records = [...this.delegations.values()].filter((record) => record.startedEpoch === this.turnEpoch);
+    const working = records.filter((record) => record.status === "running" || record.settling || record.resumingLock);
+    const settled = records.filter((record) => !working.includes(record));
+    const completed = settled.filter((record) => record.status === "completed");
+    const pending = settled.filter((record) => !record.reportDelivered);
+    const stopped = settled.filter((record) => record.status === "stopped" || record.status === "aborted");
+    const failed = settled.filter((record) => record.status !== "completed" && !stopped.includes(record));
+    return [
+      `子代理协调状态（程序生成，${nowIso()}）：`,
+      `共 ${records.length} 个；工作中 ${working.length}；已完成 ${completed.length}；失败 ${failed.length}；停止 ${stopped.length}；终态报告待投递 ${pending.length}，已提供 ${settled.length - pending.length}。`,
+      ...records.map((record) => {
+        const state = record.settling ? "结算中" : record.resumingLock ? "恢复中" : record.status;
+        const delivery = working.includes(record) ? "" : record.reportDelivered ? "；报告已提供供审阅" : "；报告待投递";
+        return `- ${JSON.stringify(record.agentName)} (${record.delegationId}, execution ${record.execution ?? 1})：${state}${delivery}`;
+      }),
+      "报告已提供不代表已审阅。结合已收到的结果继续任务；缺少正文时按 delegationId 调用 TaskWait 或 TaskInspect，在结束任务前整合相关结果。",
+    ].join("\n");
+  }
+
+  /** 每个请求入口都经过这里，但只有事件版本变化才追加一条内存上下文消息。 */
+  private async prepareSubagentCoordination(context: AgentContext): Promise<AgentLoopTurnUpdate | undefined> {
+    if (this.disposed || this.runCancelled || this.turnHadError || this.coordinationVersion === this.coordinationConsumedVersion) return;
+    const version = this.coordinationVersion;
+    const message: AgentMessage = { role: "system", content: this.subagentCoordinationSnapshot(), timestamp: Date.now() };
+    const messages = [...context.messages, message];
+    const budget = this.contextBudget(messages);
+    if (budget.tokens >= budget.hardLimit) {
+      if (!this.compactionEnabled || !(await this.runCompaction("threshold", false, "active_turn"))) {
+        throw new Error("CONTEXT_TOO_LARGE: subagent coordination exceeds the safe model budget");
+      }
+      // 压缩落盘期间的新事件仍待消费，不被旧版本快照抹掉。
+      const rebuilt = this.rebuiltAgentContext();
+      return (await this.prepareSubagentCoordination(rebuilt)) ?? { context: rebuilt };
+    }
+    this.appendLiveEntry(`subagent-coordination:${randomUUID()}`, message);
+    this.coordinationMessages.add(message);
+    this.agent.state.messages = [...messages];
+    this.coordinationConsumedVersion = version;
+    return { context: { ...context, messages } };
   }
 
   private makeSupervisionMessage(text: string): AgentMessage {
@@ -7050,6 +7111,9 @@ Delegation rules:
     mustFitSafeBudget: boolean,
     fallback?: ContextCompactionFallback,
   ): Promise<CheckpointPersistResult> {
+    // 快照随检查点保存，覆盖手动、自动和溢出恢复；预算也计入这段内容。
+    const coordinationVersion = this.coordinationVersion;
+    checkpoint = { ...checkpoint, summary: `${checkpoint.summary}\n\n${this.subagentCoordinationSnapshot()}` };
     const compactedBudget = this.contextBudget(
       this.liveSessionContext(checkpoint).messages,
     );
@@ -7071,6 +7135,7 @@ Delegation rules:
     }
 
     this.activeCompaction = checkpoint;
+    this.coordinationConsumedVersion = coordinationVersion;
     // A new window means both reminders are available again, matching Codex
     // resetting its `claim_*` flags when the context window turns over.
     this.contextReminderClaimed = false;

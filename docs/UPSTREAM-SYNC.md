@@ -602,3 +602,19 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 保留品牌、日期版本、统一构建入口、单文件便携 EXE、独立安装与缓存、共用业务目录及互斥、TaskResume 快照恢复、当前轮引导与持久回执、任务级过程抽屉、引用/批注/侧边对话、固定 275px 侧栏、自定义外观、临时会话工作目录、模型导入导出、内置终端及局域网远控插件。仅维护简中和英文；实时语音新增界面、调用接线及专属脚本不接入，上游发布脚本、CI 与流程/归档文档更新不纳入。
 
 本轮完成源码差异审阅和冲突处理，采用真实双父合并提交。同步前的流式光标及构建版本改动从专用 stash 恢复为未提交状态，不并入本次合并提交。未运行测试、typecheck、构建、依赖安装、服务或浏览器预览，未操作实际业务数据库，未推送或发布。
+## 本地定制：子代理协调快照注入主代理上下文（2026-10-02）
+
+用户确认实现“事件驱动、程序生成的主代理子代理协调快照”：子代理报告或状态变化后，在下次主代理模型请求的上下文中携带最新协调总览，供压缩等场景使用。这是本 fork 独有的功能差异，上游无对应实现；后续同步上游时本节列出的机制不得被“还原”或覆盖。
+
+实现位置与机制（后续适配必须整体保留）：
+
+- `packages/agent-runtime/src/runtime.ts` 的 `prepareSubagentCoordination()` 经 Agent 选项 `prepareRequest` 挂载，覆盖首次与后续所有模型请求；仅用 `coordinationVersion` / `coordinationConsumedVersion` 事件修订号合并事件，相同状态文本的报告若之间隔着主代理请求也必须各自触发一次快照，不做文本去重。
+- 快照为 `role: "system"` 的程序生成消息，调用 `appendLiveEntry` 后直接写入 `this.agent.state.messages = [...messages]`（克隆数组）；仅返回瞬时请求消息或调用 `setAgentMessages()` 无法在后续请求中保留快照，不得改回这两种方式。
+- `coordinationMessages` WeakSet 登记所有快照消息；`setAgentMessages()` 对“全部为协调增量系统消息”的入参执行守卫，用 `rebuildSystemTranscript(previous, [])` 保留原始指令与工具声明。上游若调整系统消息重建逻辑，必须保留该守卫，否则原系统提示与工具声明会丢失。
+- `persistCheckpoint()` 在计算预算与持久化前把当前快照追加进 `checkpoint.summary`，使协调状态随检查点跨压缩与重启存活；仅在检查点成功安装后才消费修订号，压缩期间的异步事件保持待投递。
+- 快照只统计 `startedEpoch === this.turnEpoch` 的本轮委派记录，不显示历史记录为“待审阅”；报告状态区分待投递/已投递，并明确“已投递不等于主代理已审阅”，不得改成任何“已审阅”表述。
+- 快照超出安全预算时优先就地压缩（`runCompaction("threshold", ...)`），仍放不下才抛 `CONTEXT_TOO_LARGE`；不得静默丢弃快照。
+- `abortRunningDelegations()` 不得清空协调状态（`coordinationMessages` / `pendingSubagentCoordination` / `coordinationSeen`）；上游若在该路径新增清理，按本 fork 语义移除。
+- 聚焦用例位于 `packages/agent-runtime/src/subagent-collaboration.test.ts`（“程序生成的子代理协调快照”组，含参数化压缩用例），须从包根 `--root packages/agent-runtime` 运行。
+
+验证与交付：聚焦用例 5 项全部通过，`git diff --check` 通过；同文件另有 7 项父督导连通性用例为既有失败（基线对照确认与本次改动无关）。通过统一入口构建 Windows x64 安装版与单文件便携版，版本 `20261002-012859`（内部版本 `2610.201.2859`），安装包 SHA-512 与 `latest.yml` 一致，构建版本文件随本次提交保存。未运行全量测试、安装或 GUI 交互验证，未发布 GitHub Release。

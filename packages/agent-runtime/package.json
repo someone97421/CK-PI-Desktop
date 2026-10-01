@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/agent-runtime",
-  "version": "2610.110.5603",
+  "version": "2610.201.2859",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
