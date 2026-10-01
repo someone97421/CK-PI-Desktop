@@ -1600,7 +1600,7 @@ fn load_task_projection(
         .and_then(|t| t.get("usageIncomplete").and_then(Value::as_bool))
         .unwrap_or(effective_status != "completed" || summary_usage.is_none());
 
-    let final_usage = match (summary_usage, db_usage) {
+    let mut final_usage = match (summary_usage, db_usage) {
         (Some(sum_u), Some(db_u)) => {
             if db_u.total_tokens > sum_u.total_tokens {
                 usage_incomplete = true;
@@ -1616,6 +1616,10 @@ fn load_task_projection(
         }
         (None, None) => None,
     };
+    // 此投影会复制到每条消息，账本只在回合和各消息的原始用量中保留。
+    if let Some(usage) = final_usage.as_mut() {
+        usage.accounting.remove("operations");
+    }
 
     if effective_status != "completed" || final_usage.is_none() {
         usage_incomplete = true;
@@ -1662,6 +1666,16 @@ fn load_task_projection(
     }))
 }
 
+pub fn get_session_summary(db: &Database, id: &str) -> Result<Option<SessionSummary>> {
+    let sql = format!("{SUMMARY_SELECT} AND s.id = ?1");
+    let summary = db
+        .conn()
+        .prepare_cached(&sql)?
+        .query_row(params![id], summary_from_row)
+        .optional()?;
+    Ok(summary)
+}
+
 pub fn get_session(db: &Database, id: &str) -> Result<Option<SessionDetail>> {
     get_session_with_options(db, id, SessionReadOptions::default())
 }
@@ -1675,19 +1689,13 @@ pub fn get_session_with_options(
     id: &str,
     options: SessionReadOptions,
 ) -> Result<Option<SessionDetail>> {
-    let sql = format!("{SUMMARY_SELECT} AND s.id = ?1");
-    let summary = db
-        .conn()
-        .prepare_cached(&sql)?
-        .query_row(params![id], summary_from_row)
-        .optional()?;
-    let Some(summary) = summary else {
+    let Some(summary) = get_session_summary(db, id)? else {
         return Ok(None);
     };
 
     let layout = session_layout(db, id)?;
     let total = layout.message_count();
-    let (records, compactions, message_start, has_more_before, message_end, has_more_after) =
+    let (mut records, compactions, message_start, has_more_before, message_end, has_more_after) =
         if let Some(raw_limit) = options.message_limit.filter(|limit| *limit > 0) {
             let limit = raw_limit.min(1_000) as usize;
             let before = if let Some(message_id) = options.message_around.as_deref() {
@@ -1730,6 +1738,16 @@ pub fn get_session_with_options(
                 None,
             )
         };
+    // 兼容旧历史中的重复账本，先缩减展示摘要再构造 UiMessage，避免重复克隆。
+    for record in &mut records {
+        if let Some(usage) = record.meta.as_mut()
+            .and_then(|meta| meta.get_mut("task"))
+            .and_then(|task| task.get_mut("usage"))
+            .and_then(Value::as_object_mut)
+        {
+            usage.remove("operations");
+        }
+    }
     // Content comes from the transcript file; SQLite only indexes it. A
     // renderer window may additionally request a display cap so a single
     // pasted or tool-produced multi-megabyte message never crosses the UI IPC
@@ -7697,5 +7715,78 @@ mod tests {
                 .as_i64(),
             Some(0)
         );
+    }
+    #[test]
+    fn task_projection_keeps_totals_without_repeating_operation_ledgers() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let turn_id = begin_turn(&db, &session.id, None, None).unwrap();
+        let operations: Vec<Value> = (0..64).map(|i| serde_json::json!({
+            "operationId": format!("operation-{i}"), "inputTokens": 8,
+            "outputTokens": 2, "totalTokens": 10
+        })).collect();
+        let usage = serde_json::json!({
+            "inputTokens": 512, "outputTokens": 128, "totalTokens": 640,
+            "aggregation": "aggregate", "costStatus": "unknown", "operations": operations
+        });
+        let mut root = user_msg("task-root", "任务", "2026-10-01T00:00:00Z");
+        root.task_id = Some(turn_id.clone());
+        root.task = Some(serde_json::from_value(serde_json::json!({
+            "id": turn_id, "revision": 1, "status": "running",
+            "usageIncomplete": false, "usage": usage
+        })).unwrap());
+        // 独立消息的原始用量仍完整返回，只有展示用的任务摘要被压缩。
+        root.usage = Some(serde_json::from_value(usage.clone()).unwrap());
+        append_message(&db, &session.id, &root, Some(&turn_id)).unwrap();
+        let mut next = user_msg("task-next", "继续", "2026-10-01T00:00:01Z");
+        next.task_id = Some(turn_id.clone());
+        append_message(&db, &session.id, &next, Some(&turn_id)).unwrap();
+        let mut db_usage = usage.clone();
+        db_usage["totalTokens"] = serde_json::json!(650);
+        db.conn().execute("UPDATE turns SET usage_json = ?1 WHERE id = ?2",
+            params![db_usage.to_string(), turn_id]).unwrap();
+        let path = db.data_dir().join("sessions").join(format!("{}.jsonl", session.id));
+        let original = std::fs::read(&path).unwrap();
+        for options in [SessionReadOptions::default(), SessionReadOptions {
+            message_limit: Some(1), ..Default::default()
+        }] {
+            let detail = get_session_with_options(&db, &session.id, options).unwrap().unwrap();
+            for message in &detail.messages {
+                let task = message.task.as_ref().unwrap();
+                let total = task.usage.as_ref().unwrap();
+                assert_eq!(total.total_tokens, 650);
+                assert!(!total.accounting.contains_key("operations"));
+                assert!(serde_json::to_string(task).unwrap().len() < 1000);
+                if message.id == root.id {
+                    assert_eq!(message.usage.as_ref().unwrap().accounting["operations"], usage["operations"]);
+                }
+            }
+        }
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        let stored: String = db.conn().query_row("SELECT usage_json FROM turns WHERE id = ?1",
+            params![turn_id], |row| row.get(0)).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), db_usage);
+    }
+
+
+    #[test]
+    fn get_session_summary_returns_summary_without_transcript() {
+        let db = test_db();
+        let session = create_session(
+            &db,
+            Some("Summary only".into()),
+            Some("agent".into()),
+            None,
+            None,
+            Some("/tmp/project".into()),
+        )
+        .unwrap();
+
+        let summary = get_session_summary(&db, &session.id).unwrap().unwrap();
+        assert_eq!(summary.id, session.id);
+        assert_eq!(summary.title, "Summary only");
+        assert_eq!(summary.project_path, Some("/tmp/project".into()));
+
+        assert!(get_session_summary(&db, "nonexistent-id").unwrap().is_none());
     }
 }

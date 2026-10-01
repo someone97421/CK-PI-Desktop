@@ -1287,8 +1287,8 @@ fn resolve_persisted_project_workspace(
     state: &AppState,
     session_id: &str,
 ) -> Result<Option<String>, JsonRpcError> {
-    match sessions::get_session(&state.db, session_id) {
-        Ok(Some(detail)) => Ok(detail.summary.project_path),
+    match sessions::get_session_summary(&state.db, session_id) {
+        Ok(Some(summary)) => Ok(summary.project_path),
         // A tool request must name a persisted session: an unknown id never
         // inherits the mutable global workspace.
         Ok(None) => Err(rpc_err(1007, "session not found", "SESSION_NOT_FOUND")),
@@ -1300,12 +1300,12 @@ fn resolve_tool_workspace(
     state: &AppState,
     session_id: &str,
 ) -> Result<Option<String>, JsonRpcError> {
-    match sessions::get_session(&state.db, session_id) {
-        Ok(Some(detail)) => {
-            if let Some(project_path) = detail.summary.project_path {
+    match sessions::get_session_summary(&state.db, session_id) {
+        Ok(Some(summary)) => {
+            if let Some(project_path) = summary.project_path {
                 return Ok(Some(project_path));
             }
-            if let Some(path) = detail.summary.temporary_workspace_path {
+            if let Some(path) = summary.temporary_workspace_path {
                 return Ok(Some(path));
             }
             let scratch = scratch::session_dir(&state.data_dir, session_id)
@@ -1406,9 +1406,10 @@ fn resolve_plan_workspace_if_available(
     state: &AppState,
     session_id: &str,
 ) -> Result<Option<PathBuf>, JsonRpcError> {
-    match sessions::get_session(&state.db, session_id) {
-        Ok(Some(detail)) => Ok(detail.summary.project_path
-            .or(detail.summary.temporary_workspace_path)
+    match sessions::get_session_summary(&state.db, session_id) {
+        Ok(Some(summary)) => Ok(summary
+            .project_path
+            .or(summary.temporary_workspace_path)
             .map(PathBuf::from)),
         Ok(None) => Err(plan_rpc_err("PLAN_SESSION_NOT_FOUND")),
         Err(error) => Err(rpc_err(1000, error.to_string(), "INTERNAL")),
@@ -5082,10 +5083,10 @@ mod tests {
 
     use super::{
         capability_err, handle_request, parse_capability_query, parse_capability_target,
-        peek_jsonrpc_id, provider_rpc_err, request_budget_ms, resolve_plan_workspace,
-        resolve_tool_workspace, resolve_tool_workspace_for_call, scope_err, skill_err,
-        with_request_budget, JsonRpcError, RPC_REQUEST_BUDGET_MS,
-        RPC_COMPACT_BUDGET_MS, RPC_CONFIG_SYNC_BUDGET_MS,
+        peek_jsonrpc_id, provider_rpc_err, request_budget_ms, resolve_persisted_project_workspace,
+        resolve_plan_workspace, resolve_plan_workspace_if_available, resolve_tool_workspace,
+        resolve_tool_workspace_for_call, scope_err, skill_err, with_request_budget, JsonRpcError,
+        RPC_REQUEST_BUDGET_MS, RPC_COMPACT_BUDGET_MS, RPC_CONFIG_SYNC_BUDGET_MS,
     };
     use crate::agent_capabilities::CapabilityLevel;
     use crate::plans::{PlanResolveParams, PlanSubmitParams};
@@ -6622,6 +6623,97 @@ mod tests {
         let external = data_dir.path().join("outside.txt");
         let resolved = resolve_tool_workspace_for_call(&state, &session.id, &json!({"path": external})).unwrap().unwrap();
         assert_eq!(PathBuf::from(resolved), expected);
+    }
+
+    #[test]
+    fn resolve_tool_workspace_does_not_require_transcript_history() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let project_dir = tempfile::tempdir().unwrap();
+        let state = AppState::open(data_dir.path()).unwrap();
+        let session = sessions::create_session(
+            &state.db,
+            Some("Corrupted history task".into()),
+            Some("agent".into()),
+            None,
+            None,
+            Some(project_dir.path().to_string_lossy().into_owned()),
+        )
+        .unwrap();
+
+        // Corrupt transcript history so any transcript read or layout scan fails.
+        let transcript_path = data_dir
+            .path()
+            .join("sessions")
+            .join(format!("{}.jsonl", session.id));
+        fs::create_dir_all(&transcript_path).unwrap();
+
+        // Full session retrieval must fail because transcript history is corrupt.
+        assert!(sessions::get_session(&state.db, &session.id).is_err());
+
+        // Resolving workspace for tools only needs the session summary and succeeds.
+        let resolved = resolve_tool_workspace(&state, &session.id)
+            .unwrap()
+            .unwrap();
+        let expected = crate::workspace::simple_canonicalize(project_dir.path()).unwrap();
+        assert_eq!(
+            crate::workspace::simple_canonicalize(Path::new(&resolved)).unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_persisted_project_workspace(&state, &session.id).unwrap(),
+            session.project_path.clone()
+        );
+
+        let member_file = project_dir.path().join("child.txt");
+        let resolved_for_call = resolve_tool_workspace_for_call(
+            &state,
+            &session.id,
+            &json!({ "path": member_file }),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            crate::workspace::simple_canonicalize(Path::new(&resolved_for_call)).unwrap(),
+            expected
+        );
+        assert_eq!(
+            resolve_plan_workspace_if_available(&state, &session.id).unwrap(),
+            Some(project_dir.path().to_path_buf())
+        );
+
+        // Also verify that temporary workspace sessions resolve without transcript history.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_session = sessions::create_session_with_options(
+            &state.db,
+            sessions::SessionCreateOptions {
+                temporary_workspace_path: Some(temp_dir.path().to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let temp_transcript = data_dir
+            .path()
+            .join("sessions")
+            .join(format!("{}.jsonl", temp_session.id));
+        fs::create_dir_all(&temp_transcript).unwrap();
+        assert!(sessions::get_session(&state.db, &temp_session.id).is_err());
+
+        let temp_resolved = resolve_tool_workspace(&state, &temp_session.id)
+            .unwrap()
+            .unwrap();
+        let temp_expected = crate::workspace::simple_canonicalize(temp_dir.path()).unwrap();
+        assert_eq!(
+            crate::workspace::simple_canonicalize(Path::new(&temp_resolved)).unwrap(),
+            temp_expected
+        );
+        assert_eq!(
+            resolve_persisted_project_workspace(&state, &temp_session.id).unwrap(),
+            None
+        );
+        assert_eq!(
+            resolve_plan_workspace_if_available(&state, &temp_session.id).unwrap(),
+            Some(temp_dir.path().to_path_buf())
+        );
     }
 
     #[test]

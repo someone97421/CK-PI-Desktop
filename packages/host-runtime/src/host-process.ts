@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from "node:buffer";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -139,9 +140,20 @@ export class HostProcess {
       if (this.exitObserved) this.cleanupProcessListeners();
     });
 
-    this.stdoutReader = readNdjsonLines(this.child.stdout, (line) =>
-      this.onLine(line),
-    );
+    const failTransport = (error: Error) => {
+      if (this.closed) return;
+      const failure = this.unavailableError(`host stdio transport failed: ${error.message}`);
+      onStderr(`${failure.message}\n`);
+      this.closeTransport(failure);
+      this.notifyExit({ code: null, signal: null, intentional: this.disposed });
+      // 复用 EOF 退出与超时清理，不能留下已失去回执通道的宿主。
+      void this.dispose().catch((error) => onStderr(`host cleanup failed: ${String(error)}\n`));
+    };
+    this.child.stdin.on("error", failTransport);
+    this.stdoutReader = readNdjsonLines(this.child.stdout, (line) => this.onLine(line), {
+      onError: failTransport,
+      maxFrameChars: bufferConstants.MAX_STRING_LENGTH,
+    });
   }
 
   private closeTransport(error: Error) {

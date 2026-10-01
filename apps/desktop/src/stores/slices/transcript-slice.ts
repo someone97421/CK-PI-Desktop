@@ -448,6 +448,8 @@ export function createTranscriptSlice({
         if (messages) runtime.cacheSessionTranscript(sessionId, messages);
         set((current) => ({
           runningSessions: { ...current.runningSessions, [sessionId]: false },
+          // 停止收尾同步清理运行时快照，避免依赖可能迟到的终态事件。
+          agentStatuses: withoutRecordKey(current.agentStatuses, sessionId),
           ...(messages ? { retainedTranscripts: { ...current.retainedTranscripts, [sessionId]: messages } } : {}),
           ...(current.activeSessionId === sessionId ? { isRunning: false, ...(messages ? { messages } : {}) } : {}),
         }));
@@ -488,6 +490,8 @@ export function createTranscriptSlice({
         runtime.submittedComposerDrafts.delete(sessionId);
         set((current) => ({
           runningSessions: { ...current.runningSessions, [sessionId]: false },
+          // 切换会话后也清理原会话的运行时快照。
+          agentStatuses: withoutRecordKey(current.agentStatuses, sessionId),
         }));
         return;
       }
@@ -565,6 +569,8 @@ export function createTranscriptSlice({
             : current.messages,
         isRunning: false,
         runningSessions: { ...current.runningSessions, [sessionId]: false },
+        // 与停止展示同步清理运行时快照。
+        agentStatuses: withoutRecordKey(current.agentStatuses, sessionId),
       }));
       void flushPendingSessionConfiguration(sessionId);
     },

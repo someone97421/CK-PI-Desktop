@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from "node:buffer";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_RPC_TIMEOUT_MS, IMAGE_BATCH_TIMEOUT_MS, imageGenerationPrompts, readNdjsonLines, rpcTimeoutMs, rpcErrorFromWire, rpcErrorToWire } from "@pi-desktop/shared";
@@ -207,9 +208,20 @@ export class AgentSidecar {
       this.notifyExit({ code: null, signal: null, intentional: this.disposed });
     });
 
-    this.stdoutReader = readNdjsonLines(this.child.stdout, (line) =>
-      void this.onLine(line),
-    );
+    const failTransport = (error: Error) => {
+      if (this.closed) return;
+      const detail = `agent stdio transport failed: ${error.message}`;
+      this.recordStderr(detail);
+      onStderr(`${detail}\n`);
+      this.closeTransport(error);
+      this.notifyExit({ code: null, signal: null, intentional: this.disposed });
+      void this.dispose().catch((error) => onStderr(`agent cleanup failed: ${String(error)}\n`));
+    };
+    this.child.stdin.on("error", failTransport);
+    this.stdoutReader = readNdjsonLines(this.child.stdout, (line) => void this.onLine(line), {
+      onError: failTransport,
+      maxFrameChars: bufferConstants.MAX_STRING_LENGTH,
+    });
   }
 
   private recordStderr(text: string) {
@@ -243,7 +255,7 @@ export class AgentSidecar {
     this.stdoutReader?.close();
     this.stdoutReader = undefined;
     this.child.removeAllListeners("exit");
-    this.child.removeAllListeners("error");
+    // 进程 error 监听保留，承接随后的 kill/管道关闭错误。
     this.child.stderr.removeAllListeners("data");
   }
 

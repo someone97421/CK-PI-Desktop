@@ -417,9 +417,13 @@ fn extract_task_summary(
     let Some(meta) = parsed.meta else {
         return;
     };
-    let Some(task_val) = meta.task else {
+    let Some(mut task_val) = meta.task else {
         return;
     };
+    // 布局缓存保存展示汇总；原始账本仍保留在消息用量和回合结算中。
+    if let Some(usage) = task_val.get_mut("usage").and_then(Value::as_object_mut) {
+        usage.remove("operations");
+    }
     let task_id = match meta.task_id.as_deref() {
         Some(id) if !id.is_empty() => id,
         _ => match task_val.get("id").and_then(Value::as_str) {

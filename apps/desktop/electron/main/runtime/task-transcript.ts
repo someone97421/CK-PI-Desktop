@@ -9,6 +9,8 @@ type TaskRecord = {
   childReceipts: Map<number, MessageUsage>;
   delegated: boolean;
   finalCandidate?: string;
+  snapshot?: MessageTask;
+  fullUsage?: MessageUsage;
 };
 type Publisher = (sessionId: string, turnId: string, message: UiMessage, echo: boolean) => Promise<void>;
 
@@ -26,10 +28,24 @@ export class TaskTranscript {
   private key(sessionId: string, turnId: string): string { return JSON.stringify([sessionId, turnId]); }
 
   private snapshot(record: TaskRecord): MessageTask {
+    if (record.snapshot && record.snapshot.revision === record.summary.revision) return record.snapshot;
+    // 分层合并使每条用量只参与对数次合并，避免逐项累加时反复复制整个账本。
     const sum = (values: Iterable<MessageUsage | undefined>) => {
-      let total: MessageUsage | undefined;
-      for (const value of values) if (value) total = addUsage(total, value);
-      return total;
+      let level = [...values].filter((value): value is MessageUsage => Boolean(value));
+      // 含旧版无归属用量或汇总余量时，保持原有合并顺序与成本语义。
+      if (level.some(value => !value.operationId || value.aggregation === "aggregate" || value.operations?.length)) {
+        let total: MessageUsage | undefined;
+        for (const value of level) total = addUsage(total, value);
+        return total;
+      }
+      while (level.length > 1) {
+        const next: MessageUsage[] = [];
+        for (let i = 0; i < level.length; i += 2) {
+          next.push(addUsage(level[i], level[i + 1])!);
+        }
+        level = next;
+      }
+      return level[0];
     };
     const main = sum(record.main.values());
     const rawChildren = sum(record.children.values());
@@ -37,15 +53,18 @@ export class TaskTranscript {
     // 汇总回执与逐条子代理消息是同一批用量的两种证据，不能相加。
     const children = (receiptChildren?.totalTokens ?? 0) > (rawChildren?.totalTokens ?? 0)
       ? receiptChildren : rawChildren;
-    const usage = children ? addUsage(main, children) : main;
-    return {
+    record.fullUsage = children ? addUsage(main, children) : main;
+    // 展示摘要只携带汇总数值；完整账本通过 usage() 交给回合结算保存。
+    const { operations: _operations, ...usage } = record.fullUsage ?? {};
+    record.snapshot = {
       ...record.summary,
-      usage,
+      usage: record.fullUsage ? usage as MessageUsage : undefined,
       usageIncomplete: record.summary.status === "aborted" || record.summary.status === "failed"
-        || !usage || [...record.main.values()].some((value) => !value)
+        || !record.fullUsage || [...record.main.values()].some((value) => !value)
         || [...record.children.values()].some((value) => !value)
         || (record.delegated && !children),
     };
+    return record.snapshot;
   }
 
   private async publish(record: TaskRecord, echo = true): Promise<void> {
@@ -113,7 +132,10 @@ export class TaskTranscript {
     }
     if (event.type === "tool_start" && !child) {
       if (record.summary.status === "running") record.finalCandidate = undefined;
-      if (["Task", "TaskResume"].includes(event.toolName)) record.delegated = true;
+      if (["Task", "TaskResume"].includes(event.toolName) && !record.delegated) {
+        record.delegated = true;
+        changed = true;
+      }
     }
     if (event.type === "turn_end" && !child && event.subagentUsage) {
       record.childReceipts.set(envelope.ts, event.subagentUsage);
@@ -167,6 +189,8 @@ export class TaskTranscript {
 
   usage(sessionId: string, turnId: string): MessageUsage | undefined {
     const record = this.records.get(this.key(sessionId, turnId));
-    return record ? this.snapshot(record).usage : undefined;
+    if (!record) return undefined;
+    this.snapshot(record);
+    return record.fullUsage;
   }
 }

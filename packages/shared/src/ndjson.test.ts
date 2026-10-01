@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readNdjsonLines } from "./ndjson.js";
 
 type DataListener = (chunk: string) => void;
@@ -125,5 +125,61 @@ describe("readNdjsonLines", () => {
     for (const event of ["data", "end", "close"] as const) {
       expect(input.listenerCount(event)).toBe(0);
     }
+  });
+
+  it("字符串拼接失败时关闭通道，不让同一缓冲在后续数据中反复抛错", () => {
+    const input = new FakeNdjsonInput();
+    const lines: string[] = [];
+    const errors: Error[] = [];
+    const failure = new RangeError("Invalid string length");
+    readNdjsonLines(input, (line) => lines.push(line), { onError: (error) => errors.push(error) });
+    input.write("partial");
+    const join = vi.spyOn(Array.prototype, "join").mockImplementationOnce(() => { throw failure; });
+    try {
+      input.write("tail\n");
+    } finally {
+      join.mockRestore();
+    }
+    input.finish("later\n");
+    expect(errors).toEqual([failure]);
+    expect(lines).toEqual([]);
+    expect(input.listenerCount("data")).toBe(0);
+  });
+
+  it("在完整帧之间重置预算，并保留上限内的分块帧", () => {
+    const input = new FakeNdjsonInput();
+    const lines: string[] = [];
+    readNdjsonLines(input, (line) => lines.push(line), { maxFrameChars: 4 });
+    input.write("ab");
+    input.write("cd\n1234\nx");
+    input.finish("yz");
+    expect(lines).toEqual(["abcd", "1234", "xyz"]);
+  });
+
+  it.each(["abcde\nnext\n", "abcde"])("超长帧关闭读取并只报告一次失败：%j", (wire) => {
+    const input = new FakeNdjsonInput();
+    const lines: string[] = [];
+    const errors: Error[] = [];
+    readNdjsonLines(input, (line) => lines.push(line), {
+      maxFrameChars: 4,
+      onError: (error) => errors.push(error),
+    });
+    input.write(wire.slice(0, 2));
+    input.write(wire.slice(2));
+    input.finish("ignored\n");
+    expect(lines).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain("NDJSON frame exceeds 4 characters");
+    for (const event of ["data", "end", "close"] as const) {
+      expect(input.listenerCount(event)).toBe(0);
+    }
+  });
+
+  it("未提供错误处理器时也先释放缓冲与监听器再抛错", () => {
+    const input = new FakeNdjsonInput();
+    readNdjsonLines(input, () => {}, { maxFrameChars: 2 });
+    expect(() => input.write("abc")).toThrow("NDJSON frame exceeds");
+    expect(() => input.finish("abc\n")).not.toThrow();
+    expect(input.listenerCount("data")).toBe(0);
   });
 });

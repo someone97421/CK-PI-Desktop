@@ -19,6 +19,7 @@ import { accentInkTokens, applyAppearance, resolveAppearance } from "../../lib/a
 import { installRendererApi } from "../../capture/renderer-api";
 import { commitWorkPanelPresentation } from "../../lib/work-panel-presentation";
 import { browserPluginTab } from "../../lib/work-panel-tabs";
+import { settleLocalRunLoss } from "../../stores/runtime/run-loss-settlement";
 import {
   MAIN_PANE_MIN_WIDTH,
   workPanelWidthForSidebarReopen,
@@ -660,8 +661,21 @@ export function useAppShellRuntime() {
           message: status.message,
           schema: status.schema,
         });
-        // A dead sidecar cannot finish the turn; unstick the composer.
-        useAppStore.setState({ isRunning: false });
+        // 本地执行端失联后收尾其会话展示；远程会话由各自连接维护。
+        const store = useAppStore.getState();
+        const isLocalAffected = (id: string | undefined): id is string =>
+          id !== undefined &&
+          store.sessions.find((session) => session.id === id)?.source !== "remote";
+        const localAffected = new Set(
+          Object.keys(store.runningSessions).filter(
+            (id) => store.runningSessions[id] === true && isLocalAffected(id),
+          ),
+        );
+        // 刚提交时当前会话可能尚未写入 runningSessions。
+        if (store.isRunning && isLocalAffected(store.activeSessionId)) {
+          localAffected.add(store.activeSessionId);
+        }
+        useAppStore.setState((state) => settleLocalRunLoss(state, [...localAffected]));
       }
     });
     const offNotificationChanged = api.onNotificationChanged((notification) => {
