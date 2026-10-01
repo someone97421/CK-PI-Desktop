@@ -278,3 +278,13 @@ describe("unmatched model effective thinking policy", () => {
     expect(capabilitiesFromModelConfig(modelConfigWithBinding(trusted, { ...binding, thinkingLevels: [] })).supportsReasoning).toBe(false);
   });
 });
+
+it("keeps native Pi null and absent extended mappings unavailable", () => {
+  const configured = modelConfigWithBinding({ ...knownModel(), source: "pi",
+    supportedThinkingLevels: ["low", "high"], thinkingLevelMap: { off: null, xhigh: null } }, {
+    contextWindow: 64_000, maxTokens: 4_000, thinkingLevels: ["low", "xhigh", "max"],
+  });
+  expect(configured.supportedThinkingLevels).toEqual(["low"]);
+  expect(configured.thinkingLevelMap?.xhigh).toBeNull();
+  expect(configured.thinkingLevelMap?.max).toBeUndefined();
+});

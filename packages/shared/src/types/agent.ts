@@ -190,6 +190,8 @@ export type ToolPermissionRequest = {
   agentName?: string;
   /** `Task` call that spawned the asking delegate. */
   parentToolCallId?: string;
+  /** Immediate tool parent when this request came from nested execution. */
+  nestedParentToolCallId?: string;
 };
 
 export type ToolPermissionResolution = {
@@ -270,6 +272,7 @@ export type AgentEvent =
   | { type: "agent_start" }
   | { type: "agent_end"; messageIds: string[] }
   | { type: "turn_start" }
+  | { type: "usage"; usage: MessageUsage }
   | { type: "turn_end"; subagentUsage?: MessageUsage }
   | { type: "message_start"; message: UiMessage }
   | {
@@ -331,6 +334,8 @@ export type AgentEventEnvelope = {
    * skips the turn-lifecycle handling that belongs to the parent alone.
    */
   parentToolCallId?: string;
+  /** Immediate nested-tool parent; never identifies subagent ownership. */
+  nestedParentToolCallId?: string;
   /** Definition name of the emitting subagent. */
   agentName?: string;
 };

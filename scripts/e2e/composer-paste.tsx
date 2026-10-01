@@ -123,6 +123,7 @@ function Fixture({ sessionId, t, workspacePath }: { sessionId: string; t: TFunct
         onInput={(source, caret) => { inputHistory.exitBrowsing(); draft.handleInput(source, caret); }}
         onCompositionStart={noop}
         onCompositionEnd={noop}
+        onSettledInput={() => draft.setComposing(false)}
         onFocus={noop}
         onBlur={noop}
       />

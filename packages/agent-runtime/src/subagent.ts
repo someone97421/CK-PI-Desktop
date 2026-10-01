@@ -40,6 +40,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   addUsage,
+  usageForEvent,
   cumulativeDelta,
   GEMINI_INLINE_REQUEST_BYTES,
   isCertificateVerificationError,
@@ -106,7 +107,7 @@ import {
   retainedUserMessageBudget,
   type ContextBudget,
 } from "./context-budget.js";
-import { estimateOutputCapInputTokens } from "./output-cap.js";
+import { effectiveModelContextWindow, estimateOutputCapInputTokens } from "./output-cap.js";
 import {
   degradedDelegateMessages,
   subagentContextOverflowError,
@@ -882,6 +883,12 @@ export class SubagentRun {
     return drop.messages;
   }
 
+  private recordUsage(usage: MessageUsage): void {
+    this.usage = addUsage(this.usage, usage);
+    this.executionUsage = addUsage(this.executionUsage, usage);
+    this.emit({ type: "usage", usage });
+  }
+
   private bindingFor(
     provider: RuntimeProviderConfig,
     thinkingLevel: SubagentThinkingLevel,
@@ -892,6 +899,7 @@ export class SubagentRun {
       sessionId: this.opts.sessionId,
       maxTokens: this.opts.definition.maxTokens,
       requestLimitBytes: this.opts.definition.name === "media-analyst" ? GEMINI_INLINE_REQUEST_BYTES : undefined,
+      onUsage: usage => this.recordUsage(usage),
     }, this.retryState);
   }
 
@@ -905,7 +913,7 @@ export class SubagentRun {
   }
 
   private modelContextWindow(): number {
-    return this.agent.state.model.contextWindow || DEFAULT_CONTEXT_WINDOW;
+    return effectiveModelContextWindow(this.agent.state.model);
   }
 
   /** Shared model-window budget, retained independently of snapshot format. */
@@ -1062,7 +1070,6 @@ export class SubagentRun {
     );
 
     let summary: string | undefined;
-    let summaryUsage: MessageUsage | undefined;
     // Do not send a summary request that cannot fit its model's window.
     // Failure retains the original transcript rather than omitting work.
     if (!compactionSummaryWouldExceedBudget(preparation, budget, binding.model)) {
@@ -1077,11 +1084,11 @@ export class SubagentRun {
         // An empty or output-truncated summary would replace the delegate's
         // whole history with nothing; keep the context and recover instead.
         requireCompleteSummary: true,
+        onUsage: usage => this.recordUsage(usage),
       });
       if (signal.aborted) return "aborted";
       if (result.ok) {
         summary = result.value.summary;
-        summaryUsage = usageFromPi(result.value.usage);
       }
     }
 
@@ -1097,8 +1104,6 @@ export class SubagentRun {
       return "failed";
     }
     this.contextCompactions += 1;
-    this.usage = addUsage(this.usage, summaryUsage);
-    this.executionUsage = addUsage(this.executionUsage, summaryUsage);
     return "compacted";
   }
 
@@ -1610,6 +1615,7 @@ export class SubagentRun {
           this.providerRateLimitRetryAttempt = 0;
         }
         const messageUsage = usageFromPi(message.usage);
+        // Identified requests deduplicate; legacy streams still contribute their usage.
         this.usage = addUsage(this.usage, messageUsage);
         this.executionUsage = addUsage(this.executionUsage, messageUsage);
         // The report is the last assistant text; a call-only turn has none and
@@ -1669,15 +1675,19 @@ export class SubagentRun {
           partialResult: event.partialResult,
         });
         break;
-      case "tool_execution_end":
+      case "tool_execution_end": {
         this.observation.end(event.toolCallId, event.result, event.isError);
-        this.emit({
-          type: "tool_end",
+        const toolEnd = {
+          type: "tool_end" as const,
           toolCallId: event.toolCallId,
           result: event.result,
           isError: event.isError,
-        });
+        };
+        const usage = usageForEvent({ sessionId: this.opts.sessionId, ts: Date.now(), event: toolEnd });
+        if (usage) this.recordUsage(usage);
+        this.emit(toolEnd);
         break;
+      }
       default:
         break;
     }

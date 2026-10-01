@@ -1,3 +1,4 @@
+import { clampThinkingLevel as clampPiThinkingLevel, type Api, type Model, type SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type {
   ModelCost,
   ModelExperimentalMetadata,
@@ -17,12 +18,14 @@ export type ThinkingCapabilitySet = {
 };
 
 /**
- * Serializable model metadata resolved in Electron main from models.dev.
- * pi-ai consumes this record through its selected transport adapter but does
- * not provide model names, limits, modalities, thinking levels, or prices.
+ * Serializable projection of the account's effective Pi chat model.
+ * Legacy source tags remain readable; no legacy catalog is consulted.
  */
 export type ModelConfig = {
-  source: "models.dev" | "generic";
+  source: "pi" | "models.dev" | "generic";
+  inputLimits?: Model<Api>["inputLimits"];
+  promptCache?: Model<Api>["promptCache"];
+  samplingParams?: Model<Api>["samplingParams"];
   name: string;
   baseUrl: string;
   description?: string;
@@ -44,6 +47,8 @@ export type ModelConfig = {
   modalities?: ModelModalities;
   openWeights?: boolean;
   limit?: ModelLimit;
+  /** Pi's native request pricing, including tiers; never reconstruct it from UI prices. */
+  nativeCost?: Model<Api>["cost"];
   cost?: ModelCost & {
     input: number;
     output: number;
@@ -101,6 +106,23 @@ export function omitThinkingModel<T extends { thinkingLevelMap?: Partial<Record<
     ...model,
     thinkingLevelMap: { ...model.thinkingLevelMap, off: null },
   };
+}
+
+/** Normalize only after resolving the physical request model; never mutate preferences. */
+export function effectiveThinkingLevel(
+  model: Model<Api>,
+  requested: SessionThinkingLevel,
+): SessionThinkingLevel {
+  return requested === "omit" ? "omit" : clampPiThinkingLevel(model, requested);
+}
+
+/** Simple requests encode off by omitting reasoning, unlike Agent bookkeeping. */
+export function requestThinkingLevel(
+  model: Model<Api>,
+  requested: SessionThinkingLevel,
+): SimpleStreamOptions["reasoning"] {
+  const effective = effectiveThinkingLevel(model, requested);
+  return effective === "off" || effective === "omit" ? undefined : effective;
 }
 
 /** Apply the canonical nearest-supported-level rule to catalog metadata. */

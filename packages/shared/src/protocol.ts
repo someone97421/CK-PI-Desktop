@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 11 as const;
-export const SCHEMA_VERSION = 20 as const;
+export const SCHEMA_VERSION = 21 as const;
 export { APP_ID, APP_NAME, APP_SLUG, APP_REPOSITORY, APP_VERSION, APP_DISPLAY_VERSION,
   APP_BUILD_TIME, APP_BUILD_TIMEZONE, APP_LEGACY_LOCK_NAME } from "./app-build.js";
 
@@ -91,6 +91,8 @@ export const IPC = {
     liveVoiceEnd: "pi-desktop/voice/live/end",
     liveVoiceHeartbeat: "pi-desktop/voice/live/heartbeat",
     liveVoiceResolveWorkSelection: "pi-desktop/voice/live/work/resolveSelection",
+    liveVoiceStopWorkOperation: "pi-desktop/voice/live/work/stopOperation",
+    liveVoiceCancelQueuedOperation: "pi-desktop/voice/live/work/cancelQueuedOperation",
     agentCompact: "pi-desktop/agent/compact",
     sessionCompactionModelGet: "pi-desktop/session/compactionModel/get",
     sessionCompactionModelSet: "pi-desktop/session/compactionModel/set",
@@ -193,6 +195,7 @@ export const IPC = {
     scheduledExecute: "pi-desktop/scheduled/execute",
     scheduledListRuns: "pi-desktop/scheduled/listRuns",
     toolResolvePermission: "pi-desktop/tool/resolvePermission",
+    todosGet: "pi-desktop/todos/get",
     askToolResolve: "pi-desktop/agent/askTool/resolve",
     plansPending: "pi-desktop/plans/pending",
     plansResolve: "pi-desktop/plans/resolve",
@@ -416,6 +419,7 @@ export const IPC = {
     notificationActivated: "pi-desktop/notification/event/activated",
     notificationSound: "pi-desktop/notification/event/sound",
     plansChanged: "pi-desktop/plans/event/changed",
+    todosChanged: "pi-desktop/todos/event/changed",
     providersOauth: "pi-desktop/providers/oauth/event",
     mcpOauth: "pi-desktop/mcp/oauth/event",
     updatesState: "pi-desktop/updates/event/state",

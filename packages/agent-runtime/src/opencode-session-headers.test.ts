@@ -241,6 +241,7 @@ describe("completeOneShot OpenCode headers", () => {
       },
     );
     expect(result.text).toBe("ok");
+    expect(result.usage).toMatchObject({ operationId: expect.any(String), providerId: provider.id, modelId: provider.modelId });
     expect(captured?.sessionId).toBe("session-9");
     expect(captured?.headers).toMatchObject({
       [OPENCODE_SESSION_HEADER]: "session-9",

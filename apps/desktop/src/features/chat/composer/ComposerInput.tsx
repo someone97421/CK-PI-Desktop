@@ -33,6 +33,13 @@ export type ComposerInputProps = {
   onHistoryNavigate: (direction: "older" | "newer") => boolean;
   onCompositionStart: () => void;
   onCompositionEnd: (event: FormEvent<HTMLDivElement>) => void;
+  /**
+   * A composition that the browser never reports as ended. A Windows Chinese
+   * IME drops `compositionend` when the composing text is deleted, which
+   * would otherwise leave the draft composing forever (#929). An input event
+   * that is not part of a composition is proof it is over.
+   */
+  onSettledInput: () => void;
   onFocus: () => void;
   onBlur: () => void;
 };
@@ -57,6 +64,7 @@ export function ComposerInput({
   onHistoryNavigate,
   onCompositionStart,
   onCompositionEnd,
+  onSettledInput,
   onFocus,
   onBlur,
 }: ComposerInputProps) {
@@ -99,6 +107,9 @@ export function ComposerInput({
             const element = event.currentTarget;
             const source = readEditorValue(element);
             const { start } = editorSelectionRange(element);
+            // An input outside a composition proves the previous one ended,
+            // even when the IME never sent compositionend (#929).
+            if (!(event.nativeEvent as InputEvent).isComposing) onSettledInput();
             onInput(source, start);
           }}
           onCompositionStart={onCompositionStart}

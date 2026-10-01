@@ -29,7 +29,7 @@ import {
   DEFAULT_MAX_TOKENS,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
-import { clampThinkingLevel } from "./thinking-level.js";
+import { clampThinkingLevel, omitThinkingModel } from "./thinking-level.js";
 import { effectiveModelContextWindow } from "./output-cap.js";
 
 import {
@@ -600,18 +600,20 @@ export async function generateCompactionSummary(input: {
   signal: AbortSignal;
   /** Reject an empty or output-truncated summary (delegate policy). */
   requireCompleteSummary?: boolean;
+  onUsage?: import("./request-usage.js").UsageObserver;
 }): Promise<Awaited<ReturnType<typeof compact>>> {
   const models = withCompactionRequestHeaders(
     input.models,
     input.provider,
     input.sessionId,
+    input.onUsage,
   );
   return compact(
     input.preparation,
     input.requireCompleteSummary
       ? requireCompleteSummaryModels(models)
       : models,
-    input.model,
+    input.thinkingLevel === undefined ? omitThinkingModel(input.model) : input.model,
     undefined,
     input.thinkingLevel,
     COMPACTION_SUMMARY_RETRY_POLICY,

@@ -1,3 +1,4 @@
+import { getSupportedThinkingLevels, type Api, type Model } from "@earendil-works/pi-ai";
 import {
   effectiveContextWindow,
   THINKING_LEVELS,
@@ -10,10 +11,28 @@ import type { ModelConfig, ThinkingCapabilitySet } from "./thinking-level.js";
 export {
   agentThinkingLevel,
   clampThinkingLevel,
+  effectiveThinkingLevel,
   omitThinkingModel,
   type ModelConfig,
   type ThinkingCapabilitySet,
 } from "./thinking-level.js";
+
+/** Read-only, credential-free projection of a resolved Pi chat model. */
+export function modelConfigFromPi(model: Model<Api>): ModelConfig {
+  const { id: _id, provider: _provider, cost, compat, ...metadata } = model;
+  return {
+    ...metadata,
+    ...(compat ? { compat: { ...compat } } : {}),
+    source: "pi",
+    nativeCost: cost,
+    // Desktop's historical tier schema differs; do not invent a translation.
+    cost: { input: cost.input, output: cost.output, cacheRead: cost.cacheRead, cacheWrite: cost.cacheWrite },
+    modalities: { input: [...model.input], output: ["text"] },
+    limit: { context: model.contextWindow, output: model.maxTokens },
+    catalogContextWindow: model.contextWindow,
+    supportedThinkingLevels: getSupportedThinkingLevels(model),
+  };
+}
 
 export type ModelCapabilities = ThinkingCapabilitySet;
 /** Compatibility name used by Electron main and existing runtime callers. */
@@ -85,6 +104,12 @@ export function modelConfigWithBinding(
       >
     | null,
 ): ModelConfig {
+  // A live-only account model may already carry explicit sibling capabilities.
+  // Preserve those until a stored user binding overrides them; only a truly
+  // unclassified generic row needs the unrestricted defaults below.
+  if (!binding && (model.supportedThinkingLevels?.length || model.thinkingLevelMap)) {
+    return model;
+  }
   // A generic discovery row carries no trusted capability restriction. Keep
   // all levels selectable unless the user stored a non-empty override.
   // This is an effective runtime policy, not published catalog metadata.
@@ -101,9 +126,13 @@ export function modelConfigWithBinding(
     };
   }
   if (!binding) return model;
-  const enabledThinkingLevels = model.source === "generic" && binding.thinkingLevels.length === 0
+  const requestedLevels = model.source === "generic" && binding.thinkingLevels.length === 0
     ? [...THINKING_LEVELS]
     : THINKING_LEVELS.filter((level) => binding.thinkingLevels.includes(level));
+  // Known native models cannot gain unsupported effort mappings from saved settings.
+  const enabledThinkingLevels = model.source === "pi"
+    ? requestedLevels.filter(level => model.supportedThinkingLevels?.includes(level))
+    : requestedLevels;
   const thinkingLevelMap = { ...(model.thinkingLevelMap ?? {}) };
   const compat = binding.thinkingProtocol
     ? {
@@ -116,7 +145,7 @@ export function modelConfigWithBinding(
   // extended level without a catalog translation must pass through as-is.
   for (const level of ["xhigh", "max"] as const) {
     if (
-      enabledThinkingLevels.includes(level) &&
+      model.source !== "pi" && enabledThinkingLevels.includes(level) &&
       thinkingLevelMap[level] == null
     ) {
       thinkingLevelMap[level] = level;
@@ -145,7 +174,9 @@ export function modelConfigWithBinding(
       context: contextWindow,
     },
     maxTokens: binding.maxTokens,
-    reasoning: enabledThinkingLevels.some((level) => level !== "off"),
+    reasoning: model.source === "pi"
+      ? model.reasoning || enabledThinkingLevels.some((level) => level !== "off")
+      : enabledThinkingLevels.some((level) => level !== "off"),
     supportedThinkingLevels: enabledThinkingLevels,
     ...(binding.thinkingProtocol
       ? { thinkingProtocol: binding.thinkingProtocol }

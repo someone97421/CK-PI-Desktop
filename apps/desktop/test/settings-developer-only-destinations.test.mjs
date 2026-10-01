@@ -30,6 +30,7 @@ const composerToolbar = readFileSync(
   "utf8",
 );
 
+
 const identity = (key) => key;
 const experimentalIds = ["sync", "remoteHosts"];
 

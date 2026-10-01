@@ -133,6 +133,7 @@ export function createSidecarRuntime({
       startedAt: number;
       turnId?: string;
       parentToolCallId?: string;
+      nestedParentToolCallId?: string;
       agentName?: string;
     }
   >();
@@ -225,6 +226,7 @@ export function createSidecarRuntime({
           startedAt: envelope.ts,
           turnId: envelope.turnId,
           parentToolCallId: envelope.parentToolCallId,
+          nestedParentToolCallId: envelope.nestedParentToolCallId,
           agentName: envelope.agentName,
         });
       } else if (event.type === "tool_end") {
@@ -247,6 +249,7 @@ export function createSidecarRuntime({
             turnId: envelope.turnId ?? started?.turnId,
             toolCallId: event.toolCallId,
             parentToolCallId: started?.parentToolCallId,
+            nestedParentToolCallId: started?.nestedParentToolCallId,
             agentName: started?.agentName,
             ...(resultCode ? { code: resultCode } : {}),
             data: {
@@ -293,6 +296,7 @@ export function createSidecarRuntime({
         turnId: tool.turnId,
         toolCallId: tool.toolCallId,
         parentToolCallId: tool.parentToolCallId,
+        nestedParentToolCallId: tool.nestedParentToolCallId,
         agentName: tool.agentName,
         data: {
           toolName: tool.toolName,
@@ -493,12 +497,14 @@ export function createSidecarRuntime({
     }
 
     await modelsDevCatalog.ensureLoaded();
+    modelsDevCatalog.configureAccount(provider);
     let catalogModelConfig: Parameters<typeof modelConfigWithBinding>[0];
     if (isVendorAccount) {
       const vendorBinding = await vendorOAuth.bindingFor(provider.id, modelId);
       if (!vendorBinding) throw new Error(`vendor "${provider.name}" does not offer "${modelId}"`);
       catalogModelConfig =
         vendorBinding.modelConfig ?? catalogModelConfigFor(modelsDevCatalog, {
+          providerId: provider.id,
           vendorKey: provider.vendorKey,
           baseUrl: vendorBinding.baseUrl ?? provider.baseUrl,
           apiStyle: vendorBinding.apiStyle ?? provider.apiStyle,
@@ -506,6 +512,7 @@ export function createSidecarRuntime({
         });
     } else {
       catalogModelConfig = catalogModelConfigFor(modelsDevCatalog, {
+        providerId: provider.id,
         vendorKey: provider.vendorKey,
         baseUrl: provider.baseUrl,
         apiStyle: provider.apiStyle,
@@ -536,6 +543,13 @@ export function createSidecarRuntime({
   s.setLocalTool("GenerateImages", createImageGenerationTool({
     dataDir,
     getHost: () => runtimeState.host,
+    resolveAuth: providerId => vendorOAuth.resolveAuth(providerId),
+    resolveImageModel: async (provider, modelId) => {
+      await modelsDevCatalog.ensureLoaded();
+      return modelsDevCatalog.findModelOfType("image", {
+        providerId: provider.id, vendorKey: provider.vendorKey, baseUrl: provider.baseUrl, modelId,
+      });
+    },
     // Fake-IP tolerance belongs to the network policy, not to the proxy switch.
     allowFakeIp: () => relaxedNetworkPolicyEnabled(),
   }));

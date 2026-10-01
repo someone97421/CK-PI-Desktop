@@ -11,6 +11,8 @@
  * the collection is the seam that reaches its one request.
  */
 
+import { accountModelResult, nativeCostStatus, requestUsageIdentity, type UsageObserver } from "./request-usage.js";
+import { requestThinkingLevel } from "./thinking-level.js";
 import type {
   Api,
   Context,
@@ -46,7 +48,7 @@ export function compactionRequestOptions(input: {
   const { provider, sessionId, model, context, options } = input;
   return withProviderHeaders(
     withOpenCodeSessionHeaders(
-      { ...options, sessionId },
+      { ...options, sessionId, ...(options?.reasoning !== undefined ? { reasoning: requestThinkingLevel(model, options.reasoning) } : {}) },
       { ...openCodeEndpointFromProvider(provider, model), sessionId },
     ),
     mergeProviderHeaders(
@@ -104,8 +106,10 @@ export function withCompactionRequestHeaders(
   models: Models,
   provider: RuntimeProviderConfig,
   sessionId: string,
+  onUsage?: UsageObserver,
 ): Models {
-  const completeSimple: Models["completeSimple"] = (model, context, options) => {
+  const completeSimple: Models["completeSimple"] = async (model, context, options) => {
+    const identity = { ...requestUsageIdentity(model, provider.id), costStatus: nativeCostStatus(provider.modelConfig?.nativeCost) };
     const requestOptions = compactionRequestOptions({ provider, sessionId, model, context, options });
     const previousOnPayload = requestOptions.onPayload;
     if (SUMMARY_CONVERSATION_APIS.has(model.api)) {
@@ -122,7 +126,8 @@ export function withCompactionRequestHeaders(
         return keyed === base ? replacement : keyed;
       };
     }
-    return models.completeSimple(model, context, requestOptions);
+    const result = await models.completeSimple(model, context, requestOptions);
+    return onUsage ? accountModelResult(result, identity, onUsage) : result;
   };
   return new Proxy(models, {
     get: (target, property, receiver) =>

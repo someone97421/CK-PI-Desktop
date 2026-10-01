@@ -121,7 +121,7 @@ pub struct PermissionManager {
 impl PermissionManager {
     pub fn tool_risk_with_declared(tool_name: &str, declared: Option<&str>) -> Risk {
         match tool_name {
-            "Read" | "Glob" | "Grep" | "ScheduledTaskList" => Risk::Low,
+            "Read" | "Glob" | "Grep" | "ScheduledTaskList" | "TodoWrite" => Risk::Low,
             "Write" | "Edit" | "Bash" | "GenerateImages" => Risk::High,
             name if name.starts_with("plugin_") => match declared {
                 Some("low") => Risk::Low,
@@ -588,6 +588,50 @@ mod tests {
             let d = pm.evaluate_auto_with_permission_mode("s", "Read", "agent", mode, &no_grants());
             assert_eq!(d, Some(PermissionDecision::AllowOnce), "Read + {mode}");
         }
+    }
+
+    /// TodoWrite is the session checklist: low risk, so the normal permission
+    /// modes never prompt for it inside Agent mode, and part of the contract
+    /// modes' hard deny — a Plan/Goal checklist is negotiated through the
+    /// proposal instead of written directly.
+    #[test]
+    fn todo_write_is_low_risk_in_agent_and_denied_in_contract_modes() {
+        let pm = PermissionManager::default();
+        assert!(matches!(
+            PermissionManager::tool_risk_with_declared("TodoWrite", None),
+            Risk::Low
+        ));
+        for mode in ["ask", "accept-edits", "auto"] {
+            assert_eq!(
+                pm.evaluate_auto_with_permission_mode(
+                    "s",
+                    "TodoWrite",
+                    "agent",
+                    mode,
+                    &no_grants()
+                ),
+                Some(PermissionDecision::AllowOnce),
+                "agent + {mode}"
+            );
+        }
+        let mut grants = HashMap::new();
+        grants.insert("s".to_string(), vec!["TodoWrite".to_string()]);
+        for contract in ["plan", "goal"] {
+            for mode in ["ask", "accept-edits", "auto"] {
+                assert_eq!(
+                    pm.evaluate_auto_with_permission_mode(
+                        "s",
+                        "TodoWrite",
+                        contract,
+                        mode,
+                        &grants
+                    ),
+                    Some(PermissionDecision::Deny),
+                    "{contract} + {mode} denies even with a session grant"
+                );
+            }
+        }
+        assert!(!PermissionManager::plan_mode_allows("TodoWrite"));
     }
 
     #[test]

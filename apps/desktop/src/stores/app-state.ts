@@ -25,6 +25,7 @@ import type {
   ReviewRollbackResult,
   SessionSummary,
   SessionThinkingLevel,
+  SessionTodoSnapshot,
   UiMessage,
 } from "@pi-desktop/shared";
 import type { SettingsTabId } from "../lib/settings-search";
@@ -187,6 +188,9 @@ export type AppState = {
   pendingPlans: Record<string, PlanProposal>;
   /** Latest immutable Plan checkpoint/execution snapshot per session. */
   planCheckpoints: Record<string, PlanProposal>;
+  /** Host-authoritative Todo snapshots keyed by session. */
+  sessionTodos: Record<string, SessionTodoSnapshot>;
+  applyTodosChanged: (snapshot: SessionTodoSnapshot) => void;
   toasts: ToastItem[];
   notifications: AppNotification[];
   unreadNotificationCount: number;

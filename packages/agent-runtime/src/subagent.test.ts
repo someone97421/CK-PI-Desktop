@@ -143,6 +143,22 @@ describe("composeSubagentSystemPrompt", () => {
 });
 
 describe("SubagentRun event forwarding", () => {
+  it("classifies overflow against the published context ceiling", () => {
+    const { run } = createRun();
+    run.agent.state.model = { ...run.agent.state.model, contextWindow: 1_000_000, catalogContextWindow: 128_000 };
+    expect(run.modelContextWindow()).toBe(128_000);
+  });
+
+  it("includes tool operations in execution usage without recounting replayed identities", () => {
+    const { run } = createRun();
+    const usage = { operationId: "image-operation", usageOrigin: "pi", inputTokens: 10, outputTokens: 5, totalTokens: 15 };
+    const event = { type: "tool_execution_end", toolCallId: "image-tool", result: { details: { operations: [{ usage }] } }, isError: false };
+    run.handleEvent(event);
+    run.handleEvent(event);
+    expect(run.usage.totalTokens).toBe(15);
+    expect(run.executionUsage.totalTokens).toBe(15);
+  });
+
   it("keeps the no-pass selection out of the agent's canonical state", () => {
     const { run } = createRun({ thinkingLevel: "omit" });
 

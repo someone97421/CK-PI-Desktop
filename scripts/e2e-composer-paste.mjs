@@ -35,6 +35,17 @@ try {
       "react-dom": join(root, "apps/desktop/node_modules/react-dom"),
     },
     nodePaths: [join(root, "apps/desktop/node_modules")],
+    plugins: [{
+      name: "local-url-assets",
+      setup(build) {
+        build.onResolve({ filter: /\?url$/ }, ({ path, resolveDir }) => ({
+          path: join(resolveDir, path.slice(0, -4)), namespace: "local-url-asset",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "local-url-asset" }, async ({ path }) => ({
+          contents: await readFile(path), loader: "file",
+        }));
+      },
+    }],
   });
   await build({
     entryPoints: {

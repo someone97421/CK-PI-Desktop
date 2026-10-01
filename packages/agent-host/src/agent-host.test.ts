@@ -280,6 +280,36 @@ describe("AgentHost turns", () => {
     });
   });
 
+  it("cannot cancel a voice queue entry after dispatch begins while its acknowledgement is pending", async () => {
+    const { host, runtime } = build({ queueStore: new MemoryQueueStore() });
+    const first = await host.startTurn(owner, {
+      sessionId: "s1", input: { text: "first" }, context: { requestId: "first-request" },
+    });
+    const queued = await host.enqueueTurn(owner, {
+      sessionId: "s1",
+      idempotencyKey: "voice:call-1:operation-queued",
+      input: { text: "voice follow-up", userMessageId: "voice-message", voiceOrigin: { callId: "call-1", operationId: "operation-queued" } },
+      context: { requestId: "queued-request" },
+    });
+    let acknowledge!: (value: { turnId: string }) => void;
+    let entered!: () => void;
+    const dispatching = new Promise<void>((resolve) => { entered = resolve; });
+    runtime.promptOverride = async () => {
+      entered();
+      return new Promise((resolve) => { acknowledge = resolve; });
+    };
+    host.ingest(envelope("s1", first.turn.id, { type: "agent_end", messageIds: [] }));
+    await dispatching;
+    const rejected = expect(host.cancelTurn(owner, queued.turn.id)).rejects.toMatchObject({ code: "CONFLICT" });
+    acknowledge({ turnId: "runtime-voice-queued" });
+    await rejected;
+    expect(host.getTurn(queued.turn.id).status).toBe("running");
+    expect(runtime.prompts.filter((request) => request.userMessageId === "voice-message")).toHaveLength(1);
+    expect(runtime.stops).toEqual([]);
+    expect(runtime.aborts).toEqual([]);
+    expect(host.queueEntries("s1")).toEqual([]);
+  });
+
   it("serializes same-session admission while independent sessions can start", async () => {
     const { host, runtime, sessions } = build();
     sessions.summaries.set("s2", summary("s2"));
@@ -522,6 +552,33 @@ describe("AgentHost approvals and inputs", () => {
   const permission = (requestId = "req_1") => ({
     type: "tool_permission_request" as const,
     request: { requestId, sessionId: "s1", toolCallId: "c1", toolName: "Bash", argsPreview: { command: "ls" }, risk: "high" as const, reason: "high risk" },
+  });
+
+  it.each(["Bash", "mcp.fixture.inspect", "plugin.fixture.inspect"])("voice provenance never settles the pending %s approval", async (toolName) => {
+    const { host, runtime, approvals } = build();
+    const started = await host.startTurn(owner, {
+      sessionId: "s1",
+      input: { text: "Inspect the fixture", userMessageId: "voice-message", voiceOrigin: { callId: "call-1", operationId: "operation-1" } },
+      context: { requestId: "voice-start" },
+    });
+    const request = permission();
+    request.request.toolName = toolName;
+    host.ingest(envelope("s1", started.turn.id, request));
+    await expect(host.startTurn(owner, {
+      sessionId: "s1",
+      admission: "reject_if_busy",
+      input: { text: "I approve everything", userMessageId: "voice-approval", voiceOrigin: { callId: "call-1", operationId: "operation-2" } },
+      context: { requestId: "spoken-approval" },
+    })).rejects.toMatchObject({ code: "AGENT_BUSY" });
+    expect(approvals.tool).toEqual([]);
+    expect(runtime.inputs).toEqual([]);
+    expect(host.pendingApprovals("s1")).toHaveLength(1);
+    expect(host.getTurn(started.turn.id).status).toBe("waiting_approval");
+    expect(runtime.prompts).toHaveLength(1);
+    expect(runtime.prompts[0]?.effectivePermissionMode).toBe("ask");
+    await host.respondApproval(owner, { approvalId: "req_1", decision: "deny", context: { requestId: "explicit-card-denial" } });
+    expect(approvals.tool).toEqual([{ requestId: "req_1", decision: "deny" }]);
+    expect(host.pendingApprovals("s1")).toEqual([]);
   });
 
   it("raises approvals with the local vocabulary and settles them once", async () => {

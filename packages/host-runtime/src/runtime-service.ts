@@ -189,6 +189,7 @@ export class RuntimeService implements RuntimePort {
             reason: permission.reason,
             ...(asking?.agentName ? { agentName: asking.agentName } : {}),
             ...(asking?.parentToolCallId ? { parentToolCallId: asking.parentToolCallId } : {}),
+            ...(asking?.nestedParentToolCallId ? { nestedParentToolCallId: asking.nestedParentToolCallId } : {}),
           },
         },
       });

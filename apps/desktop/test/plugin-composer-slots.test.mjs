@@ -14,7 +14,9 @@ import { parseProbe, probed, propsProbe, slotMounts, slotSsr } from "./helpers/s
  */
 
 /** The toolbar's own controls below, by label. */
-const HOST_LEFT = ["chat.addFiles", "liveVoice.start", "settings.mode", "chat.permissionMode"];
+// Live Voice's idle entry is conditional on the feature setting and therefore
+// is not a permanent host slot in this disabled-by-default fixture.
+const HOST_LEFT = ["chat.addFiles", "settings.mode", "chat.permissionMode"];
 const HOST_RIGHT = ["context", "chat.model: Model. chat.reasoningLevel: Off", "chat.enhancePrompt", "chat.send"];
 
 async function composer(t) {

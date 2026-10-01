@@ -21,6 +21,7 @@ import {
   FONT_OPTION_ROW_HEIGHT,
   visibleRowRange,
 } from "../../lib/font-list";
+import { useAppStore } from "../../stores/app-store";
 import { IconCheck, IconChevronDown, IconSearch } from "../icons";
 
 /**
@@ -52,7 +53,7 @@ export function FontFamilyRow({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [systemFonts, setSystemFonts] = useState<string[] | null>(null);
-  const [loadError, setLoadError] = useState(false);
+  const showToast = useAppStore((state) => state.showToast);
   const [highlight, setHighlight] = useState(-1);
   const [menuPosition, setMenuPosition] = useState<{
     top: number;
@@ -79,12 +80,17 @@ export function FontFamilyRow({
         if (!cancelled) setSystemFonts(fonts);
       })
       .catch(() => {
-        if (!cancelled) setLoadError(true);
+        // Enumerating the families is not something the user asked for and not
+        // something the picker can recover from, so the reason is announced once
+        // as a toast and the list keeps the options it can still offer.
+        if (!cancelled) {
+          showToast(t("settings.fontLoadError"), { variant: "error" });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showToast, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -364,11 +370,6 @@ export function FontFamilyRow({
                     onChange={(event) => setQuery(event.target.value)}
                   />
                 </div>
-                {loadError && !systemFonts && (
-                  <div className="settings-font-empty">
-                    {t("settings.fontLoadError")}
-                  </div>
-                )}
                 {filtered.length === 0 ? (
                   <div className="settings-font-empty">
                     {t("settings.noResults")}

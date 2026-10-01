@@ -12,6 +12,8 @@ use std::sync::{Mutex, OnceLock};
 use crate::transcripts::{self, CompactionRecord, MessageRecord, RevisionRecord};
 
 mod fork_files;
+mod usage;
+pub use usage::record_usage;
 
 pub const MODES: [&str; 3] = ["plan", "goal", "agent"];
 
@@ -131,6 +133,10 @@ pub struct MessageUsage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<i64>,
     pub total_tokens: i64,
+    /// Additive accounting provenance and atomic operation ledger. Preserve these
+    /// JSON fields verbatim, including fields introduced by a newer producer.
+    #[serde(default, flatten)]
+    pub accounting: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -240,6 +246,8 @@ pub struct UiMessage {
     /// runtime excludes them from the parent's model context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_parent_tool_call_id: Option<String>,
     /// Subagent definition name that produced the row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
@@ -355,17 +363,7 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
         meta_obj.insert("providerId".into(), json!(provider_id));
     }
     if let Some(usage) = &message.usage {
-        meta_obj.insert(
-            "usage".into(),
-            json!({
-                "inputTokens": usage.input_tokens,
-                "outputTokens": usage.output_tokens,
-                "cacheReadTokens": usage.cache_read_tokens,
-                "cacheWriteTokens": usage.cache_write_tokens,
-                "reasoningTokens": usage.reasoning_tokens,
-                "totalTokens": usage.total_tokens,
-            }),
-        );
+        meta_obj.insert("usage".into(), json!(usage));
     }
     if let Some(duration) = message.response_duration_ms {
         meta_obj.insert("responseDurationMs".into(), json!(duration));
@@ -387,6 +385,9 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
     }
     if let Some(parent) = &message.parent_tool_call_id {
         meta_obj.insert("parentToolCallId".into(), json!(parent));
+    }
+    if let Some(parent) = &message.nested_parent_tool_call_id {
+        meta_obj.insert("nestedParentToolCallId".into(), json!(parent));
     }
     if let Some(agent) = &message.agent_name {
         meta_obj.insert("agentName".into(), json!(agent));
@@ -530,6 +531,22 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             cache_write_tokens: value.get("cacheWriteTokens").and_then(|v| v.as_i64()),
             reasoning_tokens: value.get("reasoningTokens").and_then(|v| v.as_i64()),
             total_tokens,
+            accounting: value
+                .as_object()?
+                .iter()
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "inputTokens"
+                            | "outputTokens"
+                            | "cacheReadTokens"
+                            | "cacheWriteTokens"
+                            | "reasoningTokens"
+                            | "totalTokens"
+                    )
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
         })
     });
     let error = meta.get("error").cloned();
@@ -545,6 +562,10 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
         .get("parentToolCallId")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let nested_parent_tool_call_id = meta
+        .get("nestedParentToolCallId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let agent_name = meta
         .get("agentName")
         .and_then(|v| v.as_str())
@@ -647,6 +668,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             tool_duration_ms: block.get("durationMs").and_then(|v| v.as_i64()),
             is_error,
             parent_tool_call_id,
+            nested_parent_tool_call_id,
             agent_name,
             task_id: task_id.clone(),
             task: task.clone(),
@@ -692,6 +714,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             tool_duration_ms: None,
             is_error,
             parent_tool_call_id,
+            nested_parent_tool_call_id,
             agent_name,
             task_id,
             task,
@@ -3738,6 +3761,21 @@ pub fn end_turn_settling(
         "completed" | "aborted" | "error" => status,
         _ => "completed",
     };
+    let existing_usage: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT usage_json FROM turns WHERE id = ?1",
+            params![turn_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let existing_usage = existing_usage
+        .as_deref()
+        .map(serde_json::from_str::<Value>)
+        .transpose()?;
+    let merged_usage = usage.map(|next| usage::merge_usage(existing_usage.as_ref(), next));
+    let usage = merged_usage.as_ref().or(existing_usage.as_ref());
     let input_tokens = usage
         .and_then(|u| u.get("inputTokens"))
         .and_then(|v| v.as_i64());
@@ -3767,6 +3805,19 @@ pub fn end_turn_settling(
             usage.map(|u| u.to_string()),
             turn_id,
         ])?;
+    // A replay after startup recovery may complete accounting for a terminal
+    // turn, but must never change its settled status or emit another notification.
+    if n == 0 && usage.is_some_and(|value| value.get("operations").is_some()) {
+        tx.execute(
+            "UPDATE turns SET input_tokens = ?1, output_tokens = ?2, usage_json = ?3 WHERE id = ?4",
+            params![
+                input_tokens,
+                output_tokens,
+                usage.map(Value::to_string),
+                turn_id
+            ],
+        )?;
+    }
     let notification = if n > 0 && create_notification {
         notifications::insert_for_terminal_turn(&tx, turn_id, status, error_code)?
     } else {
@@ -4169,6 +4220,7 @@ mod tests {
             tool_duration_ms: None,
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
             session_message: None,
@@ -4877,6 +4929,7 @@ mod tests {
             tool_duration_ms: Some(1_000),
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
             session_message: None,
@@ -5278,6 +5331,79 @@ mod tests {
     }
 
     #[test]
+    fn nested_lineage_roundtrips_independently_of_legacy_task_parent() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        for (id, task, nested) in [
+            ("legacy", Some("task-1"), None),
+            ("nested-root", None, Some("code-root")),
+            ("nested-delegate", Some("task-1"), Some("code-child")),
+        ] {
+            let mut message = user_msg(id, "result", "2026-09-30T00:00:00Z");
+            message.role = "assistant".into();
+            message.parent_tool_call_id = task.map(str::to_owned);
+            message.nested_parent_tool_call_id = nested.map(str::to_owned);
+            append_message(&db, &session.id, &message, None).unwrap();
+        }
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(
+            detail.messages[0].parent_tool_call_id.as_deref(),
+            Some("task-1")
+        );
+        assert_eq!(detail.messages[0].nested_parent_tool_call_id, None);
+        assert_eq!(detail.messages[1].parent_tool_call_id, None);
+        assert_eq!(
+            detail.messages[1].nested_parent_tool_call_id.as_deref(),
+            Some("code-root")
+        );
+        assert_eq!(
+            detail.messages[2].parent_tool_call_id.as_deref(),
+            Some("task-1")
+        );
+        assert_eq!(
+            detail.messages[2].nested_parent_tool_call_id.as_deref(),
+            Some("code-child")
+        );
+    }
+
+    #[test]
+    fn usage_accounting_roundtrips_without_rewriting_legacy_tokens() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let fixtures = [
+            json!({"inputTokens": 12, "outputTokens": 3, "totalTokens": 15}),
+            json!({
+                "inputTokens": 12, "outputTokens": 3, "totalTokens": 15,
+                "operationId": "request-1", "usageOrigin": "pi",
+                "providerId": "physical-account", "modelId": "physical-model",
+                "costStatus": "reported", "aggregation": "operation",
+                "cost": {"input": 0.12, "output": 0.03, "cacheRead": 0, "cacheWrite": 0, "total": 0.15}
+            }),
+            json!({
+                "inputTokens": 12, "outputTokens": 3, "totalTokens": 15,
+                "costStatus": "unknown", "aggregation": "aggregate",
+                "operations": [
+                    {"operationId": "child-1", "usageOrigin": "pi", "inputTokens": 10, "outputTokens": 2, "totalTokens": 12, "costStatus": "unknown"},
+                    {"operationId": "classifier-1", "usageOrigin": "pi", "inputTokens": 2, "outputTokens": 1, "totalTokens": 3, "costStatus": "estimated", "cost": {"input": 0.2, "output": 0.1, "cacheRead": 0, "cacheWrite": 0, "total": 0.3}}
+                ]
+            }),
+        ];
+        for (index, usage) in fixtures.iter().enumerate() {
+            let mut message = user_msg(&format!("usage-{index}"), "answer", "2026-09-30T00:00:00Z");
+            message.role = "assistant".into();
+            message.usage = Some(serde_json::from_value(usage.clone()).unwrap());
+            append_message(&db, &session.id, &message, None).unwrap();
+            // Replayed message_end replaces a row; it must not duplicate usage.
+            append_message(&db, &session.id, &message, None).unwrap();
+        }
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(detail.messages.len(), fixtures.len());
+        for (message, expected) in detail.messages.iter().zip(fixtures) {
+            assert_eq!(json!(message.usage), expected);
+        }
+    }
+
+    #[test]
     fn assistant_thinking_roundtrips_as_canonical_blocks() {
         let db = test_db();
         let session = create_session(&db, None, None, None, None, None).unwrap();
@@ -5302,6 +5428,7 @@ mod tests {
                 cache_write_tokens: None,
                 reasoning_tokens: Some(5),
                 total_tokens: 48,
+                accounting: serde_json::Map::new(),
             }),
             response_duration_ms: Some(2_000),
             response_output_tokens: Some(34),
@@ -5318,6 +5445,7 @@ mod tests {
             tool_duration_ms: None,
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
             session_message: None,
@@ -5399,6 +5527,7 @@ mod tests {
             tool_duration_ms: None,
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: Some(json!({
                 "status": "completed",

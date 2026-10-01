@@ -29,6 +29,7 @@ import {
 } from "./sidecar-config.js";
 import { matchesExpectedTurnId } from "./turn-target.js";
 import { applyNodeNetworkProxy } from "./node-proxy.js";
+import { applyAdditiveDefaultCaCertificates } from "./system-ca.js";
 import { NATIVE_PI_SESSION_PREFIX, nativePiService } from "./native-pi-session.js";
 import { SubagentPersistenceClient } from "./subagent-persistence-client.js";
 import type { SubagentDirectoryEntry, SubagentListReceipt } from "./subagent-persistence.js";
@@ -590,11 +591,11 @@ async function handle(method: string, params: any): Promise<unknown> {
     }
     case "agent.abort": {
       const sessionId = String(params.sessionId);
+      const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
       if (sessionId.startsWith(NATIVE_PI_SESSION_PREFIX)) {
-        return nativePiService().abort(sessionId);
+        return nativePiService().abort(sessionId, turnId);
       }
       const runtime = runtimes.get(sessionId);
-      const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
       if (!matchesExpectedTurnId(runtime?.getStatus().currentTurnId, turnId)) return { ok: false, aborted: false };
       await hostProxy.call("plans.abort", { sessionId, ...(turnId ? { turnId } : {}) }).catch(() => undefined);
       if (runtime && runtimes.get(sessionId) === runtime && matchesExpectedTurnId(runtime.getStatus().currentTurnId, turnId)) {
@@ -604,11 +605,11 @@ async function handle(method: string, params: any): Promise<unknown> {
     }
     case "agent.stop": {
       const sessionId = String(params.sessionId);
+      const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
       if (sessionId.startsWith(NATIVE_PI_SESSION_PREFIX)) {
-        return nativePiService().abort(sessionId);
+        return nativePiService().abort(sessionId, turnId);
       }
       const runtime = runtimes.get(sessionId);
-      const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
       if (!matchesExpectedTurnId(runtime?.getStatus().currentTurnId, turnId)) {
         return { requested: false };
       }
@@ -726,4 +727,7 @@ if (bootProxy) {
     // Invalid boot payload is ignored; sidecar.configure will replace it.
   }
 }
+// The default TLS context is configured before any provider request can be
+// issued, so the merged CA set covers every transport this sidecar builds.
+applyAdditiveDefaultCaCertificates();
 process.stderr.write("[agent-sidecar] ready (host-proxy mode)\n");

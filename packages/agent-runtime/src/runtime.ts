@@ -1,8 +1,10 @@
+import { accountModelStream } from "./request-usage.js";
 import { modeToolDenial, retainModeToolDeclaration, withModeExecutionGuard } from "./mode-tool-access.js";
 import { restoreHostedSearchReplay } from "./hosted-search-replay.js";
 import { requestExtensionUi } from "./extensions/ui-request.js";
 import { readLocalRequestErrorDetails } from "./local-request-errors.js";
 import { imageGenerationDescription, imageGenerationParameters } from "./image-generation/tool.js";
+import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
 import { scheduledToolParameters, scheduledToolDescriptions } from "./scheduled-tools.js";
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
@@ -1919,14 +1921,19 @@ Delegation rules:
             stallAbort.signal,
           ]),
         };
+        const usageTurnId = this.turnId;
         const retryStream = createProviderRetryStream(
           m,
           context,
           attemptOptions,
-          (retryOptions) =>
+          (retryOptions) => accountModelStream(m, () =>
             this.thinkingLevel === "omit"
               ? this.models.stream(omitThinkingModel(m), context, retryOptions)
-              : this.models.streamSimple(m, context, retryOptions),
+              : this.models.streamSimple(m, context, retryOptions), {
+                providerId: this.provider.id,
+                nativeCost: this.provider.modelConfig?.nativeCost,
+                onUsage: (usage) => this.emit({ type: "usage", usage }, usageTurnId),
+              }),
           {
             claim: (error, phase) => this.claimProviderRetry(error, phase),
             headers: () => this.providerRetryHeaders,
@@ -2913,6 +2920,8 @@ Delegation rules:
           return `Replace, insert, or delete lines in an existing file. Names positions and supplies new content only — never old_string. Required: path, tag (4 hex from the latest Read/Grep/Write/Edit), ops. Ops: PUT N.=M: replace inclusive lines N–M; PUT <N: insert before N; PUT >N: insert after N; PUT >$: append; CUT N.=M delete; REM delete the file; MV DEST rename after other ops. Body rows are + plus the final line text. Every PUT with body rows must include the trailing colon, for example PUT 48.=48:; PUT 48.=48 followed by + rows is invalid. A colonless PUT is only for a register paste such as PUT <1 @name. No -old or context rows. Ranges name only the lines being changed. Re-ground on the tag returned by every successful write. After one failed Edit, classify the error: Read the live file for a stale tag or unseen lines (or retry unchanged on a complete EDIT_LINES_UNSEEN reveal), but correct syntax or range errors directly; do not guess. Do not edit the same path concurrently.${scratchPathHint}${externalPathHint}`;
         case "Bash":
           return `${commandShellToolDescription(this.commandShell, this.scratchDir)} Use Edit or Write instead of apply_patch, git apply, or patch; do not retry a failed shell patch command repeatedly.`;
+        case "TodoWrite":
+          return todoWriteDescription;
         case ASK_TOOL_NAME:
           return "Ask the user one or more questions. Question text and option labels support Markdown. Options accept strings or { label, description? }; descriptions stay plain text and answers return source labels. The card always provides custom input; unanswered questions return empty answers.";
         case "PluginScaffold":
@@ -2929,6 +2938,7 @@ Delegation rules:
     // stopped being readable.
     const parameters: Record<string, Parameters<typeof Type.Object>[0]> = {
       GenerateImages: imageGenerationParameters,
+      TodoWrite: todoWriteParameters,
       Read: {
         path: pathParam(
           "Existing regular file only, never a directory; workspace-relative or explicitly approved.",
@@ -3412,6 +3422,7 @@ Delegation rules:
             "Grep",
             "BrowserPreview",
             "PluginCheck",
+            "TodoWrite",
           ]
         : ["Read", "Glob", "Grep", "BrowserPreview", "Bash", "Write", "Edit"];
     if (this.mode === "agent") {
@@ -7220,6 +7231,7 @@ Delegation rules:
     signal: AbortSignal,
   ): ReturnType<typeof generateCompactionSummary> {
     const model = this.compactionModel ?? this.model;
+    const usageTurnId = this.turnId;
     return generateCompactionSummary({
       preparation,
       provider: this.compactionProvider ?? this.provider,
@@ -7231,6 +7243,7 @@ Delegation rules:
         this.thinkingLevel,
       ),
       signal,
+      onUsage: usage => this.emit({ type: "usage", usage }, usageTurnId),
     });
   }
 

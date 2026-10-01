@@ -25,6 +25,7 @@ mod session_search;
 mod sessions;
 mod skill_roots;
 mod state;
+mod todos;
 mod tool_budget;
 mod tools;
 mod transcripts;

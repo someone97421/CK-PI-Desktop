@@ -81,3 +81,6 @@ export * from "./appearance-media.js";
 export * from "./header-value.js";
 export * from "./tool-result-text.js";
 export * from "./media-reference.js";
+export * from "./session-todos.js";
+export * from "./tool-call-lineage.js";
+export * from "./event-usage.js";

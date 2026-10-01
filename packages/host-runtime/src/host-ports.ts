@@ -64,6 +64,7 @@ export function toRacpItem(message: UiMessage): RacpItemSummary {
     status: message.status === "streaming" ? "streaming" : "completed",
     createdAt: message.createdAt,
     ...(message.parentToolCallId ? { parentToolCallId: message.parentToolCallId } : {}),
+    ...(message.nestedParentToolCallId ? { nestedParentToolCallId: message.nestedParentToolCallId } : {}),
     ...(message.agentName ? { agentName: message.agentName } : {}),
     content: message,
   };

@@ -2817,6 +2817,35 @@ pub fn builtin_tool_defs() -> Value {
             }
         },
         {
+            "name": "TodoWrite",
+            "description": "Replace the current session's task checklist in display order, so the user can follow multi-step work. \
+                 Send `{ todos: [...] }`; every call replaces the whole list (at most 50 items) and an empty array clears it. \
+                 At most one item may be `in_progress` — later ones become `pending`; content is trimmed, must be non-empty, and is truncated at 500 characters. \
+                 The owner session and turn come from the transport, so any other argument is rejected.",
+            "risk": "low",
+            "parameters": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "maxItems": 50,
+                        "description": "The full checklist in display order",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": { "type": "string", "minLength": 1 },
+                                "status": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"] },
+                                "priority": { "type": "string", "enum": ["high", "medium", "low"], "description": "Defaults to medium" }
+                            },
+                            "required": ["content", "status"]
+                        }
+                    }
+                },
+                "required": ["todos"]
+            }
+        },
+        {
             "name": "Write",
             "description": "Create or overwrite a file inside the workspace or the session scratch directory. Strips a pasted `[path#TAG]` header and `N:` line prefixes. Returns the post-write `tag` so a following Edit needs no extra Read.",
             "risk": "high",

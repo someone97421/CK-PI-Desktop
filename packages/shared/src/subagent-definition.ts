@@ -119,6 +119,7 @@ export const SUBAGENT_INHERIT_DENY_TOOLS: readonly string[] = [
   "TaskResume",
   "EnterPlanMode",
   "EnterGoalMode",
+  "TodoWrite",
   "asktool",
   "new_context",
   "ToolSearch",

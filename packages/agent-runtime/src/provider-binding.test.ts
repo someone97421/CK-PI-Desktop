@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { DEEPSEEK_REASONING_REPLAY_PLACEHOLDER } from "@pi-desktop/shared";
 import type { ModelAuth } from "@earendil-works/pi-ai";
 import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
-import { genericModelConfig, modelConfigWithBinding } from "./model-capabilities.js";
+import { genericModelConfig, modelConfigFromPi, modelConfigWithBinding } from "./model-capabilities.js";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { ModelConfig } from "./thinking-level.js";
 import {
   adapterAcceptsCustomFetch,
@@ -43,6 +44,53 @@ describe("providerRejectsCustomFetch", () => {
     };
     expect(providerRejectsCustomFetch(google)).toBe(true);
     expect(providerRejectsCustomFetch(keyedProvider)).toBe(false);
+  });
+});
+
+describe("account-local Pi registries", () => {
+  it("preserves native pricing tiers through a serialized model projection", () => {
+    const native = builtinProviders().flatMap((provider) => provider.getModels())
+      .find((model) => model.cost.tiers?.length);
+    expect(native).toBeDefined();
+    if (!native) throw new Error("Missing tiered Pi catalog model");
+    const modelConfig: ModelConfig = JSON.parse(JSON.stringify(modelConfigFromPi(native)));
+    const restored = buildProviderModel({
+      ...keyedProvider,
+      modelId: native.id,
+      vendorKey: native.provider,
+      modelConfig,
+    });
+    expect(restored.cost).toEqual(native.cost);
+    expect(restored.cost.tiers).toHaveLength(native.cost.tiers!.length);
+  });
+
+  it("keeps same-vendor credentials isolated during concurrent resolution", async () => {
+    const first: RuntimeProviderConfig = {
+      ...keyedProvider,
+      id: "account-one",
+      vendorKey: "openai",
+      resolveAuth: async () => ({ apiKey: "first-fixture-key" }),
+    };
+    const second: RuntimeProviderConfig = {
+      ...first,
+      id: "account-two",
+      resolveAuth: async () => ({ apiKey: "second-fixture-key" }),
+    };
+    const firstModel = buildProviderModel(first);
+    const secondModel = buildProviderModel(second);
+    const firstModels = createProviderModels(first, firstModel);
+    const secondModels = createProviderModels(second, secondModel);
+    expect(firstModels).not.toBe(secondModels);
+    expect(firstModel.provider).toBe("openai");
+    expect(secondModel.provider).toBe("openai");
+    const [firstAuth, secondAuth] = await Promise.all([
+      firstModels.getAuth(firstModel),
+      secondModels.getAuth(secondModel),
+    ]);
+    expect(firstAuth?.auth.apiKey).toBe("first-fixture-key");
+    expect(secondAuth?.auth.apiKey).toBe("second-fixture-key");
+    expect(first.id).toBe("account-one");
+    expect(second.id).toBe("account-two");
   });
 });
 
@@ -487,7 +535,7 @@ describe("buildProviderModel OpenAI-compatible role compatibility", () => {
       },
     }) as any;
 
-    expect(model.provider).toBe("row-uuid");
+    expect(model.provider).toBe("siliconflow-cn");
     expect(model.compat).toMatchObject({
       requiresReasoningContentOnAssistantMessages: true,
       requiresNonEmptyReasoningReplay: true,
@@ -904,7 +952,7 @@ describe("GitHub Copilot transport identity", () => {
   it("retains pi-ai static headers for a row-scoped OAuth model", () => {
     const model = buildProviderModel(provider);
 
-    expect(model.provider).toBe(provider.id);
+    expect(model.provider).toBe(provider.vendorKey);
     expect(model.headers).toMatchObject({
       "Editor-Version": "vscode/1.107.0",
       "Editor-Plugin-Version": "copilot-chat/0.35.0",
@@ -1040,7 +1088,7 @@ describe("GitHub Copilot transport identity", () => {
     expect(request?.headers.get("X-Initiator")).toBe("user");
     expect(request?.headers.get("Openai-Intent")).toBe("conversation-edits");
     expect(request?.url).toBe("https://api.business.githubcopilot.com/v1/messages?beta=true");
-    expect(model.provider).toBe(claudeProvider.id);
+    expect(model.provider).toBe(claudeProvider.vendorKey);
   });
 
   it("re-resolves the rotating Bearer token for each row-scoped Claude request", async () => {

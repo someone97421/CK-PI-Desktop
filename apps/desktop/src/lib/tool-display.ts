@@ -10,6 +10,7 @@ export type ToolAction =
   | "fetch"
   | "fork"
   | "delegate"
+  | "todo"
   | "use";
 
 const SUMMARY_KEYS: Record<ToolAction, string[]> = {
@@ -26,6 +27,7 @@ const SUMMARY_KEYS: Record<ToolAction, string[]> = {
   // tool (ADR 0089) carries only delegation ids, which read as bare UUIDs, so
   // it summarizes from the agent names in its own result roster instead (D268).
   delegate: ["description", "agent", "instruction"],
+  todo: [],
   use: [
     "command",
     "cmd",
@@ -38,7 +40,6 @@ const SUMMARY_KEYS: Record<ToolAction, string[]> = {
     "prompt",
   ],
 };
-
 function compact(value: string, limit = 220) {
   const singleLine = value.replace(/\s+/g, " ").trim();
   return singleLine.length > limit
@@ -114,6 +115,7 @@ export function getToolAction(toolName?: string): ToolAction {
   if (isDelegationStartTool(toolName) || delegationLifecycleKind(toolName)) {
     return "delegate";
   }
+  if (bareToolName(toolName) === "todowrite") return "todo";
   if (matches(["websearch", "searchquery", "fetch", "http", "browser"])) {
     return "fetch";
   }
@@ -122,12 +124,8 @@ export function getToolAction(toolName?: string): ToolAction {
   if (matches(["grep", "rg", "search", "searchfiles"])) return "search";
   if (matches(["write", "writefile", "createfile"])) return "write";
   if (matches(["edit", "editfile", "applypatch", "patch"])) return "edit";
-  if (matches(["fork", "forkagent", "forktask", "forksession"])) {
-    return "fork";
-  }
-  if (
-    matches(["bash", "shell", "exec", "execcommand", "runcommand", "terminal"])
-  ) {
+  if (matches(["fork", "forkagent", "forktask", "forksession"])) return "fork";
+  if (matches(["bash", "shell", "exec", "execcommand", "runcommand", "terminal"])) {
     return "run";
   }
   return "use";

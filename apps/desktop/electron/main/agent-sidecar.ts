@@ -5,6 +5,7 @@ import {
   type StderrHandler,
 } from "@pi-desktop/host-runtime";
 import { redactValue } from "./logger";
+import { getModuleDirectory } from "./module-path";
 
 export type {
   LocalToolHandler,
@@ -18,13 +19,22 @@ export type {
 function resolveSidecarEntry(): string {
   const candidates = [
     join(process.resourcesPath || "", "agent-runtime/sidecar.js"),
-    join(__dirname, "../../../agent-runtime/dist/sidecar.js"),
-    join(__dirname, "../../../../packages/agent-runtime/dist/sidecar.js"),
+    join(
+      getModuleDirectory(import.meta.url),
+      "../../../agent-runtime/dist/sidecar.js",
+    ),
+    join(
+      getModuleDirectory(import.meta.url),
+      "../../../../packages/agent-runtime/dist/sidecar.js",
+    ),
   ];
   for (const c of candidates) {
     if (c && existsSync(c)) return c;
   }
-  return join(__dirname, "../../../../packages/agent-runtime/dist/sidecar.js");
+  return join(
+    getModuleDirectory(import.meta.url),
+    "../../../../packages/agent-runtime/dist/sidecar.js",
+  );
 }
 
 /**
@@ -45,9 +55,12 @@ export class AgentSidecar extends RuntimeAgentSidecar {
     super({
       launch: {
         command: process.execPath,
-        // Electron 43's Node supports the OS trust store. Keep bundled roots
-        // and inherited NODE_EXTRA_CA_CERTS; never bypass TLS verification.
-        args: ["--max-old-space-size=2048", "--use-system-ca", resolveSidecarEntry()],
+        // macOS merges bundled, system and extra CAs in the sidecar.
+        args: [
+          "--max-old-space-size=2048",
+          ...(process.platform === "darwin" ? [] : ["--use-system-ca"]),
+          resolveSidecarEntry(),
+        ],
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",

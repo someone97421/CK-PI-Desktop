@@ -58,7 +58,7 @@ export type RuntimeProviderConfig = {
   apiStyle?: string;
   supportsReasoning: boolean;
   supportedThinkingLevels: ThinkingLevel[];
-  /** Complete model metadata resolved from models.dev by Electron main. */
+  /** Effective Pi model metadata resolved by Electron main. */
   modelConfig?: ModelConfig;
   /**
    * Optional outbound HTTP headers. Empty/absent keeps adapter defaults.
@@ -242,7 +242,7 @@ function nativeCopilotHeaders(modelId: string): Record<string, string> | undefin
     : undefined;
   if (model?.headers) return model.headers;
 
-  // A model returned by models.dev or a user's Copilot entitlement may not be
+  // A model returned by Pi or a user's Copilot entitlement may not be
   // present in pi-ai's pinned built-in catalog. Its transport still requires
   // the same client identity headers as every other Copilot model.
   return Object.values(GITHUB_COPILOT_MODELS).find((entry) => entry.headers)?.headers;
@@ -298,8 +298,8 @@ function copilotRequestAuth(
  * Claude models that publish an effort ladder without a `budget_tokens`
  * option (Opus 4.7+, Opus 5.x, Fable, ...) reject `thinking.type=enabled`
  * with a 400. pi-ai only sends adaptive thinking when
- * `compat.forceAdaptiveThinking` is set, and models.dev carries no compat
- * record, so derive the flag from the published reasoning options.
+ * `compat.forceAdaptiveThinking` is set. Legacy projections can lack that
+ * compatibility record, so derive the flag from published reasoning options.
  */
 function requiresAdaptiveThinking(
   model: Pick<ModelConfig, "reasoning" | "reasoningOptions">,
@@ -318,8 +318,15 @@ export function buildProviderModel(
   const binding = apiBindingForProviderModel(provider);
   const catalog = provider.modelConfig;
   const catalogModel = catalog
-    ? (({ source: _source, ...model }) => model)(catalog)
-    : genericModelConfig(provider.modelId, provider.baseUrl ?? binding.defaultBaseUrl);
+    ? (({ source: _source, nativeCost, ...model }) => ({
+        ...model,
+        ...(nativeCost ? { cost: nativeCost } : {}),
+      }))(catalog)
+    : {
+        ...genericModelConfig(provider.modelId, provider.baseUrl ?? binding.defaultBaseUrl),
+        reasoning: provider.supportsReasoning,
+        supportedThinkingLevels: provider.supportedThinkingLevels,
+      };
   const baseUrl = runtimeBaseUrlForApi(
     binding.api,
     providerRequestTransport(provider).baseUrl ?? binding.defaultBaseUrl,
@@ -376,7 +383,7 @@ export function buildProviderModel(
     ...catalogModel,
     id: provider.modelId,
     api: binding.api,
-    provider: provider.id,
+    provider: provider.extensionAgentKey ? provider.id : (provider.vendorKey?.trim() || provider.id),
     baseUrl,
     webSearch:
       resolveNativeWebSearch({
@@ -390,46 +397,52 @@ export function buildProviderModel(
   } as Model<Api>;
 }
 
-/** A single-model registry for one resolved provider. */
+/** Account-local operation registry. Vendor identity stays internal; auth stays row-scoped. */
+export function createAccountModels(
+  provider: RuntimeProviderConfig,
+  operations: Pick<Parameters<typeof createProvider>[0], "models" | "api" | "images" | "classifiers">,
+): Models {
+  const models = createModels({ authContext: { env: async () => undefined, fileExists: async () => false } });
+  const providerId = provider.extensionAgentKey ? provider.id : (provider.vendorKey?.trim() || provider.id);
+  models.setProvider(createProvider({
+    id: providerId,
+    name: provider.name,
+    baseUrl: provider.baseUrl,
+    ...operations,
+    models: operations.models.map((model) => ({ ...model, provider: providerId })),
+    auth: {
+      apiKey: {
+        name: `${provider.name} credential`,
+        resolve: async () => ({
+          auth: provider.resolveAuth
+            ? await provider.resolveAuth()
+            : provider.authKind === "none" ? {} : { apiKey: providerRequestKey(provider) },
+        }),
+      },
+    },
+  }));
+  return models;
+}
+
+/** A single account registry for an effective chat binding and optional other operations. */
 export function createProviderModels(
   provider: RuntimeProviderConfig,
   model: Model<Api>,
-  requestLimitBytes?: number,
+  operationsOrRequestLimit?: Pick<Parameters<typeof createProvider>[0], "models" | "images" | "classifiers"> | number,
 ): Models {
-  const requestKey = providerRequestKey(provider);
+  const operations = typeof operationsOrRequestLimit === "number" ? undefined : operationsOrRequestLimit;
+  const requestLimitBytes = typeof operationsOrRequestLimit === "number" ? operationsOrRequestLimit : undefined;
   const resolveAuth = provider.resolveAuth;
-  const models = createModels();
-  models.setProvider(
-    createProvider({
-      id: provider.id,
-      name: provider.name,
-      baseUrl: model.baseUrl,
-      auth: {
-        apiKey: {
-          name: `${provider.name} API key`,
-          // Stored apiKey semantics let each adapter emit its own auth header
-          // (Bearer for OpenAI-style APIs, x-api-key for Anthropic, …).
-          //
-          // A vendor account resolves instead through Electron main, which
-          // returns the whole `ModelAuth` — token, headers, and the
-          // per-credential baseUrl GitHub Copilot hands out. pi-ai calls this
-          // for every request and caches nothing, so a token that rotates
-          // mid-session is picked up on the next one. Copilot's Anthropic wire
-          // needs explicit Bearer auth because the model uses a row id.
-          resolve: async () =>
-            resolveAuth
-              ? {
-                  auth: copilotRequestAuth(provider, model.api, await resolveAuth()),
-                  source: "OAuth",
-                }
-              : { auth: { apiKey: requestKey } },
-        },
-      },
-      models: [model],
-      api: withMediaInput(apiBindingForProviderModel(provider).adapter(), mediaCapabilitiesForProvider(provider), requestLimitBytes),
-    }),
-  );
-  return models;
+  return createAccountModels({
+    ...provider,
+    resolveAuth: async () => resolveAuth
+      ? copilotRequestAuth(provider, model.api, await resolveAuth())
+      : { apiKey: providerRequestKey(provider) },
+  }, {
+    ...operations,
+    models: [model, ...(operations?.models ?? [])],
+    api: withMediaInput(apiBindingForProviderModel(provider).adapter(), mediaCapabilitiesForProvider(provider), requestLimitBytes),
+  });
 }
 /** Build a pi-ai model collection for a trusted extension-owned agent. */
 export function createExtensionAgentModels(input: {
@@ -438,7 +451,7 @@ export function createExtensionAgentModels(input: {
   model: Model<Api>;
   stream: ProviderStreams;
 }): Models {
-  const models = createModels();
+  const models = createModels({ authContext: { env: async () => undefined, fileExists: async () => false } });
   models.setProvider(
     createProvider({
       id: input.providerId,

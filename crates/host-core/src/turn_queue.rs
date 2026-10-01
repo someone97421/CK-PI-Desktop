@@ -437,6 +437,46 @@ mod tests {
     }
 
     #[test]
+    fn voice_origin_survives_database_reopen_without_replaying_or_reordering_entries() {
+        let (dir, db, session_id) = open_with_session();
+        let legacy = push(&db, input(&session_id, "legacy text request", None)).unwrap();
+        let origin = VoiceOrigin {
+            call_id: "closed-live-call".into(),
+            operation_id: "accepted-operation".into(),
+        };
+        let mut request = input(&session_id, "accepted voice request", Some("voice-request"));
+        request.id = Some("voice-queue-entry".into());
+        request.user_message_id = Some("voice-user-message".into());
+        request.session_message_id = Some("session-message".into());
+        request.voice_origin = Some(origin.clone());
+        let voice = push(&db, request.clone()).unwrap();
+        let voice = prioritize(&db, &voice.id).unwrap().unwrap();
+        drop(db);
+
+        let reopened = Database::open_in_dir(dir.path()).unwrap();
+        let restored = list(&reopened, Some(&session_id)).unwrap();
+        assert_eq!(restored, vec![voice.clone(), legacy]);
+        assert_eq!(restored[0].voice_origin, Some(origin));
+        assert_eq!(
+            restored[0].user_message_id.as_deref(),
+            Some("voice-user-message")
+        );
+        assert_eq!(
+            restored[0].session_message_id.as_deref(),
+            Some("session-message")
+        );
+        assert_eq!(restored[0].permission_mode, "ask");
+        assert!(restored[1].voice_origin.is_none());
+        assert!(restored[1].user_message_id.is_none());
+        assert_eq!(push(&reopened, request).unwrap(), voice);
+        assert_eq!(list(&reopened, None).unwrap(), restored);
+        drop(reopened);
+
+        let reopened_again = Database::open_in_dir(dir.path()).unwrap();
+        assert_eq!(list(&reopened_again, Some(&session_id)).unwrap(), restored);
+    }
+
+    #[test]
     fn malformed_voice_origin_is_reported_instead_of_dropped() {
         let (_dir, db, session_id) = open_with_session();
         let origin = VoiceOrigin {
@@ -492,7 +532,7 @@ mod tests {
         assert_eq!(entries[0].content, "existing");
         assert!(entries[0].user_message_id.is_none());
         assert!(entries[0].voice_origin.is_none());
-        assert_eq!(crate::db::SCHEMA_VERSION, 20);
+        assert_eq!(crate::db::SCHEMA_VERSION, 21);
     }
 
     #[test]

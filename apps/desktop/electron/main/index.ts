@@ -288,11 +288,7 @@ const updater = new AppUpdaterController({
  * this process; the renderer sees progress events and the sidecar sees only
  * resolved request auth.
  */
-const modelsDevCatalog = new ModelsDevCatalog({
-  catalogPath: app.isPackaged
-    ? join(process.resourcesPath, "models.dev", "api.json")
-    : join(app.getAppPath(), "resources", "models.dev", "api.json"),
-});
+const modelsDevCatalog = new ModelsDevCatalog();
 
 const vendorOAuth = new VendorOAuth({
   call: <T,>(method: string, params?: unknown): Promise<T> => {
@@ -305,9 +301,12 @@ const vendorOAuth = new VendorOAuth({
     await safeOpenExternal(url);
   },
   log: (level, message, data) => logger.app("provider", level, message, { data }),
-  modelConfigFor: async ({ vendorKey, option }) => {
+  onAccountModels: (id, models) => modelsDevCatalog.setAccountModels(id, models),
+  onAccountRemoved: (id) => modelsDevCatalog.deleteAccount(id),
+  modelConfigFor: async ({ providerId, vendorKey, option }) => {
     await modelsDevCatalog.ensureLoaded();
     return catalogModelConfigFor(modelsDevCatalog, {
+      providerId,
       vendorKey,
       baseUrl: option.baseUrl,
       apiStyle: option.apiStyle,

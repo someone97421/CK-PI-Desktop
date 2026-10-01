@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Api, Model, Models, ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Api, Model, Models, ModelsSimpleStreamOptions } from "@earendil-works/pi-ai";
 import {
   OPENCODE_CLIENT_HEADER,
   OPENCODE_CLIENT_VALUE,
@@ -40,6 +40,12 @@ const model = {
 const context = { messages: [] };
 
 describe("compactionRequestOptions", () => {
+  it("does not turn an omitted reasoning option into a supported effort", () => {
+    const reasoningModel = { ...model, reasoning: true, thinkingLevelMap: { off: null, medium: "medium" } } as Model<Api>;
+    const options = compactionRequestOptions({ provider, sessionId: "session-omit", model: reasoningModel, context });
+    expect(options.reasoning).toBeUndefined();
+  });
+
   it("carries the session id pi-agent-core's per-call fallback replaced", () => {
     const options = compactionRequestOptions({
       provider,
@@ -258,4 +264,21 @@ describe("compaction summary conversation key", () => {
     expect(sentMutation.mutated).toBe(true);
     expect(sentMutation.prompt_cache_key).toBe("session-1");
   });
+});
+
+ it("accounts each summary attempt with its account and preserves replay identity", async () => {
+  const reports: import("@pi-desktop/shared").MessageUsage[] = [];
+  const response = (failed: boolean): AssistantMessage => ({ role: "assistant", content: [], api: model.api,
+    provider: model.provider, model: model.id, timestamp: 1, stopReason: failed ? "error" : "stop",
+    usage: { input: 12, output: 3, cacheRead: 0, cacheWrite: 0, totalTokens: 15,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } });
+  const completeSimple = vi.fn().mockResolvedValueOnce(response(true)).mockResolvedValueOnce(response(false));
+  const wrapped = withCompactionRequestHeaders({ completeSimple } as unknown as Models, provider, "summary-session", usage => reports.push(usage));
+  const failed = await wrapped.completeSimple(model, context);
+  await wrapped.completeSimple(model, context);
+  expect(reports).toHaveLength(2);
+  expect(new Set(reports.map(usage => usage.operationId)).size).toBe(2);
+  expect(reports[0]).toMatchObject({ providerId: provider.id, modelId: model.id, totalTokens: 15, costStatus: "unknown" });
+  expect((failed.usage as unknown as { desktopUsage?: { operationId?: string } }).desktopUsage?.operationId).toBe(reports[0]?.operationId);
+  expect(completeSimple.mock.calls[0]?.[2]).toMatchObject({ sessionId: "summary-session", headers: { [OPENCODE_SESSION_HEADER]: "summary-session" } });
 });
