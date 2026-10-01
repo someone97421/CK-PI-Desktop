@@ -21,6 +21,18 @@ test("disabled reveal still batches streaming text and finished text flushes imm
 
 test("streaming cursor does not add a line to the last Markdown block", async () => {
   const css = await readFile(new URL("../src/styles/messages.css", import.meta.url), "utf8");
-  assert.match(css, /\.assistant-turn-fragment\.smooth-cursor \.prose-chat::after\s*\{[^}]*position: absolute;/);
+  assert.match(css, /\.assistant-turn-fragment\.smooth-cursor \.prose-chat\[data-cursor-ready\]::after\s*\{[^}]*position: absolute;/);
   assert.doesNotMatch(css, /\.smooth-cursor \.prose-chat > :last-child::after/);
+  assert.match(css, /left: var\(--stream-cursor-x\);/);
+  assert.match(css, /top: var\(--stream-cursor-y\);/);
+});
+
+test("streaming cursor measures text and tracks layout without observing its own styles", async () => {
+  const cursor = await readFile(new URL("../src/hooks/use-streaming-cursor.ts", import.meta.url), "utf8");
+  assert.match(cursor, /document\.createRange\(\)/);
+  assert.match(cursor, /range\.getClientRects\(\)/);
+  assert.match(cursor, /new ResizeObserver\(measure\)/);
+  assert.match(cursor, /subtree: true, childList: true, characterData: true/);
+  assert.match(cursor, /resize\.disconnect\(\)/);
+  assert.match(cursor, /mutation\.disconnect\(\)/);
 });

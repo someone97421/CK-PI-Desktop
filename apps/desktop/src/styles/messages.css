@@ -3667,19 +3667,18 @@
   position: relative;
 }
 
-.assistant-turn-fragment.smooth-cursor .prose-chat::after {
+.assistant-turn-fragment.smooth-cursor .prose-chat[data-cursor-ready]::after {
   content: "";
   position: absolute;
-  right: 0;
-  bottom: 0;
+  left: var(--stream-cursor-x);
+  top: var(--stream-cursor-y);
   pointer-events: none;
   width: 2px;
-  height: 1.1em;
-  transform: translateX(4px);
+  height: var(--stream-cursor-height);
   background: var(--ds-text-primary);
   animation: smooth-stream-blink 1s step-end infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .assistant-turn-fragment.smooth-cursor .prose-chat::after { animation: none; opacity: 0.7; }
+  .assistant-turn-fragment.smooth-cursor .prose-chat[data-cursor-ready]::after { animation: none; opacity: 0.7; }
 }

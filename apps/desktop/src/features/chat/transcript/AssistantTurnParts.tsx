@@ -6,6 +6,7 @@ import type { SubagentOutcome, SubagentTiming } from "../../../lib/subagent-topo
 import { useAppStore } from "../../../stores/app-store";
 import { Markdown } from "../../../components/Markdown";
 import { useSmoothText } from "../../../hooks/useSmoothText";
+import { useStreamingCursor } from "../../../hooks/use-streaming-cursor";
 import { ActivityGroup } from "./ActivityGroup";
 import { AssistantErrorMessage } from "./shared";
 import { useRenderBlocks, type RenderBlock } from "./render-blocks";
@@ -23,12 +24,13 @@ const SmoothMessageBubble = memo(function SmoothMessageBubble({ message, streami
   const enabled = smoothStreaming && !prefersReducedMotion;
   const displayContent = useSmoothText(message.content || "", streaming, enabled);
   const showCursor = streaming && enabled && (displayContent.length < (message.content || "").length);
+  const proseRef = useStreamingCursor(displayContent, showCursor);
   return (
     <div
       className={`message-bubble assistant-turn-fragment${streaming ? " streaming" : ""}${showCursor ? " smooth-cursor" : ""}`}
       data-message-id={message.id}
     >
-      {displayContent ? <div className="prose-chat"><Markdown source={displayContent} /></div> : null}
+      {displayContent ? <div ref={proseRef} className="prose-chat"><Markdown source={displayContent} /></div> : null}
       {message.error ? <AssistantErrorMessage message={message} /> : null}
     </div>
   );

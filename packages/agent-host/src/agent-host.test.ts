@@ -47,10 +47,11 @@ class FakeRuntime implements RuntimePort {
   failNext = false;
   /** When true, `steer` refuses so the promoted block must fall back. */
   refuseSteers = false;
+  promptOverride?: (request: TurnStartRequest) => Promise<{ turnId: string }>;
   async prompt(request: TurnStartRequest): Promise<{ turnId: string }> {
+    if (this.promptOverride) return this.promptOverride(request);
     if (this.failNext) {
       this.failNext = false;
-      throw Object.assign(new Error("runtime rejected"), { code: "AGENT_UNAVAILABLE" });
       throw Object.assign(new Error("runtime rejected"), { code: "AGENT_UNAVAILABLE" });
     }
     this.prompts.push(request);
