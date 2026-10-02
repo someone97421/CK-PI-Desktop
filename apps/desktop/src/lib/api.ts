@@ -773,6 +773,7 @@ export const api = {
    */
   listProviderModels: (input: {
     providerId?: string;
+    vendorKey?: string;
     baseUrl?: string;
     apiKey?: string;
     apiStyle?: string;

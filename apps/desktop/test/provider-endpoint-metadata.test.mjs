@@ -1,17 +1,4 @@
-/**
- * A custom endpoint gets the metadata the catalog can justify for it.
- *
- * Two reported failures live here. A custom row pointed at
- * `https://open.bigmodel.cn/api/v1` (Zhipu's OpenAI Responses endpoint) listed
- * its models but showed a generic 128k / 8k text-only row for every one of them,
- * because the catalog only accepted that host's own published path. And a row on
- * a relay the catalog cannot place got nothing at all for models the catalog
- * describes, because one publisher's record must never answer for another.
- *
- * This drives the real handlers with the bundled snapshot, so it pins the whole
- * chain: discovery, endpoint resolution, catalog anchoring, and the hand-typed
- * id channel.
- */
+/** Custom providers discover IDs without automatic catalog matching. */
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
@@ -47,13 +34,16 @@ async function handlersFor(t, row, body) {
   });
 
   const handlers = new Map();
+  const hostCalls = [];
   registerProviderIpc({
     registrar: { handle: (channel, handler) => handlers.set(channel, handler) },
     getHost: () => ({
-      call: async (method) => {
+      call: async (method, input) => {
+        hostCalls.push({ method, input });
         if (method === "providers.list") return { providers: [row] };
         if (method === "providers.getSecret") return { value: "sk-secret" };
         if (method === "providers.get") return { provider: row };
+        if (method === "providers.listModels") return { models: body.data?.map(({ id }) => ({ modelId: id, displayName: id, source: "discovered" })) ?? [] };
         return {};
       },
     }),
@@ -73,10 +63,12 @@ async function handlersFor(t, row, body) {
 
   return {
     calls,
+    hostCalls,
     row,
     result: await listModels({ providerId: row.id, source: "refresh" }),
     /** The hand-typed id channel a picker uses when a user types an id in. */
     lookup: (input) => lookupModel(input),
+    list: (input) => listModels(input),
   };
 }
 
@@ -92,140 +84,82 @@ function rowOf(overrides) {
   };
 }
 
-test("a custom row on a published host gets that publisher's model metadata", async (t) => {
-  const row = rowOf({
-    id: "row-1",
-    name: "Zhipu",
-    baseUrl: "https://open.bigmodel.cn/api/v1",
-    apiStyle: "responses",
-  });
-  const { result, calls } = await handlersFor(t, row, {
-    models: [{ slug: "glm-5.3", display_name: "glm-5.3" }],
-  });
-
+test("a custom row on an official endpoint discovers IDs without publisher metadata", async (t) => {
+  const row = rowOf({ id: "custom-official", baseUrl: "https://open.bigmodel.cn/api/v1", apiStyle: "responses" });
+  const { result, calls, lookup } = await handlersFor(t, row, { models: [{ slug: "glm-5.3", display_name: "My served model" }] });
   assert.deepEqual(calls, ["https://open.bigmodel.cn/api/v1/models"]);
-  // The address the user typed answered, so it stays the row's address.
-  assert.equal(result.effectiveBaseUrl, "https://open.bigmodel.cn/api/v1");
-
+  assert.equal(result.effectiveBaseUrl, row.baseUrl);
   const [model] = result.models;
-  assert.equal(model.modelId, "glm-5.3", "the wire id is the one the service served");
-  assert.equal(model.catalogSource, "pi", "the host identified the publisher");
+  assert.equal(model.modelId, "glm-5.3");
+  assert.equal(model.displayName, "My served model");
+  assert.equal(model.catalogSource, undefined);
+  assert.equal(model.contextWindow, 128_000);
+  assert.equal(model.maxTokens, 8_192);
+  assert.deepEqual(model.capabilities, ["text"]);
+  assert.deepEqual(model.modalities, { input: ["text"], output: ["text"] });
+  assert.equal((await lookup({ modelId: model.modelId, vendorKey: "custom", baseUrl: row.baseUrl })).info, null);
+});
+
+test("custom live and cached discovery do not enrich official, routed or operation IDs", async (t) => {
+  const ids = ["claude-sonnet-4-5", "mimo-v2.5-pro", "mimo-v2.5-pro-1m", "route/mimo-v2.5-pro", "mimo-v2.5-tts", "some-private-model"];
+  const row = rowOf({ id: "custom-relay", baseUrl: "https://relay.example/v1" });
+  const { result, list, lookup, calls } = await handlersFor(t, row, { data: ids.map(id => ({ id })) });
+  const cached = await list({ providerId: row.id, source: "cache" });
+  for (const response of [result, cached]) {
+    assert.deepEqual(response.models.map(model => model.modelId).sort(), [...ids].sort());
+    for (const model of response.models) {
+      assert.equal(model.catalogSource, undefined);
+      assert.equal(model.contextWindow, 128_000, model.modelId);
+      assert.equal(model.maxTokens, 8_192, model.modelId);
+      assert.deepEqual(model.capabilities, ["text"], model.modelId);
+    }
+  }
+  const networkCount = calls.length;
+  for (const modelId of ids) {
+    assert.equal((await lookup({ modelId, vendorKey: row.vendorKey, providerId: row.id, baseUrl: row.baseUrl })).info, null);
+  }
+  assert.equal(calls.length, networkCount, "typed lookup remains local");
+});
+
+test("new custom provider requests preserve explicit identity before the row is saved", async (t) => {
+  const row = rowOf({ id: "existing", vendorKey: "zhipuai", baseUrl: "https://open.bigmodel.cn/api/v1", apiStyle: "responses" });
+  const { list, hostCalls } = await handlersFor(t, row, { models: [{ slug: "glm-5.3" }] });
+  const response = await list({ vendorKey: "custom", baseUrl: row.baseUrl, apiStyle: row.apiStyle });
+  assert.equal(response.models[0].catalogSource, undefined);
+  assert.equal(response.models[0].contextWindow, 128_000);
+  assert.equal(response.models[0].maxTokens, 8_192);
+  const cacheWrites = hostCalls.filter(call => call.method === "providers.cacheModels").length;
+  const preview = await list({ providerId: row.id, vendorKey: "custom", baseUrl: row.baseUrl, apiStyle: row.apiStyle });
+  assert.equal(preview.models[0].catalogSource, undefined);
+  assert.equal(hostCalls.filter(call => call.method === "providers.cacheModels").length, cacheWrites,
+    "an unsaved custom selection must not replace the named provider's cache");
+});
+
+test("custom list preserves stored limits and never fills the list from the catalog", async (t) => {
+  const row = rowOf({
+    id: "custom-manual", baseUrl: "https://api.openai.com/v1",
+    models: [{ id: "gpt-6.1-sol", contextWindow: 2_000_000, contextWindowSource: "catalog", maxTokens: 24_000, maxTokensSource: "catalog", thinkingLevels: ["off"], supportsImages: true }],
+  });
+  const original = structuredClone(row);
+  const { result } = await handlersFor(t, row, { data: [] });
+  assert.equal(result.source, "fallback");
+  assert.deepEqual(result.models.map(model => model.modelId), ["gpt-6.1-sol"]);
+  assert.equal(result.models[0].catalogSource, undefined);
+  assert.equal(result.models[0].contextWindow, 2_000_000);
+  assert.equal(result.models[0].maxTokens, 24_000);
+  assert.deepEqual(result.models[0].modalities.input, ["text", "image"]);
+  assert.deepEqual(row, original);
+});
+
+test("named providers retain published metadata in discovery and typed lookup", async (t) => {
+  const row = rowOf({ id: "named", vendorKey: "zhipuai", baseUrl: "https://open.bigmodel.cn/api/v1", apiStyle: "responses" });
+  const { result, lookup } = await handlersFor(t, row, { models: [{ slug: "glm-5.3" }] });
+  const [model] = result.models;
+  assert.equal(model.catalogSource, "pi");
   assert.equal(model.contextWindow, 1_000_000);
   assert.equal(model.maxTokens, 131_072);
-  for (const capability of ["tools", "reasoning"]) {
-    assert.ok(model.capabilities.includes(capability), `expected ${capability} capability`);
-  }
-});
-
-test("a relay's list reads the shipped publisher's record for a known id", async (t) => {
-  const row = rowOf({
-    id: "row-2",
-    name: "Relay",
-    baseUrl: "https://relay.example/v1",
-  });
-  const { result } = await handlersFor(t, row, {
-    data: [{ id: "claude-sonnet-4-5" }, { id: "some-private-model" }],
-  });
-
-  const byId = new Map(result.models.map((model) => [model.modelId, model]));
-  const known = byId.get("claude-sonnet-4-5");
-  assert.equal(known.catalogSource, "pi", "several publishers state this id");
-  // Anthropic's published window, not a median dragged down by resellers that
-  // state a smaller deployment of the same id.
-  assert.equal(known.contextWindow, 1_000_000);
-  assert.equal(known.maxTokens, 64_000);
-  assert.ok(known.capabilities.includes("tools"));
-  // An id no publisher states still lands on the generic seed.
-  const unknown = byId.get("some-private-model");
-  assert.equal(unknown.catalogSource, undefined);
-  assert.equal(unknown.contextWindow, 128_000);
-  assert.deepEqual(unknown.capabilities, ["text"]);
-});
-
-test("a hand-typed id on the same relay answers with the same record", async (t) => {
-  const row = rowOf({
-    id: "row-3",
-    name: "Relay",
-    baseUrl: "https://relay.example/v1",
-  });
-  const { lookup } = await handlersFor(t, row, { data: [] });
-
-  const known = await lookup({
-    modelId: "claude-sonnet-4-5",
-    baseUrl: row.baseUrl,
-    vendorKey: row.vendorKey,
-    providerId: row.id,
-  });
-  assert.ok(known.info, "a typed id the catalog knows must reach its record");
-  assert.equal(known.info.modelId, "claude-sonnet-4-5");
-  assert.ok(known.info.capabilities.includes("tools"));
-
-  // A private id stays generic, and the lookup never contacts the network.
-  const unknown = await lookup({ modelId: "some-private-model", baseUrl: row.baseUrl });
-  assert.equal(unknown.info, null);
-});
-
-test("a relay enriches official IDs, strips safe deployment labels, and preserves variants", async (t) => {
-  /*
-    Exact last-segment matches run first. A unique official publisher wins over
-    reseller copies, and only whitelisted deployment labels such as `-1m` are
-    stripped as a fallback; semantic variants and release dates stay distinct.
-  */
-  const row = rowOf({ id: "row-4", name: "Relay", baseUrl: "https://relay.example/v1" });
-  const { result } = await handlersFor(t, row, {
-    data: [
-      { id: "deepseek-v4-flash" },
-      { id: "mimo-v2.5-pro" },
-      { id: "mimo-v2.5-pro-1m" },
-      { id: "mimo-v2.5-tts" },
-      { id: "gemini-2.5-pro-1m" },
-      { id: "claude-sonnet-4-5" },
-    ],
-  });
-
-  const byId = new Map(result.models.map((model) => [model.modelId, model]));
-
-  // No official publisher states this leaf, so a reseller must not decide it.
-  assert.equal(byId.get("deepseek-v4-flash").catalogSource, undefined);
-  // The mimo family's owner publishes the base ID; both served IDs inherit it.
-  for (const id of ["mimo-v2.5-pro", "mimo-v2.5-pro-1m"]) {
-    const mimo = byId.get(id);
-    assert.equal(mimo.modelId, id); // lookup never rewrites the served wire ID
-    assert.equal(mimo.contextWindow, 1_048_576);
-    assert.equal(mimo.maxTokens, 131_072);
-  }
-
-  // A unique operation-metadata leaf still enriches without becoming a Pi chat.
-  const tts = byId.get("mimo-v2.5-tts");
-  assert.equal(tts.source, "bundled");
-  assert.equal(tts.catalogSource, undefined);
-  assert.ok(tts.capabilities.includes("audio"));
-  assert.equal(tts.contextWindow, 8_192);
-
-  // Official publisher disambiguation also applies after a `-1m` deployment tag.
-  const gemini = byId.get("gemini-2.5-pro-1m");
-  assert.equal(gemini.catalogSource, "pi");
-  assert.equal(gemini.contextWindow, 1_048_576);
-
-  // Official Anthropic disambiguation still enriches exact leaves.
-  const claude = byId.get("claude-sonnet-4-5");
-  assert.equal(claude.catalogSource, "pi");
-  assert.equal(claude.contextWindow, 1_000_000);
-});
-test("a relay enriches a uniquely published dated leaf without reseller majority voting", async (t) => {
-  /*
-    #1047: exact leaf match. If the dated id is published uniquely (or shares
-    identical capabilities / a unique official), enrich; otherwise stay generic.
-    No shipped-publisher majority override beyond official/source disambiguation.
-  */
-  const row = rowOf({ id: "row-5", name: "Relay", baseUrl: "https://relay.example/v1" });
-  const { result } = await handlersFor(t, row, { data: [{ id: "doubao-seed-2-0-pro-260215" }] });
-
-  const [model] = result.models;
-  // Accept either enrichment from an exact leaf hit, or generic when ambiguous.
-  if (model.catalogSource === "pi") {
-    assert.ok(model.contextWindow > 0);
-  } else {
-    assert.equal(model.catalogSource, undefined);
-  }
+  assert.ok(model.capabilities.includes("reasoning"));
+  const typed = await lookup({ modelId: model.modelId, vendorKey: row.vendorKey, providerId: row.id, baseUrl: row.baseUrl });
+  assert.equal(typed.info.catalogSource, "pi");
+  assert.equal(typed.info.contextWindow, model.contextWindow);
 });

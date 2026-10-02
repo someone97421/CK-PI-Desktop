@@ -180,6 +180,19 @@ test("context window uses the selected binding before the model list loads", () 
   );
 });
 
+test("custom provider context usage ignores stale catalog metadata and provenance", () => {
+  const provider = {
+    id: "custom",
+    vendorKey: "custom",
+    models: [{ id: "gpt-6.1-sol", contextWindow: 500_000, contextWindowSource: "catalog" }],
+  };
+  const before = structuredClone(provider);
+  assert.equal(resolveContextWindow("custom", "gpt-6.1-sol", {
+    custom: [{ modelId: "gpt-6.1-sol", contextWindow: 272_000 }],
+  }, [provider]), 500_000);
+  assert.deepEqual(provider, before);
+});
+
 test("context window does not borrow a sibling route's configured binding", () => {
   const providers = [{
     id: "provider",

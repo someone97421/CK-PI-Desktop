@@ -67,7 +67,7 @@ export type OutputCapReplayTarget = {
 /** Structural view of the active model. */
 export type OutputCapModel = OutputCapReplayTarget & {
   contextWindow: number;
-  /** Published limit, when a user override may have enlarged contextWindow. */
+  /** Published fallback when the resolved context window is unavailable. */
   catalogContextWindow?: number;
   maxTokens: number;
 };
@@ -85,12 +85,15 @@ function positiveWindow(value: number | undefined): number | undefined {
   return Math.max(1, Math.round(value!));
 }
 
-/** Use the published window as a hard safety ceiling for configured values. */
+/**
+ * The binding resolver already chooses between user and catalog values. Keep
+ * that resolved window authoritative; a name-matched catalog record must not
+ * silently shrink a custom endpoint's explicit window a second time.
+ */
 export function effectiveModelContextWindow(model: OutputCapModel): number {
   const configured = positiveWindow(model.contextWindow);
   const catalog = positiveWindow(model.catalogContextWindow);
-  if (configured === undefined) return catalog ?? 0;
-  return catalog === undefined ? configured : Math.min(configured, catalog);
+  return configured ?? catalog ?? 0;
 }
 
 /** Fallback reserve when the window is too small to afford the ratio. */

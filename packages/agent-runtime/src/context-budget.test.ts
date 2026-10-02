@@ -40,12 +40,12 @@ describe("contextBudgetFor", () => {
     expect(automaticCompactionThresholdFor({ hardLimit: 1 })).toBe(1);
   });
 
-  it("手动窗口大于目录上限时按目录预算压缩", () => {
+  it("手动窗口大于目录默认值时按手动窗口预算压缩", () => {
     const budget = contextBudgetLimitsFor({
-      contextWindow: 1_048_576, catalogContextWindow: 128_000, maxTokens: 32_000,
+      contextWindow: 500_000, catalogContextWindow: 272_000, maxTokens: 32_000,
     });
-    expect(budget.hardLimit).toBe(96_000);
-    expect(automaticCompactionThresholdFor(budget)).toBe(86_400);
+    expect(budget.hardLimit).toBe(468_000);
+    expect(automaticCompactionThresholdFor(budget)).toBe(421_200);
     expect(contextBudgetLimitsFor({
       contextWindow: 64_000, catalogContextWindow: 128_000, maxTokens: 16_000,
     }).hardLimit).toBe(47_616);

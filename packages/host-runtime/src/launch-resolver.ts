@@ -184,6 +184,9 @@ export function createHeadlessLaunchResolver(options: HeadlessLaunchResolverOpti
   }
 
   function catalogModelConfig(provider: HostProviderRecord, modelId: string, baseUrl: string | undefined) {
+    if (provider.vendorKey?.trim().toLowerCase() === "custom") {
+      return genericModelConfig(modelId, baseUrl ?? "");
+    }
     return options.catalog?.modelConfig({ vendorKey: provider.vendorKey, baseUrl }, modelId)
       ?? genericModelConfig(modelId, baseUrl ?? "");
   }

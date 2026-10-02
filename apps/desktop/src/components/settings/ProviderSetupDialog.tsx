@@ -37,6 +37,7 @@ import {
   isAccountOnlyApiStyle,
   needsCustomApiStyleChoice,
   providerSetupPreset,
+  providerSetupVendorKey,
 } from "./provider-api-style";
 
 import {
@@ -106,11 +107,13 @@ export function ProviderSetupDialog({
   // A format the user picked by hand outranks every inference about this row.
   const [apiStyleTouched, setApiStyleTouched] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  const [serviceChanged, setServiceChanged] = useState(false);
   const chooserOpen = choosing || !service;
 
   const namedPreset = NAMED_ENDPOINT_PRESETS.find((preset) => preset.id === service);
   const named = Boolean(namedPreset);
   const custom = service === CUSTOM_SERVICE;
+  const selectedVendorKey = providerSetupVendorKey(provider, namedPreset?.vendorKey, serviceChanged);
   const resolvedName = namedPreset ? name.trim() || namedPreset.name : name;
   const resolvedBaseUrl = namedPreset?.baseUrl ?? baseUrl;
   /*
@@ -153,6 +156,7 @@ export function ProviderSetupDialog({
       baseUrl: requestBaseUrl,
       apiKey,
       apiStyle: resolvedApiStyle,
+      vendorKey: selectedVendorKey,
       headers,
     },
     provider,
@@ -236,6 +240,7 @@ export function ProviderSetupDialog({
 
   const pickService = (next: string) => {
     setChoosing(false);
+    setServiceChanged(true);
     if (next === service) {
       focusAfterServiceChange(next);
       return;
@@ -316,9 +321,7 @@ export function ProviderSetupDialog({
         const result = await api.updateProvider({
           id: provider.id,
           name: providerName,
-          // A row whose stored wire format differs from the published preset is
-          // no longer that preset, but its catalog identity is still its own.
-          vendorKey: namedPreset?.vendorKey ?? provider?.vendorKey ?? "custom",
+          vendorKey: selectedVendorKey,
           baseUrl: providerBaseUrl,
           defaultModelId: persisted[0]?.id,
           models: persisted,
@@ -330,7 +333,7 @@ export function ProviderSetupDialog({
       } else {
         const result = await api.createProvider({
           name: providerName,
-          vendorKey: namedPreset?.vendorKey ?? "custom",
+          vendorKey: selectedVendorKey,
           type: "openai_compatible",
           protocol: "openai_compatible",
           baseUrl: providerBaseUrl,
@@ -476,7 +479,7 @@ export function ProviderSetupDialog({
           onImageModelChange={updateImageModelDraft}
           lookupContext={{
             baseUrl: requestBaseUrl,
-            vendorKey: namedPreset?.vendorKey ?? provider?.vendorKey ?? "custom",
+            vendorKey: selectedVendorKey,
             providerId: provider?.id,
           }}
           autoPicked={recommended.autoPicked}

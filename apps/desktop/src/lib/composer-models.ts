@@ -1,5 +1,6 @@
 import {
   bindingSupportsImages,
+  effectiveContextWindow,
   isImageGenerationModel,
   type ImageGenerationBindings,
   modelMatchesFilter,
@@ -9,7 +10,7 @@ import {
   type ProviderPublic,
 } from "@pi-desktop/shared";
 
-type ConfiguredProvider = Pick<ProviderPublic, "id" | "models" | "defaultModelId">;
+type ConfiguredProvider = Pick<ProviderPublic, "id" | "models" | "defaultModelId" | "vendorKey">;
 
 /** UI identity is the complete wire id, not a catalog alias or a route suffix. */
 export function sameComposerModelId(left: string, right: string): boolean {
@@ -43,10 +44,22 @@ export function composerModelsForProvider(
     const metadata = (discovered ?? []).find((model) =>
       sameComposerModelId(model.modelId, modelId),
     );
+    const binding = composerModelBinding(provider, modelId);
+    const custom = provider.vendorKey?.trim().toLowerCase() === "custom";
+    const contextWindow = effectiveContextWindow(
+      custom ? undefined : metadata?.contextWindow ?? metadata?.limit?.context,
+      binding?.contextWindow,
+      custom ? "user" : binding?.contextWindowSource,
+    );
+    const contextLimits = contextWindow === undefined ? {} : {
+      contextWindow,
+      limit: { ...metadata?.limit, context: contextWindow },
+    };
     const displayName = modelId;
     return metadata
-      ? { ...metadata, modelId, displayName, providerId: provider.id }
+      ? { ...metadata, ...contextLimits, modelId, displayName, providerId: provider.id }
       : {
+          ...contextLimits,
           modelId,
           displayName,
           providerId: provider.id,

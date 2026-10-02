@@ -3,7 +3,7 @@ import { register } from "node:module";
 import test from "node:test";
 register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 const { API_STYLES } = await import("@pi-desktop/shared");
-const { CUSTOM_PROVIDER_API_STYLES, needsCustomApiStyleChoice, providerSetupPreset } =
+const { CUSTOM_PROVIDER_API_STYLES, needsCustomApiStyleChoice, providerSetupPreset, providerSetupVendorKey } =
   await import("../src/components/settings/provider-api-style.ts");
 const { copyProviderConfiguration } = await import("../src/components/settings/provider-copy.ts");
 
@@ -54,4 +54,26 @@ test("ordinary named services retain existing preset selection", () => {
 test("a named hostname cannot overwrite a manually saved protocol", () => {
   assert.equal(providerSetupPreset(source("chat_completions")), undefined);
 
+});
+
+test("an explicit custom provider stays custom on a matching official endpoint", () => {
+  for (const apiStyle of ["chat_completions", "responses", "anthropic_messages"]) {
+    assert.equal(providerSetupPreset(source(apiStyle)), undefined);
+  }
+  assert.equal(providerSetupPreset({ ...source("anthropic_messages"),
+    baseUrl: "https://api.anthropic.com" }), undefined);
+});
+
+test("renaming a named provider with a different wire style preserves its identity", () => {
+  const provider = { ...source("chat_completions"), vendorKey: "openai" };
+  assert.equal(providerSetupPreset(provider), undefined);
+  assert.equal(providerSetupVendorKey(provider, undefined, false), "openai");
+});
+
+test("an explicit service choice replaces the saved vendor identity", () => {
+  const provider = { vendorKey: "openai" };
+  assert.equal(providerSetupVendorKey(provider, undefined, true), "custom");
+  assert.equal(providerSetupVendorKey(provider, "anthropic", true), "anthropic");
+  assert.equal(providerSetupVendorKey({ vendorKey: "custom" }, undefined, false), "custom");
+  assert.equal(providerSetupVendorKey(undefined, undefined, false), "custom");
 });

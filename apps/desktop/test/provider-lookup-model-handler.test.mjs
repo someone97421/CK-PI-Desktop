@@ -1,12 +1,13 @@
 import { fixtureProvider } from "./pi-catalog-fixtures.mjs";
 /**
- * Contract test for the custom-model library lookup.
+ * Contract test for hand-typed models on named providers.
  *
- * A hand-typed custom id exists nowhere in any provider's list, so the settings
- * picker reads the local models.dev snapshot through one dedicated channel.
+ * The settings picker reads the local Pi catalog through one dedicated channel;
+ * an explicit custom provider bypasses it and retains its manual configuration.
  * This pins the handler contract: it loads the snapshot, resolves the id,
- * echoes the provider back on the record, answers a miss with `null`, and never
- * touches the host or the network.
+ * echoes the provider back on the record and answers a miss with `null`.
+ * Explicit vendor identity needs neither host nor network; legacy account-only
+ * requests resolve the saved identity before looking up any model.
  */
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -51,7 +52,7 @@ async function fixtureCatalog() {
  * Register the real handler with a fake catalog and a fake registrar, then
  * expose only the lookup channel.
  */
-function harness(realCatalog) {
+function harness(realCatalog, savedProviders) {
   const handlers = new Map();
   const catalogCalls = [];
   const hostCalls = [];
@@ -64,6 +65,10 @@ function harness(realCatalog) {
       catalogCalls.push(["findModel", input]);
       return realCatalog.findModel(input);
     },
+    configureAccount: (provider) => {
+      catalogCalls.push(["configureAccount", provider]);
+      realCatalog.configureAccount(provider);
+    },
   };
   const { registerProviderIpc } = load("../electron/main/ipc/provider-ipc.ts", {
     "@pi-desktop/shared": {
@@ -74,6 +79,7 @@ function harness(realCatalog) {
       resolveBindingLimits: () => ({}),
     },
     "../oauth": { OAUTH_AUTH_KIND: "oauth" },
+    "../provider-config-transfer": {},
     "../model-discovery": {
       probeProviderEndpoint: async () => {
         throw new Error("the lookup must not probe the network");
@@ -97,6 +103,7 @@ function harness(realCatalog) {
     getHost: () => ({
       call: async (method) => {
         hostCalls.push(method);
+        if (method === "providers.list" && savedProviders) return { providers: savedProviders };
         throw new Error("the lookup must not call the host");
       },
     }),
@@ -162,4 +169,45 @@ test("the catalog lookup never probes the provider or the host", async (t) => {
   await h.call({ modelId: "claude-opus-4.6" });
   await h.call({ modelId: "missing" });
   assert.deepEqual(h.hostCalls, []);
+});
+
+
+test("an explicitly custom provider never loads or matches catalog metadata", async () => {
+  const h = harness(await fixtureCatalog());
+  for (const baseUrl of ["https://api.anthropic.com/v1", "https://relay.example/v1"]) {
+    const result = await h.call({ modelId: "claude-opus-4.6", vendorKey: "custom", baseUrl });
+    assert.deepEqual(result, { info: null });
+  }
+  assert.deepEqual(h.catalogCalls, []);
+  assert.deepEqual(h.hostCalls, []);
+});
+
+test("a cold saved custom account is resolved before an older caller can infer its official endpoint", async () => {
+  const row = { id: "cold-custom", name: "Custom", vendorKey: "custom", baseUrl: "https://api.anthropic.com/v1" };
+  const h = harness(await fixtureCatalog(), [row]);
+  const result = await h.call({ providerId: row.id, baseUrl: row.baseUrl, modelId: "claude-opus-4.6" });
+  assert.deepEqual(result, { info: null });
+  assert.deepEqual(h.hostCalls, ["providers.list"]);
+  assert.deepEqual(h.catalogCalls, [["configureAccount", row]]);
+});
+
+test("a cold saved named account still returns its catalog model for an older caller", async () => {
+  const row = { id: "cold-named", name: "Anthropic", vendorKey: "anthropic", baseUrl: "https://api.anthropic.com/v1" };
+  const h = harness(await fixtureCatalog(), [row]);
+  const result = await h.call({ providerId: row.id, baseUrl: row.baseUrl, modelId: "claude-opus-4.6" });
+  assert.equal(result.info.providerId, row.id);
+  assert.equal(result.info.contextWindow, 1_000_000);
+  assert.equal(result.info.catalogSource, "pi");
+  assert.deepEqual(h.hostCalls, ["providers.list"]);
+  assert.deepEqual(h.catalogCalls.slice(0, 2), [["configureAccount", row], "ensureLoaded"]);
+});
+
+test("an unresolved account cannot fall back to model-name or endpoint matching", async () => {
+  for (const providers of [undefined, [], [{ id: "unknown-key", name: "Old row" }]]) {
+    const h = harness(await fixtureCatalog(), providers);
+    const result = await h.call({ providerId: "unknown-key", baseUrl: "https://api.anthropic.com/v1", modelId: "claude-opus-4.6" });
+    assert.deepEqual(result, { info: null });
+    assert.deepEqual(h.hostCalls, ["providers.list"]);
+    assert.ok(!h.catalogCalls.some(call => call === "ensureLoaded" || call[0] === "findModel"));
+  }
 });

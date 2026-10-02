@@ -26,7 +26,7 @@ const resolution = registerHooks({
     return nextResolve(specifier, context);
   },
 });
-const { applyCustomModelLookup, customModelLookupInput, customModelSeedBinding } =
+const { applyCustomModelLookup, createCustomModelLookupGuard, customModelLookupInput, customModelSeedBinding } =
   await import("../src/components/settings/model-custom-lookup.ts");
 resolution.deregister();
 
@@ -132,4 +132,35 @@ test("the lookup input carries only the context this entry has", () => {
   assert.deepEqual(customModelLookupInput("m", { providerId: "", baseUrl: "" }), {
     modelId: "m",
   });
+});
+
+test("switching to Custom while a named lookup is pending leaves the binding alone", async () => {
+  const guard = createCustomModelLookupGuard();
+  guard.update({ vendorKey: "anthropic", baseUrl: "https://api.anthropic.com" });
+  const revision = guard.capture();
+  const seed = customModelSeedBinding("claude-opus-4.6");
+  const current = [seed];
+  const pending = Promise.resolve(published).then((info) => guard.isCurrent(revision)
+    ? applyCustomModelLookup(current, seed, info)
+    : current);
+  guard.update({ vendorKey: "custom", baseUrl: "https://api.anthropic.com" });
+  assert.equal(await pending, current);
+});
+
+test("lookup generations reject changes away and back while preserving unchanged scope", () => {
+  const guard = createCustomModelLookupGuard();
+  const context = { providerId: "p", vendorKey: "anthropic", baseUrl: "https://api.anthropic.com" };
+  guard.update(context);
+  const revision = guard.capture();
+  guard.update({ ...context });
+  assert.equal(guard.isCurrent(revision), true);
+  guard.update({ ...context, vendorKey: "custom" });
+  guard.update(context);
+  assert.equal(guard.isCurrent(revision), false);
+  const next = guard.capture();
+  guard.update({ ...context, baseUrl: "https://relay.example" });
+  assert.equal(guard.isCurrent(next), false);
+  const last = guard.capture();
+  guard.update({ ...context, providerId: "other" });
+  assert.equal(guard.isCurrent(last), false);
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createHeadlessLaunchResolver, type HostProviderRecord } from "./launch-resolver.js";
+import { genericModelConfig } from "@pi-desktop/agent-runtime";
 
 type Call = { method: string; params: Record<string, unknown> };
 
@@ -55,6 +56,26 @@ const provider: HostProviderRecord = {
 };
 
 describe("createHeadlessLaunchResolver", () => {
+  it("never looks up catalog metadata for an explicitly custom provider", async () => {
+    const row: HostProviderRecord = {
+      ...provider,
+      vendorKey: "custom",
+      models: [{ ...provider.models![0], id: "gpt-6.1-sol", contextWindow: 500_000, contextWindowSource: "catalog" }],
+    };
+    const { host } = hostWith([row], { p1: "sk-test" });
+    let catalogCalls = 0;
+    const resolver = createHeadlessLaunchResolver({
+      getHost: () => host, dataDir: "/data", log: () => undefined,
+      catalog: { modelConfig: (_provider, id) => {
+        catalogCalls++;
+        return { ...genericModelConfig(id), source: "pi", contextWindow: 272_000 };
+      } },
+    });
+    const launch = await resolver.resolve("s1", { providerId: "p1", modelId: "gpt-6.1-sol" }, {});
+    expect(catalogCalls).toBe(0);
+    expect(launch.sidecarParams.provider.modelConfig).toMatchObject({ source: "generic", contextWindow: 500_000 });
+  });
+
   it("resolves the session's provider, its secret, the shell, skills and project memory", async () => {
     const { host, calls } = hostWith([provider], { p1: "sk-test" });
     const resolver = createHeadlessLaunchResolver({ getHost: () => host, dataDir: "/data", log: () => undefined });

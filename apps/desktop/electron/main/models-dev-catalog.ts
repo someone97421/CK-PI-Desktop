@@ -34,6 +34,7 @@ export type ModelsDevCatalogOptions = {
 };
 export type CatalogAccount = { id: string; vendorKey?: string; baseUrl?: string; apiStyle?: string; models?: ModelBinding[] };
 type CatalogTarget = { providerId?: string; vendorKey?: string; baseUrl?: string; modelId: string };
+const isCustomVendor = (vendorKey?: string): boolean => vendorKey?.trim().toLowerCase() === "custom";
 
 export function normalizedApiUrl(value: string | undefined): string | undefined {
   if (!value?.trim()) return undefined;
@@ -83,6 +84,7 @@ export function catalogModelConfigFor(
   input: CatalogTarget & { apiStyle?: string },
 ): ModelConfig {
   if (catalog.modelConfigFor) return catalog.modelConfigFor(input);
+  if (isCustomVendor(input.vendorKey)) return genericModelConfig(input.modelId, input.baseUrl ?? "");
   const model = catalog.findModel(input);
   return model ? modelConfigFromModelsDev(model, input.baseUrl) : genericModelConfig(input.modelId, input.baseUrl ?? "");
 }
@@ -142,6 +144,9 @@ export class ModelsDevCatalog {
     if (previous && signature(previous) === signature(row) && this.accounts.has(row.id)) return;
     row = structuredClone(row);
     this.accountRows.set(row.id, row);
+    // Custom accounts own their model settings, even on a known vendor URL.
+    // Keep the saved bindings without wrapping or borrowing a Pi provider.
+    if (isCustomVendor(row.vendorKey)) return;
     let collection = this.accounts.get(row.id);
     if (!collection) {
       collection = createModels({ modelsStore: new InMemoryModelsStore(), authContext: { env: async () => undefined, fileExists: async () => false } });
@@ -221,9 +226,13 @@ export class ModelsDevCatalog {
       }
       return { ...config, ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}) };
     }
-    // Hand-typed custom IDs have no published metadata. Preserve historical
-    // explicit limits without pretending that the generic seed is a catalog.
-    const limits = resolveBindingLimits(unpublishedConfig ?? genericModelConfig(input.modelId, input.baseUrl ?? ""), binding);
+    // Custom accounts never inherit a caller's previously matched metadata.
+    // Saved limits (including older catalog-sourced values) remain intact;
+    // missing settings use the existing generic defaults.
+    const baseline = this.isCustomTarget(input)
+      ? genericModelConfig(input.modelId, input.baseUrl ?? "")
+      : unpublishedConfig ?? genericModelConfig(input.modelId, input.baseUrl ?? "");
+    const limits = resolveBindingLimits(baseline, binding);
     return modelConfigWithBinding(limits.catalogConfig, limits.binding);
   }
 
@@ -264,7 +273,13 @@ export class ModelsDevCatalog {
     };
   }
 
-  providerKeyForRow(input: { vendorKey?: string; baseUrl?: string }): string | undefined {
+  private isCustomTarget(input: { providerId?: string; vendorKey?: string }): boolean {
+    return isCustomVendor(input.vendorKey ??
+      (input.providerId ? this.accountRows.get(input.providerId)?.vendorKey : undefined));
+  }
+
+  providerKeyForRow(input: { providerId?: string; vendorKey?: string; baseUrl?: string }): string | undefined {
+    if (this.isCustomTarget(input)) return undefined;
     const key = input.vendorKey?.trim().toLowerCase();
     const alias = key ? PI_VENDOR_ALIASES[key] ?? key : undefined;
     if (alias && alias !== "custom" && this.models.getProvider(alias)) return alias;
@@ -285,6 +300,7 @@ export class ModelsDevCatalog {
   }
 
   findModelOfType<T extends ModelType>(type: T, input: CatalogTarget): ModelTypeMap[T] | undefined {
+    if (this.isCustomTarget(input)) return undefined;
     if (input.providerId && this.removedAccounts.has(input.providerId)) return undefined;
     const models = (input.providerId && this.accounts.get(input.providerId)) || this.models;
     const providerId = this.providerKeyForRow(input) ?? input.vendorKey;
@@ -299,11 +315,13 @@ export class ModelsDevCatalog {
   }
 
   settingsMetadataFor(input: CatalogTarget): ModelInfo | undefined {
+    if (this.isCustomTarget(input)) return undefined;
     const vendor = this.providerKeyForRow(input);
     return settingsOperationMetadata(input.providerId ?? "", vendor, input.modelId)[0];
   }
 
   modelsForProvider(input: { providerId: string; vendorKey?: string; baseUrl?: string; includeNonChat?: boolean }): ModelInfo[] {
+    if (this.isCustomTarget(input)) return [];
     if (this.removedAccounts.has(input.providerId)) return [];
     const models = this.accounts.get(input.providerId) ?? this.models;
     const providerId = this.providerKeyForRow(input) ?? input.vendorKey;

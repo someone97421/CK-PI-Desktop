@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   clampOutputToContext,
+  effectiveModelContextWindow,
   estimateOutputCapInputTokens,
   type OutputCapContext,
 } from "./output-cap.js";
@@ -332,13 +333,25 @@ describe("clampOutputToContext", () => {
     expect(clampOutputToContext(model, BASE_CONTEXT, 8888)).toBe(8888);
   });
 
-  it("uses the published window as a safety ceiling", () => {
+  it("keeps a configured window larger than the published default", () => {
     const model = {
-      contextWindow: 262_144,
-      catalogContextWindow: 128_000,
+      contextWindow: 500_000,
+      catalogContextWindow: 272_000,
       maxTokens: 200_000,
     };
-    expect(clampOutputToContext(model, BASE_CONTEXT, 200_000)).toBe(123_904);
+    expect(effectiveModelContextWindow(model)).toBe(500_000);
+    expect(clampOutputToContext(model, BASE_CONTEXT, 200_000)).toBe(200_000);
+    const context = { messages: [{ role: "user", content: "a".repeat(1_200_000) }] };
+    expect(clampOutputToContext(model, context, 200_000)).toBe(195_000);
+  });
+
+  it("keeps smaller configured windows and validates fallback counts", () => {
+    expect(effectiveModelContextWindow({ contextWindow: 64_000, catalogContextWindow: 272_000, maxTokens: 8_192 })).toBe(64_000);
+    for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(effectiveModelContextWindow({ contextWindow: invalid, catalogContextWindow: 272_000, maxTokens: 8_192 })).toBe(272_000);
+      expect(effectiveModelContextWindow({ contextWindow: invalid, catalogContextWindow: invalid, maxTokens: 8_192 })).toBe(0);
+    }
+    expect(effectiveModelContextWindow({ contextWindow: 500_000.4, maxTokens: 8_192 })).toBe(500_000);
   });
 
   it("never exceeds the requested budget", () => {

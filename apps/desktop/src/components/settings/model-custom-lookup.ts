@@ -33,6 +33,25 @@ export type CustomModelLookupInput = {
   baseUrl?: string;
 };
 
+/** Invalidate pending catalog answers whenever the provider form changes scope. */
+export function createCustomModelLookupGuard() {
+  let key = "";
+  let revision = 0;
+  let enabled = true;
+  return {
+    update(context: CustomModelLookupContext = {}) {
+      const nextKey = JSON.stringify([context.providerId, context.vendorKey, context.baseUrl]);
+      if (nextKey !== key) {
+        key = nextKey;
+        revision += 1;
+      }
+      enabled = context.vendorKey?.trim().toLowerCase() !== "custom";
+    },
+    capture: () => revision,
+    isCurrent: (captured: number) => enabled && captured === revision,
+  };
+}
+
 /**
  * The binding a hand-typed id starts from: the discovered row's published
  * record when the service already returned this id, the generic seed otherwise.

@@ -36,6 +36,7 @@ export function needsCustomApiStyleChoice(
 
 export function providerSetupPreset(provider?: ProviderPublic | null) {
   if (!provider || isAccountOnlyApiStyle(provider.apiStyle)) return undefined;
+  if (provider.vendorKey?.trim().toLowerCase() === "custom") return undefined;
   const preset = matchNamedPreset({
     vendorKey: provider.vendorKey,
     baseUrl: provider.baseUrl,
@@ -43,4 +44,14 @@ export function providerSetupPreset(provider?: ProviderPublic | null) {
   });
   // A published hostname does not override an explicitly saved wire format.
   return provider.apiStyle && preset?.apiStyle !== provider.apiStyle ? undefined : preset;
+}
+
+/** Renaming a row preserves its vendor; an explicit service choice owns it. */
+export function providerSetupVendorKey(
+  provider: Pick<ProviderPublic, "vendorKey"> | null | undefined,
+  selectedPresetVendorKey: string | undefined,
+  serviceChanged: boolean,
+): string {
+  if (!serviceChanged && provider?.vendorKey) return provider.vendorKey;
+  return selectedPresetVendorKey ?? "custom";
 }

@@ -93,12 +93,13 @@ export function resolveContextWindow(
           .flat()
           .find((model) => modelWireIdsEqual(model.modelId, modelId))
     : undefined;
-  const catalogWindow = modelContextWindow(catalogModel);
+  const custom = provider?.vendorKey?.trim().toLowerCase() === "custom";
+  const catalogWindow = custom ? undefined : modelContextWindow(catalogModel);
   const configured = bindingContextWindow(provider, modelId);
   const configuredWindow = effectiveContextWindow(
     catalogWindow,
     configured?.contextWindow,
-    configured?.contextWindowSource,
+    custom ? "user" : configured?.contextWindowSource,
   );
   if (configuredWindow) return configuredWindow;
 

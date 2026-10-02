@@ -143,10 +143,10 @@ describe("composeSubagentSystemPrompt", () => {
 });
 
 describe("SubagentRun event forwarding", () => {
-  it("classifies overflow against the published context ceiling", () => {
+  it("classifies overflow against the configured context window", () => {
     const { run } = createRun();
     run.agent.state.model = { ...run.agent.state.model, contextWindow: 1_000_000, catalogContextWindow: 128_000 };
-    expect(run.modelContextWindow()).toBe(128_000);
+    expect(run.modelContextWindow()).toBe(1_000_000);
   });
 
   it("includes tool operations in execution usage without recounting replayed identities", () => {

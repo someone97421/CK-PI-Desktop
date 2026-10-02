@@ -63,6 +63,82 @@ test("configured models remain selectable when discovery is unavailable", () => 
   assert.equal(models[0].displayName, "my-model-v2");
 });
 
+test("Composer displays a user window above the published catalog window", () => {
+  const published = {
+    ...model("gpt-6.1-sol"),
+    contextWindow: 272_000,
+    limit: { context: 272_000, output: 128_000 },
+  };
+  const [configured] = composerModelsForProvider({
+    id: "custom",
+    models: [{ ...binding("gpt-6.1-sol"), contextWindow: 500_000, contextWindowSource: "user" }],
+  }, [published]);
+
+  assert.equal(configured.contextWindow, 500_000);
+  assert.deepEqual(configured.limit, { context: 500_000, output: 128_000 });
+  assert.equal(published.contextWindow, 272_000);
+  assert.equal(published.limit.context, 272_000);
+});
+
+test("Composer follows the published window only for catalog-owned bindings", () => {
+  const [configured] = composerModelsForProvider({
+    id: "custom",
+    models: [{ ...binding("gpt-6.1-sol"), contextWindow: 500_000, contextWindowSource: "catalog" }],
+  }, [{ ...model("gpt-6.1-sol"), contextWindow: 272_000 }]);
+
+  assert.equal(configured.contextWindow, 272_000);
+  assert.equal(configured.limit.context, 272_000);
+});
+
+test("Composer preserves legacy windows without provenance", () => {
+  const [configured] = composerModelsForProvider({
+    id: "custom",
+    models: [{ ...binding("gpt-6.1-sol"), contextWindow: 500_000 }],
+  }, [{ ...model("gpt-6.1-sol"), contextWindow: 272_000 }]);
+
+  assert.equal(configured.contextWindow, 500_000);
+  assert.equal(configured.limit.context, 500_000);
+});
+
+test("custom providers keep saved windows even when old provenance says catalog", () => {
+  const provider = {
+    id: "custom",
+    vendorKey: "custom",
+    models: [{ ...binding("gpt-6.1-sol"), contextWindow: 500_000, contextWindowSource: "catalog" }],
+  };
+  const before = structuredClone(provider);
+  const [configured] = composerModelsForProvider(provider,
+    [{ ...model("gpt-6.1-sol"), contextWindow: 272_000 }]);
+
+  assert.equal(configured.contextWindow, 500_000);
+  assert.equal(configured.limit.context, 500_000);
+  assert.deepEqual(provider, before);
+});
+
+test("Composer retains configured windows without matching discovery metadata", () => {
+  for (const contextWindowSource of ["user", "catalog", undefined]) {
+    for (const discovered of [undefined, [model("gpt-6.1-sol")]]) {
+      const [configured] = composerModelsForProvider({
+        id: "custom",
+        models: [{ ...binding("proxy/gpt-6.1-sol"), contextWindow: 500_000, contextWindowSource }],
+      }, discovered);
+
+      assert.equal(configured.contextWindow, 500_000);
+      assert.equal(configured.limit.context, 500_000);
+    }
+  }
+});
+
+test("Composer takes context metadata from limit.context when needed", () => {
+  const [configured] = composerModelsForProvider({
+    id: "custom",
+    models: [{ ...binding("gpt-6.1-sol"), contextWindowSource: "catalog" }],
+  }, [{ ...model("gpt-6.1-sol"), limit: { context: 272_000, output: 128_000 } }]);
+
+  assert.equal(configured.contextWindow, 272_000);
+  assert.deepEqual(configured.limit, { context: 272_000, output: 128_000 });
+});
+
 test("unmatched models expose the full thinking ladder unless a binding overrides it", () => {
   const provider = {
     id: "custom",

@@ -8,7 +8,7 @@
  * guarantee lives here once instead of in a convention two files had to
  * remember.
  */
-import { useEffect, useMemo, useState, type Ref } from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import {
   THINKING_LEVELS,
@@ -41,6 +41,7 @@ import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import { filterChosenModels, hidesAddedBinding } from "./model-chosen-filter";
 import {
   applyCustomModelLookup,
+  createCustomModelLookupGuard,
   customModelLookupInput,
   customModelSeedBinding,
   type CustomModelLookupContext,
@@ -236,6 +237,9 @@ export function ModelSelectionPanes({
 }: ModelSelectionPanesProps) {
   const { t } = useTranslation();
   const { rows, models, publishedLevelsById, setModels } = selection;
+  const customProvider = lookupContext?.vendorKey?.trim().toLowerCase() === "custom";
+  const lookupGuard = useRef(createCustomModelLookupGuard());
+  lookupGuard.current.update(lookupContext);
   const [modelQuery, setModelQuery] = useState("");
   const [chosenQuery, setChosenQuery] = useState("");
   const [customModelId, setCustomModelId] = useState("");
@@ -357,6 +361,8 @@ export function ModelSelectionPanes({
    * untouched seed. A miss or a failed call is the generic seed it already is.
    */
   const enrichCustomModel = async (seed: ModelBinding) => {
+    if (customProvider) return;
+    const lookupRevision = lookupGuard.current.capture();
     let info: ModelInfo | null = null;
     try {
       const result = await api.lookupProviderModel(
@@ -374,7 +380,10 @@ export function ModelSelectionPanes({
       here would only drop an answer the rest of the app uses. The stored wire id
       stays exactly what the user typed.
     */
-    setModels((current) => applyCustomModelLookup(current, seed, info));
+    if (!lookupGuard.current.isCurrent(lookupRevision)) return;
+    setModels((current) => lookupGuard.current.isCurrent(lookupRevision)
+      ? applyCustomModelLookup(current, seed, info)
+      : current);
   };
 
   /**
@@ -598,6 +607,7 @@ export function ModelSelectionPanes({
                 ? (info.contextWindow ?? info.limit?.context)
                 : undefined;
               const followsCatalog =
+                !customProvider &&
                 publishedContextWindow != null && publishedContextWindow > 0 &&
                 resolveBindingLimits(
                   { contextWindow: publishedContextWindow }, binding,

@@ -122,14 +122,10 @@ export function registerProviderIpc({
     return { status: modelsDevCatalog.getStatus() };
   });
   /**
-   * Look one model id up in the local models.dev snapshot.
-   *
-   * A hand-typed custom id is not in any provider's model list yet, so the
-   * settings picker has no other channel for its published limits. This is a
-   * snapshot read: it loads the bundled catalog, performs no network request,
-   * and never asks the host, so a slow or offline catalog cannot block the
-   * picker. `providerId` is echoed back on the record; `vendorKey` / `baseUrl`
-   * only disambiguate which published provider a duplicate id belongs to.
+   * Look up a hand-typed model for a named provider in the local Pi catalog.
+   * Custom providers keep their manual configuration and never get a match.
+   * Explicit provider identity stays a local read. Older callers that supply
+   * only an account ID must first resolve its saved identity from the host.
    */
   handle(
     IPC.invoke.providersLookupModel,
@@ -141,31 +137,32 @@ export function registerProviderIpc({
     }) => {
       const modelId = (input?.modelId ?? "").trim();
       if (!modelId) return { info: null };
+      let vendorKey = input?.vendorKey;
+      if (!vendorKey && input?.providerId) {
+        if (!host) return { info: null };
+        try {
+          const { providers } = await host.call<{ providers: RuntimeProvider[] }>("providers.list", { includeDisabled: true });
+          const provider = providers.find((row) => row.id === input.providerId);
+          if (!provider) return { info: null };
+          vendorKey = provider.vendorKey ?? "custom";
+          modelsDevCatalog.configureAccount(provider);
+        } catch {
+          // An unresolved account must not borrow a publisher from its URL.
+          return { info: null };
+        }
+      }
+      if (vendorKey?.trim().toLowerCase() === "custom") return { info: null };
       await modelsDevCatalog.ensureLoaded();
-      /*
-        A hand-typed id on a custom endpoint names no publisher itself, so the
-        host decides whose records to read — the same anchor the discovered list
-        uses. A host the registry does not know keeps the caller's key (usually
-        `custom`), where the snapshot only answers an unambiguous id. Pure: this
-        stays a snapshot read with no network request or host call.
-      */
-      const declaredKey = input?.vendorKey;
-      const lookupVendorKey =
-        declaredKey && declaredKey !== "custom"
-          ? declaredKey
-          : typeof input?.baseUrl === "string" && input.baseUrl
-            ? (inferEndpointProfile({ baseUrl: input.baseUrl })?.providerKey ?? declaredKey)
-            : declaredKey;
       const model = (modelsDevCatalog.publishedModelFor?.bind(modelsDevCatalog) ?? modelsDevCatalog.findModel.bind(modelsDevCatalog))({
         providerId: input?.providerId,
-        vendorKey: lookupVendorKey,
+        vendorKey,
         baseUrl: input?.baseUrl,
         modelId,
       });
       return {
         info: model
           ? modelInfoFromModelsDev(model, input?.providerId ?? "")
-          : modelsDevCatalog.settingsMetadataFor?.({ providerId: input?.providerId, vendorKey: lookupVendorKey, baseUrl: input?.baseUrl, modelId }) ?? null,
+          : modelsDevCatalog.settingsMetadataFor?.({ providerId: input?.providerId, vendorKey, baseUrl: input?.baseUrl, modelId }) ?? null,
       };
     },
   );
@@ -339,6 +336,7 @@ export function registerProviderIpc({
         | string
           | {
             providerId?: string;
+            vendorKey?: string;
             baseUrl?: string;
             apiKey?: string;
             apiStyle?: string;
@@ -359,6 +357,7 @@ export function registerProviderIpc({
       if (provider) modelsDevCatalog.configureAccount(provider);
       const baseUrl = (req.baseUrl ?? provider?.baseUrl ?? "").trim();
       const apiStyle = req.apiStyle ?? provider?.apiStyle ?? "chat_completions";
+      const declaredVendorKey = req.vendorKey ?? provider?.vendorKey;
       /*
         Static endpoint resolution, the same layer the settings dialog uses:
         which URL this row will really address, which wire style the evidence
@@ -371,25 +370,15 @@ export function registerProviderIpc({
         // of the row is read: as Chat Completions.
         apiStyle: normalizeApiStyle(apiStyle),
         explicitApiStyle: true,
-        providerKey: provider?.vendorKey,
+        providerKey: declaredVendorKey,
       });
       // The address that answers may be a resolved candidate. The requested URL
       // stays the key for cache writes: the cache belongs to the saved endpoint,
       // not to a suggestion.
       let endpointBaseUrl = profile?.effectiveBaseUrl ?? baseUrl;
-      /*
-        Which publisher's metadata this row is read against.
-
-        A custom endpoint on a published host still serves that vendor's models,
-        so when the row names no publisher itself the registry's identity for
-        the host anchors the models.dev lookup. That is a host fact, not a guess
-        from a model name. An unknown host keeps `custom`, where the catalog
-        only answers an unambiguous id — metadata missing beats metadata wrong.
-      */
-      const catalogVendorKey =
-        provider?.vendorKey && provider.vendorKey !== "custom"
-          ? provider.vendorKey
-          : (profile?.providerKey ?? "custom");
+      // Endpoint resolution still finds the service's discovery route, but an
+      // explicit custom selection must never become a catalog publisher.
+      const catalogVendorKey = declaredVendorKey ?? profile?.providerKey ?? "custom";
 
 
       // Cache hydration must stay fast; the renderer already requests a live
@@ -505,7 +494,8 @@ export function registerProviderIpc({
         const requestBaseUrl = baseUrl.replace(/\/+$/, "");
         const usesSavedEndpoint =
           requestBaseUrl === savedBaseUrl &&
-          apiStyle === (provider.apiStyle ?? "chat_completions");
+          apiStyle === (provider.apiStyle ?? "chat_completions") &&
+          declaredVendorKey === provider.vendorKey;
         if (!usesSavedEndpoint) return;
         try {
           const latestProvider = (await listRuntimeProviders()).find(
@@ -514,7 +504,8 @@ export function registerProviderIpc({
           const endpointStillCurrent =
             (latestProvider?.baseUrl ?? "").trim().replace(/\/+$/, "") ===
               requestBaseUrl &&
-            (latestProvider?.apiStyle ?? "chat_completions") === apiStyle;
+            (latestProvider?.apiStyle ?? "chat_completions") === apiStyle &&
+            latestProvider?.vendorKey === declaredVendorKey;
           if (endpointStillCurrent) {
             await host!.call("providers.cacheModels", {
               providerId: provider.id,
