@@ -246,14 +246,19 @@ export function ModelSelectionPanes({
   // The returned list is short and already local, so filtering is client-side:
   // no host search and no debounced IPC round trip.
   const visibleRows = useMemo(() => {
+    // The service pane follows a live answer. Configured-only rows remain in
+    // the chosen pane, including hand-typed IDs absent from discovery.
+    const availableRows = discovery.source === "remote"
+      ? rows.filter((row) => row.info && row.info.source !== "user")
+      : rows;
     const needle = modelQuery.trim().toLowerCase();
-    if (!needle) return rows;
-    return rows.filter(
+    if (!needle) return availableRows;
+    return availableRows.filter(
       (row) =>
         row.id.toLowerCase().includes(needle) ||
         row.displayName.toLowerCase().includes(needle),
     );
-  }, [modelQuery, rows]);
+  }, [modelQuery, rows, discovery.source]);
 
   const selected = useMemo(
     () => new Set(models.map((binding) => binding.id.toLowerCase())),

@@ -16,6 +16,7 @@ import {
   visionFromModelConfig,
   type ThinkingCapabilities,
 } from "@pi-desktop/agent-runtime";
+import { resolveBindingLimits } from "@pi-desktop/shared";
 import type { HostProcess } from "../host-process";
 import {
   catalogModelConfigFor,
@@ -116,10 +117,18 @@ export function createProviderCatalogRuntime({
       providerId: provider.id, vendorKey: provider.vendorKey, baseUrl: provider.baseUrl, modelId,
     });
     const models = provider.models?.map((binding) => {
-      const effective = catalogModelConfigFor(modelsDevCatalog, {
+      const catalogConfig = catalogModelConfigFor(modelsDevCatalog, {
         providerId: provider.id, vendorKey: provider.vendorKey, baseUrl: provider.baseUrl, modelId: binding.id,
       });
-      return { ...binding, contextWindow: effective.contextWindow, maxTokens: effective.maxTokens, maxTokensSource: binding.maxTokensSource ?? "user" as const };
+      // A user-pinned window/cap is never replaced by the published number
+      // (spec §9.1, issue #1176); an inherited one keeps following the catalog.
+      const limits = resolveBindingLimits(catalogConfig, binding);
+      return {
+        ...binding,
+        contextWindow: limits.binding.contextWindow ?? limits.catalogConfig.contextWindow,
+        maxTokens: limits.binding.maxTokens ?? limits.catalogConfig.maxTokens,
+        maxTokensSource: binding.maxTokensSource ?? "user" as const,
+      };
     });
     return {
       ...provider,

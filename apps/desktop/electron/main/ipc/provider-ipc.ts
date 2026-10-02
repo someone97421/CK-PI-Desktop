@@ -454,6 +454,9 @@ export function registerProviderIpc({
             };
         return {
           ...info,
+          // Catalog enrichment must not turn a configured-only row into
+          // evidence that the endpoint still serves it.
+          source: model.source ?? info.source,
           modelId: model.modelId,
           displayName: info.displayName || modelConfig.name,
           providerId: provider?.id ?? "",

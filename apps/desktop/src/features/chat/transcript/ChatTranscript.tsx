@@ -138,6 +138,7 @@ function TranscriptBody({
     veilPhase,
     handleScroll,
     revealEarlierHistory,
+    releaseFollow,
     jumpToLatest,
     navigateAnnotation,
     disclosureAnchorNotifier,
@@ -247,6 +248,7 @@ function TranscriptBody({
           hasEarlier={hasEarlierHistory}
           loadingEarlier={loadingOlder}
           onRevealEarlier={revealEarlierHistory}
+          onReleaseFollow={releaseFollow}
         />
       ) : null}
       {/* Quoting follows the selection: the row action at the end of a long

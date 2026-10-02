@@ -430,6 +430,7 @@ export function SettingsPage() {
 
               <NetworkProxySection settings={settings} saveSettings={saveSettings} />
 
+
               <SettingsCard title={t("settings.power")}>
                 <SettingsRow
                   title={t("settings.keepAwakeWhileRunning")}

@@ -131,16 +131,26 @@ export function useTranscriptScroll({
     followFrameRef.current = 0;
   }, []);
 
+  /*
+    Leave follow mode. Every reader-driven move inside the transcript starts
+    here: while the scroller is still pinned, a scroll that carries no input
+    gesture is indistinguishable from a layout clamp, so the follow re-bottoms
+    the view one frame later and undoes the move.
+  */
+  const releaseFollow = useCallback(() => {
+    cancelFollowScroll();
+    pinnedRef.current = false;
+    setShowJump(true);
+  }, [cancelFollowScroll]);
+
   // A manual disclosure (a tool, thinking or activity title; #324) hands this
   // scroller the very title it was toggled from, before the expansion state
   // changes. Follow mode is left first — re-bottoming the expansion is exactly
   // what dragged the clicked title out of view — and the held position is
   // restored from the observer below for every frame of the height transition.
   const enterDisclosureReading = useCallback(() => {
-    cancelFollowScroll();
-    pinnedRef.current = false;
-    setShowJump(true);
-  }, [cancelFollowScroll]);
+    releaseFollow();
+  }, [releaseFollow]);
   const recordScrollPosition = useCallback((top: number) => {
     lastScrollTopRef.current = top;
     lastLaidOutScrollTopRef.current = top;
@@ -696,9 +706,7 @@ export function useTranscriptScroll({
       return;
     }
     releaseDisclosureAnchor();
-    cancelFollowScroll();
-    pinnedRef.current = false;
-    setShowJump(true);
+    releaseFollow();
     const reduceMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
@@ -706,7 +714,7 @@ export function useTranscriptScroll({
       top: 0,
       behavior: reduceMotion ? "auto" : "smooth",
     });
-  }, [cancelFollowScroll, reachTop, releaseDisclosureAnchor]);
+  }, [reachTop, releaseDisclosureAnchor, releaseFollow]);
 
   const jumpToLatest = useCallback(() => {
     releaseDisclosureAnchor();
@@ -807,6 +815,7 @@ export function useTranscriptScroll({
     scrollToBottom,
     jumpToLatest,
     navigateAnnotation,
+    releaseFollow,
     disclosureAnchorNotifier,
   };
 }

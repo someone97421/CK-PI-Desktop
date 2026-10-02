@@ -987,6 +987,14 @@ export function registerAgentIpc({
     const sessionId = String(resolution?.sessionId ?? "").trim();
     const requestId = String(resolution?.requestId ?? "").trim();
     if (!sessionId || !requestId) throw new Error("asktool resolution identity required");
+    // Prefer the Host-owned input path when it still holds this ask so the
+    // pending input is cleared before the sidecar settles.
+    const settled = await agentHostBridge?.resolveAskByRequestId({
+      ...resolution,
+      sessionId,
+      requestId,
+    });
+    if (settled) return settled;
     const result = await sidecar.call("asktool.resolve", {
       ...resolution,
       sessionId,
@@ -994,7 +1002,6 @@ export function registerAgentIpc({
     });
     agentHostBridge?.notifyInputResolved({ sessionId, inputId: requestId });
     return result;
-  });
 
   handle(IPC.invoke.plansPending, async (input: { sessionId?: string } = {}) => {
     if (!host) throw new Error("host unavailable");
