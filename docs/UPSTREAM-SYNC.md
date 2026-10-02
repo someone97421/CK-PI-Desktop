@@ -640,3 +640,13 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 - 上游 Edit 旧 `old_string` / `new_string` 兼容未采用，继续遵守 fork 的 tag、最新读取和行锚编辑契约。
 
 本轮完成源码冲突处理、`git diff --check` 和父提交关系核对；未运行测试、typecheck、构建、依赖安装、服务或浏览器预览，未操作实际业务数据库，未发布或推送。工作区已恢复干净。
+
+## Windows 原生窗口（2026-10-02）
+
+按用户要求审查近期主线：`5a640ef43`（父提交 `7242c66c8`）加入 `thickFrame: false`、默认 4px 的 `setShape` 裁剪及自定义全屏状态补偿；后续 `395a69c67`、`e61ad95d8`、`fbda72910` 未再修改窗口创建与全屏控制。此前仅恢复 thick frame、保留裁剪的修补不完整，不能视为已验证解决窗口问题。
+
+- `bootstrap/window.ts`、`bootstrap/app-lifecycle.ts` 和 `window-resize.test.mjs` 恢复为 `7242c66c8` 的内容；保留原生窗口样式、系统窗口形状及 Electron 原生全屏状态。
+- 主窗口不安装自定义 shape 控制器。保留插件外观字段与 IPC 兼容，圆角请求在没有控制器时返回 `null`，不修改窗口形状；主题背景色继续生效。
+- 通过 Git 差异确认上述三个文件与回退基准一致，并审阅运行路径引用。构建时修复 `agent-ipc.ts` 中 `asktool.resolve` handler 缺失的闭合语句。
+- 使用统一构建入口完成 Windows x64 安装包与单文件便携版，显示版本 `20261002-215440`、内部版本 `2610.221.5440`，构建退出码为 0。安装包 SHA-512 与 `latest.yml` 一致，构建版本元数据随源码提交。
+- 未单独运行测试或 typecheck，未安装产物或进行实际窗口交互验证；圆角、吸附及全屏的实机效果仍待确认。安装产物保留本地，本次提交推送不发布更新。

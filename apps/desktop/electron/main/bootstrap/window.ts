@@ -34,8 +34,6 @@ import {
 import { readWindowState, writeWindowState } from "../window-preferences";
 import { suppressLinuxFramelessSystemMenu } from "../frameless-system-menu";
 import { readAppearanceIconPath } from "../appearance-media";
-import { isWindowFullScreen } from "../window-fullscreen";
-import { installWindowShape } from "../window-shape";
 import { recoverRendererAfterGone } from "../renderer-recovery";
 
 function windowsIconPath(dataDir: string): string | undefined {
@@ -191,7 +189,6 @@ export async function createWindow({
         }
       : {
           frame: false,
-          ...(process.platform === "win32" ? { thickFrame: false } : {}),
           backgroundColor: builtinWindowBackground(
             nativeTheme.shouldUseDarkColors ? "dark" : "light",
           ),
@@ -213,7 +210,6 @@ export async function createWindow({
     },
   });
   const window = windowState.mainWindow;
-  if (process.platform === "win32") installWindowShape(window);
   suppressLinuxFramelessSystemMenu(window);
   const initialBounds = window.getBounds();
   windowState.workPanelBaseBounds = restoredBounds
@@ -337,7 +333,7 @@ export async function createWindow({
     if (
       nativeWorkPanelResize ||
       windowState.requestedWorkPanelReservation <= 0 ||
-      isWindowFullScreen(window) ||
+      window.isFullScreen() ||
       window.isMaximized()
     ) {
       return nativeWorkPanelResize;
@@ -370,7 +366,7 @@ export async function createWindow({
     if (
       !isLiveWindow() ||
       windowState.requestedWorkPanelReservation <= 0 ||
-      isWindowFullScreen(window) ||
+      window.isFullScreen() ||
       window.isMaximized()
     ) {
       return windowState.workPanelBaseBounds?.width ?? windowMinWidth;
@@ -559,7 +555,7 @@ export async function createWindow({
   const sendFullScreen = () => {
     if (window.isDestroyed() || window.webContents.isDestroyed()) return;
     window.webContents.send(IPC.event.windowFullScreen, {
-      fullScreen: isWindowFullScreen(window),
+      fullScreen: window.isFullScreen(),
     });
   };
   window.on("enter-full-screen", sendFullScreen);
@@ -584,7 +580,7 @@ export async function createWindow({
   // window never lands partly off-screen. macOS keeps its own restore behavior.
   const refitWindowToWorkArea = () => {
     if (!isLiveWindow() || process.platform === "darwin") return;
-    if (window.isMaximized() || isWindowFullScreen(window) || window.isMinimized()) return;
+    if (window.isMaximized() || window.isFullScreen() || window.isMinimized()) return;
     const currentBounds = window.getBounds();
     const workArea = screen.getDisplayMatching(currentBounds).workArea;
     const minimum = clampMinimumSizeToWorkArea(
@@ -884,8 +880,7 @@ export async function createWindow({
       !isLiveWindow() ||
       boundsGuard ||
       windowState.workPanelNativeResizeActive ||
-      windowState.workPanelChatResizeActive ||
-      isWindowFullScreen(window)
+      windowState.workPanelChatResizeActive
     ) {
       return;
     }

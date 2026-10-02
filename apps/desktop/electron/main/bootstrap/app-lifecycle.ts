@@ -18,7 +18,6 @@ import {
 } from "@pi-desktop/shared";
 import { catalogs, resolveLocale } from "@pi-desktop/i18n";
 import { installApplicationMenu } from "../application-menu";
-import { isWindowFullScreen, setWindowFullScreen } from "../window-fullscreen";
 import { createTraySessions } from "../tray-sessions";
 import { createTaskbarUnreadBadge } from "../taskbar-unread-badge";
 import { createWindow, type WindowLifecycleState } from "./window";
@@ -437,7 +436,7 @@ export function createApplicationLifecycle({
       const window = state.mainWindow;
       return {
         maximized: Boolean(window && !window.isDestroyed() && window.isMaximized()),
-        fullScreen: Boolean(window && !window.isDestroyed() && isWindowFullScreen(window)),
+        fullScreen: Boolean(window && !window.isDestroyed() && window.isFullScreen()),
       };
     }
     if (!target || target.isDestroyed()) {
@@ -477,11 +476,7 @@ export function createApplicationLifecycle({
         contents.setZoomFactor(1);
         break;
       case "toggleFullScreen":
-        setWindowFullScreen(
-          target,
-          !isWindowFullScreen(target),
-          process.platform === "win32" && target === state.mainWindow,
-        );
+        target.setFullScreen(!target.isFullScreen());
         break;
       case "minimize":
         target.minimize();
@@ -497,7 +492,7 @@ export function createApplicationLifecycle({
 
     return {
       maximized: !target.isDestroyed() && target.isMaximized(),
-      fullScreen: !target.isDestroyed() && isWindowFullScreen(target),
+      fullScreen: !target.isDestroyed() && target.isFullScreen(),
     };
   }
 

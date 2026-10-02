@@ -1002,6 +1002,7 @@ export function registerAgentIpc({
     });
     agentHostBridge?.notifyInputResolved({ sessionId, inputId: requestId });
     return result;
+  });
 
   handle(IPC.invoke.plansPending, async (input: { sessionId?: string } = {}) => {
     if (!host) throw new Error("host unavailable");
