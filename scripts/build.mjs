@@ -32,8 +32,9 @@ async function run(command, args, cwd = root) {
 }
 async function pnpm(args, cwd = root) {
   const cli = process.env.npm_execpath;
-  if (!cli || !/\.[cm]?js$/i.test(cli)) throw new Error("请通过 pnpm 脚本执行构建，例如 pnpm dev / pnpm dist");
-  await run(process.execPath, [cli, ...args], cwd);
+  if (!cli) throw new Error("请通过 pnpm 脚本执行构建，例如 pnpm dev / pnpm dist");
+  if (/\.[cm]?js$/i.test(cli)) await run(process.execPath, [cli, ...args], cwd);
+  else await run(cli, args, cwd);
 }
 async function vite() {
   const cli = join(dirname(require.resolve("electron-vite/package.json")), "bin/electron-vite.js");
