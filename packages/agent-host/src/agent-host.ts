@@ -40,7 +40,7 @@ import {
   rolesAllowOperation,
 } from "@pi-desktop/shared";
 
-import { ApprovalBroker, type ApprovalPort } from "./approvals.js";
+import { ApprovalBroker, type ApprovalPort, type HostPendingToolApproval } from "./approvals.js";
 import { racpError } from "./errors.js";
 import { EventHub, type SubscribeParams, type SubscribeResult, type SubscriptionSink } from "./event-log.js";
 import {
@@ -380,7 +380,7 @@ export class AgentHost {
     approvalId: string,
     outcome: { decision?: RacpApprovalResult["decision"]; permissionMode?: RacpPermissionMode; status?: RacpApprovalResult["status"] },
   ): RacpApprovalResult | null {
-    const request = this.approvals.get(approvalId);
+    const request = this.approvals.getForDesktop(approvalId);
     if (!request) return null;
     const state = this.state(request.sessionId);
     const result = this.approvals.settle(approvalId, {
@@ -479,7 +479,7 @@ export class AgentHost {
     params: StartTurnParams,
     forceQueue = false,
   ): Promise<StartTurnResult> {
-    const summary = await this.requireSession(params.sessionId);
+    let summary = await this.requireSession(params.sessionId);
     const state = this.state(summary.id);
     state.permissionMode = summary.permissionMode;
     const inputHash = hashInput(params.input);
@@ -499,6 +499,11 @@ export class AgentHost {
       throw racpError("CONFLICT", "expected session revision is stale", {
         details: { expectedRevision: expected, revision: state.revision },
       });
+    }
+    if (this.runtime.prepareTurn) {
+      await this.runtime.prepareTurn(params.sessionId);
+      summary = await this.requireSession(params.sessionId);
+      state.permissionMode = summary.permissionMode;
     }
     const effectivePermissionMode = effectiveRemotePermissionMode({
       sessionMode: summary.permissionMode,
@@ -1001,6 +1006,26 @@ export class AgentHost {
     };
   }
 
+  /** Local plugin controls use Host-pending tool requests, not RACP leases. */
+  async snapshotForDesktop(sessionId: string): Promise<Omit<RacpSessionSnapshot, "pendingApprovals"> & {
+    pendingApprovals: HostPendingToolApproval[];
+  }> {
+    const snapshot = await this.snapshot(sessionId);
+    const state = this.state(sessionId);
+    const tools = await this.approvals.listHostPendingTools(sessionId, {
+      turnId: state.activeTurnId ?? "",
+      revision: state.revision,
+      allowSession: this.allowRemoteSessionGrants,
+    });
+    return {
+      ...snapshot,
+      pendingApprovals: [
+        ...this.approvals.list(sessionId).filter((request) => request.kind !== "tool"),
+        ...tools,
+      ],
+    };
+  }
+
   pendingApprovals(sessionId?: string): RacpApprovalRequest[] {
     return this.approvals.list(sessionId);
   }
@@ -1241,10 +1266,11 @@ export class AgentHost {
 
   private afterApproval(state: SessionState, turnId: string | undefined): void {
     const turn = turnId ? state.turns.get(turnId) : undefined;
-    if (turn && turn.status === "waiting_approval" && this.approvals.list(state.id).length === 0) {
+    const hasPending = this.approvals.list(state.id).length > 0 || this.approvals.hasHostPendingTools(state.id);
+    if (turn && turn.status === "waiting_approval" && !hasPending) {
       turn.status = "running";
     }
-    if (state.status === "waiting_permission" && this.approvals.list(state.id).length === 0) {
+    if (state.status === "waiting_permission" && !hasPending) {
       state.status = state.activeTurnId ? "running" : "idle";
     }
   }

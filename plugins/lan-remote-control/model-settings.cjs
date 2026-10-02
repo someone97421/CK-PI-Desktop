@@ -34,8 +34,10 @@ function createModelSettings({ listModels, getSession, configureSession, seriali
 
   async function configure(sessionId, input) {
     const current = await getSession(sessionId);
+    // 已排队的修改也是下一次编辑的基线；不能用当前轮的旧值覆盖它。
+    const effective = { ...current, ...current.pendingConfiguration };
     // 宿主的配置接口要求 mode；未编辑的值取当前会话，不取打开面板时的快照。
-    const config = { mode: current.mode || "agent" };
+    const config = { mode: effective.mode || "agent" };
     if (input.mode !== undefined) {
       if (!["agent", "plan", "goal"].includes(input.mode)) invalid("工作模式无效");
       config.mode = input.mode;
@@ -47,7 +49,7 @@ function createModelSettings({ listModels, getSession, configureSession, seriali
     const changingModel = input.modelKey !== undefined || input.providerId !== undefined || input.modelId !== undefined;
     if (changingModel || input.thinkingLevel !== undefined) {
       const items = await catalog();
-      const key = changingModel ? input.modelKey : `${current.providerId}/${current.modelId}`;
+      const key = changingModel ? input.modelKey : `${effective.providerId}/${effective.modelId}`;
       const model = items.find(item => item.key === key);
       if (!model) invalid("所选模型已不可用，请刷新模型列表后重新选择");
       if (changingModel) {
@@ -59,16 +61,17 @@ function createModelSettings({ listModels, getSession, configureSession, seriali
         if (!model.thinkingLevels.includes(input.thinkingLevel)) invalid("所选模型不支持此思考强度，请重新选择");
         config.thinkingLevel = input.thinkingLevel;
       } else if (changingModel) {
-        config.thinkingLevel = model.thinkingLevels.includes(current.thinkingLevel) ? current.thinkingLevel : model.thinkingLevels[0];
+        config.thinkingLevel = model.thinkingLevels.includes(effective.thinkingLevel) ? effective.thinkingLevel : model.thinkingLevels[0];
       }
     }
     const result = await configureSession(sessionId, config);
     if (!result?.session || result.session.id !== sessionId) throw new Error("宿主未返回更新后的会话，请刷新后确认设置");
     const updated = result.session;
+    const accepted = result.queued ? { ...updated, ...updated.pendingConfiguration } : updated;
     for (const key of Object.keys(config)) {
-      if (updated[key] !== config[key]) throw new Error("宿主返回的设置与请求不一致，请刷新后确认实际配置");
+      if (accepted[key] !== config[key]) throw new Error("宿主返回的设置与请求不一致，请刷新后确认实际配置");
     }
-    return { session: serializeSession(updated) };
+    return { session: serializeSession(updated), queued: result.queued === true };
   }
   return { list, configure, catalog };
 }

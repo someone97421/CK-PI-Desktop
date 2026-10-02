@@ -34,10 +34,12 @@ export function requireHostRpc(getHost: () => HostRpc | null): HostRpc {
   return host;
 }
 
-export function toSessionSummary(record: HostSessionRecord): SessionSummary {
+export function toSessionSummary(record: HostSessionRecord, defaultPermissionMode?: unknown): SessionSummary {
   const mode = record.mode === "plan" || record.mode === "goal" ? record.mode : "agent";
+  const configuredPermissionMode = record.permissionMode && record.permissionMode !== "inherit"
+    ? record.permissionMode : defaultPermissionMode;
   const permissionMode: RacpPermissionMode =
-    record.permissionMode === "accept-edits" || record.permissionMode === "auto" ? record.permissionMode : "ask";
+    configuredPermissionMode === "accept-edits" || configuredPermissionMode === "auto" ? configuredPermissionMode : "ask";
   const planningState =
     record.planningState === "planning" || record.planningState === "awaiting_approval"
       ? record.planningState
@@ -81,7 +83,13 @@ export function createHostSessionPort(getHost: () => HostRpc | null): SessionPor
   return {
     async get(sessionId) {
       const record = await fetchSession(sessionId);
-      return record ? toSessionSummary(record) : null;
+      if (!record) return null;
+      // Resolve inheritance on every read. Cached defaults (or treating
+      // `inherit` as `ask`) can misstate the authority the Rust tools use.
+      const settings = !record.permissionMode || record.permissionMode === "inherit"
+        ? await requireHostRpc(getHost).call<{ defaultPermissionMode?: unknown }>("settings.get")
+        : undefined;
+      return toSessionSummary(record, settings?.defaultPermissionMode);
     },
     async history(sessionId, { limit, beforeItemId }) {
       const record = await fetchSession(sessionId);

@@ -82,6 +82,8 @@ export type SteeringReceiptView = {
 /** The pi runtime as the module drives it. Electron Main adapts its prompt,
  * stop, abort, and asktool paths to this port; nothing here knows about IPC. */
 export interface RuntimePort {
+  /** Settle runtime-owned next-turn configuration before admission reads it. */
+  prepareTurn?(sessionId: string): Promise<void>;
   /**
    * Inject one more user message into a running turn. Optional: a runtime that
    * cannot steer keeps every queue entry as its own turn.

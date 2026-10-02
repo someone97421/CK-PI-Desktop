@@ -643,6 +643,78 @@ describe("AgentHost approvals and inputs", () => {
     expect(host.pendingApprovals("s1")[0]!.expiresAt).toBe("2026-09-10T00:02:00.000Z");
   });
 
+  it.each(["allow-once", "deny"] as const)("refreshes desktop snapshots beyond 120 seconds and records %s", async (decision) => {
+    const { host, approvals, clock, sub } = build();
+    host.unsubscribe(sub.subscriptionId, "s1");
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    host.ingest(envelope("s1", "rt_1", permission()));
+    approvals.pending = [{ ...permission().request, createdAt: new Date(clock.current).toISOString() }];
+    clock.current += 121_000;
+    expect((await host.snapshot("s1")).pendingApprovals).toEqual([]);
+    for (let refresh = 0; refresh < 2; refresh += 1) {
+      const snapshot = await host.snapshotForDesktop("s1");
+      expect(snapshot.pendingApprovals).toHaveLength(1);
+      expect(snapshot.pendingApprovals[0]).toMatchObject({ id: "req_1", allowedDecisions: ["allow-once", "deny"] });
+      expect(snapshot.pendingApprovals[0]).not.toHaveProperty("expiresAt");
+      clock.current += 121_000;
+    }
+    // The desktop/plugin path settles through IPC, then informs the broker.
+    await approvals.resolveTool("req_1", decision);
+    approvals.pending = [];
+    expect(host.settleApprovalExternally("req_1", { decision })).toMatchObject({ status: "resolved", decision });
+    expect((await host.snapshotForDesktop("s1")).pendingApprovals).toEqual([]);
+    expect(host.getTurn("rt_1").status).toBe("running");
+    expect(approvals.tool).toEqual([{ requestId: "req_1", decision }]);
+  });
+
+  it("recovers a missed tool request on desktop reopen and settles its session bookkeeping", async () => {
+    const { host, approvals, clock } = build();
+    approvals.pending = [{ ...permission("req_missed").request, createdAt: new Date(clock.current).toISOString() }];
+    clock.current += 121_000;
+    expect((await host.snapshotForDesktop("s1")).pendingApprovals.map((request) => request.id)).toEqual(["req_missed"]);
+    expect(host.approvals.getForDesktop("req_missed")?.sessionId).toBe("s1");
+    expect(host.settleApprovalExternally("req_missed", { decision: "deny" })).toMatchObject({ status: "resolved", decision: "deny" });
+    // Even a stale Host read cannot resurrect the locally recorded result.
+    expect((await host.snapshotForDesktop("s1")).pendingApprovals).toEqual([]);
+  });
+
+  it("keeps waiting when another Host tool still needs a decision after its RACP lease expired", async () => {
+    const { host, approvals, clock, sub } = build();
+    host.unsubscribe(sub.subscriptionId, "s1");
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    for (const id of ["req_1", "req_2"]) {
+      host.ingest(envelope("s1", "rt_1", permission(id)));
+      approvals.pending.push({ ...permission(id).request, createdAt: new Date(clock.current).toISOString() });
+    }
+    clock.current += 121_000;
+    expect((await host.snapshotForDesktop("s1")).pendingApprovals).toHaveLength(2);
+    approvals.pending.shift();
+    host.settleApprovalExternally("req_1", { decision: "deny" });
+    expect(host.getTurn("rt_1").status).toBe("waiting_approval");
+    expect((await host.snapshotForDesktop("s1")).session.status).toBe("waiting_permission");
+    approvals.pending = [];
+    host.settleApprovalExternally("req_2", { decision: "allow-once" });
+    expect(host.getTurn("rt_1").status).toBe("running");
+  });
+
+  it("keeps contract expiry and remote session-grant policy unchanged in desktop snapshots", async () => {
+    const { host, approvals, clock, sub } = build();
+    host.unsubscribe(sub.subscriptionId, "s1");
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    host.ingest(envelope("s1", "rt_1", permission()));
+    host.ingest(envelope("s1", "rt_1", { type: "planning_state", state: "awaiting_approval", kind: "plan", proposalId: "prop_1" }));
+    approvals.pending = [{ ...permission().request, createdAt: new Date(clock.current).toISOString() }];
+    expect((await host.snapshotForDesktop("s1")).pendingApprovals.map((request) => request.kind)).toEqual(["plan", "tool"]);
+    clock.current += 121_000;
+    expect((await host.snapshotForDesktop("s1")).pendingApprovals.map((request) => request.kind)).toEqual(["tool"]);
+    await expect(host.respondApproval(approver, { approvalId: "req_1", decision: "allow-session", context: { requestId: "r" } }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(host.respondApproval(approver, { approvalId: "prop_1", decision: "reject", context: { requestId: "r" } }))
+      .rejects.toMatchObject({ code: "APPROVAL_EXPIRED" });
+    expect(approvals.tool).toEqual([]);
+    expect(approvals.contract).toEqual([]);
+  });
+
   it("routes contract approvals through the contract port with a permission mode", async () => {
     const { host, approvals, received } = build();
     host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));

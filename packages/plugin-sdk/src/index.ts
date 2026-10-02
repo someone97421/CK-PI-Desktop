@@ -1006,7 +1006,8 @@ export type PluginDesktopApprovalRequest = {
   turnId: string;
   kind: "tool" | "plan" | "goal";
   summary: string;
-  expiresAt: string;
+  /** Present only when the Host imposes a deadline; tool requests may wait indefinitely. */
+  expiresAt?: string;
   revision: number;
   toolName?: string;
   risk?: "low" | "medium" | "high";

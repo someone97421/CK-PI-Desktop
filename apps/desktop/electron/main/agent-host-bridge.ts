@@ -44,6 +44,8 @@ export type AgentHostBridgeOptions = {
   /** Runtime-side busy state the event stream cannot see (active turn map,
    * manual compaction). */
   isSessionBusy?: (sessionId: string) => boolean;
+  /** Apply a main-owned next-turn draft before reading permission ceilings. */
+  prepareSessionForTurn?: (sessionId: string) => Promise<void>;
   /** Renderer fan-out for queue changes (`agent/event/queueChanged`). */
   onQueueChange?: (event: AgentQueueChangedEvent) => void;
   /**
@@ -88,8 +90,10 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
   };
 
   const runtime: RuntimePort = {
+    prepareTurn: options.prepareSessionForTurn,
     async prompt(request: TurnStartRequest) {
       try {
+        await options.prepareSessionForTurn?.(request.sessionId);
         const summary = await sessions.get(request.sessionId);
         // A per-turn ceiling that differs from the session's stored mode is
         // refused. `agent.prompt`'s `permissionMode` override is not yet
@@ -104,7 +108,7 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
         ) {
           throw new RacpError(
             "FORBIDDEN",
-            "the local runtime cannot apply a per-turn permission ceiling yet",
+            "the local runtime cannot apply a per-turn permission ceiling yet; confirm the session settings and resubmit this message",
             {
               details: {
                 sessionPermissionMode: summary.permissionMode,
@@ -123,6 +127,7 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
             ...(request.attachments ? { attachments: request.attachments } : {}),
           },
           request.submittedAt,
+          request.effectivePermissionMode,
         ])) as { accepted?: boolean; turnId: string };
         return { turnId: result.turnId };
       } catch (error) {
@@ -250,7 +255,12 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
         resolvingViaModule.delete(input.proposalId);
       }
     },
-    listPendingTools: (sessionId) => listPendingToolRequests(options.getHost, sessionId),
+    async listPendingTools(sessionId) {
+      const host = options.getHost();
+      const pending = await listPendingToolRequests(() => host, sessionId);
+      // A read from a disconnected/replaced Host cannot restore its old cards.
+      return host === options.getHost() ? pending : [];
+    },
   };
 
   // Session reads and the persisted turn queue (schema v15, ADR 0213) go
@@ -269,7 +279,7 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
   });
 
   function sessionOfApproval(approvalId: string): string | undefined {
-    return agentHost.approvals.get(approvalId)?.sessionId;
+    return agentHost.approvals.getForDesktop(approvalId)?.sessionId;
   }
 
   function notifyApprovalResolved(sessionId: string | undefined, approvalId: string): void {
@@ -352,75 +362,6 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
 
   return {
     agentHost,
-    observeWorkTarget(sessionId: string): string | null {
-      return agentHost.observeWorkTarget(sessionId).activeTurnId;
-    },
-    /**
-     * Every interactive request this session is waiting on: the ask questions
-     * this sidecar generation still holds plus Host-owned permission requests.
-     * A renderer that reloaded reads this instead of keeping a card that no
-     * longer exists; both lists are bounded.
-     */
-    async pendingInteractiveRequests(sessionId: string): Promise<PendingInteractiveRequests> {
-      const asks = agentHost.pendingInputRequests(sessionId)
-        .slice(0, MAX_PENDING_INTERACTIVE)
-        .map((entry) => entry.original);
-      const pending = await listPendingToolRequests(options.getHost, sessionId);
-      return {
-        asks,
-        permissions: pending.slice(0, MAX_PENDING_INTERACTIVE).map(
-          ({ createdAt: _createdAt, expiresAt: _expiresAt, ...request }) => request,
-        ),
-      };
-    },
-    /**
-     * The single open ask of a session, or `null` when none or several are
-     * open: an answer that cannot be attributed to exactly one question must
-     * fail closed rather than guess.
-     */
-    openAsk(sessionId: string) {
-      const open = agentHost.pendingInputRequests(sessionId);
-      if (open.length !== 1) return null;
-      const [entry] = open;
-      return {
-        inputId: entry.input.id,
-        turnId: entry.input.turnId,
-        requestId: entry.original.requestId,
-        toolCallId: entry.original.toolCallId,
-        questions: entry.original.questions,
-      };
-    },
-    /** Resolve one open ask through the Host-owned input path. */
-    async resolveOpenAsk(input: { sessionId: string; inputId: string; answers: Array<string[] | null> }) {
-      return forIpc(() => agentHost.respondInput(DESKTOP_PRINCIPAL, {
-        inputId: input.inputId,
-        answers: input.answers,
-        context: { requestId: `live-voice:${input.sessionId}` },
-      }));
-    },
-    /** Resolve a Composer ask card through the Host-owned input path. */
-    async resolveAskByRequestId(resolution: AskToolResolution): Promise<{ ok: boolean } | null> {
-      const sessionId = String(resolution?.sessionId ?? "").trim();
-      const requestId = String(resolution?.requestId ?? "").trim();
-      if (!sessionId || !requestId) return null;
-      const entry = agentHost.pendingInputRequests(sessionId)
-        .find((candidate) => candidate.original.requestId === requestId);
-      if (!entry) return null;
-      await forIpc(() => agentHost.respondInput(DESKTOP_PRINCIPAL, {
-        inputId: entry.input.id,
-        answers: resolution.answers,
-        context: { requestId },
-      }));
-      return { ok: true };
-    },
-    lookupWorkAdmission(request: {
-      sessionId: string;
-      idempotencyKey: string;
-      userMessageId: string;
-      voiceOrigin: import("@pi-desktop/shared").VoiceOrigin;
-    }) {
-      return agentHost.lookupTurnByIdempotency(DESKTOP_PRINCIPAL, request);
-    },
     queue,
     async steerWorkSession(input: { sessionId: string; expectedTurnId: string; content: string; userMessageId: string; voiceOrigin: import("@pi-desktop/shared").VoiceOrigin }): Promise<boolean> {
       const result = await options.invoke(options.channels.agentSteer, [{

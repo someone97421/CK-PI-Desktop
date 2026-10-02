@@ -447,7 +447,9 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
       normalizeProjectPath(projectPath) ?? "<temporary>",
     latestSessionInScope: (sessions, projectPath, sessionMeta) =>
       sessions
-        .filter((session) => sessionMatchesProject(session, projectPath))
+        // Empty failed runs still belong to their task; New Task must never
+        // turn one into an ordinary conversation hidden by that ownership.
+        .filter((session) => session.scheduledRun !== true && sessionMatchesProject(session, projectPath))
         .sort((a, b) => {
           const aUpdated = Date.parse(a.updatedAt);
           const bUpdated = Date.parse(b.updatedAt);

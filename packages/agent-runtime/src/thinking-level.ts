@@ -18,8 +18,9 @@ export type ThinkingCapabilitySet = {
 };
 
 /**
- * Serializable projection of the account's effective Pi chat model.
- * Legacy source tags remain readable; no legacy catalog is consulted.
+ * Serializable effective model config. Desktop built-ins use models.dev metadata;
+ * custom accounts use their saved bindings, while Pi remains the wire runtime.
+ * Legacy Pi source tags remain readable.
  */
 export type ModelConfig = {
   source: "pi" | "models.dev" | "generic";

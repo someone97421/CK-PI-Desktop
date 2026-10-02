@@ -499,9 +499,13 @@ export function createSidecarRuntime({
     await modelsDevCatalog.ensureLoaded();
     modelsDevCatalog.configureAccount(provider);
     let catalogModelConfig: Parameters<typeof modelConfigWithBinding>[0];
+    let baseUrl = provider.baseUrl;
+    let apiStyle = provider.apiStyle;
     if (isVendorAccount) {
       const vendorBinding = await vendorOAuth.bindingFor(provider.id, modelId);
       if (!vendorBinding) throw new Error(`vendor "${provider.name}" does not offer "${modelId}"`);
+      baseUrl = vendorBinding.baseUrl ?? baseUrl;
+      apiStyle = vendorBinding.apiStyle ?? apiStyle;
       catalogModelConfig =
         vendorBinding.modelConfig ?? catalogModelConfigFor(modelsDevCatalog, {
           providerId: provider.id,
@@ -520,7 +524,7 @@ export function createSidecarRuntime({
       });
     }
     const { modelConfig, capabilities } = effectiveSubagentModelConfig(
-      provider,
+      { ...provider, baseUrl, apiStyle },
       modelId,
       catalogModelConfig,
     );
@@ -528,11 +532,11 @@ export function createSidecarRuntime({
     return {
       id: provider.id,
       name: provider.name,
-      ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      ...(baseUrl ? { baseUrl } : {}),
       modelId,
       apiKey,
       ...(provider.authKind ? { authKind: provider.authKind } : {}),
-      ...(provider.apiStyle ? { apiStyle: provider.apiStyle } : {}),
+      ...(apiStyle ? { apiStyle } : {}),
       supportsReasoning: capabilities.supportsReasoning,
       supportedThinkingLevels: [...capabilities.supportedThinkingLevels],
       ...(modelConfig ? { modelConfig } : {}),

@@ -132,7 +132,7 @@ test("selected thinking chips keep high contrast in both themes", () => {
   )?.[0];
   assert.ok(selectedRule);
   assert.match(selectedRule, /background: var\(--ds-accent\)/);
-  assert.match(selectedRule, /color: var\(--ds-bg-primary\)/);
+  assert.match(selectedRule, /color: var\(--ds-on-accent, var\(--ds-bg-primary\)\)/);
 });
 
 test("thinking levels use a compact accessible grouped control", () => {
@@ -223,14 +223,12 @@ test("a model the catalog does not describe still reports its binding overrides"
     ),
   );
   for (const block of [providerBlock, sessionBlock]) {
-    assert.doesNotMatch(block, /modelConfigWithBinding\(/);
+    assert.match(block, /effectiveConfigWithBinding\(/);
     assert.match(block, /catalogModelConfigFor\(modelsDevCatalog/);
     assert.match(block, /providerId: provider.id/);
   }
-  assert.doesNotMatch(
-    providerCatalogSource,
-    /const modelConfig = catalogModelConfig\s*\n\s*\? modelConfigWithBinding/,
-  );
+  assert.match(providerCatalogSource, /resolveBindingLimits\(catalogConfig, binding\)/);
+  assert.match(providerCatalogSource, /const effectiveConfigWithBinding[\s\S]*?resolveBindingLimits\(config, binding\)[\s\S]*?modelConfigWithBinding\(limits.catalogConfig, limits.binding\)/);
 });
 
 test("the advanced body is a compact sheet without helper paragraphs", () => {

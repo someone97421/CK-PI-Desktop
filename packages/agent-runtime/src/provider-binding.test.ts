@@ -869,6 +869,48 @@ describe("buildProviderModel model-level wire API", () => {
     expect(model.api).toBe("openai-completions");
   });
 
+  it("does not overwrite OpenAI completions with foreign catalog APIs such as Google or Anthropic (issue #1310)", () => {
+    const geminiRelay = buildProviderModel({
+      ...keyedProvider,
+      id: "cliproxy",
+      name: "CliProxy",
+      baseUrl: "http://127.0.0.1:8317/v1",
+      modelId: "gemini-3.8-flash",
+      apiStyle: "chat_completions",
+      modelConfig: {
+        source: "models.dev",
+        name: "Gemini 3.8 Flash",
+        baseUrl: "http://127.0.0.1:8317/v1",
+        api: "google-generative-ai",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 1048576,
+        maxTokens: 65536,
+      },
+    }) as any;
+    expect(geminiRelay.api).toBe("openai-completions");
+
+    const claudeRelay = buildProviderModel({
+      ...keyedProvider,
+      id: "openai-proxy",
+      name: "OpenAI Proxy",
+      baseUrl: "http://127.0.0.1:8317/v1",
+      modelId: "claude-sonnet-4-6",
+      apiStyle: "chat_completions",
+      modelConfig: {
+        source: "models.dev",
+        name: "Claude Sonnet 4.6",
+        baseUrl: "http://127.0.0.1:8317/v1",
+        api: "anthropic-messages",
+        reasoning: true,
+        input: ["text", "image"],
+        contextWindow: 200000,
+        maxTokens: 64000,
+      },
+    }) as any;
+    expect(claudeRelay.api).toBe("openai-completions");
+  });
+
   it("posts responses models to the responses endpoint", async () => {
     const provider = responsesCatalogProvider;
     const model = buildProviderModel(provider);

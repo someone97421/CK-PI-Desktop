@@ -105,6 +105,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     sessionCapabilityContext,
     enrichSession,
     acquireSessionOperation,
+    sessionConfiguration,
     stripWinLongPrefix,
     normalizeSettings,
     validateSettingsWrite,
@@ -269,6 +270,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     sessionCapabilityContext,
     enrichSession,
     acquireSessionOperation,
+    sessionConfiguration,
     stripWinLongPrefix,
   });
   registerSettingsIpc({
@@ -349,6 +351,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     registrar,
     getHost,
     scheduledRunsBySession,
+    onSessionsChanged: () => sendToRenderer(IPC.event.sessionsChanged, { reason: "scheduled.delete" }),
     isQuitting: dependencies.isQuitting,
     invoke: async (channel, args) => {
       const handler = ipcHandlers.get(channel);
@@ -420,6 +423,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     claimedExecutionSessions,
     resolveAgentRuntimeLaunch,
     acquireSessionOperation,
+    sessionConfiguration,
     finishTurn,
     lockAbortReason,
     finishApprovedExecution,

@@ -90,6 +90,7 @@ export type StartupDependencies = {
    * be derived from the startup state alone.
    */
   isSessionBusy: (sessionId: string) => boolean;
+  prepareSessionForTurn?: (sessionId: string) => Promise<void>;
   getHost: () => HostProcess | null;
   getMainWindow: () => BrowserWindow | null;
   sendToRenderer: (channel: string, payload: unknown) => void;
@@ -160,6 +161,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       modelsDevCatalog,
       plugins,
       isSessionBusy,
+      prepareSessionForTurn,
       getHost,
       getMainWindow,
       sendToRenderer,
@@ -274,6 +276,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       channels: IPC.invoke,
       getHost,
       isSessionBusy,
+      prepareSessionForTurn,
       steeringJournal: deps.queuedSteeringJournal,
       onQueueChange: (event) => {
         sendToRenderer(IPC.event.agentQueueChanged, event);
@@ -330,11 +333,11 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     plugins.setServices({
       desktopControl: control,
       // The live session state a subscription starts from. Read through the
-      // Agent Host's own resync snapshot so pending approvals, pending asks,
-      // streaming items and the queue all come from the one owner.
+      // Agent Host's desktop snapshot: tool approvals follow permissions.pending
+      // rather than the separate RACP response deadline.
       desktopSessionSnapshot: async (sessionId: string) => {
         if (!state.agentHostBridge) throw Object.assign(new Error("agent host unavailable"), { code: "UNSUPPORTED" });
-        return state.agentHostBridge.agentHost.snapshot(sessionId);
+        return state.agentHostBridge.agentHost.snapshotForDesktop(sessionId);
       },
     });
     // Load the bundled model snapshot at startup without blocking the first

@@ -9,6 +9,7 @@ export type ScheduledIpcDependencies = {
   scheduledRunsBySession: Map<string, string>;
   invoke: (channel: string, args: readonly unknown[]) => Promise<unknown>;
   isQuitting: () => boolean;
+  onSessionsChanged: () => void;
 };
 
 export function registerScheduledIpc({
@@ -17,12 +18,29 @@ export function registerScheduledIpc({
   scheduledRunsBySession,
   invoke,
   isQuitting,
+  onSessionsChanged,
 }: ScheduledIpcDependencies): void {
-  registrar.handle(IPC.invoke.scheduledListRuns, async () => {
-    const host = getHost();
-    if (!host) throw new Error("host unavailable");
-    return host.call("scheduled.listRuns", { limit: 100 });
-  });
+  // The Scheduled workspace renders one task's own history and one newest run
+  // per task for the column, so the caller may scope or summarize the read. The
+  // host owns the 1..200 bound and the default, so the request only forwards a
+  // validated shape.
+  registrar.handle(
+    IPC.invoke.scheduledListRuns,
+    async (options: { taskId?: unknown; limit?: unknown; latestPerTask?: unknown } = {}) => {
+      const host = getHost();
+      if (!host) throw new Error("host unavailable");
+      const taskId = typeof options?.taskId === "string" ? options.taskId.trim() : "";
+      const limit = options?.limit === undefined ? undefined : options.limit;
+      if (limit !== undefined && (typeof limit !== "number" || !Number.isFinite(limit))) {
+        throw new Error("invalid scheduled run limit");
+      }
+      return host.call("scheduled.listRuns", {
+        ...(options?.latestPerTask === true ? { latestPerTask: true } : {}),
+        ...(taskId ? { taskId } : {}),
+        ...(limit === undefined ? {} : { limit: Math.trunc(limit) }),
+      });
+    },
+  );
   registrar.handle(IPC.invoke.scheduledExecute, async (id: string, automatic = false) => {
     if (typeof id !== "string" || typeof automatic !== "boolean") throw new Error("invalid task request");
     const host = getHost();
@@ -53,7 +71,10 @@ export function registerScheduledIpc({
   });
   handle(IPC.invoke.scheduledDelete, async (host: HostProcess | null, id: string) => {
     if (!host) throw new Error("host unavailable");
-    return host.call("scheduled.delete", { id });
+    const result = await host.call("scheduled.delete", { id });
+    // Deleting task_runs releases their transcripts into ordinary lists.
+    onSessionsChanged();
+    return result;
   });
   handle(IPC.invoke.scheduledRun, async (host: HostProcess | null, id: string) => {
     if (!host) throw new Error("host unavailable");

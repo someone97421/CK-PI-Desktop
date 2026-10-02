@@ -1,3 +1,4 @@
+import "./helpers/provider-ipc-test-setup.mjs";
 /** Custom providers discover IDs without automatic catalog matching. */
 import assert from "node:assert/strict";
 import { register } from "node:module";
@@ -155,11 +156,11 @@ test("named providers retain published metadata in discovery and typed lookup", 
   const row = rowOf({ id: "named", vendorKey: "zhipuai", baseUrl: "https://open.bigmodel.cn/api/v1", apiStyle: "responses" });
   const { result, lookup } = await handlersFor(t, row, { models: [{ slug: "glm-5.3" }] });
   const [model] = result.models;
-  assert.equal(model.catalogSource, "pi");
+  assert.equal(model.catalogSource, "models.dev");
   assert.equal(model.contextWindow, 1_000_000);
   assert.equal(model.maxTokens, 131_072);
   assert.ok(model.capabilities.includes("reasoning"));
   const typed = await lookup({ modelId: model.modelId, vendorKey: row.vendorKey, providerId: row.id, baseUrl: row.baseUrl });
-  assert.equal(typed.info.catalogSource, "pi");
+  assert.equal(typed.info.catalogSource, "models.dev");
   assert.equal(typed.info.contextWindow, model.contextWindow);
 });

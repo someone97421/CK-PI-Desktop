@@ -28,6 +28,7 @@ import type { PluginRuntime } from "../plugin-runtime";
 import { readSessionCollaboration } from "../services/session-collaboration";
 import { searchSessionsAcrossSources } from "../services/session-search";
 import type { IpcRegistrar } from "./types";
+import type { SessionConfigurationQueue } from "../runtime/session-configuration";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 
 type RuntimeSession = {
@@ -99,6 +100,7 @@ export type SessionIpcDependencies = {
   plugins: Pick<PluginRuntime, "broadcastEvent" | "publishDesktopEvent">;
   sessionCapabilityContext: () => Promise<{ providers: any; defaults: any }>;
   enrichSession: (session: any, providers: any, defaults: any) => any;
+  sessionConfiguration?: SessionConfigurationQueue;
   acquireSessionOperation: (sessionId: string) => Promise<() => void>;
   stripWinLongPrefix: (path: string) => string;
 };
@@ -117,8 +119,13 @@ export function registerSessionIpc({
   sessionCapabilityContext,
   enrichSession,
   acquireSessionOperation,
+  sessionConfiguration,
   stripWinLongPrefix,
 }: SessionIpcDependencies): void {
+  const enriched = (session: any, providers: any, defaults: any) => {
+    const value = enrichSession(session, providers, defaults);
+    return sessionConfiguration?.decorate(value) ?? value;
+  };
   let host: HostProcess | null = null;
   let sidecar: AgentSidecar | null = null;
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
@@ -159,7 +166,7 @@ export function registerSessionIpc({
       ...result,
       sessions: [
         ...result.sessions.map((session) => ({
-          ...enrichSession(session, providers, defaults),
+          ...enriched(session, providers, defaults),
           source: "desktop",
         })),
         ...native.sessions,
@@ -247,7 +254,7 @@ export function registerSessionIpc({
       });
       return {
         ...result,
-        session: enrichSession(result.session, providers, defaults),
+        session: enriched(result.session, providers, defaults),
       };
     },
   );
@@ -291,7 +298,7 @@ export function registerSessionIpc({
         sessionCapabilityContext(),
       ]);
       return result.session
-        ? { ...result, session: enrichSession(result.session, providers, defaults) }
+        ? { ...result, session: enriched(result.session, providers, defaults) }
         : result;
     },
   );
@@ -326,7 +333,7 @@ export function registerSessionIpc({
         errorCode: ErrorCodes.NOT_FOUND,
       });
     }
-    return { ...result, session: enrichSession(result.session, providers, defaults) };
+    return { ...result, session: enriched(result.session, providers, defaults) };
   });
   handle(IPC.invoke.sessionDelete, async (id: string) => {
     if (id.startsWith("native-pi:")) {
@@ -348,6 +355,7 @@ export function registerSessionIpc({
       await persistenceOutbox.dropSession(id);
       await subagentSnapshots.deleteSession(id);
       sessionProjects.delete(id);
+      await sessionConfiguration?.clear(id);
       logger.app("session", "info", "session deleted", { sessionId: id });
       return res;
     } finally {
@@ -423,7 +431,7 @@ export function registerSessionIpc({
       });
       return {
         ...result,
-        session: enrichSession(result.session, providers, defaults),
+        session: enriched(result.session, providers, defaults),
       };
       } finally {
         releaseSessionOperation();
@@ -549,6 +557,7 @@ export function registerSessionIpc({
       id: string,
       config: {
         mode: Mode;
+        deferUntilIdle?: boolean;
         providerId?: string;
         modelId?: string;
         thinkingLevel?: SessionThinkingLevel;
@@ -557,32 +566,30 @@ export function registerSessionIpc({
     ) => {
       rejectNativeMutation(id, "configuration");
       if (!host) throw new Error("host unavailable");
-      const result = await host.call<{ session?: RuntimeSession | null }>(
-        "session.configure",
-        { id, ...config },
-      );
-      if (!result.session) return result;
-      const { providers, defaults } = await sessionCapabilityContext();
-      const session = enrichSession(result.session, providers, defaults);
-      if (
-        config.providerId !== undefined ||
-        config.modelId !== undefined ||
-        config.thinkingLevel !== undefined
-      ) {
-        const modelKey =
-          session.providerId && session.modelId
-            ? `${session.providerId}/${session.modelId}`
-            : null;
-        plugins.broadcastEvent("session:modelChanged", [
-          {
-            sessionId: id,
-            modelKey,
-            thinkingLevel: session.thinkingLevel,
-          },
-        ]);
+      const release = await acquireSessionOperation(id);
+      try {
+        // Resolve enrichment first: a catalog failure must not obscure a
+        // successfully accepted draft or an already committed host mutation.
+        const { providers, defaults } = await sessionCapabilityContext();
+        const result = sessionConfiguration
+          ? await sessionConfiguration.configure(id, config)
+          : await host.call<{ session?: RuntimeSession | null }>("session.configure", { id, ...config });
+        if (!result.session) return result;
+        const session = enriched(result.session, providers, defaults);
+        if (!sessionConfiguration) {
+          if (config.providerId !== undefined || config.modelId !== undefined || config.thinkingLevel !== undefined) {
+            plugins.broadcastEvent("session:modelChanged", [{
+              sessionId: id,
+              modelKey: session.providerId && session.modelId ? `${session.providerId}/${session.modelId}` : null,
+              thinkingLevel: session.thinkingLevel,
+            }]);
+          }
+          plugins.publishDesktopEvent({ sessionId: id, kind: "session.changed", payload: { reason: "configured" } });
+        }
+        return { ...result, session };
+      } finally {
+        release();
       }
-      plugins.publishDesktopEvent({ sessionId: id, kind: "session.changed", payload: { reason: "configured" } });
-      return { ...result, session };
     },
   );
 

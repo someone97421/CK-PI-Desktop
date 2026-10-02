@@ -119,6 +119,11 @@ pub struct SessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_user_message_at: Option<String>,
     pub created_at: String,
+    /// True while a retained scheduled-task run references this transcript.
+    /// Derived on read, with no session column: deleting the task or pruning
+    /// its last run reference releases the session into ordinary lists again.
+    #[serde(default)]
+    pub scheduled_run: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1232,7 +1237,8 @@ const SUMMARY_SELECT: &str =
                 WHERE q.session_id = s.id AND q.session_message_id IS NULL
             )),
             (SELECT json_extract(value_json, '$') FROM kv
-             WHERE ns = 'session-workspace' AND key = s.id) AS temporary_workspace_path
+             WHERE ns = 'session-workspace' AND key = s.id) AS temporary_workspace_path,
+            EXISTS (SELECT 1 FROM task_runs r WHERE r.session_id = s.id) AS scheduled_run
      FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
      WHERE s.deleted_at IS NULL";
 
@@ -1251,6 +1257,8 @@ pub(crate) fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Sess
         updated_at: ms_to_ts(row.get(9)?),
         created_at: ms_to_ts(row.get(10)?),
         last_user_message_at: row.get::<_, Option<i64>>(11)?.map(ms_to_ts),
+        // Search and listing build different column lists; use the shared alias.
+        scheduled_run: row.get("scheduled_run")?,
     })
 }
 
@@ -1460,6 +1468,8 @@ pub fn create_session_with_options(
         updated_at: ms_to_ts(now),
         last_user_message_at: None,
         created_at: ms_to_ts(now),
+        // The run row that references this transcript is written after creation.
+        scheduled_run: false,
     })
 }
 
@@ -2002,6 +2012,8 @@ pub fn fork_session_through(
         last_user_message_at: records.iter().rev().find(|record| record.role == "user")
             .map(|record| record.created_at.clone()),
         created_at,
+        // A user-created fork has no scheduled-task run reference of its own.
+        scheduled_run: false,
     };
     let messages = records.into_iter().map(record_to_ui).collect();
     Ok(ForkSessionResult::Created(Box::new(SessionDetail {
@@ -4790,6 +4802,7 @@ mod tests {
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-02T00:00:00Z".into(),
             last_user_message_at: None,
+            scheduled_run: false,
         };
         let messages = vec![user_msg("m1", "hello", "2025-01-01T00:00:01Z")];
 
@@ -4842,6 +4855,7 @@ mod tests {
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),
             last_user_message_at: None,
+            scheduled_run: false,
         };
         assert!(import_session(&db, &base, &[]).unwrap());
 
@@ -5675,6 +5689,7 @@ mod tests {
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),
             last_user_message_at: None,
+            scheduled_run: false,
         };
         let mut message = user_msg("m1", "prompt", "2025-01-01T00:00:01Z");
         message.role = "assistant".into();
@@ -7788,5 +7803,76 @@ mod tests {
         assert_eq!(summary.project_path, Some("/tmp/project".into()));
 
         assert!(get_session_summary(&db, "nonexistent-id").unwrap().is_none());
+    }
+
+    #[test]
+    fn scheduled_marker_preserves_workspace_and_user_time_across_read_paths() {
+        let db = test_db();
+        let directory = tempfile::tempdir().unwrap();
+        let session = create_session_with_options(
+            &db,
+            SessionCreateOptions {
+                title: Some("Scheduled workspace probe".into()),
+                temporary_workspace_path: Some(directory.path().to_string_lossy().into_owned()),
+                ..SessionCreateOptions::default()
+            },
+        )
+        .unwrap();
+        let sent_at = "2026-09-30T01:02:03Z";
+        append_message(
+            &db,
+            &session.id,
+            &user_msg("probe", "Read this workspace", sent_at),
+            None,
+        )
+        .unwrap();
+        let task = crate::scheduled::create_task(
+            &db,
+            &json!({"prompt":"probe", "cadence":"manual"}),
+        )
+        .unwrap();
+        let run_id = crate::scheduled::begin_run(&db, &task.id, Some(&session.id)).unwrap();
+        crate::scheduled::finish_run(&db, &run_id, "completed", None).unwrap();
+
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        let listed = list_sessions(&db)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.id == session.id)
+            .unwrap();
+        let page = crate::session_search::search(&db, "Scheduled workspace probe", 0).unwrap();
+        let hit = &page.hits[0];
+        for summary in [&detail.summary, &listed, &hit.session] {
+            assert!(summary.scheduled_run);
+            assert_eq!(summary.temporary_workspace_path, session.temporary_workspace_path);
+            assert_eq!(
+                summary.last_user_message_at.as_deref().map(ts_to_ms),
+                Some(ts_to_ms(sent_at))
+            );
+        }
+        assert!(hit.metadata_match);
+        assert_eq!(hit.message_count, 0);
+        assert!(hit.project_name.is_none());
+
+        let ForkSessionResult::Created(fork) =
+            fork_session_through(&db, &session.id, None, None).unwrap()
+        else {
+            panic!("settled transcript can be forked");
+        };
+        assert!(!fork.summary.scheduled_run);
+        assert_eq!(fork.summary.temporary_workspace_path, session.temporary_workspace_path);
+        assert_eq!(
+            fork.summary.last_user_message_at.as_deref().map(ts_to_ms),
+            Some(ts_to_ms(sent_at))
+        );
+        assert!(!get_session_summary(&db, &fork.summary.id)
+            .unwrap()
+            .unwrap()
+            .scheduled_run);
+
+        let mut legacy = serde_json::to_value(&session).unwrap();
+        legacy.as_object_mut().unwrap().remove("scheduledRun");
+        let legacy: SessionSummary = serde_json::from_value(legacy).unwrap();
+        assert!(!legacy.scheduled_run, "older summaries remain compatible");
     }
 }

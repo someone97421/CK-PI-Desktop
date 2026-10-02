@@ -73,6 +73,8 @@ function session(s) {
       "projectPath",
       "mode",
       "permissionMode",
+      "pendingConfiguration",
+      "pendingConfigurationError",
       "providerId",
       "modelId",
       "thinkingLevel",
@@ -145,7 +147,7 @@ function createHostAdapter(pi) {
   const modelSettings = createModelSettings({
     listModels: () => { assertAuthorized(); return pi.models.list(); },
     getSession: (id) => rawSession(id, { limit: 1 }),
-    configureSession: (id, config) => host("session/configure", [id, config]),
+    configureSession: (id, config) => host("session/configure", [id, { ...config, deferUntilIdle: true }]),
     serializeSession: session,
   });
   // 与桌面新建会话对齐：客户端显式选择优先，否则继承桌面设置的默认

@@ -105,6 +105,10 @@
     ],
     "extraResources": [
       {
+        "from": "resources/models.dev",
+        "to": "models.dev"
+      },
+      {
         "from": "build/icon.png",
         "to": "tray-icon.png"
       },

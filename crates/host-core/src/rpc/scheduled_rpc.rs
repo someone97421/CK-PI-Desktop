@@ -253,6 +253,23 @@ fn handle_with_workspace_policy(
         }
         "scheduled.listRuns" => {
             let task_id = params.get("taskId").and_then(|v| v.as_str());
+            // A global history window can lose an idle task's newest result.
+            if params
+                .get("latestPerTask")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                if task_id.is_some() {
+                    return Err(rpc_err(
+                        1002,
+                        "latestPerTask cannot be scoped to a single task",
+                        "INVALID_PARAMS",
+                    ));
+                }
+                let runs = scheduled::latest_run_per_task(&st.db)
+                    .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+                return Ok(json!({ "runs": runs }));
+            }
             let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
             let runs = scheduled::list_runs(&st.db, task_id, limit)
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
@@ -758,5 +775,210 @@ mod tests {
             assert_eq!(error.data.unwrap()["errorCode"], "INVALID_PARAMS");
         }
         assert!(scheduled::list_tasks(&state.db).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn automation_sessions_are_marked_and_released_with_their_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = AppState::open(dir.path()).unwrap();
+        st.handshook = true;
+        let id = handle(
+            &st,
+            "scheduled.create",
+            json!({"title":"Nightly","prompt":"Summarize the dependencies",
+                   "cadence":"manual","schedule":null}),
+        )
+        .unwrap()["task"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let run = handle(&st, "scheduled.run", json!({"id":id})).unwrap();
+        let run_session = run["sessionId"].as_str().unwrap().to_string();
+        let ordinary = sessions::create_session(
+            &st.db,
+            Some("Hand written".into()),
+            Some("agent".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let flag = |session_id: &str| {
+            sessions::list_sessions(&st.db)
+                .unwrap()
+                .into_iter()
+                .find(|session| session.id == session_id)
+                .map(|session| session.scheduled_run)
+        };
+        assert_eq!(
+            flag(&run_session),
+            Some(true),
+            "a run's transcript is marked as automation output"
+        );
+        assert_eq!(
+            flag(&ordinary.id),
+            Some(false),
+            "an ordinary conversation is never marked"
+        );
+        let detail = sessions::get_session(&st.db, &run_session)
+            .unwrap()
+            .expect("the run's session exists");
+        assert!(detail.summary.scheduled_run);
+
+        let page = crate::session_search::search(&st.db, "Nightly", 0).unwrap();
+        let hit = page
+            .hits
+            .iter()
+            .find(|hit| hit.session.id == run_session)
+            .expect("search finds the run's transcript");
+        assert!(
+            hit.session.scheduled_run,
+            "search reports the same ownership as the list"
+        );
+
+        // A task with a run still in flight cannot be deleted yet.
+        let settled = handle(
+            &st,
+            "scheduled.finishRun",
+            json!({"runId": run["runId"].as_str().unwrap(), "status": "completed"}),
+        )
+        .unwrap();
+        assert_eq!(settled["ok"], json!(true));
+        handle(&st, "scheduled.delete", json!({"id":id})).unwrap();
+        assert_eq!(
+            flag(&run_session),
+            Some(false),
+            "deleting the task releases its transcripts"
+        );
+        assert!(
+            flag(&run_session).is_some(),
+            "the conversation itself survives the task deletion"
+        );
+    }
+
+    #[test]
+    fn the_task_column_asks_for_one_newest_run_per_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut st = AppState::open(dir.path()).unwrap();
+        st.handshook = true;
+        let create = |title: &str| {
+            handle(
+                &st,
+                "scheduled.create",
+                json!({ "title": title, "prompt": "Review", "cadence": "manual", "schedule": null }),
+            )
+            .unwrap()["task"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let idle = create("Idle");
+        let busy = create("Busy");
+        // The idle task ran first; afterwards the busy one produced two runs.
+        for (index, task) in [(0i64, &idle), (1, &idle), (2, &busy), (3, &busy)] {
+            let started = 1_000 + index * 100;
+            st.db
+                .conn()
+                .execute(
+                    &format!(
+                        "INSERT INTO task_runs
+                           (id, task_id, session_id, status, error_code, started_at, ended_at)
+                         VALUES ('run-{index}', '{task}', NULL, 'completed', NULL, {started}, {})",
+                        started + 500
+                    ),
+                    [],
+                )
+                .unwrap();
+        }
+
+        let scoped = handle(&st, "scheduled.listRuns", json!({ "latestPerTask": true })).unwrap();
+        let runs = scoped["runs"].as_array().unwrap();
+        assert_eq!(runs.len(), 2, "one run per task");
+        assert_eq!(runs[0]["id"], "run-3");
+        assert_eq!(
+            runs[1]["id"], "run-1",
+            "the idle task reports its own newest run"
+        );
+
+        let rejected = handle(
+            &st,
+            "scheduled.listRuns",
+            json!({ "latestPerTask": true, "taskId": idle }),
+        )
+        .unwrap_err();
+        assert_eq!(rejected.data.unwrap()["errorCode"], "INVALID_PARAMS");
+    }
+
+    #[test]
+    fn supported_cadences_always_open_fresh_sessions_without_deferred_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = AppState::open(dir.path()).unwrap();
+        for cadence in ["manual", "hourly", "daily", "weekly"] {
+            let schedule = if cadence == "manual" {
+                Value::Null
+            } else {
+                json!({"hour":9,"minute":15,"weekday":0})
+            };
+            let task = handle(
+                &st,
+                "scheduled.create",
+                json!({"title":"Independent", "prompt":"Summarize", "cadence":cadence,
+                       "schedule":schedule}),
+            )
+            .unwrap()["task"]
+                .clone();
+            let id = task["id"].as_str().unwrap();
+            assert_eq!(task["cadence"], cadence);
+            assert!(task.get("sessionMode").is_none());
+            let mut previous_session = None;
+            for _ in 0..2 {
+                let automatic = cadence != "manual";
+                if automatic {
+                    st.db.conn().execute(
+                        "UPDATE scheduled_tasks SET config_json = json_set(config_json, '$.nextRunAt', ?1) WHERE id = ?2",
+                        rusqlite::params![crate::db::now_ms(), id],
+                    ).unwrap();
+                }
+                let run = handle(
+                    &st,
+                    "scheduled.run",
+                    json!({"id":id,"automatic":automatic}),
+                )
+                .unwrap();
+                let session_id = run["sessionId"].as_str().unwrap().to_string();
+                assert_ne!(previous_session.as_ref(), Some(&session_id));
+                let summary = sessions::get_session_summary(&st.db, &session_id)
+                    .unwrap()
+                    .unwrap();
+                assert!(summary.scheduled_run);
+                assert!(summary.project_path.is_none());
+                assert!(summary.temporary_workspace_path.is_none());
+                assert!(summary.last_user_message_at.is_none());
+                if automatic {
+                    assert_eq!(summary.permission_mode, "ask");
+                }
+                handle(
+                    &st,
+                    "scheduled.finishRun",
+                    json!({"runId":run["runId"],"status":"completed"}),
+                )
+                .unwrap();
+                previous_session = Some(session_id);
+            }
+            let raw: String = st
+                .db
+                .conn()
+                .query_row(
+                    "SELECT config_json FROM scheduled_tasks WHERE id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let config: Value = serde_json::from_str(&raw).unwrap();
+            assert!(config.get("sessionMode").is_none());
+            assert!(config.get("intervalMinutes").is_none());
+            assert!(config["schedule"].get("intervalMinutes").is_none());
+        }
     }
 }

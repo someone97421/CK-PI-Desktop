@@ -147,11 +147,20 @@ export function createInteractionSlice({
     },
 
     resolveAsk: async (sessionId, resolution: AskToolResolution) => {
+      const key = JSON.stringify([sessionId, resolution.requestId]);
+      const answers = JSON.stringify(resolution.answers);
+      const activeRequest = interactionRuntime.askResolutionRequests.get(key);
+      if (activeRequest) {
+        if (activeRequest.answers !== answers) {
+          throw new Error("another answer is already being submitted for this question");
+        }
+        return activeRequest.promise;
+      }
       const ask = headAsk(get().pendingAsks, sessionId);
       if (!ask || ask.requestId !== resolution.requestId) return;
-      try {
+      const request = (async () => {
         await api.resolveAskTool(resolution);
-      } finally {
+        // Failed submissions keep the same card mounted, including its answers.
         set((state) => ({
           pendingAsks: removeAsk(
             state.pendingAsks,
@@ -159,6 +168,15 @@ export function createInteractionSlice({
             resolution.requestId,
           ),
         }));
+      })();
+      const pending = { answers, promise: request };
+      interactionRuntime.askResolutionRequests.set(key, pending);
+      try {
+        await request;
+      } finally {
+        if (interactionRuntime.askResolutionRequests.get(key) === pending) {
+          interactionRuntime.askResolutionRequests.delete(key);
+        }
       }
     },
 

@@ -20,7 +20,7 @@ import { mergeSnapshot, assertQueueDraftAvailable } from "./recovery.js";
 import { createMutationRecovery } from "./mutation-recovery.js";
 import { buildProcessTimeline, processSummary } from "./process.js";
 import { createSubagentObserver } from "./subagents.js";
-import { openModelSettings } from "./model-settings.js";
+import { openModelSettings, pendingConfigurationNotice } from "./model-settings.js";
 
 const subagentObserver = createSubagentObserver();
 
@@ -265,6 +265,7 @@ const modelChip = button("模型", {
 });
 const moreButton = iconButton("plus", { title: "更多操作", className: "composer-more", onClick: openComposerMore });
 const modelLabels = new Map();
+let configurationReceipt = null;
 function currentModelLabel() {
   const key = snapshot?.session?.modelKey;
   return (key && modelLabels.get(key)) || key || "";
@@ -277,6 +278,16 @@ function updateComposerState() {
   modelChip.querySelector(".btn-label").textContent = text;
   modelChip.title = label ? text : "模型设置";
   modelChip.setAttribute("aria-label", modelChip.title);
+  if (configurationReceipt && notice.textContent === configurationReceipt.text) {
+    if (configurationReceipt.sessionId !== current) {
+      notice.textContent = "";
+      configurationReceipt = null;
+    } else if (snapshot?.session) {
+      const text = pendingConfigurationNotice(snapshot.session) || "会话设置已生效";
+      notice.textContent = text;
+      configurationReceipt.text = text;
+    }
+  }
 }
 function openComposerMore() {
   if (!current) return;
@@ -804,6 +815,11 @@ async function drawChat() {
         onClick: () => transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" }),
       })] : []),
       iconButton("more", { title: "会话操作", onClick: openChatMore })),
+    ...(snapshot?.session?.pendingConfiguration ? [el("p", {
+      className: "connection-banner",
+      text: pendingConfigurationNotice(snapshot.session),
+      attrs: { role: "status" },
+    })] : []),
     ...(sidechatLink ? [el("div", { className: "remote-sidechat-bar" },
       button(`返回主对话${sidechatLink.parentTitle ? `：${sidechatLink.parentTitle}` : ""}`, {
         iconName: "back", preserveLabel: true, className: "remote-sidechat-back",
@@ -1191,11 +1207,20 @@ function openSessionSettings() {
       for (const model of models) modelLabels.set(model.key, model.alias || model.label);
       updateComposerState();
     },
-    onSaved: (session) => {
+    onSaved: (session, { queued } = {}) => {
       // 使已经在途的旧快照失效，当前显示以配置回执为准。
       refreshVersion++;
-      if (snapshot) snapshot.session = { ...snapshot.session, ...session };
+      if (snapshot) {
+        // 回执中的缺省表示队列已清空，不能把旧的排队/错误字段合并回来。
+        const { pendingConfiguration, pendingConfigurationError, ...previous } = snapshot.session || {};
+        snapshot.session = { ...previous, ...session };
+      }
+      notice.textContent = queued
+        ? pendingConfigurationNotice(session)
+        : "会话设置已生效";
+      configurationReceipt = { sessionId, text: notice.textContent };
       updateComposerState();
+      void action(drawChat);
       scheduleRefresh();
     },
   });

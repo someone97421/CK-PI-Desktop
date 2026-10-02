@@ -35,6 +35,9 @@ export type PendingToolRequest = ToolPermissionRequest & {
   expiresAt?: string;
 };
 
+/** Desktop controls follow the Host's pending set, which may have no deadline. */
+export type HostPendingToolApproval = Omit<RacpApprovalRequest, "expiresAt"> & { expiresAt?: string };
+
 type PendingApproval = {
   request: RacpApprovalRequest;
   expiresAtMs: number;
@@ -51,6 +54,9 @@ const MAX_REMEMBERED_RESULTS = 1000;
 export class ApprovalBroker {
   private readonly pending = new Map<string, PendingApproval>();
   private readonly results = new Map<string, RacpApprovalResult>();
+  private readonly hostPending = new Map<string, HostPendingToolApproval>();
+  private readonly hostPendingReads = new Map<string, number>();
+  private readonly cancellations = new Map<string, number>();
 
   constructor(
     private readonly port: ApprovalPort,
@@ -67,12 +73,23 @@ export class ApprovalBroker {
       ? Date.parse(context.expiresAt)
       : this.clock.now() + context.lifetimeMs;
     const approval: RacpApprovalRequest = {
+      ...this.toolApproval(request, context),
+      expiresAt: new Date(expiresAtMs).toISOString(),
+    };
+    this.pending.set(approval.id, { request: approval, expiresAtMs });
+    return approval;
+  }
+
+  private toolApproval(
+    request: ToolPermissionRequest,
+    context: { turnId: string; revision: number; allowSession: boolean },
+  ): Omit<RacpApprovalRequest, "expiresAt"> {
+    return {
       id: request.requestId,
       sessionId: request.sessionId,
       turnId: context.turnId,
       kind: "tool",
       summary: `${request.toolName}: ${request.reason}`,
-      expiresAt: new Date(expiresAtMs).toISOString(),
       revision: context.revision,
       toolName: request.toolName,
       risk: request.risk,
@@ -83,8 +100,6 @@ export class ApprovalBroker {
         ? [...RACP_TOOL_APPROVAL_DECISIONS]
         : RACP_TOOL_APPROVAL_DECISIONS.filter((decision) => decision !== "allow-session"),
     };
-    this.pending.set(approval.id, { request: approval, expiresAtMs });
-    return approval;
   }
 
   /** A Plan or Goal proposal awaiting approval: a session-level transition. */
@@ -120,12 +135,61 @@ export class ApprovalBroker {
     context: { turnId: string; revision: number; lifetimeMs: number; allowSession: boolean },
   ): Promise<RacpApprovalRequest[]> {
     const open = await this.port.listPendingTools(sessionId);
-    return open.map((request) =>
+    return open.filter((request) => request.sessionId === sessionId && !this.results.has(request.requestId)).map((request) =>
       this.fromToolPermission(
         request,
         request.expiresAt ? { ...context, expiresAt: request.expiresAt } : context,
       ),
     );
+  }
+
+  /**
+   * Desktop/plugin controls resolve through permissions.resolve, whose lifetime
+   * is owned by the Host. Re-read it on every refresh instead of extending or
+   * re-issuing a RACP approval lease. An expired RACP lease stays expired.
+   */
+  async listHostPendingTools(
+    sessionId: string,
+    context: { turnId: string; revision: number; allowSession: boolean },
+  ): Promise<HostPendingToolApproval[]> {
+    const generation = this.cancellations.get(sessionId);
+    const read = (this.hostPendingReads.get(sessionId) ?? 0) + 1;
+    this.hostPendingReads.set(sessionId, read);
+    const open = await this.port.listPendingTools(sessionId);
+    if (generation !== this.cancellations.get(sessionId)) return [];
+    if (read !== this.hostPendingReads.get(sessionId)) {
+      return [...this.hostPending.values()].filter((request) => request.sessionId === sessionId);
+    }
+    for (const [id, request] of this.hostPending) {
+      if (request.sessionId === sessionId) this.hostPending.delete(id);
+    }
+    for (const request of open) {
+      if (request.sessionId !== sessionId) continue;
+      const result = this.results.get(request.requestId);
+      if (result && result.status !== "expired") continue;
+      // A real Host deadline still applies; a missing one must not be invented.
+      if (request.expiresAt && !(Date.parse(request.expiresAt) > this.clock.now())) continue;
+      const known = this.pending.get(request.requestId)?.request;
+      const approval = {
+        ...this.toolApproval(request, {
+          ...context,
+          turnId: known?.turnId ?? context.turnId,
+          revision: known?.revision ?? context.revision,
+        }),
+        ...(request.expiresAt ? { expiresAt: request.expiresAt } : {}),
+      };
+      this.hostPending.set(request.requestId, approval);
+    }
+    return [...this.hostPending.values()].filter((request) => request.sessionId === sessionId);
+  }
+
+  /** Metadata for a desktop decision, including a request recovered by snapshot. */
+  getForDesktop(approvalId: string): HostPendingToolApproval | undefined {
+    return this.hostPending.get(approvalId) ?? this.get(approvalId);
+  }
+
+  hasHostPendingTools(sessionId: string): boolean {
+    return [...this.hostPending.values()].some((request) => request.sessionId === sessionId);
   }
 
   list(sessionId?: string): RacpApprovalRequest[] {
@@ -214,6 +278,7 @@ export class ApprovalBroker {
     },
   ): RacpApprovalResult {
     this.pending.delete(approvalId);
+    this.hostPending.delete(approvalId);
     const result: RacpApprovalResult = {
       approvalId,
       status: outcome.status,
@@ -233,10 +298,13 @@ export class ApprovalBroker {
 
   /** Close every open approval of a session, e.g. when its turn ended. */
   cancelForSession(sessionId: string, revision: number): RacpApprovalResult[] {
+    this.cancellations.set(sessionId, (this.cancellations.get(sessionId) ?? 0) + 1);
     const closed: RacpApprovalResult[] = [];
-    for (const entry of [...this.pending.values()]) {
-      if (entry.request.sessionId !== sessionId) continue;
-      closed.push(this.settle(entry.request.id, { status: "canceled", revision }));
+    const requests = new Map<string, HostPendingToolApproval>([...this.pending.values()].map((entry) => [entry.request.id, entry.request]));
+    for (const request of this.hostPending.values()) requests.set(request.id, request);
+    for (const request of requests.values()) {
+      if (request.sessionId !== sessionId) continue;
+      closed.push(this.settle(request.id, { status: "canceled", revision }));
     }
     return closed;
   }

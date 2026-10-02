@@ -5,12 +5,21 @@ const THINKING_LABELS = { off: "关闭", minimal: "最低", low: "低", medium: 
 const MODES = { agent: "执行", plan: "计划", goal: "目标" };
 const PERMISSIONS = { inherit: "跟随全局", ask: "询问", "accept-edits": "自动接受编辑", auto: "自动" };
 
+export function pendingConfigurationNotice(session) {
+  if (!session?.pendingConfiguration) return "";
+  if (session.pendingConfigurationError)
+    return `排队设置尚未生效：${session.pendingConfigurationError}。请打开模型设置重新提交。`;
+  return "会话设置已排队，将在当前任务结束后、下一轮开始前生效"
+    + (session.pendingConfiguration.permissionMode !== undefined
+      ? "。已排队消息保留原提交权限，权限不一致时需重新发送。" : "");
+}
+
 /** 每次打开独立加载、独立草稿；只有宿主回执才能更新会话。 */
 export function openModelSettings({ sessionId, read, save, openSheet, isCurrent, onCatalog, onSaved }) {
-  let controller, generation = 0, catalog = [], baseline, draft, saving = false;
+  let controller, generation = 0, catalog = [], baseline, draft, saving = false, retryPending = false;
   const sheet = openSheet({
     title: "模型与会话设置",
-    subtitle: "选择模型和思考强度，应用到当前会话。",
+    subtitle: "运行中修改会先排队，当前任务结束后、下一轮开始前生效。",
     onClose: () => { generation++; controller?.abort(); },
   });
   sheet.panel.classList.add("model-settings");
@@ -22,7 +31,7 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
   const reload = button("刷新列表", { preserveLabel: true, onClick: () => void load() });
   const apply = button("应用设置", { variant: "primary", preserveLabel: true, disabled: true, onClick: () => void commit() });
   const active = () => sheet.isOpen() && isCurrent();
-  const changed = () => baseline && ["modelKey", "thinkingLevel", "mode", "permissionMode"].some(key => draft[key] !== baseline[key]);
+  const changed = () => baseline && (retryPending || ["modelKey", "thinkingLevel", "mode", "permissionMode"].some(key => draft[key] !== baseline[key]));
   const selectedModel = () => catalog.find(model => model.key === draft?.modelKey);
   const syncApply = () => { apply.disabled = saving || !changed(); };
   sheet.body.append(status, el("div", { className: "model-search" }, search, reload), list, selected, fields);
@@ -96,6 +105,7 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
     controller?.abort();
     controller = new AbortController();
     baseline = null;
+    retryPending = false;
     catalog = [];
     apply.disabled = true;
     reload.disabled = true;
@@ -110,10 +120,18 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
       if (!Array.isArray(result?.items) || !result.session || result.session.id !== sessionId) throw new Error("模型目录响应不完整，请更新电脑端远控插件后重试。");
       catalog = result.items;
       const session = result.session;
-      baseline = { modelKey: session.modelKey || "", thinkingLevel: session.thinkingLevel || "off", mode: session.mode || "agent", permissionMode: session.permissionMode || "inherit" };
+      retryPending = !!(session.pendingConfiguration && session.pendingConfigurationError);
+      const effective = { ...session, ...session.pendingConfiguration };
+      const modelKey = effective.providerId && effective.modelId
+        ? `${effective.providerId}/${effective.modelId}` : session.modelKey || "";
+      baseline = { modelKey, thinkingLevel: effective.thinkingLevel || "off", mode: effective.mode || "agent", permissionMode: effective.permissionMode || "inherit" };
       draft = { ...baseline };
       onCatalog(catalog);
-      status.textContent = `当前模型：${catalog.find(m => m.key === baseline.modelKey)?.label || baseline.modelKey || "跟随默认"} · ${catalog.length} 个可用模型`;
+      status.textContent = session.pendingConfigurationError
+        ? `排队设置尚未生效：${session.pendingConfigurationError}。可直接点击“应用设置”重试。`
+        : session.pendingConfiguration
+          ? `已有设置排队，下一轮生效。当前权限：${PERMISSIONS[session.permissionMode] || session.permissionMode || "跟随全局"}；下面显示待生效设置。`
+          : `当前模型：${catalog.find(m => m.key === baseline.modelKey)?.label || baseline.modelKey || "跟随默认"} · ${catalog.length} 个可用模型`;
       search.disabled = false;
       renderList();
       renderFields();
@@ -144,10 +162,10 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
       const result = await save("models.configure", settings);
       if (!result?.session || result.session.id !== sessionId) throw new Error("宿主未返回更新后的会话，请刷新后确认当前设置。");
       if (!active()) return;
-      onSaved(result.session);
+      onSaved(result.session, { queued: result.queued === true });
       try {
-        if (result.session.modelKey)
-          localStorage.setItem("lan-remote-last-model", JSON.stringify({ modelKey: result.session.modelKey }));
+        if (draft.modelKey)
+          localStorage.setItem("lan-remote-last-model", JSON.stringify({ modelKey: draft.modelKey }));
       } catch {}
       sheet.setBusy(false);
       sheet.close();

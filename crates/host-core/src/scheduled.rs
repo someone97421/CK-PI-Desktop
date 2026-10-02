@@ -455,36 +455,57 @@ pub fn finish_run(
     Ok(n > 0)
 }
 
+fn run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRun> {
+    Ok(TaskRun {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        session_id: row.get(2)?,
+        status: row.get(3)?,
+        error_code: row.get(4)?,
+        started_at: ms_to_ts(row.get(5)?),
+        ended_at: row.get::<_, Option<i64>>(6)?.map(ms_to_ts),
+    })
+}
+
+/// Newest first. `task_id` scopes the read to one task's history; without it the
+/// window spans every task and is bounded by `limit` (1..200).
 pub fn list_runs(db: &Database, task_id: Option<&str>, limit: i64) -> Result<Vec<TaskRun>> {
     let limit = limit.clamp(1, 200);
-    let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<TaskRun> {
-        Ok(TaskRun {
-            id: row.get(0)?,
-            task_id: row.get(1)?,
-            session_id: row.get(2)?,
-            status: row.get(3)?,
-            error_code: row.get(4)?,
-            started_at: ms_to_ts(row.get(5)?),
-            ended_at: row.get::<_, Option<i64>>(6)?.map(ms_to_ts),
-        })
-    };
     let mut out = Vec::new();
     if let Some(task_id) = task_id {
         let mut stmt = db.conn().prepare_cached(
             "SELECT id, task_id, session_id, status, error_code, started_at, ended_at
-             FROM task_runs WHERE task_id = ?1 ORDER BY started_at DESC LIMIT ?2",
+             FROM task_runs WHERE task_id = ?1 ORDER BY started_at DESC, id DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![task_id, limit], map_row)?;
+        let rows = stmt.query_map(params![task_id, limit], run_from_row)?;
         out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
     } else {
         let mut stmt = db.conn().prepare_cached(
             "SELECT id, task_id, session_id, status, error_code, started_at, ended_at
-             FROM task_runs ORDER BY started_at DESC LIMIT ?1",
+             FROM task_runs ORDER BY started_at DESC, id DESC LIMIT ?1",
         )?;
-        let rows = stmt.query_map(params![limit], map_row)?;
+        let rows = stmt.query_map(params![limit], run_from_row)?;
         out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
     }
     Ok(out)
+}
+
+/// One newest retained run per task, unaffected by other tasks' activity.
+/// Ties use the same descending id order as the run-history query.
+pub fn latest_run_per_task(db: &Database) -> Result<Vec<TaskRun>> {
+    let mut stmt = db.conn().prepare_cached(
+        "SELECT id, task_id, session_id, status, error_code, started_at, ended_at
+         FROM task_runs
+         WHERE rowid = (
+             SELECT rowid FROM task_runs AS newer
+             WHERE newer.task_id = task_runs.task_id
+             ORDER BY newer.started_at DESC, newer.id DESC
+             LIMIT 1
+         )
+         ORDER BY started_at DESC, id DESC",
+    )?;
+    let rows = stmt.query_map([], run_from_row)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 #[cfg(test)]
@@ -630,5 +651,88 @@ mod tests {
         let config: Value = serde_json::from_str(&config).unwrap();
         assert_eq!(config["mode"], "plan");
         assert_eq!(config["notify"], true);
+    }
+
+    #[test]
+    fn the_task_column_reads_each_tasks_own_newest_run() {
+        let db = test_db();
+        let idle = create_task(&db, &json!({ "prompt": "idle", "cadence": "daily" })).unwrap();
+        let busy = create_task(&db, &json!({ "prompt": "busy", "cadence": "daily" })).unwrap();
+        let insert = |id: &str, task: &str, started: i64| {
+            db.conn()
+                .execute(
+                    "INSERT INTO task_runs
+                       (id, task_id, session_id, status, error_code, started_at, ended_at)
+                     VALUES (?1, ?2, NULL, 'completed', NULL, ?3, ?4)",
+                    params![id, task, started, started + 500],
+                )
+                .unwrap();
+        };
+        // The idle task ran first; afterwards the busy one piled up 120 runs.
+        insert("run-idle-1", &idle.id, 1_000);
+        insert("run-idle-2", &idle.id, 2_000);
+        for index in 0..120 {
+            insert(
+                &format!("run-busy-{index:03}"),
+                &busy.id,
+                10_000 + i64::from(index) * 1_000,
+            );
+        }
+
+        // A global window drops the idle task entirely — the defect the task
+        // column used to inherit from the shared read.
+        let window = list_runs(&db, None, 100).unwrap();
+        assert_eq!(window.len(), 100);
+        assert!(
+            window.iter().all(|run| run.task_id == busy.id),
+            "the newest 100 rows all belong to the busy task"
+        );
+
+        // One newest run per task reports both tasks, newest first.
+        let latest = latest_run_per_task(&db).unwrap();
+        assert_eq!(
+            latest.iter().map(|run| run.id.as_str()).collect::<Vec<_>>(),
+            vec!["run-busy-119", "run-idle-2"]
+        );
+        assert_eq!(latest[1].started_at, ms_to_ts(2_000));
+    }
+
+    #[test]
+    fn latest_per_task_and_history_agree_when_start_times_tie() {
+        let db = test_db();
+        let task = create_task(&db, &json!({"prompt":"tie", "cadence":"manual"})).unwrap();
+        for id in ["run-a", "run-c", "run-b"] {
+            db.conn().execute(
+                "INSERT INTO task_runs (id, task_id, started_at, status) VALUES (?1, ?2, 1000, 'completed')",
+                params![id, task.id],
+            ).unwrap();
+        }
+        assert_eq!(latest_run_per_task(&db).unwrap()[0].id, "run-c");
+        assert_eq!(list_runs(&db, Some(&task.id), 1).unwrap()[0].id, "run-c");
+        assert_eq!(list_runs(&db, None, 1).unwrap()[0].id, "run-c");
+    }
+
+    #[test]
+    fn retention_releases_transcripts_when_their_run_reference_is_pruned() {
+        let db = test_db();
+        let task = create_task(&db, &json!({"prompt":"retention", "cadence":"manual"})).unwrap();
+        let session = sessions::create_session(&db, None, None, None, None, None).unwrap();
+        for index in 0..101 {
+            db.conn().execute(
+                "INSERT INTO task_runs (id, task_id, session_id, started_at, status) VALUES (?1, ?2, ?3, ?4, 'completed')",
+                params![format!("run-{index}"), task.id, (index == 0).then_some(&session.id), 1000 + index],
+            ).unwrap();
+        }
+        assert!(sessions::get_session_summary(&db, &session.id)
+            .unwrap()
+            .unwrap()
+            .scheduled_run);
+        db.boot_maintenance().unwrap();
+        assert_eq!(list_runs(&db, Some(&task.id), 200).unwrap().len(), 100);
+        assert!(!sessions::get_session_summary(&db, &session.id)
+            .unwrap()
+            .unwrap()
+            .scheduled_run);
+        assert_eq!(latest_run_per_task(&db).unwrap()[0].id, "run-100");
     }
 }

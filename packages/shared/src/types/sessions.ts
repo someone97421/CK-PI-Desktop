@@ -48,6 +48,12 @@ export type SessionSummary = {
   /** Effective image-input capability for this session's exact model. */
   supportsVision?: boolean;
   supportedThinkingLevels?: ThinkingLevel[];
+  /**
+   * True while a retained scheduled-task run references this transcript.
+   * Desktop SessionList and global search hide it; the Scheduled page opens it.
+   * Older hosts omit it, so undefined means an ordinary conversation.
+   */
+  scheduledRun?: boolean;
   updatedAt: string;
   /** 用户最后发送时间（含等待中的队列消息）；空会话或旧宿主可省略。 */
   lastUserMessageAt?: string;

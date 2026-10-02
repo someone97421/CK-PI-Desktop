@@ -155,4 +155,89 @@ describe("ApprovalBroker", () => {
     await broker.syncPendingTools("s1", { turnId: "t1", revision: 1, lifetimeMs: 1, allowSession: false });
     expect(broker.list("s1")).toHaveLength(1);
   });
+
+  it("keeps desktop tools pending past the local lease without renewing the RACP lease", async () => {
+    const port = new FakeApprovalPort();
+    const clock = new FixedClock();
+    const broker = new ApprovalBroker(port, clock);
+    const context = { turnId: "t1", revision: 3, lifetimeMs: 120_000, allowSession: false };
+    port.pending = [{ ...toolRequest, createdAt: new Date(clock.current).toISOString() }];
+    const original = broker.fromToolPermission(toolRequest, context);
+    clock.current += 121_000;
+    expect(broker.list("s1")).toEqual([]);
+    const desktop = await broker.listHostPendingTools("s1", context);
+    expect(desktop).toHaveLength(1);
+    expect(desktop[0]).toMatchObject({ id: "req_1", turnId: "t1", revision: 3, allowedDecisions: ["allow-once", "deny"] });
+    expect(desktop[0]).not.toHaveProperty("expiresAt");
+    expect(broker.get("req_1")?.expiresAt).toBe(original.expiresAt);
+    await expect(broker.resolve({ approvalId: "req_1", decision: "deny", context: { requestId: "r" } }, principal, 4))
+      .rejects.toMatchObject({ code: "APPROVAL_EXPIRED" });
+    expect(await broker.listHostPendingTools("s1", context)).toHaveLength(1);
+    expect(broker.result("req_1")?.status).toBe("expired");
+    expect(port.tool).toEqual([]);
+  });
+
+  it("recovers missed requests, respects Host deadlines and forgets requests the Host closed", async () => {
+    const port = new FakeApprovalPort();
+    const clock = new FixedClock();
+    const broker = new ApprovalBroker(port, clock);
+    const context = { turnId: "t1", revision: 3, allowSession: false };
+    port.pending = [
+      { ...toolRequest, createdAt: new Date(clock.current - 121_000).toISOString() },
+      { ...toolRequest, requestId: "expired", createdAt: "", expiresAt: new Date(clock.current - 1).toISOString() },
+      { ...toolRequest, requestId: "future", createdAt: "", expiresAt: new Date(clock.current + 1_000).toISOString() },
+      { ...toolRequest, requestId: "other-session", sessionId: "s2", createdAt: "" },
+    ];
+    expect((await broker.listHostPendingTools("s1", context)).map((request) => request.id)).toEqual(["req_1", "future"]);
+    expect(broker.getForDesktop("req_1")?.sessionId).toBe("s1");
+    expect(broker.list()).toEqual([]);
+    clock.current += 121_000;
+    expect((await broker.listHostPendingTools("s1", context)).map((request) => request.id)).toEqual(["req_1"]);
+    port.pending = [];
+    expect(await broker.listHostPendingTools("s1", context)).toEqual([]);
+    expect(broker.getForDesktop("req_1")).toBeUndefined();
+  });
+
+  it.each(["resolved", "canceled"] as const)("does not resurrect %s requests in stale Host reads", async (status) => {
+    const port = new FakeApprovalPort();
+    const broker = new ApprovalBroker(port, new FixedClock());
+    const context = { turnId: "t1", revision: 3, lifetimeMs: 120_000, allowSession: false };
+    port.pending = [{ ...toolRequest, createdAt: "" }];
+    await broker.listHostPendingTools("s1", context);
+    if (status === "canceled") broker.cancelForSession("s1", 4);
+    else broker.settle("req_1", { status, decision: "deny", revision: 4 });
+    expect(await broker.listHostPendingTools("s1", context)).toEqual([]);
+    expect(await broker.syncPendingTools("s1", context)).toEqual([]);
+    expect(broker.getForDesktop("req_1")).toBeUndefined();
+    expect(broker.result("req_1")?.status).toBe(status);
+    expect(port.tool).toEqual([]);
+  });
+
+  it("does not restore a request when the turn ends while Host pending is being read", async () => {
+    const port = new FakeApprovalPort();
+    const broker = new ApprovalBroker(port, new FixedClock());
+    let finish!: (requests: PendingToolRequest[]) => void;
+    port.listPendingTools = () => new Promise((resolve) => { finish = resolve; });
+    const read = broker.listHostPendingTools("s1", { turnId: "t1", revision: 3, allowSession: false });
+    broker.cancelForSession("s1", 4);
+    finish([{ ...toolRequest, createdAt: "" }]);
+    expect(await read).toEqual([]);
+    expect(broker.getForDesktop("req_1")).toBeUndefined();
+  });
+
+  it("does not let an older Host read resurrect a request a newer refresh removed", async () => {
+    const port = new FakeApprovalPort();
+    const broker = new ApprovalBroker(port, new FixedClock());
+    const context = { turnId: "t1", revision: 3, allowSession: false };
+    port.pending = [{ ...toolRequest, createdAt: "" }];
+    await broker.listHostPendingTools("s1", context);
+    let finish!: (requests: PendingToolRequest[]) => void;
+    port.listPendingTools = () => new Promise((resolve) => { finish = resolve; });
+    const oldRead = broker.listHostPendingTools("s1", context);
+    port.listPendingTools = async () => [];
+    expect(await broker.listHostPendingTools("s1", context)).toEqual([]);
+    finish([{ ...toolRequest, createdAt: "" }]);
+    expect(await oldRead).toEqual([]);
+    expect(broker.getForDesktop("req_1")).toBeUndefined();
+  });
 });

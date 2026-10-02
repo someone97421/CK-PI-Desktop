@@ -1,4 +1,5 @@
 import { IPC, ErrorCodes, compactionRecordId, findSkillMentions, isRpcTimeoutError, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest, type VoiceOrigin, canonicalThinkingLevel, type SessionThinkingLevel } from "@pi-desktop/shared";
+import type { SessionConfigurationQueue } from "../runtime/session-configuration";
 import type { FinishTurn } from "../runtime/plans";
 import { expandSlashInvocation, enhancePromptDraft, summarizeSessionTitle, visionFromModelConfig, type ComposerTemplate, type RuntimeProviderConfig } from "@pi-desktop/agent-runtime";
 import { mediaCapabilitiesForProvider } from "@pi-desktop/agent-runtime";
@@ -40,6 +41,7 @@ export type AgentIpcDependencies = {
   approvedExecutionIdsBySession: Map<string, string>;
   claimedExecutionSessions: Map<string, string>;
   resolveAgentRuntimeLaunch: (...args: any[]) => Promise<any>;
+  sessionConfiguration?: SessionConfigurationQueue;
   acquireSessionOperation: (sessionId: string) => Promise<() => void>;
   finishTurn: FinishTurn;
   /**
@@ -104,6 +106,7 @@ export function registerAgentIpc({
   claimedExecutionSessions,
   resolveAgentRuntimeLaunch,
   acquireSessionOperation,
+  sessionConfiguration,
   finishTurn,
   lockAbortReason,
   finishApprovedExecution,
@@ -118,6 +121,11 @@ export function registerAgentIpc({
   let host: HostProcess | null = null;
   let sidecar: AgentSidecar | null = null;
   let agentHostBridge: AgentHostBridge | null = null;
+  const askResolutions = new Map<string, {
+    sidecar: AgentSidecar;
+    answers: string | undefined;
+    promise: Promise<{ ok: boolean }>;
+  }>();
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
     registrar.handle(channel, async (...args) => {
       host = getHost();
@@ -373,7 +381,7 @@ export function registerAgentIpc({
     }
   });
 
-  handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest, submittedAt?: number) => {
+  handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest, submittedAt?: number, expectedPermissionMode?: string) => {
     if (!sidecar) throw new Error("sidecar unavailable");
     const voiceOrigin = parseVoiceOrigin(req.voiceOrigin);
     if (req.sessionId.startsWith("native-pi:")) {
@@ -498,6 +506,22 @@ export function registerAgentIpc({
       session = refreshed.session ?? session;
     }
 
+    if (sessionConfiguration?.hasPending(req.sessionId)) {
+      await sessionConfiguration.flush(req.sessionId, true);
+      const refreshed = await host.call<{ session?: any }>("session.get", { id: req.sessionId, messageLimit: 1 });
+      session = refreshed.session ?? session;
+    }
+    // Agent Host checked this ceiling before admission. Recheck under the
+    // session operation lock so a concurrent configuration cannot widen it.
+    const permissionSettings = expectedPermissionMode !== undefined
+      ? await host.call<{ defaultPermissionMode?: string }>("settings.get") : settings;
+    const permissionMode = session.permissionMode && session.permissionMode !== "inherit"
+      ? session.permissionMode : permissionSettings.defaultPermissionMode;
+    const effectivePermissionMode = permissionMode === "auto" || permissionMode === "accept-edits"
+      ? permissionMode : "ask";
+    if (expectedPermissionMode !== undefined && expectedPermissionMode !== effectivePermissionMode) {
+      throw Object.assign(new Error("Session permissions changed. Confirm the settings and resubmit the message."), { errorCode: "FORBIDDEN" });
+    }
     const launch = await resolveAgentRuntimeLaunch(
       req.sessionId,
       session,
@@ -987,21 +1011,38 @@ export function registerAgentIpc({
     const sessionId = String(resolution?.sessionId ?? "").trim();
     const requestId = String(resolution?.requestId ?? "").trim();
     if (!sessionId || !requestId) throw new Error("asktool resolution identity required");
-    // Prefer the Host-owned input path when it still holds this ask so the
-    // pending input is cleared before the sidecar settles.
-    const settled = await agentHostBridge?.resolveAskByRequestId({
-      ...resolution,
-      sessionId,
-      requestId,
-    });
-    if (settled) return settled;
-    const result = await sidecar.call("asktool.resolve", {
-      ...resolution,
-      sessionId,
-      requestId,
-    });
-    agentHostBridge?.notifyInputResolved({ sessionId, inputId: requestId });
-    return result;
+    const runtime = sidecar;
+    const bridge = agentHostBridge;
+    const key = JSON.stringify([sessionId, requestId]);
+    const answers = JSON.stringify(resolution.answers);
+    const active = askResolutions.get(key);
+    if (active?.sidecar === runtime) {
+      if (active.answers !== answers) {
+        throw Object.assign(new Error("another answer is already being submitted for this question"), {
+          errorCode: ErrorCodes.CONFLICT,
+        });
+      }
+      return active.promise;
+    }
+    // This IPC is also the Host input port's runtime adapter. Re-entering
+    // AgentHost.respondInput here recurses back into this same handler.
+    const promise = (async () => {
+      const result = await runtime.call<{ ok: boolean }>("asktool.resolve", {
+        ...resolution,
+        sessionId,
+        requestId,
+      });
+      if (result?.ok !== true) throw new Error("asktool answer was not acknowledged");
+      bridge?.notifyInputResolved({ sessionId, inputId: requestId });
+      return result;
+    })();
+    const pending = { sidecar: runtime, answers, promise };
+    askResolutions.set(key, pending);
+    try {
+      return await promise;
+    } finally {
+      if (askResolutions.get(key) === pending) askResolutions.delete(key);
+    }
   });
 
   handle(IPC.invoke.plansPending, async (input: { sessionId?: string } = {}) => {
@@ -1062,6 +1103,10 @@ export function registerAgentIpc({
       } else {
         void dispatchExecutionForProposal(proposalId);
       }
+    }
+    if (action === "reject") {
+      await sessionConfiguration?.flush(sessionId);
+      agentHostBridge?.agentHost.kick(sessionId);
     }
     return result;
   });

@@ -99,7 +99,7 @@ test("a per-turn ceiling that narrows below the session mode refuses the turn", 
   assert.equal(outcome.code, "FORBIDDEN", "a narrowed ceiling must refuse the turn");
   assert.equal(
     outcome.message,
-    "the local runtime cannot apply a per-turn permission ceiling yet",
+    "the local runtime cannot apply a per-turn permission ceiling yet; confirm the session settings and resubmit this message",
   );
   assert.equal(
     outcome.details?.sessionPermissionMode,
@@ -137,7 +137,7 @@ test("the bridge's mismatch gate stays fail closed at the source", async () => {
   );
   assert.match(
     bridgeSource,
-    /"the local runtime cannot apply a per-turn permission ceiling yet"/,
+    /"the local runtime cannot apply a per-turn permission ceiling yet; confirm the session settings and resubmit this message"/,
     "bridge must throw a FORBIDDEN with the fail-closed message",
   );
   assert.doesNotMatch(

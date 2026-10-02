@@ -12,6 +12,7 @@ import {
 } from "@pi-desktop/shared";
 import {
   capabilitiesFromModelConfig,
+  modelConfigWithBinding,
   type ModelConfig,
   visionFromModelConfig,
   type ThinkingCapabilities,
@@ -85,6 +86,13 @@ export function createProviderCatalogRuntime({
       modelId,
     });
 
+  const effectiveConfigWithBinding = (config: ModelConfig, binding?: ModelBinding) => {
+    // Applying the original binding again must not replace a refreshed
+    // catalog-sourced output cap with its stale saved snapshot.
+    const limits = resolveBindingLimits(config, binding);
+    return modelConfigWithBinding(limits.catalogConfig, limits.binding);
+  };
+
   /**
    * Apply the exact provider/model binding before exposing a model to a
    * subagent. The catalog supplies the baseline, but an explicit binding owns
@@ -99,7 +107,14 @@ export function createProviderCatalogRuntime({
     const modelConfig = modelsDevCatalog.modelConfigFor({
       providerId: provider.id, vendorKey: provider.vendorKey, baseUrl: provider.baseUrl, modelId,
     }, catalogModelConfig);
-    return { modelConfig, capabilities: capabilitiesFromModelConfig(modelConfig) };
+    const effectiveModelConfig = effectiveConfigWithBinding(
+      modelConfig,
+      bindingForModel(provider, modelId),
+    );
+    return {
+      modelConfig: effectiveModelConfig,
+      capabilities: capabilitiesFromModelConfig(effectiveModelConfig),
+    };
   };
 
   const enrichProvider = <T extends RuntimeProvider>(
@@ -113,9 +128,13 @@ export function createProviderCatalogRuntime({
       provider.defaultModelId ||
       "";
     modelsDevCatalog.configureAccount(provider);
-    const modelConfig = catalogModelConfigFor(modelsDevCatalog, {
+    const catalogConfig = catalogModelConfigFor(modelsDevCatalog, {
       providerId: provider.id, vendorKey: provider.vendorKey, baseUrl: provider.baseUrl, modelId,
     });
+    const modelConfig = effectiveConfigWithBinding(
+      catalogConfig,
+      bindingForModel(provider, modelId),
+    );
     const models = provider.models?.map((binding) => {
       const catalogConfig = catalogModelConfigFor(modelsDevCatalog, {
         providerId: provider.id, vendorKey: provider.vendorKey, baseUrl: provider.baseUrl, modelId: binding.id,
@@ -337,9 +356,13 @@ export function createProviderCatalogRuntime({
     }
     const { provider, modelId } = target;
     modelsDevCatalog.configureAccount(provider);
-    const modelConfig = catalogModelConfigFor(modelsDevCatalog, {
+    const catalogConfig = catalogModelConfigFor(modelsDevCatalog, {
       providerId: provider.id, vendorKey: provider.vendorKey, baseUrl: provider.baseUrl, modelId,
     });
+    const modelConfig = effectiveConfigWithBinding(
+      catalogConfig,
+      bindingForModel(provider, modelId),
+    );
     return {
       ...session,
       ...capabilitiesFromModelConfig(modelConfig),

@@ -66,6 +66,7 @@ import {
   createProviderCatalogRuntime,
 } from "./runtime/provider-catalog";
 import { createSessionLaunchRuntime } from "./runtime/session-launch";
+import { createSessionConfigurationQueue } from "./runtime/session-configuration";
 import { createSessionCoordination } from "./runtime/session-coordination";
 import { createScheduledRuntime } from "./runtime/scheduled";
 import { createDesktopServices } from "./services/desktop-services";
@@ -288,7 +289,11 @@ const updater = new AppUpdaterController({
  * this process; the renderer sees progress events and the sidecar sees only
  * resolved request auth.
  */
-const modelsDevCatalog = new ModelsDevCatalog();
+const modelsDevCatalog = new ModelsDevCatalog({
+  catalogPath: app.isPackaged
+    ? join(process.resourcesPath, "models.dev", "api.json")
+    : join(app.getAppPath(), "resources", "models.dev", "api.json"),
+});
 
 const vendorOAuth = new VendorOAuth({
   call: <T,>(method: string, params?: unknown): Promise<T> => {
@@ -662,6 +667,24 @@ const {
   isStaleTerminalEvent,
 } = sessionCoordination;
 
+const sessionConfiguration = createSessionConfigurationQueue({
+  getHost,
+  isTurnActive: (sessionId) => activeTurns.has(sessionId),
+  onChanged: (sessionId, session, applied) => {
+    if (session && applied && (applied.providerId !== undefined || applied.modelId !== undefined || applied.thinkingLevel !== undefined)) {
+      plugins.broadcastEvent("session:modelChanged", [{
+        sessionId,
+        modelKey: session.providerId && session.modelId ? `${session.providerId}/${session.modelId}` : null,
+        thinkingLevel: session.thinkingLevel,
+      }]);
+    }
+    sendToRenderer(IPC.event.sessionsChanged, { reason: "session.configuration" });
+    plugins.publishDesktopEvent({ sessionId, kind: "session.changed", payload: { reason: applied ? "configured" : "configuration-pending" } });
+    if (!sessionConfiguration.hasPending(sessionId)) mainState.agentHostBridge?.agentHost.kick(sessionId);
+  },
+  log: (message, data) => logger.app("session", "warn", message, { data }),
+});
+
 /**
  * Applies a close-behavior choice. The tray icon is owned by D216 and stays
  * resident on every platform, so switching to "quit" must not destroy it —
@@ -721,6 +744,7 @@ const planRuntime = createPlanRuntime({
   resolveAgentRuntimeLaunch,
   isQuitting: () => mainState.quitting,
   onTurnSettled: sessionCollaboration.settle,
+  sessionConfiguration,
 });
 const {
   finishTurn,
@@ -887,6 +911,7 @@ function registerIpc() {
     sessionCapabilityContext,
     enrichSession,
     acquireSessionOperation,
+    sessionConfiguration,
     stripWinLongPrefix,
     normalizeSettings,
     validateSettingsWrite,
@@ -978,7 +1003,10 @@ registerApplicationStartup({
   updater,
   modelsDevCatalog,
   plugins,
-  isSessionBusy,
+  isSessionBusy: (sessionId) => isSessionBusy(sessionId) || sessionConfiguration.hasPending(sessionId),
+  prepareSessionForTurn: async (sessionId) => {
+    if (!activeTurns.has(sessionId)) await sessionConfiguration.flush(sessionId);
+  },
   getHost,
   getMainWindow,
   sendToRenderer,

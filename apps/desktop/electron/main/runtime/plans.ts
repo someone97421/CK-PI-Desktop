@@ -1,5 +1,6 @@
 import { ErrorCodes, IPC, type AgentEventEnvelope, type AppNotification, type PlanExecution, type PlanExecutionFinishStatus, type UiMessage } from "@pi-desktop/shared";
 import { executionFromResponse, executionListFromResponse, planExecutionFromUnknown } from "@pi-desktop/host-runtime";
+import type { SessionConfigurationQueue } from "./session-configuration";
 import type { RuntimeState } from "./context";
 import type {
   SessionCoordination,
@@ -65,6 +66,7 @@ export type PlanRuntimeDependencies = {
   acquireSessionOperation: (sessionId: string) => Promise<() => void>;
   resolveAgentRuntimeLaunch: (...args: any[]) => Promise<any>;
   isQuitting: () => boolean;
+  sessionConfiguration?: SessionConfigurationQueue;
   onTurnSettled?: (sessionId: string, turnId: string) => Promise<void>;
 };
 
@@ -91,6 +93,7 @@ export function createPlanRuntime({
   resolveAgentRuntimeLaunch,
   isQuitting,
   onTurnSettled,
+  sessionConfiguration,
 }: PlanRuntimeDependencies): {
   finishTurn: FinishTurn;
   finishApprovedExecution: (executionId: string, status: PlanExecutionFinishStatus, errorCode?: string) => Promise<void>;
@@ -276,6 +279,10 @@ function finishTurn(
       }, 5 * 60 * 1000).unref();
     }
 
+    // Apply the next-turn draft while finalization still holds Agent Host's
+    // queue. The configuration lock is independent of admission/abort locks.
+    await sessionConfiguration?.flush(id);
+
     // The turn can no longer start a plugin tool, and its finalization record
     // still holds the queue, so the announcement observes a settled turn. Every
     // delivery failure is isolated inside the announcement itself.
@@ -372,6 +379,12 @@ async function finishApprovedExecution(
     }
     approvedExecutionTurns.delete(executionId);
     claimedExecutionSessions.delete(executionId);
+    if (sessionId) {
+      // A plan execution owns an immutable configuration through its durable
+      // finish, so the turn-end attempt may still have been blocked.
+      await sessionConfiguration?.flush(sessionId);
+      if (!isQuitting()) runtimeState.agentHostBridge?.agentHost.kick(sessionId);
+    }
   } catch (error) {
     logger.app("runtime", "warn", "approved plan execution finalization failed", {
       data: { executionId, error: String(error) },

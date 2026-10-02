@@ -460,7 +460,7 @@ export function registerProviderIpc({
           // ModelInfo is catalog metadata. Keep its published reasoning fields
           // intact; Composer and runtime resolve the exact user binding when
           // they need effective per-provider capabilities.
-          ...(modelsDevModel ? { catalogSource: "pi" as const } : {}),
+          ...(modelsDevModel ? { catalogSource: "models.dev" as const } : {}),
         };
       };
 

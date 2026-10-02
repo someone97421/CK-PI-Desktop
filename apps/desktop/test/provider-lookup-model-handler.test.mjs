@@ -1,8 +1,7 @@
-import { fixtureProvider } from "./pi-catalog-fixtures.mjs";
 /**
  * Contract test for hand-typed models on named providers.
  *
- * The settings picker reads the local Pi catalog through one dedicated channel;
+ * The settings picker reads the local models.dev catalog through one dedicated channel;
  * an explicit custom provider bypasses it and retains its manual configuration.
  * This pins the handler contract: it loads the snapshot, resolves the id,
  * echoes the provider back on the record and answers a miss with `null`.
@@ -17,7 +16,7 @@ import { join } from "node:path";
 import test from "node:test";
 import ts from "typescript";
 import { ErrorCodes } from "../../../packages/shared/src/errors.ts";
-import { IPC } from "../../../packages/shared/src/protocol.ts";
+import { IPC } from "@pi-desktop/shared";
 import * as modelsDev from "../electron/main/models-dev-catalog.ts";
 
 /** Minimal CJS loader for the main-process module under test. */
@@ -40,10 +39,9 @@ function load(relative, imports) {
 }
 
 async function fixtureCatalog() {
-  const catalog = new modelsDev.ModelsDevCatalog({ providers: [fixtureProvider("anthropic", [{
-    id: "claude-opus-4.6", reasoning: true, input: ["text", "image"], contextWindow: 1_000_000, maxTokens: 128_000,
-    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: null, max: null },
-  }])] });
+  const catalog = new modelsDev.ModelsDevCatalog({
+    catalogPath: new URL("../resources/models.dev/api.json", import.meta.url).pathname,
+  });
   assert.equal(await catalog.ensureLoaded(), true);
   return catalog;
 }
@@ -123,12 +121,12 @@ function harness(realCatalog, savedProviders) {
 test("a published id returns the snapshot record for the typed id", async (t) => {
   const h = harness(await fixtureCatalog(t));
   const result = await h.call({
-    modelId: "Claude-Opus-4.6",
+    modelId: "Claude-Opus-4-6",
     providerId: "provider-1",
     vendorKey: "anthropic",
   });
   assert.ok(result.info, "a published id must return its record");
-  assert.equal(result.info.modelId, "claude-opus-4.6");
+  assert.equal(result.info.modelId, "claude-opus-4-6");
   assert.equal(result.info.providerId, "provider-1");
   assert.equal(result.info.contextWindow, 1_000_000);
   assert.equal(result.info.maxTokens, 128_000);
@@ -142,7 +140,7 @@ test("a published id returns the snapshot record for the typed id", async (t) =>
     providerId: "provider-1",
     vendorKey: "anthropic",
     baseUrl: undefined,
-    modelId: "Claude-Opus-4.6",
+    modelId: "Claude-Opus-4-6",
   });
   assert.deepEqual(h.hostCalls, []);
 });
@@ -166,7 +164,7 @@ test("the catalog lookup never probes the provider or the host", async (t) => {
   // The fake discovery throws and the fake host records, so any network or
   // host path taken by the handler fails this test instead of passing silently.
   const h = harness(await fixtureCatalog(t));
-  await h.call({ modelId: "claude-opus-4.6" });
+  await h.call({ modelId: "claude-opus-4-6" });
   await h.call({ modelId: "missing" });
   assert.deepEqual(h.hostCalls, []);
 });
@@ -175,7 +173,7 @@ test("the catalog lookup never probes the provider or the host", async (t) => {
 test("an explicitly custom provider never loads or matches catalog metadata", async () => {
   const h = harness(await fixtureCatalog());
   for (const baseUrl of ["https://api.anthropic.com/v1", "https://relay.example/v1"]) {
-    const result = await h.call({ modelId: "claude-opus-4.6", vendorKey: "custom", baseUrl });
+    const result = await h.call({ modelId: "claude-opus-4-6", vendorKey: "custom", baseUrl });
     assert.deepEqual(result, { info: null });
   }
   assert.deepEqual(h.catalogCalls, []);
@@ -185,7 +183,7 @@ test("an explicitly custom provider never loads or matches catalog metadata", as
 test("a cold saved custom account is resolved before an older caller can infer its official endpoint", async () => {
   const row = { id: "cold-custom", name: "Custom", vendorKey: "custom", baseUrl: "https://api.anthropic.com/v1" };
   const h = harness(await fixtureCatalog(), [row]);
-  const result = await h.call({ providerId: row.id, baseUrl: row.baseUrl, modelId: "claude-opus-4.6" });
+  const result = await h.call({ providerId: row.id, baseUrl: row.baseUrl, modelId: "claude-opus-4-6" });
   assert.deepEqual(result, { info: null });
   assert.deepEqual(h.hostCalls, ["providers.list"]);
   assert.deepEqual(h.catalogCalls, [["configureAccount", row]]);
@@ -194,10 +192,10 @@ test("a cold saved custom account is resolved before an older caller can infer i
 test("a cold saved named account still returns its catalog model for an older caller", async () => {
   const row = { id: "cold-named", name: "Anthropic", vendorKey: "anthropic", baseUrl: "https://api.anthropic.com/v1" };
   const h = harness(await fixtureCatalog(), [row]);
-  const result = await h.call({ providerId: row.id, baseUrl: row.baseUrl, modelId: "claude-opus-4.6" });
+  const result = await h.call({ providerId: row.id, baseUrl: row.baseUrl, modelId: "claude-opus-4-6" });
   assert.equal(result.info.providerId, row.id);
   assert.equal(result.info.contextWindow, 1_000_000);
-  assert.equal(result.info.catalogSource, "pi");
+  assert.equal(result.info.catalogSource, "models.dev");
   assert.deepEqual(h.hostCalls, ["providers.list"]);
   assert.deepEqual(h.catalogCalls.slice(0, 2), [["configureAccount", row], "ensureLoaded"]);
 });
@@ -205,7 +203,7 @@ test("a cold saved named account still returns its catalog model for an older ca
 test("an unresolved account cannot fall back to model-name or endpoint matching", async () => {
   for (const providers of [undefined, [], [{ id: "unknown-key", name: "Old row" }]]) {
     const h = harness(await fixtureCatalog(), providers);
-    const result = await h.call({ providerId: "unknown-key", baseUrl: "https://api.anthropic.com/v1", modelId: "claude-opus-4.6" });
+    const result = await h.call({ providerId: "unknown-key", baseUrl: "https://api.anthropic.com/v1", modelId: "claude-opus-4-6" });
     assert.deepEqual(result, { info: null });
     assert.deepEqual(h.hostCalls, ["providers.list"]);
     assert.ok(!h.catalogCalls.some(call => call === "ensureLoaded" || call[0] === "findModel"));

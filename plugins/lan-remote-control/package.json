@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:settings": "node --test scripts/model-settings.test.mjs",
     "build": "node scripts/build.mjs",
     "check": "node scripts/check-source.mjs && node scripts/build.mjs --check",
     "pack": "node scripts/build.mjs --pack"

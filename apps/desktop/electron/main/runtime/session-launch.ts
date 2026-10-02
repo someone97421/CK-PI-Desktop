@@ -6,6 +6,7 @@ import {
   imageGenerationBindings,
   isImageGenerationModel,
   normalizeMode,
+  resolveBindingLimits,
   trustedExtensionAgentKeyFromProviderId,
   type AppSettings,
   type CommandShellCatalog,
@@ -607,13 +608,17 @@ export function createSessionLaunchRuntime({
           if (!apiKey) continue;
         }
         let catalogModelConfig: Parameters<typeof modelConfigWithBinding>[0];
+        let baseUrl = row.baseUrl;
+        let apiStyle = row.apiStyle;
         if (isVendorAccount) {
           const vb = await vendorOAuth.bindingFor(row.id, binding.id);
           if (!vb) continue;
+          baseUrl = vb.baseUrl ?? baseUrl;
+          apiStyle = vb.apiStyle ?? apiStyle;
           catalogModelConfig =
             vb.modelConfig ?? catalogModelConfigFor(modelsDevCatalog, {
               providerId: row.id,
-            vendorKey: row.vendorKey,
+              vendorKey: row.vendorKey,
               baseUrl: vb.baseUrl ?? row.baseUrl,
               apiStyle: vb.apiStyle ?? row.apiStyle,
               modelId: binding.id,
@@ -628,7 +633,7 @@ export function createSessionLaunchRuntime({
           });
         }
         const effective = effectiveSubagentModelConfig(
-          row,
+          { ...row, baseUrl, apiStyle },
           binding.id,
           catalogModelConfig,
         );
@@ -638,11 +643,11 @@ export function createSessionLaunchRuntime({
           id: row.id,
           name: row.name,
           ...(row.vendorKey ? { vendorKey: row.vendorKey } : {}),
-          ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
+          ...(baseUrl ? { baseUrl } : {}),
           modelId: binding.id,
           apiKey,
           ...(row.authKind ? { authKind: row.authKind } : {}),
-          ...(row.apiStyle ? { apiStyle: row.apiStyle } : {}),
+          ...(apiStyle ? { apiStyle } : {}),
           ...optionalProviderHeaders(row.headers),
           supportsReasoning: caps.supportsReasoning,
           supportedThinkingLevels: [...caps.supportedThinkingLevels],
