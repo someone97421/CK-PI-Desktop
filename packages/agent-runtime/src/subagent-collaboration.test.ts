@@ -585,7 +585,7 @@ describe("程序生成的子代理协调快照", () => {
     return record;
   }
 
-  it("首次请求消费多个事件一次，后续请求保留快照，同一子代理再次回报仍注入", async () => {
+  it("多个事件合并刷新最新快照，后续请求与上下文重建只保留一份", async () => {
     const fixture = parent();
     const record = register(fixture);
     fixture.internal.markSubagentCoordination(record);
@@ -594,17 +594,18 @@ describe("程序生成的子代理协调快照", () => {
     const initialSystem = fixture.internal.agent.state.messages.find((message: any) => message.role === "system").content;
     await fixture.internal.agent.prompt("检查");
     await fixture.internal.agent.prompt("继续");
-    const snapshots = () => fixture.internal.fullEntries.filter((entry: any) => entry.id.startsWith("subagent-coordination:"));
+    const snapshots = () => fixture.internal.agent.state.messages.filter((message: any) => fixture.internal.coordinationMessages.has(message));
     expect(snapshots()).toHaveLength(1);
     expect(JSON.stringify(contexts[0])).toContain("工作中 1");
     expect(JSON.stringify(contexts[1])).toContain("工作中 1");
     fixture.internal.markSubagentCoordination(record);
     await fixture.internal.agent.prompt("再继续");
     expect(fixture.internal.agent.state.messages.filter((message: any) => message.role === "assistant")).toHaveLength(3);
-    expect(snapshots()).toHaveLength(2);
+    expect(snapshots()).toHaveLength(1);
     expect(JSON.stringify(fixture.internal.rebuiltAgentContext())).toContain("子代理协调状态");
     expect(JSON.stringify(fixture.internal.rebuiltAgentContext())).toContain(JSON.stringify(initialSystem).slice(1, -1));
-    expect(snapshots().every((entry: any) => entry.message.role === "system")).toBe(true);
+    expect(snapshots().every((message: any) => message.role === "system")).toBe(true);
+    expect(fixture.internal.fullEntries.some((entry: any) => fixture.internal.coordinationMessages.has(entry.message))).toBe(false);
     fixture.internal.delegations.clear();
     await fixture.runtime.dispose();
   });
@@ -620,7 +621,10 @@ describe("程序生成的子代理协调快照", () => {
     await fixture.internal.settleDelegation(record, { agentName: "explorer", status: "completed", report: "结果", toolCalls: 1, turns: 1 });
     expect(fixture.internal.coordinationVersion).toBe(2);
     expect(fixture.internal.subagentCoordinationSnapshot()).toContain("终态报告待投递 1");
-    record.reportDelivered = true;
+    fixture.internal.markDelegationReportDelivered(record);
+    expect(fixture.internal.coordinationVersion).toBe(3);
+    fixture.internal.markDelegationReportDelivered(record);
+    expect(fixture.internal.coordinationVersion).toBe(3);
     expect(fixture.internal.subagentCoordinationSnapshot()).toContain("已提供供审阅");
     expect(fixture.internal.subagentCoordinationSnapshot()).toContain("不代表已审阅");
     const old = register(fixture, "old", "completed");
@@ -648,7 +652,80 @@ describe("程序生成的子代理协调快照", () => {
     const contexts = setStream(fixture.internal.agent, () => reply());
     await fixture.internal.agent.prompt("压缩后继续");
     expect(JSON.stringify(contexts[0])).toContain("子代理协调状态");
+    expect(JSON.stringify(contexts[0]).match(/子代理协调状态/g)).toHaveLength(1);
+    const compactionEntries = fixture.internal.entriesWithCompaction(fixture.internal.activeCompaction, false);
+    expect(compactionEntries.find((entry: any) => entry.type === "compaction").summary).toBe("任务摘要");
     expect(fixture.internal.coordinationConsumedVersion).toBe(2);
+    fixture.internal.delegations.clear();
+    await fixture.runtime.dispose();
+  });
+
+  it("跨轮清除旧快照，不注入空总览，保留请求中的真实消息", async () => {
+    const fixture = parent();
+    const record = register(fixture);
+    fixture.internal.markSubagentCoordination(record);
+    const original = fixture.internal.agent.state.messages;
+    await fixture.internal.prepareSubagentCoordination({ messages: original });
+    fixture.internal.turnEpoch += 1;
+    const user = { role: "user", content: "新的任务", timestamp: 1 };
+    fixture.internal.setAgentMessages([user]);
+    const context = { messages: [...fixture.internal.agent.state.messages] };
+    expect(JSON.stringify(context.messages)).not.toContain("子代理协调状态");
+    const updated = await fixture.internal.prepareSubagentCoordination(context);
+    expect(updated.context.messages).toContain(user);
+    expect(updated.context.messages.some((message: any) => fixture.internal.coordinationMessages.has(message))).toBe(false);
+    expect(fixture.internal.coordinationConsumedVersion).toBe(fixture.internal.coordinationVersion);
+    expect(JSON.stringify(fixture.internal.rebuiltAgentContext())).not.toContain("子代理协调状态");
+    fixture.internal.delegations.clear();
+    await fixture.runtime.dispose();
+  });
+
+  it("投递最终正文后刷新状态，不重复投递正文", async () => {
+    const fixture = parent();
+    const record = register(fixture, "child", "completed");
+    Object.assign(record, { result: { report: "最终报告正文" } });
+    fixture.internal.markSubagentCoordination(record);
+    await fixture.internal.prepareSubagentCoordination({ messages: fixture.internal.agent.state.messages });
+    const report = fixture.internal.takeFinishedDelegationReports([record]);
+    expect(report).toContain("最终报告正文");
+    expect(fixture.internal.takeFinishedDelegationReports([record])).toBe("");
+    const updated = await fixture.internal.prepareSubagentCoordination({ messages: fixture.internal.agent.state.messages });
+    expect(JSON.stringify(updated.context.messages)).toContain("终态报告待投递 0");
+    expect(JSON.stringify(updated.context.messages)).not.toContain("最终报告正文");
+    expect(updated.context.messages.filter((message: any) => fixture.internal.coordinationMessages.has(message))).toHaveLength(1);
+    fixture.internal.delegations.clear();
+    await fixture.runtime.dispose();
+  });
+
+  it("快照触发压缩后即使事件已消费，仍拒绝超限请求", async () => {
+    const fixture = parent();
+    register(fixture);
+    fixture.internal.contextBudget = () => ({ tokens: 100, hardLimit: 100 });
+    fixture.internal.compactionEnabled = true;
+    fixture.internal.runCompaction = async () => {
+      expect(fixture.internal.coordinationRequiresSafeBudget).toBe(true);
+      fixture.internal.coordinationConsumedVersion = fixture.internal.coordinationVersion;
+      fixture.internal.coordinationSnapshotEpoch = fixture.internal.turnEpoch;
+      return true;
+    };
+    await expect(fixture.internal.prepareSubagentCoordination({ messages: fixture.internal.agent.state.messages }))
+      .rejects.toThrow("CONTEXT_TOO_LARGE");
+    expect(fixture.internal.coordinationRequiresSafeBudget).toBe(false);
+    fixture.internal.delegations.clear();
+    await fixture.runtime.dispose();
+  });
+
+  it("快照要求安全预算时不保存超限检查点", async () => {
+    const fixture = parent();
+    register(fixture);
+    fixture.internal.appendLiveEntry("anchor", { role: "user", content: "原始任务", timestamp: 1 });
+    fixture.internal.coordinationRequiresSafeBudget = true;
+    fixture.internal.contextBudget = () => ({ tokens: 100, hardLimit: 100 });
+    const checkpoint = { id: "cp", summary: "任务摘要", firstKeptMessageId: "anchor", throughMessageId: "anchor",
+      tokensBefore: 100, retainedTail: [], details: { generation: 1 }, providerId: "fixture", modelId: "model", createdAt: new Date().toISOString() };
+    expect(await fixture.internal.persistCheckpoint(checkpoint, "threshold", false, false)).toBe("oversized");
+    expect(fixture.host.call.mock.calls.some(([method]: any[]) => method === "session.appendCompaction")).toBe(false);
+    fixture.internal.coordinationRequiresSafeBudget = false;
     fixture.internal.delegations.clear();
     await fixture.runtime.dispose();
   });

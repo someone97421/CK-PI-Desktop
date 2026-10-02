@@ -1550,6 +1550,27 @@ export class DesktopAgentRuntime {
   private coordinationVersion = 0;
   private coordinationConsumedVersion = 0;
   private coordinationMessages = new WeakSet<AgentMessage>();
+  private coordinationMessage: AgentMessage | undefined;
+  private coordinationSnapshotEpoch = -1;
+  private coordinationRequiresSafeBudget = false;
+  private checkpointCoordination(checkpoint: ContextCompactionRecord | undefined): string | undefined {
+    const details = checkpoint?.details;
+    return isRecord(details) && typeof details.subagentCoordination === "string"
+      ? details.subagentCoordination : undefined;
+  }
+
+  private coordinationMessageFor(text: string | undefined): AgentMessage | undefined {
+    if (!text) return undefined;
+    const message: AgentMessage = { role: "system", content: text, timestamp: Date.now() };
+    this.coordinationMessages.add(message);
+    return message;
+  }
+
+  private markDelegationReportDelivered(record: DelegationRecord): void {
+    if (record.reportDelivered) return;
+    record.reportDelivered = true;
+    this.markSubagentCoordination(record);
+  }
   /** Set by `abort` / `dispose` so a finishing delegate cannot restart the parent. */
   private runCancelled = false;
   /**
@@ -2122,14 +2143,14 @@ Delegation rules:
       this.agent.state.messages = messages;
       return;
     }
-    // live entries 中的协调消息只是 system 增量，重建时仍需保留原始指令与工具声明。
+    // 协调槽位始终独立于基础指令，包含本轮尚无 system 消息的重建路径。
+    const previous = this.agent.state.messages.filter((message) => !this.coordinationMessages.has(message));
     const systems = messages.filter((message) => message.role === "system");
     if (systems.length > 0 && systems.every((message) => this.coordinationMessages.has(message))) {
-      const previous = this.agent.state.messages.filter((message) => !this.coordinationMessages.has(message));
       messages = [...rebuildSystemTranscript(previous, []), ...messages];
     }
     this.agent.state.messages = syncSystemTools(
-      rebuildSystemTranscript(this.agent.state.messages, messages),
+      rebuildSystemTranscript(previous, messages),
       this.agent.state.tools,
     );
   }
@@ -2836,6 +2857,7 @@ Delegation rules:
 
   private entriesWithCompaction(
     checkpoint: ContextCompactionRecord | undefined = this.activeCompaction,
+    includeCoordination = true,
   ): Entry[] {
     const entries: Entry[] = [...this.fullEntries];
     if (!checkpoint) return entries;
@@ -2849,7 +2871,14 @@ Delegation rules:
       seq: throughIndex + 1,
       parentId: checkpoint.throughMessageId,
       timestamp: timestampMs(checkpoint.createdAt),
-      summary: checkpoint.summary,
+      summary: (() => {
+        const snapshot = this.checkpointCoordination(checkpoint);
+        const suffix = snapshot ? `\n\n${snapshot}` : "";
+        // 仅剥离有精确来源记录的程序段，兼容保留已有摘要。
+        return suffix && (!includeCoordination || this.coordinationSnapshotEpoch >= 0)
+          && checkpoint.summary.endsWith(suffix)
+          ? checkpoint.summary.slice(0, -suffix.length) : checkpoint.summary;
+      })(),
       tokensBefore: checkpoint.tokensBefore,
       // pi 0.84 dereferences `retainedTail` unconditionally when it finds a
       // previous compaction entry, so a checkpoint restored without a usable
@@ -4168,6 +4197,7 @@ Delegation rules:
           taskInstruction: task,
         };
         this.delegations.set(delegationId, record);
+        this.markSubagentCoordination(record);
         // 先登记名额与取消句柄，开始回执等待期间的停止也必须可见。
         try {
           record.pendingBegin = this.persistenceClient.beginExecution({
@@ -4193,7 +4223,7 @@ Delegation rules:
           record.status = record.stopRequested ? "stopped" : "failed";
           record.persistenceState = "persistence-error";
           // 注册失败已由本次 Task 结果同步返回，不再作为后台完成报告补发。
-          record.reportDelivered = true;
+          this.markDelegationReportDelivered(record);
           resolveCompletion();
           return this.subagentToolError(toolCallId, `Failed to register subagent execution: ${error instanceof Error ? error.message : String(error)}`);
         } finally {
@@ -4253,7 +4283,7 @@ Delegation rules:
         });
           this.watchDelegationExecution(record, Promise.resolve().then(() => record.run!.run()));
         } catch {
-          record.reportDelivered = true;
+          this.markDelegationReportDelivered(record);
           await this.settleDelegation(record, {
             agentName: definition.name, modelId: provider.modelId, thinkingLevel,
             status: "failed", report: "", turns: 0, toolCalls: 0,
@@ -4860,7 +4890,7 @@ Delegation rules:
             record.status !== "running" &&
             formatted.includedDelegationIds.has(record.delegationId)
           ) {
-            record.reportDelivered = true;
+            this.markDelegationReportDelivered(record);
           }
         }
         return {
@@ -5379,6 +5409,7 @@ Delegation rules:
           record.lastPhase = "waiting-model";
           record.reportDelivered = false;
           record.completion = new Promise<void>((resolve) => { record.resolveCompletion = resolve; });
+          this.markSubagentCoordination(record);
 
           const resumeInstruction = `[Resumed Context Note: Earlier execution was checkpointed and restored. Please re-read any workspace files before modifying them.]\n\n${params.instruction}`;
           const pending = record.run.resume(resumeInstruction, this.turnId, toolCallId);
@@ -5585,7 +5616,7 @@ Delegation rules:
       report: record.result?.report ?? `(${record.status} without a report)`,
     })));
     for (const record of settled) {
-      if (formatted.includedDelegationIds.has(record.delegationId)) record.reportDelivered = true;
+      if (formatted.includedDelegationIds.has(record.delegationId)) this.markDelegationReportDelivered(record);
     }
     return `${DELEGATION_RESUME_PROMPT}\n${formatted.text}`;
   }
@@ -5625,23 +5656,39 @@ Delegation rules:
     ].join("\n");
   }
 
-  /** 每个请求入口都经过这里，但只有事件版本变化才追加一条内存上下文消息。 */
+  /** 事件合并到下一次请求，运行时只保留最新一份协调状态。 */
   private async prepareSubagentCoordination(context: AgentContext): Promise<AgentLoopTurnUpdate | undefined> {
-    if (this.disposed || this.runCancelled || this.turnHadError || this.coordinationVersion === this.coordinationConsumedVersion) return;
+    if (this.disposed || this.runCancelled || this.turnHadError) return;
+    if (this.coordinationSnapshotEpoch === this.turnEpoch && this.coordinationVersion === this.coordinationConsumedVersion) return;
     const version = this.coordinationVersion;
-    const message: AgentMessage = { role: "system", content: this.subagentCoordinationSnapshot(), timestamp: Date.now() };
-    const messages = [...context.messages, message];
+    const hasRecords = [...this.delegations.values()].some((record) => record.startedEpoch === this.turnEpoch);
+    const message = this.coordinationMessageFor(hasRecords ? this.subagentCoordinationSnapshot() : undefined);
+    const snapshot = this.checkpointCoordination(this.activeCompaction);
+    const suffix = snapshot ? `\n\n${snapshot}` : "";
+    const messages = context.messages.filter((entry) => !this.coordinationMessages.has(entry)).map((entry) =>
+      entry.role === "compactionSummary" && suffix && entry.summary === this.activeCompaction?.summary && entry.summary.endsWith(suffix)
+        ? { ...entry, summary: entry.summary.slice(0, -suffix.length) } : entry);
+    if (message) messages.push(message);
     const budget = this.contextBudget(messages);
     if (budget.tokens >= budget.hardLimit) {
-      if (!this.compactionEnabled || !(await this.runCompaction("threshold", false, "active_turn"))) {
+      let compacted = false;
+      this.coordinationRequiresSafeBudget = true;
+      try {
+        compacted = this.compactionEnabled && await this.runCompaction("threshold", false, "active_turn");
+      } finally {
+        this.coordinationRequiresSafeBudget = false;
+      }
+      if (!compacted) throw new Error("CONTEXT_TOO_LARGE: subagent coordination exceeds the safe model budget");
+      const rebuilt = this.rebuiltAgentContext();
+      const refreshed = (await this.prepareSubagentCoordination(rebuilt)) ?? { context: rebuilt };
+      const finalBudget = this.contextBudget(refreshed.context!.messages);
+      if (finalBudget.tokens >= finalBudget.hardLimit) {
         throw new Error("CONTEXT_TOO_LARGE: subagent coordination exceeds the safe model budget");
       }
-      // 压缩落盘期间的新事件仍待消费，不被旧版本快照抹掉。
-      const rebuilt = this.rebuiltAgentContext();
-      return (await this.prepareSubagentCoordination(rebuilt)) ?? { context: rebuilt };
+      return refreshed;
     }
-    this.appendLiveEntry(`subagent-coordination:${randomUUID()}`, message);
-    this.coordinationMessages.add(message);
+    this.coordinationSnapshotEpoch = this.turnEpoch;
+    this.coordinationMessage = message;
     this.agent.state.messages = [...messages];
     this.coordinationConsumedVersion = version;
     return { context: { ...context, messages } };
@@ -6828,10 +6875,14 @@ Delegation rules:
   private liveSessionContext(
     checkpoint: ContextCompactionRecord | undefined = this.activeCompaction,
   ): { messages: AgentMessage[] } {
-    return buildSessionContext(
+    const context = buildSessionContext(
       this.entriesWithCompaction(checkpoint),
       this.reasoningReplayIdentity(),
     );
+    if (this.coordinationSnapshotEpoch === this.turnEpoch && this.coordinationMessage) {
+      context.messages.push(this.coordinationMessage);
+    }
+    return context;
   }
 
   /**
@@ -7113,12 +7164,21 @@ Delegation rules:
   ): Promise<CheckpointPersistResult> {
     // 快照随检查点保存，覆盖手动、自动和溢出恢复；预算也计入这段内容。
     const coordinationVersion = this.coordinationVersion;
-    checkpoint = { ...checkpoint, summary: `${checkpoint.summary}\n\n${this.subagentCoordinationSnapshot()}` };
-    const compactedBudget = this.contextBudget(
-      this.liveSessionContext(checkpoint).messages,
-    );
+    const snapshot = [...this.delegations.values()].some((record) => record.startedEpoch === this.turnEpoch)
+      ? this.subagentCoordinationSnapshot() : undefined;
+    const previous = this.checkpointCoordination(checkpoint);
+    const suffix = previous ? `\n\n${previous}` : "";
+    const summary = suffix && checkpoint.summary.endsWith(suffix)
+      ? checkpoint.summary.slice(0, -suffix.length) : checkpoint.summary;
+    checkpoint = { ...checkpoint, summary: snapshot ? `${summary}\n\n${snapshot}` : summary,
+      details: { ...(isRecord(checkpoint.details) ? checkpoint.details : checkpoint.details === undefined ? {} : { value: checkpoint.details }),
+        subagentCoordination: snapshot ?? null } };
+    const compactedBudget = this.contextBudget([
+      ...buildSessionContext(this.entriesWithCompaction(checkpoint, false), this.reasoningReplayIdentity()).messages,
+      ...(snapshot ? [this.coordinationMessageFor(snapshot)!] : []),
+    ]);
     if (
-      mustFitSafeBudget &&
+      (mustFitSafeBudget || this.coordinationRequiresSafeBudget) &&
       compactedBudget.tokens >= compactedBudget.hardLimit
     ) {
       return "oversized";
@@ -7136,6 +7196,8 @@ Delegation rules:
 
     this.activeCompaction = checkpoint;
     this.coordinationConsumedVersion = coordinationVersion;
+    this.coordinationSnapshotEpoch = this.turnEpoch;
+    this.coordinationMessage = this.coordinationMessageFor(snapshot);
     // A new window means both reminders are available again, matching Codex
     // resetting its `claim_*` flags when the context window turns over.
     this.contextReminderClaimed = false;
@@ -7369,7 +7431,7 @@ Delegation rules:
     signal: AbortSignal,
     retentionMode: CompactionRetentionMode,
   ): Promise<CheckpointBuild> {
-    const entries = this.entriesWithCompaction();
+    const entries = this.entriesWithCompaction(this.activeCompaction, false);
     const context = buildSessionContext(entries, this.reasoningReplayIdentity());
     const budget = this.contextBudget(context.messages);
     const preparation = this.prepareCompactionInput(

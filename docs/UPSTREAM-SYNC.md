@@ -608,16 +608,19 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 
 实现位置与机制（后续适配必须整体保留）：
 
-- `packages/agent-runtime/src/runtime.ts` 的 `prepareSubagentCoordination()` 经 Agent 选项 `prepareRequest` 挂载，覆盖首次与后续所有模型请求；仅用 `coordinationVersion` / `coordinationConsumedVersion` 事件修订号合并事件，相同状态文本的报告若之间隔着主代理请求也必须各自触发一次快照，不做文本去重。
-- 快照为 `role: "system"` 的程序生成消息，调用 `appendLiveEntry` 后直接写入 `this.agent.state.messages = [...messages]`（克隆数组）；仅返回瞬时请求消息或调用 `setAgentMessages()` 无法在后续请求中保留快照，不得改回这两种方式。
-- `coordinationMessages` WeakSet 登记所有快照消息；`setAgentMessages()` 对“全部为协调增量系统消息”的入参执行守卫，用 `rebuildSystemTranscript(previous, [])` 保留原始指令与工具声明。上游若调整系统消息重建逻辑，必须保留该守卫，否则原系统提示与工具声明会丢失。
-- `persistCheckpoint()` 在计算预算与持久化前把当前快照追加进 `checkpoint.summary`，使协调状态随检查点跨压缩与重启存活；仅在检查点成功安装后才消费修订号，压缩期间的异步事件保持待投递。
-- 快照只统计 `startedEpoch === this.turnEpoch` 的本轮委派记录，不显示历史记录为“待审阅”；报告状态区分待投递/已投递，并明确“已投递不等于主代理已审阅”，不得改成任何“已审阅”表述。
-- 快照超出安全预算时优先就地压缩（`runCompaction("threshold", ...)`），仍放不下才抛 `CONTEXT_TOO_LARGE`；不得静默丢弃快照。
-- `abortRunningDelegations()` 不得清空协调状态（`coordinationMessages` / `pendingSubagentCoordination` / `coordinationSeen`）；上游若在该路径新增清理，按本 fork 语义移除。
-- 聚焦用例位于 `packages/agent-runtime/src/subagent-collaboration.test.ts`（“程序生成的子代理协调快照”组，含参数化压缩用例），须从包根 `--root packages/agent-runtime` 运行。
+- `prepareSubagentCoordination()` 经 Agent 的 `prepareRequest` 覆盖首次与后续模型请求。`coordinationVersion` / `coordinationConsumedVersion` 合并请求之间的事件；新建、恢复、进度、停止、结算及报告投递状态变化均刷新版本，相同文本的不同报告仍触发刷新。
+- 当前快照存于独立 `coordinationMessage` 槽位，作为 `role: "system"` 消息加入请求和 `liveSessionContext()` 投影；更新时替换已有快照，不写入 `fullEntries`，保持真实消息索引与压缩锚点稳定。
+- `coordinationMessages` WeakSet 标识程序快照。基础系统提示重建始终排除旧协调消息，保留原始指令及工具声明；所有上下文重建路径均保留本轮最新快照。
+- `persistCheckpoint()` 在保存前将最新快照追加到摘要，并以可选 `details.subagentCoordination` 标记精确来源。后续投影及压缩排除这段已知程序后缀，真实报告照常参与摘要；未带来源标记的历史摘要保持兼容。检查点成功安装后才消费捕获版本，落盘期间的新事件仍待刷新。
+- 快照只统计当前 `turnEpoch` 的委派；本轮无记录时清除运行时旧快照并消费版本，不生成空总览。终态记录区分报告待投递与已提供，已提供不代表主代理已审阅。
+- `reportDelivered` 继续负责旧汇报链路的正文单次消费，快照仅展示状态。正文首次投递通过统一 helper 触发状态刷新；停止控制回执、TaskWait、自动汇报和 TaskResume 保持各自职责。
+- 快照纳入请求与检查点预算。快照触发的压缩强制要求安装结果满足安全预算，压缩后仍检查最终请求；空间不足时保留明确 `CONTEXT_TOO_LARGE` 失败语义。
+- 聚焦用例位于 `packages/agent-runtime/src/subagent-collaboration.test.ts` 的“程序生成的子代理协调快照”组，涵盖单快照替换、投递状态、跨轮清理和参数化压缩期间事件。
 
-验证与交付：聚焦用例 5 项全部通过，`git diff --check` 通过；同文件另有 7 项父督导连通性用例为既有失败（基线对照确认与本次改动无关）。通过统一入口构建 Windows x64 安装版与单文件便携版，版本 `20261002-012859`（内部版本 `2610.201.2859`），安装包 SHA-512 与 `latest.yml` 一致，构建版本文件随本次提交保存。未运行全量测试、安装或 GUI 交互验证，未发布 GitHub Release。
+当前改动（2026-10-02）完成源码与独立只读审阅，已更新相关用例；未运行本地测试、typecheck、构建、服务或数据库操作。用户授权通过 GitHub Actions 对当前源码构建 macOS ARM64 / x64 和 Windows x64 安装包，三个目标复用统一构建时间，产物附带更新描述与 SHA-256 校验文件。
+
+此前版本交付记录：`20261002-012859`（内部版本 `2610.201.2859`）的初版快照聚焦用例 5 项通过，并构建了 Windows x64 安装版与单文件便携版；这些结果不覆盖本次单快照替换改动。
+
 ## 本轮增量：0.16.0 调度与停止竞态适配（2026-10-01）
 
 从 `7e775e6c9e14d6009bf959b4de2eb4c9e0bf40a2` 增量获取上游 `vastsa/PI-Desktop` main 至 `22dfb87a84056127fad07617e8d06974f927bebc`（上游 `0.16.0`），区间包含 52 个提交、28 个非合并提交。本轮在当前 `main` 建立真实 `--no-ff` 双父合并，合并提交为 `3ecca8835`；随后补入停止与 prompt admission 串行化修复，提交为 `6d3b601b2`，并保留其配套回归用例。

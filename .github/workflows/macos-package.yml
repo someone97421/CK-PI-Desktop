@@ -1,7 +1,12 @@
-name: macOS 双架构打包
+name: macOS 与 Windows 打包
 
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 发布为 GitHub 预发布版本
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -11,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-package-${{ github.ref }}
+  group: desktop-package-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -98,19 +103,73 @@ jobs:
           compression-level: 0
           retention-days: 30
 
+  windows:
+    name: Windows x64
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      THIS_IS_A_AGENT_BUILD_TIME: ${{ needs.version.outputs.time }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: 设置产物目录
+        run: '"THIS_IS_A_AGENT_OUTPUT_DIR=$env:RUNNER_TEMP\windows-package" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append'
+      - uses: pnpm/action-setup@v6
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 配置 Rust
+        run: |
+          rustup default stable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --version
+          cargo --version
+      - name: 原生编译并生成安装版和便携版
+        run: pnpm --filter @pi-desktop/desktop dist:win
+      - name: 整理下载文件与校验信息
+        env:
+          DISPLAY_VERSION: ${{ needs.version.outputs.display }}
+        run: |
+          $downloadDir = Join-Path $env:RUNNER_TEMP 'downloads'
+          New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
+          Get-ChildItem -LiteralPath $env:THIS_IS_A_AGENT_OUTPUT_DIR -Recurse -File |
+            Where-Object { $_.Extension -in '.exe', '.blockmap', '.yml' -and $_.DirectoryName -notmatch 'win-unpacked' } |
+            Copy-Item -Destination $downloadDir
+          foreach ($name in @("this-is-a-agent-Setup-$env:DISPLAY_VERSION-x64.exe", "this-is-a-agent-Portable-$env:DISPLAY_VERSION-x64.exe", 'latest.yml')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $downloadDir $name))) { throw "缺少构建产物：$name" }
+          }
+          Get-ChildItem -LiteralPath $downloadDir -Filter '*.exe' |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path $_.Path -Leaf) } |
+            Set-Content -LiteralPath (Join-Path $downloadDir 'SHA256SUMS-windows-x64.txt') -Encoding utf8
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64-${{ needs.version.outputs.display }}
+          path: ${{ runner.temp }}/downloads/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
   publish:
-    name: 发布双架构下载
-    needs: [version, build]
+    name: 发布安装包下载
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [version, build, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: macos-*-${{ needs.version.outputs.display }}
+          pattern: '*-${{ needs.version.outputs.display }}'
           path: downloads
           merge-multiple: true
-      - name: 创建 macOS 预发布
+      - name: 创建桌面预发布
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -121,20 +180,24 @@ jobs:
           set -euo pipefail
           test -f "downloads/this-is-a-agent-$DISPLAY_VERSION-arm64.dmg"
           test -f "downloads/this-is-a-agent-$DISPLAY_VERSION-x64.dmg"
+          test -f "downloads/this-is-a-agent-Setup-$DISPLAY_VERSION-x64.exe"
+          test -f "downloads/this-is-a-agent-Portable-$DISPLAY_VERSION-x64.exe"
+          test -f "downloads/latest.yml"
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          macOS 双架构安装包，版本 $DISPLAY_VERSION。
+          macOS 双架构与 Windows x64 安装包，版本 $DISPLAY_VERSION。
 
           - Apple Silicon（M 系列）：选择 arm64.dmg。
           - Intel：选择 x64.dmg。
+          - Windows 安装版：选择 Setup-x64.exe；单文件便携版：选择 Portable-x64.exe。
           - 临时签名，未经过 Apple 公证。首次打开可能需要在系统设置的“隐私与安全性”中允许打开。
           - 附带 ZIP、分架构更新描述文件及 SHA-256 校验文件。
           - 源码提交：$SOURCE_SHA。
 
-          此版本为 macOS 预发布，不替换稳定版更新入口。
+          此版本为预发布，不替换稳定版更新入口。
           EOF
           gh release create "v$BUILD_VERSION" downloads/* \
             --target "$SOURCE_SHA" \
-            --title "这是一个助手 $DISPLAY_VERSION · macOS ARM64 / x64" \
+            --title "这是一个助手 $DISPLAY_VERSION · macOS / Windows" \
             --notes-file "$RUNNER_TEMP/release-notes.md" \
             --prerelease --latest=false
           gh release view "v$BUILD_VERSION" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"
