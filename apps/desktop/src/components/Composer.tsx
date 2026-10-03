@@ -125,6 +125,17 @@ export function Composer({
       ),
     [liveMessages, providerModels, providers, sessionCompactions],
   );
+  // 运行中轮次的开始时间：任务摘要 agent_start 落的时间戳，胶囊用它显示本轮运行时长。
+  const activeRunStartedAt = useMemo(() => {
+    for (let index = liveMessages.length - 1; index >= 0; index--) {
+      const task = liveMessages[index]?.task;
+      if (task && task.status === "running" && task.startedAt) {
+        const started = Date.parse(task.startedAt);
+        if (Number.isFinite(started)) return started;
+      }
+    }
+    return undefined;
+  }, [liveMessages]);
   const configureActiveSession = useAppStore((s) => s.configureActiveSession);
   const showToast = useAppStore((s) => s.showToast);
   const composerPrefill = useAppStore((s) => s.composerPrefill);
@@ -618,6 +629,7 @@ export function Composer({
             runActive={runActive}
             hasDraftContent={hasDraftContent}
             abort={abort}
+            runStartedAt={activeRunStartedAt}
             submit={submitFromComposer}
           />
         </div>

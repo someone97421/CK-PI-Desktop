@@ -1472,6 +1472,8 @@ sklm: {
     enterToSendDesc: "关闭后按 ⌘/Ctrl+Enter 发送。",
     infiniteProviderRetry: "无尽重试",
     infiniteProviderRetryDesc: "网络或临时服务故障会一直重试直到成功。仍可随时停止，但开启后可能持续消耗 API 用量。",
+    runStatusReminder: "运行状态提醒",
+    runStatusReminderDesc: "主代理运行每满五分钟，在下一次模型请求中告知其已运行时长与累计 token 用量；消息不写入对话记录，压缩后自然消失。",
     smoothStreaming: "平滑流式显示",
     smoothStreamingDesc: "将流式文本逐字释放；系统开启减少动态效果时自动禁用。",
     preventScreenSleep: "阻止屏幕休眠",

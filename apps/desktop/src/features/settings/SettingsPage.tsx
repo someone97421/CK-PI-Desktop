@@ -557,6 +557,16 @@ export function SettingsPage() {
                   />
                 </SettingsRow>
                 <SettingsRow
+                  title={t("settings.runStatusReminder")}
+                  description={t("settings.runStatusReminderDesc")}
+                >
+                  <SettingsToggle
+                    checked={settings.runStatusReminder !== false}
+                    label={t("settings.runStatusReminder")}
+                    onChange={() => void saveSettings({ runStatusReminder: settings.runStatusReminder === false })}
+                  />
+                </SettingsRow>
+                <SettingsRow
                   title={t("settings.smoothStreaming")}
                   description={t("settings.smoothStreamingDesc")}
                 >

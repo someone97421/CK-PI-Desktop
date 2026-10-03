@@ -553,6 +553,20 @@
     transform var(--motion-duration-fast) var(--motion-ease-out);
 }
 
+/* 运行中终止键（fork 定制）：宽胶囊，左侧终止图标，右侧本轮运行时长。 */
+.stop-btn-pill {
+  width: auto;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 0 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.stop-btn-elapsed {
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.85;
+}
 .stop-btn:hover {
   background: color-mix(in oklab, var(--ds-text-primary) 22%, transparent);
 }

@@ -99,6 +99,8 @@ type RuntimeParams = {
   turnId?: string;
   thinkingLevel?: SessionThinkingLevel;
   infiniteProviderRetry?: boolean;
+  /** 运行状态提醒开关；缺省开启（false 关闭）。 */
+  runStatusReminder?: boolean;
   provider: RuntimeProviderConfig;
   /**
    * Optional dedicated context-compaction model, fully resolved by Electron
@@ -263,6 +265,7 @@ async function runtimeFor(
   if (reusable) {
     reusable.setCompactionSettings(params.compactionSettings);
     reusable.setInfiniteProviderRetry(params.infiniteProviderRetry === true);
+    reusable.setRunStatusReminder(params.runStatusReminder !== false);
     reusable.setMode(mode);
     return reusable;
   }
@@ -321,6 +324,7 @@ async function runtimeFor(
     commandShell: params.commandShell,
     thinkingLevel,
     infiniteProviderRetry: params.infiniteProviderRetry === true,
+    runStatusReminder: params.runStatusReminder !== false,
     history,
     compaction,
     compactionSettings: params.compactionSettings,

@@ -1505,6 +1505,8 @@ sklm: {
     enterToSendDesc: "Off: press ⌘/Ctrl+Enter to send.",
     infiniteProviderRetry: "Retry until success",
     infiniteProviderRetryDesc: "Keep retrying network and transient provider failures until the request succeeds. You can still stop the turn; API usage may continue while enabled.",
+    runStatusReminder: "Run status reminder",
+    runStatusReminderDesc: "Every five minutes of a run, the agent is told in the next model request how long it has been running and its cumulative token usage. The note is not written into the conversation and disappears after compaction.",
     smoothStreaming: "Smooth streaming",
     smoothStreamingDesc: "Release streamed text character by character. Automatically disabled when the system prefers reduced motion.",
     preventScreenSleep: "Prevent screen sleep",

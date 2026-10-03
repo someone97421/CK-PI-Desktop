@@ -179,6 +179,8 @@ export function createProviderCatalogRuntime({
       ...(value as T),
       infiniteProviderRetry: (value as T & { infiniteProviderRetry?: unknown })
         .infiniteProviderRetry === true,
+      runStatusReminder: (value as T & { runStatusReminder?: unknown })
+        .runStatusReminder !== false,
       keepAwakeWhileRunning: (value as T & { keepAwakeWhileRunning?: unknown })
         .keepAwakeWhileRunning === true,
       defaultCommandShell: isCommandShellId(value.defaultCommandShell)
@@ -194,6 +196,7 @@ export function createProviderCatalogRuntime({
     const value = settings as T & {
       defaultCommandShell?: unknown;
       infiniteProviderRetry?: unknown;
+      runStatusReminder?: unknown;
       keepAwakeWhileRunning?: unknown;
       updatePreference?: unknown;
       lastNotifiedUpdateVersion?: unknown;
@@ -218,6 +221,14 @@ export function createProviderCatalogRuntime({
       typeof value.infiniteProviderRetry !== "boolean"
     ) {
       throw Object.assign(new Error("infiniteProviderRetry is invalid"), {
+        errorCode: ErrorCodes.INVALID_PARAMS,
+      });
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value, "runStatusReminder") &&
+      typeof value.runStatusReminder !== "boolean"
+    ) {
+      throw Object.assign(new Error("runStatusReminder is invalid"), {
         errorCode: ErrorCodes.INVALID_PARAMS,
       });
     }

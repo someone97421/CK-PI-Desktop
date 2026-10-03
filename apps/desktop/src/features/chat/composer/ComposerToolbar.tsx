@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import type { TFunction } from "i18next";
 import {
@@ -61,6 +62,54 @@ export type ComposerToolbarProps = {
   hasDraftContent: boolean;
   abort: AppState["abort"];
   submit: () => Promise<void>;
+  /** 当前运行轮的开始时间（epoch 毫秒）；未知时胶囊自行以挂载时刻兜底。 */
+  runStartedAt?: number;
+};
+
+function formatRunElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/** 运行中的终止键：宽胶囊，左侧终止图标，右侧本轮运行时长。 */
+function StopRunPill({
+  t,
+  abort,
+  startedAt,
+}: {
+  t: TFunction;
+  abort: () => void;
+  startedAt?: number;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const fallbackRef = useRef(startedAt ?? Date.now());
+  useEffect(() => {
+    fallbackRef.current = startedAt ?? Date.now();
+  }, [startedAt]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const anchor = startedAt ?? fallbackRef.current;
+  return (
+    <TooltipButton
+      type="button"
+      className="stop-btn stop-btn-pill"
+      tooltip={t("chat.stopGenerating")}
+      ariaLabel={t("chat.stopGenerating")}
+      onClick={() => void abort()}
+    >
+      <IconStop size={14} />
+      <span className="stop-btn-elapsed" aria-hidden="true">
+        {formatRunElapsed(now - anchor)}
+      </span>
+    </TooltipButton>
+  );
 };
 
 /** Composer controls: mode, permission, model, enhancement, and send/stop. */
@@ -95,6 +144,7 @@ export function ComposerToolbar({
   hasDraftContent,
   abort,
   submit,
+  runStartedAt,
 }: ComposerToolbarProps) {
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
   const steeringShortcut = keybindingDisplayParts("Alt+Enter", platform).join("+");
@@ -222,15 +272,7 @@ export function ComposerToolbar({
           </TooltipButton>
         ) : null}
         {runActive && !hasDraftContent ? (
-          <TooltipButton
-            type="button"
-            className="stop-btn"
-            tooltip={t("chat.stopGenerating")}
-            ariaLabel={t("chat.stopGenerating")}
-            onClick={() => void abort()}
-          >
-            <IconStop size={14} />
-          </TooltipButton>
+          <StopRunPill t={t} abort={() => void abort()} startedAt={runStartedAt} />
         ) : (
           <TooltipButton
             type="button"

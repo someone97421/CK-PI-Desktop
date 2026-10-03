@@ -906,6 +906,8 @@ const CONTEXT_REMINDER_MAX_TOKENS = 32_000;
 const CONTEXT_REMINDER_RATIO = 0.15;
 /** Close enough to the boundary that the next turn is likely to cross it. */
 const CONTEXT_FALLBACK_REMINDER_TOKENS = 2_000;
+/** 运行状态提醒间隔：本轮运行每满五分钟，随下一次模型请求注入一次。 */
+const RUN_STATUS_REMINDER_INTERVAL_MS = 5 * 60_000;
 
 function contextBudgetReminder(remaining: number): string {
   return [
@@ -954,6 +956,8 @@ export type AgentRuntimeOptions = {
   thinkingLevel: SessionThinkingLevel;
   /** Persisted opt-in for retrying transient provider failures until success. */
   infiniteProviderRetry?: boolean;
+  /** 运行状态提醒开关；缺省开启（false 关闭）。 */
+  runStatusReminder?: boolean;
   systemPrompt?: string;
   /** pi-compatible SYSTEM.md / APPEND_SYSTEM.md resolved for the session. */
   customSystemPrompt?: CustomSystemPrompt;
@@ -1808,6 +1812,13 @@ export class DesktopAgentRuntime {
   private activeToolProgressCleanups = new Set<(flush: boolean) => void>();
   private hostCloseUnsubscribe?: () => void;
   private turnSubagentUsage?: MessageUsage;
+  /** 运行状态提醒开关（fork 定制）。 */
+  private runStatusReminder: boolean;
+
+  /** 运行状态提醒（fork 定制）：本轮开始时间、上次提醒时间与主代理累计用量。 */
+  private runStatusTurnStartedAt = 0;
+  private runStatusRemindedAt = 0;
+  private runStatusTurnUsage?: MessageUsage;
 
   constructor(opts: AgentRuntimeOptions) {
     this.sessionId = opts.sessionId;
@@ -1817,6 +1828,7 @@ export class DesktopAgentRuntime {
     this.provider = opts.provider;
     this.thinkingLevel = clampThinkingLevel(opts.provider, opts.thinkingLevel);
     this.infiniteProviderRetry = opts.infiniteProviderRetry === true;
+    this.runStatusReminder = opts.runStatusReminder !== false;
     this.host = opts.host;
     this.persistenceClient = new SubagentPersistenceClient(opts.host, opts.sessionId);
     this.hostCloseUnsubscribe = this.host.onClose?.(() => {
@@ -2015,7 +2027,13 @@ Delegation rules:
               : this.models.streamSimple(m, context, retryOptions), {
                 providerId: this.provider.id,
                 nativeCost: this.provider.modelConfig?.nativeCost,
-                onUsage: (usage) => this.emit({ type: "usage", usage }, usageTurnId),
+                onUsage: (usage) => {
+                  // 只累计主代理模型请求的用量；压缩等内部请求走另一条 onUsage，不进这里。
+                  if (usageTurnId !== undefined && usageTurnId === this.turnId) {
+                    this.runStatusTurnUsage = addUsage(this.runStatusTurnUsage, usage);
+                  }
+                  this.emit({ type: "usage", usage }, usageTurnId);
+                },
               }),
           {
             claim: (error, phase) => this.claimProviderRetry(error, phase),
@@ -2177,6 +2195,12 @@ Delegation rules:
   setInfiniteProviderRetry(enabled: boolean): void {
     if (this.disposed) throw new Error("runtime disposed");
     this.infiniteProviderRetry = enabled;
+  }
+
+  /** 热更新运行状态提醒开关，无需重建空闲 runtime。 */
+  setRunStatusReminder(enabled: boolean): void {
+    if (this.disposed) throw new Error("runtime disposed");
+    this.runStatusReminder = enabled;
   }
 
   private agentUsesTranscriptSystemMessages(): boolean {
@@ -6765,7 +6789,9 @@ Delegation rules:
     turn: PrepareNextTurnContext,
     signal?: AbortSignal,
   ): Promise<AgentLoopTurnUpdate> {
-    return this.extensionContext(await this.prepareNextTurnWithoutExtensions(turn, signal));
+    const update = await this.extensionContext(await this.prepareNextTurnWithoutExtensions(turn, signal));
+    if (!update.context) return update;
+    return { ...update, context: this.withRunStatusReminder(update.context) };
   }
 
   private async prepareNextTurnWithoutExtensions(
@@ -6863,6 +6889,37 @@ Delegation rules:
     if (remaining > threshold || this.contextReminderClaimed) return undefined;
     this.contextReminderClaimed = true;
     return contextBudgetReminder(remaining);
+  }
+
+  /** 新一轮运行开始时重置运行状态提醒的计时与用量基准。 */
+  private resetRunStatusReminder(): void {
+    this.runStatusTurnStartedAt = Date.now();
+    this.runStatusRemindedAt = 0;
+    this.runStatusTurnUsage = undefined;
+  }
+
+  /**
+   * 运行状态提醒（fork 定制）：本轮运行每满五分钟，在下一次模型请求的上下文
+   * 末尾追加一条系统消息，只报告运行时长与主代理累计 token。消息不写入持久化
+   * 对话，压缩重建后自然消失；耗时为墙钟时间，包含长工具调用与子代理等待。
+   */
+  private withRunStatusReminder(context: AgentContext): AgentContext {
+    if (!this.runStatusReminder || !this.runStatusTurnStartedAt) return context;
+    const now = Date.now();
+    const anchor = this.runStatusRemindedAt || this.runStatusTurnStartedAt;
+    if (now - anchor < RUN_STATUS_REMINDER_INTERVAL_MS) return context;
+    this.runStatusRemindedAt = now;
+    const elapsedMs = now - this.runStatusTurnStartedAt;
+    const minutes = Math.floor(elapsedMs / 60_000);
+    const seconds = Math.floor((elapsedMs % 60_000) / 1000);
+    const usage = this.runStatusTurnUsage;
+    const content = usage
+      ? `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；主代理累计 token：输入 ${usage.inputTokens.toLocaleString("en-US")}，输出 ${usage.outputTokens.toLocaleString("en-US")}。仅为信息，无需回应。`
+      : `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；暂无 token 用量记录。仅为信息，无需回应。`;
+    return {
+      ...context,
+      messages: [...context.messages, { role: "system", content, timestamp: now }],
+    };
   }
 
   private async runCompaction(
@@ -8494,6 +8551,7 @@ Delegation rules:
     this.abortDelegationsFromPreviousTurns();
     this.currentAssistant = undefined;
     this.requestStartedAt = Date.now();
+    this.resetRunStatusReminder();
     this.setMode("agent");
     this.autonomousExecution = true;
 
@@ -8598,6 +8656,7 @@ Delegation rules:
     this.turnEpoch += 1;
     this.abortDelegationsFromPreviousTurns();
     this.requestStartedAt = Date.now();
+    this.resetRunStatusReminder();
     this.setAgentActivity({ phase: "starting", since: Date.now() });
     try {
       const content = promptContent(modelInput, mediaCapabilitiesForProvider(this.provider));

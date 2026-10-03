@@ -72,7 +72,17 @@ export type AppSettings = {
    * Keep retryable provider/network failures retrying until the request succeeds.
    * Absent and false use the bounded ten-retry policy.
    */
+  /**
+   * Keep retryable provider/network failures retrying until the request succeeds.
+   * Absent and false use the bounded ten-retry policy.
+   */
   infiniteProviderRetry?: boolean;
+  /**
+   * 运行状态提醒（fork 定制）：主代理每次运行从本轮开始计时，每满五分钟在下一次
+   * 模型请求的上下文末尾注入一条系统消息，报告运行时长与主代理累计 token。
+   * 消息不写入持久化对话。缺省开启；设为 false 关闭。
+   */
+  runStatusReminder?: boolean;
   /** Prevent idle system sleep while this desktop app runs; off when absent. */
   keepAwakeWhileRunning?: boolean;
   defaultCommandShell?: CommandShellId;
