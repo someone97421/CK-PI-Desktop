@@ -199,7 +199,7 @@ export type SerializedAssistantMessage = {
   usage?: Usage;
   stopReason?: "stop" | "toolUse" | "length";
   timestamp: number;
-} & Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">;
+} & Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "thinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">;
 
 export type SerializedToolResultMessage = {
   role: "toolResult";
@@ -207,6 +207,7 @@ export type SerializedToolResultMessage = {
   toolName: string;
   content: string | SerializedUserContentPart[];
   details?: Record<string, unknown>;
+  usage?: Usage;
   addedToolNames?: string[];
   isError: boolean;
   timestamp: number;
@@ -419,11 +420,12 @@ export function validatePairedToolCalls(messages: readonly (AgentMessage | Seria
 }
 
 /** 保留模型库定义的响应元数据，供恢复上下文和诊断使用。 */
-function assistantMetadata(message: Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">) {
+function assistantMetadata(message: Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "thinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">) {
   return {
     ...(typeof message.responseModel === "string" ? { responseModel: message.responseModel } : {}),
     ...(typeof message.responseId === "string" ? { responseId: message.responseId } : {}),
     ...(typeof message.providerThinkingLevel === "string" ? { providerThinkingLevel: message.providerThinkingLevel } : {}),
+    ...(typeof message.thinkingLevel === "string" ? { thinkingLevel: message.thinkingLevel } : {}),
     ...(Array.isArray(message.diagnostics) ? { diagnostics: message.diagnostics.map((item) => ({ ...item })) } : {}),
     ...(typeof message.rawStopReason === "string" ? { rawStopReason: message.rawStopReason } : {}),
     ...(typeof message.endTurn === "boolean" ? { endTurn: message.endTurn } : {}),
@@ -498,7 +500,7 @@ export function encodeAgentMessages(
         assertKnownKeys(
           a as unknown as Record<string, unknown>,
           ["role", "content", "api", "provider", "model", "usage", "stopReason", "timestamp",
-            "responseModel", "responseId", "providerThinkingLevel", "diagnostics", "rawStopReason", "endTurn", "errorMessage", "deferred"],
+            "responseModel", "responseId", "providerThinkingLevel", "thinkingLevel", "diagnostics", "rawStopReason", "endTurn", "errorMessage", "deferred"],
           `messages[${idx}]`,
         );
 
@@ -598,7 +600,7 @@ export function encodeAgentMessages(
         const t = message as ToolResultMessage;
         assertKnownKeys(
           t as unknown as Record<string, unknown>,
-          ["role", "toolCallId", "toolName", "content", "details", "isError", "timestamp", "addedToolNames"],
+          ["role", "toolCallId", "toolName", "content", "details", "usage", "isError", "timestamp", "addedToolNames"],
           `messages[${idx}]`,
         );
 
@@ -651,6 +653,7 @@ export function encodeAgentMessages(
             ? { details: t.details as Record<string, unknown> }
             : {}),
           ...(addedToolNames && addedToolNames.length > 0 ? { addedToolNames } : {}),
+          ...(t.usage && typeof t.usage === "object" ? { usage: { ...t.usage, cost: { ...t.usage.cost } } } : {}),
           isError: Boolean(t.isError),
           timestamp: typeof t.timestamp === "number" ? t.timestamp : Date.now(),
         });
@@ -744,6 +747,7 @@ export function decodeAgentMessages(serialized: readonly SerializedAgentMessage[
           toolName: raw.toolName,
           content: raw.content as any,
           ...(Object.keys(details).length > 0 ? { details } : {}),
+          ...(raw.usage ? { usage: { ...raw.usage, cost: { ...raw.usage.cost } } } : {}),
           isError: raw.isError,
           timestamp: raw.timestamp,
         } as any;

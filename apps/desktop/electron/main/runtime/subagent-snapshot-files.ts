@@ -1,26 +1,9 @@
-import { createDecipheriv, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
-/** 只依赖安全存储的最小接口；主进程注入 Electron safeStorage。 */
-export interface SnapshotKeyProtector {
-  isEncryptionAvailable(): boolean;
-  encryptString(value: string): Buffer;
-  decryptString(value: Buffer): string;
-  getSelectedStorageBackend?(): string;
-}
-
-export class LegacySnapshotKeyUnavailableError extends Error {
-  constructor() {
-    super("旧版加密快照密钥不可用。");
-    this.name = "LegacySnapshotKeyUnavailableError";
-  }
-}
-
 export const SNAPSHOT_FILE_LIMIT = 16 * 1024 * 1024;
-const LEGACY_HEADER_BYTES = 4 + 12 + 16;
-const LEGACY_MAGIC = Buffer.from("SAC1");
 const JSON_FORMAT = "subagent-contexts/v1";
 
 interface PlainSnapshotEnvelope {
@@ -29,49 +12,16 @@ interface PlainSnapshotEnvelope {
   value: unknown;
 }
 
-/** 独占目录内的有界快照文件操作。不得向日志传递正文、密钥或解密错误的原始载荷。 */
+/** 独占目录内的有界快照文件操作。不得向日志传递正文或敏感载荷。 */
 export class SubagentSnapshotFiles {
   readonly root: string;
-  private legacyKey?: Buffer;
 
-  constructor(root: string, private readonly protector: SnapshotKeyProtector) {
+  constructor(root: string) {
     this.root = resolve(root);
   }
 
   async initialize(): Promise<void> {
     await this.ensureDirectory(this.root);
-
-    // 新快照不依赖安全存储；仅在可用时加载旧 SAC1 文件所需的历史密钥。
-    let canDecryptLegacy = false;
-    try {
-      const backend = process.platform === "linux" ? this.protector.getSelectedStorageBackend?.() : undefined;
-      canDecryptLegacy = this.protector.isEncryptionAvailable() && (
-        process.platform !== "linux" ||
-        ["gnome_libsecret", "kwallet", "kwallet5", "kwallet6"].includes(backend ?? "")
-      );
-    } catch {
-      return;
-    }
-    if (!canDecryptLegacy) return;
-
-    let protectedKey: Buffer;
-    try {
-      protectedKey = await this.readBounded(this.path("key.bin"), 64 * 1024);
-    } catch {
-      // 缺失、损坏或不可访问的旧密钥只影响旧 SAC1 文件，不阻断普通 JSON 存储。
-      return;
-    }
-
-    try {
-      const decoded = Buffer.from(this.protector.decryptString(protectedKey), "base64");
-      if (decoded.length !== 32) {
-        decoded.fill(0);
-        return;
-      }
-      this.legacyKey = decoded;
-    } catch {
-      // 当前系统用户无法解密旧密钥时，仍允许保存和读取新的普通 JSON 快照。
-    }
   }
 
   path(...parts: string[]): string {
@@ -143,10 +93,6 @@ export class SubagentSnapshotFiles {
   }
 
   decode<T>(bytes: Buffer, identity: string): T {
-    if (bytes.subarray(0, 4).equals(LEGACY_MAGIC)) {
-      return this.decodeLegacy<T>(bytes, identity);
-    }
-
     let parsed: unknown;
     try {
       parsed = JSON.parse(bytes.toString("utf8"));
@@ -161,23 +107,6 @@ export class SubagentSnapshotFiles {
       throw new Error("快照格式或身份不匹配。");
     }
     return envelope.value as T;
-  }
-
-  private decodeLegacy<T>(bytes: Buffer, identity: string): T {
-    if (!this.legacyKey) throw new LegacySnapshotKeyUnavailableError();
-    if (bytes.length < LEGACY_HEADER_BYTES) throw new Error("旧版加密快照格式无效。");
-    let plaintext: Buffer | undefined;
-    try {
-      const decipher = createDecipheriv("aes-256-gcm", this.legacyKey, bytes.subarray(4, 16));
-      decipher.setAAD(Buffer.from(`subagent-contexts/v1/${identity}`, "utf8"));
-      decipher.setAuthTag(bytes.subarray(16, 32));
-      plaintext = Buffer.concat([decipher.update(bytes.subarray(32)), decipher.final()]);
-      return JSON.parse(plaintext.toString("utf8")) as T;
-    } catch {
-      throw new Error("旧版加密快照认证失败或内容损坏。");
-    } finally {
-      plaintext?.fill(0);
-    }
   }
 
   /** 同卷 rename 覆盖目标；失败时绝不先删除旧 control。 */
@@ -210,8 +139,4 @@ export class SubagentSnapshotFiles {
     }
   }
 
-  destroy(): void {
-    this.legacyKey?.fill(0);
-    this.legacyKey = undefined;
-  }
 }

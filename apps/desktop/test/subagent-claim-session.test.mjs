@@ -15,7 +15,6 @@ test("新会话及重复登记不读取正在写入的历史转录", async () =>
   try {
     const store = new SubagentSnapshotStore({
       dataDir: dir,
-      protector: { isEncryptionAvailable: () => false },
       deliverEvent: async () => {},
       sessionAuthority: async (_id, mode) => {
         modes.push(mode);

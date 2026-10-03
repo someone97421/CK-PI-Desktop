@@ -2,7 +2,6 @@ import {
   app,
   BrowserWindow,
   ipcMain,
-  safeStorage,
 } from "electron";
 import { join } from "node:path";
 import { configureApplicationIdentity } from "./application-identity";
@@ -778,7 +777,6 @@ const { persistAgentEvent } = eventPersistence;
 
 const subagentSnapshots = new SubagentSnapshotStore({
   dataDir,
-  protector: safeStorage,
   sessionAuthority: createSubagentSessionAuthority(dataDir, getHost),
   deliverEvent: async (envelope) => {
     const host = getHost();

@@ -40,10 +40,8 @@ import {
   type SubagentRevokeRequest,
 } from "@pi-desktop/agent-runtime";
 import {
-  LegacySnapshotKeyUnavailableError,
   SNAPSHOT_FILE_LIMIT,
   SubagentSnapshotFiles,
-  type SnapshotKeyProtector,
 } from "./subagent-snapshot-files.js";
 import type { SubagentSessionAuthority } from "./subagent-session-authority.js";
 
@@ -104,7 +102,6 @@ export interface StoredControlRecord extends SubagentControlRecord {
 
 export interface SubagentSnapshotStoreOptions {
   dataDir: string;
-  protector: SnapshotKeyProtector;
   sessionAuthority: SubagentSessionAuthority;
   deliverEvent: (envelope: AgentEventEnvelope) => Promise<void>;
 }
@@ -166,7 +163,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
 
   constructor(options: SubagentSnapshotStoreOptions) {
     this.root = resolve(options.dataDir, "subagent-contexts", "v1");
-    this.files = new SubagentSnapshotFiles(this.root, options.protector);
+    this.files = new SubagentSnapshotFiles(this.root);
     this.sessionAuthority = options.sessionAuthority;
     this.deliverEvent = options.deliverEvent;
   }
@@ -242,10 +239,8 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
 
           let sessionControl: SessionControlRecord | null = null;
           try {
-            sessionControl = await this.loadSessionControl(sessionId, true);
-          } catch (error) {
-            // 保留当前用户无法解密的旧会话，避免初始化将旧加密控制记录覆盖。
-            if (error instanceof LegacySnapshotKeyUnavailableError) continue;
+            sessionControl = await this.loadSessionControl(sessionId);
+          } catch {
             // Corrupted session control -> mark isolated
             sessionControl = {
               sessionId,
@@ -1704,7 +1699,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       try {
         rawCheckpoint = this.files.decode(bytes, identity);
       } catch {
-        throw new SubagentPersistenceError("SNAPSHOT_CORRUPTED", "快照格式、身份或旧版加密认证失败");
+        throw new SubagentPersistenceError("SNAPSHOT_CORRUPTED", "快照格式或身份校验失败");
       }
 
       const validatedCheckpoint = validateCheckpoint(rawCheckpoint);
@@ -1929,10 +1924,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     }
   }
 
-  private async loadSessionControl(
-    sessionId: string,
-    preserveUnavailableLegacy = false,
-  ): Promise<SessionControlRecord | null> {
+  private async loadSessionControl(sessionId: string): Promise<SessionControlRecord | null> {
     const p = this.files.path(sessionId, "session-control.bin");
     let bytes: Buffer;
     try {
@@ -1949,11 +1941,10 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     try {
       return this.files.decode<SessionControlRecord>(bytes, `${sessionId}/session-control`);
     } catch (err) {
-      if (preserveUnavailableLegacy && err instanceof LegacySnapshotKeyUnavailableError) throw err;
       this.isolatedSessions.set(sessionId, "SESSION_CONTROL_CORRUPTED");
       throw new SubagentPersistenceError(
         "SNAPSHOT_CORRUPTED",
-        `会话控制记录格式、身份或旧版加密认证失败: ${(err as Error).message}`,
+        `会话控制记录格式或身份不匹配: ${(err as Error).message}`,
       );
     }
   }
@@ -1982,7 +1973,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     } catch (err) {
       throw new SubagentPersistenceError(
         "SNAPSHOT_CORRUPTED",
-        `任务控制记录格式、身份或旧版加密认证失败: ${(err as Error).message}`,
+        `任务控制记录格式或身份不匹配: ${(err as Error).message}`,
       );
     }
   }

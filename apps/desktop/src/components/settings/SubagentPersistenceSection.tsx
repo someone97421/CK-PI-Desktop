@@ -4,7 +4,7 @@ import type { SubagentPersistenceSettings } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { Button } from "../ui";
 import { CapabilityToggle } from "./AgentCapabilityLayout";
-import { IconCheck, IconTrash } from "../icons";
+import { IconTrash } from "../icons";
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return "0 B";
@@ -96,24 +96,6 @@ export function SubagentPersistenceSection() {
             label={t("settings.subagentPersistenceEnable")}
             onChange={() => void handleToggle()}
           />
-        </div>
-      </div>
-
-      <div className="settings-row">
-        <div className="settings-row-copy">
-          <div className="settings-row-title">{t("settings.subagentPersistenceStatus")}</div>
-          <div className="settings-row-desc">
-            {loading ? t("chat.subagentRecallCheck") : settings?.available ? (
-              <span className="text-success inline-flex items-center gap-1">
-                <IconCheck size={14} aria-hidden />
-                {t("settings.subagentPersistenceAvailable")}
-              </span>
-            ) : (
-              <span className="text-warning">
-                {t("settings.subagentPersistenceUnavailable", { reason: settings?.reason || error || t("chat.subagentPersistenceState.unavailable") })}
-              </span>
-            )}
-          </div>
         </div>
       </div>
 
