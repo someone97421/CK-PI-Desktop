@@ -5,8 +5,8 @@
  * shape, so the conversions live here instead of being duplicated per loop.
  */
 
-import type { AgentMessage, JsonValue } from "@earendil-works/pi-agent-core";
-import type { Usage } from "@earendil-works/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { JsonObject, JsonValue, Usage } from "@earendil-works/pi-ai";
 import type { MessageUsage, UsageProvenance } from "@pi-desktop/shared";
 
 export function nowIso(): string {
@@ -40,9 +40,14 @@ export function toJsonValue(value: unknown): JsonValue | undefined {
     return undefined;
   }
 }
+
+function isJsonObject(value: JsonValue): value is JsonObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export function toJsonObject(value: unknown): Record<string, JsonValue> {
   const normalized = toJsonValue(value);
-  return normalized && typeof normalized === "object" && !Array.isArray(normalized)
+  return normalized !== undefined && isJsonObject(normalized)
     ? normalized
     : {};
 }

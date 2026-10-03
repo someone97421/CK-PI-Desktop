@@ -6,17 +6,15 @@
  * requests the parent already considers unsafe. Both therefore read the
  * formula from here instead of each owning a copy that can drift.
  *
- * Deliberately dependency-light — token estimation is delegated to
- * pi-agent-core, and pi-ai only contributes the erased `Model`/`Api` *types*,
- * so this module stays usable from any runtime context and can never form a
- * cycle with `runtime.ts`.
+ * Deliberately dependency-light — token estimation uses the pi-ai utility
+ * boundary through the desktop-owned compatibility adapter, so this module
+ * stays usable from any runtime context and can never form a cycle with
+ * `runtime.ts`.
  */
 
 import type { Api, Model } from "@earendil-works/pi-ai";
-import {
-  estimateContextTokens,
-  type AgentMessage,
-} from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { estimateContextTokens } from "./pi-runtime-estimates.js";
 import {
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MAX_TOKENS,

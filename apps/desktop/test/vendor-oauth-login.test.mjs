@@ -11,6 +11,9 @@ import {
   buildProviderModel,
   createProviderModels,
 } from "../../../packages/agent-runtime/dist/provider-binding.js";
+import { InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 
 import {
   VendorOAuth,
@@ -183,7 +186,7 @@ function harness(options = {}) {
     },
     createModels: (store) => {
       stores.push(store);
-      return fakeModels(store, options);
+      return options.createModels ? options.createModels(store) : fakeModels(store, options);
     },
     modelConfigFor: options.modelConfigFor,
     onAccountModels: options.onAccountModels,
@@ -213,6 +216,15 @@ async function waitFor(events, kind, maxAttempts = 200) {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`no ${kind} event; saw ${events.map((e) => e.kind).join(", ")}`);
+}
+
+async function waitForPromptType(events, type, maxAttempts = 200) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const found = events.find((event) => event.kind === "prompt" && event.request.type === type);
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`no ${type} prompt; saw ${events.filter((e) => e.kind === "prompt").map((e) => e.request.type).join(", ")}`);
 }
 
 test("wire apis map to the provider row's api style and protocol", () => {
@@ -294,6 +306,69 @@ test("a completed login stores the credential and configures the row", async () 
       connected: true,
     },
   ]);
+});
+
+test("the pi-ai 1.0 Anthropic copy-code flow uses the select and manual-code bridge", async () => {
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    requests.push({ url, init });
+    assert.equal(url, "https://platform.claude.com/v1/oauth/token");
+    return new Response(JSON.stringify({
+      access_token: "fixture-access-token",
+      refresh_token: "fixture-refresh-token",
+      expires_in: 3600,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+
+  let registered = false;
+  const { host, events, opened, oauth } = harness({
+    createModels: (credentials) => {
+      if (!registered) {
+        registerBunOAuthFlows();
+        registered = true;
+      }
+      return builtinModels({
+        credentials,
+        authContext: { env: async () => undefined, fileExists: async () => false },
+        modelsStore: new InMemoryModelsStore(),
+      });
+    },
+  });
+
+  try {
+    const { loginId } = await oauth.start("anthropic");
+    const selection = await waitForPromptType(events, "select");
+    assert.deepEqual(selection.request.options.map(({ id }) => id), ["browser", "copy_code"]);
+    assert.equal(oauth.respond({ loginId, promptId: selection.request.promptId, value: "copy_code" }), true);
+
+    const authUrl = await waitFor(events, "authUrl");
+    assert.deepEqual(opened, [authUrl.url]);
+    const redirect = new URL(authUrl.url).searchParams.get("redirect_uri");
+    assert.equal(redirect, "https://platform.claude.com/oauth/code/callback");
+
+    const manualCode = await waitForPromptType(events, "manual_code");
+    const state = new URL(authUrl.url).searchParams.get("state");
+    assert.ok(state);
+    assert.equal(oauth.respond({
+      loginId,
+      promptId: manualCode.request.promptId,
+      value: `fixture-auth-code#${state}`,
+    }), true);
+
+    const done = await waitFor(events, "done");
+    const row = host.providers.get(done.providerId);
+    const stored = JSON.parse(host.secrets.get(secretRefForProviderOauth(row.id)));
+    assert.equal(stored.refresh, "fixture-refresh-token");
+    assert.equal(stored.access, "fixture-access-token");
+    assert.equal(host.secrets.has(`secret:provider:${row.id}:api_key`), false);
+    assert.deepEqual(await oauth.resolveAuth(row.id), { apiKey: "fixture-access-token" });
+    assert.equal(requests.length, 1);
+    assert.equal(JSON.parse(requests[0].init.body).grant_type, "authorization_code");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test("OAuth model configuration comes from the supplied models.dev snapshot", async () => {

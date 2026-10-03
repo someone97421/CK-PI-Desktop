@@ -206,6 +206,10 @@ test("packaging keeps only shipped locales and excludes non-runtime artifacts", 
       from: "resources/plugins",
       to: "plugins",
     },
+    {
+      from: "resources/models.dev",
+      to: "models.dev",
+    },
   ]);
   assert.doesNotMatch(JSON.stringify(packageJson.build), /node-pty/);
 });

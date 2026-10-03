@@ -39,27 +39,58 @@ async function tool(name, args = {}) {
 const invoke = (channel, ...args) => tool("pi_desktop_invoke", { operation: channel, args }).then((r) => (r && typeof r === "object" && "result" in r ? r.result : r));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function waitForTurn(sessionId, timeoutMs = 60_000) {
+function messageText(message) {
+  const textFrom = (content) => {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .filter((block) => block?.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+  };
+  return textFrom(message?.content) || textFrom(message?.blocks);
+}
+
+function readRequests() {
+  return readFileSync(join(root, "requests.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+async function waitForTurn(sessionId, turnId, timeoutMs = 60_000) {
+  if (typeof turnId !== "string" || !turnId) throw new Error("prompt was not accepted with a turn id");
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const status = await tool("pi_agent_status", { sessionId });
-    if (status?.status?.isRunning === false || status?.isRunning === false) return status;
+    const runtimeStatus = status?.status ?? status;
+    if (runtimeStatus?.currentTurnId === turnId && runtimeStatus.isRunning === false) return status;
     await sleep(500);
   }
-  throw new Error("turn did not finish");
+  throw new Error(`turn ${turnId} did not finish`);
 }
 
 async function waitForReply(sessionId, userText) {
   const deadline = Date.now() + 10_000;
+  let lastSummary = [];
   while (Date.now() < deadline) {
     const detail = await tool("pi_session_get", { id: sessionId });
     const messages = detail?.session?.messages ?? [];
-    const index = messages.findLastIndex((message) => message.role === "user" && message.content === userText);
-    const reply = index < 0 ? undefined : messages.slice(index + 1).find((message) => message.role === "assistant");
-    if (reply?.content) return reply;
+    const index = messages.findLastIndex((message) => message.role === "user" && messageText(message) === userText);
+    const reply = index < 0 ? undefined : messages.slice(index + 1).find((message) =>
+      message.role === "assistant" && messageText(message).trim());
+    if (messageText(reply)) return reply;
+    lastSummary = messages.slice(-4).map((message) => ({
+      role: message.role,
+      keys: Object.keys(message),
+      contentType: typeof message.content,
+      contentLength: Array.isArray(message.content) ? message.content.length : undefined,
+      blocks: Array.isArray(message.blocks) ? message.blocks.map((block) => block.type) : undefined,
+    }));
     await sleep(50);
   }
-  throw new Error("Current turn reply was not persisted");
+  throw new Error(`Current turn reply was not persisted; recent messages: ${JSON.stringify(lastSummary)}`);
 }
 
 await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "0" } });
@@ -69,16 +100,18 @@ const sessionId = created?.session?.id ?? created?.id;
 check("session created", !!sessionId, sessionId);
 
 // 1) tool + hooks (E2E-242)
-await tool("pi_agent_prompt", { sessionId, content: "please add 20 and 22" });
-await waitForTurn(sessionId);
-let detail = await tool("pi_session_get", { id: sessionId });
-let messages = detail?.session?.messages ?? [];
-const toolRow = messages.find((m) => m.role === "tool" && m.toolName === "fx_add");
-const assistant = [...messages].reverse().find((m) => m.role === "assistant");
-check("fx_add tool executed", !!toolRow, JSON.stringify(toolRow?.content ?? toolRow).slice(0, 120));
-check("tool_result replacement reached the model", /42 \(replaced\)/.test(assistant?.content ?? ""), assistant?.content);
+const firstPrompt = await tool("pi_agent_prompt", { sessionId, content: "please add 20 and 22" });
+await waitForTurn(sessionId, firstPrompt?.turnId);
+const firstReply = await waitForReply(sessionId, "please add 20 and 22");
+let requests = readRequests();
+const fxCall = requests.some((request) => request.payload.messages.some((message) =>
+  message.role === "assistant" && message.tool_calls?.some((call) => call.function?.name === "fx_add")));
+const fxResult = requests.flatMap((request) => request.payload.messages).find((message) =>
+  message.role === "tool" && String(message.content).includes("42 (replaced)"));
+check("fx_add tool executed", fxCall && readFileSync(join(root, "hooks.log"), "utf8").includes("fx_add 20+22"));
+check("tool_result replacement reached the model", !!fxResult, String(fxResult?.content ?? "undefined").slice(0, 120));
+check("the replaced tool result is visible in the assistant reply", /42 \(replaced\)/.test(messageText(firstReply)), messageText(firstReply));
 
-const requests = readFileSync(join(root, "requests.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 const first = requests[0];
 const sys = (first.payload.messages.find((m) => m.role === "system")?.content ?? "");
 check("before_agent_start chains two plugins in extension ID order", sys.includes("E2E-MARKER-7f3\n\nE2E-MARKER-greet"));
@@ -87,12 +120,14 @@ check("ToolSearch activation advertised fx_add to a later request", requests.som
 check("hooks log has session_start, tool_call fx_add, tool_result, turn_end", (() => { const h = readFileSync(join(root, "hooks.log"), "utf8"); return ["session_start startup", "before_agent_start", "tool_call fx_add", "fx_add 20+22", "tool_result fx_add false", "turn_end", "agent_end", "after_provider_response 200", "before_provider_request object", "context "].every((k) => h.includes(k)); })(), readFileSync(join(root, "hooks.log"), "utf8").split("\n").slice(0, 14).join(" | "));
 
 // 2) tool_call block (E2E-242)
-await tool("pi_agent_prompt", { sessionId, content: "run bash please" });
-await waitForTurn(sessionId);
-detail = await tool("pi_session_get", { id: sessionId });
-messages = detail?.session?.messages ?? [];
-const bashRow = messages.find((m) => m.role === "tool" && m.toolName === "Bash");
-check("Bash blocked by extension", JSON.stringify(bashRow ?? {}).includes("E2E blocked bash"), JSON.stringify(bashRow?.content ?? bashRow).slice(0, 160));
+const bashPrompt = await tool("pi_agent_prompt", { sessionId, content: "run bash please" });
+await waitForTurn(sessionId, bashPrompt?.turnId);
+const bashReply = await waitForReply(sessionId, "run bash please");
+requests = readRequests();
+const blockedBashResult = requests.flatMap((request) => request.payload.messages).find((message) =>
+  message.role === "tool" && String(message.content).includes("E2E blocked bash"));
+check("Bash blocked by extension", !!blockedBashResult && messageText(bashReply).includes("E2E blocked bash"),
+  String(blockedBashResult?.content ?? messageText(bashReply) ?? "undefined").slice(0, 160));
 
 // 3) plugin rows carry the agent-extension state and diagnostics (E2E-241 / 244)
 const listed = await invoke("plugin/list");
@@ -213,8 +248,8 @@ check("the session binding is persisted under the extension-agent id", boundProv
 
 // The next turn must reload the extension and run through the plugin's own
 // transport instead of a host adapter.
-await tool("pi_agent_prompt", { sessionId, content: "say hi through your own transport" });
-await waitForTurn(sessionId);
+const ownTransportPrompt = await tool("pi_agent_prompt", { sessionId, content: "say hi through your own transport" });
+await waitForTurn(sessionId, ownTransportPrompt?.turnId);
 const pluginAssistant = await waitForReply(sessionId, "say hi through your own transport");
 check("the plugin's own stream served the turn", /plugin-transport-ok/.test(pluginAssistant?.content ?? ""), pluginAssistant?.content);
 
@@ -224,8 +259,8 @@ const aliasRun = await invoke("extensions/commands/run", { sessionId, name: "age
 check("agent_model selects the alias provider's model", aliasRun?.ok === true, JSON.stringify(aliasRun));
 const aliasLine = lastLine("agent_model setModel=");
 check("the alias registers the same plugin-owned shape", /setModel=true model=cc-alias-1 provider=extension-agent:/.test(aliasLine), aliasLine);
-await tool("pi_agent_prompt", { sessionId, content: "say hi through the alias" });
-await waitForTurn(sessionId);
+const aliasPrompt = await tool("pi_agent_prompt", { sessionId, content: "say hi through the alias" });
+await waitForTurn(sessionId, aliasPrompt?.turnId);
 const aliasAssistant = await waitForReply(sessionId, "say hi through the alias");
 check("the alias provider's transport served the turn", /alias-transport-ok/.test(aliasAssistant?.content ?? ""), aliasAssistant?.content);
 

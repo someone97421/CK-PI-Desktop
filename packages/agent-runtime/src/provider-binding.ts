@@ -206,6 +206,7 @@ function providerRequestTransport(provider: RuntimeProviderConfig) {
   const modelStyle = resolveApiStyle(provider.modelConfig?.api);
   const resolvedProviderStyle = resolveApiStyle(provider.apiStyle);
   const providerStyle = resolvedProviderStyle ?? (provider.apiStyle ? normalizeApiStyle(provider.apiStyle) : undefined);
+  const customEndpoint = provider.vendorKey?.trim().toLowerCase() === "custom";
   const isOpenAiStyle = (style: string | undefined) =>
     style === "chat_completions" ||
     style === "responses" ||
@@ -216,7 +217,14 @@ function providerRequestTransport(provider: RuntimeProviderConfig) {
     !modelStyle ||
     modelStyle === providerStyle ||
     (isOpenAiStyle(providerStyle) && isOpenAiStyle(modelStyle));
-  const apiStyle = (isCompatible ? modelStyle : undefined) ?? provider.apiStyle;
+  // A custom endpoint's saved API format describes the user's actual gateway.
+  // Published model metadata may describe another publisher's default adapter;
+  // it cannot silently retarget that request. Other providers may use a
+  // compatible model-level pin, such as OpenCode Go's Responses route (#105),
+  // but foreign catalog protocols must not replace the provider's wire style.
+  const apiStyle = customEndpoint
+    ? provider.apiStyle ?? modelStyle
+    : (isCompatible ? modelStyle : undefined) ?? provider.apiStyle;
   return nativeWebSearchTransport({
     apiStyle,
     baseUrl: provider.baseUrl ?? provider.modelConfig?.baseUrl ?? apiBindingForStyle(apiStyle).defaultBaseUrl,

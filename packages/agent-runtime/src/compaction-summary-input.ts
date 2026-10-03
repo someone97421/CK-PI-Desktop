@@ -1,25 +1,24 @@
 import {
-  convertToLlm,
-  estimateTokens,
-  serializeConversation,
   type AgentMessage,
-  type CompactionPreparation,
 } from "@earendil-works/pi-agent-core";
 import type { RetryPolicy, Usage } from "@earendil-works/pi-ai";
 import { truncateMessageText } from "./agent-messages.js";
+import { estimateTokens } from "./pi-runtime-estimates.js";
+import { convertToLlm, serializeConversation } from "./pi-runtime-messages.js";
+import type { CompactionPreparation } from "./pi-runtime-types.js";
 import { DEFAULT_MAX_TOKENS } from "./provider-binding.js";
 
 /**
  * Sizing and retry policy for the automatic summary request (ADR 0282).
  *
- * pi-agent-core serializes the messages it summarizes into one text prompt and
- * caps every tool result at 2 000 characters while doing so. The runtime's
- * budget guard used to add up `estimateTokens` over the raw messages instead,
+ * The desktop summary adapter serializes messages into one text prompt and
+ * caps every tool result at 2 000 characters. The budget guard used to add up
+ * `estimateTokens` over the raw messages instead,
  * so a session whose bulk was tool output looked several times larger than the
  * prompt it would actually send and was routed to retained-tail recovery
  * without ever asking the model (issue #543). These helpers size the prompt the
- * way pi builds it and shrink the input one bounded step — and when even that
- * still does not fit, they split the range into chunks that each do, so the
+ * the way the adapter sends it and shrink the input one bounded step — when
+ * even that does not fit, they split the range into chunks that each do, so the
  * budget decides how many requests a summary takes rather than whether the
  * model is asked at all (issue #827).
  */

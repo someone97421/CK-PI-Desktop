@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Agent, convertToLlm, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
+import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream,
   getCurrentSystemMessage,
@@ -12,6 +12,7 @@ import {
   type Tool,
 } from "@earendil-works/pi-ai";
 import { estimateContextTokens as estimateTranscriptTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { convertToLlm } from "./pi-runtime-messages.js";
 import {
   initialSystemTranscript,
   rebuildSystemTranscript,

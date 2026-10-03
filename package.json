@@ -57,6 +57,8 @@
     "test:e2e:subagents": "node scripts/e2e-subagents.mjs",
     "test:e2e:subagent-models": "node scripts/e2e-subagent-models.mjs",
     "check:marketplace": "node scripts/check-marketplace-catalog.mjs",
+    "check:pi-dependencies": "node scripts/check-pi-dependencies.mjs",
+    "check:pi-patches": "node scripts/check-pi-patches.mjs",
     "lint": "pnpm lint:biome && pnpm -r --if-present lint",
     "host:dev": "node scripts/build.mjs host:dev",
     "clean": "pnpm -r --if-present clean && cargo clean",

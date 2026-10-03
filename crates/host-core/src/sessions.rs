@@ -155,6 +155,11 @@ pub struct MessageAttachment {
     pub mime_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<i64>,
+    /// Bounded excerpt of a referenced conversation (`kind: "session"`), written
+    /// by Electron main when the prompt carried a `pi-desktop://session/<id>`
+    /// link. Travels with the user message so the model keeps reading it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -474,6 +479,9 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
                 if let Some(size) = attachment.size {
                     block.insert("size".into(), json!(size));
                 }
+                if let Some(text) = &attachment.text {
+                    block.insert("text".into(), json!(text));
+                }
                 blocks.push(Value::Object(block));
             }
         }
@@ -617,6 +625,10 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
                 size: block.get("size").and_then(|v| v.as_i64()),
+                text: block
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
             })
         })
         .collect::<Vec<_>>();
@@ -5141,6 +5153,14 @@ mod tests {
             reference: "attachments/abc123".into(),
             mime_type: Some("image/png".into()),
             size: Some(42),
+            text: None,
+        }, MessageAttachment {
+            kind: "session".into(),
+            name: "相关会话".into(),
+            reference: "referenced-session".into(),
+            mime_type: None,
+            size: None,
+            text: Some("user: 已确认的工作方案".into()),
         }]);
 
         append_message(&db, &session.id, &user, None).unwrap();
@@ -5158,6 +5178,9 @@ mod tests {
         assert_eq!(blocks[1]["type"], "attachment");
         assert_eq!(blocks[1]["ref"], "attachments/abc123");
         assert!(blocks[1].get("data").is_none());
+        assert!(blocks[1].get("text").is_none());
+        assert_eq!(blocks[2]["kind"], "session");
+        assert_eq!(blocks[2]["text"], "user: 已确认的工作方案");
     }
 
     #[test]

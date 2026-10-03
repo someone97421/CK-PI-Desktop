@@ -9,17 +9,10 @@
  * a delegate holds its checkpoint in memory for the rest of the run.
  */
 
-import {
-  BACKGROUND_CONTEXT,
-  compact,
-  estimateContextTokens,
-  estimateTokens,
-  withAbortSignal,
-  type AgentMessage,
-  type AgentTool,
-  type CompactionPreparation,
-  type FileOperations,
-} from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import { compact } from "./pi-runtime-compaction-summary.js";
+import { estimateContextTokens, estimateTokens } from "./pi-runtime-estimates.js";
+import type { CompactionPreparation, FileOperations } from "./pi-runtime-types.js";
 import type { Api, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@pi-desktop/shared";
 import { assistantContent } from "./agent-messages.js";
@@ -582,9 +575,9 @@ export function requireCompleteSummaryModels(models: Models): Models {
 /**
  * Issue the summary request.
  *
- * pi-agent-core builds this request's options itself and never reaches an
- * agent's `streamFn`, so the headers ride on the collection — and they must be
- * the summary provider's, not the caller's.
+ * The desktop summary adapter calls the provider directly rather than an
+ * agent's `streamFn`, so the headers ride on the collection and belong to
+ * the summary provider.
  */
 export async function generateCompactionSummary(input: {
   preparation: CompactionPreparation;
@@ -618,7 +611,7 @@ export async function generateCompactionSummary(input: {
     input.thinkingLevel,
     COMPACTION_SUMMARY_RETRY_POLICY,
     undefined,
-    withAbortSignal(input.signal, BACKGROUND_CONTEXT),
+    input.signal,
   );
 }
 

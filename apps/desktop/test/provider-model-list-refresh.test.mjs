@@ -84,6 +84,14 @@ test("refresh removes revoked service rows and preserves configured chat binding
   }
   const render = () => renderToStaticMarkup(createElement(I18nextProvider, { i18n }, createElement(Picker)));
   const ids = (html, className) => [...html.matchAll(new RegExp(`<span class="${className}[^"]*">([^<]*)</span>`, "g"))].map((match) => match[1]);
+  const limitsFor = (html, idClass, limitClass, modelId) => {
+    const row = [...html.matchAll(/<li\b[\s\S]*?<\/li>/g)]
+      .map((match) => match[0])
+      .find((item) =>
+        item.includes(`class="${idClass}`) && item.includes(`>${modelId}</span>`),
+      );
+    return row?.match(new RegExp(`class="${limitClass}">([^<]*)`))?.[1];
+  };
   const refresh = async () => {
     const result = await handlers.get(IPC.invoke.providersListModels)({ providerId: row.id, source: "refresh" });
     discovery = { status: "ready", ...result };
@@ -112,12 +120,30 @@ test("refresh removes revoked service rows and preserves configured chat binding
     [runtime.enrichProvider(row)],
   ), 1_000_000, "context usage follows the selected account binding");
   served = ["gpt-6-sol", "new-model"];
+  row.models.push(bindingForCustomModel("new-model"));
   const html = await refresh();
   assert.deepEqual(ids(html, "provider-models-row-id"), served);
   assert.deepEqual(persisted, row.models);
-  assert.deepEqual(ids(html, "provider-chosen-row-id"), ["gpt-6-sol", "claude-sonnet-4-5", "gpt-6-astra"]);
-  assert.deepEqual(composerModelsForProvider(row, discovery.models).map((model) => model.modelId), ["gpt-6-sol", "claude-sonnet-4-5", "gpt-6-astra"]);
+  assert.deepEqual(ids(html, "provider-chosen-row-id"), [
+    "gpt-6-sol", "claude-sonnet-4-5", "gpt-6-astra", "new-model",
+  ]);
+  assert.deepEqual(
+    composerModelsForProvider(row, discovery.models).map((model) => model.modelId),
+    ["gpt-6-sol", "claude-sonnet-4-5", "gpt-6-astra", "new-model"],
+  );
+  assert.equal(
+    limitsFor(html, "provider-models-row-id", "provider-models-row-limits", "new-model"),
+    "— · —",
+    "an undiscovered model does not present generic runtime defaults as catalog limits",
+  );
+  assert.equal(
+    limitsFor(html, "provider-chosen-row-id", "provider-chosen-row-limits", "new-model"),
+    "— · —",
+    "an unknown configured model is labeled unknown until its limits are published or overridden",
+  );
   // Offline/manual fallbacks must still expose configured entries for editing.
   discovery = { ...discovery, source: "fallback", models: [] };
-  assert.deepEqual(ids(render(), "provider-models-row-id"), ["gpt-6-sol", "claude-sonnet-4-5", "gpt-6-astra"]);
+  assert.deepEqual(ids(render(), "provider-models-row-id"), [
+    "gpt-6-sol", "claude-sonnet-4-5", "gpt-6-astra", "new-model",
+  ]);
 });

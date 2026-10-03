@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  createCompactionSummaryMessage,
   type AgentMessage,
   type PrepareNextTurnContext,
 } from "@earendil-works/pi-agent-core";
+import { createCompactionSummaryMessage } from "./pi-runtime-messages.js";
 import type {
   Api,
   AssistantMessage,

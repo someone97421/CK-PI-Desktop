@@ -18,15 +18,13 @@
  * existed keep the old one-user-message normalization.
  *
  * Deliberately dependency-light, like `context-budget.ts`: token estimation is
- * pi-agent-core's, the record guard and the text bounding are the shared
+ * owned by the runtime adapter, the record guard and text bounding are shared
  * helpers, and nothing here imports `runtime.ts`, so this module can never form
  * a cycle with it.
  */
 
-import {
-  estimateTokens,
-  type AgentMessage,
-} from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { estimateTokens } from "./pi-runtime-estimates.js";
 import { isRecord, truncateMessageText } from "./agent-messages.js";
 
 /**

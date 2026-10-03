@@ -1,15 +1,15 @@
 diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
-index 501971b2a..a72110c70 100644
+index 106f2b9617fa3b810261e067a3c965f209907af3..b4b92125484b40d54fc12aa4121a52f8ba9d6324 100644
 --- a/dist/api/anthropic-messages.js
 +++ b/dist/api/anthropic-messages.js
 @@ -1,3 +1,6 @@
 +import { hostedSearchReplayProjection, validateHostedSearchMessages } from "../utils/hosted-search.js";
 +import { asLocalRequestError, localRequestErrorDetails } from "../utils/local-request-error.js";
 +import { withLocalRequestErrors } from "../utils/local-request-stream.js";
- import Anthropic from "@anthropic-ai/sdk";
+ import Anthropic, {} from "@anthropic-ai/sdk";
+ import { ANTHROPIC_FEDERATION_RULE_ID_ENV, ANTHROPIC_IDENTITY_TOKEN_FILE_ENV, ANTHROPIC_ORGANIZATION_ID_ENV, ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, ANTHROPIC_WORKSPACE_ID_ENV, } from "../env-api-keys.js";
  import { calculateCost } from "../models.js";
- import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.js";
-@@ -332,8 +335,6 @@ async function* iterateAnthropicEvents(response, signal) {
+@@ -375,8 +378,6 @@ async function* iterateAnthropicEvents(response, signal) {
  }
  export const stream = (model, context, options) => {
      const stream = new AssistantMessageEventStream();
@@ -18,7 +18,7 @@ index 501971b2a..a72110c70 100644
      (async () => {
          const providerThinkingLevel = model.compat?.supportsMidConvoEffort ? (options?.effort ?? "high") : undefined;
          const output = {
-@@ -354,7 +355,11 @@ export const stream = (model, context, options) => {
+@@ -397,7 +398,11 @@ export const stream = (model, context, options) => {
              stopReason: "pending",
              timestamp: Date.now(),
          };
@@ -30,7 +30,7 @@ index 501971b2a..a72110c70 100644
              let client;
              let isOAuth;
              let usageModel = model;
-@@ -390,6 +395,8 @@ export const stream = (model, context, options) => {
+@@ -435,6 +440,8 @@ export const stream = (model, context, options) => {
                  ...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
                  maxRetries: 0,
              };
@@ -39,7 +39,7 @@ index 501971b2a..a72110c70 100644
              const response = await retryProviderRequest(() => client.beta.messages.create(params, requestOptions).asResponse(), {
                  maxRetries: options?.maxRetries,
                  maxRetryDelayMs: options?.maxRetryDelayMs,
-@@ -475,17 +482,50 @@ export const stream = (model, context, options) => {
+@@ -520,17 +527,50 @@ export const stream = (model, context, options) => {
                          output.content.push(block);
                          stream.push({ type: "toolcall_start", contentIndex: output.content.length - 1, partial: output });
                      }
@@ -92,7 +92,7 @@ index 501971b2a..a72110c70 100644
                                  partial: output,
                              });
                          }
-@@ -494,11 +534,11 @@ export const stream = (model, context, options) => {
+@@ -539,11 +579,11 @@ export const stream = (model, context, options) => {
                          const index = blocks.findIndex((b) => b.index === event.index);
                          const block = blocks[index];
                          if (block && block.type === "thinking") {
@@ -106,7 +106,7 @@ index 501971b2a..a72110c70 100644
                                  partial: output,
                              });
                          }
-@@ -507,12 +547,24 @@ export const stream = (model, context, options) => {
+@@ -552,12 +592,24 @@ export const stream = (model, context, options) => {
                          const index = blocks.findIndex((b) => b.index === event.index);
                          const block = blocks[index];
                          if (block && block.type === "toolCall") {
@@ -133,7 +133,7 @@ index 501971b2a..a72110c70 100644
                                  partial: output,
                              });
                          }
-@@ -522,7 +574,19 @@ export const stream = (model, context, options) => {
+@@ -567,7 +619,19 @@ export const stream = (model, context, options) => {
                          const block = blocks[index];
                          if (block && block.type === "thinking") {
                              block.thinkingSignature = block.thinkingSignature || "";
@@ -154,7 +154,7 @@ index 501971b2a..a72110c70 100644
                          }
                      }
                  }
-@@ -559,6 +623,12 @@ export const stream = (model, context, options) => {
+@@ -604,6 +668,12 @@ export const stream = (model, context, options) => {
                                  partial: output,
                              });
                          }
@@ -167,7 +167,7 @@ index 501971b2a..a72110c70 100644
                      }
                  }
                  else if (event.type === "message_delta") {
-@@ -631,13 +701,18 @@ export const stream = (model, context, options) => {
+@@ -676,13 +746,18 @@ export const stream = (model, context, options) => {
              stream.end();
          }
          catch (error) {
@@ -187,16 +187,16 @@ index 501971b2a..a72110c70 100644
              stream.push({ type: "error", reason: output.stopReason, error: output });
              stream.end();
          }
-@@ -665,7 +740,7 @@ function mapThinkingLevelToEffort(model, level) {
+@@ -710,7 +785,7 @@ function mapThinkingLevelToEffort(model, level) {
              return "high";
      }
  }
 -export const streamSimple = (model, context, options) => {
 +export const streamSimple = (model, context, options) => withLocalRequestErrors(model, options, () => {
-     assertRequestAuth(model.provider, options?.apiKey, options?.headers);
-     const base = {
-         ...buildBaseOptions(model, context, options, options?.apiKey),
-@@ -697,7 +772,7 @@ export const streamSimple = (model, context, options) => {
+     if (!getAnthropicFederation(model, options?.apiKey, options?.headers, options?.env)) {
+         assertRequestAuth(model.provider, options?.apiKey, options?.headers);
+     }
+@@ -744,7 +819,7 @@ export const streamSimple = (model, context, options) => {
          thinkingEnabled: true,
          thinkingBudgetTokens: Math.min(adjusted.thinkingBudget, Math.max(0, maxTokens - 1024)),
      });
@@ -205,7 +205,7 @@ index 501971b2a..a72110c70 100644
  function isOAuthToken(apiKey) {
      return apiKey.includes("sk-ant-oat");
  }
-@@ -874,6 +949,15 @@ function buildParams(model, context, isOAuthToken, options) {
+@@ -936,6 +1011,15 @@ function buildParams(model, context, isOAuthToken, options) {
              params.tools = convertTools(tools, isOAuthToken, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, toolCacheControl);
          }
      }
@@ -221,7 +221,7 @@ index 501971b2a..a72110c70 100644
      // Managed effort models always use adaptive thinking so prefix mismatches can
      // be dropped instead of surfacing as persistent 400 responses.
      if (model.compat?.supportsMidConvoEffort === true) {
-@@ -1078,6 +1162,15 @@ function convertMessages(transformedMessages, isOAuthToken, cacheControl, allowE
+@@ -1140,6 +1224,15 @@ function convertMessages(transformedMessages, isOAuthToken, cacheControl, allowE
                          input: block.arguments ?? {},
                      });
                  }
@@ -238,7 +238,7 @@ index 501971b2a..a72110c70 100644
              if (blocks.length === 0)
                  continue;
 diff --git a/dist/api/azure-openai-responses.js b/dist/api/azure-openai-responses.js
-index dc2d8f9be..e43cc048c 100644
+index dc2d8f9be2f47dc73dde758c630fe12dd7749d5d..e43cc048c4bb6fcb7c3a82d27d14843cd1819ffd 100644
 --- a/dist/api/azure-openai-responses.js
 +++ b/dist/api/azure-openai-responses.js
 @@ -1,3 +1,5 @@
@@ -343,7 +343,7 @@ index dc2d8f9be..e43cc048c 100644
      Object.assign(params, model.samplingParams, options?.samplingParams);
      return params;
 diff --git a/dist/api/mistral-conversations.js b/dist/api/mistral-conversations.js
-index fbcc5e25e..92b07a1a1 100644
+index fbcc5e25ee6752a9c5461b41fa8544a090a17b3f..92b07a1a107a9e0993bc9872d685279ccd921139 100644
 --- a/dist/api/mistral-conversations.js
 +++ b/dist/api/mistral-conversations.js
 @@ -658,6 +658,9 @@ function toChatMessages(messages, supportsImages) {
@@ -357,7 +357,7 @@ index fbcc5e25e..92b07a1a1 100644
                      id: block.id,
                      type: "function",
 diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
-index 40014b3b7..f8b215d3a 100644
+index 40014b3b7eacb3a8e5e43daac2cec6446e8810c2..f8b215d3aec7b5124c4f9c5fa2fe5a1f0886015d 100644
 --- a/dist/api/openai-codex-responses.js
 +++ b/dist/api/openai-codex-responses.js
 @@ -411,6 +411,12 @@ function buildRequestBody(model, context, options, cacheSessionId, grammarToolIn
@@ -374,7 +374,7 @@ index 40014b3b7..f8b215d3a 100644
          const effort = options.reasoningEffort === "none"
              ? model.thinkingLevelMap?.off === undefined
 diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
-index eecd83c75..2390122f7 100644
+index eecd83c753e3b758b8e44628f560b862f8252839..2390122f72d7a6f04a9e1e93b96f885392b91d5e 100644
 --- a/dist/api/openai-completions.js
 +++ b/dist/api/openai-completions.js
 @@ -1041,21 +1041,27 @@ export function convertMessages(model, context, compat, options) {
@@ -473,7 +473,7 @@ index eecd83c75..2390122f7 100644
          openRouterRouting: model.compat.openRouterRouting ?? {},
          vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index 3e3b48a9e..7bd0d1498 100644
+index f413fe5f2a1abcac39c38bbd4a77b38c349a5918..af7832b03b722013d7fcbc01423d6b36dd8c146b 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
 @@ -1,3 +1,4 @@
@@ -503,7 +503,7 @@ index 3e3b48a9e..7bd0d1498 100644
                  else if (block.type === "toolCall") {
                      const toolCall = block;
                      const [callId, itemIdRaw] = toolCall.id.split("|");
-@@ -405,6 +414,28 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -406,6 +415,28 @@ export async function processResponsesStream(openaiStream, output, stream, model
              stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
              return slot;
          }
@@ -532,7 +532,7 @@ index 3e3b48a9e..7bd0d1498 100644
          return undefined;
      };
      const getOrCreateSlot = (outputIndex, item) => {
-@@ -486,11 +517,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -487,11 +518,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "thinking");
              if (!slot)
                  continue;
@@ -546,7 +546,7 @@ index 3e3b48a9e..7bd0d1498 100644
                  partial: output,
              });
          }
-@@ -510,11 +541,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -511,11 +542,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "thinking");
              if (!slot)
                  continue;
@@ -560,7 +560,7 @@ index 3e3b48a9e..7bd0d1498 100644
                  partial: output,
              });
          }
-@@ -522,23 +553,44 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -523,23 +554,44 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "text");
              if (!slot)
                  continue;
@@ -609,7 +609,7 @@ index 3e3b48a9e..7bd0d1498 100644
                  partial: output,
              });
          }
-@@ -546,9 +598,9 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -547,9 +599,9 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "toolCall");
              if (!slot || slot.block.partialJson === undefined)
                  continue;
@@ -621,7 +621,7 @@ index 3e3b48a9e..7bd0d1498 100644
          }
          else if (event.type === "response.function_call_arguments.done") {
              const slot = getSlot(event.output_index, "toolCall");
-@@ -634,9 +686,25 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -635,9 +687,25 @@ export async function processResponsesStream(openaiStream, output, stream, model
                  });
                  outputSlots.delete(event.output_index);
              }
@@ -648,7 +648,7 @@ index 3e3b48a9e..7bd0d1498 100644
          else if (event.type === "error") {
              throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
 diff --git a/dist/api/openai-responses.js b/dist/api/openai-responses.js
-index 4d58c9772..c928c3f64 100644
+index 4d58c9772b49f0d40e31d42c251a6d993a4a673f..c928c3f640a0b58941ebfc509171ec1984be56ba 100644
 --- a/dist/api/openai-responses.js
 +++ b/dist/api/openai-responses.js
 @@ -1,3 +1,5 @@
@@ -751,7 +751,7 @@ index 4d58c9772..c928c3f64 100644
      Object.assign(params, model.samplingParams, options?.samplingParams);
      return params;
 diff --git a/dist/api/simple-options.js b/dist/api/simple-options.js
-index da0fc83be..d56ef2ab9 100644
+index da0fc83be3031326465b7dc1c53030a0d184517a..d56ef2ab9d76579b6b335c1083da94f1a84e8e93 100644
 --- a/dist/api/simple-options.js
 +++ b/dist/api/simple-options.js
 @@ -4,7 +4,7 @@ const MIN_MAX_TOKENS = 1;
@@ -764,10 +764,10 @@ index da0fc83be..d56ef2ab9 100644
  }
  export function buildBaseOptions(model, context, options, apiKey) {
 diff --git a/dist/auth/oauth/anthropic.js b/dist/auth/oauth/anthropic.js
-index 94c8f0035..e5b6f72dd 100644
+index e136a751e45d059b721257f829f418a601ce3243..0d35358ce444ff32278521cf2b37997ada17f9d9 100644
 --- a/dist/auth/oauth/anthropic.js
 +++ b/dist/auth/oauth/anthropic.js
-@@ -61,21 +61,90 @@ function formatErrorDetails(error) {
+@@ -64,21 +64,90 @@ function formatErrorDetails(error) {
      }
      return String(error);
  }
@@ -871,7 +871,7 @@ index 94c8f0035..e5b6f72dd 100644
  }
  async function exchangeAuthorizationCode(code, state, verifier, redirectUri, signal) {
      let responseBody;
-@@ -90,6 +159,8 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
+@@ -93,6 +162,8 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
          }, signal);
      }
      catch (error) {
@@ -880,7 +880,7 @@ index 94c8f0035..e5b6f72dd 100644
          throw new Error(`Token exchange request failed. url=${TOKEN_URL}; redirect_uri=${redirectUri}; response_type=authorization_code; details=${formatErrorDetails(error)}`);
      }
      let tokenData;
-@@ -97,7 +168,7 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
+@@ -100,7 +171,7 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
          tokenData = JSON.parse(responseBody);
      }
      catch (error) {
@@ -889,7 +889,7 @@ index 94c8f0035..e5b6f72dd 100644
      }
      return {
          type: "oauth",
-@@ -171,6 +242,8 @@ async function refreshAnthropicToken(refreshToken, signal) {
+@@ -205,6 +276,8 @@ async function refreshAnthropicToken(refreshToken, signal) {
          }, signal);
      }
      catch (error) {
@@ -898,7 +898,7 @@ index 94c8f0035..e5b6f72dd 100644
          throw new Error(`Anthropic token refresh request failed. url=${TOKEN_URL}; details=${formatErrorDetails(error)}`);
      }
      let data;
-@@ -178,7 +251,7 @@ async function refreshAnthropicToken(refreshToken, signal) {
+@@ -212,7 +285,7 @@ async function refreshAnthropicToken(refreshToken, signal) {
          data = JSON.parse(responseBody);
      }
      catch (error) {
@@ -908,7 +908,7 @@ index 94c8f0035..e5b6f72dd 100644
      return {
          type: "oauth",
 diff --git a/dist/index.d.ts b/dist/index.d.ts
-index 75c0d7ba7..b0bf6975c 100644
+index 75c0d7ba79dbf893724a302829011bc0f8ded282..b0bf6975cb155df67e7cad59e4c65d751f47ec8b 100644
 --- a/dist/index.d.ts
 +++ b/dist/index.d.ts
 @@ -33,4 +33,7 @@ export * from "./utils/transcript.ts";
@@ -921,7 +921,7 @@ index 75c0d7ba7..b0bf6975c 100644
  //# sourceMappingURL=index.d.ts.map
 \ No newline at end of file
 diff --git a/dist/index.js b/dist/index.js
-index 4fafddad7..2e4ed41e5 100644
+index 4fafddad713ac5811fe2b1dfea629b4b8f6627e1..2e4ed41e548807b836625b35ba753a8422aea160 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -20,4 +20,6 @@ export * from "./utils/transcript.js";
@@ -933,7 +933,7 @@ index 4fafddad7..2e4ed41e5 100644
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index 68aa0553d..d6d73b0ca 100644
+index 68aa0553de03aab4f7a47084995732f83ae4de00..d6d73b0caf995a5bc0b40456890d499dd39b625b 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
 @@ -286,6 +286,30 @@ export interface ToolCall {
@@ -1019,7 +1019,7 @@ index 68aa0553d..d6d73b0ca 100644
       * Maps pi thinking levels to provider/model-specific values.
       * Missing keys use provider defaults. null marks a level as unsupported.
 diff --git a/dist/utils/assistant-message-frame.d.ts b/dist/utils/assistant-message-frame.d.ts
-index 08207197a..0584f6898 100644
+index 08207197acab532d0f5f596363700a2d15a687d8..0584f6898e1d842c4414869b9080505b63c3a7b7 100644
 --- a/dist/utils/assistant-message-frame.d.ts
 +++ b/dist/utils/assistant-message-frame.d.ts
 @@ -1,4 +1,4 @@
@@ -1041,7 +1041,7 @@ index 08207197a..0584f6898 100644
  /**
   * Encodes one assistant stream. `partial` remains a shared live accumulator;
 diff --git a/dist/utils/assistant-message-frame.js b/dist/utils/assistant-message-frame.js
-index c0e00197b..a86f5939a 100644
+index c0e00197b2bdd4c815106daa036d844c07aca800..a86f5939accd25110d7a4d1e0d268646691d321d 100644
 --- a/dist/utils/assistant-message-frame.js
 +++ b/dist/utils/assistant-message-frame.js
 @@ -1,15 +1,30 @@
@@ -1196,7 +1196,7 @@ index c0e00197b..a86f5939a 100644
                  if (frame.content.type !== "text") {
                      throw new Error(`text_start frame contains ${frame.content.type} content`);
 diff --git a/dist/utils/estimate.d.ts b/dist/utils/estimate.d.ts
-index 6dcca6eff..5ccaaf235 100644
+index 6dcca6eff16b95b83e047a6e27b65d9d7694bf2c..5ccaaf2358a0afeea3ce354e5799255ae8508f3d 100644
 --- a/dist/utils/estimate.d.ts
 +++ b/dist/utils/estimate.d.ts
 @@ -1,4 +1,4 @@
@@ -1217,7 +1217,7 @@ index 6dcca6eff..5ccaaf235 100644
  //# sourceMappingURL=estimate.d.ts.map
 \ No newline at end of file
 diff --git a/dist/utils/estimate.js b/dist/utils/estimate.js
-index d04ff22cb..28564cc73 100644
+index d04ff22cbe8d7357404b938e228b8e3a2dbdcb1d..28564cc73798163f7590290123b7476573d5bee5 100644
 --- a/dist/utils/estimate.js
 +++ b/dist/utils/estimate.js
 @@ -1,95 +1,114 @@
@@ -1392,7 +1392,7 @@ index d04ff22cb..28564cc73 100644
 \ No newline at end of file
 diff --git a/dist/utils/hosted-search.d.ts b/dist/utils/hosted-search.d.ts
 new file mode 100644
-index 000000000..a76ae5269
+index 0000000000000000000000000000000000000000..a76ae5269313931b8476e1f153e76792875ad54c
 --- /dev/null
 +++ b/dist/utils/hosted-search.d.ts
 @@ -0,0 +1,10 @@
@@ -1408,7 +1408,7 @@ index 000000000..a76ae5269
 +export declare function validateHostedSearchMessages(messages: readonly Message[]): void;
 diff --git a/dist/utils/hosted-search.js b/dist/utils/hosted-search.js
 new file mode 100644
-index 000000000..b98cb8d12
+index 0000000000000000000000000000000000000000..b98cb8d128310273014e4490e9c26144f45b56af
 --- /dev/null
 +++ b/dist/utils/hosted-search.js
 @@ -0,0 +1,97 @@
@@ -1511,7 +1511,7 @@ index 000000000..b98cb8d12
 +}
 diff --git a/dist/utils/local-request-error.d.ts b/dist/utils/local-request-error.d.ts
 new file mode 100644
-index 000000000..a72f65b33
+index 0000000000000000000000000000000000000000..a72f65b33c64b89f118a59bd286e62624711fd90
 --- /dev/null
 +++ b/dist/utils/local-request-error.d.ts
 @@ -0,0 +1,15 @@
@@ -1532,7 +1532,7 @@ index 000000000..a72f65b33
 +export declare function prepareLocalRequest<T>(phase: LocalRequestErrorPhase, prepare: () => T): T;
 diff --git a/dist/utils/local-request-error.js b/dist/utils/local-request-error.js
 new file mode 100644
-index 000000000..4d276ddc8
+index 0000000000000000000000000000000000000000..4d276ddc8caee98dfeeeeaa9bcd234ad63dc414b
 --- /dev/null
 +++ b/dist/utils/local-request-error.js
 @@ -0,0 +1,38 @@
@@ -1576,7 +1576,7 @@ index 000000000..4d276ddc8
 +}
 diff --git a/dist/utils/local-request-stream.d.ts b/dist/utils/local-request-stream.d.ts
 new file mode 100644
-index 000000000..879b78cbe
+index 0000000000000000000000000000000000000000..879b78cbecb0cc2c4322049ed2c7d61f77be9375
 --- /dev/null
 +++ b/dist/utils/local-request-stream.d.ts
 @@ -0,0 +1,3 @@
@@ -1585,7 +1585,7 @@ index 000000000..879b78cbe
 +export declare function withLocalRequestErrors(model: Model<Api>, options: { signal?: AbortSignal } | undefined, prepare: () => AssistantMessageEventStream): AssistantMessageEventStream;
 diff --git a/dist/utils/local-request-stream.js b/dist/utils/local-request-stream.js
 new file mode 100644
-index 000000000..5c63b882a
+index 0000000000000000000000000000000000000000..5c63b882ae4cb618e964c5d2ce8d3c18e0fe4688
 --- /dev/null
 +++ b/dist/utils/local-request-stream.js
 @@ -0,0 +1,24 @@

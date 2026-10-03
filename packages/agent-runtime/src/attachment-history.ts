@@ -101,6 +101,9 @@ export async function hydrateAttachmentHistory(
   const resolveAttachment = async (
     sourceAttachment: NonNullable<UiMessage["attachments"]>[number],
   ): Promise<ResolvedAttachment> => {
+    if (sourceAttachment.kind === "session") {
+      return { attachment: { ...sourceAttachment, data: undefined, mediaRef: undefined } };
+    }
     // History from the host never contains transient data. Strip stale in-memory
     // payloads as well so a caller cannot bypass the aggregate hydration budget.
     const cleanAttachment: MessageAttachment = {

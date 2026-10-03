@@ -44,7 +44,7 @@ export function UpdateBanner() {
 
   if (!update?.availableVersion) return null;
   const stateKey = `${update.availableVersion}:${update.status}`;
-  if (stateKey === dismissedState) return null;
+  if (stateKey === dismissedState || update.dismissed === true) return null;
 
   const visible =
     update.status === "downloaded" ||
@@ -125,7 +125,10 @@ export function UpdateBanner() {
         tooltip={t("updates.dismiss")}
         ariaLabel={t("updates.dismiss")}
         className="update-notice-dismiss"
-        onClick={() => setDismissedState(stateKey)}
+        onClick={() => {
+          setDismissedState(stateKey);
+          void api.updatesDismiss().catch(() => undefined);
+        }}
       >
         <IconClose className="size-3.5" />
       </TooltipButton>

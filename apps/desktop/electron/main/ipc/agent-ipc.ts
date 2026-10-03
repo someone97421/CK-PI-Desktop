@@ -6,6 +6,7 @@ import { mediaCapabilitiesForProvider } from "@pi-desktop/agent-runtime";
 import type { MediaInputCapabilities } from "@pi-desktop/shared";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
 import { appendPromptFallbackPaths, durableUserMessageId, preparePromptAttachments, type PreparedPromptAttachment } from "../prompt-attachments";
+import { resolveSessionReferences } from "../session-references";
 import { executionFromResponse, resolveSessionMessageInput } from "@pi-desktop/host-runtime";
 import type { AgentExtensionBridge } from "../agent-extensions";
 import { QUEUED_STEERING_DURABILITY, type AgentHostBridge } from "../agent-host-bridge";
@@ -311,8 +312,14 @@ export function registerAgentIpc({
       dataDir, req.sessionId, context.projectPath, req.attachments ?? [], context.supportsVision,
       context,
     );
-    const session = await host.call<{ session?: { messages?: UiMessage[] } }>("session.get", {
+    const session = await host.call<{ session?: { messages?: UiMessage[]; projectPath?: string; temporaryWorkspacePath?: string } }>("session.get", {
       id: req.sessionId, messageLimit: 1,
+    });
+    const sessionReferences = await resolveSessionReferences({
+      host, logger, sessionId: req.sessionId,
+      projectPath: session.session?.projectPath,
+      temporaryWorkspacePath: session.session?.temporaryWorkspacePath,
+      content: req.content,
     });
     const message: UiMessage = {
       id: transferId && req.messageId ? req.messageId : durableUserMessageId(req.messageId, session.session?.messages ?? []),
@@ -323,7 +330,9 @@ export function registerAgentIpc({
       status: "complete",
       createdAt: new Date().toISOString(),
       steering: true,
-      ...(prepared.length ? { attachments: prepared.map((attachment) => attachment.message) } : {}),
+      ...(prepared.length || sessionReferences.length
+        ? { attachments: [...prepared.map((attachment) => attachment.message), ...sessionReferences] }
+        : {}),
       ...(voiceOrigin ? { voiceOrigin } : {}),
     };
     // Revalidate inside the runtime after all file/host IO. A stale target must
@@ -347,11 +356,16 @@ export function registerAgentIpc({
     const result = await sidecar.call<{ accepted: boolean; turnId: string }>("agent.steer", {
       sessionId: req.sessionId, expectedTurnId: req.expectedTurnId, message,
       content: appendPromptFallbackPaths(req.content, prepared),
-      attachments: prepared.filter((attachment) => attachment.inlineData || attachment.mediaRef).map((attachment) => ({
-        path: attachment.message.ref, name: attachment.message.name, kind: attachment.message.kind,
-        mimeType: attachment.message.mimeType, size: attachment.message.size, data: attachment.inlineData,
-        mediaRef: attachment.mediaRef,
-      })),
+      attachments: [
+        ...prepared.filter((attachment) => attachment.inlineData || attachment.mediaRef).map((attachment) => ({
+          path: attachment.message.ref, name: attachment.message.name, kind: attachment.message.kind,
+          mimeType: attachment.message.mimeType, size: attachment.message.size, data: attachment.inlineData,
+          mediaRef: attachment.mediaRef,
+        })),
+        ...sessionReferences.map((attachment) => ({
+          path: attachment.ref, name: attachment.name, kind: attachment.kind, text: attachment.text,
+        })),
+      ],
     });
     if (result.accepted && durability === QUEUED_STEERING_DURABILITY && transferId) {
       // Accepted is journaled with the prepared echo before the outbox write, so
@@ -624,6 +638,20 @@ export function registerAgentIpc({
       });
       throw error;
     }
+    // A `pi-desktop://session/<id>` link in the draft becomes a bounded excerpt
+    // that travels with this message from now on (issue #1324). A skipped link
+    // stays plain text; nothing else about the prompt changes.
+    const sessionReferences = await resolveSessionReferences({
+      host,
+      logger,
+      sessionId: req.sessionId,
+      projectPath:
+        typeof session.projectPath === "string" && session.projectPath.trim()
+          ? session.projectPath.trim()
+          : undefined,
+      temporaryWorkspacePath: session.temporaryWorkspacePath,
+      content: req.content,
+    });
     const modelContent = appendPromptFallbackPaths(
       promptContent,
       preparedAttachments,
@@ -651,8 +679,13 @@ export function registerAgentIpc({
       ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
       createdAt: new Date(submittedAt ?? Date.now()).toISOString(),
       status: "complete" as const,
-      ...(preparedAttachments.length
-        ? { attachments: preparedAttachments.map((attachment) => attachment.message) }
+      ...(preparedAttachments.length || sessionReferences.length
+        ? {
+            attachments: [
+              ...preparedAttachments.map((attachment) => attachment.message),
+              ...sessionReferences,
+            ],
+          }
         : {}),
       ...(voiceOrigin ? { voiceOrigin } : {}),
       ...(slashCommand ? { command: slashCommand } : {}),
@@ -708,17 +741,25 @@ export function registerAgentIpc({
           turnId: durableTurnId,
           content: modelContent,
           ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
-          attachments: preparedAttachments
-            .filter((attachment) => attachment.inlineData || attachment.mediaRef)
-            .map((attachment) => ({
-              path: attachment.message.ref,
-              name: attachment.message.name,
-              kind: attachment.message.kind,
-              mimeType: attachment.message.mimeType,
-              size: attachment.message.size,
-              data: attachment.inlineData,
-              mediaRef: attachment.mediaRef,
+          attachments: [
+            ...preparedAttachments
+              .filter((attachment) => attachment.inlineData || attachment.mediaRef)
+              .map((attachment) => ({
+                path: attachment.message.ref,
+                name: attachment.message.name,
+                kind: attachment.message.kind,
+                mimeType: attachment.message.mimeType,
+                size: attachment.message.size,
+                data: attachment.inlineData,
+                mediaRef: attachment.mediaRef,
+              })),
+            ...sessionReferences.map((attachment) => ({
+              path: attachment.ref,
+              name: attachment.name,
+              kind: attachment.kind,
+              text: attachment.text,
             })),
+          ],
           userMessageId: userMessage.id,
           // Per-turn permission ceiling override (R1 leftover; spec §7.3). The
           // sidecar records it on the turn context; enforcement of a NARROWER

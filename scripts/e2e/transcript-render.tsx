@@ -8,11 +8,16 @@ import { useState } from "react";
 import { createInstance } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { en } from "@pi-desktop/i18n";
-import type { AgentActivity, UiMessage } from "@pi-desktop/shared";
+import type { AgentActivity, AgentEventEnvelope, UiMessage } from "@pi-desktop/shared";
 import { Markdown } from "../../apps/desktop/src/components/Markdown";
 import { AssistantTurn } from "../../apps/desktop/src/features/chat/transcript/AssistantTurn";
 import { ChatTranscript } from "../../apps/desktop/src/features/chat/transcript/ChatTranscript";
 import { buildTranscriptEntries } from "../../apps/desktop/src/lib/assistant-turns";
+import { assistantErrorMessage } from "../../apps/desktop/src/stores/helpers/store-helpers";
+import type { AppState } from "../../apps/desktop/src/stores/app-state";
+import { createSessionRuntime } from "../../apps/desktop/src/stores/runtime/session-runtime";
+import { createEventsSlice } from "../../apps/desktop/src/stores/slices/events-slice";
+import type { StoreSet } from "../../apps/desktop/src/stores/slices/types";
 import { useSmoothText } from "../../apps/desktop/src/hooks/useSmoothText";
 import { useAppStore } from "../../apps/desktop/src/stores/app-store";
 
@@ -22,6 +27,8 @@ declare global {
   var transcriptRuntimeSlotProbe: () => Promise<unknown>;
   var smoothTextThrottleProbe: () => Promise<unknown>;
   var transcriptLongHistoryProbe: typeof runLongHistoryProbe;
+  var resetContextOverflowRecoveryProbe: () => Promise<void>;
+  var contextOverflowRecoveryProbe: (events: AgentEventEnvelope[]) => Promise<unknown>;
 }
 
 globalThis.transcriptLongHistoryProbe = runLongHistoryProbe;
@@ -125,6 +132,135 @@ const message = (
   content: string,
   extra: Partial<UiMessage> = {},
 ): UiMessage => ({ id, role, content, createdAt, ...extra });
+
+let recoveryState: AppState | undefined;
+let recoveryRoot: ReturnType<typeof createRoot> | undefined;
+let recoveryHost: HTMLDivElement | undefined;
+let recoveryI18n: ReturnType<typeof createInstance> | undefined;
+let recoveryInitialAssistantId: string | undefined;
+
+globalThis.resetContextOverflowRecoveryProbe = async () => {
+  const sessionId = "context-overflow-fixture";
+  const initialStore = useAppStore.getState();
+  const user = message("user-1", "user", "hello", {
+    status: "complete",
+  });
+  recoveryState = {
+    ...initialStore,
+    activeSessionId: sessionId,
+    messages: [user],
+    retainedTranscripts: {
+      ...initialStore.retainedTranscripts,
+      [sessionId]: [user],
+    },
+    runningSessions: {},
+    sessionOutcomes: {},
+    latestTurnResults: {},
+    pendingPermissions: [],
+    pendingAsks: [],
+    isRunning: false,
+  };
+  const get = () => {
+    assert(recoveryState, "overflow fixture state was not initialized");
+    return recoveryState;
+  };
+  const set: StoreSet = (update) => {
+    const previous = get();
+    const patch = typeof update === "function" ? update(previous) : update;
+    recoveryState = { ...previous, ...patch };
+    sessionRuntime.syncTranscriptProjection(recoveryState, previous);
+  };
+  const sessionRuntime = createSessionRuntime({ get, set });
+  sessionRuntime.cacheSessionTranscript(sessionId, [user]);
+  const withoutRecordKey = <T,>(record: Record<string, T>, key: string) => {
+    const next = { ...record };
+    delete next[key];
+    return next;
+  };
+  Object.assign(
+    recoveryState,
+    createEventsSlice({
+      get,
+      set,
+      runtime: sessionRuntime,
+      withoutRecordKey,
+      sessionModeForPlanningState: () => "agent",
+      openPlanArtifact: () => undefined,
+      notifyInteractivePrompt: () => undefined,
+      triggerAutoTitleSummarization: async () => undefined,
+      flushPendingSessionConfiguration: async () => undefined,
+      assistantErrorMessage: (error) =>
+        assistantErrorMessage({
+          code: error.code,
+          message: error.message,
+          retriable: error.retriable === true,
+        }),
+      withCompactionMark: (marks, mark) => [...(marks ?? []), mark],
+    }),
+  );
+  recoveryInitialAssistantId = undefined;
+  recoveryI18n = createInstance();
+  await recoveryI18n.init({
+    lng: "en",
+    resources: { en: { translation: en } },
+    interpolation: { escapeValue: false },
+  });
+  recoveryHost = document.createElement("div");
+  document.body.append(recoveryHost);
+  recoveryRoot = createRoot(recoveryHost);
+  useAppStore.setState({
+    activeSessionId: sessionId,
+    dismissedAssistantErrorMessages: {},
+    settings: {
+      ...initialStore.settings,
+      defaultMode: "agent",
+      theme: "dark",
+      enterToSend: true,
+      onboardingDismissed: false,
+      smoothStreaming: false,
+    },
+  });
+};
+
+globalThis.contextOverflowRecoveryProbe = async (events) => {
+  assert(recoveryState, "overflow fixture state was not initialized");
+  assert(recoveryRoot && recoveryHost && recoveryI18n, "overflow fixture DOM is missing");
+  for (const event of events) recoveryState.handleAgentEvent(event);
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  const state = recoveryState;
+  const assistantMessages = state.messages.filter((item) => item.role === "assistant");
+  const assistant = assistantMessages.at(-1);
+  const entry = buildTranscriptEntries(state.messages).entries.find(
+    (item) => item.kind === "assistant-turn",
+  );
+  assert(entry?.kind === "assistant-turn", "recovered assistant turn is missing");
+  flushSync(() =>
+    recoveryRoot.render(
+      <I18nextProvider i18n={recoveryI18n}>
+        <AssistantTurn entry={entry} isActive={state.isRunning} />
+      </I18nextProvider>,
+    ),
+  );
+  const visibleErrorCards = recoveryHost.querySelectorAll(".message-error").length;
+  const recovering =
+    state.isRunning && assistant?.status === "streaming" && !assistant.error &&
+    visibleErrorCards === 0 && recoveryHost.textContent?.includes("partial response");
+  const complete =
+    !state.isRunning && assistant?.status === "complete" &&
+    visibleErrorCards === 0 && recoveryHost.textContent?.includes("recovered response");
+  if (!recoveryInitialAssistantId && recovering) recoveryInitialAssistantId = assistant?.id;
+  const phase = recovering ? "recovering" : complete ? "complete" : "invalid";
+  return {
+    ok: phase !== "invalid",
+    phase,
+    assistantId: assistant?.id,
+    initialAssistantId: recoveryInitialAssistantId,
+    assistantStatus: assistant?.status,
+    assistantCount: assistantMessages.length,
+    visibleErrorCards,
+    visibleText: recoveryHost.textContent,
+  };
+};
 
 /** Real React DOM + production transcript components; no component/hook mocks. */
 globalThis.transcriptRenderProbe = async () => {

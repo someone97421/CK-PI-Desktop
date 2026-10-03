@@ -2,6 +2,7 @@ import i18n from "i18next";
 import type {
   UiMessage,
 } from "@pi-desktop/shared";
+import { isRenderableAttachment } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { resolveComposerSmartStop } from "../../lib/composer-smart-stop";
 import {
@@ -143,14 +144,16 @@ export function createTranscriptSlice({
       const optimisticMessage = optimisticUserMessage(
         crypto.randomUUID(),
         prompt,
-        (attachments ?? state.messages[userIndex].attachments ?? []).map(
-          (attachment) => ({
+        (attachments ?? state.messages[userIndex].attachments ?? [])
+          // A session reference re-resolves from its link text on send; it is
+          // not an optimistic file reference.
+          .filter(isRenderableAttachment)
+          .map((attachment) => ({
             path: attachment.ref,
             name: attachment.name,
             kind: attachment.kind,
             mimeType: attachment.mimeType,
-          }),
-        ),
+          })),
       );
 
       set((current) => ({

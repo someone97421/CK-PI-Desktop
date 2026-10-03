@@ -35,6 +35,17 @@ describe("expandSlashInvocation", () => {
     );
   });
 
+  it("preserves pi's default placeholders without recursively expanding arguments", () => {
+    const template = {
+      name: "defaults",
+      content: "${1:-fallback} ${@:-no args} $2 $1",
+    };
+    expect(expandSlashInvocation('/defaults "$2" "$1"', [template])?.expanded)
+      .toBe("$2 $2 $1 $1 $2");
+    expect(expandSlashInvocation("/defaults", [template])?.expanded)
+      .toBe("fallback no args  ");
+  });
+
   it("drops missing positional args to empty strings", () => {
     expect(expandSlashInvocation("/review one", templates)?.expanded).toBe(
       "Review one with focus on .",

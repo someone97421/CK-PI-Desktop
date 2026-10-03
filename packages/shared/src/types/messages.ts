@@ -48,17 +48,30 @@ export type UsageOperation = Omit<MessageUsage, "operations" | "aggregation"> & 
 export { addUsage, withUsageIdentity } from "../message-usage.js";
 
 export type MessageAttachment = {
-  kind: "image" | "file";
+  kind: "image" | "file" | "session";
   name: string;
-  /** Workspace-relative path or session-scratch absolute path. */
+  /** Workspace-relative path, session-scratch absolute path, or a session id. */
   ref: string;
   mimeType?: string;
   size?: number;
+  /**
+   * Bounded excerpt of a referenced conversation, written by Electron main when
+   * the prompt carries a `pi-desktop://session/<id>` link. The model reads it
+   * with the user's message; other attachment kinds never carry it.
+   */
+  text?: string;
   /** Sidecar-only hydrated image data; never persisted or sent by the host. */
   data?: string;
   /** 运行时按需装载的媒体引用；持久化仍沿用 ref/mimeType/size。 */
   mediaRef?: import("../media-reference.js").MediaReference;
 };
+
+/** Whether an attachment is a renderer-resolvable file or image reference. */
+export function isRenderableAttachment(
+  attachment: MessageAttachment,
+): attachment is MessageAttachment & { kind: "image" | "file" } {
+  return attachment.kind !== "session";
+}
 
 /** Estimated context footprint for one tool call and its returned result. */
 export type ToolTokenUsage = {

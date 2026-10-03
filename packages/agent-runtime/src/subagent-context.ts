@@ -15,16 +15,7 @@
  */
 
 import {
-  BACKGROUND_CONTEXT,
-  createCompactionSummaryMessage,
-  generateSummaryWithUsage,
-  prepareCompaction,
-  withAbortSignal,
   type AgentMessage,
-  type CompactionSettings,
-  type CompactionSummaryMessage,
-  type Entry,
-  type MessageEntry,
   type PrepareNextTurnContext,
   type ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
@@ -54,6 +45,10 @@ import {
   reduceSummaryInput,
   type CompactionSummaryInput,
 } from "./compaction-summary-input.js";
+import { prepareCompaction } from "./pi-runtime-compaction-plan.js";
+import { generateSummaryWithUsage } from "./pi-runtime-compaction-summary.js";
+import { createCompactionSummaryMessage, type CompactionSummaryMessage } from "./pi-runtime-messages.js";
+import type { CompactionSettings, Entry, MessageEntry } from "./pi-runtime-types.js";
 import type { UsageObserver } from "./request-usage.js";
 import { withCompactionRequestHeaders } from "./compaction-request.js";
 import {
@@ -120,9 +115,9 @@ export function subagentContextOverflowError(modelId: string): {
 
 /**
  * Build the provider registry a delegate summary request goes through, with
- * the same header seam the session's compaction uses: pi-agent-core hands the
- * collection to its own request path, so provider and session headers have to
- * ride on it.
+ * the same header seam as the session's compaction adapter. The summary
+ * request uses `completeSimple` on this collection, so provider and session
+ * headers have to ride on it.
  */
 export function delegateSummaryModels(
   provider: RuntimeProviderConfig,
@@ -258,7 +253,7 @@ function delegateContextBudgetFor(
 }
 
 /**
- * Compact through pi-agent-core's primitives, shaped the way the session's
+ * Compact through desktop-owned primitives, shaped the way the session's
  * checkpoint is shaped: pi's three contiguous ranges are summarized as one,
  * and the retained tail is rebuilt from the retention mode rather than pi's
  * token cut, so no tool call can be orphaned from its result. Returns
@@ -326,7 +321,7 @@ async function compactDelegateContext(
     input.thinkingLevel,
     COMPACTION_SUMMARY_RETRY_POLICY,
     undefined,
-    withAbortSignal(input.signal, BACKGROUND_CONTEXT),
+    input.signal,
   );
   if (!result.ok) {
     if (result.error.code === "aborted" || input.signal.aborted) {
@@ -504,8 +499,8 @@ function delegateSummaryInputExceedsBudget(
 
 /**
  * Synthetic message-entry chain for `prepareCompaction`. A delegate has no
- * durable entry log, so the cut point is computed over its in-memory messages
- * wrapped in the entry shape pi's compaction expects.
+ * durable entry log, so the runtime computes the cut point over its in-memory
+ * messages wrapped in the entry shape its preparation helper expects.
  */
 function delegateMessageEntries(messages: AgentMessage[]): Entry[] {
   let parentId: string | null = null;

@@ -5,12 +5,83 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { isolatedEnv } from "./e2e/hosted-search-sidecar.mjs";
 import { runScenarios } from "./e2e/hosted-search-scenarios.mjs";
+
+async function collectArtifactFiles(directory, relative = "") {
+  const entries = await readdir(join(directory, relative), { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const child = relative ? join(relative, entry.name) : entry.name;
+    if (entry.isDirectory()) files.push(...(await collectArtifactFiles(directory, child)));
+    else if (entry.isFile()) files.push(child);
+  }
+  return files;
+}
+
+async function bundleArtifactHash(entry) {
+  const directory = resolve(entry, "..");
+  const packagePath = join(directory, "package.json");
+  let packageManifest;
+  try {
+    packageManifest = await readFile(packagePath);
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    packageManifest = Buffer.from('{"type":"module"}\n');
+  }
+
+  const files = [
+    ["entry", await readFile(entry)],
+    ["package.json", packageManifest],
+  ];
+  const chunksDirectory = join(directory, "chunks");
+  try {
+    if ((await stat(chunksDirectory)).isDirectory()) {
+      for (const relative of await collectArtifactFiles(chunksDirectory)) {
+        files.push([join("chunks", relative), await readFile(join(chunksDirectory, relative))]);
+      }
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+
+  const digest = createHash("sha256");
+  for (const [name, content] of files.sort(([left], [right]) => left.localeCompare(right))) {
+    digest.update(name);
+    digest.update("\0");
+    digest.update(content);
+  }
+  return digest.digest("hex");
+}
+
+async function snapshotBundleArtifact(entry, directory) {
+  await mkdir(directory, { recursive: true });
+  const snapshotEntry = join(directory, "sidecar.mjs");
+  await copyFile(entry, snapshotEntry);
+
+  const sourceDirectory = resolve(entry, "..");
+  const packagePath = join(sourceDirectory, "package.json");
+  try {
+    await copyFile(packagePath, join(directory, "package.json"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    await writeFile(join(directory, "package.json"), '{"type":"module"}\n');
+  }
+
+  const chunksDirectory = join(sourceDirectory, "chunks");
+  try {
+    if ((await stat(chunksDirectory)).isDirectory()) {
+      await cp(chunksDirectory, join(directory, "chunks"), { recursive: true });
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return snapshotEntry;
+}
 
 const { values } = parseArgs({ options: {
   bundle: { type: "string" }, "timeout-ms": { type: "string", default: "15000" },
@@ -89,7 +160,7 @@ when the run ends; any change between the two fails the run.`);
     for (const name of ["pi-ai", "pi-agent-core", "pi-coding-agent"]) {
       const manifest = JSON.parse(await readFile(join(root, "packages/agent-runtime/node_modules/@earendil-works", name, "package.json"), "utf8"));
       evidence.installedDependencies[name] = manifest.version;
-      assert.equal(manifest.version, "0.99.1", `${name} must match the locked pi version`);
+      assert.equal(manifest.version, "1.0.0", `${name} must match the locked pi version`);
     }
     evidence.lockfileSha256 = await hash(join(root, "pnpm-lock.yaml"));
     evidence.head = git("rev-parse", "HEAD");
@@ -106,22 +177,23 @@ when the run ends; any change between the two fails the run.`);
       }
     }
     const source = resolve(root, values.bundle ?? "packages/agent-runtime/dist-bundle/sidecar.js");
-    const bundle = join(dir, "sidecar.mjs");
+    const bundleDirectory = join(dir, "artifact");
     evidence.bundleSource = source;
-    evidence.sha256 = await hash(source);
-    // Snapshot the complete artifact so another agent's bundle rebuild cannot
-    // silently replace code halfway through the child-process scenarios.
-    await copyFile(source, bundle);
-    assert.equal(await hash(bundle), evidence.sha256, "bundle changed during snapshot; rebuild and retry");
-    console.log(`Bundle SHA-256: ${evidence.sha256}`);
+    evidence.sha256 = await bundleArtifactHash(source);
+    evidence.entrySha256 = await hash(source);
+    // Snapshot the entry, ESM package marker, and every relative chunk so a
+    // concurrent bundle rebuild cannot replace code halfway through scenarios.
+    const bundle = await snapshotBundleArtifact(source, bundleDirectory);
+    assert.equal(await bundleArtifactHash(bundle), evidence.sha256, "bundle changed during snapshot; rebuild and retry");
+    console.log(`Bundle artifact SHA-256: ${evidence.sha256}`);
     evidence.results = await runScenarios(bundle, dir, timeoutMs, (result) => {
       console.log(`${result.passed ? "PASS" : "FAIL"} ${result.name} (${result.requests} provider requests)`);
       if (!result.passed) console.error(result.error);
     });
-    assert.equal(await hash(bundle), evidence.sha256, "executed snapshot was modified");
-    // The snapshot protects execution; qualification also requires its source
-    // artifact to remain stable for a reproducible build-to-test attribution.
-    evidence.bundleSourceSha256After = await hash(source);
+    assert.equal(await bundleArtifactHash(bundle), evidence.sha256, "executed snapshot was modified");
+    // The snapshot protects execution; qualification also requires the source
+    // artifact and every relative chunk to remain stable during the run.
+    evidence.bundleSourceSha256After = await bundleArtifactHash(source);
     evidence.bundleSourceRewrittenDuringRun = evidence.bundleSourceSha256After !== evidence.sha256;
     assert.equal(evidence.bundleSourceRewrittenDuringRun, false, "bundle source changed during qualification");
     evidence.passed = evidence.results.every((result) => result.passed);

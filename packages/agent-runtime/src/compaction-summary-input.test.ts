@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  estimateTokens,
-  type AgentMessage,
-} from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { estimateTokens } from "./pi-runtime-estimates.js";
 import {
   addSummaryUsage,
   compactionSummaryInputLimit,

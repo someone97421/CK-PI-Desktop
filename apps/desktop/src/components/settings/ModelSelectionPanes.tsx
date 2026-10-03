@@ -72,6 +72,24 @@ export type ModelSelection = {
   setModels: (update: (current: ModelBinding[]) => ModelBinding[]) => void;
 };
 
+type ModelTokenLimit = "contextWindow" | "maxTokens";
+
+function publishedModelLimit(
+  info: ModelInfo | undefined,
+  field: ModelTokenLimit,
+): number | undefined {
+  if (!info) return undefined;
+  const published = field === "contextWindow" ? info.limit?.context : info.limit?.output;
+  if (published !== undefined) return published;
+  // models.dev rows keep the raw record in `limit`; other discovered rows may
+  // carry only the runtime's generic safety budget, which is not a published
+  // model limit and should not look like one in Settings.
+  if (info.catalogSource === "models.dev" || info.source === "discovered") {
+    return undefined;
+  }
+  return field === "contextWindow" ? info.contextWindow : info.maxTokens;
+}
+
 /**
  * Row merging and published-level metadata for one binding list.
  *
@@ -480,7 +498,8 @@ export function ModelSelectionPanes({
                 ) : null}
               </span>
               <span className="provider-models-row-limits">
-                {formatTokenCount(row.contextWindow)} · {formatTokenCount(row.maxTokens)}
+                {formatTokenCount(publishedModelLimit(row.info, "contextWindow"))} ·{" "}
+                {formatTokenCount(publishedModelLimit(row.info, "maxTokens"))}
               </span>
             </label>
           </li>
@@ -603,15 +622,26 @@ export function ModelSelectionPanes({
               const publishedImages = info ? modelMatchesFilter(info, "vision") : false;
               // The row's published window, so the hint below the field can say
               // the number still follows it.
-              const publishedContextWindow = info
-                ? (info.contextWindow ?? info.limit?.context)
-                : undefined;
+              const publishedContextWindow = publishedModelLimit(info, "contextWindow");
+              const publishedMaxTokens = publishedModelLimit(info, "maxTokens");
               const followsCatalog =
                 !customProvider &&
                 publishedContextWindow != null && publishedContextWindow > 0 &&
                 resolveBindingLimits(
                   { contextWindow: publishedContextWindow }, binding,
                 ).binding.contextWindowSource === "catalog";
+              const displayedContextWindow =
+                !customProvider &&
+                binding.contextWindowSource === "catalog" &&
+                publishedContextWindow === undefined
+                  ? undefined
+                  : binding.contextWindow;
+              const displayedMaxTokens =
+                !customProvider &&
+                binding.maxTokensSource === "catalog" &&
+                publishedMaxTokens === undefined
+                  ? undefined
+                  : binding.maxTokens;
               const publishedDocuments = info ? modelMatchesFilter(info, "pdf") : false;
               const expanded = expandedModelId === binding.id;
               const imageModelSelected = imageModelIds?.some((modelId) =>
@@ -647,8 +677,8 @@ export function ModelSelectionPanes({
                       <span className="provider-chosen-row-alias">{binding.alias.trim()}</span>
                     ) : null}
                     <span className="provider-chosen-row-limits">
-                      {formatTokenCount(binding.contextWindow)} ·{" "}
-                      {formatTokenCount(binding.maxTokens)}
+                      {formatTokenCount(displayedContextWindow)} ·{" "}
+                      {formatTokenCount(displayedMaxTokens)}
                     </span>
                     <button
                       type="button"

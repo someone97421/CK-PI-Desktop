@@ -66,8 +66,25 @@ delete env.ELECTRON_RUN_AS_NODE;
 const child = spawn(
   electronBinary,
   [`--remote-debugging-port=${port}`, `--user-data-dir=${join(root, "profile")}`, "."],
-  { cwd: appDir, env, stdio: ["ignore", "pipe", "pipe"] },
+  {
+    cwd: appDir,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
+  },
 );
+const childClose = new Promise((resolve) => child.once("close", resolve));
+const waitForChildExit = async (timeoutMs) => {
+  let timer;
+  const exited = await Promise.race([
+    childClose.then(() => true),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  return exited;
+};
 let output = "";
 child.stdout.on("data", (data) => {
   output += data;
@@ -346,6 +363,22 @@ try {
   throw error;
 } finally {
   ws?.close();
-  child.kill();
+  try {
+    if (process.platform === "win32") child.kill("SIGTERM");
+    else process.kill(-child.pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+  if (!(await waitForChildExit(3000))) {
+    try {
+      if (process.platform === "win32") child.kill("SIGKILL");
+      else process.kill(-child.pid, "SIGKILL");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+    if (!(await waitForChildExit(3000))) {
+      throw new Error("Electron process group did not close during E2E cleanup");
+    }
+  }
   server.close();
 }

@@ -1,5 +1,3 @@
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AssistantMessageFrameEncoder,
@@ -21,9 +19,6 @@ import {
   getLastAssistantUsageInfo,
 } from "@earendil-works/pi-ai/utils/estimate";
 import { streamSimple as streamMistral } from "@earendil-works/pi-ai/api/mistral-conversations";
-
-const require = createRequire(import.meta.url);
-const { applyFrame } = await import(pathToFileURL(require.resolve("@earendil-works/pi-agent-core/package.json").replace(/package\.json$/, "dist/harness/pico3/kinds/frames.js")).href);
 
 function assistant(content: AssistantMessage["content"], timestamp = 2, tokens = 0): AssistantMessage {
   return {
@@ -108,9 +103,6 @@ describe("hosted-search consumers", () => {
         ]);
         expect(frames.map(frame => frame.type)).toEqual(["start", "hosted_search_update", "text_start", "text_end"]);
         expect(reduceAssistantMessageFrames(frames)?.content).toEqual(output.content);
-        const tracked: { message?: AssistantMessage } = {};
-        for (const frame of frames) applyFrame(tracked, structuredClone(frame));
-        expect(tracked.message?.content).toEqual(reduceAssistantMessageFrames(frames)?.content);
       });
     }
     it("replaces snapshots without duplicating blocks and detaches nested wire data", () => {

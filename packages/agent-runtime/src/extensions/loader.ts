@@ -13,10 +13,12 @@ import * as typeboxCompile from "typebox/compile";
 import * as typeboxValue from "typebox/value";
 import * as piAgentCore from "@earendil-works/pi-agent-core";
 import * as piAi from "@earendil-works/pi-ai";
+import { TRUSTED_EXTENSION_KERNEL_VERSION } from "@pi-desktop/shared";
 
 export type ExtensionFactory = (api: unknown) => unknown;
 
 export type StubSymbolReporter = (symbol: string) => void;
+export type MissingCodingAgentApiReporter = (symbol: string) => void;
 
 /** Callable, constructible, property-bearing nothing. */
 function inertValue(): unknown {
@@ -63,8 +65,8 @@ export function createTuiStub(onUse: StubSymbolReporter): Record<string, unknown
 }
 
 /** Runtime surface of `@earendil-works/pi-coding-agent` that extensions import. */
-export function createCodingAgentShim(): Record<string, unknown> {
-  return {
+export function createCodingAgentShim(onMissingApi?: MissingCodingAgentApiReporter): Record<string, unknown> {
+  const supported = {
     defineTool: <T>(tool: T): T => tool,
     /** Result type guards from the pi CLI's built-in tools. Trusted extensions
      * run beside the desktop's own tools, so these never match here. */
@@ -78,8 +80,32 @@ export function createCodingAgentShim(): Record<string, unknown> {
     isPowerShellToolResult: () => false,
     isToolCallEventType: (type: unknown) =>
       type === "tool_call" || type === "tool_result",
-    VERSION: "0.87.1",
+    VERSION: TRUSTED_EXTENSION_KERNEL_VERSION,
   };
+  const reportMissing = (target: typeof supported, prop: PropertyKey) => {
+    if (
+      typeof prop === "string" &&
+      prop !== "default" &&
+      prop !== "__esModule" &&
+      prop !== "then" &&
+      !(prop in target)
+    ) {
+      onMissingApi?.(prop);
+    }
+  };
+  return new Proxy(supported, {
+    get: (target, prop, receiver) => {
+      reportMissing(target, prop);
+      return Reflect.get(target, prop, receiver);
+    },
+    // Jiti checks `name in module` before reading a virtual named import.
+    // Report unknown static imports here even though the unsupported export
+    // remains absent from the compatibility subset.
+    has: (target, prop) => {
+      reportMissing(target, prop);
+      return Reflect.has(target, prop);
+    },
+  });
 }
 
 export type CreateVirtualModulesOptions = {
@@ -96,6 +122,8 @@ export type CreateVirtualModulesOptions = {
 const stubReporters = new Map<string, StubSymbolReporter>();
 /** Symbols each cached module touched at import time; replayed to later Runners. */
 const stubSymbolsByExtension = new Map<string, Set<string>>();
+const missingCodingAgentApiReporters = new Map<string, MissingCodingAgentApiReporter>();
+const missingCodingAgentApisByExtension = new Map<string, Set<string>>();
 
 export function setStubSymbolReporter(extensionId: string, reporter: StubSymbolReporter | undefined): void {
   if (reporter) stubReporters.set(extensionId, reporter);
@@ -105,6 +133,19 @@ export function setStubSymbolReporter(extensionId: string, reporter: StubSymbolR
 /** pi-tui symbols a cached module already touched, for Runners that reuse it. */
 export function knownStubSymbols(extensionId: string): string[] {
   return [...(stubSymbolsByExtension.get(extensionId) ?? [])];
+}
+
+export function setMissingCodingAgentApiReporter(
+  extensionId: string,
+  reporter: MissingCodingAgentApiReporter | undefined,
+): void {
+  if (reporter) missingCodingAgentApiReporters.set(extensionId, reporter);
+  else missingCodingAgentApiReporters.delete(extensionId);
+}
+
+/** Missing shim exports touched by a cached module, for later Runners. */
+export function knownMissingCodingAgentApis(extensionId: string): string[] {
+  return [...(missingCodingAgentApisByExtension.get(extensionId) ?? [])];
 }
 
 export function createVirtualModules(
@@ -119,7 +160,15 @@ export function createVirtualModules(
     known.add(symbol);
     stubReporters.get(options.extensionId)?.(symbol);
   });
-  const codingAgent = createCodingAgentShim();
+  const codingAgent = createCodingAgentShim((symbol) => {
+    let known = missingCodingAgentApisByExtension.get(options.extensionId);
+    if (!known) {
+      known = new Set();
+      missingCodingAgentApisByExtension.set(options.extensionId, known);
+    }
+    known.add(symbol);
+    missingCodingAgentApiReporters.get(options.extensionId)?.(symbol);
+  });
   return {
     typebox,
     "typebox/compile": typeboxCompile,

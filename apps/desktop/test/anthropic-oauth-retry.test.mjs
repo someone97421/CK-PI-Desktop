@@ -69,8 +69,15 @@ async function fixture(outcomes, run) {
   const events = [];
   const oauth = new VendorOAuth({ call: host.call, openExternal: async () => {}, emit: event => {
     events.push(event);
-    if (event.kind === "prompt") oauth.respond({ loginId: event.loginId,
-      promptId: event.request.promptId, value: "fixture-authorization-code" });
+    if (event.kind === "prompt") {
+      const value = event.request.type === "select"
+        ? "copy_code"
+        : event.request.type === "manual_code"
+          ? `fixture-authorization-code#${new URL(events.find(candidate =>
+              candidate.kind === "authUrl" && candidate.loginId === event.loginId).url).searchParams.get("state")}`
+          : undefined;
+      oauth.respond({ loginId: event.loginId, promptId: event.request.promptId, value });
+    }
   } });
   const signIn = async () => {
     await oauth.start("anthropic");

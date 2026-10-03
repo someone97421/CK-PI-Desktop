@@ -26,8 +26,10 @@ import {
 } from "@pi-desktop/shared";
 import {
   createVirtualModules,
+  knownMissingCodingAgentApis,
   knownStubSymbols,
   loadExtensionFactory,
+  setMissingCodingAgentApiReporter,
   setStubSymbolReporter,
   type ExtensionFactory,
 } from "./loader.js";
@@ -344,12 +346,25 @@ export class TrustedExtensionRunner {
         reportedStubs.add(symbol);
         this.report(spec.id, "stub_symbol", `pi-tui symbol "${symbol}" is a no-op in PI-Desktop`, symbol);
       };
+      const reportedMissingApis = new Set<string>();
+      const reportMissingApi = (symbol: string) => {
+        if (reportedMissingApis.has(symbol)) return;
+        reportedMissingApis.add(symbol);
+        this.report(
+          spec.id,
+          "unsupported_api",
+          `@earendil-works/pi-coding-agent export "${symbol}" is outside PI-Desktop's extension compatibility subset`,
+          symbol,
+        );
+      };
       setStubSymbolReporter(spec.id, reportStub);
+      setMissingCodingAgentApiReporter(spec.id, reportMissingApi);
       const virtualModules = createVirtualModules({ extensionId: spec.id });
       let factory = factoryCache.get(spec.id);
       // A cached module keeps the pi-tui symbols it imported the first time;
       // report them here so this session's diagnostics say so too.
       if (factory) for (const symbol of knownStubSymbols(spec.id)) reportStub(symbol);
+      if (factory) for (const symbol of knownMissingCodingAgentApis(spec.id)) reportMissingApi(symbol);
       if (!factory) {
         try {
           factory = await this.lifecycle.run(

@@ -35,6 +35,7 @@ import {
   LinkifiedText,
   MessageAttachmentImage,
   MessageTimestamp,
+  SessionRefChip,
 } from "./shared";
 import {
   useChatTextActions,
@@ -273,6 +274,10 @@ export const MessageRow = memo(function MessageRow({
                           attachment={attachment}
                           onOpenFile={openFileRef}
                         />
+                      ) : attachment.kind === "session" ? (
+                        <span key={`${attachment.ref}:${attachment.name}`} role="listitem">
+                          <SessionRefChip attachment={attachment} />
+                        </span>
                       ) : (
                         <span
                           key={`${attachment.ref}:${attachment.name}`}

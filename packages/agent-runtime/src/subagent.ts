@@ -24,8 +24,6 @@ import { randomUUID } from "node:crypto";
 import { mediaStore } from "./media-store.js";
 import {
   Agent,
-  convertToLlm,
-  createCompactionSummaryMessage,
   type AfterToolCallContext,
   type AfterToolCallResult,
   type AgentEvent,
@@ -82,6 +80,7 @@ import {
   nowIso,
   usageFromPi,
 } from "./agent-messages.js";
+import { convertToLlm, createCompactionSummaryMessage } from "./pi-runtime-messages.js";
 import {
   apiBindingForStyle,
   buildProviderModel,

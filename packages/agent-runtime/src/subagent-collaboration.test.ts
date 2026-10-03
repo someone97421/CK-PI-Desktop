@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createAssistantMessageEventStream, Type, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
-import type { Agent, AgentTool, JsonValue } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, Type, type AssistantMessage, type Context, type JsonValue } from "@earendil-works/pi-ai";
+import type { Agent, AgentTool } from "@earendil-works/pi-agent-core";
 import type { AgentEventEnvelope, SubagentDefinition } from "@pi-desktop/shared";
 import { SubagentObserver, type SubagentObservation } from "./subagent-observer.js";
 import { SubagentRun } from "./subagent.js";

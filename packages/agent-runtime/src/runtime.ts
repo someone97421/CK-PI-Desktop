@@ -1,3 +1,4 @@
+import { planWorkspaceRequiredResult } from "./plan-workspace-error.js";
 import { accountModelStream } from "./request-usage.js";
 import { modeToolDenial, retainModeToolDeclaration, withModeExecutionGuard } from "./mode-tool-access.js";
 import { restoreHostedSearchReplay } from "./hosted-search-replay.js";
@@ -15,10 +16,6 @@ import {
 } from "./delegation-message.js";
 import {
   Agent,
-  convertToLlm,
-  estimateContextTokens,
-  estimateTokens,
-  prepareCompaction,
   type AgentContext,
   type AgentEvent,
   type AgentLoopTurnUpdate,
@@ -27,13 +24,8 @@ import {
   type AgentToolResult,
   type AfterToolCallContext,
   type AfterToolCallResult,
-  type CompactionPreparation,
-  type CompactionEntry,
-  type CompactionSettings,
   type BeforeToolCallContext,
   type BeforeToolCallResult,
-  type Entry,
-  type MessageEntry,
   type PrepareNextTurnContext,
 } from "@earendil-works/pi-agent-core";
 import {
@@ -142,6 +134,19 @@ import {
 } from "./agent-messages.js";
 import { withExplicitRequired } from "./tool-schema.js";
 import { buildSessionContext } from "./session-context.js";
+import { prepareCompaction } from "./pi-runtime-compaction-plan.js";
+import {
+  estimateContextTokens,
+  estimateTokens,
+} from "./pi-runtime-estimates.js";
+import { convertToLlm } from "./pi-runtime-messages.js";
+import type {
+  CompactionEntry,
+  CompactionPreparation,
+  CompactionSettings,
+  Entry,
+  MessageEntry,
+} from "./pi-runtime-types.js";
 import {
   initialSystemTranscript,
   rebuildSystemTranscript,
@@ -295,10 +300,13 @@ export type { RuntimeProviderConfig } from "./provider-binding.js";
 
 import { mediaMimeType, supportsMediaMime, type MediaInputCapabilities } from "@pi-desktop/shared";
 
-export type RuntimePromptAttachment = AgentPromptAttachment & {
+export type RuntimePromptAttachment = Omit<AgentPromptAttachment, "kind"> & {
+  /** Session references are resolved by Electron main. */
+  kind: AgentPromptAttachment["kind"] | "session";
   /** Base64 payload is transient and only crosses the sidecar for this turn. */
   data?: string;
   mediaRef?: MediaReference;
+  text?: string;
 };
 
 export type RuntimePrompt = {
@@ -307,12 +315,23 @@ export type RuntimePrompt = {
   attachments?: RuntimePromptAttachment[];
 };
 
+/** Append resolved conversation excerpts to the model's text input. */
+function promptText(input: RuntimePrompt): string {
+  const references = (input.attachments ?? [])
+    .map((attachment) => sessionReferenceBlock(attachment))
+    .filter((block): block is string => block !== null);
+  return references.length
+    ? `${input.text}\n\n${references.join("\n\n")}`.trim()
+    : input.text;
+}
+
 function promptContent(input: string | RuntimePrompt, capabilities: MediaInputCapabilities = {}): UserMessage["content"] {
   if (typeof input === "string") return input;
+  const text = promptText(input);
   const blocks = promptMedia(input, capabilities);
-  if (!blocks.length) return input.text;
+  if (!blocks.length) return text;
   return [
-    ...(input.text.trim() ? [{ type: "text" as const, text: input.text }] : []),
+    ...(text.trim() ? [{ type: "text" as const, text }] : []),
     ...blocks,
   ];
 }
@@ -340,9 +359,32 @@ function runtimeAttachmentFromMessage(
     kind: attachment.kind,
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+    ...(attachment.text ? { text: attachment.text } : {}),
     ...(data ? { data } : {}),
     ...(attachment.mediaRef ? { mediaRef: attachment.mediaRef } : {}),
   };
+}
+
+/** Attribute-safe text: a session title may contain quotes or angle brackets. */
+function escapeAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+/**
+ * A referenced conversation travels with the user's message as one delimited
+ * block: it is quoted context, not the user's own words (a session link in the
+ * draft produced it), so the model reads it as reference material.
+ */
+export function sessionReferenceBlock(attachment: RuntimePromptAttachment): string | null {
+  if (attachment.kind !== "session") return null;
+  const text = attachment.text?.trim();
+  if (!text) return null;
+  const title = escapeAttribute(attachment.name || attachment.path);
+  return `<session_reference name="${title}" session="${escapeAttribute(attachment.path)}">\n${text}\n</session_reference>`;
 }
 
 // pi-ai's adapter retry is disabled here so setup and mid-stream 429s share
@@ -1747,6 +1789,7 @@ export class DesktopAgentRuntime {
   private pendingSteering = new Map<AgentMessage, string>();
   private pendingOverflow = false;
   private overflowRecoveryAttempted = false;
+  private overflowRecoveryInProgress = false;
   private suppressOverflowRunEnd = false;
   private turnHadError = false;
   /** Bumped at the start of each parent `prompt()` / `executeApprovedPlan()`. */
@@ -2575,6 +2618,10 @@ Delegation rules:
   private extensionModelRegistry(): Record<string, unknown> {
     const getRunner = () => this.extensionRunner;
     const models = () => [this.model, ...(getRunner()?.getAgentModels() ?? [])];
+    const hasConfiguredProvider = (providerId: string) =>
+      providerId === this.provider.id ||
+      providerId === this.model.provider ||
+      (getRunner()?.getAgents().some((agent) => agent.providerId === providerId) ?? false);
     return {
       getAll: () => [...new Map(models().map((model) => [`${model.provider}/${model.id}`, model])).values()],
       getAvailable: () => [...new Map(models().map((model) => [`${model.provider}/${model.id}`, model])).values()],
@@ -2584,12 +2631,11 @@ Delegation rules:
         getRunner()?.getAgents().find((agent) => agent.providerId === providerId)?.name ??
         (providerId === this.provider.id ? this.provider.name : providerId),
       getProviderAuthStatus: (providerId: string) => ({
-        configured: [this.provider.id, ...(getRunner()?.getAgents().map((agent) => agent.providerId) ?? [])].includes(providerId),
+        configured: hasConfiguredProvider(providerId),
         source: "plugin",
       }),
       hasConfiguredAuth: (model: { provider?: string }) =>
-        typeof model.provider === "string" &&
-        [this.provider.id, ...(getRunner()?.getAgents().map((agent) => agent.providerId) ?? [])].includes(model.provider),
+        typeof model.provider === "string" && hasConfiguredProvider(model.provider),
     };
   }
 
@@ -5853,6 +5899,8 @@ Delegation rules:
             question,
           });
         } catch (error) {
+          const recovery = planWorkspaceRequiredResult(error);
+          if (recovery) return recovery;
           const errorCode =
             (error as { data?: { errorCode?: string } })?.data?.errorCode ??
             "PLAN_SUBMIT_FAILED";
@@ -6274,6 +6322,7 @@ Delegation rules:
   private resetRunRecoveryState(): void {
     this.pendingOverflow = false;
     this.overflowRecoveryAttempted = false;
+    this.overflowRecoveryInProgress = false;
     this.suppressOverflowRunEnd = false;
     this.pendingProviderRetry = undefined;
     this.providerTransientRetryAttempt = 0;
@@ -6432,39 +6481,43 @@ Delegation rules:
         this.pendingOverflow = false;
         this.suppressOverflowRunEnd = false;
         this.overflowRecoveryAttempted = true;
-        const messages = [...this.agent.state.messages];
-        while (messages.at(-1)?.role === "assistant") messages.pop();
-        this.setAgentMessages(messages);
-        const compacted = await this.runCompaction(
-          "overflow",
-          true,
-          "active_turn",
-        );
-        if (!compacted) {
-          this.terminateParentTurn();
-          if (this.compactionAborted) {
-            // The user stopped the turn while the checkpoint was being written.
-            // That is an aborted turn, not a compaction failure: close it the
-            // way a stopped stream closes, with no error row.
-            this.finalizeCurrentAssistant("aborted");
-            this.emit({ type: "turn_end" });
-            this.emit({ type: "agent_end", messageIds: [] });
-            return false;
-          }
-          this.emit({
-            type: "error",
-            error: {
+        this.overflowRecoveryInProgress = true;
+        try {
+          const messages = [...this.agent.state.messages];
+          while (messages.at(-1)?.role === "assistant") messages.pop();
+          this.setAgentMessages(messages);
+          const compacted = await this.runCompaction(
+            "overflow",
+            true,
+            "active_turn",
+          );
+          if (!compacted) {
+            this.terminateParentTurn();
+            if (this.compactionAborted) {
+              // The user stopped the turn while the checkpoint was being written.
+              // That is an aborted turn, not a compaction failure: close it the
+              // way a stopped stream closes, with no error row.
+              this.finalizeCurrentAssistant("aborted");
+              this.emit({ type: "turn_end" });
+              this.emit({ type: "agent_end", messageIds: [] });
+              return false;
+            }
+            const error = {
               code: "CONTEXT_COMPACTION_FAILED",
               message: "Context overflow recovery could not create a checkpoint",
               retriable: false,
-            },
-          });
-          return false;
+            } satisfies ReturnType<typeof classifyAgentError>;
+            this.finalizeCurrentAssistant("error", error);
+            this.emit({ type: "error", error });
+            return false;
+          }
+          this.turnHadError = false;
+          this.requestStartedAt = Date.now();
+          await this.agent.continue();
+          await this.waitForIdleAndSteering();
+        } finally {
+          this.overflowRecoveryInProgress = false;
         }
-        this.turnHadError = false;
-        this.requestStartedAt = Date.now();
-        await this.agent.continue();
-        await this.waitForIdleAndSteering();
         continue;
       }
       if (this.pendingSilentTurnRerun) {
@@ -7728,6 +7781,7 @@ Delegation rules:
         if (this.steeringContinuation) break;
         if (
           this.providerRetryInProgress ||
+          this.overflowRecoveryInProgress ||
           this.silentTurnRerunInProgress ||
           this.progressTurnRerunInProgress
         ) {
@@ -7738,6 +7792,7 @@ Delegation rules:
       case "turn_start":
         if (
           this.providerRetryInProgress ||
+          this.overflowRecoveryInProgress ||
           this.silentTurnRerunInProgress ||
           this.progressTurnRerunInProgress
         ) {
@@ -7752,6 +7807,7 @@ Delegation rules:
           const content = assistantContent((event.message as any).content);
           const retryingAssistant =
             this.providerRetryInProgress ||
+            this.overflowRecoveryInProgress ||
             this.silentTurnRerunInProgress ||
             this.progressTurnRerunInProgress
               ? this.currentAssistant
@@ -7759,7 +7815,7 @@ Delegation rules:
           const initialText =
             content.hasText && content.text.length > 0
               ? content.text
-              : this.progressTurnRerunInProgress
+              : this.progressTurnRerunInProgress || this.overflowRecoveryInProgress
                 ? retryingAssistant?.content ?? ""
                 : content.text;
           this.currentAssistant = {
@@ -7780,6 +7836,7 @@ Delegation rules:
             // duplicate error row when the second request succeeds. The same
             // applies to a silent-turn re-run: one bubble, no empty row.
             this.providerRetryInProgress = false;
+            this.overflowRecoveryInProgress = false;
             this.silentTurnRerunInProgress = false;
             this.progressTurnRerunInProgress = false;
             this.emit({ type: "message_update", message: this.currentAssistant });
@@ -8047,6 +8104,33 @@ Delegation rules:
             this.streamStartedAt = undefined;
             break;
           }
+          const canRecoverOverflow =
+            this.compactionEnabled &&
+            overflow &&
+            !this.overflowRecoveryAttempted;
+          if (canRecoverOverflow) {
+            // Keep the failed response inside the same visible assistant bubble
+            // while compaction prepares the retry. A provider overflow is an
+            // internal recovery transition, not a terminal user-facing error.
+            this.currentAssistant = {
+              ...this.currentAssistant,
+              content: nextText,
+              ...(nextThinking
+                ? { thinking: nextThinking }
+                : content.hasThinking
+                  ? { thinking: undefined }
+                  : {}),
+              status: "streaming",
+              modelId: this.provider.modelId,
+              providerId: this.provider.id,
+              ...(usage ? { usage } : {}),
+            };
+            this.emit({ type: "message_update", message: this.currentAssistant });
+            this.streamStartedAt = undefined;
+            this.pendingOverflow = true;
+            this.suppressOverflowRunEnd = true;
+            break;
+          }
           const emptyResponse = silentTurn;
           const diagnosticError = classifiedError;
           const retryProviderAttempt =
@@ -8118,10 +8202,6 @@ Delegation rules:
           this.activeProviderRetryAttempt = 0;
           this.streamStartedAt = undefined;
           this.currentAssistant = undefined;
-          const canRecoverOverflow =
-            this.compactionEnabled &&
-            overflow &&
-            !this.overflowRecoveryAttempted;
           if (exemptSilence) {
             // Accepted silence is still nothing worth resending: keep it out
             // of the runtime entries, exactly as a restored transcript would,
@@ -8138,10 +8218,7 @@ Delegation rules:
           } else {
             this.turnHadError = true;
           }
-          if (canRecoverOverflow) {
-            this.pendingOverflow = true;
-            this.suppressOverflowRunEnd = true;
-          } else if (diagnosticError) {
+          if (diagnosticError) {
             this.terminateParentTurn();
             this.emit({ type: "error", error: diagnosticError });
           }

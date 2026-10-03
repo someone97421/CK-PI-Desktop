@@ -1,14 +1,14 @@
 /**
  * Outbound headers for the context-compaction summary request.
  *
- * pi-agent-core owns that request: `compact` assembles its own stream options
- * and hands them straight to `Models.completeSimple`, so the call never passes
+ * The desktop-owned compaction adapter assembles the request options and calls
+ * `Models.completeSimple` directly, so the call never passes
  * the agent's `streamFn` where every other request of a session picks up its
  * provider headers. OpenCode Go answers 400 to a request without
  * `x-opencode-session`, which is why `/compact` failed on that provider while
  * ordinary turns worked, and a provider row's own custom headers were missing
- * from the same call. `compact` takes the model collection as an argument, so
- * the collection is the seam that reaches its one request.
+ * from the same call. The adapter takes the model collection as an argument,
+ * so the collection is the seam that reaches its request.
  */
 
 import { accountModelResult, nativeCostStatus, requestUsageIdentity, type UsageObserver } from "./request-usage.js";
@@ -34,8 +34,8 @@ import { mergeProviderHeaders, withProviderHeaders } from "./provider-headers.js
 /**
  * The header set `streamFn` puts on a turn, applied to a summary request.
  *
- * The session id is the runtime's own, not the per-call id pi-agent-core falls
- * back to, so the summary reaches the same gateway backend as the conversation
+ * The session id is the runtime's own, not a per-call id, so the summary reaches
+ * the same gateway backend as the conversation
  * it summarizes — the same id the session's turns already send.
  */
 export function compactionRequestOptions(input: {
@@ -71,7 +71,7 @@ const SUMMARY_CONVERSATION_APIS = new Set([
 
 /**
  * pi-ai's Responses adapters attach `prompt_cache_key` only while the caller
- * keeps some cache retention, and pi-agent-core asks for `"none"` on a summary,
+ * keeps some cache retention, and the summary adapter asks for `"none"`,
  * so the summary alone loses the conversation identity the adapter would have
  * sent. Restore it for the Responses-shaped APIs and leave every other payload
  * byte-identical. The adapter's own object is never mutated: the key rides a
@@ -98,9 +98,8 @@ function withSummaryPromptCacheKey(input: {
 /**
  * `models` with compaction's request routed through that header boundary.
  *
- * Only `completeSimple` is reached from `compact`; every other member stays the
- * collection's own, so a later pi-agent-core release that calls something else
- * keeps working unchanged.
+ * Only `completeSimple` is reached from desktop compaction; every other member
+ * stays the collection's own, so future adapter changes remain isolated here.
  */
 export function withCompactionRequestHeaders(
   models: Models,

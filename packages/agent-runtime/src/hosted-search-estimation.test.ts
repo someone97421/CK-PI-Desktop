@@ -1,14 +1,20 @@
-import { createRequire } from "node:module";
-import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage, Model, Api } from "@earendil-works/pi-ai";
 import { estimateContextTokens, estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { convertResponsesMessages } from "@earendil-works/pi-ai/api/openai-responses-shared";
 import { LocalRequestError, localRequestErrorDetails, normalizeHostedSearchContent, normalizeContext } from "@earendil-works/pi-ai";
 import type { HostedSearchContent, AssistantMessageEvent } from "@earendil-works/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+  estimateContextTokens as estimateDesktopContextTokens,
+  estimateTokens as estimateDesktopTokens,
+} from "./pi-runtime-estimates.js";
 
-const require = createRequire(import.meta.url);
-const compaction = await import(pathToFileURL(require.resolve("@earendil-works/pi-agent-core/package.json").replace(/package\.json$/, "dist/harness/compaction/compaction.js")).href);
+const compaction = {
+  estimateTokens: (message: unknown) => estimateDesktopTokens(message as AgentMessage),
+  estimateContextTokens: (messages: unknown[]) =>
+    estimateDesktopContextTokens(messages as AgentMessage[]),
+};
 const apis = ["openai-responses", "azure-openai-responses", "anthropic-messages"] as const;
 function model<TApi extends Api>(api: TApi): Model<TApi> {
   return { id: "test-model", name: "test", api, provider: api === "anthropic-messages" ? "anthropic" : "openai", baseUrl: "http://localhost", reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };

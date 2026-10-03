@@ -152,7 +152,12 @@ export const TRUSTED_EXTENSION_HANDLER_TIMEOUT_MS = 30_000;
 /** Modal prompt timeout (spec §9). */
 export const TRUSTED_EXTENSION_PROMPT_TIMEOUT_MS = 5 * 60_000;
 
-/** The pinned kernel version every pi package in the sidecar must share (spec §13). */
+/**
+ * Legacy compatibility marker exposed by the trusted-extension coding-agent
+ * shim. It identifies the subset modeled on the 0.87.1 extension API; it is
+ * intentionally independent from the installed Pi runtime package versions.
+ * Change it only with an explicit shim compatibility review and contract test.
+ */
 export const TRUSTED_EXTENSION_KERNEL_VERSION = "0.87.1";
 
 /** Palette command id prefix for extension commands. */

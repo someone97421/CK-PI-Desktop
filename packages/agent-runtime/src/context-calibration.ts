@@ -3,7 +3,8 @@
  *
  * Every budget decision in this runtime reads one number: the context estimate
  * (the automatic compaction check, the idle pre-compaction, and the occupancy
- * the desktop shows). That number comes from pi's `estimateContextTokens`,
+ * the desktop shows). That number comes from the runtime's
+ * `estimateContextTokens`,
  * whose shape is:
  *
  *   last assistant usage (real, when the transcript still carries one)

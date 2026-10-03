@@ -148,6 +148,9 @@ app.whenReady().then(async () => {
     await window.loadFile(path.join(__dirname, "index.html"));
     await window.webContents.executeJavaScript("window.addEventListener('error', event => console.error(event.error?.stack ?? event.message)); window.addEventListener('unhandledrejection', event => console.error(event.reason?.stack ?? String(event.reason)));");
     const result = await window.webContents.executeJavaScript("(async () => { const render = await globalThis.transcriptRenderProbe(); const slot = await globalThis.transcriptRuntimeSlotProbe(); const smoothText = await globalThis.smoothTextThrottleProbe(); const longHistory = await globalThis.transcriptLongHistoryProbe(); return { ...render, runtimeSlot: slot, smoothText, longHistory, ok: render.ok && slot.ok && smoothText.ok && longHistory.ok }; })()");
+    const contextOverflowRecovery = await require(${JSON.stringify(join(root, "scripts/e2e/context-overflow-recovery.cjs"))})(window);
+    result.contextOverflowRecovery = contextOverflowRecovery;
+    result.ok = result.ok && contextOverflowRecovery.ok;
     console.log("TRANSCRIPT_RENDER_PROBE " + JSON.stringify(result));
     app.quit();
   } catch (error) {
@@ -201,6 +204,11 @@ app.whenReady().then(async () => {
     result.smoothText?.ok,
     true,
     `smooth text cadence scenario failed: ${JSON.stringify(result.smoothText)}`,
+  );
+  assert.equal(
+    result.contextOverflowRecovery?.ok,
+    true,
+    `context overflow recovery scenario failed: ${JSON.stringify(result.contextOverflowRecovery)}`,
   );
 } finally {
   await rm(temp, { recursive: true, force: true });

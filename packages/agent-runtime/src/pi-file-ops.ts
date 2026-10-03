@@ -1,4 +1,4 @@
-import type { Entry } from "@earendil-works/pi-agent-core";
+import type { Entry } from "./pi-runtime-types.js";
 
 import { isRecord } from "./agent-messages.js";
 
@@ -6,12 +6,9 @@ import { isRecord } from "./agent-messages.js";
  * The tool names pi's own compaction inspects, mapped from ours to pi's
  * spelling.
  *
- * `extractFileOpsFromMessage` in `@earendil-works/pi-coding-agent` switches on
- * the lowercase names `read` / `write` / `edit`, because those are the names
- * pi's own tools carry. PI-Desktop registers `Read` / `Write` / `Edit`, so that
- * collector matched nothing: a checkpoint's `readFiles` / `modifiedFiles` and
- * the `<read-files>` section of a summary were always empty (issue #827 turned
- * this up while reading a compaction report).
+ * The compaction planner switches on lowercase names `read` / `write` / `edit`.
+ * PI-Desktop registers `Read` / `Write` / `Edit`, so the conversion keeps
+ * checkpoint file lists and summary tags populated.
  *
  * Only these three are converted, and only on the way into pi's preparation.
  * There is nothing to convert for `grep`, `glob` or `bash`: pi's collector does

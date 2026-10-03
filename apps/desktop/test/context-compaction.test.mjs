@@ -101,6 +101,15 @@ test("the hard boundary is enforced by the host, with a model-side escape hatch"
     /checkpoint truncated: this message crossed the retained context budget/,
   );
   assert.match(runtime, /pendingOverflow/);
+  assert.match(runtime, /overflowRecoveryInProgress/);
+  assert.match(
+    runtime,
+    /const canRecoverOverflow =[\s\S]*?status: "streaming"[\s\S]*?message_update[\s\S]*?this\.pendingOverflow = true;/,
+  );
+  assert.match(
+    runtime,
+    /CONTEXT_COMPACTION_FAILED[\s\S]*?finalizeCurrentAssistant\("error", error\)/,
+  );
   assert.match(runtime, /runCompaction\(\s*"overflow",\s*true,\s*"active_turn",?\s*\)/);
   assert.match(runtime, /fallback: "retained_tail"/);
   // Codex's tool, verbatim and parameterless, plus its two-tier reminder.
@@ -154,7 +163,7 @@ test("a delegate gets the session's turn-boundary budget protection (ADR 0299)",
   assert.match(runtime, /budget: contextBudgetLimitsFor\(model\)/);
   assert.match(delegationHistory, /truncateSeededMessages/);
   assert.match(delegationHistory, /\.\.\.message, content, stopReason: "stop"/);
-  // The compaction itself uses pi-agent-core's primitives, the session's
+  // The compaction itself uses the runtime-owned preparation, the session's
   // retention rule, and the degradation ladder of decision 4.
   assert.match(subagentContext, /prepareCompaction\(/);
   assert.match(subagentContext, /generateSummaryWithUsage\(/);
