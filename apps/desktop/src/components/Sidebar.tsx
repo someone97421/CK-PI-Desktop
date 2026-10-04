@@ -2326,7 +2326,7 @@ export function Sidebar({
           onClick={() => setPage("chat")}
         >
           <BrandLogo size={20} />
-          <span>{t("app.shellName")}</span>
+          <span>{settings?.appDisplayName?.trim() || t("app.shellName")}</span>
         </TooltipButton>
         <div className="sidebar-header-actions no-drag">
           <TooltipButton

@@ -62,6 +62,7 @@ import { AgentMcpPage } from "../../components/settings/AgentMcpPage";
 import { AgentSubagentsPage } from "../../components/settings/AgentSubagentsPage";
 import { RemoteHostsPage } from "../../components/settings/RemoteHostsPage";
 import {
+  AppDisplayNameRow,
   CommandShellRow,
   ContextUsageDisplayRow,
   LargePasteThresholdRow,
@@ -425,6 +426,7 @@ export function SettingsPage() {
           {tab === "general" && settings && (
             <div className="settings-stack">
               <SettingsCard>
+                <AppDisplayNameRow settings={settings} saveSettings={saveSettings} />
                 <LanguageRow settings={settings} saveSettings={saveSettings} />
               </SettingsCard>
 

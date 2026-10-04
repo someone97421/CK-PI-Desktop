@@ -119,6 +119,8 @@ export type AppSettings = {
   promptEnhancementThinkingLevel?: ThinkingLevel;
   defaultPermissionMode?: GlobalPermissionMode;
   theme: ThemePreference;
+  /** Custom label shown in the desktop sidebar; empty uses the localized app name. */
+  appDisplayName?: string;
   /** UI language; `auto` (and absent) follows the OS locale. */
   language?: "auto" | "en" | "zh-CN";
   /**

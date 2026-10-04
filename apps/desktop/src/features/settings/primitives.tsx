@@ -97,6 +97,45 @@ export function SettingsCard({
   );
 }
 
+export function AppDisplayNameRow({
+  settings,
+  saveSettings,
+}: {
+  settings: AppSettings;
+  saveSettings: (patch: Partial<AppSettings>) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(settings.appDisplayName ?? "");
+
+  useEffect(() => {
+    setValue(settings.appDisplayName ?? "");
+  }, [settings.appDisplayName]);
+
+  const commit = () => {
+    const next = value.trim();
+    if (next === (settings.appDisplayName ?? "")) return;
+    void saveSettings({ appDisplayName: next });
+  };
+
+  return (
+    <SettingsRow title={t("settings.appDisplayName")} description={t("settings.appDisplayNameDesc")}>
+      <Input
+        value={value}
+        placeholder={t("app.shellName")}
+        maxLength={64}
+        aria-label={t("settings.appDisplayName")}
+        onChange={(event) => setValue(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+      />
+    </SettingsRow>
+  );
+}
+
 export function CommandShellRow({
   settings,
   saveSettings,

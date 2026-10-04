@@ -947,6 +947,8 @@ sklm: {
     pluginProviderKeyRemoved: "API key removed",
     delete: "Delete",
     theme: "Theme",
+    appDisplayName: "App name",
+    appDisplayNameDesc: "Customize the name shown at the top of the sidebar; leave empty to use the default app name.",
     mode: "Default mode",
     back: "Back",
     groupPreferences: "Preferences",

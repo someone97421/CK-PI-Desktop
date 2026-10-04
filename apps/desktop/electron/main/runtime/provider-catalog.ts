@@ -202,10 +202,19 @@ export function createProviderCatalogRuntime({
       lastNotifiedUpdateVersion?: unknown;
       networkProxy?: unknown;
       appearance?: unknown;
+      appDisplayName?: unknown;
     };
     if (value.appearance !== undefined && !isAppearanceSettings(value.appearance)) {
       throw Object.assign(new Error("appearance is invalid"), {
         errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value, "appDisplayName") &&
+      (typeof value.appDisplayName !== "string" || value.appDisplayName.length > 64)
+    ) {
+      throw Object.assign(new Error("appDisplayName is invalid"), {
+        errorCode: ErrorCodes.INVALID_PARAMS,
       });
     }
     if (

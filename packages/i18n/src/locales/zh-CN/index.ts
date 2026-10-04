@@ -932,6 +932,8 @@ sklm: {
     pluginProviderKeyRemoved: "API 密钥已移除",
     delete: "删除",
     theme: "主题",
+    appDisplayName: "应用名称",
+    appDisplayNameDesc: "自定义左侧栏顶部显示的名称；留空时使用默认应用名称。",
     mode: "默认模式",
     back: "返回",
     groupPreferences: "偏好",
