@@ -1,8 +1,13 @@
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import type { Plugin } from "vite";
+
+const resolveDependency = createRequire(import.meta.url);
+const reseditEntry = resolveDependency.resolve("resedit");
+const peLibraryEntry = createRequire(reseditEntry).resolve("pe-library");
 
 // Dev needs 'unsafe-eval' for vite HMR tooling; production must not ship it.
 function tightenCsp(): Plugin {
@@ -44,6 +49,14 @@ function dropLegacyFontFallbacks(): Plugin {
 
 export default defineConfig({
   main: {
+    resolve: {
+      // 两个包的 Node 包装入口都会 require 相邻 index.js；内联后会
+      // 误加载应用主入口，因此整条依赖链使用各自的纯 ESM 实现。
+      alias: {
+        resedit: resolve(dirname(reseditEntry), "_esm/index.js"),
+        "pe-library": resolve(dirname(peLibraryEntry), "_esm/index.js"),
+      },
+    },
     // `ws` loads its optional native accelerators (bufferutil, utf-8-validate)
     // inside `require` + try/catch and falls back to its own JavaScript
     // implementation when they are absent. A bundle cannot fail a require, and

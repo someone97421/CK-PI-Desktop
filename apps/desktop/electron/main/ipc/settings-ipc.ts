@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import {
   APPEARANCE_MEDIA_KINDS,
   IPC,
@@ -9,11 +9,11 @@ import {
 } from "@pi-desktop/shared";
 import { exportConfig, importConfig } from "../config-transfer";
 import { AppearanceMediaStore, readAppearanceIconPath } from "../appearance-media";
+import { WindowsAppearanceIcons } from "../windows-appearance-icons";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { HostProcess } from "../host-process";
 import type { IpcRegistrar } from "./types";
 import type { LiveCallService } from "../live-voice/call-service";
-import type { AppSettings } from "@pi-desktop/shared";
 
 export type SettingsIpcDependencies = {
   registrar: IpcRegistrar;
@@ -62,7 +62,10 @@ export function registerSettingsIpc({
   applyAppearanceIcon,
   liveCallService,
 }: SettingsIpcDependencies): void {
+  const systemIcons = new WindowsAppearanceIcons(dataDir);
+  void app.whenReady().then(() => systemIcons.initialize()).catch((error) => systemIcons.reportError(error));
   const appearanceMedia = new AppearanceMediaStore(dataDir, (state) => {
+    systemIcons.selectionChanged();
     applyAppearanceIcon(readAppearanceIconPath(dataDir));
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
@@ -160,6 +163,8 @@ export function registerSettingsIpc({
   };
   handle(IPC.invoke.settingsSet, saveSettings);
   handle(IPC.invoke.appearanceMediaGet, () => appearanceMedia.getState());
+  handle(IPC.invoke.appearanceSystemIconGet, () => systemIcons.getStatus());
+  handle(IPC.invoke.appearanceSystemIconApply, () => systemIcons.applyAndRestart());
   handle(IPC.invoke.appearanceMediaSelect, async (rawKind: unknown) => {
     const kind = assertMediaKind(rawKind);
     const filters = kind === "icon"

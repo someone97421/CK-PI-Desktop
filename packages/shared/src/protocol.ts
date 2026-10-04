@@ -151,6 +151,8 @@ export const IPC = {
     appearanceMediaGet: "pi-desktop/appearanceMedia/get",
     appearanceMediaSelect: "pi-desktop/appearanceMedia/select",
     appearanceMediaReset: "pi-desktop/appearanceMedia/reset",
+    appearanceSystemIconGet: "pi-desktop/appearanceMedia/systemIconGet",
+    appearanceSystemIconApply: "pi-desktop/appearanceMedia/systemIconApply",
     configSyncGetState: "pi-desktop/configSync/getState",
     configSyncConfigure: "pi-desktop/configSync/configure",
     configSyncTest: "pi-desktop/configSync/test",

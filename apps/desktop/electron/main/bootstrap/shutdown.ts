@@ -15,6 +15,7 @@ import type { McpControlServer } from "../mcp-control";
 import type { McpOAuthManager } from "../mcp-oauth";
 import { getActiveRemoteHostsBoot, setActiveRemoteHostsBoot } from "./remote-hosts";
 import type { LiveCallService } from "../live-voice/call-service";
+import { isRestartingForAppearanceIcon } from "../windows-appearance-icons";
 
 const QUIT_TURN_SETTLE_BUDGET_MS = 2_000;
 
@@ -111,7 +112,7 @@ export function registerShutdownHandlers({
     // behind a dialog fails the update. There is no decision left either: the
     // user chose "restart to update" to get here.
     const isUpdateRestart = updater.isInstallingUpdate();
-    if (!state.quitConfirmed && !isAutomatedMode && !isUpdateRestart) {
+    if (!state.quitConfirmed && !isAutomatedMode && !isUpdateRestart && !isRestartingForAppearanceIcon()) {
       state.quitConfirmed = true;
       void confirmQuitDialog().then((confirmed) => {
         if (confirmed) {

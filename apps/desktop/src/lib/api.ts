@@ -697,6 +697,9 @@ export const api = {
     invoke<AppearanceMediaSelectionResult>(IPC.invoke.appearanceMediaSelect, kind),
   resetAppearanceMedia: (kind: AppearanceMediaKind) =>
     invoke<AppearanceMediaState>(IPC.invoke.appearanceMediaReset, kind),
+  getAppearanceSystemIcon: () =>
+    invoke<{ supported: boolean; pending: boolean; message?: string }>(IPC.invoke.appearanceSystemIconGet),
+  applyAppearanceSystemIcon: () => invoke<void>(IPC.invoke.appearanceSystemIconApply),
   configSyncGetState: () => invoke<ConfigSyncState>(IPC.invoke.configSyncGetState),
   configSyncConfigure: (input: ConfigSyncConfigureInput) =>
     invoke<ConfigSyncState>(IPC.invoke.configSyncConfigure, input),
