@@ -104,7 +104,7 @@
   去掉队列记录必须以持久化回执为前提，投递失败保留消息。上游的优先顺序持久化、priority 与移动/编辑
   规则作为兼容能力保留；使用 schema 21 / protocol 11，队列的用户消息 ID 与语音来源随当前轮投递和持久化回执保留。
 - 提供商导入导出只匹配用户管理的配置；插件托管项由插件声明恢复，导入文件不得覆盖其配置或凭据。
-- 保留运行状态提醒（2026-10-04 用户确认）：主代理每次运行从本轮开始计时，每满五分钟在下一次模型请求前追加一条隐藏 `custom` 通知，只报告运行时长与主代理累计 token（输入/输出，不含压缩等内部请求）。通知按会话消息锚点保存在内存中，后续请求与同一 runtime 的新轮次重建时保持对话顺序，成功压缩后清理，不写入持久化对话。通过 `prepareRequest` 在协调上下文准备完成后注入，避免 `system` 消息被提供商适配器合并到顶部指令。设置在「设置 → AI」板块提供开关（`runStatusReminder`，缺省开启）。实现在 `packages/agent-runtime/src/runtime.ts` 的 `withRunStatusReminder`/`restoreRunStatusMessages`/`resetRunStatusReminder`，上游无对应功能，同步时勿删除或回退。
+- 保留运行状态提醒（2026-10-04 用户确认）：主代理每次运行从本轮开始计时，每满五分钟在下一次模型请求前追加一条隐藏 `custom` 通知，只报告运行时长与主代理累计 token（输入/输出，不含压缩等内部请求）。通知按会话消息锚点保存在内存中，后续请求与同一 runtime 的新轮次重建时保持对话顺序，成功压缩后清理，不写入持久化对话。通过 `prepareRequest` 在协调上下文准备完成后注入，避免 `system` 消息被提供商适配器合并到顶部指令。设置在「设置 → AI」板块提供开关（`runStatusReminder`，缺省开启）。实现在 `packages/agent-runtime/src/runtime.ts` 的 `withRunStatusReminder`/`restoreRunStatusMessages`/`resetRunStatusReminder`，上游无对应功能，同步时勿删除或回退。已于 2026-10-04 在真实会话实测通过（5 分 20 秒 sleep 后收到「运行状态」通知，时长与 token 统计正确）。
 - 子代理协调状态（2026-10-04 用户确认）通过 `prepareRequest` 在请求上下文末尾插入隐藏 `custom` 消息（`customType: "subagent-coordination"`），避免提供商适配器将动态状态归并到顶部系统指令。保留事件触发刷新、仅保留最新一份快照及压缩后恢复的现有逻辑；进度与完成报告继续使用独立的 `subagent-supervision` 通知。实现在 `packages/agent-runtime/src/runtime.ts` 的 `coordinationMessageFor`/`prepareSubagentCoordination`，同步时保留该消息角色与插入位置。
 - 内置子智能体开关使用独立 `agent-capabilities/subagent-builtins.json`，不参与数据库迁移。
 - 采用官方插件市场、备用渠道、动态下载解析及设备标识摘要发送；设备标识仅随官方下载解析请求发送。采用上游宽松网络模式并默认开启。
