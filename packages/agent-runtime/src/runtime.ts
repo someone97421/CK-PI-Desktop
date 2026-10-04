@@ -1623,7 +1623,8 @@ export class DesktopAgentRuntime {
 
   private coordinationMessageFor(text: string | undefined): AgentMessage | undefined {
     if (!text) return undefined;
-    const message: AgentMessage = { role: "system", content: text, timestamp: Date.now() };
+    // 隐藏 custom 消息保留对话内的位置，避免适配器将状态归并到顶部系统指令。
+    const message: AgentMessage = { role: "custom", customType: "subagent-coordination", display: false, content: text, timestamp: Date.now() };
     this.coordinationMessages.add(message);
     return message;
   }
