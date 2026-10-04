@@ -158,6 +158,7 @@ export function ConversationTopbar({
         >
           <span className="ct-title">{fullTaskTitle}</span>
         </div>
+        <div className="ct-drag-space" aria-hidden="true" />
       </div>
 
       <div className="ct-right">

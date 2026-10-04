@@ -89,6 +89,11 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.preventScreenSleepDesc",
       "settings.temporaryWorkspaceContextMenu",
       "settings.temporaryWorkspaceContextMenuDesc",
+      "settings.dataDirectory",
+      "settings.dataDirectoryDesc",
+      "settings.dataDirectoryChange",
+      "settings.dataDirectoryOpen",
+      "settings.dataDirectoryEnvOverride",
     ],
   },
   {

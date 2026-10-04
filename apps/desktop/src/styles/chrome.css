@@ -556,6 +556,7 @@
   flex: 1 1 auto;
   min-width: 0;
   margin-right: auto;
+  align-self: stretch;
   -webkit-app-region: drag;
   app-region: drag;
 }
@@ -576,12 +577,21 @@
   display: flex;
   align-items: center;
   gap: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   -webkit-app-region: drag; /* keep the title area draggable */
   app-region: drag;
+}
+
+/* 空白独立占满顶栏高度，拖拽范围不依赖标题文本的尺寸与裁剪。 */
+.conversation-topbar .ct-drag-space {
+  flex: 1 0 0;
+  align-self: stretch;
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
 }
 
 .conversation-topbar .ct-title {

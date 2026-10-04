@@ -16,6 +16,7 @@ import type { McpOAuthManager } from "../mcp-oauth";
 import { getActiveRemoteHostsBoot, setActiveRemoteHostsBoot } from "./remote-hosts";
 import type { LiveCallService } from "../live-voice/call-service";
 import { isRestartingForAppearanceIcon } from "../windows-appearance-icons";
+import { finishDataDirectoryRestart, isRestartingForDataDirectory } from "../data-directory";
 
 const QUIT_TURN_SETTLE_BUDGET_MS = 2_000;
 
@@ -112,7 +113,7 @@ export function registerShutdownHandlers({
     // behind a dialog fails the update. There is no decision left either: the
     // user chose "restart to update" to get here.
     const isUpdateRestart = updater.isInstallingUpdate();
-    if (!state.quitConfirmed && !isAutomatedMode && !isUpdateRestart && !isRestartingForAppearanceIcon()) {
+    if (!state.quitConfirmed && !isAutomatedMode && !isUpdateRestart && !isRestartingForAppearanceIcon() && !isRestartingForDataDirectory()) {
       state.quitConfirmed = true;
       void confirmQuitDialog().then((confirmed) => {
         if (confirmed) {
@@ -137,6 +138,7 @@ export function registerShutdownHandlers({
       globalShortcut.unregister(state.toggleWindowAccelerator);
       state.toggleWindowAccelerator = null;
     }
+    let dataDirectoryShutdownError: unknown;
     state.shutdownPromise = (async () => {
       await liveCallService?.endForLifecycle("app-quit");
       // Close every paired remote host before the local host-core so any
@@ -192,20 +194,23 @@ export function registerShutdownHandlers({
         await hostShutdown;
       } catch (error) {
         logger.app("lifecycle", "warn", "host shutdown failed", { data: String(error) });
+        dataDirectoryShutdownError = error;
       }
-      await Promise.allSettled([
+      const shutdownResults = await Promise.allSettled([
         pluginShutdown,
         sidecarShutdown,
         mcpShutdown,
         remoteHostsShutdown,
       ]);
+      dataDirectoryShutdownError ??= shutdownResults.find((result) => result.status === "rejected")?.reason;
     })();
 
-    const releaseQuit = () => {
+    const releaseQuit = async (error?: unknown) => {
+      await finishDataDirectoryRestart(error ?? dataDirectoryShutdownError);
       state.shutdownComplete = true;
       app.quit();
     };
-    void state.shutdownPromise.then(releaseQuit, releaseQuit);
+    void state.shutdownPromise.then(() => releaseQuit(), releaseQuit);
   });
 }
 

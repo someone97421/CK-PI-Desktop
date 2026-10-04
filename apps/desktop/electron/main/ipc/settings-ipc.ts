@@ -9,6 +9,7 @@ import {
 } from "@pi-desktop/shared";
 import { exportConfig, importConfig } from "../config-transfer";
 import { AppearanceMediaStore, readAppearanceIconPath } from "../appearance-media";
+import { changeDataDirectory, getDataDirectoryState, openDataDirectory } from "../data-directory";
 import { WindowsAppearanceIcons } from "../windows-appearance-icons";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { HostProcess } from "../host-process";
@@ -95,6 +96,13 @@ export function registerSettingsIpc({
     return normalizeSettings(settings);
   });
 
+  handle(IPC.invoke.settingsDataDirectoryGet, async () => getDataDirectoryState(dataDir));
+  handle(IPC.invoke.settingsDataDirectoryChange, async () => {
+    if (!host) throw new Error("host unavailable");
+    const settings = await host.call<AppSettings>("settings.get");
+    return changeDataDirectory(dataDir, settings.language);
+  });
+  handle(IPC.invoke.settingsDataDirectoryOpen, async () => openDataDirectory(dataDir));
   handle(IPC.invoke.networkProxyTest, async (settings: unknown) => {
     return testNetworkProxy(settings);
   });

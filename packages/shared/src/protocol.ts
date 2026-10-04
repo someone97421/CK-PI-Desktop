@@ -146,6 +146,9 @@ export const IPC = {
     settingsSet: "pi-desktop/settings/set",
     settingsExportConfig: "pi-desktop/settings/exportConfig",
     settingsImportConfig: "pi-desktop/settings/importConfig",
+    settingsDataDirectoryGet: "pi-desktop/settings/dataDirectoryGet",
+    settingsDataDirectoryChange: "pi-desktop/settings/dataDirectoryChange",
+    settingsDataDirectoryOpen: "pi-desktop/settings/dataDirectoryOpen",
     /** Take queued Windows Explorer temporary-workspace launches. */
     temporaryWorkspaceTake: "pi-desktop/temporaryWorkspace/take",
     appearanceMediaGet: "pi-desktop/appearanceMedia/get",

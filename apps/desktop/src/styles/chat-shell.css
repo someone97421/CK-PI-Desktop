@@ -425,7 +425,8 @@
  * uses a fainter black mix so the same rule does not read as a bright seam. */
 .chat-width-handles {
   position: absolute;
-  inset: 0 0 var(--composer-dock-height, 168px);
+  /* 不可拖拽的宽度手柄不得与原生标题栏重叠。 */
+  inset: var(--ds-toolbar-height) 0 var(--composer-dock-height, 168px);
   z-index: 7;
   pointer-events: none;
 }

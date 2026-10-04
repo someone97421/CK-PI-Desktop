@@ -2,9 +2,11 @@ import {
   app,
   BrowserWindow,
   ipcMain,
+  dialog,
 } from "electron";
 import { join } from "node:path";
 import { configureApplicationIdentity } from "./application-identity";
+import { readConfiguredDataDirectory } from "./data-directory";
 import { SubagentSnapshotStore } from "./runtime/subagent-snapshot-store";
 import { createSubagentSessionAuthority } from "./runtime/subagent-session-authority";
 import {
@@ -92,7 +94,18 @@ installMainProcessErrorHandlers();
 const isDevelopmentBuild =
   process.env.PI_DESKTOP_DEV === "1" || !app.isPackaged;
 const initialTemporaryWorkspace = initialTemporaryWorkspaceCommandLine();
+const startupDataDirectoryEnvironment = process.env.PI_DESKTOP_DATA_DIR;
+let configuredDataDirectory: string | undefined;
+try {
+  if (!startupDataDirectoryEnvironment?.trim()) {
+    configuredDataDirectory = readConfiguredDataDirectory(app.getPath("appData"));
+  }
+} catch (error) {
+  dialog.showErrorBox("无法读取数据存储位置", `请确认数据目录可用，并检查系统应用数据目录中的 this-is-a-agent/data-directory.json。\n\n${error instanceof Error ? error.message : String(error)}`);
+  app.exit(1);
+}
 const { dataDir, hasSingleInstanceLock } = configureApplicationIdentity(app, {
+  dataDir: configuredDataDirectory,
   temporaryWorkspacePath: initialTemporaryWorkspace,
 });
 // Work around a Chromium accessibility-tree crash during streaming updates.
@@ -102,6 +115,12 @@ if (!hasSingleInstanceLock) {
   // 立即终止，防止下面的日志、outbox 和插件初始化触碰另一个进程的业务目录。
   app.exit(0);
 }
+// 所有旧的目录消费者和子进程共用同一个有效路径；退出时恢复用户启动环境。
+process.env.PI_DESKTOP_DATA_DIR = dataDir;
+app.on("will-quit", () => {
+  if (startupDataDirectoryEnvironment === undefined) delete process.env.PI_DESKTOP_DATA_DIR;
+  else process.env.PI_DESKTOP_DATA_DIR = startupDataDirectoryEnvironment;
+});
 if (process.platform === "win32") {
   // Development must not claim the packaged app's AUMID. Windows resolves the
   // taskbar identity through it, so sharing the id with an installed build made

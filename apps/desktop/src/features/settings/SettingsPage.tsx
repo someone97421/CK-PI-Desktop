@@ -80,6 +80,7 @@ import { PromptEnhancementCard } from "./prompt-enhancement-card";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginScenicThemesDestination } from "../../components/settings/PluginScenicThemesDestination";
 import { ConfigSyncPage } from "../../components/settings/ConfigSyncPage";
+import { DataDirectorySection } from "../../components/settings/DataDirectorySection";
 
 type SettingsTab = ReturnType<typeof useAppStore.getState>["settingsTab"];
 
@@ -474,6 +475,7 @@ export function SettingsPage() {
               </SettingsCard>
               {platform !== "darwin" && <CloseBehaviorSection />}
               <ConfigTransferSection />
+              <DataDirectorySection />
             </div>
           )}
 

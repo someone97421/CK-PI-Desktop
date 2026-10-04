@@ -689,6 +689,18 @@ export const api = {
   getSettings: () => invoke<AppSettings>(IPC.invoke.settingsGet).then(normalizeSettings),
   setSettings: (settings: AppSettings) =>
     invoke(IPC.invoke.settingsSet, validateSettingsWrite(settings)),
+  /** The directory conversations and settings live in, plus its origin. */
+  getDataDirectory: () =>
+    invoke<{ path: string; overriddenByEnvironment: boolean }>(
+      IPC.invoke.settingsDataDirectoryGet,
+    ),
+  /** Pick a new directory, copy the data across, and restart. */
+  changeDataDirectory: () =>
+    invoke<{ canceled: boolean; restarting?: boolean }>(
+      IPC.invoke.settingsDataDirectoryChange,
+    ),
+  /** Reveal the active data directory in the OS file manager. */
+  openDataDirectory: () => invoke<void>(IPC.invoke.settingsDataDirectoryOpen),
   takeTemporaryWorkspaces: () =>
     invoke<{ workspacePaths: string[] }>(IPC.invoke.temporaryWorkspaceTake),
   getAppearanceMedia: () =>
