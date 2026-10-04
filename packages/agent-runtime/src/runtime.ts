@@ -1819,6 +1819,8 @@ export class DesktopAgentRuntime {
   private runStatusTurnStartedAt = 0;
   private runStatusRemindedAt = 0;
   private runStatusTurnUsage?: MessageUsage;
+  /** 临时提醒按会话消息锚点保留，成功压缩后清理，不进入持久化记录。 */
+  private runStatusMessages: Array<{ entryCount: number; message: AgentMessage }> = [];
 
   constructor(opts: AgentRuntimeOptions) {
     this.sessionId = opts.sessionId;
@@ -2071,7 +2073,10 @@ Delegation rules:
           convertToLlm(this.dropDuplicateToolCalls(messages)),
           this.reasoningReplayIdentity(),
         ),
-      prepareRequest: ({ context }) => this.prepareSubagentCoordination(context),
+      prepareRequest: async ({ context }) => {
+        const update = await this.prepareSubagentCoordination(context);
+        return { ...update, context: this.withRunStatusReminder(update?.context ?? context) };
+      },
       prepareNextTurnWithContext: (context, signal) =>
         this.prepareNextTurn(context, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
@@ -6789,9 +6794,7 @@ Delegation rules:
     turn: PrepareNextTurnContext,
     signal?: AbortSignal,
   ): Promise<AgentLoopTurnUpdate> {
-    const update = await this.extensionContext(await this.prepareNextTurnWithoutExtensions(turn, signal));
-    if (!update.context) return update;
-    return { ...update, context: this.withRunStatusReminder(update.context) };
+    return this.extensionContext(await this.prepareNextTurnWithoutExtensions(turn, signal));
   }
 
   private async prepareNextTurnWithoutExtensions(
@@ -6899,11 +6902,12 @@ Delegation rules:
   }
 
   /**
-   * 运行状态提醒（fork 定制）：本轮运行每满五分钟，在下一次模型请求的上下文
-   * 末尾追加一条系统消息，只报告运行时长与主代理累计 token。消息不写入持久化
-   * 对话，压缩重建后自然消失；耗时为墙钟时间，包含长工具调用与子代理等待。
+   * 运行状态提醒（fork 定制）：本轮运行每满五分钟，在模型请求前追加临时消息。
+   * 重建上下文时按原会话消息锚点恢复，成功压缩后清理，不写入持久化对话。
+   * 耗时为墙钟时间，包含长工具调用与子代理等待。
    */
   private withRunStatusReminder(context: AgentContext): AgentContext {
+    context = { ...context, messages: this.restoreRunStatusMessages(context.messages) };
     if (!this.runStatusReminder || !this.runStatusTurnStartedAt) return context;
     const now = Date.now();
     const anchor = this.runStatusRemindedAt || this.runStatusTurnStartedAt;
@@ -6916,10 +6920,25 @@ Delegation rules:
     const content = usage
       ? `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；主代理累计 token：输入 ${usage.inputTokens.toLocaleString("en-US")}，输出 ${usage.outputTokens.toLocaleString("en-US")}。仅为信息，无需回应。`
       : `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；暂无 token 用量记录。仅为信息，无需回应。`;
-    return {
-      ...context,
-      messages: [...context.messages, { role: "system", content, timestamp: now }],
+    // 部分 Pi 适配器会将 system 消息折叠到顶部；隐藏 custom 通知保持对话内的位置。
+    const message: AgentMessage = {
+      role: "custom", customType: "run-status", display: false, content, timestamp: now,
     };
+    this.runStatusMessages.push({ entryCount: this.fullEntries.length, message });
+    return { ...context, messages: [...context.messages, message] };
+  }
+
+  private restoreRunStatusMessages(messages: AgentMessage[]): AgentMessage[] {
+    const restored = [...messages];
+    // 在通知之后生成的首条会话消息前恢复，保持通知与对话的原始顺序。
+    for (const record of this.runStatusMessages) {
+      if (restored.includes(record.message)) continue;
+      const following = this.fullEntries.slice(record.entryCount)
+        .find((entry) => restored.includes(entry.message));
+      const index = following ? restored.indexOf(following.message) : restored.length;
+      restored.splice(index, 0, record.message);
+    }
+    return restored;
   }
 
   private async runCompaction(
@@ -7015,6 +7034,7 @@ Delegation rules:
     if (this.coordinationSnapshotEpoch === this.turnEpoch && this.coordinationMessage) {
       context.messages.push(this.coordinationMessage);
     }
+    context.messages = this.restoreRunStatusMessages(context.messages);
     return context;
   }
 
@@ -7328,6 +7348,7 @@ Delegation rules:
     }
 
     this.activeCompaction = checkpoint;
+    this.runStatusMessages = [];
     this.coordinationConsumedVersion = coordinationVersion;
     this.coordinationSnapshotEpoch = this.turnEpoch;
     this.coordinationMessage = this.coordinationMessageFor(snapshot);
