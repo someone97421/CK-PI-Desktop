@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
@@ -59,6 +59,70 @@ describe("NativePiSessionService", () => {
     const detail = service.detail(sessions[0].id);
     expect(detail?.messages.map((message) => message.content)).toEqual(["hello", "active branch"]);
     expect(readFileSync(f.file)).toEqual(before);
+  });
+
+  it("collapses copied session files onto one entry per native id (#1359)", async () => {
+    const f = fixture();
+
+    // Control scan without the copy: the group file is the canonical session.
+    // A byte-identical copy ties on the content-derived recency, so this is
+    // the assertion that fails when the winner follows enumeration order
+    // (#1383).
+    const control = new NativePiSessionService({ agentDir: f.agentDir, sessionRoot: f.sessionRoot });
+    const [original] = await control.list();
+
+    // A backup copy of the session under a subdirectory of the scan root:
+    // same header id, different path. It must not become a second session.
+    const backupDir = join(f.sessionRoot, "backup");
+    mkdirSync(backupDir, { recursive: true });
+    writeFileSync(join(backupDir, "fixture-copy.jsonl"), f.text);
+
+    const service = new NativePiSessionService({ agentDir: f.agentDir, sessionRoot: f.sessionRoot });
+    const sessions = await service.list();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe(original.id);
+  });
+
+  it("breaks copy ties by path order instead of directory enumeration (#1383)", async () => {
+    const f = fixture();
+    const control = new NativePiSessionService({ agentDir: f.agentDir, sessionRoot: f.sessionRoot });
+    const [original] = await control.list();
+
+    // A copy that sorts before the original's group wins by path order.
+    // The guarantee under test is determinism: whichever file wins, every
+    // platform picks the same one, so the id cannot flip between scans.
+    const backupDir = join(f.sessionRoot, "--backup--");
+    mkdirSync(backupDir, { recursive: true });
+    writeFileSync(join(backupDir, "fixture-copy.jsonl"), f.text);
+
+    const service = new NativePiSessionService({ agentDir: f.agentDir, sessionRoot: f.sessionRoot });
+    const sessions = await service.list();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).not.toBe(original.id);
+  });
+
+  it("keeps the open runtime's file when a copy ties on recency (#1383)", async () => {
+    const f = fixture();
+    const service = new NativePiSessionService({
+      agentDir: f.agentDir,
+      sessionRoot: f.sessionRoot,
+      modelRuntimeFactory: async () => fauxModelRuntime() as any,
+    });
+    const [summary] = await service.list();
+    await service.prompt(summary.id, "desktop prompt", () => undefined);
+    await expect.poll(() => service.status(summary.id).status.isRunning).toBe(false);
+
+    // The copy is byte-identical to the file the open runtime just wrote,
+    // so recency ties, and it sorts before the original's group. Only the
+    // runtime preference keeps the live session's file canonical.
+    const backupDir = join(f.sessionRoot, "--backup--");
+    mkdirSync(backupDir, { recursive: true });
+    writeFileSync(join(backupDir, "fixture-copy.jsonl"), readFileSync(f.file, "utf8"));
+
+    const sessions = await service.list();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].id).toBe(summary.id);
+    service.disposeAll();
   });
 
   it("searches native metadata and active-branch message text without rewriting JSONL", async () => {
@@ -142,45 +206,10 @@ describe("NativePiSessionService", () => {
 
   it("continues through AgentSession and appends the faux-model turn to the original file", async () => {
     const f = fixture();
-    const model = {
-      id: "test-model",
-      name: "Test Model",
-      api: "openai-completions",
-      provider: "test-provider",
-      baseUrl: "http://127.0.0.1/unused",
-      reasoning: false,
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 16_000,
-      maxTokens: 1_000,
-    };
-    const response: AssistantMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: "fixture response" }],
-      api: "openai-completions",
-      provider: "test-provider",
-      model: "test-model",
-      stopReason: "stop",
-      timestamp: Date.now(),
-      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    };
-    const fauxRuntime = {
-      getModel: () => model,
-      hasConfiguredAuth: () => true,
-      streamSimple: () => {
-        const stream = createAssistantMessageEventStream();
-        queueMicrotask(() => {
-          stream.push({ type: "start", partial: response });
-          stream.push({ type: "done", reason: "stop", message: response });
-          stream.end(response);
-        });
-        return stream;
-      },
-    };
     const service = new NativePiSessionService({
       agentDir: f.agentDir,
       sessionRoot: f.sessionRoot,
-      modelRuntimeFactory: async () => fauxRuntime as any,
+      modelRuntimeFactory: async () => fauxModelRuntime() as any,
     });
     const [summary] = await service.list();
     const before = readFileSync(f.file, "utf8");
@@ -249,6 +278,48 @@ function fauxStream(message = response()) {
     stream.end(message);
   });
   return stream;
+}
+
+/**
+ * A minimal offline model runtime for the native continuation tests: one
+ * catalog entry, auth always present, one canned assistant turn per call.
+ */
+function fauxModelRuntime() {
+  const model = {
+    id: "test-model",
+    name: "Test Model",
+    api: "openai-completions",
+    provider: "test-provider",
+    baseUrl: "http://127.0.0.1/unused",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 16_000,
+    maxTokens: 1_000,
+  };
+  const message: AssistantMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "fixture response" }],
+    api: "openai-completions",
+    provider: "test-provider",
+    model: "test-model",
+    stopReason: "stop",
+    timestamp: Date.now(),
+    usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+  };
+  return {
+    getModel: () => model,
+    hasConfiguredAuth: () => true,
+    streamSimple: () => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({ type: "start", partial: message });
+        stream.push({ type: "done", reason: "stop", message });
+        stream.end(message);
+      });
+      return stream;
+    },
+  };
 }
 
 describe("native continuation review regressions", () => {
@@ -781,7 +852,7 @@ describe("native side-chat forks", () => {
         expect(failure?.message).not.toContain(f.group);
         expect(existsSync(foreignPath)).toBe(true);
         expect(readFileSync(foreignPath, "utf8")).toContain("collision");
-        expect(groupEntries(f.group).sort()).toEqual(before.concat([foreignPath.split("/").at(-1)!]).sort());
+        expect(groupEntries(f.group).sort()).toEqual(before.concat([basename(foreignPath)]).sort());
         expect(readFileSync(f.file, "utf8")).toBe(parentBytes);
       } finally { service.disposeAll(); }
     } finally {

@@ -25,6 +25,9 @@ export function promptAttachmentsFromDraft(
   references: ComposerDraftSnapshot["fileReferences"],
 ): AgentPromptAttachment[] {
   return references.flatMap((reference) => {
+    // A session link is prompt text: main resolves it into a conversation
+    // reference, and it never travels as a structured attachment.
+    if (reference.kind === "session") return [];
     const kind =
       reference.kind ??
       (/\.(avif|bmp|gif|heic|jpe?g|png|tiff?|webp)$/i.test(reference.path)

@@ -242,8 +242,9 @@ try {
   await key("ArrowDown", 40);
   await key("Enter", 13);
   await waitFor(() => evaluate(`!!document.querySelector('.composer-menu-root')`), 5000, "task model selection returns to root");
-  await evaluate(`[...document.querySelectorAll('.composer-menu-entry')].find(e => e.textContent.includes('Reasoning')).click()`);
-  await click("high", '.composer-thinking-list [role="menuitemradio"]');
+  // The reasoning level is an inline slider on the measured root menu (issue
+  // #417); there is no separate reasoning view left to open.
+  await click("high", ".composer-thinking-tick");
   await key("Escape", 27);
   const unchangedDefaults = await invoke("settingsGet");
   assert.equal(unchangedDefaults.defaultProviderId, provider.id, "task selection cannot change the conversation default provider");

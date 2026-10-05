@@ -133,10 +133,52 @@ test("runMcpImport disables a server after upsert when the item asks for it", as
   assert.equal(host.calls[0].method, "mcp.upsert");
   const server = host.calls[0].params.server;
   assert.equal(server.id, "off");
+  assert.equal(server.level, "global", "legacy callers default to global scope");
   assert.equal(server.command, "npx");
   assert.equal(server.disabled, undefined, "disabled is stripped from the payload");
   assert.equal(host.calls[1].method, "mcp.setEnabled");
-  assert.deepEqual(host.calls[1].params, { id: "off", enabled: false });
+  assert.deepEqual(host.calls[1].params, {
+    id: "off",
+    level: "global",
+    enabled: false,
+  });
+});
+
+test("runMcpImport applies project scope to both upsert and disabled state", async () => {
+  const host = stubHost({
+    "mcp.upsert": [{ server: { id: "project-server" } }],
+    "mcp.setEnabled": [{ ok: true }],
+  });
+  const result = await runMcpImport(host.call, {
+    level: "project",
+    projectPath: "/project",
+    items: [
+      {
+        source: "claude-code",
+        sourcePath: "/project/.mcp.json",
+        id: "project-server",
+        rawKey: "project-server",
+        transport: "stdio",
+        command: "node",
+        disabled: true,
+      },
+    ],
+  });
+
+  assert.equal(result.imported.length, 1);
+  assert.deepEqual(host.calls[0].params.server, {
+    id: "project-server",
+    level: "project",
+    projectPath: "/project",
+    transport: "stdio",
+    command: "node",
+  });
+  assert.deepEqual(host.calls[1].params, {
+    id: "project-server",
+    level: "project",
+    projectPath: "/project",
+    enabled: false,
+  });
 });
 
 test("runMcpImport reports an `already exists` upsert as skipped, not failed", async () => {

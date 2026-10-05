@@ -1,3 +1,4 @@
+import { rememberModelInList, saveRecentModels } from "../../lib/recent-models";
 import type {
   AppNotification,
   SessionSummary,
@@ -28,6 +29,7 @@ export function createCatalogSlice({
   withoutRecordKey,
 }: CatalogSliceDependencies): Pick<
   AppState,
+  | "rememberModel"
   | "refreshProviders"
   | "loadProviderModels"
   | "refreshPlugins"
@@ -42,6 +44,15 @@ export function createCatalogSlice({
   | "acknowledgeSessionOutcome"
 > {
   return {
+    rememberModel: (model) => {
+      const recentModels = rememberModelInList(get().recentModels, model);
+      set({ recentModels });
+      try {
+        saveRecentModels(recentModels);
+      } catch (error) {
+        console.warn("Could not persist recent model selection", error);
+      }
+    },
     refreshProviders: async () => {
       const generation = catalogRuntime.beginProviderRefresh();
       const [providers, sessions, settings, onboarding] = await Promise.all([

@@ -155,6 +155,26 @@ test(
           ),
           extended,
         );
+        assert.equal(
+          tokenizeIncremental(
+            null,
+            "x".repeat(100_001),
+            lang,
+            themeForMode("dark"),
+          ),
+          null,
+          "oversized code should use the plain-text render path before token splitting",
+        );
+        assert.equal(
+          tokenizeIncremental(
+            null,
+            "x".repeat(2_001),
+            lang,
+            themeForMode("dark"),
+          ),
+          null,
+          "an oversized single line should not reach Shiki",
+        );
       }
     }
   },

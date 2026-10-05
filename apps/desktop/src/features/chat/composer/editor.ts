@@ -39,7 +39,7 @@ export function createFileReference(
   preferredName?: string,
   sessionId = "",
   metadata?: {
-    kind?: "image" | "file";
+    kind?: "image" | "file" | "session";
     mimeType?: string;
     token?: string;
     plugin?: ComposerPluginPart;
@@ -50,8 +50,12 @@ export function createFileReference(
     id: `composer-file-${composerFileReferenceSequence}`,
     sessionId,
     path,
-    // A plugin mark's label is shown as given; it is no path.
-    name: isPluginMark(metadata) ? (preferredName ?? "") : fileReferenceLabel(path, preferredName),
+    // A plugin mark's label is shown as given, and a session reference is
+    // named by its conversation; neither is a path.
+    name:
+      isPluginMark(metadata) || metadata?.kind === "session"
+        ? (preferredName ?? "")
+        : fileReferenceLabel(path, preferredName),
     kind: metadata?.kind ?? (isImageFilePath(path) ? "image" : "file"),
     ...(metadata?.mimeType ? { mimeType: metadata.mimeType } : {}),
     ...(metadata?.token ? { token: metadata.token } : {}),
@@ -244,6 +248,7 @@ const CHIP_ICON_SVG: Record<string, string> = {
   video:
     '<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
   file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+  session: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   plugin:
     '<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>',
@@ -253,6 +258,7 @@ const CHIP_ICON_SVG: Record<string, string> = {
 function chipIconKey(reference: ComposerFileReference): string {
   if (reference.plugin?.kind === "mark") return "plugin";
   if (reference.plugin?.kind === "fold") return "fold";
+  if (reference.kind === "session") return "session";
   const mime = reference.mimeType ?? "";
   if (reference.kind === "image" || mime.startsWith("image/")) return "image";
   const name = reference.name;
@@ -275,11 +281,6 @@ export function isEditableTextReference(reference: ComposerFileReference): boole
   return reference.mimeType?.toLowerCase() === "text/plain" || /\.txt$/i.test(reference.name);
 }
 
-export function isComposerAudioReference(reference: ComposerFileReference): boolean {
-  const mime = reference.mimeType?.toLowerCase() ?? "";
-  return mime.startsWith("audio/") || AUDIO_FILE_PATTERN.test(reference.name);
-}
-
 /** Build the atomic inline chip element for one attachment reference. */
 function buildChipElement(
   reference: ComposerFileReference,
@@ -287,7 +288,8 @@ function buildChipElement(
   removeLabel: string,
   onRemove: (token: string) => void,
   onExpandText: (token: string) => void,
-  onOpenImage?: (reference: ComposerFileReference) => void,
+  onOpenImage: (token: string) => void,
+  onOpenSession: (token: string) => void,
 ): HTMLElement {
   const chip = document.createElement("span");
   chip.className = "composer-chip";
@@ -297,16 +299,31 @@ function buildChipElement(
   const origin = isPluginMark(reference) ? (reference.plugin?.pluginId ?? "") : reference.path;
   if (isPluginMark(reference)) chip.dataset.pluginMark = reference.plugin?.kind;
   chip.title = origin;
-  const editableText = isEditableTextReference(reference);
-  const imageReference = chipIconKey(reference) === "image";
-  const activate = imageReference && onOpenImage
-    ? () => onOpenImage(reference)
-    : editableText ? () => onExpandText(token) : undefined;
+  // An image keeps the compact chip and opens its preview, a session chip opens
+  // that conversation, and only plain text expands into editable draft text.
+  const image = chipIconKey(reference) === "image";
+  if (image) chip.dataset.image = "";
+  const session = reference.kind === "session";
+  if (session) chip.dataset.sessionId = reference.path;
+  const editableText = !image && !session && isEditableTextReference(reference);
+  const activate = editableText
+    ? () => onExpandText(token)
+    : image
+      ? () => onOpenImage(token)
+      : session
+        ? () => onOpenSession(token)
+        : undefined;
   chip.setAttribute("role", activate ? "button" : "listitem");
   chip.setAttribute("aria-label", `${reference.name} — ${origin}`);
   if (activate) {
     chip.tabIndex = 0;
-    chip.dataset.action = imageReference ? "preview-image-reference" : "expand-text-reference";
+    // Only a text reference expands into editable text; an image chip opens
+    // its preview and a session chip opens that conversation instead.
+    chip.dataset.action = editableText
+      ? "expand-text-reference"
+      : image
+        ? "open-image-preview"
+        : "open-session-reference";
     chip.addEventListener("click", activate);
     chip.addEventListener("keydown", (event) => {
       if (event.target !== chip) return;
@@ -320,7 +337,7 @@ function buildChipElement(
   const icon = document.createElement("span");
   icon.className = "composer-chip-icon";
   icon.innerHTML = chipSvg(chipIconKey(reference));
-  if (imageReference) {
+  if (image) {
     const thumbnail = document.createElement("img");
     thumbnail.dataset.imageReference = reference.id;
     thumbnail.alt = "";
@@ -367,7 +384,8 @@ export function paintEditorValue(
   removeLabelFor: (reference: ComposerFileReference) => string,
   onRemove: (token: string) => void,
   onExpandText: (token: string) => void,
-  onOpenImage?: (reference: ComposerFileReference) => void,
+  onOpenImage: (token: string) => void,
+  onOpenSession: (token: string) => void,
 ): void {
   el.replaceChildren();
   let textBuffer = "";
@@ -390,6 +408,7 @@ export function paintEditorValue(
             onRemove,
             onExpandText,
             onOpenImage,
+            onOpenSession,
           ),
         );
         continue;

@@ -14,6 +14,19 @@ const message = (id, role, content, extra = {}) => ({
   id, role, content, createdAt: "2026-09-30T00:00:00.000Z", ...extra,
 });
 
+test("model system records remain hidden after loading and live projection updates", () => {
+  const state = message("state", "system", "", { modelSystem: {
+    version: 1, beforeMessageId: "user", messageJson: JSON.stringify({ role: "system", content: "Instructions", timestamp: 1 }),
+  } });
+  const user = message("user", "user", "Hello");
+  const notice = message("notice", "system", "Visible notice");
+  let rows = [state, user, notice];
+  assert.deepEqual(assertProjection(rows).visible.map((row) => row.id), ["user", "notice"]);
+  rows = upsertLiveSessionMessage(rows, message("answer", "assistant", "Hello back"));
+  assert.deepEqual(assertProjection(rows).visible.map((row) => row.id), ["user", "notice", "answer"]);
+  assert.equal(rows[0], state);
+});
+
 function assertProjection(messages, compactions) {
   const actual = getTranscriptProjection(messages, compactions);
   const expected = buildTranscriptEntries(messages, compactions);
@@ -22,6 +35,38 @@ function assertProjection(messages, compactions) {
   assert.deepEqual(actual.history, expected.entries.slice(0, -1));
   return actual;
 }
+
+test("appending tool calls does not reread completed parent or delegate text", () => {
+  let reads = 0;
+  let messages = [message("user", "user", "Continue"), message("task", "tool", "running", {
+    toolName: "Task", toolCallId: "call", toolArgs: {},
+  })];
+  for (let index = 0; index < 1_000; index++) {
+    const row = message(`old-${index}`, "assistant", "", index % 2
+      ? { parentToolCallId: "call", agentName: "worker" } : {});
+    Object.defineProperty(row, "content", {
+      enumerable: true,
+      get() { reads++; return " Completed response. ".repeat(36); },
+    });
+    messages.push(row);
+  }
+  const before = getTranscriptProjection(messages);
+  reads = 0;
+  for (let index = 0; index < 3; index++) {
+    messages = upsertLiveSessionMessage(messages, message(`new-tool-${index}`, "tool", "", {
+      toolName: "Read", toolCallId: `new-tool-${index}`, toolStatus: "running",
+    }));
+    getTranscriptProjection(messages);
+  }
+  assert.equal(reads, 0, "structural appends must reuse immutable content facts");
+  assert.equal(before.entries[1].parts.at(-1).kind, "message", "old snapshots stay unchanged");
+  assertProjection(messages);
+  // A same-id replacement is a new immutable snapshot and must invalidate text.
+  messages = upsertLiveSessionMessage(messages, message("old-0", "assistant", "  ", { thinking: "Still thinking" }));
+  const updated = assertProjection(messages);
+  assert.equal(updated.entries[1].anchorId, "old-2");
+  assert.equal(updated.entries[1].parts[1].items[0].message.thinking, "Still thinking");
+});
 
 for (const count of [100, 1_000, 10_784]) {
   test(`${count} loaded messages: one tail delta does not read historical content`, () => {

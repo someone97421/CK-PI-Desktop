@@ -36,12 +36,12 @@ test("TeX math and wrapped HTTP links render through the production Markdown pip
       lng: "en",
       resources: { en: { translation: catalogs.en } },
     });
-    const render = (source) =>
+    const render = (source, streaming = false) =>
       renderToStaticMarkup(
         createElement(
           I18nextProvider,
           { i18n },
-          createElement(Markdown, { source }),
+          createElement(Markdown, { source, streaming }),
         ),
       );
     const display = (html) => html.includes("katex-display");
@@ -92,6 +92,19 @@ test("TeX math and wrapped HTTP links render through the production Markdown pip
     // Escaped and unmatched markers stay literal.
     assert.doesNotMatch(render("\\\\(escaped\\\\)"), /katex/);
     assert.doesNotMatch(render("text \\(unmatched"), /katex/);
+
+    const largeMarkdown = "raw-source-".repeat(12_000);
+    const largeMarkdownHtml = render(largeMarkdown);
+    assert.match(largeMarkdownHtml, /role="status"/);
+    assert.match(largeMarkdownHtml, /data-source-start="0"/);
+    assert.match(largeMarkdownHtml, /data-source-end="132000"/);
+    assert.match(largeMarkdownHtml, /<pre>raw-source-/);
+    assert.doesNotMatch(largeMarkdownHtml, /<p>raw-source-/);
+
+    const streamingMarkdownHtml = render(`# Settled\n\n${"large-tail-".repeat(3_000)}`, true);
+    assert.match(streamingMarkdownHtml, /role="status"/);
+    assert.match(streamingMarkdownHtml, /<pre># Settled/);
+    assert.match(streamingMarkdownHtml, /large-tail-/);
 
     // Issue #541: display math whose body puts `=`, `-`, `+` or `*` on their
     // own lines used to be shredded by marked's block lexer (setext headings /

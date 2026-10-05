@@ -215,22 +215,10 @@ test("model ids are matched case-insensitively across picking and hand entry", (
   assert.match(pickerSource, /settings\.modelAlreadyAdded/);
 });
 
-test("default model selection saves the exact model and provider", () => {
-  // The settings picker is model-level; provider rows still use their first
-  // model as a convenience action.
-  assert.match(pageSource, /const setDefaultModel = async \(provider: ProviderPublic, modelId: string\)/);
-  assert.match(pageSource, /defaultProviderId: provider.id,[\s\S]*defaultModelId: modelId/);
-  assert.match(pageSource, /onClick=\{\(\) => void setDefaultModel\(provider, modelId\)\}/);
-  assert.match(pageSource, /visibleDefaultModelOptions\.map/);
-  assert.match(pageSource, /provider\.id === settings\.defaultProviderId &&[\s\S]*sameWireId/);
+test("provider edits retain legacy defaults for non-chat consumers", () => {
   assert.match(pageSource, /defaultModelId: firstModelId \?\? ""/);
-  assert.match(
-    pageSource,
-    /settings\.defaultProviderId === saved\.id && firstModelId[\s\S]*defaultModelId: firstModelId/,
-  );
-  // The summary line must resolve a configured complete wire id.
-  assert.match(pageSource, /displayedChatModelId\(/);
-  assert.doesNotMatch(pageSource, /\{settings\.defaultModelId \|\|/);
+  assert.match(pageSource, /settings\.defaultProviderId === saved\.id && firstModelId/);
+  assert.doesNotMatch(pageSource, /setDefaultModel|displayedChatModelId/);
 });
 
 test("the rejected catalog-browser styles are gone from the cascade", () => {
@@ -372,7 +360,6 @@ test("settings match complete case-normalized wire ids, not proxy suffixes", () 
   assert.equal(sameWireId("PROXY/model", "proxy/MODEL"), true);
   assert.equal(sameWireId("proxy/model", "model"), false);
   assert.match(pageSource, /isImageCandidate\(imageModels, provider\.id, id\)/);
-  assert.match(pageSource, /sameWireId\(settings\.defaultModelId \?\? "", modelId\)/);
   assert.match(pageSource, /!models\.some\(\(model\) => sameWireId\(model\.id, settings\.defaultModelId/);
   assert.doesNotMatch(pageSource, /modelIdsMatch|isImageGenerationModel/);
   assert.doesNotMatch(setupSource, /modelIdsMatch/);
@@ -392,11 +379,4 @@ test("new chat default skips an image-only first model", () => {
   assert.match(pageSource, /if \(!keepsCurrentDefault && firstModelId\)/);
 });
 
-test("stale image-valued chat default remains visible but is not marked ready", () => {
-  assert.match(pageSource, /const defaultProviderReady = defaultProvider !== null && providerReady\(defaultProvider\) &&[\s\S]*?chatModelOptions\(\[defaultProvider\], imageGenerationCandidates\)\.some/);
-  assert.match(pageSource, /const effectiveDefaultModelId = settings\.defaultModelId\?\.trim\(\) \|\|\s*defaultProvider\?\.models\?\.\[0\]\?\.id \|\| defaultProvider\?\.defaultModelId/);
-  assert.match(pageSource, /sameWireId\(modelId, effectiveDefaultModelId \?\? ""\)/);
-  assert.match(pageSource, /return selected\?\.trim\(\) \|\| configured\[0\]/);
-  assert.match(pageSource, /className="model-default-model font-mono" title=\{t\("settings\.noDefaultProvider"\)\}/);
-  assert.match(pageSource, /\{settings\.defaultModelId\}/);
-});
+// Chat inheritance and image exclusions are exercised by recent-models.test.mjs.

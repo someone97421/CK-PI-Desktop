@@ -1,3 +1,4 @@
+import type { RecentModel } from "../lib/recent-models";
 import type {
   AgentEventEnvelope,
   BrowserState,
@@ -167,6 +168,8 @@ export type AppState = {
   /** Every checkpoint a session has installed, oldest first. */
   sessionCompactions: Record<string, (ContextCompactionMark & { summary?: string; contextUsageMessageId?: string })[]>;
   providers: ProviderPublic[];
+  recentModels: RecentModel[];
+  rememberModel: (model: { providerId?: string; modelId?: string }) => void;
   /** Discovered model lists per provider id (composer model menu). */
   providerModels: Record<string, ModelInfo[]>;
   workspace?: ProjectWorkspace | null;
@@ -387,7 +390,7 @@ export type AppState = {
   workPanelContexts: Record<string, WorkPanelContext>;
   workPanelWidth: number;
   /** Chat-initiated "preview this file" request consumed by the files viewer. */
-  workPanelFileRequest: { path: string; seq: number; mimeType?: string } | null;
+  workPanelFileRequest: WorkPanelContext["fileRequest"];
   subagentPanel: SubagentPanelSelection | null;
   /** Toggle the selected subagent detail. */
   toggleSubagentPanel: (delegationId: string) => void;
@@ -471,7 +474,11 @@ export type AppState = {
   /** Hide the visible panel while retaining its session-owned context. */
   resetWorkPanelContext: () => void;
   setWorkPanelWidth: (width: number) => void;
-  openFileInWorkPanel: (path: string, mimeType?: string) => void;
+  openFileInWorkPanel: (
+    path: string,
+    mimeType?: string,
+    position?: { line?: number; column?: number },
+  ) => void;
   openUrlInWorkPanel: (url: string) => void;
   updateBrowserWorkPanelTab: (state: BrowserState) => void;
 };

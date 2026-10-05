@@ -1,3 +1,4 @@
+import { readSystemMessage } from "./system-transcript-journal.js";
 /**
  * Project pi session entries into the model context.
  *
@@ -58,6 +59,8 @@ export function sessionEntryToContextMessages(
       return isContextMessage(entry.message) ? [entry.message] : [];
     case "compaction":
       return [
+        ...(entry.details && typeof entry.details === "object" && "systemMessageJson" in entry.details
+          ? [readSystemMessage(entry.details.systemMessageJson)] : []),
         createCompactionSummaryMessage(
           entry.summary,
           entry.tokensBefore,
@@ -70,7 +73,8 @@ export function sessionEntryToContextMessages(
               entry.timestamp,
               identity,
             )),
-        ...entry.retainedTail.filter(isContextMessage),
+        ...entry.retainedTail.filter((message) => isContextMessage(message) &&
+          !(message.role === "system" && entry.details && typeof entry.details === "object" && "systemMessageJson" in entry.details)),
       ];
     case "branch_summary":
       return entry.summary

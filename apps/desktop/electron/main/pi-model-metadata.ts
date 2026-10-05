@@ -67,7 +67,8 @@ export function relayChatMetadata(models: Models, id: string): Model<Api> | unde
 
 /**
  * Display-only compatibility data for speech/embedding/image settings rows that
- * Pi 1.0.0 does not publish. It has no auth, prices, refresh, routing or dispatch.
+ * Pi's chat-provider records do not publish. It has no auth, prices, refresh,
+ * routing or dispatch.
  * Chat selection and typed Pi operation lookups never consult this data.
  */
 export function settingsOperationMetadata(providerId: string, vendor?: string, id?: string): ModelInfo[] {

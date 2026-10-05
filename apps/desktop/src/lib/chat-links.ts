@@ -17,6 +17,18 @@
  * still cannot escape the workspace (D322).
  */
 
+import { formatSessionLink, parseSessionLinkToken } from "@pi-desktop/shared";
+import {
+  CHAT_LINK_SCAN_LIMITS,
+  createChatLinkScanBudget,
+  KNOWN_BARE_CHAT_FILES,
+  scanChatLinkCandidates,
+  spendChatLinkScanWork,
+  type ChatLinkScanBudget,
+  type ChatLinkScanStats,
+} from "./chat-link-scanner.ts";
+import { beginRenderDiagnostic } from "./render-diagnostics.ts";
+
 const KNOWN_EXTS = new Set([
   "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "css", "scss", "less",
   "html", "htm", "md", "mdx", "txt", "rs", "py", "go", "rb", "sh", "zsh",
@@ -24,14 +36,6 @@ const KNOWN_EXTS = new Set([
   "cpp", "hpp", "cs", "php", "vue", "svelte", "xml", "ini", "cfg", "conf",
   "env", "lock", "svg", "png", "jpg", "jpeg", "gif", "webp", "ico", "pdf",
   "csv", "tsv", "log",
-]);
-
-const KNOWN_BARE_NAMES = new Set([
-  "Makefile",
-  "Dockerfile",
-  "LICENSE",
-  "README",
-  "CHANGELOG",
 ]);
 
 const FILE_TOKEN_RE =
@@ -52,6 +56,21 @@ function stripLineRef(path: string): string {
   return path.replace(/:\d+(?::\d+)?$/, "");
 }
 
+/** Trailing `:line[:col]` on a file token, if any. */
+export function parseFileRefPosition(
+  text: string,
+): { line: number; column?: number } | null {
+  const token = text.trim().replace(/[.,!?;:，。！？；：]+$/u, "");
+  const match = token.match(/:(\d+)(?::(\d+))?$/);
+  if (!match) return null;
+  const line = Number(match[1]);
+  if (!Number.isFinite(line) || line < 1) return null;
+  const column = match[2] !== undefined ? Number(match[2]) : undefined;
+  return column !== undefined && Number.isFinite(column) && column >= 1
+    ? { line, column }
+    : { line };
+}
+
 function leafName(path: string): string {
   const normalized = path.replaceAll("\\", "/").replace(/\/+$/, "");
   return normalized.slice(normalized.lastIndexOf("/") + 1) || path;
@@ -65,10 +84,10 @@ function isLikelyFilePath(path: string): boolean {
   const baseExt = ext.replace(/[+@-][\p{L}\p{N}_@+-]*$/u, "");
   if (normalized.includes("/")) {
     if (baseExt && baseExt.length <= 8) return true;
-    if (KNOWN_BARE_NAMES.has(base)) return true;
+    if (KNOWN_BARE_CHAT_FILES.has(base)) return true;
     return false;
   }
-  if (KNOWN_BARE_NAMES.has(base)) return true;
+  if (KNOWN_BARE_CHAT_FILES.has(base)) return true;
   return KNOWN_EXTS.has(baseExt);
 }
 
@@ -212,8 +231,9 @@ export function isLocalFileHref(href: string): boolean {
 }
 
 export type ChatPreviewTarget =
-  | { kind: "file"; path: string }
-  | { kind: "url"; url: string };
+  | { kind: "file"; path: string; line?: number; column?: number }
+  | { kind: "url"; url: string }
+  | { kind: "session"; sessionId: string };
 
 /** Resolve one raw chat token into a previewable target, or null. */
 export function resolvePreviewTarget(
@@ -222,18 +242,27 @@ export function resolvePreviewTarget(
   baseDir?: string | null,
 ): ChatPreviewTarget | null {
   const trimmed = text.trim();
+  const sessionId = parseSessionLinkToken(trimmed);
+  if (sessionId) return { kind: "session", sessionId };
   if (isHttpUrl(trimmed)) return { kind: "url", url: trimmed };
-  const at = unwrapAtFileRef(trimmed);
+  const position = parseFileRefPosition(trimmed);
+  const pathText = position
+    ? trimmed.replace(/[.,!?;:，。！？；：]+$/u, "")
+    : trimmed;
+  const at = unwrapAtFileRef(pathText);
   if (at) {
-    if (isAbsoluteFilePath(at)) return { kind: "file", path: at };
-    const rel = toWorkspaceRel(at, root, baseDir);
-    return rel ? { kind: "file", path: rel } : null;
+    const cleaned = stripLineRef(at);
+    if (isAbsoluteFilePath(cleaned)) {
+      return { kind: "file", path: cleaned, ...(position ?? {}) };
+    }
+    const rel = toWorkspaceRel(cleaned, root, baseDir);
+    return rel ? { kind: "file", path: rel, ...(position ?? {}) } : null;
   }
-  const file = parseFileRef(trimmed);
+  const file = parseFileRef(pathText);
   if (!file) return null;
-  if (isAbsoluteFilePath(file)) return { kind: "file", path: file };
+  if (isAbsoluteFilePath(file)) return { kind: "file", path: file, ...(position ?? {}) };
   const rel = toWorkspaceRel(file, root, baseDir);
-  return rel ? { kind: "file", path: rel } : null;
+  return rel ? { kind: "file", path: rel, ...(position ?? {}) } : null;
 }
 
 /** Tool-call args → preview target (Read/Write/Edit paths, fetch URLs). */
@@ -270,19 +299,6 @@ export type ChatTextSegment =
       target: ChatPreviewTarget;
     };
 
-// Unicode-aware scan (#235). Keep absolute candidates whole, and do not stop
-// at an inner extension such as the `.v1` in `report.v1.md`. CJK prose after
-// the extension remains outside the link (Unicode `\b` cannot express that).
-const PATH_WORD = String.raw`[\p{L}\p{N}_@+.-]+`;
-const PATH_SEGMENT = String.raw`[\p{L}\p{N}_@+. -]+`;
-// Only adjacent characters can extend a dotted directory. Whitespace after an
-// extension is ambiguous with prose; quote such paths with @"...".
-const PATH_CONTINUATION = String.raw`[\p{L}\p{N}_@+.-]*[\\/]`;
-const FILE_END = String.raw`\.[A-Za-z0-9]{1,8}(?:[+@-][\p{L}\p{N}_@+-]*)?(?::\d+(?::\d+)?)?(?![A-Za-z0-9_@+-]|\.[A-Za-z0-9]|${PATH_CONTINUATION})`;
-const BARE_FILE_END = String.raw`(?:${[...KNOWN_BARE_NAMES].join("|")})(?![\p{L}\p{N}_@+.-]|${PATH_CONTINUATION})`;
-const FILE_NAME = String.raw`(?:${PATH_SEGMENT}?${FILE_END}|${BARE_FILE_END})`;
-const UNC_PREFIX = String.raw`(?:\\\\[^\\/\s]+[\\/]|\/\/[^/\s]+\/)`;
-const SPACED_START = String.raw`(?<![\p{L}\p{N}_@+.-])[A-Za-z][\p{L}\p{N}_+-]*(?: [\p{L}\p{N}_+-]+)+`;
 // Unmarked first-segment spaces cannot be distinguished from prose. Retry
 // after common introducers so ordinary bare file links still work.
 const PROSE_INTRODUCERS = new Set([
@@ -290,45 +306,74 @@ const PROSE_INTRODUCERS = new Set([
   "see", "open", "read", "view", "check", "show", "find", "edit",
   "update", "fix", "inspect", "compare", "review", "use", "add", "remove",
   "write", "create", "created", "delete", "rename", "move", "copy",
-  "change", "saved", "generated",
+  "change", "saved", "generated", "和", "与", "再看", "然后", "接着",
+  "打开", "请看", "先看", "查看", "读取", "编辑",
 ]);
-const SCAN_RE = new RegExp([
-  String.raw`@"[^"\n]+"`,
-  String.raw`@[^\s]+`,
-  String.raw`https?:\/\/(?=[^\s<>"'()[\]{}])`,
-  String.raw`(?:[A-Za-z]:[\\/]|${UNC_PREFIX}|\/)(?:${PATH_SEGMENT}[\\/])*?${FILE_NAME}`,
-  String.raw`${SPACED_START}[\\/](?:${PATH_SEGMENT}[\\/])*?${FILE_NAME}`,
-  String.raw`${SPACED_START}(?:\.[A-Za-z0-9_-]+)*${FILE_END}`,
-  String.raw`(?:${PATH_WORD}[\\/])+(?:${PATH_SEGMENT}[\\/])*?${FILE_NAME}`,
-  String.raw`(?:~\/)?\/?\.{1,2}\/(?:${PATH_WORD}\/)*${PATH_WORD}(?::\d+(?::\d+)?)?`,
-  String.raw`(?:~\/)?\/?(?:${PATH_WORD}\/)+${PATH_WORD}(?::\d+(?::\d+)?)?`,
-  String.raw`[\p{L}\p{N}_@+-][\p{L}\p{N}_@+.-]*${FILE_END}`,
-].join("|"), "gu");
-
-function spacedRefDisposition(raw: string): "accept" | "retry" | "skip" {
+function spacedRefDisposition(
+  raw: string,
+  source: string,
+  start: number,
+  budget: ChatLinkScanBudget,
+  stats: ChatLinkScanStats,
+): "accept" | "retry" | "skip" | "exhausted" {
   if (isAbsoluteFilePath(raw) || raw.startsWith("@") || isHttpUrl(raw)) return "accept";
   const firstSegment = raw.split(/[\\/]/, 1)[0];
-  if (!firstSegment.includes(" ")) return "accept";
+  if (!firstSegment.includes(" ")) {
+    if (start > 0 && /[ \t]/u.test(source[start - 1])) {
+      if (!spendChatLinkScanWork(budget, stats, 1)) return "exhausted";
+      let previousStart = start - 1;
+      let inspected = 0;
+      const separator = /[\s(),!?;:，。！？；：()[\]{}<>"']/u;
+      while (previousStart > 0 && inspected < CHAT_LINK_SCAN_LIMITS.maxFileCandidateCodeUnits) {
+        if (!spendChatLinkScanWork(budget, stats, 1)) return "exhausted";
+        inspected += 1;
+        if (separator.test(source[previousStart - 1])) {
+          break;
+        }
+        previousStart -= 1;
+      }
+      const previousWord = source.slice(previousStart, start - 1).toLowerCase();
+      const previousLooksLikeFile = /[./\\]/u.test(previousWord) ||
+        /\.[A-Za-z0-9]{1,8}(?:[+@-][\p{L}\p{N}_@+-]*)?$/u.test(previousWord) ||
+        /\p{Script=Han}/u.test(previousWord);
+      if (
+        previousWord &&
+        inspected < CHAT_LINK_SCAN_LIMITS.maxFileCandidateCodeUnits &&
+        !previousLooksLikeFile &&
+        !PROSE_INTRODUCERS.has(previousWord)
+      ) return "skip";
+    }
+    return "accept";
+  }
   const firstWord = firstSegment.slice(0, firstSegment.indexOf(" ")).toLowerCase();
   return PROSE_INTRODUCERS.has(firstWord) ? "retry" : "skip";
 }
 
-/** Scan once, keeping URL parentheses but stopping at a closing prose wrapper. */
-function scanUrl(text: string, start: number): string {
-  let depth = 0;
-  let end = start;
-  for (; end < text.length; end += 1) {
-    const character = text[end];
-    if (/[\s<>"'[\]{}]/u.test(character)) break;
-    if (character === "(") depth += 1;
-    else if (character === ")") {
-      if (depth === 0) break;
-      depth -= 1;
-    }
+function splitChatTextWithBudget(
+  text: string,
+  root?: string | null,
+  baseDir?: string | null,
+  budget: ChatLinkScanBudget = createChatLinkScanBudget(),
+): ChatTextSegment[] {
+  const segments: ChatTextSegment[] = [];
+  let last = 0;
+  const { candidates } = scanChatLinkCandidates(
+    text,
+    budget,
+    (raw) => resolvePreviewTarget(raw, root, baseDir),
+    spacedRefDisposition,
+  );
+  for (const { start, end, raw, target } of candidates) {
+    if (start < last) continue;
+    if (start > last) segments.push({ kind: "text", text: text.slice(last, start) });
+    const label =
+      target.kind === "file" ? leafName(target.path) : raw;
+    segments.push({ kind: "target", text: raw, label, target });
+    last = end;
   }
-  // Sentence punctuation belongs to the surrounding prose, regardless of
-  // whether the URL itself ends with a parenthesized path segment.
-  return text.slice(start, end).replace(/[.,!?;:，。！？；：]+$/u, "");
+  if (segments.length === 0) return [{ kind: "text", text }];
+  if (last < text.length) segments.push({ kind: "text", text: text.slice(last) });
+  return segments;
 }
 
 /**
@@ -341,34 +386,7 @@ export function splitChatText(
   root?: string | null,
   baseDir?: string | null,
 ): ChatTextSegment[] {
-  const segments: ChatTextSegment[] = [];
-  let last = 0;
-  const scanner = new RegExp(SCAN_RE);
-  for (let match = scanner.exec(text); match; match = scanner.exec(text)) {
-    const start = match.index;
-    const raw = /^https?:\/\//i.test(match[0])
-      ? scanUrl(text, start)
-      : match[0];
-    scanner.lastIndex = start + raw.length;
-    if ((text[start - 1] === "~" && /^[\\/]/u.test(raw)) ||
-        ["~/", "~\\"].includes(text.slice(start - 2, start))) continue;
-    const disposition = spacedRefDisposition(raw);
-    if (disposition === "skip") continue;
-    if (disposition === "retry") {
-      scanner.lastIndex = start + raw.indexOf(" ") + 1;
-      continue;
-    }
-    const target = resolvePreviewTarget(raw, root, baseDir);
-    if (!target) continue;
-    if (start > last) segments.push({ kind: "text", text: text.slice(last, start) });
-    const label =
-      target.kind === "file" ? leafName(target.path) : raw;
-    segments.push({ kind: "target", text: raw, label, target });
-    last = start + raw.length;
-  }
-  if (segments.length === 0) return [{ kind: "text", text }];
-  if (last < text.length) segments.push({ kind: "text", text: text.slice(last) });
-  return segments;
+  return splitChatTextWithBudget(text, root, baseDir);
 }
 
 /** Minimal mdast node the markdown rewriter understands. */
@@ -387,6 +405,14 @@ const SKIP_MDAST = new Set([
   "html",
 ]);
 
+function previewTargetHref(target: ChatPreviewTarget): string {
+  if (target.kind === "url") return target.url;
+  if (target.kind === "session") return formatSessionLink(target.sessionId);
+  const path = /^[A-Za-z]:[\\/]/.test(target.path) || target.path.startsWith("\\\\")
+    ? encodeURIComponent(target.path) : target.path;
+  return `${path}${target.line != null ? `:${target.line}${target.column != null ? `:${target.column}` : ""}` : ""}`;
+}
+
 /**
  * Turn bare file/URL tokens in markdown phrasing into link nodes so the
  * existing markdown Anchor handler can preview them. Skips fenced code,
@@ -397,10 +423,29 @@ export function linkifyMdastTree(
   root?: string | null,
   baseDir?: string | null,
 ): void {
+  const budget = createChatLinkScanBudget();
+  const finishDiagnostic = beginRenderDiagnostic("markdown-linkify-tree");
+  let inputNodeCount = 0;
+  let sourceLength = 0;
   walk(tree, false);
+  finishDiagnostic({
+    inputNodeCount,
+    sourceLength,
+    linkCount: budget.links,
+    workCodeUnits: budget.workCodeUnits,
+    reason: budget.workCodeUnits >= CHAT_LINK_SCAN_LIMITS.maxScanWorkCodeUnits
+      ? "scan-budget"
+      : budget.links >= CHAT_LINK_SCAN_LIMITS.maxLinks
+        ? "link-limit"
+        : undefined,
+  });
 
   function walk(node: MdastNode | null | undefined, skip: boolean) {
     if (!node || typeof node.type !== "string") return;
+    inputNodeCount += 1;
+    if ((node.type === "text" || node.type === "inlineCode") && typeof node.value === "string") {
+      sourceLength += node.value.length;
+    }
     const nextSkip = skip || SKIP_MDAST.has(node.type);
     if (!node.children) return;
     const next: MdastNode[] = [];
@@ -413,19 +458,25 @@ export function linkifyMdastTree(
         // token must still look path-like the way the text scanner demands —
         // absolute or drive-letter anchored — so ordinary prose code runs
         // never turn into chips.
-        const value = child.value.trim();
-        const spacedPathLike = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("/") || value.startsWith("~/");
-        const target =
-          spacedPathLike || !value.includes(" ")
+        let target: ChatPreviewTarget | null = null;
+        const withinBudget =
+          child.value.length <= CHAT_LINK_SCAN_LIMITS.maxFileCandidateCodeUnits &&
+          budget.fileCandidates < CHAT_LINK_SCAN_LIMITS.maxFileCandidates &&
+          budget.links < CHAT_LINK_SCAN_LIMITS.maxLinks &&
+          budget.workCodeUnits + child.value.length * 2 <=
+            CHAT_LINK_SCAN_LIMITS.maxScanWorkCodeUnits;
+        if (withinBudget) {
+          budget.fileCandidates += 1;
+          budget.workCodeUnits += child.value.length * 2;
+          const value = child.value.trim();
+          const spacedPathLike = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("/") || value.startsWith("~/");
+          target = spacedPathLike || !value.includes(" ")
             ? resolvePreviewTarget(value, root, baseDir)
             : null;
+          if (target) budget.links += 1;
+        }
         if (target) {
-          const url =
-            target.kind === "url"
-              ? target.url
-              : /^[A-Za-z]:[\\/]/.test(target.path) || target.path.startsWith("\\\\")
-                ? encodeURIComponent(target.path)
-                : target.path;
+          const url = previewTargetHref(target);
           next.push({
             type: "link",
             url,
@@ -435,7 +486,7 @@ export function linkifyMdastTree(
         }
       }
       if (!nextSkip && child.type === "text" && typeof child.value === "string") {
-        const segments = splitChatText(child.value, root, baseDir);
+        const segments = splitChatTextWithBudget(child.value, root, baseDir, budget);
         if (segments.length === 1 && segments[0].kind === "text") {
           next.push(child);
           continue;
@@ -445,12 +496,7 @@ export function linkifyMdastTree(
             next.push({ type: "text", value: segment.text });
             continue;
           }
-          const url =
-            segment.target.kind === "url"
-              ? segment.target.url
-              : (/^[A-Za-z]:[\\/]/.test(segment.target.path) || segment.target.path.startsWith("\\\\"))
-                ? encodeURIComponent(segment.target.path)
-                : segment.target.path;
+          const url = previewTargetHref(segment.target);
           next.push({
             type: "link",
             url,

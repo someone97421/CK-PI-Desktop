@@ -10,6 +10,7 @@ import type {
 } from "react";
 import { editorSelectionRange, readEditorValue } from "./editor";
 import { ComposerImagePreview } from "./ComposerImagePreview";
+import { ComposerImageHover } from "./ComposerImageHoverPreview";
 import type { CompletionController } from "./hooks/useComposerCompletions";
 import type { ComposerImagePreviewController } from "./hooks/useComposerImagePreview";
 
@@ -75,6 +76,7 @@ export function ComposerInput({
   return (
     <div className="composer-input-wrap">
       {imagePreview ? <ComposerImagePreview controller={imagePreview} /> : null}
+      {imagePreview ? <ComposerImageHover controller={imagePreview} editorRef={inputRef} /> : null}
       <div className="composer-input-stage">
         {/* React does not render children into this node; the editor module
           paints atomic attachment chips imperatively. */}

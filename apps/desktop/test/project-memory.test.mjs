@@ -23,6 +23,7 @@ test("project memory has a host-backed editor and project menu entry", () => {
   assert.match(dialog, /api\.getProjectGroupMemory\(project\.groupId\)/);
   assert.match(dialog, /project\.legacy/);
   assert.match(dialog, /api\.saveProjectMemory\(project\.path, normalized\)/);
+  assert.match(dialog, /useBlockingOverlay\(\)/);
   assert.match(dialog, /project\.memoryAdd/);
   assert.match(dialog, /project\.memoryRemove/);
   assert.match(dialog, /entriesFromMemory/);

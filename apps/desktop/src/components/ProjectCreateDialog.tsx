@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { useBlockingOverlay } from "../lib/blocking-overlay";
 import { MAX_PROJECT_NAME_CHARS } from "../lib/sidebar-preferences";
 import { api } from "../lib/api";
 import { parseGitCloneUrl } from "../lib/git-clone-url";
@@ -39,9 +40,20 @@ function samePath(left: string, right: string) {
     right.trim().replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
+// The create dialog mounts its content only while open: the blocking overlay
+// registers with that mounted subtree, and every reopen resets the form.
 export function ProjectCreateDialog() {
   const { t } = useTranslation();
   const open = useAppStore((state) => state.createProjectDialogOpen);
+  if (open) {
+    return <ProjectCreateDialogContent />;
+  }
+  return null;
+}
+
+function ProjectCreateDialogContent() {
+  useBlockingOverlay();
+  const { t } = useTranslation();
   const close = useAppStore((state) => state.closeProjectDialog);
   const createProject = useAppStore((state) => state.createProjectFromFolders);
   const createProjectFromGit = useAppStore(
@@ -73,7 +85,6 @@ export function ProjectCreateDialog() {
   const projectName = resolveProjectName(name, defaultName);
 
   useEffect(() => {
-    if (!open) return;
     setSource("local");
     setName("");
     setFolders([]);
@@ -117,7 +128,7 @@ export function ProjectCreateDialog() {
       document.body.style.overflow = previousOverflow;
       if (previouslyFocused?.isConnected) previouslyFocused.focus();
     };
-  }, [close, open]);
+  }, [close]);
 
   // The first folder or the repository name fills the field until the user
   // types their own name; an emptied field still falls back to it on submit.
@@ -125,8 +136,6 @@ export function ProjectCreateDialog() {
     if (nameTouchedRef.current) return;
     setName(defaultName);
   }, [defaultName]);
-
-  if (!open) return null;
 
   const addFolders = async () => {
     if (busyRef.current || folderPickerInFlightRef.current) return;

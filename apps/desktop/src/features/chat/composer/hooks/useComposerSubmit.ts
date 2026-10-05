@@ -18,6 +18,7 @@ import {
   resolveSlashDispatch,
 } from "../slash-dispatch";
 import { readEditorValue, setEditorCaret, type ComposerFileReference } from "../editor";
+import { detachImageTokens } from "../image-attachments";
 import type { ComposerDraftSnapshot } from "../../../../lib/composer-smart-stop";
 import type { ComposerDraftController } from "./useComposerDraft";
 
@@ -198,12 +199,15 @@ export function useComposerSubmit({
   };
 
   const submit = async (steering = false) => {
-    const text = draft.ref.current ? readEditorValue(draft.ref.current) : value;
+    const rawText = draft.ref.current ? readEditorValue(draft.ref.current) : value;
+    // Images stay inline chips while editing; the model still receives them as
+    // the structured attachment, so their tokens leave the prompt text here.
+    const outgoing = detachImageTokens(rawText, activeFileReferences, 0);
     const inlineContent = serializeInlineComposerFileReferences(
-      text,
-      activeFileReferences,
+      outgoing.text,
+      outgoing.references,
     );
-    const serializedContent = serializeComposerFileReferences(text, activeFileReferences);
+    const serializedContent = serializeComposerFileReferences(outgoing.text, outgoing.references);
     // Steering is text-only; saved annotations belong to the next send/queue.
     const state = useAppStore.getState();
     const annotationsPending = !steering && Boolean(
@@ -217,7 +221,7 @@ export function useComposerSubmit({
     invalidatePromptEnhancement();
     const submittedDraftKey = draftKey;
     const submittedDraftRevision = draft.draftRevision(submittedDraftKey);
-    const submittedDraft = draft.draftSnapshot(text);
+    const submittedDraft = draft.draftSnapshot(rawText);
     // Recall keeps what the user typed, in the conversation that submitted it.
     // For a mode command that is the whole `/agent …` text rather than its body,
     // so re-submitting re-runs it; every other recorded path stores exactly the
@@ -257,16 +261,17 @@ export function useComposerSubmit({
         if (isModeCommand && commandBody) {
           try {
             await runPaletteCommand(command.id);
-            const visibleDraft = text.trim();
+            const visibleDraft = rawText.trim();
             const visibleCommandEnd = visibleDraft.search(/\s/);
             const visibleCommandBody =
               visibleCommandEnd === -1
                 ? ""
                 : visibleDraft.slice(visibleCommandEnd).trim();
+            const outgoingBody = detachImageTokens(visibleCommandBody, activeFileReferences, 0);
             const accepted = await sendPrompt(
               serializeInlineComposerFileReferences(
-                visibleCommandBody,
-                activeFileReferences,
+                outgoingBody.text,
+                outgoingBody.references,
               ),
               draft.draftSnapshot(visibleCommandBody),
               activeSessionId ?? undefined,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { MAX_SMOOTH_TEXT_CODE_UNITS } from "../lib/render-content-limits";
 
 /**
  * Progressively reveals `source` text at an adaptive rate.
@@ -14,6 +15,7 @@ export function useSmoothText(
   streaming: boolean,
   enabled: boolean,
 ): string {
+  const shouldSmooth = streaming && source.length <= MAX_SMOOTH_TEXT_CODE_UNITS;
   const [revealed, setRevealed] = useState(source.length);
   const revealedRef = useRef(source.length);
   const rafRef = useRef<number | null>(null);
@@ -22,7 +24,7 @@ export function useSmoothText(
 
   // A completed message always shows the full source.
   useEffect(() => {
-    if (!streaming) {
+    if (!shouldSmooth) {
       revealedRef.current = source.length;
       lastFrameRef.current = 0;
       fractionalAdvanceRef.current = 0;
@@ -32,11 +34,11 @@ export function useSmoothText(
         rafRef.current = null;
       }
     }
-  }, [streaming, source.length]);
+  }, [shouldSmooth, source.length]);
 
   // Core release loop
   useEffect(() => {
-    if (!streaming) return;
+    if (!shouldSmooth) return;
 
     const tick = (now: number) => {
       const backlog = source.length - revealedRef.current;
@@ -93,7 +95,7 @@ export function useSmoothText(
         rafRef.current = null;
       }
     };
-  }, [enabled, streaming, source]);
+  }, [shouldSmooth, source, enabled]);
 
   // Cancel any pending release on unmount.
   useEffect(() => {
@@ -105,7 +107,7 @@ export function useSmoothText(
     };
   }, []);
 
-  if (!streaming) return source;
+  if (!shouldSmooth) return source;
   // Avoid slicing in the middle of a UTF-16 surrogate pair.
   let end = revealed;
   if (end < source.length && end > 0) {

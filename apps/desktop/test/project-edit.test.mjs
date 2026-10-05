@@ -34,6 +34,7 @@ test("project edit dialog updates names and adjusts folder roots", () => {
   assert.match(dialogSource, /busy \|\| primary/);
   assert.match(dialogSource, /project\.editPrimaryLocked/);
   assert.match(dialogSource, /aria-modal="true"/);
+  assert.match(dialogSource, /useBlockingOverlay\(\)/);
   assert.match(dialogSource, /event\.key === "Escape"/);
 });
 

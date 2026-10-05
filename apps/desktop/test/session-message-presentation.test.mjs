@@ -55,6 +55,7 @@ function loadComponent(name, extras = {}) {
     },
     "./ActionBarSlots": { ActionSlotSide: () => null },
     "../../../plugins/renderer-slots/slot-message": { slotMessage: () => undefined },
+    "./extra-attachments": { getExtraMessageAttachments: () => [] },
     ...extras,
   };
   const module = { exports: {} };
@@ -66,7 +67,10 @@ function loadComponent(name, extras = {}) {
 }
 
 const origin = loadComponent("SessionMessageOrigin");
-const { MessageRow } = loadComponent("MessageRow", { "./SessionMessageOrigin": origin });
+const { MessageRow } = loadComponent("MessageRow", {
+  "./SessionMessageOrigin": origin,
+  "./extra-attachments": { getExtraMessageAttachments: () => [] },
+});
 const userMessage = {
   id: "incoming-row",
   role: "user",

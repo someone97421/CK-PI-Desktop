@@ -14,7 +14,7 @@ export type CommandItem = {
 export type ComposerCommand = {
   /** Slash name typed after "/"; unique across the merged list. */
   name: string;
-  kind: "template" | "builtin" | "plugin" | "extension" | "skill";
+  kind: "template" | "builtin" | "plugin" | "extension" | "skill" | "mcp";
   /** Display title (templates use their name). */
   title: string;
   description?: string;
@@ -26,6 +26,10 @@ export type ComposerCommand = {
   id?: string;
   /** Skill id passed to the model's Skill tool. */
   skillId?: string;
+  /** Active user MCP server selected for this prompt. */
+  mcpServerId?: string;
+  /** Exact host tool name, absent for a whole-server selection. */
+  mcpToolName?: string;
 };
 
 /** One clipboard file transferred from the renderer to the composer bridge. */

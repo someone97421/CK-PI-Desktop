@@ -86,7 +86,6 @@ test("settings rail labels stay concise and parallel across locales", () => {
     "skills",
     "mcp",
     "subagents",
-    "import",
     "projects",
     "info",
   ].map((key) => `settings.nav.${key}`);
@@ -102,7 +101,6 @@ test("settings rail labels stay concise and parallel across locales", () => {
       "Skills",
       "MCP",
       "Subagents",
-      "Import",
       "Projects",
       "Info",
     ],
@@ -118,11 +116,14 @@ test("settings rail labels stay concise and parallel across locales", () => {
       "技能",
       "MCP",
       "子智能体",
-      "导入",
       "项目",
       "信息",
     ],
   );
+  assert.equal(english["settings.nav.import"], undefined);
+  assert.equal(chinese["settings.nav.import"], undefined);
+  assert.equal(english["settings.import"], undefined);
+  assert.equal(chinese["settings.import"], undefined);
   assert.equal(english["settings.groupPreferences"], "Preferences");
   assert.equal(chinese["settings.groupPreferences"], "偏好");
   assert.equal(english["settings.groupSystem"], "System");

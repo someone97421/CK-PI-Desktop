@@ -38,14 +38,18 @@ test("renderer hook loads referenced image data URLs with a scoped bounded cache
   assert.match(hook, /https\?\|data\|blob/);
 });
 
-test("user message image attachments render as thumbnails", () => {
+test("user message image attachments render as chips with a hover card", () => {
   assert.match(transcript, /function MessageAttachmentImage\(/);
   assert.match(transcript, /useReferencedImageDataUrl\(attachment\.ref, attachment\.mimeType\)/);
-  assert.match(transcript, /className="message-attachment-image"/);
+  assert.match(transcript, /className="message-attachment-image-chip"/);
+  assert.match(transcript, /role="listitem"/);
+  assert.match(transcript, /onOpen=\{onOpenFile\}/);
+  // One shared preview card serves the draft and the transcript.
   assert.match(
     transcript,
-    /openFileInWorkPanel\(attachment\.ref, attachment\.mimeType\)/,
+    /import \{ ImageHoverCard, type ImageHoverAnchor \} from "\.\.\/\.\.\/\.\.\/components\/ImageHoverCard";/,
   );
+  assert.match(transcript, /<ImageHoverCard src=\{dataUrl\} anchor=\{anchor\} onDismiss=\{dismiss\} \/>/);
   assert.match(
     transcript,
     /attachment\.kind === "image" \?/,

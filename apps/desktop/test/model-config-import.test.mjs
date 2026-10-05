@@ -1,4 +1,4 @@
-import { readSettingsSource, readMainSource } from "./helpers/source-contracts.mjs";
+import { readMainSource } from "./helpers/source-contracts.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { register } from "node:module";
@@ -84,17 +84,25 @@ test("scanModelConfigs returns nothing when the home directory is empty", async 
   assert.deepEqual(drafts, []);
 });
 
-test("settings import and protocol expose model-config import independently of sessions", async () => {
+test("model settings embeds the model-config importer while retaining its protocol", async () => {
   const { readFile } = await import("node:fs/promises");
-  const settingsPage = await readSettingsSource();
+  const modelPage = await readFile(
+    new URL("../src/components/settings/ModelConfigPage.tsx", import.meta.url),
+    "utf8",
+  );
+  const modelImport = await readFile(
+    new URL("../src/features/settings/imports/ModelConfigImportPanel.tsx", import.meta.url),
+    "utf8",
+  );
   const apiSource = await readFile(new URL("../src/lib/api.ts", import.meta.url), "utf8");
   const protocol = await readFile(
     new URL("../../../packages/shared/src/protocol.ts", import.meta.url),
     "utf8",
   );
   const mainSource = await readMainSource();
-  assert.match(settingsPage, /scanImportModelConfigs/);
-  assert.match(settingsPage, /ModelConfigImportPanel/);
+  assert.match(modelPage, /ImportToggleButton/);
+  assert.match(modelPage, /<ModelConfigImportPanel \/>/);
+  assert.match(modelImport, /scanImportModelConfigs/);
   assert.match(apiSource, /modelConfigImportScan/);
   assert.match(protocol, /pi-desktop\/modelConfig\/importScan/);
   assert.match(mainSource, /providers\.create/);

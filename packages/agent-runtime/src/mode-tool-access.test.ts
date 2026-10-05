@@ -80,7 +80,10 @@ it.each([
     compactionSettings: { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
     commandShell: { id: "bash", label: "Bash", dialect: "posix", available: true, isDefault: true },
     subagents: [{ name: "worker", description: "Inspect", tools: ["Read"], prompt: "Inspect only.", source: "user" }],
-    host: { call: async (method) => { hostCalls.push(method); throw new Error("blocked tools must never reach the host"); }, onNotification: () => () => {} },
+    host: { call: async <T>(method: string): Promise<T> => {
+      if (method === "session.appendMessage") return undefined as T;
+      hostCalls.push(method); throw new Error("blocked tools must never reach the host");
+    }, onNotification: () => () => {} },
     onEvent: (event) => { events.push(event); },
   });
   runtime.setMode(mode);

@@ -523,6 +523,7 @@ test("configurationChanged separates what a server is from who may use it", () =
   assert.equal(configurationChanged(base, { ...base, args: ["b.mjs"] }), true);
   assert.equal(configurationChanged(base, { ...base, env: { A: "2" } }), true);
   assert.equal(configurationChanged(base, { ...base, transport: "http", url: "https://x" }), true);
+  assert.equal(configurationChanged(base, { ...base, timeoutSeconds: 30 }), true);
   assert.equal(configurationChanged(base, { ...base, enabled: false }), true);
   // Re-enabling does not invalidate anything: nothing was running.
   assert.equal(configurationChanged({ ...base, enabled: false }, base), false);
@@ -544,4 +545,44 @@ test("a server whose catalog cannot be listed lands as failed with the reason", 
   // A server that already failed this run is not handshaken again per session.
   assert.deepEqual(await rt.toolsForProject("/repo"), []);
   assert.equal(rt.statusFor("stub").state, "failed");
+});
+
+test("custom timeoutSeconds overrides default connect and call timeouts on client creation", () => {
+  let createdConfig = null;
+  const rt = new UserMcpRuntime({
+    createClient: (config) => {
+      createdConfig = config;
+      return {
+        connect: async () => [],
+        callTool: async () => ({}),
+        getTools: () => [],
+        isConnected: () => false,
+        close: () => {},
+        ping: async () => {},
+      };
+    },
+    connectTimeoutMs: 10_000,
+    callTimeoutMs: 100_000,
+    discoveryTimeoutMs: 30_000,
+  });
+
+  rt.setRecords([
+    {
+      id: "slow-server",
+      label: "Slow Server",
+      transport: "stdio",
+      command: "node",
+      args: ["slow.mjs"],
+      enabled: true,
+      timeoutSeconds: 45,
+      createdAt: "",
+      updatedAt: "",
+    },
+  ]);
+
+  void rt.connect(rt.listRecords()[0]);
+  assert.ok(createdConfig);
+  assert.equal(createdConfig.connectTimeoutMs, 45_000);
+  assert.equal(createdConfig.callTimeoutMs, 100_000);
+  assert.equal(createdConfig.discoveryTimeoutMs, 45_000);
 });

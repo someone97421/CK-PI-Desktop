@@ -6,6 +6,7 @@ import {
 } from "react";
 import type { TFunction } from "i18next";
 import { ensureDraftSession, useAppStore } from "../../../../stores/app-store";
+import { parseSessionLinks, sessionLinkSpans } from "@pi-desktop/shared";
 import { api } from "../../../../lib/api";
 import {
   HOME_DRAFT_KEY,
@@ -169,6 +170,56 @@ export function useComposerAttachments({
     }
   };
 
+  /** The chip label for one referenced conversation. */
+  const sessionChipName = (id: string) => {
+    const title = (
+      useAppStore.getState().sessions.find((session) => session.id === id)?.title ?? ""
+    ).trim();
+    return `${t("chat.sessionReference")} · ${title || id.slice(0, 8)}`;
+  };
+
+  /**
+   * A pasted `pi-desktop://session/<id>` link becomes the same inline chip as
+   * any other attachment; the prompt still carries the link text.
+   */
+  const pasteSessionLinks = (text: string) => {
+    const editor = draft.ref.current;
+    const sourceValue = editor ? readEditorValue(editor) : draft.valueRef.current;
+    const { start: selectionStart, end: selectionEnd } = editor
+      ? editorSelectionRange(editor)
+      : { start: sourceValue.length, end: sourceValue.length };
+    const ownerSessionId = activeSessionId ?? "";
+    const previousReferences = snapshotReferences(ownerSessionId);
+    const sessionReferences: ComposerFileReference[] = [];
+    let pasted = text;
+    for (const span of [...sessionLinkSpans(text)].reverse()) {
+      const token = nextChipToken();
+      pasted = pasted.slice(0, span.start) + token + pasted.slice(span.end);
+      sessionReferences.unshift(
+        createFileReference(span.id, sessionChipName(span.id), ownerSessionId, {
+          kind: "session",
+          token,
+        }),
+      );
+    }
+    if (!sessionReferences.length) return;
+    const nextText = sourceValue.slice(0, selectionStart) + pasted + sourceValue.slice(selectionEnd);
+    const nextReferences = [
+      ...previousReferences.map((reference) =>
+        createFileReference(reference.path, reference.name, ownerSessionId, reference),
+      ),
+      ...sessionReferences,
+    ];
+    writeComposerDraft(ownerSessionId || draftKey, {
+      text: nextText,
+      fileReferences: [
+        ...previousReferences,
+        ...sessionReferences.map((reference) => draftFileReference(reference)),
+      ],
+    });
+    draft.applyEditorDraft(nextText, nextReferences, selectionStart + pasted.length);
+  };
+
   const pasteClipboardFiles = async (event: ClipboardEvent<HTMLDivElement>) => {
     if (isInputBlocked) return;
     const text = event.clipboardData.getData("text/plain");
@@ -262,6 +313,14 @@ export function useComposerAttachments({
       } finally {
         setPasting(false);
       }
+      return;
+    }
+
+    const sessionIds = parseSessionLinks(text);
+    if (sessionIds.length) {
+      event.preventDefault();
+      void api.recordClipboardPaste(text).catch(() => undefined);
+      pasteSessionLinks(text);
       return;
     }
 

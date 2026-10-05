@@ -1,3 +1,4 @@
+import type { PlanHistoryEntry } from "./plans.js";
 /** Shared public types grouped by the owning application domain. */
 import type { SessionMessageOrigin } from "../session-collaboration.js";
 import type { AppError } from "../errors.js";
@@ -104,6 +105,15 @@ export type UiMessage = {
   taskId?: string;
   /** Presentation task summary; history pages may project it onto every task message. */
   task?: MessageTask;
+  /** Internal model instructions/tool declarations; never a visible chat row. */
+  modelSystem?: {
+    version: 1;
+    /** The following user input can have been persisted before runtime admission. */
+    beforeMessageId?: string;
+    afterMessageId?: string;
+    /** Opaque JSON preserves section and schema key order across Host storage. */
+    messageJson: string;
+  };
   /** Authenticated agent-to-agent provenance; never inferred from message text. */
   sessionMessage?: SessionMessageOrigin;
   /** Present only on the durable user row created by a Live Voice operation. */
@@ -145,6 +155,8 @@ export type UiMessage = {
   toolStatus?: "running" | "success" | "error" | "denied";
   toolArgs?: unknown;
   toolResult?: unknown;
+  /** Renderer projection; never written back into canonical model evidence. */
+  planHistory?: PlanHistoryEntry;
   /** Estimated tokens occupied by this tool call and its result. */
   toolUsage?: ToolTokenUsage;
   toolCompletedAt?: string;

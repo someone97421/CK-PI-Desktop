@@ -18,6 +18,7 @@ const [dialog, editDialog, store, api, protocol, main, styles] = await Promise.a
 
 test("create project dialog supports named multi-folder setup", () => {
   assert.match(dialog, /role="dialog"/);
+  assert.match(dialog, /useBlockingOverlay\(\)/);
   assert.doesNotMatch(dialog, /project\.createNamePlaceholder/);
   assert.match(dialog, /api\.pickProjectFolders\(\)/);
   assert.match(dialog, /result\.folders/);

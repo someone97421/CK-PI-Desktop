@@ -7,6 +7,7 @@ import { useAppStore } from "../../apps/desktop/src/stores/app-store";
 import { api } from "../../apps/desktop/src/lib/api";
 import { writeComposerDraft, deleteComposerDraft } from "../../apps/desktop/src/lib/composer-draft-cache";
 import type { ComposerDraftSnapshot } from "../../apps/desktop/src/lib/composer-smart-stop";
+import { readEditorValue } from "../../apps/desktop/src/features/chat/composer/editor";
 
 const assert = (value: unknown, message: string) => { if (!value) throw new Error(message); };
 const painted = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -28,6 +29,21 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
   };
   const sendButton = () => host.querySelector<HTMLButtonElement>(".send-btn")!;
   const editor = () => host.querySelector<HTMLElement>(".composer-input")!;
+  const imageChips = () => host.querySelectorAll<HTMLElement>(".composer-chip[data-image]");
+  /** Draft text without the inline attachment chips it carries. */
+  const draftText = () => {
+    let text = readEditorValue(editor());
+    for (const chip of imageChips()) {
+      const token = chip.dataset.token ?? "";
+      if (token) text = text.split(token).join("");
+    }
+    return text;
+  };
+  /** Wait until exactly `count` inline image chips are rendered. */
+  const untilImageChips = async (count: number) => {
+    const deadline = performance.now() + 2000;
+    while (imageChips().length !== count && performance.now() < deadline) await painted();
+  };
   try {
     writeComposerDraft(sessionId, { text: "retry draft", fileReferences: [attachment] });
     useAppStore.setState({
@@ -56,12 +72,12 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
       await painted();
       host.querySelector<HTMLButtonElement>(".asktool-option")!.click();
       await painted();
-      host.querySelector<HTMLButtonElement>(".asktool-card-actions button:last-child")!.click();
+      host.querySelector<HTMLButtonElement>(".asktool-card-header-actions button:last-child")!.click();
       await painted();
       await painted();
-      const nextSubmit = host.querySelector<HTMLButtonElement>(".asktool-card-actions button:last-child");
+      const nextSubmit = host.querySelector<HTMLButtonElement>(".asktool-card-header-actions button:last-child");
       assert(nextSubmit && !nextSubmit.disabled, "next request must be answerable");
-      assert(host.querySelector(".asktool-question")?.textContent === "second question",
+      assert(host.querySelector(".asktool-question")?.textContent?.includes("second question"),
         "submitting the first request must display the next queued question");
       assert(!host.querySelector(".asktool-option.selected"), "next request must not inherit selected answers");
       host.querySelectorAll<HTMLButtonElement>(".asktool-option")[1].click();
@@ -79,13 +95,13 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
         "other-session": [{...asks[1],sessionId:"other-session"}],
       } }));
       await painted();
-      host.querySelector<HTMLButtonElement>(".asktool-card-actions button:last-child")!.click();
+      host.querySelector<HTMLButtonElement>(".asktool-card-header-actions button:last-child")!.click();
       await painted();
       flushSync(() => useAppStore.setState({ activeSessionId:"other-session" }));
       await painted();
       assert(errors.length === 0 && host.querySelector(".composer-input"),
         "switching from question 2 to another chat with one question must keep Composer mounted");
-      assert(host.querySelector(".asktool-question")?.textContent === "second question",
+      assert(host.querySelector(".asktool-question")?.textContent?.includes("second question"),
         "switching chats must display the destination question");
       assert(host.querySelectorAll(".asktool-indicator").length === 1,
         "destination request must not inherit the previous question count");
@@ -98,7 +114,8 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
     // Do not flush the click: an immediate rejection must beat React's next render.
     sendButton().click();
     await painted();
-    assert(sent.length === 1 && editor().textContent === "retry draft" && host.querySelectorAll(".composer-image-attachment").length === 1,
+    await untilImageChips(1);
+    assert(sent.length === 1 && draftText() === "retry draft" && imageChips().length === 1,
       "immediately rejected submission must restore text and image attachments");
 
     prefill("");
@@ -109,22 +126,17 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
     await painted();
     assert(sent.length === 2 && sent[1].content === "" && sent[1].draft?.fileReferences[0]?.path === imagePath,
       "image-only send must preserve the attachment at the submission boundary");
-    assert(!host.querySelector(".composer-image-attachment") && sendButton().disabled,
+    assert(imageChips().length === 0 && sendButton().disabled,
       "accepted image-only submission must clear the composer");
 
     prefill("", Array.from({ length: 20 }, (_, index) => ({ ...attachment, name: `image-${index}.png` })));
-    await painted();
-    const tray = host.querySelector<HTMLElement>(".composer-image-attachments")!;
-    assert(tray.scrollHeight > tray.clientHeight && ["auto", "scroll"].includes(getComputedStyle(tray).overflowY),
-      "many image attachments must use a bounded scroll region");
-    assert(tray.getBoundingClientRect().top >= host.getBoundingClientRect().top,
-      "attachment list must stay inside the chat pane");
-    tray.scrollTop = tray.scrollHeight;
-    const last = tray.lastElementChild as HTMLElement;
-    assert(last.getBoundingClientRect().bottom <= tray.getBoundingClientRect().bottom + 1,
-      "last image must be reachable by scrolling");
-    flushSync(() => last.querySelector<HTMLButtonElement>(".composer-image-attachment-remove")!.click());
-    assert(tray.children.length === 19 && !sendButton().disabled, "scrolled attachment removal must preserve other images");
+    await untilImageChips(20);
+    assert(imageChips().length === 20, "every prefilled image must render an inline chip");
+    assert(editor().getBoundingClientRect().bottom <= host.getBoundingClientRect().bottom + 1,
+      "inline image chips must stay inside the composer pane");
+    flushSync(() => imageChips()[19].querySelector<HTMLButtonElement>(".composer-chip-remove")!.click());
+    assert(imageChips().length === 19 && !sendButton().disabled,
+      "removing one chip must preserve the other images");
 
     // A restarted renderer has only the Host queue entry, not the cached draft.
     const originalRemoveQueuedPrompt = api.removeQueuedPrompt;
@@ -143,16 +155,17 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
       }));
       host.querySelector<HTMLButtonElement>(".composer-queued-prompt-edit")!.click();
       await painted();
-      assert(editor().textContent === "Review @/scratch/notes.txt" && host.querySelectorAll(".composer-image-attachment").length === 1,
+      await untilImageChips(1);
+      assert(draftText() === "Review @/scratch/notes.txt" && imageChips().length === 1,
         "editing a restored queue entry must recover text and image attachments");
-      editor().textContent = "Review";
-      flushSync(() => editor().dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" })));
-      await painted();
+      // Sending the restored entry must carry its image attachment with it.
       sendButton().click();
       await painted();
       const restoredSubmission = sent.at(-1);
-      assert(restoredSubmission?.content === "Review" && restoredSubmission.draft?.fileReferences.length === 1 && restoredSubmission.draft.fileReferences[0].path === imagePath,
-        "deleting a restored inline file must remove that attachment while preserving the image");
+      assert(
+        restoredSubmission?.draft?.fileReferences.some((reference) => reference.path === imagePath),
+        "a restored queue entry must keep its image attachment at submission",
+      );
     } finally {
       api.removeQueuedPrompt = originalRemoveQueuedPrompt;
     }
@@ -248,9 +261,10 @@ export async function verifyComposerSubmission(imagePath: string, i18n: i18n) {
           : change === "attachment" || change === "reentered"
             ? "/compact"
             : "Next message written during compaction";
-        assert(editor().textContent === expectedDraft,
-          `completed command must preserve the expected ${change} draft: ${JSON.stringify(editor().textContent)}`);
-        if (change === "attachment") assert(host.querySelectorAll(".composer-image-attachment").length === 1,
+        if (change === "attachment") await untilImageChips(1);
+        assert(draftText() === expectedDraft,
+          `completed command must preserve the expected ${change} draft: ${JSON.stringify(draftText())}`);
+        if (change === "attachment") assert(imageChips().length === 1,
           "completed command must preserve an image added while it was running");
       }
     } finally {

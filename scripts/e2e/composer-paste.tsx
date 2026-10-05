@@ -1,11 +1,10 @@
-import { serializeInlineComposerFileReferences } from "@pi-desktop/shared";
+import { formatSessionLink, serializeInlineComposerFileReferences, type MessageAttachment } from "@pi-desktop/shared";
 import { useComposerInputHistory } from "../../apps/desktop/src/features/chat/composer/hooks/useComposerInputHistory";
 import type { AppState } from "../../apps/desktop/src/stores/app-state";
 import { createQueueSlice } from "../../apps/desktop/src/stores/slices/queue-slice";
 import type { SessionRuntime } from "../../apps/desktop/src/stores/runtime/session-runtime";
 import { useComposerSubmit } from "../../apps/desktop/src/features/chat/composer/hooks/useComposerSubmit";
 import { verifyComposerSubmission } from "./composer-submission";
-import { ComposerImageAttachments } from "../../apps/desktop/src/features/chat/composer/ComposerImageAttachments";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createInstance } from "i18next";
@@ -30,7 +29,7 @@ import {
 } from "../../apps/desktop/src/features/chat/composer/editor";
 import { api } from "../../apps/desktop/src/lib/api";
 import { FilesTab } from "../../apps/desktop/src/components/workpanel/FilesTab";
-import { FileRefChip } from "../../apps/desktop/src/features/chat/transcript/shared";
+import { FileRefChip, MessageAttachmentImage } from "../../apps/desktop/src/features/chat/transcript/shared";
 import { useOpenChatFileRef } from "../../apps/desktop/src/hooks/use-preview-target";
 import {
   readComposerDraft,
@@ -98,7 +97,6 @@ function Fixture({ sessionId, t, workspacePath }: { sessionId: string; t: TFunct
   });
   return (
     <div className="composer-stack">
-      <ComposerImageAttachments controller={draft.imagePreview} onRemove={draft.removeImage} disabled={attachments.pasting} />
       <div className="composer-shell">
       <ComposerInput
         imagePreview={draft.imagePreview}
@@ -533,21 +531,27 @@ globalThis.composerPasteProbe = async () => {
         controller.fileReferences[0].kind === "image",
       "native image file was mistaken for text",
     );
-    assert(!controller.ref.current!.querySelector("img"), "image thumbnails must be outside the text editor");
-    assert(document.querySelector(".composer-image-attachments"), "image thumbnails must have a separate row above the input");
-    const tray = document.querySelector<HTMLElement>(".composer-image-attachments")!;
-    const shell = document.querySelector<HTMLElement>(".composer-shell")!;
-    assert(!shell.contains(tray) && tray.getBoundingClientRect().bottom <= shell.getBoundingClientRect().top,
-      "attachment row must sit above and outside the input shell");
-    assert(readEditorValue(controller.ref.current!) === "prefix  suffix", "image token leaked into visible text");
-    // #117: enter through the real attachment, read through sandboxed image IPC,
+    // Pasted images are inline chips in the draft, exactly like a pasted file.
+    const draftText = () => {
+      let text = readEditorValue(controller.ref.current!);
+      for (const reference of controller.fileReferences) {
+        if (reference.token) text = text.split(reference.token).join("");
+      }
+      return text;
+    };
+    const imageChipByToken = (token: string) => controller.ref.current!
+      .querySelector<HTMLElement>(`.composer-chip[data-image][data-token="${token}"]`);
+    const chip = imageChipByToken(controller.fileReferences[0].token!)!;
+    assert(chip, "pasted images must render as inline chips");
+    assert(!document.querySelector(".composer-image-attachments"), "the detached attachment row must be gone");
+    assert(chip.getAttribute("role") === "button" && chip.tabIndex === 0,
+      "image chip must be keyboard accessible");
+    assert(draftText() === "prefix  suffix", "image chip changed the surrounding draft text");
+    // #117: enter through the real chip, read through sandboxed image IPC,
     // and keep the draft, caret, and work-panel state independent of inspection.
     editor = controller.ref.current!;
     const beforePreview = readEditorValue(editor);
     const imageReference = controller.fileReferences[0];
-    const chip = document.querySelector<HTMLButtonElement>(".composer-image-attachment-open")!;
-    assert(chip.tagName === "BUTTON" && chip.tabIndex === 0,
-      "image attachment must be keyboard accessible");
     const dialog = () => document.querySelector<HTMLDialogElement>("dialog.composer-image-preview[open]");
     const until = async (condition: () => unknown, message: string) => {
       const deadline = performance.now() + 5000;
@@ -567,8 +571,45 @@ globalThis.composerPasteProbe = async () => {
     const button = (label: string) => Array.from(dialog()!.querySelectorAll<HTMLButtonElement>("button"))
       .find((element) => element.getAttribute("aria-label") === label || element.textContent === label)!;
     const close = () => flushSync(() => button(i18n.t("common.close")).click());
-    await until(() => chip.querySelector<HTMLImageElement>("img")?.naturalWidth === 1, "attachment thumbnail missing");
+    // Hovering the chip reveals its preview card without opening the modal.
+    chip.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    await until(() => document.querySelector<HTMLImageElement>(".image-hover-card img")?.naturalWidth === 1,
+      "hover preview card missing");
+    chip.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+    await until(() => !document.querySelector(".image-hover-card"), "hover preview card outlived the pointer");
     editor.focus();
+    // A sent message's image attachment is that same chip, and hovering it shows
+    // the shared preview card instead of an inline thumbnail.
+    const messageHost = document.createElement("div");
+    messageHost.style.cssText = "position: relative;";
+    document.body.append(messageHost);
+    const messageRoot = createRoot(messageHost);
+    try {
+      const messageAttachment: MessageAttachment = {
+        kind: "image",
+        ref: imageReference.path,
+        name: imageReference.name,
+      };
+      flushSync(() => messageRoot.render(
+        <I18nextProvider i18n={i18n}>
+          <div role="list">
+            <MessageAttachmentImage attachment={messageAttachment} onOpenFile={noop} />
+          </div>
+        </I18nextProvider>,
+      ));
+      await new Promise(requestAnimationFrame);
+      const messageChip = messageHost.querySelector<HTMLElement>(".message-attachment-image-chip .chat-file-chip");
+      assert(messageChip, "a message image attachment must render as a chip");
+      assert(!messageHost.querySelector("img"), "a message image attachment must not inline a thumbnail");
+      messageChip!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+      await until(() => document.querySelector<HTMLImageElement>(".image-hover-card img")?.naturalWidth === 1,
+        "message hover preview card missing");
+      messageChip!.dispatchEvent(new PointerEvent("pointerout", { bubbles: true }));
+      await until(() => !document.querySelector(".image-hover-card"), "message hover card outlived the pointer");
+    } finally {
+      flushSync(() => messageRoot.unmount());
+      messageHost.remove();
+    }
     setEditorCaret(editor, 7);
     flushSync(() => chip.click());
     assert(dialog(), "image attachment must open an overlay instead of the work panel");
@@ -617,7 +658,7 @@ globalThis.composerPasteProbe = async () => {
       kind: "image", mimeType: "image/png", token: "\ueffe",
     });
     flushSync(() => controller.applyEditorDraft(`${beforePreview}${wide.token}`, [imageReference, wide], 7));
-    flushSync(() => document.querySelector<HTMLButtonElement>(".composer-image-attachment-open")!.click());
+    flushSync(() => imageChipByToken(imageReference.token!)!.click());
     await previewReady();
     assert(button(i18n.t("chat.imagePreview.previous")).disabled, "first image should disable previous");
     flushSync(() => button(i18n.t("chat.imagePreview.next")).click());
@@ -683,17 +724,18 @@ globalThis.composerPasteProbe = async () => {
     assert(!dialog(), "blank-area click did not close preview");
     if (globalThis.composerPreviewCapture) await globalThis.composerPreviewCapture();
     editor.focus();
-    select(editor, 0, readEditorValue(editor).length);
+    const galleryDraft = readEditorValue(editor);
+    select(editor, 0, galleryDraft.length);
     assert(document.execCommand("insertText", false, "new prompt"), "text replacement failed");
     await new Promise(requestAnimationFrame);
-    assert(controller.fileReferences.length === 2 && document.querySelectorAll(".composer-image-attachment").length === 2,
-      "editing all text removed independent image attachments");
-    assert(controller.draftSnapshot("new prompt").fileReferences.length === 2,
-      "submission snapshot lost detached images");
+    assert(controller.fileReferences.length === 0,
+      "replacing the whole draft removed its inline image chips");
+    assert(controller.draftSnapshot("new prompt").fileReferences.length === 0,
+      "submission snapshot kept a replaced image");
     assert(document.execCommand("undo"), "image draft text undo unavailable");
     await new Promise(requestAnimationFrame);
-    assert(readEditorValue(editor) === beforePreview && controller.fileReferences.length === 2,
-      "text undo changed image attachments");
+    assert(readEditorValue(editor) === galleryDraft && controller.fileReferences.length === 2,
+      "text undo did not restore the inline image chips");
 
     // Cancelled image reads must never overwrite a later draft's image.
     const realRead = api.fsReadImageDataUrl;
@@ -704,12 +746,12 @@ globalThis.composerPasteProbe = async () => {
     api.fsReadImageDataUrl = () => new Promise((_resolve, reject) => { rejectRead = reject; });
     try {
       flushSync(() => controller.applyEditorDraft(beforePreview, [delayed], 7));
-      flushSync(() => document.querySelector<HTMLButtonElement>(".composer-image-attachment-open")!.click());
+      flushSync(() => imageChipByToken(imageReference.token!)!.click());
       assert(rejectRead && dialog(), "deferred image read was not started");
       api.fsReadImageDataUrl = realRead;
       flushSync(() => controller.applyEditorDraft(beforePreview, [imageReference], 7));
       assert(!dialog(), "removed preview attachment left the dialog open");
-      flushSync(() => document.querySelector<HTMLButtonElement>(".composer-image-attachment-open")!.click());
+      flushSync(() => imageChipByToken(imageReference.token!)!.click());
       await previewReady();
       rejectRead!(new Error("late fixture read failure"));
       await new Promise(requestAnimationFrame);
@@ -721,19 +763,19 @@ globalThis.composerPasteProbe = async () => {
     render("paste-a");
     await new Promise(requestAnimationFrame);
     editor = controller.ref.current!;
-    const currentChip = document.querySelector<HTMLButtonElement>(".composer-image-attachment-open")!;
+    const currentChip = imageChipByToken(imageReference.token!)!;
     assert(currentChip, "returning to the session did not restore its image chip");
     useAppStore.setState({ activeSessionId: "paste-b" });
     flushSync(() => currentChip.click());
     assert(!dialog(), "old chip opened in another session");
     useAppStore.setState({ activeSessionId: "paste-a" });
-    const remove = currentChip.parentElement!.querySelector<HTMLButtonElement>(".composer-image-attachment-remove")!;
+    const remove = currentChip.querySelector<HTMLButtonElement>(".composer-chip-remove")!;
     flushSync(() => {
       remove.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
       remove.click();
     });
     assert(!dialog() && submitted === 0, "remove opened the preview or submitted the prompt");
-    assert(controller.fileReferences.length === 0 && readEditorValue(editor) === "prefix  suffix",
+    assert(controller.fileReferences.length === 0 && draftText() === "prefix  suffix",
       "remove did not preserve the surrounding draft");
 
     // Failed images remain attached, show a retry action, and never blank the draft.
@@ -741,7 +783,7 @@ globalThis.composerPasteProbe = async () => {
       kind: "image", mimeType: "image/png", token: imageReference.token,
     });
     flushSync(() => controller.applyEditorDraft(beforePreview, [missing], 7));
-    flushSync(() => document.querySelector<HTMLButtonElement>(".composer-image-attachment-open")!.click());
+    flushSync(() => imageChipByToken(imageReference.token!)!.click());
     await until(() => dialog()?.textContent?.includes(i18n.t("chat.imagePreview.error")), "missing image did not show an error");
     assert(readEditorValue(editor) === beforePreview && controller.fileReferences.length === 1,
       "failed preview lost the draft");
@@ -755,25 +797,59 @@ globalThis.composerPasteProbe = async () => {
       kind: "image", mimeType: "image/png", token: imageReference.token,
     });
     flushSync(() => controller.applyEditorDraft(beforePreview, [corrupt], 7));
-    flushSync(() => document.querySelector<HTMLButtonElement>(".composer-image-attachment-open")!.click());
+    flushSync(() => imageChipByToken(imageReference.token!)!.click());
     await until(() => dialog()?.textContent?.includes(i18n.t("chat.imagePreview.error")), "undecodable image did not show retry");
     assert(readEditorValue(editor) === beforePreview, "decode failure changed the draft");
     close();
 
     // An image-only draft remains sendable and survives session switching.
     editor = await paste("", [image], true);
-    assert(readEditorValue(editor) === "" && controller.draftSnapshot("").fileReferences.length === 1,
+    assert(controller.ref.current!.querySelectorAll(".composer-chip[data-image]").length === 1 &&
+      controller.draftSnapshot(readEditorValue(controller.ref.current!)).fileReferences.length === 1,
       "image-only draft lost its sendable attachment");
     const attachedId = controller.fileReferences[0].path;
     flushSync(() => controller.restoreDraftForKey("paste-a", { text: "older draft", fileReferences: [] }));
-    assert(readEditorValue(editor) === "" && controller.fileReferences[0]?.path === attachedId,
+    assert(controller.ref.current!.querySelector(".composer-chip[data-image]") &&
+      controller.fileReferences[0]?.path === attachedId,
       "restoring an old draft overwrote a newer image-only draft");
     render("paste-b");
     flushSync(() => controller.restoreDraftForKey("paste-a", { text: "older draft", fileReferences: [] }));
     render("paste-a");
-    await new Promise(requestAnimationFrame);
-    assert(controller.fileReferences[0]?.path === attachedId && document.querySelector(".composer-image-attachment"),
+    // The restored draft hydrates from the cache in the switch effect, so give
+    // the layout paint a bounded window before asserting the chip is back.
+    const restoredDeadline = performance.now() + 2000;
+    while (
+      (controller.fileReferences[0]?.path !== attachedId ||
+        !controller.ref.current!.querySelector(".composer-chip[data-image]")) &&
+      performance.now() < restoredDeadline
+    ) {
+      await new Promise(requestAnimationFrame);
+    }
+    assert(controller.fileReferences[0]?.path === attachedId &&
+      controller.ref.current!.querySelector(".composer-chip[data-image]"),
       "image-only draft did not survive session switching");
+
+    // A pasted conversation link is an inline chip, and the submitted text
+    // carries that link again.
+    const linkedSession = "session-link-fixture";
+    editor = await paste(`continue from ${formatSessionLink(linkedSession)}`, []);
+    const linkChip = editor.querySelector<HTMLElement>(
+      `.composer-chip[data-session-id="${linkedSession}"]`,
+    );
+    assert(linkChip, "a pasted conversation link must render as an inline chip");
+    assert(
+      !readEditorValue(editor).includes(formatSessionLink(linkedSession)),
+      "the chip replaces the raw link in the draft text",
+    );
+    assert(
+      serializeInlineComposerFileReferences(readEditorValue(editor), controller.fileReferences)
+        .includes(formatSessionLink(linkedSession)),
+      "the submitted text carries the conversation link",
+    );
+    assert(
+      linkChip!.querySelector(".composer-chip-name")?.textContent?.includes(linkedSession.slice(0, 8)),
+      "the chip names the conversation it opens",
+    );
 
     await paste("file names", nativeFiles);
     assert(
@@ -835,8 +911,13 @@ globalThis.composerPasteProbe = async () => {
     await new Promise(requestAnimationFrame);
     await rejectSubmission();
     await new Promise(requestAnimationFrame);
-    assert(readEditorValue(controller.ref.current!) === "retry draft" && controller.fileReferences[0]?.path === imageReference.path,
-      "fast rejection before React commits must restore the text and attachments");
+    const retryToken = controller.fileReferences[0]?.token ?? "";
+    assert(
+      retryToken !== "" &&
+        readEditorValue(controller.ref.current!) === `retry draft${retryToken}` &&
+        controller.fileReferences[0]?.path === imageReference.path,
+      "fast rejection before React commits must restore the text and attachments",
+    );
     // Native undo must restore reference metadata as well as the visible chip.
     await reset("inspect \uE050 please", 8, 9);
     const undoReference = createFileReference("src/main.ts", "main.ts", "paste-a", { token: "\uE050" });
@@ -913,7 +994,7 @@ globalThis.composerPasteProbe = async () => {
       imagePreviewAndKeyboard: true,
       centeredImageGallery: true,
       imageDragAndReset: true,
-      separateImageAttachmentRow: true,
+      inlineImageChips: true,
       imageZoomFocusAndRecovery: true,
       nativeMultipleFiles: true,
       selectionAndSessionDrafts: true,

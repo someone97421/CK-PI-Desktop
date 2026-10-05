@@ -90,7 +90,7 @@ export function useComposerImagePreview({
         const current = useAppStore.getState();
         if (!editor.isConnected || (current.activeSessionId ?? "") !== reference.sessionId ||
           (current.workspace?.path ?? null) !== openingWorkspace) return;
-        if (focused instanceof HTMLElement && focused.isConnected && (editor.contains(focused) || focused.closest(".composer-image-attachments"))) focused.focus();
+        if (focused instanceof HTMLElement && focused.isConnected && (editor.contains(focused) || focused.closest(".composer-chip[data-image]"))) focused.focus();
         else editor.focus();
         if (range && editor.contains(range.commonAncestorContainer)) {
           const selection = window.getSelection();

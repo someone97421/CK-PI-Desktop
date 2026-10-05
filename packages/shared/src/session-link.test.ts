@@ -4,6 +4,8 @@ import {
   isSessionLinkToken,
   MAX_SESSION_LINKS_PER_MESSAGE,
   parseSessionLinks,
+  parseSessionLinkToken,
+  sessionLinkSpans,
 } from "./session-link.js";
 
 describe("session links", () => {
@@ -42,5 +44,21 @@ describe("session links", () => {
   it("recognizes one token without scanning prose", () => {
     expect(isSessionLinkToken(formatSessionLink("abc"))).toBe(true);
     expect(isSessionLinkToken("@src/index.ts")).toBe(false);
+  });
+  it("names the id only when the whole token is one link", () => {
+    expect(parseSessionLinkToken(formatSessionLink("abc"))).toBe("abc");
+    expect(parseSessionLinkToken(`  ${formatSessionLink("abc")}  `)).toBe("abc");
+    expect(parseSessionLinkToken(`see ${formatSessionLink("abc")}`)).toBeNull();
+    expect(parseSessionLinkToken("pi-desktop://session/")).toBeNull();
+    expect(parseSessionLinkToken("@src/index.ts")).toBeNull();
+  });
+
+  it("reports every link span in text order", () => {
+    const text = `first ${formatSessionLink("aaa")} then ${formatSessionLink("bbb")}`;
+    const spans = sessionLinkSpans(text);
+    expect(spans.map((span) => span.id)).toEqual(["aaa", "bbb"]);
+    expect(text.slice(spans[0].start, spans[0].end)).toBe(formatSessionLink("aaa"));
+    expect(text.slice(spans[1].start, spans[1].end)).toBe(formatSessionLink("bbb"));
+    expect(sessionLinkSpans("nothing here")).toEqual([]);
   });
 });

@@ -17,16 +17,15 @@ const root = createRoot(host);
 function Fixture({ width, crowded, model }: { width: number; crowded: boolean; model: string }) {
   const [level, setLevel] = useState<SessionThinkingLevel>("omit");
   const [open, setOpen] = useState(false);
-  const rootMenuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const controller: ReturnType<typeof useComposerModelMenu> = {
-    open, setOpen, view: "root", query: "", setQuery: noop,
+    open, setOpen, otherModelsExpanded: false, setOtherModelsExpanded: noop, hasOtherModels: false, query: "", setQuery: noop,
     modelHighlight: -1, setModelHighlight: noop,
     thinkingHighlight: -1, setThinkingHighlight: noop,
-    rootMenuRef, modelSearchRef: searchRef, modelListRef: listRef,
+    modelSearchRef: searchRef, modelListRef: listRef,
     thinkingListRef: listRef, modelGroups: [], flatModels: [],
-    thinkingMenuLevels: levels, showView: noop,
+    thinkingMenuLevels: levels,
     selectModel: async () => {}, selectThinkingLevel: async () => {},
     commitThinkingLevel: async (next) => { setLevel(next); return true; },
     onMenuKeyDown: noop, controlsBlocked: false,

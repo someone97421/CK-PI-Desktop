@@ -3,6 +3,8 @@ import { convertResponsesMessages } from "@earendil-works/pi-ai/api/openai-respo
 import { retryProviderRequest } from "@earendil-works/pi-ai/utils/provider-retry";
 import { isContextOverflow } from "@earendil-works/pi-ai/utils/overflow";
 import { normalizeContext, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { isRetryableAssistantError } from "@earendil-works/pi-ai/compat";
+import { classifyProviderError, isTransientProviderRetryCode } from "./provider-retry.js";
 
 const testModel: Model<"openai-responses"> = {
   id: "test-model",
@@ -78,6 +80,28 @@ describe("Pi 1.0 upstream regression contracts", () => {
       random.mockRestore();
       vi.useRealTimers();
     }
+  });
+
+  it("keeps model-capacity failures retryable in Pi and Desktop runtimes", () => {
+    const message: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: testModel.api,
+      provider: testModel.provider,
+      model: testModel.id,
+      usage: {
+        input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "error",
+      errorMessage: "Selected model is at capacity",
+      timestamp: 1,
+    };
+
+    expect(isRetryableAssistantError(message)).toBe(true);
+    const desktopError = classifyProviderError(message);
+    expect(desktopError).toMatchObject({ code: "PROVIDER_ERROR", retriable: true });
+    expect(isTransientProviderRetryCode(desktopError.code)).toBe(true);
   });
 
   it("recognizes the Z.AI context-overflow finish reason", () => {

@@ -52,3 +52,25 @@ export function parseSessionLinks(text: string): string[] {
 export function isSessionLinkToken(token: string): boolean {
   return parseSessionLinks(token).length > 0;
 }
+
+/** The session id when the whole token is one session link, otherwise null. */
+export function parseSessionLinkToken(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith(`${SESSION_LINK_SCHEME}://${SESSION_LINK_HOST}/`)) return null;
+  const ids = parseSessionLinks(trimmed);
+  return ids.length === 1 && trimmed.endsWith(ids[0]) ? ids[0] : null;
+}
+
+/** Every session link in `text` with the span it occupies, in text order. */
+export function sessionLinkSpans(
+  text: string,
+): Array<{ id: string; start: number; end: number }> {
+  if (!text?.includes(`${SESSION_LINK_SCHEME}://`)) return [];
+  const spans: Array<{ id: string; start: number; end: number }> = [];
+  for (const match of text.matchAll(SESSION_LINK_PATTERN)) {
+    const id = match[1];
+    if (!SESSION_LINK_ID.test(id) || match.index === undefined) continue;
+    spans.push({ id, start: match.index, end: match.index + match[0].length });
+  }
+  return spans;
+}

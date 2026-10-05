@@ -28,7 +28,6 @@ pub const DOMAIN_PROJECTS: &str = "projects";
 pub const DOMAIN_PLUGINS: &str = "plugins";
 pub const DOMAIN_AUTOMATION: &str = "automation";
 pub const DOMAIN_MEMORY: &str = "memory";
-pub const MAX_INSTRUCTION_BYTES: usize = 32 * 1024;
 
 pub(crate) const PORTABLE_APPLICATION_FIELDS: &[&str] = &[
     "theme",
@@ -743,5 +742,43 @@ mod tests {
             .insert(stored_path, "project:from-other-device".into());
         let mapped = capture_projects(&mut state, &overrides).unwrap();
         assert_eq!(mapped[0].payload["logicalId"], "project:from-other-device");
+    }
+
+    #[test]
+    fn captures_project_instruction_files_beyond_the_former_size_cap() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let project = data_dir.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let content = "policy line\n".repeat(4000);
+        assert!(content.len() > 32 * 1024);
+        std::fs::write(project.join("AGENTS.md"), &content).unwrap();
+
+        let mut state = AppState::open(data_dir.path()).unwrap();
+        state
+            .db
+            .ensure_project(&project.to_string_lossy(), false)
+            .unwrap();
+        let entities =
+            capture_instructions(&mut state, &ProjectIdentityOverrides::default()).unwrap();
+        let project_entity = entities
+            .iter()
+            .find(|entity| entity.payload["scope"] == "project")
+            .expect("project instruction entity");
+        assert_eq!(
+            project_entity.payload["content"].as_str(),
+            Some(content.as_str())
+        );
+    }
+
+    #[test]
+    fn writes_imported_instruction_files_beyond_the_former_size_cap() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let path = data_dir.path().join("AGENTS.md");
+        let content = "imported line\n".repeat(4000);
+        assert!(content.len() > 32 * 1024);
+
+        write_instruction_file(&path, &content).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
     }
 }

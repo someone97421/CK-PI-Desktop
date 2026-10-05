@@ -60,7 +60,11 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'test.trust',params:{s
   await build({ entryPoints: [join(root, "scripts/e2e/provider-certificate-sidecar.ts")],
     outfile: join(temp, "parent.mjs"), bundle: true, platform: "node", format: "esm",
     alias: { "@pi-desktop/host-runtime": join(root, "packages/host-runtime/src/agent-sidecar.ts") },
-    banner: { js: "import { createRequire } from 'node:module'; import { dirname } from 'node:path'; import { fileURLToPath } from 'node:url'; const require = createRequire(import.meta.url); const __dirname = dirname(fileURLToPath(import.meta.url));" },
+    // Inject only the cjs interop the ESM bundle still needs. `dirname` and
+    // `fileURLToPath` stay out of the banner: the bundled main sources import
+    // them from `node:path` / `node:url` themselves, and a same-scope redeclare
+    // is a syntax error.
+    banner: { js: "import { createRequire as __piCreateRequire } from 'node:module'; const require = __piCreateRequire(import.meta.url); const __dirname = new URL('.', import.meta.url).pathname;" },
   });
   await run("localhost", "DEPTH_ZERO_SELF_SIGNED_CERT", false);
   await run("localhost", "success", true);

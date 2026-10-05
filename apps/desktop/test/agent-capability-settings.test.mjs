@@ -78,14 +78,19 @@ test("one search field covers the page and every row carries its level", () => {
   assert.match(styles, /\.agent-capability-badge\.is-level\s*\{/);
 });
 
-test("skills keep the MCP-shaped toolbar and scope import actions in group headers", () => {
+test("skills keep file imports in group headers and expose the external scan in-page", () => {
   const toolbar = skills.slice(skills.indexOf("<CapabilityToolbar"), skills.indexOf("<CapabilityPanel"));
   assert.match(toolbar, /actions=\{[\s\S]*?CapabilityButton variant="primary"/);
   assert.match(toolbar, /settings\.newSkill/);
+  assert.match(toolbar, /ImportToggleButton/);
+  assert.match(toolbar, /settings\.importSkillFromTools/);
   assert.doesNotMatch(toolbar, /extensions\.skills\.add/);
-  assert.doesNotMatch(toolbar, /importSkill|IconDownload|settings\.importSkill/);
   assert.match(skills, /action=\{importButton\("global"\)\}/);
   assert.match(skills, /action=\{selectedProjectPath \? importButton\("project"\) : undefined\}/);
+  assert.match(skills, /<AgentSkillImportPanel/);
+  assert.match(skills, /level=\{targetLevel\}/);
+  assert.match(mcp, /<AgentMcpImportPanel/);
+  assert.match(mcp, /settings\.importMcpFromTools/);
   assert.match(layout, /action\?: ReactNode/);
 });
 

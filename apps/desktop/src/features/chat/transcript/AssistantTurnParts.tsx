@@ -23,14 +23,14 @@ const SmoothMessageBubble = memo(function SmoothMessageBubble({ message, streami
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const enabled = smoothStreaming && !prefersReducedMotion;
   const displayContent = useSmoothText(message.content || "", streaming, enabled);
-  const showCursor = streaming && enabled && (displayContent.length < (message.content || "").length);
+  const showCursor = streaming && enabled && Boolean(displayContent);
   const proseRef = useStreamingCursor(displayContent, showCursor);
   return (
     <div
       className={`message-bubble assistant-turn-fragment${streaming ? " streaming" : ""}${showCursor ? " smooth-cursor" : ""}`}
       data-message-id={message.id}
     >
-      {displayContent ? <div ref={proseRef} className="prose-chat"><Markdown source={displayContent} /></div> : null}
+      {displayContent ? <div ref={proseRef} className="prose-chat"><Markdown source={displayContent} streaming={streaming} /></div> : null}
       {message.error ? <AssistantErrorMessage message={message} /> : null}
     </div>
   );

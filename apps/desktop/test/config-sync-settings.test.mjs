@@ -26,11 +26,19 @@ const api = await read("../src/lib/api.ts");
 const progressModel = await read(
   "../src/features/settings/config-sync-progress.ts",
 );
+const syncError = await read(
+  "../src/components/settings/ConfigSyncError.tsx",
+);
 
 test("cloud sync rendering follows the settings visibility gate", () => {
   assert.match(settingsPage, /tab === "sync" && !tabHidden && <ConfigSyncPage \/>/);
   assert.match(settingsIndex, /id: "sync"/);
-  assert.match(settingsIndex, /experimentalBadgeKey: "settings\.configSync\.experimental"/);
+  // Cloud sync stays behind the developer-mode and development-build gate and
+  // keeps its Experimental badge (fork visibility rule).
+  assert.match(
+    settingsIndex,
+    /\{\s*id: "sync",[\s\S]*?developerOnly: true,[\s\S]*?developmentOnly: true,[\s\S]*?experimentalBadgeKey: "settings\.configSync\.experimental",/,
+  );
   assert.match(settingsIndex, /settings\.configSync\.connectionTitle/);
 });
 
@@ -183,4 +191,44 @@ test("a manual sync outlasts the flat default transport deadline", () => {
   assert.ok(CONFIG_SYNC_RPC_TIMEOUT_MS > DEFAULT_RPC_TIMEOUT_MS);
   // Every other config-sync call keeps the shared default.
   assert.equal(rpcTimeoutMs("configSync.getState", {}), DEFAULT_RPC_TIMEOUT_MS);
+});
+
+test("a failed sync reads as one alert, not a stray paragraph", () => {
+  // The notice is the page's error summary: announced once, with the error
+  // signal carried by a single frame instead of an inline bold label.
+  assert.match(
+    syncError,
+    /className="settings-config-sync-alert" role="alert"/,
+  );
+  assert.match(syncError, /<IconTriangleAlert[\s\S]{0,120}size=\{16\}/);
+  assert.match(syncError, /className="settings-config-sync-alert-title"/);
+  assert.match(syncError, /className="settings-config-sync-alert-text"/);
+  // The raw host text stays opt-in behind the existing disclosure.
+  assert.match(syncError, /className="settings-config-sync-alert-details"/);
+  assert.match(
+    syncError,
+    /<summary>\{t\("settings\.configSync\.errorDetails"\)\}<\/summary>/,
+  );
+  assert.match(syncError, /<pre>\{message\}<\/pre>/);
+});
+
+test("the sync alert paints its surface from theme tokens", () => {
+  assert.match(
+    styles,
+    /\.settings-config-sync-alert \{[\s\S]*?border: 1px solid color-mix\(in srgb, var\(--ds-error\) 30%, transparent\);[\s\S]*?background: color-mix\(in srgb, var\(--ds-error\) 8%, transparent\);/s,
+  );
+  assert.match(styles, /\.settings-config-sync-alert-icon \{[\s\S]*?color: var\(--ds-error\);/s);
+  // The host text keeps its own plate so a long provider detail never widens
+  // the notice.
+  assert.match(
+    styles,
+    /\.settings-config-sync-alert-details > pre \{[\s\S]*?overflow-wrap: anywhere;/s,
+  );
+  // `--ds-danger` is defined by no theme, so the error ink it named silently
+  // fell back to inherited text. Settings errors resolve through `--ds-error`.
+  assert.doesNotMatch(styles, /var\(--ds-danger\)/);
+  assert.match(
+    styles,
+    /\.settings-storage-message\.error \{\n  color: var\(--ds-error\);/,
+  );
 });

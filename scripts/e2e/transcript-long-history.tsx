@@ -364,6 +364,20 @@ export async function transcriptLongHistoryProbe() {
         assert(useAppStore.getState().messages[1] === parent, "child update replaced its stable parent Task");
       }
     }
+    // Structural growth must reuse completed text too, not just same-row deltas.
+    await select(largest);
+    largest.reads.count = 0;
+    for (let index = 0; index < 3; index++) {
+      const id = `appended-long-history-tool-${index}`;
+      send(largest.summary.id, { type: "tool_start", toolCallId: id, toolName: "Read",
+        args: { path: `append-probe-${index}.txt` } });
+      await until(() => host.querySelector(`[data-message-id="${id}"]`) !== null, "appended tool row");
+      await settled();
+    }
+    assert(largest.reads.count === 0, `tool appends reread ${largest.reads.count} completed bodies`);
+    largest.messages = useAppStore.getState().messages;
+    await select(sessions[0]); await select(largest);
+    assert(host.querySelector('[data-message-id="appended-long-history-tool-2"]'), "switch lost appended tool");
     assert(reads.every((read) => read.limit === 100), "ordinary selection requested unbounded Host history");
     assert(errors.length === 0, `render errors: ${errors.map(String)}`);
     return { ok: true, workCounts, hostPageSize: 100, simultaneousRunningSessions: 3,

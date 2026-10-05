@@ -1,9 +1,31 @@
+#!/usr/bin/env node
+/**
+ * Require every pinned Pi package to be installed at the target version, and
+ * the ones we patch to be installed as pnpm's patched instance.
+ *
+ * Usage:
+ *   node scripts/check-pi-dependencies.mjs
+ *   node scripts/check-pi-dependencies.mjs --root <dir>
+ *   pnpm check:pi-dependencies
+ */
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installedPatchHashes } from "./pi-patch-hash.mjs";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const targetVersion = "1.0.0";
+function parseArgs(argv) {
+  let out = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === "--root" && argv[i + 1]) {
+      out = resolve(argv[i + 1]);
+      i += 1;
+    }
+  }
+  return out;
+}
+
+const root = parseArgs(process.argv.slice(2));
+const targetVersion = "1.0.1";
 
 function readJson(path) {
   return JSON.parse(readFileSync(join(root, path), "utf8"));
@@ -25,7 +47,7 @@ function assertInstalled(packagePath, expectedName, { patched = false } = {}) {
   if (manifest.name !== expectedName || manifest.version !== targetVersion) {
     throw new Error(`${packagePath} resolves to ${manifest.name}@${manifest.version}, expected ${expectedName}@${targetVersion}`);
   }
-  if (patched && !resolved.includes("patch_hash=")) {
+  if (patched && installedPatchHashes(root, expectedName, targetVersion).length === 0) {
     throw new Error(`${packagePath} does not resolve to pnpm's patched package instance`);
   }
 }
@@ -53,10 +75,23 @@ for (const packageName of ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-mcp"
 }
 const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
 const releaseAgeExclusions = workspace.match(
-  /^minimumReleaseAgeExclude:[ \t]*([\s\S]*?)(?=^[A-Za-z][\w-]*:|\s*$)/m,
+  /^minimumReleaseAgeExclude:[ \t]*\r?\n((?:[ \t]+-[^\r\n]*\r?\n)*)/m,
 )?.[1] ?? "";
-if (/@earendil-works\/(?:chord|pi-agent-core|pi-ai|pi-telemetry|pi-coding-agent|pi-codemode|pi-mcp|pi-tui)@/.test(releaseAgeExclusions)) {
-  throw new Error("Remove the obsolete Pi-specific minimumReleaseAgeExclude entries");
+const actualReleaseAgeExclusions = [...releaseAgeExclusions.matchAll(/^[ \t]+-[ \t]*['"]?([^'"\s]+)['"]?[ \t]*$/gm)]
+  .map((match) => match[1])
+  .sort();
+const expectedReleaseAgeExclusions = [
+  "@earendil-works/chord@1.0.1",
+  "@earendil-works/pi-agent-core@1.0.1",
+  "@earendil-works/pi-ai@1.0.1",
+  "@earendil-works/pi-codemode@1.0.1",
+  "@earendil-works/pi-coding-agent@1.0.1",
+  "@earendil-works/pi-mcp@1.0.1",
+  "@earendil-works/pi-telemetry@1.0.1",
+  "@earendil-works/pi-tui@1.0.1",
+].sort();
+if (JSON.stringify(actualReleaseAgeExclusions) !== JSON.stringify(expectedReleaseAgeExclusions)) {
+  throw new Error("Pi minimumReleaseAgeExclude entries must match only the exact 1.0.1 release packages");
 }
 
-process.stdout.write("Pi direct pins and installed package instances are aligned at 1.0.0.\n");
+process.stdout.write(`Pi direct pins and installed package instances are aligned at ${targetVersion}.\n`);

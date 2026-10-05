@@ -1,4 +1,5 @@
 /** Resolve the provider/model a session should keep after first selection. */
+import type { RecentModel } from "./recent-models";
 
 export type SessionModelRef = {
   providerId?: string;
@@ -9,16 +10,41 @@ export type SessionModelProvider = {
   id: string;
   defaultModelId?: string;
   models?: Array<{ id: string }>;
+  enabled?: boolean;
+  hasSecret?: boolean;
+  authKind?: string;
 };
 
 export type SessionModelSettings = {
   defaultProviderId?: string;
   defaultModelId?: string;
+  imageGeneration?: SessionModelRef | null;
+  imageGenerationModels?: SessionModelRef[] | null;
 };
 
+/** Only configured, runnable chat bindings can be inherited by a new chat. */
+export function availableRecentModels(
+  recentModels: readonly RecentModel[],
+  providers: readonly SessionModelProvider[],
+  settings?: SessionModelSettings | null,
+): RecentModel[] {
+  const images = [
+    ...(settings?.imageGenerationModels ?? []),
+    ...(settings?.imageGeneration ? [settings.imageGeneration] : []),
+  ];
+  return recentModels.filter(entry => {
+    const provider = providers.find(item => item.id === entry.providerId);
+    const ids = provider?.models?.length ? provider.models.map(model => model.id) : [provider?.defaultModelId];
+    return provider && provider.enabled !== false &&
+      (provider.authKind === undefined || provider.authKind === "none" || provider.hasSecret) &&
+      ids.some(id => id?.toLowerCase() === entry.modelId.toLowerCase()) &&
+      !images.some(image => image.providerId === entry.providerId && image.modelId?.toLowerCase() === entry.modelId.toLowerCase());
+  });
+}
+
 /**
- * App default (or an explicit draft override) at the moment a session is
- * created. Later Settings default-model changes must not rewrite this pair.
+ * 创建会话时固定应用默认模型或明确选择的草稿模型。
+ * 近期模型仅用于菜单，不影响新会话继承。
  */
 export function inheritedSessionModelBinding({
   draft,
@@ -28,6 +54,7 @@ export function inheritedSessionModelBinding({
   draft?: SessionModelRef | null;
   settings?: SessionModelSettings | null;
   providers: readonly SessionModelProvider[];
+  recentModels?: readonly RecentModel[];
 }): SessionModelRef {
   const providerId = draft?.providerId ?? settings?.defaultProviderId;
   const provider = providers.find((item) => item.id === providerId);
@@ -66,8 +93,8 @@ export function sessionNeedsModelPin(
 }
 
 /**
- * Durable snapshot for an unpinned session: last used turn, else the current
- * app default. Callers persist this so the session stops following Settings.
+ * 未绑定会话使用最近一轮已有绑定，否则使用应用默认模型。
+ * 固定后不随设置变化。
  */
 export function pinnedSessionModelBinding({
   session,
@@ -79,6 +106,7 @@ export function pinnedSessionModelBinding({
   messages?: readonly SessionModelRef[];
   settings?: SessionModelSettings | null;
   providers: readonly SessionModelProvider[];
+  recentModels?: readonly RecentModel[];
 }): SessionModelRef {
   const used = lastUsedSessionModel(messages ?? []);
   return inheritedSessionModelBinding({

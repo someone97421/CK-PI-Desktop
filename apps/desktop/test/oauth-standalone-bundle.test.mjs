@@ -59,7 +59,28 @@ const exercise = String.raw`
 import assert from "node:assert/strict";
 import http from "node:http";
 import { syncBuiltinESMExports } from "node:module";
-http.Server.prototype.listen = function () { throw new Error("mock callback port unavailable"); };
+let callbackServer;
+const originalAddress = http.Server.prototype.address;
+http.Server.prototype.listen = function (port, host, callback) {
+  assert.equal(port, 1455);
+  assert.equal(host, "127.0.0.1");
+  callbackServer = this;
+  queueMicrotask(() => callback?.());
+  return this;
+};
+http.Server.prototype.address = function () {
+  if (this === callbackServer) return { address: "127.0.0.1", family: "IPv4", port: 1455 };
+  return originalAddress.call(this);
+};
+http.Server.prototype.close = function (callback) {
+  if (this === callbackServer) {
+    callback?.();
+    return this;
+  }
+  return Reflect.apply(originalClose, this, [callback]);
+};
+const originalClose = http.Server.prototype.close;
+http.Server.prototype.closeAllConnections = function () {};
 syncBuiltinESMExports();
 const { VendorOAuth, secretRefForProviderOauth } = await import("./oauth.mjs");
 const secrets = new Map();
@@ -107,16 +128,28 @@ const deps = {
     if (!url.startsWith("https://auth.openai.com/")) return;
     authorization = new URL(url);
     hostIds.push(authorization.searchParams.get("ext_agent_host_id"));
+    const callback = new URL("http://127.0.0.1:1455/auth/callback");
+    callback.searchParams.set("state", authorization.searchParams.get("state"));
+    callback.searchParams.set("code", "test-code");
+    callback.searchParams.set("client_id", "test-issued-client");
+    const requestHandler = callbackServer?.listeners("request")[0];
+    assert.equal(typeof requestHandler, "function");
+    await new Promise((resolve, reject) => {
+      requestHandler({ method: "GET", url: callback.pathname + callback.search }, {
+        writeHead(status) {
+          if (status !== 200) reject(new Error("unexpected OAuth callback response: " + status));
+        },
+        end() {
+          resolve();
+        },
+      });
+    });
   },
   emit: (event) => {
     if (event.kind === "error") failed(new Error(event.message));
     if (event.kind === "done") complete(event.providerId);
     if (event.kind === "prompt") {
-      const callback = new URL("http://127.0.0.1:1455/auth/callback");
-      callback.searchParams.set("state", authorization.searchParams.get("state"));
-      callback.searchParams.set("code", "test-code");
-      callback.searchParams.set("client_id", "test-issued-client");
-      oauth.respond({ loginId: event.loginId, promptId: event.request.promptId, value: callback.href });
+      assert.equal(event.request.type, "manual_code");
     }
   },
 };

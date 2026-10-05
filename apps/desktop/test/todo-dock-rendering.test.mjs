@@ -52,8 +52,13 @@ test("TodoDock renders bounded session progress and cancelled state", async () =
     const html = render();
     assert.match(html, /aria-expanded="false"/);
     assert.match(html, /class="todo-dock-content" aria-hidden="true"/);
+    assert.match(html, /class="todo-dock-content" aria-hidden="true"><div class="todo-dock-clip">/);
     assert.match(html, /extra-0/);
-    assert.match(html, /4 more items/);
+    // The expanded dock lists every row (#1319): the whole list is mounted, and
+    // the dock scrolls inside instead of printing a static overflow line.
+    assert.equal((html.match(/role="listitem"/g) ?? []).length, 12, "every ordered row renders");
+    assert.doesNotMatch(html, /more items/);
+    assert.match(html, /class="todo-dock-list" role="list" tabindex="-1"/);
     assert.match(html, /lucide-check/);
 
     Object.assign(useAppStore.getInitialState(), {
@@ -82,5 +87,13 @@ test("TodoDock uses a quiet disclosure animation and state surfaces", async () =
   assert.match(css, /\.todo-dock-content\s*\{[\s\S]*?grid-template-rows:\s*0fr;[\s\S]*?opacity:\s*0;/);
   assert.match(css, /\.todo-dock\.is-expanded \.todo-dock-content\s*\{[\s\S]*?grid-template-rows:\s*1fr;/);
   assert.match(css, /\.todo-dock-row-completed\s*\{[\s\S]*?var\(--ds-success\)/);
+  // The expanded list is the scrollport (#1319): bounded height, internal
+  // scroll, no chaining into the transcript, and reachable from the keyboard.
+  assert.match(
+    css,
+    /\.todo-dock\.is-expanded \.todo-dock-list\s*\{[\s\S]*?max-height:[\s\S]*?overflow-y:\s*auto;[\s\S]*?overscroll-behavior:\s*contain;/,
+  );
+  assert.match(css, /\.todo-dock-list:focus-visible\s*\{[\s\S]*?outline:/);
+  assert.doesNotMatch(css, /\.todo-dock-more\s*\{/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\.todo-dock-content/);
 });

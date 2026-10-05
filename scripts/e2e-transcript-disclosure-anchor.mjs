@@ -35,7 +35,10 @@ try {
     platform: "browser",
     format: "iife",
     jsx: "automatic",
-    define: { "process.env.NODE_ENV": '"production"' },
+    define: {
+      "process.env.NODE_ENV": '"production"',
+      "import.meta.env": '{"DEV":false,"MODE":"production"}',
+    },
     // The fixture measures its own geometry, so no app stylesheet is needed.
     loader: { ".css": "empty" },
     alias: {

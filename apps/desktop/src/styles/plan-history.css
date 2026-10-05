@@ -1,0 +1,31 @@
+.plan-history-card {
+  margin-block: 8px;
+  padding: 12px;
+  min-width: 0;
+}
+.plan-history-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.plan-history-title {
+  min-width: 0;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.plan-history-artifact {
+  max-width: 100%;
+  justify-content: flex-start;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: var(--text-xs);
+  color: var(--ds-text-secondary);
+}
+.plan-history-body {
+  margin-top: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

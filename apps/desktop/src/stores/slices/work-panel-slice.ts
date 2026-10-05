@@ -5,6 +5,7 @@ import {
   browserPluginTab,
   browserTabLabel,
   closeWorkPanelTabState,
+  createWorkPanelFileRequest,
   emptyWorkPanelContext,
   fileWorkPanelTab,
   newWorkPanelTab,
@@ -15,6 +16,7 @@ import {
   subagentWorkPanelTab,
   switchWorkPanelContextState,
   type WorkPanelContext,
+  type WorkPanelTab,
 } from "../../lib/work-panel-tabs";
 import {
   WORK_PANEL_COMPACT_MIN_WIDTH,
@@ -119,6 +121,10 @@ export function createWorkPanelSlice({
   | "updateBrowserWorkPanelTab"
 > {
   let workPanelFileRequestSeq = 0;
+  const nextFileRequest = (tab?: WorkPanelTab): WorkPanelContext["fileRequest"] => {
+    if (!tab || tab.kind !== "file" || !tab.resource) return null;
+    return createWorkPanelFileRequest(tab, ++workPanelFileRequestSeq);
+  };
 
   return {
   toggleSubagentPanel: (delegationId) => {
@@ -184,14 +190,7 @@ export function createWorkPanelSlice({
         },
         tab,
       );
-      const fileRequest =
-        tab.kind === "file" && tab.resource
-          ? {
-              path: tab.resource,
-              seq: ++workPanelFileRequestSeq,
-              ...(tab.mimeType ? { mimeType: tab.mimeType } : {}),
-            }
-          : context.fileRequest;
+      const fileRequest = nextFileRequest(tab) ?? context.fileRequest;
       const nextContext: WorkPanelContext = {
         open: true,
         tabs: next.tabs,
@@ -237,14 +236,7 @@ export function createWorkPanelSlice({
         tab,
       );
       const activeTab = next.tabs.find((item) => item.id === next.activeTabId);
-      const fileRequest =
-        activeTab?.kind === "file" && activeTab.resource
-          ? {
-              path: activeTab.resource,
-              seq: ++workPanelFileRequestSeq,
-              ...(activeTab.mimeType ? { mimeType: activeTab.mimeType } : {}),
-            }
-          : state.workPanelFileRequest;
+      const fileRequest = nextFileRequest(activeTab) ?? state.workPanelFileRequest;
       const nextContext: WorkPanelContext = {
         open: true,
         tabs: next.tabs,
@@ -275,14 +267,7 @@ export function createWorkPanelSlice({
         tabId,
       );
       const activeTab = next.tabs.find((tab) => tab.id === next.activeTabId);
-      const fileRequest =
-        activeTab?.kind === "file" && activeTab.resource
-          ? {
-              path: activeTab.resource,
-              seq: ++workPanelFileRequestSeq,
-              ...(activeTab.mimeType ? { mimeType: activeTab.mimeType } : {}),
-            }
-          : state.workPanelFileRequest;
+      const fileRequest = nextFileRequest(activeTab) ?? state.workPanelFileRequest;
       const nextContext: WorkPanelContext = {
         open: state.workPanelOpen,
         tabs: next.tabs,
@@ -358,14 +343,7 @@ export function createWorkPanelSlice({
         releasedSessionId && sideChats !== state.sideChats
           ? Object.fromEntries(Object.entries(state.sideChatTranscripts).filter(([id]) => id !== releasedSessionId))
           : state.sideChatTranscripts;
-      const fileRequest =
-        activeTab?.kind === "file" && activeTab.resource
-          ? {
-              path: activeTab.resource,
-              seq: ++workPanelFileRequestSeq,
-              ...(activeTab.mimeType ? { mimeType: activeTab.mimeType } : {}),
-            }
-          : state.workPanelFileRequest;
+      const fileRequest = nextFileRequest(activeTab) ?? state.workPanelFileRequest;
       const nextContext: WorkPanelContext = {
         // Closing the final tab leaves the panel open so the user can choose
         // another tool from the new-tab launcher instead of losing the dock.
@@ -414,8 +392,8 @@ export function createWorkPanelSlice({
     saveWorkPanelWidth(get().workPanelWidth);
   },
 
-  openFileInWorkPanel: (path, mimeType) => {
-    get().openWorkPanelTab(fileWorkPanelTab(path, mimeType));
+  openFileInWorkPanel: (path, mimeType, position) => {
+    get().openWorkPanelTab(fileWorkPanelTab(path, mimeType, position));
   },
   updateBrowserWorkPanelTab: (event) => {
     const sessionId = event.sessionId;

@@ -157,10 +157,18 @@ when the run ends; any change between the two fails the run.`);
     evidence.nodeVersion = process.version;
     evidence.pnpmVersion = values.bundle ? "not invoked (supplied artifact)" : runPnpm(["--version"]).trim();
     evidence.installedDependencies = {};
+    const runtimeManifest = JSON.parse(await readFile(join(root, "packages/agent-runtime/package.json"), "utf8"));
+    const expectedVersion = runtimeManifest.dependencies?.["@earendil-works/pi-ai"];
+    assert.ok(
+      typeof expectedVersion === "string" && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(expectedVersion),
+      "agent-runtime must exactly pin @earendil-works/pi-ai",
+    );
     for (const name of ["pi-ai", "pi-agent-core", "pi-coding-agent"]) {
       const manifest = JSON.parse(await readFile(join(root, "packages/agent-runtime/node_modules/@earendil-works", name, "package.json"), "utf8"));
       evidence.installedDependencies[name] = manifest.version;
-      assert.equal(manifest.version, "1.0.0", `${name} must match the locked pi version`);
+      const packageName = `@earendil-works/${name}`;
+      assert.equal(runtimeManifest.dependencies?.[packageName], expectedVersion, `${packageName} must share the exact pi-ai pin`);
+      assert.equal(manifest.version, expectedVersion, `${name} must match the agent-runtime pi pin`);
     }
     evidence.lockfileSha256 = await hash(join(root, "pnpm-lock.yaml"));
     evidence.head = git("rev-parse", "HEAD");

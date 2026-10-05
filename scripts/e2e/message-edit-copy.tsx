@@ -6,6 +6,7 @@ import { I18nextProvider } from "react-i18next";
 import { en } from "../../packages/i18n/src/index";
 import { MessageRow } from "../../apps/desktop/src/features/chat/transcript/MessageRow";
 import { TranscriptMenuProvider } from "../../apps/desktop/src/features/chat/transcript/TranscriptMenu";
+import { useAppStore } from "../../apps/desktop/src/stores/app-store";
 
 const check = (ok: boolean, label: string) => { if (!ok) throw new Error(label); };
 const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -22,10 +23,31 @@ const menu = async (node: HTMLElement) => {
   flushSync(() => node.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 10, clientY: 10 })));
   await settle();
 };
+// Editing now reloads the saved message before the editor opens, so the probe
+// has to wait for the editor instead of reading it in the same tick.
+const waitForTextarea = async () => {
+  for (let index = 0; index < 120; index++) {
+    const node = document.querySelector<HTMLTextAreaElement>("textarea");
+    if (node) return node;
+    await settle();
+  }
+  throw new Error("Missing textarea");
+};
 
 Object.assign(globalThis, { messageEditCopyProbe: async () => {
   await i18n.init({ lng: "en", resources: { en: { translation: en } } });
   let copied = "";
+  // `prepareUserMessageEdit` reads the active session's stored message; this
+  // row-level fixture has no session, so stub that round trip with the message
+  // it renders and keep the probe offline.
+  useAppStore.setState({
+    prepareUserMessageEdit: async () => ({
+      id: "message",
+      role: "user",
+      content: "Original saved message",
+      createdAt: "2026-09-21T00:00:00Z",
+    }),
+  });
   // Mock only the external clipboard write, keeping native textarea selection.
   Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { copied = text; } } });
   const container = document.createElement("div");
@@ -36,7 +58,7 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   </TranscriptMenuProvider></I18nextProvider>));
   await menu(find('[role="article"]'));
   await click('[data-context-menu-item="edit"]');
-  const editor = find<HTMLTextAreaElement>("textarea");
+  const editor = await waitForTextarea();
   editor.focus();
   editor.select();
   document.execCommand("insertText", false, "Fresh draft: ORANGE-927");

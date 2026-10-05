@@ -180,6 +180,16 @@ async function run(id, args, expectedModel, keys = ["fixture/allowed"], sessionI
     assert.equal(delegates.length, 0, "forbidden override must not issue a provider request");
     assert.ok(captured.some((p) => p.messages.some((m) => m.role === "tool" && JSON.stringify(m.content).includes("not available for delegation"))));
   }
+  if (id === "empty-override-guidance") {
+    const task = parent.tools.find((tool) => tool.function?.name === "Task");
+    const toolResult = captured.flatMap((request) => request.messages)
+      .find((message) => message.role === "tool" && JSON.stringify(message.content).includes("not available for delegation"));
+    for (const text of [system, task.function.description, JSON.stringify(toolResult?.content)]) {
+      assert.ok(text.includes("Settings → Models"), "empty overrides must point to model settings");
+      assert.ok(text.includes("Advanced") && text.includes("Available for AI delegation") && text.includes("save"), "guidance must name the opt-in control and save action");
+      assert.ok(text.includes("Omit"), "empty overrides must not imply delegation is unavailable");
+    }
+  }
   if (fallbackModels) {
     for (const pin of fallbackModels) {
       assert.ok(!system.includes(`\`fixture/${pin}\``), "fallback pin stays out of the override catalog");
@@ -322,6 +332,8 @@ try {
     expectedAttempts: unavailable,
     expectedStatus: "failed",
   });
+  await run("empty-override-guidance", { agent: "explorer", model: "guessed/model" }, undefined, [], "empty-catalog");
+  await run("empty-override-inheritance", { agent: "explorer" }, "parent", [], "empty-catalog");
   console.log("PASS E2E-166 changed opt-in rebuilds the sidecar runtime");
 } finally {
   child.kill();

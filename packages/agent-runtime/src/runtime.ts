@@ -1,3 +1,6 @@
+import { resolveMcpToolSelection } from "./mcp-tool-selection.js";
+import { TOOL_ACTIVATION_SECTION, toolDeclarationPolicy, toolActivationSection, restoredToolActivation, syncToolActivation, type ToolDeclarationPolicy } from "./fixed-tool-declarations.js";
+import { orderSystemRows, SystemTranscriptJournal } from "./system-transcript-journal.js";
 import { planWorkspaceRequiredResult } from "./plan-workspace-error.js";
 import { accountModelStream } from "./request-usage.js";
 import { modeToolDenial, retainModeToolDeclaration, withModeExecutionGuard } from "./mode-tool-access.js";
@@ -30,6 +33,9 @@ import {
 } from "@earendil-works/pi-agent-core";
 import {
   isContextOverflow,
+  getCurrentTools,
+  getToolStateChanges,
+  toToolDeclaration,
   Type,
   type Api,
   type AssistantMessage,
@@ -149,9 +155,12 @@ import type {
 } from "./pi-runtime-types.js";
 import {
   initialSystemTranscript,
+  CONTEXT_BUDGET_SECTION,
+  syncSystemSections,
+  systemTranscriptCheckpoint,
+  removeTrailingAssistantMessages,
   rebuildSystemTranscript,
   replaceSystemPrompt,
-  syncSystemTools,
   systemPromptContent,
 } from "./system-transcript.js";
 import {
@@ -223,6 +232,7 @@ import type { CustomSystemPrompt } from "./custom-system-prompt.js";
 import { projectMemoryPrompt } from "./project-memory-prompt.js";
 import {
   pluginSkillsPrompt,
+  pluginSkillsPromptSections,
   SKILL_TOOL_NAME,
   type PluginSkillDef,
 } from "./plugin-skills-prompt.js";
@@ -311,6 +321,9 @@ export type RuntimePromptAttachment = Omit<AgentPromptAttachment, "kind"> & {
 
 export type RuntimePrompt = {
   text: string;
+  /** Explicit user selection, resolved against the host-provided tool catalog. */
+  mcpServerIds?: string[];
+  mcpToolNames?: string[];
   sessionMessage?: SessionMessageOrigin;
   attachments?: RuntimePromptAttachment[];
 };
@@ -931,6 +944,8 @@ function contextFallbackReminder(): string {
 
 
 export type PluginToolDef = {
+  /** Present only on tools resolved from a user MCP server by Electron main. */
+  mcpServerId?: string;
   /** Full exposed name (`plugin_<pluginIdSafe>_<toolName>`, D015). */
   name: string;
   description?: string;
@@ -1445,6 +1460,21 @@ export function toolResultFromUi(
         blocks.push({ type: "image", data: b.data, mimeType: b.mimeType });
       }
     }
+  } else if (Array.isArray(raw)) {
+    // Plugin tools may return a bare content-block array; restore its text
+    // and image blocks so a restart does not flatten them into JSON (#1360).
+    for (const b of raw) {
+      if (!isRecord(b)) continue;
+      if (b.type === "text" && typeof b.text === "string") {
+        blocks.push({ type: "text", text: b.text });
+      } else if (
+        b.type === "image" &&
+        typeof b.data === "string" &&
+        typeof b.mimeType === "string"
+      ) {
+        blocks.push({ type: "image", data: b.data, mimeType: b.mimeType });
+      }
+    }
   } else if (typeof raw === "string" && raw.trim()) {
     blocks.push({ type: "text", text: raw });
   } else if (raw !== undefined && raw !== null) {
@@ -1649,8 +1679,11 @@ export class DesktopAgentRuntime {
   private toolCatalog = new Map<string, AgentTool>();
   /** Tools intentionally omitted from the initial provider request. */
   private deferredToolNames = new Set<string>();
-  /** Deferred tools loaded for the current user prompt. */
+  /** Deferred tools activated for this runtime and declaration epoch. */
   private activeDeferredToolNames = new Set<string>();
+  private declarationPolicy?: ToolDeclarationPolicy;
+  private trackToolActivation = false;
+  private activationHydrated = false;
   private scratchDir?: string;
   private projectPath?: string;
   private commandShell: CommandShellOption;
@@ -1760,6 +1793,8 @@ export class DesktopAgentRuntime {
   };
   private terminatingToolCalls = new Set<string>();
   private fullEntries: MessageEntry[];
+  private readonly systemJournal = new SystemTranscriptJournal();
+  private composedSections: Record<string, string> = {};
   private activeCompaction?: ContextCompactionRecord;
   private compactionEnabled: boolean;
   private readonly compactionStrategy: CompactionStrategy;
@@ -1785,13 +1820,9 @@ export class DesktopAgentRuntime {
   private acceptingSteering = false;
   private steeringContinuation = false;
   private readonly delegationWaitWakeups = new Set<(reason: "steered" | "aborted") => void>();
-  /**
-   * Steering ids this turn already accepted. A retried request (a double click,
-   * or a replay after Main lost the acknowledgement) must not enqueue the same
-   * input twice, and reusing an id with different input is a client bug.
-   */
+  /** 已接收的引导保留指纹，重试不得重复投递或复用不同输入。 */
   private readonly acceptedSteering = new Map<string, { turnId: string; fingerprint: string }>();
-  private pendingSteering = new Map<AgentMessage, string>();
+  private pendingSteering = new Map<AgentMessage, { id: string; toolNames: string[] }>();
   private pendingOverflow = false;
   private overflowRecoveryAttempted = false;
   private overflowRecoveryInProgress = false;
@@ -1840,7 +1871,7 @@ export class DesktopAgentRuntime {
     this.streamSink = createStreamCoalescer(opts.onEvent);
     this.onEvent = (envelope) => this.streamSink.push(envelope);
     this.pluginTools = opts.pluginTools ?? [];
-    this.pluginSkills = opts.pluginSkills ?? [];
+    this.pluginSkills = [...(opts.pluginSkills ?? [])].sort((left, right) => left.id.localeCompare(right.id));
     this.trustedExtensionSpecs = opts.trustedExtensions ?? [];
     this.subagents = opts.subagents ?? [];
     this.subagentProviders = opts.subagentProviders ?? {};
@@ -1864,7 +1895,6 @@ export class DesktopAgentRuntime {
     this.rebuildToolCatalog();
     const model = buildProviderModel(this.provider);
     this.model = model;
-    const tools = this.activeTools();
     const models = createProviderModels(this.provider, model);
     this.models = models;
     // The summary follows the session model unless the launched candidate
@@ -1874,7 +1904,6 @@ export class DesktopAgentRuntime {
 
     this.fullEntries = this.historyToEntries(opts.history ?? []);
     this.activeCompaction = opts.compaction;
-    const skillsPrompt = pluginSkillsPrompt(this.pluginSkills);
     const defaultSystemPromptParts = [
       DEFAULT_RUNTIME_SYSTEM_PROMPT,
       // 以用户目标约束执行范围、信息获取和收尾，保持进展可见。
@@ -1917,10 +1946,6 @@ Delegation rules:
             `Your scratch directory for this session is \`${formatScratchDirForShell(this.commandShell, this.scratchDir)}\` (in Bash: ${shellScratchVariable(this.commandShell)}). Write ALL temporary and intermediate files there using absolute paths — one-off scripts, downloaded data, drafts, experiment output — never into the workspace. Only write into the workspace when the file is a deliverable the user asked for. Scratch files persist across turns of this session and are cleaned up automatically when the session is deleted.`,
           ]
         : []),
-      // Plugin skills (D174): the catalog rides in the base prompt so a
-      // path-scoped instruction reload never drops it, and it stays ahead of
-      // the instruction chain so the user's own AGENTS.md keeps the last word.
-      ...(skillsPrompt ? [skillsPrompt] : []),
     ];
     // SYSTEM.md replaces only the product persona. Operational desktop rules
     // remain active; APPEND_SYSTEM.md is composed before project instructions.
@@ -1932,6 +1957,9 @@ Delegation rules:
       ).trim(),
       ...defaultSystemPromptParts.slice(1),
     ].join("\n\n");
+    this.refreshToolDeclarationPolicy();
+    this.restoreDeferredToolsFromContext();
+    const tools = this.declaredTools();
     this.agent = new Agent({
       streamFn: (m, context, options) => {
         this.setAgentActivity({ phase: "waiting-model", since: Date.now() });
@@ -2069,23 +2097,30 @@ Delegation rules:
       // The provider's rule that a tool-call id is unique is enforced here, on
       // the last view before the wire: the request is the only place it can be
       // guaranteed for both a rebuilt context and one that grew in this process.
-      convertToLlm: (messages) =>
-        alignRetainedReasoningIdentity(
-          convertToLlm(this.dropDuplicateToolCalls(messages)),
-          this.reasoningReplayIdentity(),
-        ),
+      convertToLlm: async (messages) => {
+        await this.systemJournal.persist(messages, this.fullEntries, async (message) => {
+          await this.host.call("session.appendMessage", {
+            sessionId: this.sessionId, turnId: this.turnId, message,
+          });
+        });
+        return alignRetainedReasoningIdentity(
+          convertToLlm(this.dropDuplicateToolCalls(messages)), this.reasoningReplayIdentity(),
+        );
+      },
       prepareRequest: async ({ context }) => {
-        const update = await this.prepareSubagentCoordination(context);
-        return { ...update, context: this.withRunStatusReminder(update?.context ?? context) };
+        const declarations = this.prepareToolDeclarations(context);
+        const coordination = await this.prepareSubagentCoordination(declarations.context ?? context);
+        return { ...declarations, ...coordination,
+          context: this.withRunStatusReminder(coordination?.context ?? declarations.context ?? context) };
       },
       prepareNextTurnWithContext: (context, signal) =>
         this.prepareNextTurn(context, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
       initialState: {
         model,
-        tools,
+        tools: [],
         thinkingLevel: agentThinkingLevel(this.thinkingLevel),
-        messages: initialSystemTranscript(this.composeSystemPrompt(), tools, this.liveSessionContext().messages),
+        messages: initialSystemTranscript(this.composeSystemPrompt(), tools, this.liveSessionContext().messages, this.composedSections),
       },
       // Plan transitions must be the only tool call in an assistant batch.
       // Sequential execution also makes the host-confirmed mode change visible
@@ -2109,6 +2144,9 @@ Delegation rules:
         return { action: "end" };
       },
     });
+
+    // Avoid Pi inserting a tool-only baseline ahead of restored legacy rows.
+    this.setAgentTools(tools);
 
     // pi awaits every listener, so a throw here would reject the run in
     // progress and, with nothing awaiting that rejection, could take the whole
@@ -2209,52 +2247,16 @@ Delegation rules:
     this.runStatusReminder = enabled;
   }
 
-  private agentUsesTranscriptSystemMessages(): boolean {
-    let current: object | null = this.agent.state as unknown as object;
-    while (current) {
-      const descriptor = Object.getOwnPropertyDescriptor(current, "systemPrompt");
-      if (descriptor) return typeof descriptor.get === "function" && !descriptor.set;
-      current = Object.getPrototypeOf(current) as object | null;
-    }
-    return false;
-  }
-
-  private setAgentSystemPrompt(prompt: string): void {
-    if (!this.agentUsesTranscriptSystemMessages()) {
-      (this.agent.state as unknown as { systemPrompt: string }).systemPrompt = prompt;
-      return;
-    }
-    this.agent.state.messages = replaceSystemPrompt(this.agent.state.messages, prompt);
-  }
-
-  private setAgentMessages(messages: AgentMessage[]): void {
-    if (!this.agentUsesTranscriptSystemMessages()) {
-      this.agent.state.messages = messages;
-      return;
-    }
-    // 协调槽位始终独立于基础指令，包含本轮尚无 system 消息的重建路径。
-    const previous = this.agent.state.messages.filter((message) => !this.coordinationMessages.has(message));
-    const systems = messages.filter((message) => message.role === "system");
-    if (systems.length > 0 && systems.every((message) => this.coordinationMessages.has(message))) {
-      messages = [...rebuildSystemTranscript(previous, []), ...messages];
-    }
-    this.agent.state.messages = syncSystemTools(
-      rebuildSystemTranscript(previous, messages),
-      this.agent.state.tools,
-    );
-  }
-
-  private setAgentTools(tools: AgentTool[]): void {
-    this.agent.state.tools = tools;
-    if (this.agentUsesTranscriptSystemMessages()) {
-      this.agent.state.messages = syncSystemTools(this.agent.state.messages, tools);
-    }
-  }
-
-  private agentSystemPromptContent(): string {
-    return this.agentUsesTranscriptSystemMessages()
-      ? systemPromptContent(this.agent.state.messages)
-      : this.agent.state.systemPrompt;
+  /** 技能目录更新只追加变更，不替换会话或丢失 fork 的协调状态。 */
+  setPluginSkills(skills: PluginSkillDef[]): void {
+    if (this.disposed) throw new Error("runtime disposed");
+    if (this.getStatus().isRunning) throw new Error("cannot update skills during an active turn");
+    const sorted = [...skills].sort((left, right) => left.id.localeCompare(right.id));
+    if (pluginSkillsDigest(this.pluginSkills) === pluginSkillsDigest(sorted)) return;
+    this.pluginSkills = sorted;
+    this.rebuildToolCatalog();
+    this.setAgentTools(this.activeTools());
+    this.setAgentSystemPrompt(this.composeSystemPrompt());
   }
 
   /** Switch the planning state on this Agent without creating another Agent. */
@@ -2282,20 +2284,95 @@ Delegation rules:
     return this.mode;
   }
 
+  private agentUsesTranscriptSystemMessages(): boolean {
+    let current: object | null = this.agent.state as unknown as object;
+    while (current) {
+      const descriptor = Object.getOwnPropertyDescriptor(current, "systemPrompt");
+      if (descriptor) return typeof descriptor.get === "function" && !descriptor.set;
+      current = Object.getPrototypeOf(current) as object | null;
+    }
+    return false;
+  }
+
+  private setAgentSystemPrompt(prompt: string): void {
+    if (!this.agentUsesTranscriptSystemMessages()) {
+      (this.agent.state as unknown as { systemPrompt: string }).systemPrompt = prompt;
+      return;
+    }
+    this.agent.state.messages = prompt === this.composedSystemPrompt
+      ? syncSystemSections(this.agent.state.messages, this.composedSections)
+      : replaceSystemPrompt(this.agent.state.messages, prompt);
+  }
+
+  private setAgentMessages(messages: AgentMessage[]): void {
+    if (!this.agentUsesTranscriptSystemMessages()) {
+      this.agent.state.messages = messages;
+      return;
+    }
+    const previous = this.agent.state.messages.filter((message) =>
+      !this.coordinationMessages.has(message) &&
+      (message.role !== "system" || !this.systemJournal.isPersisted(message)),
+    );
+    this.agent.state.messages = rebuildSystemTranscript(previous, messages);
+  }
+
+  /** Steering is consumed after next-turn preparation; sync before dispatch. */
+  private prepareToolDeclarations(context: AgentContext): AgentLoopTurnUpdate {
+    const tools = this.declaredTools();
+    let messages = context.messages;
+    const changes = getToolStateChanges(getCurrentTools(messages), tools.map(toToolDeclaration));
+    if (changes.toolsAdded.length || changes.toolsRemoved.length) {
+      messages = [...messages, {
+        role: "system", content: "", ...changes, timestamp: Date.now(),
+      }];
+    }
+    if (this.trackToolActivation && this.declarationPolicy) {
+      messages = syncToolActivation(messages, toolActivationSection(
+        this.declarationPolicy.key, this.activeDeferredToolNames,
+      ));
+    }
+    for (const message of messages.slice(context.messages.length)) {
+      this.agent.state.messages.push(message);
+    }
+    return { context: { ...context, messages, tools } };
+  }
+
+  private setAgentTools(tools: AgentTool[]): void {
+    this.agent.state.tools = this.declarationPolicy?.tools ?? tools;
+    if (this.trackToolActivation && this.declarationPolicy) {
+      const section = toolActivationSection(this.declarationPolicy.key, this.activeDeferredToolNames);
+      this.composedSections = { ...this.composedSections, [TOOL_ACTIVATION_SECTION]: section };
+      this.composedSystemPrompt = Object.values(this.composedSections).filter(Boolean).join("\n\n");
+      this.agent.state.messages = syncToolActivation(this.agent.state.messages, section);
+    }
+  }
+
+  private agentSystemPromptContent(): string {
+    return this.agentUsesTranscriptSystemMessages()
+      ? systemPromptContent(this.agent.state.messages)
+      : this.agent.state.systemPrompt;
+  }
+
   private composeSystemPrompt(): string {
     const projectPrompt = projectInstructionsPrompt(this.projectInstructions);
     const memoryPrompt = projectMemoryPrompt(this.projectMemory);
     const optionalToolsPrompt = this.optionalToolsPrompt();
-    return composeModeSystemPrompt(
-      this.mode,
-      [
-        this.baseSystemPrompt,
+    this.composedSections = {
+      runtime: this.baseSystemPrompt,
+      ...(this.trackToolActivation && this.declarationPolicy ? {
+        [TOOL_ACTIVATION_SECTION]: toolActivationSection(this.declarationPolicy.key, this.activeDeferredToolNames),
+      } : {}),
+      ...pluginSkillsPromptSections(this.pluginSkills),
+      context: composeModeSystemPrompt(this.mode, [
         ...(this.customSystemPrompt?.append ? [this.customSystemPrompt.append] : []),
         ...(optionalToolsPrompt ? [optionalToolsPrompt] : []),
         ...(projectPrompt ? [projectPrompt] : []),
         ...(memoryPrompt ? [memoryPrompt] : []),
-      ].join("\n\n"),
-    );
+      ].join("\n\n")),
+    };
+    const composed = Object.values(this.composedSections).filter(Boolean).join("\n\n");
+    this.composedSystemPrompt = composed;
+    return composed;
   }
 
   /**
@@ -2417,6 +2494,9 @@ Delegation rules:
   private async beforeToolCall(
     context: BeforeToolCallContext,
   ): Promise<BeforeToolCallResult | undefined> {
+    if (this.deferredToolNames.has(context.toolCall.name) && !this.activeDeferredToolNames.has(context.toolCall.name)) {
+      return { block: true, reason: `Call ${TOOL_SEARCH_NAME} to activate ${context.toolCall.name} before using it.` };
+    }
     const toolCalls = (context.assistantMessage.content as Array<{ type?: string }>).filter(
       (block) => block.type === "toolCall",
     );
@@ -2479,9 +2559,8 @@ Delegation rules:
   /** True when this runtime can be reused for a prompt with the given config. */
   matches(config: RuntimeMatchConfig): boolean {
     const requestedPluginTools = config.pluginTools ?? [];
-    const requestedPluginSkills = config.pluginSkills ?? [];
-    const current = this.pluginTools.map((t) => t.name).sort().join(",");
-    const next = requestedPluginTools.map((t) => t.name).sort().join(",");
+    const current = safeJson([...this.pluginTools].sort((a, b) => a.name.localeCompare(b.name)));
+    const next = safeJson([...requestedPluginTools].sort((a, b) => a.name.localeCompare(b.name)));
     const currentThinkingLevels = [
       ...(this.provider.supportedThinkingLevels ?? ["off"]),
     ]
@@ -2530,10 +2609,6 @@ Delegation rules:
         safeJson(config.customSystemPrompt ?? null) &&
       (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "") &&
       (this.projectPath ?? "") === (config.projectPath?.trim() ?? "") &&
-      // Enabling a plugin, revoking agent.prompt.inject or renaming a skill
-      // changes the catalog digest, which retires the runtime and its stale
-      // prompt. Bodies are excluded: the Skill tool always reads them fresh.
-      pluginSkillsDigest(this.pluginSkills) === pluginSkillsDigest(requestedPluginSkills) &&
       // Editing `~/.agents/subagents/*.md` must reach the next prompt. Definition
       // bodies are part of the `Task` tool's behavior, so unlike skills they
       // are compared in full.
@@ -2829,14 +2904,17 @@ Delegation rules:
     // (the nearest one above), keeping each call adjacent to its result as
     // the provider APIs require.
     let toolCarrier: AssistantMessage | undefined;
-    for (const m of history) {
+    for (const m of orderSystemRows(history)) {
       // Subagent rows belong to the transcript and to review, never to the
       // parent's model context (ADR 0062): the parent only ever saw the `Task`
       // report, and replaying a delegate's messages would both contradict that
       // and reintroduce the context cost delegation exists to avoid.
       if (m.parentToolCallId) continue;
       const timestamp = Date.parse(m.createdAt) || Date.now();
-      if (m.role === "user") {
+      if (m.role === "system" && m.modelSystem) {
+        toolCarrier = undefined;
+        append(m.id, this.systemJournal.restore(m));
+      } else if (m.role === "user") {
         toolCarrier = undefined;
         const attachments = (m.attachments ?? []).map((attachment) =>
           runtimeAttachmentFromMessage(
@@ -2883,8 +2961,13 @@ Delegation rules:
           role: "assistant",
           content,
           api,
-          provider: this.provider.id,
-          model: this.provider.modelId,
+          // Persisted providerId identifies a local account; Pi compares its
+          // vendor identity to decide whether native thinking can be replayed.
+          // Keep known account/model switches distinct; legacy rows have no
+          // source identity and retain the existing current-model fallback.
+          provider: !m.providerId || m.providerId === this.provider.id
+            ? this.model.provider : m.providerId,
+          model: m.modelId || this.model.id,
           usage: usageToPi(m.usage),
           stopReason: "stop",
           timestamp,
@@ -2900,8 +2983,8 @@ Delegation rules:
             role: "assistant",
             content: [],
             api,
-            provider: this.provider.id,
-            model: this.provider.modelId,
+            provider: this.model.provider,
+            model: this.model.id,
             usage: usageToPi(undefined),
             stopReason: "toolUse",
             timestamp,
@@ -2953,6 +3036,9 @@ Delegation rules:
   ): Entry[] {
     const entries: Entry[] = [...this.fullEntries];
     if (!checkpoint) return entries;
+    if (isRecord(checkpoint.details) && checkpoint.details.systemMessageJson) {
+      this.systemJournal.rememberCheckpoint(checkpoint.details.systemMessageJson);
+    }
     const throughIndex = entries.findIndex(
       (entry) => entry.id === checkpoint.throughMessageId,
     );
@@ -3419,8 +3505,54 @@ Delegation rules:
         const imageBlocks: Array<{ type: "image"; data: string; mimeType: string }> = [];
         let text: string;
         let details: unknown = rawContent;
+        const vision = inputCapabilities.supportsVision;
+        // Collect image blocks from a content-block array; only well-formed
+        // image entries ({ type, data, mimeType }) are accepted.
+        const collectImageBlocks = (blocks: unknown[]): void => {
+          for (const block of blocks) {
+            if (
+              isRecord(block) &&
+              block.type === "image" &&
+              typeof block.data === "string" &&
+              typeof block.mimeType === "string"
+            ) {
+              if (vision) {
+                imageBlocks.push({
+                  type: "image",
+                  data: block.data,
+                  mimeType: block.mimeType,
+                });
+              }
+            }
+          }
+        };
         if (typeof rawContent === "string") {
           text = rawContent;
+        } else if (Array.isArray(rawContent)) {
+          // Plugin tools may return a bare content-block array
+          // ([{ type: "text" }, { type: "image" }]); render the text blocks
+          // and hand images to the model instead of stringifying (#1360).
+          const textParts: string[] = [];
+          for (const block of rawContent) {
+            if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+              textParts.push(block.text);
+            }
+          }
+          collectImageBlocks(rawContent);
+          text = textParts.join("\n") || JSON.stringify(rawContent, null, 2);
+          details = { blocks: rawContent, imageCount: imageBlocks.length };
+        } else if (isRecord(rawContent) && Array.isArray(rawContent.content)) {
+          // MCP tools return `content: [{ type: "image" | "text", ... }]`.
+          const contentBlocks = rawContent.content;
+          const textParts: string[] = [];
+          for (const block of contentBlocks) {
+            if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+              textParts.push(block.text);
+            }
+          }
+          collectImageBlocks(contentBlocks);
+          text = textParts.join("\n") || JSON.stringify(rawContent, null, 2);
+          details = { ...rawContent, imageCount: imageBlocks.length };
         } else if (isRecord(rawContent) && Array.isArray(rawContent.images)) {
           text =
             typeof rawContent.text === "string"
@@ -3430,7 +3562,6 @@ Delegation rules:
                   null,
                   2,
                 );
-          const vision = inputCapabilities.supportsVision;
           for (const image of rawContent.images) {
             if (
               !isRecord(image) ||
@@ -3650,9 +3781,9 @@ Delegation rules:
   }
 
   /**
-   * Build the complete registry once, then expose only the core subset to the
-   * first provider request. This mirrors pi's active-tool model while keeping
-   * the host tool implementation and permission path unchanged.
+   * Build the complete registry before selecting fixed or on-demand
+   * declarations. Execution activation and Host permissions remain separate
+   * from the provider-visible schemas.
    */
   private rebuildToolCatalog(): void {
     const catalog = new Map<string, AgentTool>();
@@ -3697,6 +3828,25 @@ Delegation rules:
         }),
       );
     }
+    if (this.model) this.refreshToolDeclarationPolicy();
+  }
+
+  private refreshToolDeclarationPolicy(): void {
+    const previous = this.declarationPolicy;
+    const policy = toolDeclarationPolicy(this.model, [...this.toolCatalog.values()], this.deferredToolNames, this.composeSystemPrompt(), this.provider.id);
+    if (previous && previous.key !== policy.key && this.trackToolActivation) {
+      this.activeDeferredToolNames.clear();
+      this.activationHydrated = true;
+    }
+    this.declarationPolicy = policy;
+    this.trackToolActivation ||= Boolean(policy.tools || policy.fallback);
+    if (policy.fallback && (previous?.key !== policy.key || previous.fallback !== policy.fallback)) {
+      process.stderr.write(`[agent-runtime] fixed tool declarations unavailable (${policy.fallback}); using on-demand declarations; ToolSearch cache stability is not guaranteed.\n`);
+    }
+  }
+
+  private declaredTools(): AgentTool[] {
+    return this.declarationPolicy?.tools ?? this.activeTools();
   }
 
   private isPlanSafePluginTool(name: string): boolean {
@@ -3788,7 +3938,7 @@ Delegation rules:
     }
     return [
       "# On-demand tools",
-      `The following capabilities are available on demand. Call ${TOOL_SEARCH_NAME} with an exact tool name or a short capability description before using one that is not in the current tool list.`,
+      `The following capabilities are available on demand. Call ${TOOL_SEARCH_NAME} with an exact tool name or a short capability description before using an inactive tool. The tool_activation section, when present, records active names.`,
       ...lines,
     ].join("\n");
   }
@@ -3818,7 +3968,7 @@ Delegation rules:
       name: TOOL_SEARCH_NAME,
       label: "Tool Search",
       description:
-        "Find and activate an on-demand tool by exact name or capability. Use this before calling any tool listed under On-demand tools that is not already in the current tool list.",
+        "Find and activate an on-demand tool by exact name or capability. Use this before calling an inactive on-demand tool, even when its schema is visible.",
       parameters: Type.Object({
         query: Type.String({
           description:
@@ -3831,12 +3981,7 @@ Delegation rules:
             ? params.query.trim()
             : "";
         const matches = this.findDeferredTools(query);
-        const activated = matches.filter(
-          (name) => !this.activeDeferredToolNames.has(name),
-        );
-        for (const name of activated) {
-          this.activeDeferredToolNames.add(name);
-        }
+        const activated = this.activateDeferredTools(matches);
         const available = [...this.deferredToolNames];
         const availablePreview = available.slice(0, MAX_TOOL_SEARCH_RESULT_NAMES);
         const remaining = available.length - availablePreview.length;
@@ -5793,6 +5938,22 @@ Delegation rules:
     return message;
   }
 
+  private selectedMcpTools(input: string | RuntimePrompt): string[] {
+    return resolveMcpToolSelection(
+      typeof input === "string" ? undefined : input.mcpServerIds,
+      this.pluginTools,
+      name => this.toolCatalog.has(name) && this.isToolAllowedInMode(name),
+      typeof input === "string" ? undefined : input.mcpToolNames,
+    );
+  }
+
+  private activateDeferredTools(names: readonly string[]): string[] {
+    const activated = names.filter(name => this.deferredToolNames.has(name)
+      && !this.activeDeferredToolNames.has(name));
+    for (const name of activated) this.activeDeferredToolNames.add(name);
+    return activated;
+  }
+
   private findDeferredTools(query: string): string[] {
     const normalizedQuery = query.toLowerCase();
     if (!normalizedQuery) return [];
@@ -5841,8 +6002,26 @@ Delegation rules:
    */
   private restoreDeferredToolsFromContext(): void {
     if (this.deferredToolNames.size === 0) return;
+    if (this.trackToolActivation && this.activationHydrated) return;
     const { messages } = this.liveSessionContext();
-    for (const message of messages) {
+    const restored = this.declarationPolicy && restoredToolActivation(messages, this.declarationPolicy.key);
+    if (restored !== undefined) {
+      this.trackToolActivation = true;
+      for (const name of restored.active) {
+        if (this.deferredToolNames.has(name)) this.activeDeferredToolNames.add(name);
+      }
+    }
+    this.activationHydrated = true;
+    const lastSystem = restored ? restored.replayFrom - 1 : messages.map((message) => message.role).lastIndexOf("system");
+    if (!restored && lastSystem >= 0) {
+      for (const tool of getCurrentTools(messages)) {
+        if (this.deferredToolNames.has(tool.name)) this.activeDeferredToolNames.add(tool.name);
+      }
+    }
+    // Legacy histories lack declarations. For current histories, only results
+    // after the last declaration can represent an activation not yet declared.
+    for (const message of messages.slice(lastSystem + 1)) {
+      if (restored && (message.role !== "toolResult" || message.toolName !== TOOL_SEARCH_NAME)) continue;
       if (message.role !== "toolResult" || message.isError) continue;
       if (isMissingToolResultPlaceholder(message.content)) continue;
       const names =
@@ -6461,8 +6640,7 @@ Delegation rules:
 
     // agentLoopContinue refuses a transcript ending in an assistant message,
     // and this one carries nothing worth resending anyway.
-    const messages = [...this.agent.state.messages];
-    while (messages.at(-1)?.role === "assistant") messages.pop();
+    const messages = removeTrailingAssistantMessages(this.agent.state.messages);
     this.setAgentMessages(messages);
 
     const promptBefore = this.agentSystemPromptContent();
@@ -6513,8 +6691,7 @@ Delegation rules:
         this.overflowRecoveryAttempted = true;
         this.overflowRecoveryInProgress = true;
         try {
-          const messages = [...this.agent.state.messages];
-          while (messages.at(-1)?.role === "assistant") messages.pop();
+          const messages = removeTrailingAssistantMessages(this.agent.state.messages);
           this.setAgentMessages(messages);
           const compacted = await this.runCompaction(
             "overflow",
@@ -6572,8 +6749,7 @@ Delegation rules:
     // pi-agent-core refuses `continue()` when the transcript ends in an
     // assistant message. The progress text is already visible in the reused
     // bubble, so it must not be sent back as model context.
-    const messages = [...this.agent.state.messages];
-    while (messages.at(-1)?.role === "assistant") messages.pop();
+    const messages = removeTrailingAssistantMessages(this.agent.state.messages);
     this.setAgentMessages(messages);
 
     const promptBefore = this.agentSystemPromptContent();
@@ -6619,9 +6795,8 @@ Delegation rules:
         (message): message is Extract<AgentMessage, { content: unknown }> =>
           message.role !== "system" && "content" in message,
       ),
-      ...(typeof this.agent.state.systemPrompt === "string"
-        ? { systemPrompt: this.agent.state.systemPrompt } : {}),
-      tools: this.activeTools(),
+      systemPrompt: this.agentSystemPromptContent(),
+      tools: this.declaredTools(),
     }, this.model);
     return { ...budget, tokens: Math.max(calibratedMessageTokens, requestTokens) };
   }
@@ -6772,7 +6947,7 @@ Delegation rules:
 
   private rebuiltAgentContext(): AgentContext {
     const messages = this.liveSessionContext().messages;
-    const tools = this.activeTools();
+    const tools = this.declaredTools();
     this.setAgentMessages(messages);
     this.setAgentTools(tools);
     return {
@@ -6853,7 +7028,7 @@ Delegation rules:
     return { context };
   }
 
-  /** 本轮预算提醒作为系统消息传入模型，不写入持久化对话。 */
+  /** 预算提醒独立分区在压缩后失效，不改变基础指令。 */
   private withContextBudgetReminder(
     context: AgentContext,
     budget: ContextBudget,
@@ -6865,7 +7040,7 @@ Delegation rules:
       ...context,
       messages: [
         ...context.messages,
-        { role: "system", content: reminder, timestamp: Date.now() },
+        { role: "system", content: "", sections: { [CONTEXT_BUDGET_SECTION]: reminder }, timestamp: Date.now() },
       ],
     };
   }
@@ -6925,7 +7100,7 @@ Delegation rules:
     const message: AgentMessage = {
       role: "custom", customType: "run-status", display: false, content, timestamp: now,
     };
-    this.runStatusMessages.push({ entryCount: this.fullEntries.length, message });
+    this.runStatusMessages.push({ entryCount: this.fullEntries.filter((entry) => entry.message.role !== "system").length, message });
     return { ...context, messages: [...context.messages, message] };
   }
 
@@ -6934,7 +7109,7 @@ Delegation rules:
     // 在通知之后生成的首条会话消息前恢复，保持通知与对话的原始顺序。
     for (const record of this.runStatusMessages) {
       if (restored.includes(record.message)) continue;
-      const following = this.fullEntries.slice(record.entryCount)
+      const following = this.fullEntries.filter((entry) => entry.message.role !== "system").slice(record.entryCount)
         .find((entry) => restored.includes(entry.message));
       const index = following ? restored.indexOf(following.message) : restored.length;
       restored.splice(index, 0, record.message);
@@ -7316,7 +7491,7 @@ Delegation rules:
     mustFitSafeBudget: boolean,
     fallback?: ContextCompactionFallback,
   ): Promise<CheckpointPersistResult> {
-    // 快照随检查点保存，覆盖手动、自动和溢出恢复；预算也计入这段内容。
+    // fork 协调快照与系统状态共同进入检查点，运行状态通知仍只留在内存。
     const coordinationVersion = this.coordinationVersion;
     const snapshot = [...this.delegations.values()].some((record) => record.startedEpoch === this.turnEpoch)
       ? this.subagentCoordinationSnapshot() : undefined;
@@ -7324,9 +7499,11 @@ Delegation rules:
     const suffix = previous ? `\n\n${previous}` : "";
     const summary = suffix && checkpoint.summary.endsWith(suffix)
       ? checkpoint.summary.slice(0, -suffix.length) : checkpoint.summary;
+    const systemMessage = systemTranscriptCheckpoint(this.agent.state.messages);
     checkpoint = { ...checkpoint, summary: snapshot ? `${summary}\n\n${snapshot}` : summary,
       details: { ...(isRecord(checkpoint.details) ? checkpoint.details : checkpoint.details === undefined ? {} : { value: checkpoint.details }),
-        subagentCoordination: snapshot ?? null } };
+        subagentCoordination: snapshot ?? null,
+        ...(systemMessage ? { systemMessageJson: JSON.stringify(systemMessage) } : {}) } };
     const compactedBudget = this.contextBudget([
       ...buildSessionContext(this.entriesWithCompaction(checkpoint, false), this.reasoningReplayIdentity()).messages,
       ...(snapshot ? [this.coordinationMessageFor(snapshot)!] : []),
@@ -7357,7 +7534,10 @@ Delegation rules:
     // resetting its `claim_*` flags when the context window turns over.
     this.contextReminderClaimed = false;
     this.contextFallbackReminderClaimed = false;
-    this.setAgentMessages(this.liveSessionContext().messages);
+    this.agent.state.messages = this.liveSessionContext().messages;
+    for (const message of this.agent.state.messages) {
+      if (message.role === "system") this.systemJournal.remember(message, checkpoint.id);
+    }
     const mark = contextCompactionMark(checkpoint);
     mark.contextTokens = compactedBudget.tokens;
     this.emit({
@@ -7981,9 +8161,13 @@ Delegation rules:
           break;
         }
         if (event.message.role === "user") {
-          const steeringId = this.pendingSteering.get(event.message);
-          const id = steeringId ?? this.pendingUserMessageId ?? randomUUID();
-          if (steeringId) {
+          const steering = this.pendingSteering.get(event.message);
+          const id = steering?.id ?? this.pendingUserMessageId ?? randomUUID();
+          if (steering) {
+            if (steering.toolNames.length) {
+              this.activateDeferredTools(steering.toolNames);
+              this.setAgentTools(this.activeTools());
+            }
             this.pendingSteering.delete(event.message);
             // User input is now part of the model context: whatever the model
             // says next answers the user, not a completion notice, so the
@@ -8652,6 +8836,7 @@ Delegation rules:
   ): Promise<{ turnId: string }> {
     if (this.disposed) throw new Error("runtime disposed");
     this.assertNotRunning();
+    const selectedTools = this.selectedMcpTools(input);
     const modelInput = typeof input !== "string" && input.sessionMessage
       ? { ...input, text: formatSessionMessage(input.text, input.sessionMessage), sessionMessage: undefined }
       : input;
@@ -8665,6 +8850,10 @@ Delegation rules:
     // Capabilities and path-scoped instruction claims belong to one prompt.
     this.subagentOverrideProviders = {};
     this.resetDeferredToolsForPrompt();
+    if (selectedTools.length) {
+      this.activateDeferredTools(selectedTools);
+      this.setAgentTools(this.activeTools());
+    }
     this.pathInstructionClaims.clear();
     this.pendingUserMessageId = userMessageId;
     this.resetRunRecoveryState();
@@ -8872,8 +9061,9 @@ Delegation rules:
       return { accepted: true, turnId: previous.turnId };
     }
     this.steeringContext(expectedTurnId);
+    const toolNames = this.selectedMcpTools(input);
     const queued: AgentMessage = { role: "user", content: promptContent(input, mediaCapabilitiesForProvider(this.provider)), timestamp: Date.now() };
-    this.pendingSteering.set(queued, message.id);
+    this.pendingSteering.set(queued, { id: message.id, toolNames });
     this.agent.steer(queued);
     this.acceptedSteering.set(message.id, { turnId: expectedTurnId, fingerprint });
     // A subagent wait wakes up and hands control back, but the delegates keep
@@ -8891,11 +9081,9 @@ Delegation rules:
 
   private retainPendingSteering(): void {
     this.agent.clearSteeringQueue();
-    for (const [message, id] of this.pendingSteering) {
-      if (!this.agent.state.messages.includes(message)) {
-        this.setAgentMessages([...this.agent.state.messages, message]);
-      }
-      this.appendLiveEntry(id, message);
+    for (const [message, pending] of this.pendingSteering) {
+      if (!this.agent.state.messages.includes(message)) this.setAgentMessages([...this.agent.state.messages, message]);
+      this.appendLiveEntry(pending.id, message);
     }
     this.pendingSteering.clear();
   }

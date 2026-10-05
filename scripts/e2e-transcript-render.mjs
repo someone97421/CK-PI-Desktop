@@ -24,7 +24,10 @@ try {
     platform: "browser",
     format: "iife",
     jsx: "automatic",
-    define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false" },
+    define: {
+      "process.env.NODE_ENV": '"production"',
+      "import.meta.env": '{"DEV":false,"MODE":"production"}',
+    },
     // Styles are outside the render-count contract; component and hook code is real.
     loader: { ".css": "empty" },
     alias: {

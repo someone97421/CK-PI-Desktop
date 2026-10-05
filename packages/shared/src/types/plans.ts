@@ -162,3 +162,6 @@ export type PlanResolutionResult = {
   targetPermissionMode?: GlobalPermissionMode;
   execution?: PlanExecution;
 };
+
+/** Current host state for one immutable plan/goal submission in a history page. */
+export type PlanHistoryEntry = { proposal: PlanProposal; superseded: boolean };

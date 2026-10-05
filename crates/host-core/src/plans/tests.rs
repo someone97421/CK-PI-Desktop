@@ -886,3 +886,6 @@ fn entering_goal_mode_writes_the_goal_mode_and_kind() {
         "PLAN_INVALID_ARGUMENT"
     );
 }
+
+#[path = "history_tests.rs"]
+mod history;

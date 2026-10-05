@@ -76,6 +76,9 @@ export interface McpImportRunItem {
 }
 
 export interface McpImportRunPayload {
+  /** Defaults to global for existing callers. */
+  level?: "global" | "project";
+  projectPath?: string;
   items: McpImportRunItem[];
 }
 
@@ -157,6 +160,8 @@ export async function runMcpImport(
   hostCall: HostCall,
   payload: McpImportRunPayload,
 ): Promise<McpImportRunResult> {
+  const level = payload.level ?? "global";
+  const projectPath = level === "project" ? payload.projectPath : undefined;
   const result: McpImportRunResult = {
     imported: [],
     skipped: [],
@@ -165,6 +170,8 @@ export async function runMcpImport(
   for (const item of payload.items) {
     const server: Record<string, unknown> = {
       id: item.id,
+      level,
+      ...(projectPath ? { projectPath } : {}),
       transport: item.transport,
       ...(item.label !== undefined ? { label: item.label } : {}),
       ...(item.description !== undefined ? { description: item.description } : {}),
@@ -178,7 +185,12 @@ export async function runMcpImport(
       const res = await hostCall<{ server: unknown }>("mcp.upsert", { server });
       if (item.disabled === true) {
         try {
-          await hostCall("mcp.setEnabled", { id: item.id, enabled: false });
+          await hostCall("mcp.setEnabled", {
+            id: item.id,
+            level,
+            ...(projectPath ? { projectPath } : {}),
+            enabled: false,
+          });
         } catch (error) {
           // Turning off failed after the server was written; report it as a
           // failure so the user is not left with an enabled server they did

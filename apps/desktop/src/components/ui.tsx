@@ -741,13 +741,21 @@ export function SegmentedControl<T extends string>({
 export function Checkbox({
   label,
   className,
+  indeterminate = false,
   ...props
-}: Omit<InputHTMLAttributes<HTMLInputElement>, "type"> & {
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "ref"> & {
   label: ReactNode;
+  indeterminate?: boolean;
 }) {
   return (
     <label className={cx("ui-checkbox", className)}>
-      <input type="checkbox" {...props} />
+      <input
+        type="checkbox"
+        ref={(node) => {
+          if (node) node.indeterminate = indeterminate;
+        }}
+        {...props}
+      />
       <span>{label}</span>
     </label>
   );

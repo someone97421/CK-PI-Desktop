@@ -1,3 +1,4 @@
+import { preservePlanHistory } from "./plan-history";
 import type { AgentEvent, MessageAttachment, UiMessage } from "@pi-desktop/shared";
 import {
   getSessionMessageSnapshot,
@@ -9,7 +10,7 @@ import {
 type OptimisticFileReference = {
   path: string;
   name: string;
-  kind?: "image" | "file";
+  kind?: "image" | "file" | "session";
   mimeType?: string;
   /** Large-text paste tokens travel inline in the text, not as attachments. */
   token?: string;
@@ -146,7 +147,7 @@ export function upsertLiveSessionMessage(
   if (index === undefined) return registerSessionMessageAppend(normalized, [...normalized, message]);
   if (normalized[index] === message) return normalized;
   const next = normalized.slice();
-  next[index] = preserveSteeringAttribution(message, normalized[index]);
+  next[index] = preservePlanHistory(preserveSteeringAttribution(message, normalized[index]), normalized[index]);
   return registerSessionMessageReplacement(normalized, next, index);
 }
 
@@ -311,7 +312,7 @@ export function mergeLiveSessionMessages(
     const liveIndex = liveIndexById.get(durableMessage.id);
     const live =
       liveIndex === undefined ? undefined : liveNormalized[liveIndex];
-    push(live && isInFlightMessage(live) ? live : preserveSteeringAttribution(durableMessage, live));
+    push(preservePlanHistory(live && isInFlightMessage(live) ? live : preserveSteeringAttribution(durableMessage, live), live));
     // Live-only rows between two durable ids belong in the overlap. Trailing
     // rows after the last shared id wait until the durable page is complete
     // so a not-yet-cached user echo stays ahead of the streaming tail.

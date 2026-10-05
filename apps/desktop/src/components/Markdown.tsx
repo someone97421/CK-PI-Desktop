@@ -3,6 +3,7 @@ import {
   Fragment,
   isValidElement,
   memo,
+  Profiler,
   useCallback,
   useContext,
   useEffect,
@@ -16,7 +17,7 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
-import ReactMarkdown, { type Components, type Options } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components, type Options } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -25,9 +26,19 @@ import {
   emptyMarkdownBlockCache,
   markdownRemarkPlugins,
 } from "../lib/markdown-blocks";
+import {
+  MAX_STREAMING_MARKDOWN_TAIL_CODE_UNITS,
+  MAX_SYNC_MARKDOWN_CODE_UNITS,
+} from "../lib/render-content-limits";
+import {
+  beginRenderDiagnostic,
+  recordRenderDiagnostic,
+} from "../lib/render-diagnostics";
 import { useTranslation } from "react-i18next";
 import type { ThemedToken } from "shiki";
 import "katex/dist/katex.min.css";
+import { parseSessionLinkToken } from "@pi-desktop/shared";
+import { SessionLinkChip } from "../features/chat/transcript/shared";
 import {
   IconCheck,
   IconCircleAlert,
@@ -58,6 +69,7 @@ import {
   normalizeLatexMathDelimiters,
   remarkLatexBracketDisplay,
 } from "../lib/latex-math";
+import { sessionWorkspacePath } from "../lib/session-workspace";
 import { useAppStore } from "../stores/app-store";
 import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url";
 import { absoluteImagePath, remarkLocalImagePaths } from "../lib/markdown-image-paths";
@@ -68,6 +80,7 @@ import {
   type ChatFileMenuTarget,
 } from "../hooks/use-chat-file-menu";
 import {
+  parseFileRefPosition,
   isLocalFileHref,
   remarkChatFileLinks,
   rehypeWindowsFileLinks,
@@ -488,6 +501,13 @@ function PreBlock({
   return <CodeBlock code={info.code} lang={info.lang} {...sourcePositionProps(rest)} />;
 }
 
+function useMarkdownWorkspaceRoot() {
+  return useAppStore((state) => sessionWorkspacePath(
+    state.sessions.find((session) => session.id === state.activeSessionId),
+    state.workspace?.path,
+  ));
+}
+
 /** Preview-in-panel tooltip for file and URL chat references. */
 function usePreviewTitle(kind: "file" | "url"): string {
   const { t } = useTranslation();
@@ -505,7 +525,7 @@ function InlineCode({
   children,
   ...rest
 }: ComponentProps<"code"> & { node?: unknown }) {
-  const root = useAppStore((s) => s.workspace?.path);
+  const root = useMarkdownWorkspaceRoot();
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
   const text = typeof children === "string" ? children : null;
@@ -529,7 +549,7 @@ function InlineCode({
         <button
           type="button"
           className="chat-code-link"
-          onClick={() => openFileRef(text ?? target.path, baseDir)}
+          onClick={() => openFileRef(cleanChatFileRef(text ?? target.path).path, baseDir, undefined, target)}
         >
           <code className={className} {...rest}>
             {children}
@@ -537,6 +557,9 @@ function InlineCode({
         </button>
       </FileRefTarget>
     );
+  }
+  if (target.kind === "session") {
+    return <SessionLinkChip sessionId={target.sessionId} {...sourcePositionProps(rest)} />;
   }
   return (
     <button
@@ -594,7 +617,7 @@ function Anchor({
   ...rest
 }: ComponentProps<"a"> & { node?: unknown }) {
   const { t } = useTranslation();
-  const root = useAppStore((s) => s.workspace?.path);
+  const root = useMarkdownWorkspaceRoot();
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
   const openUrl = useAppStore((s) => s.openUrlInWorkPanel);
@@ -678,15 +701,22 @@ function Anchor({
       openHttpUrl(href);
       return;
     }
+    const sessionId = parseSessionLinkToken(href);
+    if (sessionId) {
+      e.preventDefault();
+      void useAppStore.getState().selectSession(sessionId).catch(() => undefined);
+      return;
+    }
     if (isLocalFileHref(href)) {
       e.preventDefault();
-      const { path } = cleanChatFileRef(href);
+      const { path, lineSuffix } = cleanChatFileRef(href);
+      const position = parseFileRefPosition(`${path}${lineSuffix}`) ?? undefined;
       if (/^\.{1,2}[/\\]/.test(path)) {
         const anchored = toWorkspaceRel(path, root, baseDir);
-        if (anchored) openFileRef(anchored);
+        if (anchored) openFileRef(anchored, undefined, undefined, position);
         else showToast(t("chat.fileRefMissing", { name: path }), { variant: "error" });
       } else {
-        openFileRef(path);
+        openFileRef(path, undefined, undefined, position);
       }
     }
   };
@@ -714,6 +744,11 @@ function Anchor({
         </a>
       </FileRefTarget>
     );
+  }
+
+  const sessionId = href ? parseSessionLinkToken(href) : null;
+  if (sessionId) {
+    return <SessionLinkChip sessionId={sessionId} {...sourcePositionProps(rest)} />;
   }
 
   return (
@@ -745,7 +780,7 @@ function MarkdownImage({
   alt,
   ...rest
 }: ComponentProps<"img"> & SourcePositionProps & { node?: unknown }) {
-  const root = useAppStore((s) => s.workspace?.path);
+  const root = useMarkdownWorkspaceRoot();
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
   const openFileMenu = useContext(MarkdownFileMenuContext);
@@ -959,7 +994,7 @@ const sanitizeSchema = {
     ...defaultSchema.protocols,
     // The annotation markers travel on their own scheme; without it the
     // sanitizer drops the href and the raw directive renders as link text.
-    href: [...(defaultSchema.protocols?.href ?? []), ANNOTATION_MARKER_SCHEME.replace(/:$/, "")],
+    href: [...(defaultSchema.protocols?.href ?? []), "pi-desktop", ANNOTATION_MARKER_SCHEME.replace(/:$/, "")],
   },
   attributes: {
     ...defaultSchema.attributes,
@@ -985,12 +1020,16 @@ const rehypePlugins = [rehypeRaw, rehypeWindowsFileLinks, [rehypeSanitize, sanit
  * Splitting and its streaming reuse live in `markdown-blocks`, which owns the
  * rules a slice has to satisfy before it can be parsed on its own.
  */
-function useBlocks(source: string): string[] {
+function useBlocks(source: string, maxTailCodeUnits: number): string[] {
   const cacheRef = useRef(emptyMarkdownBlockCache);
   return useMemo(() => {
-    cacheRef.current = advanceMarkdownBlocks(cacheRef.current, source);
+    cacheRef.current = advanceMarkdownBlocks(
+      cacheRef.current,
+      source,
+      maxTailCodeUnits,
+    );
     return cacheRef.current.blocks;
-  }, [source]);
+  }, [source, maxTailCodeUnits]);
 }
 
 const Block = memo(function MarkdownBlock({
@@ -1032,15 +1071,30 @@ const Block = memo(function MarkdownBlock({
     [sourceOffset],
   );
   return (
-    <MarkdownBlockContext.Provider value={context}>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={positionedRehypePlugins}
-        components={markdownComponents}
-      >
-        {raw}
-      </ReactMarkdown>
-    </MarkdownBlockContext.Provider>
+    <Profiler
+      id="transcript-markdown-block"
+      onRender={(_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+        recordRenderDiagnostic("markdown-react-render", {
+          sourceLength: raw.length,
+          durationMs: actualDuration,
+          baseDurationMs: baseDuration,
+          startTime,
+          commitTime,
+          renderPhase: phase,
+        });
+      }}
+    >
+      <MarkdownBlockContext.Provider value={context}>
+        <ReactMarkdown
+          urlTransform={(url) => parseSessionLinkToken(url) || annotationMarkerIndexFromHref(url) !== null ? url : defaultUrlTransform(url)}
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={positionedRehypePlugins}
+          components={markdownComponents}
+        >
+          {raw}
+        </ReactMarkdown>
+      </MarkdownBlockContext.Provider>
+    </Profiler>
   );
 });
 
@@ -1048,13 +1102,16 @@ export const Markdown = memo(function Markdown({
   source,
   renderDiagrams = true,
   baseDir,
+  streaming = false,
 }: {
   source: string;
   renderDiagrams?: boolean;
+  /** True only while an assistant message is still receiving text. */
+  streaming?: boolean;
   /** Workspace-relative directory of the source file, for `./` / `../` links. */
   baseDir?: string;
 }) {
-  const workspaceRoot = useAppStore((s) => s.workspace?.path);
+  const workspaceRoot = useMarkdownWorkspaceRoot();
 
   // 图片菜单由整个 Markdown 树持有，流式块替换不会卸载菜单。
   const fileMenuItems = useChatFileMenuItems();
@@ -1067,22 +1124,64 @@ export const Markdown = memo(function Markdown({
     (event, target) => openFileMenu(event, { items: fileMenuItems(target) }),
     [fileMenuItems, openFileMenu],
   );
+  const { t } = useTranslation();
+  const fullSourceTooLarge = source.length > MAX_SYNC_MARKDOWN_CODE_UNITS;
+  const markdownTailLimit = streaming
+    ? MAX_STREAMING_MARKDOWN_TAIL_CODE_UNITS
+    : MAX_SYNC_MARKDOWN_CODE_UNITS;
   // Keep normalization length-preserving so source anchors and the bracket
   // display plugin still address the original text. Block splitting uses the
   // same math grammar as rendering, including unclosed streaming math blocks.
   const normalizedSource = useMemo(
-    () => normalizeLatexMathDelimiters(source),
-    [source],
+    () => {
+      const finishDiagnostic = beginRenderDiagnostic("markdown-normalize", {
+        sourceLength: source.length,
+      });
+      if (fullSourceTooLarge) {
+        finishDiagnostic({ reason: "source-limit" });
+        return "";
+      }
+      const normalized = normalizeLatexMathDelimiters(source);
+      finishDiagnostic();
+      return normalized;
+    },
+    [fullSourceTooLarge, source],
   );
-  const blocks = useBlocks(normalizedSource);
+  const blocks = useBlocks(
+    fullSourceTooLarge ? "" : normalizedSource,
+    markdownTailLimit,
+  );
   let sourceOffset = 0;
   return (
     <MarkdownFileMenuContext.Provider value={openMarkdownFileMenu}>
       <MarkdownBaseDirContext.Provider value={baseDir ?? ""}>
-        {blocks.map((raw, i) => {
+        {fullSourceTooLarge ? (
+          <div
+            className="markdown-plain-fallback"
+            data-source-start={0}
+            data-source-end={source.length}
+          >
+            <div role="status">{t("chat.markdownPlainTextFallback")}</div>
+            <pre>{source}</pre>
+          </div>
+        ) : blocks.map((raw, i) => {
           const start = sourceOffset;
           sourceOffset = start + raw.length;
           const originalRaw = source.slice(start, start + raw.length);
+          const tailTooLarge = streaming && raw.length > markdownTailLimit;
+          if (tailTooLarge) {
+            return (
+              <div
+                className="markdown-plain-fallback"
+                key={i}
+                data-source-start={start}
+                data-source-end={start + raw.length}
+              >
+                <div role="status">{t("chat.markdownPlainTextFallback")}</div>
+                <pre>{originalRaw}</pre>
+              </div>
+            );
+          }
           return (
             <Block
               key={i}

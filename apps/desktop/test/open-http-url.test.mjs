@@ -164,7 +164,7 @@ test("previewable transcript URLs follow the link-open setting", () => {
   assert.match(previewSource, /import \{ openHttpUrl \} from "\.\.\/lib\/open-http-url"/);
   assert.match(
     previewSource,
-    /target\.kind === "file" \? openFileRef\(target\.path\) : openHttpUrl\(target\.url\)/,
+    /if \(target\.kind === "file"\) \{[\s\S]*?openFileRef\(target\.path,[\s\S]*?\}[\s\S]*?openHttpUrl\(target\.url\)/,
   );
 });
 

@@ -531,6 +531,9 @@ export function createQueueSlice({
           if (submitted?.abortResolution && (await submitted.abortResolution)) {
             return false;
           }
+          if (current?.source !== "pi-native" && current?.source !== "remote") {
+            get().rememberModel(current ?? {});
+          }
           onAccepted?.(startedIn);
           return true;
         } catch (error) {

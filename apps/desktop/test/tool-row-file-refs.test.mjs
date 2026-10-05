@@ -47,6 +47,7 @@ const calls = { tabs: [], files: [], urls: [], toasts: [], resolved: [] };
 const state = {
   workspace: { path: "C:/project" },
   activeSessionId: "session-1",
+  sessions: [],
   pluginViews: [],
   openFileInWorkPanel: (...args) => calls.files.push(args),
   openUrlInWorkPanel: (...args) => calls.urls.push(args),
@@ -64,6 +65,7 @@ const { useOpenPreviewTarget } = loadModule("../src/hooks/use-preview-target.ts"
   react: React,
   "react-i18next": { useTranslation: () => ({ t: (key, values) => `${key}:${values?.name ?? ""}` }) },
   "../stores/app-store": { useAppStore: (selector) => selector(state) },
+  "../lib/session-workspace": { sessionWorkspacePath: (session, workspacePath) => session?.workspacePath ?? session?.projectPath ?? workspacePath },
   "../lib/api": {
     api: {
       fsResolveRef: async (ref) => {
@@ -73,7 +75,13 @@ const { useOpenPreviewTarget } = loadModule("../src/hooks/use-preview-target.ts"
       },
     },
   },
-  "../lib/chat-links": loadModule("../src/lib/chat-links.ts", {}),
+  "../lib/chat-links": loadModule("../src/lib/chat-links.ts", {
+    "@pi-desktop/shared": await import("@pi-desktop/shared"),
+    "./chat-link-scanner.ts": loadModule("../src/lib/chat-link-scanner.ts", {
+      "./render-diagnostics.ts": { beginRenderDiagnostic: () => () => {} },
+    }),
+    "./render-diagnostics.ts": { beginRenderDiagnostic: () => () => {} },
+  }),
   "../lib/open-http-url": { openHttpUrl: (...args) => calls.urls.push(args) },
   "../lib/work-panel-tabs": workPanelTabs,
 });
@@ -130,7 +138,7 @@ test("a project file a tool surface names opens in the bundled file view", async
       id: "plugin:pi.file-manager/manager",
       kind: "plugin",
       resource: "pi.file-manager/manager",
-      location: "src/dir/a.ts",
+      location: "C:/project/src/dir/a.ts",
     },
   ]);
   assert.deepEqual(calls.files, [], "the host file tab is not also opened");
@@ -143,7 +151,7 @@ test("a Windows tool path reaches resolution intact and opens its exact project 
   nextMatch = projectMatch({ relativePath: "readme.md", absolutePath: path, matchedBy: "exact-absolute" });
   await click({ kind: "file", path });
   assert.deepEqual(calls.resolved, [path]);
-  assert.equal(calls.tabs[0].location, "readme.md");
+  assert.equal(calls.tabs[0].location, path.replaceAll("\\", "/"));
   assert.deepEqual(calls.toasts, []);
 });
 

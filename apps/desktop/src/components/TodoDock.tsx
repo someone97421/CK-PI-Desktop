@@ -6,8 +6,6 @@ import { IconCheck, IconChevronDown, IconChevronUp } from "./icons";
 import { useSessionTodosRecovery } from "../features/chat/todos/useSessionTodosRecovery";
 import { useAppStore } from "../stores/app-store";
 
-const VISIBLE_LIMIT = 8;
-
 function statusSymbol(status: TodoStatus): string {
   switch (status) {
     case "in_progress":
@@ -38,8 +36,6 @@ export function TodoDock({ sessionId }: { sessionId: string }) {
   const finished = snapshot.todos.every(
     (todo) => todo.status === "completed" || todo.status === "cancelled",
   );
-  const visible = snapshot.todos.slice(0, VISIBLE_LIMIT);
-  const remaining = Math.max(0, snapshot.todos.length - VISIBLE_LIMIT);
   const statusLabel = allCancelled
     ? t("chat.todo.status.cancelled")
     : finished
@@ -64,15 +60,20 @@ export function TodoDock({ sessionId }: { sessionId: string }) {
         {expanded ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
       </Button>
       <div className="todo-dock-content" aria-hidden={!expanded}>
-        <div className="todo-dock-list" role="list">
-          {visible.map((todo, index) => (
-            <TodoRow key={`${index}:${todo.content}`} todo={todo} />
-          ))}
-          {remaining > 0 ? (
-            <div className="todo-dock-more" role="status">
-              {t("chat.todo.more", { count: remaining })}
-            </div>
-          ) : null}
+        <div className="todo-dock-clip">
+          {/* The expanded dock lists every row (#1319): the list scrolls
+              inside its own box instead of truncating to a static "N more"
+              line, and a keyboard user can reach that scrollport only while
+              the disclosure is open. */}
+          <div
+            className="todo-dock-list"
+            role="list"
+            tabIndex={expanded ? 0 : -1}
+          >
+            {snapshot.todos.map((todo, index) => (
+              <TodoRow key={`${index}:${todo.content}`} todo={todo} />
+            ))}
+          </div>
         </div>
       </div>
     </div>

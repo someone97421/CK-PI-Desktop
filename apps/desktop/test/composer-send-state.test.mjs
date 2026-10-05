@@ -248,9 +248,9 @@ test("send clears the composer before the round trip and restores a rejected dra
   // still pending under load must not drop the last characters typed.
   assert.match(
     submit,
-    /const text = draft\.ref\.current \? readEditorValue\(draft\.ref\.current\) : value;/,
+    /const rawText = draft\.ref\.current \? readEditorValue\(draft\.ref\.current\) : value;/,
   );
-  assert.match(submit, /serializeInlineComposerFileReferences\(\s*text,\s*activeFileReferences,\s*\)/);
+  assert.match(submit, /serializeInlineComposerFileReferences\(\s*outgoing\.text,\s*outgoing\.references,\s*\)/);
   // Blocked and not-ready states are said, not swallowed.
   assert.match(submit, /if \(pasting\) showToast\(t\("chat\.pasteInProgress"\)/);
   assert.match(
@@ -270,8 +270,8 @@ test("send clears the composer before the round trip and restores a rejected dra
   // draft in its cache slot for the next switch back.
   assert.match(restore, /if \(valueRef\.current\.trim\(\)\) return;/);
   assert.match(restore, /if \(currentKey !== key\) \{[\s\S]*?writeComposerDraft\(key, snapshot\);/);
-  assert.match(restore, /setValue\(snapshot\.text\);/);
-  assert.match(restore, /setCursor\(snapshot\.text\.length\);/);
+  assert.match(restore, /setValue\(restored\.text\);/);
+  assert.match(restore, /setCursor\(restored\.text\.length\);/);
 });
 
 test("mode slash prefixes send the trailing prompt and retain failed drafts", () => {
@@ -287,11 +287,11 @@ test("mode slash prefixes send the trailing prompt and retain failed drafts", ()
   );
   assert.match(
     submit,
-    /serializeInlineComposerFileReferences\(\s*visibleCommandBody,\s*activeFileReferences,\s*\)/,
+    /serializeInlineComposerFileReferences\(\s*outgoingBody\.text,\s*outgoingBody\.references,\s*\)/,
   );
   assert.match(
     submit,
-    /const submittedDraftRevision = draft\.draftRevision\(submittedDraftKey\);\s*const submittedDraft = draft\.draftSnapshot\(text\);[\s\S]*?draft\.clearDraftForKey\(submittedDraftKey, submittedDraftRevision, submittedDraft\);\s*const accepted = steering\s*\?\s*await steerPrompt\(inlineContent, submittedDraft\)\s*:\s*await sendPrompt\(\s*inlineContent,\s*submittedDraft,\s*activeSessionId \?\? undefined,\s*captureAcceptedSession,\s*\);\s*if \(!accepted\) draft\.restoreDraftForKey\(submittedDraftKey, submittedDraft\);/,
+    /const submittedDraftRevision = draft\.draftRevision\(submittedDraftKey\);\s*const submittedDraft = draft\.draftSnapshot\(rawText\);[\s\S]*?draft\.clearDraftForKey\(submittedDraftKey, submittedDraftRevision, submittedDraft\);\s*const accepted = steering\s*\?\s*await steerPrompt\(inlineContent, submittedDraft\)\s*:\s*await sendPrompt\(\s*inlineContent,\s*submittedDraft,\s*activeSessionId \?\? undefined,\s*captureAcceptedSession,\s*\);\s*if \(!accepted\) draft\.restoreDraftForKey\(submittedDraftKey, submittedDraft\);/,
   );
   assert.match(store, /draft\?: ComposerDraftSnapshot/);
   const sendPrompt = queueSlice.slice(

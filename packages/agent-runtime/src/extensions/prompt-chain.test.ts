@@ -39,7 +39,10 @@ it.each([
     });
     runtime = new DesktopAgentRuntime({
       host: {
-        call: async (method) => { throw new Error(`Unexpected host call: ${method}`); },
+        call: async <T>(method: string): Promise<T> => {
+          if (method === "session.appendMessage") return undefined as T;
+          throw new Error(`Unexpected host call: ${method}`);
+        },
         onNotification: () => () => {},
       },
       sessionId: "prompt-chain-fixture",

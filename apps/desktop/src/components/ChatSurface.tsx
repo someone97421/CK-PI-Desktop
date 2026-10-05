@@ -92,13 +92,16 @@ export const ChatSurface = memo(function ChatSurface({
     ),
   );
 
-  const heroProject = useMemo(
-    () =>
-      activeSession?.projectPath?.trim()
-        ? projectName(activeSession.projectPath, workspace?.name)
-        : null,
-    [activeSession?.projectPath, workspace?.name],
-  );
+  // The project the empty home names: the session on screen decides when there
+  // is one, because a temporary session deliberately belongs to no project. A
+  // project the user has just opened has no session yet, so its active
+  // workspace names the hero instead of falling back to the generic title.
+  const heroProject = useMemo(() => {
+    const path = activeSession
+      ? activeSession.projectPath?.trim()
+      : workspace?.path?.trim();
+    return path ? projectName(path, workspace?.name) : null;
+  }, [activeSession, workspace?.path, workspace?.name]);
   const isTemporarySession = Boolean(
     (activeSessionId && activeSession && !activeSession.projectPath?.trim()) ||
       (!activeSessionId && !workspace?.path && draftSessionKind === "temporary"),

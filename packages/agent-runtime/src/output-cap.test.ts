@@ -365,3 +365,11 @@ describe("clampOutputToContext", () => {
     }
   });
 });
+
+// Transcript-only Pi requests have no legacy systemPrompt/tools fields.
+it("counts instruction sections and tool declarations in transcript-only requests", () => {
+  const base = { messages: [{ role: "system", content: "" }] };
+  const state = { messages: [{ role: "system", content: "", sections: { skills: "中文说明" }, toolsAdded: [{ name: "Read", parameters: { type: "object" } }] }] };
+  expect(estimateOutputCapInputTokens(state)).toBeGreaterThan(estimateOutputCapInputTokens(base));
+  expect(estimateOutputCapInputTokens(state)).toBeGreaterThan(4);
+});

@@ -6,11 +6,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createModels, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { buildProviderModel } from "../../../packages/agent-runtime/dist/provider-binding.js";
 import {
   apiStyleForAdapter,
   bindingForCustomModelInfo,
   catalogModelIdsMatch,
   modelIdsMatch,
+  resolveApiStyle,
 } from "@pi-desktop/shared";
 import {
   MODELS_DEV_API_URL,
@@ -104,6 +108,43 @@ async function loadFixtureCatalog(t, fixture = catalogFixture) {
   assert.equal(await catalog.ensureLoaded(), true);
   return catalog;
 }
+
+test("published metadata retains exact Pi transcript transport bindings through runtime launch", async (t) => {
+  const pi = createModels({ modelsStore: new InMemoryModelsStore(),
+    authContext: { env: async () => undefined, fileExists: async () => false } });
+  for (const provider of builtinProviders()) pi.setProvider(provider);
+  for (const [vendorKey, modelId] of [
+    ["deepseek", "deepseek-flash"], ["anthropic", "claude-opus-5-5"],
+    ["openai", "gpt-6.1-sol"], ["openai-codex", "gpt-6.1-sol"],
+  ]) {
+    const original = pi.getModel(vendorKey, modelId);
+    assert.ok(original, `${vendorKey}/${modelId}`);
+    const catalog = await loadFixtureCatalog(t, { [vendorKey]: {
+      name: vendorKey, api: original.baseUrl, models: { [modelId]: {
+        id: modelId, limit: { context: 543_210, output: 40_000 }, cost: { input: 1.25, output: 2.5 },
+      } },
+    } });
+    const target = { providerId: "account", vendorKey, modelId, baseUrl: original.baseUrl,
+      apiStyle: resolveApiStyle(original.api) };
+    const config = catalog.modelConfigFor(target);
+    assert.equal(config.source, "models.dev");
+    assert.equal(config.contextWindow, 543_210);
+    assert.equal(config.maxTokens, 40_000);
+    assert.equal(config.cost.input, 1.25);
+    assert.deepEqual(config.transcriptBinding, { modelId, api: original.api, baseUrl: original.baseUrl });
+    const provider = { ...target, id: "account", name: "Fixture", apiKey: "", authKind: "none",
+      supportsReasoning: false, supportedThinkingLevels: ["off"], modelConfig: config };
+    const wire = buildProviderModel(provider);
+    assert.equal(wire.compat.supportsMidConvoSystemMessages, true, vendorKey);
+    assert.equal(wire.compat.supportsMidConvoToolChanges, original.compat?.supportsMidConvoToolChanges === true);
+    assert.equal(wire.compat.supportsAdditionalTools, original.compat?.supportsAdditionalTools === true);
+    const relay = { ...target, baseUrl: "https://relay.invalid/v1" };
+    assert.equal(buildProviderModel({ ...provider, ...relay, modelConfig: catalog.modelConfigFor(relay) })
+      .compat.supportsMidConvoSystemMessages, false);
+    assert.equal(buildProviderModel({ ...provider, modelId: `${modelId}-alias` })
+      .compat.supportsMidConvoSystemMessages, false);
+  }
+});
 
 test("the bundled models.dev OpenAI record supplies the selected model limits", async () => {
   const catalogPath = fileURLToPath(new URL("../resources/models.dev/api.json", import.meta.url));

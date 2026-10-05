@@ -12,6 +12,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::transcripts::{self, CompactionRecord, MessageRecord, RevisionRecord};
 
 mod fork_files;
+mod model_system;
 mod usage;
 pub use usage::record_usage;
 
@@ -269,6 +270,9 @@ pub struct UiMessage {
     /// as an additive `hostedSearch` transcript block; no SQL migration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosted_search: Option<Value>,
+    /// Internal model-context state, preserved outside visible message text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_system: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +289,8 @@ pub struct SessionDetail {
     #[serde(flatten)]
     pub summary: SessionSummary,
     pub messages: Vec<UiMessage>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub plan_history: Vec<crate::plans::PlanHistoryEntry>,
     /// Owning Task for a nested messageAround target, outside the page cursors.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigation_parent: Option<UiMessage>,
@@ -348,6 +354,9 @@ fn is_default_title(title: &str) -> bool {
 /// the search index row (None for tool rows, matching the FTS triggers).
 pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String>) {
     let mut meta_obj = serde_json::Map::new();
+    if let Some(system) = &message.model_system {
+        meta_obj.insert("modelSystem".into(), system.clone());
+    }
     if let Some(command) = &message.command {
         meta_obj.insert("command".into(), json!(command));
     }
@@ -508,6 +517,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
         _ => Vec::new(),
     };
     let meta = record.meta.unwrap_or(Value::Null);
+    let model_system = meta.get("modelSystem").cloned();
     let command = meta
         .get("command")
         .and_then(Value::as_str)
@@ -690,6 +700,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             task_id: task_id.clone(),
             task: task.clone(),
             hosted_search: hosted_search.clone(),
+            model_system: None,
         }
     } else {
         let content = blocks
@@ -736,6 +747,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             task_id,
             task,
             hosted_search,
+            model_system,
         }
     }
 }
@@ -955,6 +967,19 @@ fn clone_records_for_fork(
                 .cloned()
                 .unwrap_or_else(|| Uuid::new_v4().to_string());
             if let Some(meta) = record.meta.as_mut().and_then(Value::as_object_mut) {
+                if let Some(system) = meta.get_mut("modelSystem").and_then(Value::as_object_mut) {
+                    for key in ["beforeMessageId", "afterMessageId"] {
+                        if let Some(new_id) = system
+                            .get(key)
+                            .and_then(Value::as_str)
+                            .and_then(|id| message_ids.get(id))
+                        {
+                            system.insert(key.into(), json!(new_id));
+                        } else {
+                            system.remove(key);
+                        }
+                    }
+                }
                 meta.remove("revisionRootId");
                 meta.remove("revisionCount");
                 meta.remove("activeRevision");
@@ -1813,6 +1838,17 @@ pub fn get_session_with_options(
             }
         }
     }
+    let plan_calls: Vec<&str> = messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message.tool_name.as_deref(),
+                Some("SubmitPlan" | "SubmitGoal")
+            )
+        })
+        .filter_map(|message| message.tool_call_id.as_deref())
+        .collect();
+    let plan_history = crate::plans::history_for_tool_calls(db, id, &plan_calls)?;
     let parent_call_id = options.message_around.as_deref().and_then(|target| {
         messages
             .iter()
@@ -1832,6 +1868,7 @@ pub fn get_session_with_options(
     };
     Ok(Some(SessionDetail {
         summary,
+        plan_history,
         navigation_parent,
         message_start,
         message_end,
@@ -2030,6 +2067,7 @@ pub fn fork_session_through(
     let messages = records.into_iter().map(record_to_ui).collect();
     Ok(ForkSessionResult::Created(Box::new(SessionDetail {
         summary,
+        plan_history: Vec::new(),
         navigation_parent: None,
         message_start: None,
         message_end: None,
@@ -2205,6 +2243,7 @@ pub fn append_message(
     message: &UiMessage,
     turn_id: Option<&str>,
 ) -> Result<()> {
+    model_system::validate(message)?;
     let message = crate::session_collaboration::prepare_append(db, session_id, message, turn_id)?;
     let session_created = ensure_session_for_append(db, session_id)?;
     let (mut record, text) = ui_to_record(&message);
@@ -4265,6 +4304,7 @@ mod tests {
             nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
+            model_system: None,
             session_message: None,
             task_id: None,
             task: None,
@@ -4976,6 +5016,7 @@ mod tests {
             nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
+            model_system: None,
             session_message: None,
             task_id: None,
             task: None,
@@ -5503,6 +5544,7 @@ mod tests {
             nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
+            model_system: None,
             session_message: None,
             task_id: None,
             task: None,
@@ -5584,6 +5626,7 @@ mod tests {
             parent_tool_call_id: None,
             nested_parent_tool_call_id: None,
             agent_name: None,
+            model_system: None,
             hosted_search: Some(json!({
                 "status": "completed",
                 "rounds": [

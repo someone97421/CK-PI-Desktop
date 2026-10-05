@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useBlockingOverlay } from "../lib/blocking-overlay";
 import { portalToBody } from "../lib/portal-visibility";
 import { useTranslation } from "react-i18next";
 import type { ProjectGroupRecord, ProjectGroupRoot } from "@pi-desktop/shared";
@@ -51,6 +52,7 @@ export function ProjectEditDialog({
   onSaved: (group: ProjectGroupRecord) => void;
   onError: (error: unknown) => void;
 }) {
+  useBlockingOverlay();
   const { t } = useTranslation();
   const [group, setGroup] = useState<ProjectGroupRecord | null>(null);
   const [name, setName] = useState(project.name);

@@ -16,7 +16,10 @@ const temp = await mkdtemp(join(cache, "run-"));
 await require("esbuild").build({
   entryPoints: [join(root, "scripts/e2e/ime-escape.tsx")],
   outfile: join(temp, "renderer.js"), bundle: true, platform: "browser", format: "iife",
-  loader: { ".css": "empty" }, jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' },
+  // The iife bundle cannot evaluate `import.meta`, so pin the Vite build flags
+  // the components read instead of leaving them undefined at runtime.
+  loader: { ".css": "empty" }, jsx: "automatic",
+  define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false", "import.meta.env.PROD": "true" },
   alias: { react: join(desktop, "node_modules/react"), "react-dom": join(desktop, "node_modules/react-dom") },
   nodePaths: [join(desktop, "node_modules")],
 });

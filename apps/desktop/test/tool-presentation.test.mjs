@@ -68,6 +68,22 @@ test("Read renders file content as code with a path-derived language", () => {
   assert.equal(content.text, "export const App = () => null;\n");
 });
 
+test("Read keeps oversized or exceptionally long-line content as plain text", () => {
+  for (const content of ["x".repeat(100_001), "x".repeat(2_001)]) {
+    const blocks = buildToolPresentation(
+      {
+        toolName: "Read",
+        toolArgs: { path: "src/App.tsx" },
+        toolResult: envelope({ path: "src/App.tsx", content, truncated: false }),
+      },
+      { hideSummaryArg: true },
+    );
+    assert.equal(blocks[0].kind, "code");
+    assert.equal(blocks[0].text, content);
+    assert.equal(blocks[0].highlight, false);
+  }
+});
+
 test("Write shows the written content and a size chip", () => {
   const message = {
     toolName: "Write",

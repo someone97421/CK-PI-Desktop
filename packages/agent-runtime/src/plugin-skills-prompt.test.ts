@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   pluginSkillsPrompt,
+  pluginSkillsPromptSections,
   SKILL_TOOL_NAME,
   type PluginSkillDef,
 } from "./plugin-skills-prompt.js";
@@ -37,4 +38,19 @@ describe("pluginSkillsPrompt", () => {
     expect(prompt).not.toContain("Short line.\n\n");
     expect(prompt.split("\n").filter((line) => line.startsWith("- "))).toHaveLength(1);
   });
+});
+
+it("gives skill IDs collision-free section names and stable catalog ordering", () => {
+  const entries = [
+    { id: "__proto__", name: "Prototype" }, { id: "runtime", name: "Reserved" },
+    { id: "skill:a", name: "Colon" }, { id: "a", name: "A" },
+  ];
+  const sections = pluginSkillsPromptSections(entries);
+  expect(sections).toEqual(pluginSkillsPromptSections([...entries].reverse()));
+  expect(Object.keys(sections)).toEqual(Object.keys(pluginSkillsPromptSections([...entries].reverse())));
+  expect(sections["skill:__proto__"]).toContain("Prototype");
+  expect(sections["skill:runtime"]).toContain("Reserved");
+  expect(sections["skill:skill:a"]).toContain("Colon");
+  expect(sections["skill:a"]).toContain("A");
+  expect(pluginSkillsPromptSections([])).toEqual({});
 });

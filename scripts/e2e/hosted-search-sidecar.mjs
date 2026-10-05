@@ -196,6 +196,12 @@ export function fixtureHost({ history = [], instructions = false } = {}) {
   return async (method, params) => {
     switch (method) {
       case "session.get": return { session: { id: params.id, messages: history } };
+      case "session.appendMessage": {
+        const message = params?.message;
+        assert.ok(message && typeof message.id === "string", "session.appendMessage requires a message id");
+        if (!history.some((entry) => entry.id === message.id)) history.push(message);
+        return { ok: true };
+      }
       case "project.instructions.resolve": return {
         entries: instructions ? [{
           source: "nested/AGENTS.md",

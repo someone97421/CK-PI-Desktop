@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { useBlockingOverlay } from "../lib/blocking-overlay";
 import type { ProjectMemory, ProjectMemoryEntry } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { Button, Input, Textarea, TooltipButton } from "./ui";
@@ -45,6 +46,7 @@ export function ProjectMemoryDialog({
   onSaved: () => void;
   onError: (error: unknown) => void;
 }) {
+  useBlockingOverlay();
   const { t } = useTranslation();
   const [memory, setMemory] = useState<ProjectMemory | null>(null);
   const [entries, setEntries] = useState<ProjectMemoryEntry[]>([]);

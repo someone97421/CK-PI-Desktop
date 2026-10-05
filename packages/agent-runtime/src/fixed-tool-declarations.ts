@@ -1,0 +1,69 @@
+import { createHash } from "node:crypto";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import { getCurrentSystemMessage, toToolDeclaration, Type, type Api, type Model } from "@earendil-works/pi-ai";
+import * as Value from "typebox/value";
+import { contextBudgetLimitsFor, automaticCompactionThresholdFor } from "./context-budget.js";
+import { estimateOutputCapInputTokens } from "./output-cap.js";
+
+export const TOOL_ACTIVATION_SECTION = "tool_activation";
+const activationSchema = Type.Object({
+  version: Type.Literal(1), snapshot: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+  active: Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true }),
+}, { additionalProperties: false });
+
+export type ToolDeclarationPolicy = {
+  key: string;
+  tools?: AgentTool[];
+  fallback?: "tool-count" | "context-budget";
+};
+
+/** The verified Flash route has chronological system updates, but no tool deltas. */
+export function toolDeclarationPolicy(
+  model: Model<Api>, tools: readonly AgentTool[], deferred: ReadonlySet<string>, prompt: string, accountId: string,
+): ToolDeclarationPolicy {
+  const ordered = [...tools].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  const key = createHash("sha256").update(JSON.stringify({
+    account: accountId, model: model.id, api: model.api, endpoint: model.baseUrl.replace(/\/+$/, ""),
+    tools: ordered.map(toToolDeclaration), deferred: [...deferred].sort(),
+  })).digest("hex");
+  if (model.id !== "deepseek-flash" || model.api !== "openai-completions"
+    || model.baseUrl.replace(/\/+$/, "") !== "https://api.deepseek.com"
+    || !model.compat || !("supportsMidConvoSystemMessages" in model.compat)
+    || model.compat.supportsMidConvoSystemMessages !== true) return { key };
+  // DeepSeek Chat Completions permits at most 128 functions. Never truncate.
+  if (ordered.length > 128) return { key, fallback: "tool-count" };
+  const budget = contextBudgetLimitsFor(model);
+  const tokens = estimateOutputCapInputTokens({ messages: [], systemPrompt: prompt, tools: ordered }, model);
+  // Leave the normal retained-tail budget available to the conversation. A
+  // fixed catalog must not make every fresh/compacted request overflow again.
+  if (tokens >= automaticCompactionThresholdFor(budget) - budget.keepRecentTokens) {
+    return { key, fallback: "context-budget" };
+  }
+  return { key, tools: ordered };
+}
+
+export function toolActivationSection(key: string, active: ReadonlySet<string>): string {
+  return JSON.stringify({ version: 1, snapshot: key, active: [...active].sort() });
+}
+
+/** A declaration is not activation. Malformed/new-version state fails closed. */
+export function restoredToolActivation(messages: readonly AgentMessage[], key: string): { active: string[]; replayFrom: number } | undefined {
+  const section = getCurrentSystemMessage(messages)?.sections?.[TOOL_ACTIVATION_SECTION];
+  const closed = { active: [], replayFrom: messages.length };
+  if (section == null) return messages.some((message) => message.role === "system"
+    && TOOL_ACTIVATION_SECTION in (message.sections ?? {})) ? closed : undefined;
+  try {
+    const parsed: unknown = JSON.parse(section);
+    if (!Value.Check(activationSchema, parsed) || parsed.snapshot !== key) return closed;
+    const lastState = messages.map((message) => message.role === "system"
+      && TOOL_ACTIVATION_SECTION in (message.sections ?? {})).lastIndexOf(true);
+    return { active: parsed.active, replayFrom: lastState + 1 };
+  } catch { return closed; }
+}
+
+/** Activation is appended after the result, never inserted into old instructions. */
+export function syncToolActivation(messages: AgentMessage[], section: string): AgentMessage[] {
+  if (getCurrentSystemMessage(messages)?.sections?.[TOOL_ACTIVATION_SECTION] === section) return messages;
+  const timestamp = messages.reduce((latest, message) => Math.max(latest, message.timestamp + 1), Date.now());
+  return [...messages, { role: "system", content: "", timestamp, sections: { [TOOL_ACTIVATION_SECTION]: section } }];
+}

@@ -29,7 +29,10 @@ it.each(["session", "delegate"])(
     const runtime = kind === "session" ? new DesktopAgentRuntime({
       sessionId: "certificate-session", mode: "agent", provider,
       thinkingLevel: "off", onEvent,
-      host: { call: async () => { throw new Error("Unexpected host request"); } },
+      host: { call: async <T>(method: string): Promise<T> => {
+        if (method === "session.appendMessage") return undefined as T;
+        throw new Error("Unexpected host request");
+      } },
       commandShell: { id: "bash", label: "Bash", dialect: "posix", available: true, isDefault: true },
     }) : undefined;
     try {

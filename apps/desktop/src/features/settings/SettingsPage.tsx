@@ -75,7 +75,7 @@ import {
   PiConfigSyncPanel,
   UpdatesRow,
 } from "./agent-sections";
-import { ImportSection } from "./import-page";
+import { SessionImportPanel } from "./imports/SessionImportPanel";
 import { PromptEnhancementCard } from "./prompt-enhancement-card";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginScenicThemesDestination } from "../../components/settings/PluginScenicThemesDestination";
@@ -614,7 +614,7 @@ export function SettingsPage() {
 
           {tab === "import" && (
             <div className="settings-stack">
-              <ImportSection />
+              <SessionImportPanel />
               <PiConfigSyncPanel />
             </div>
           )}

@@ -31,7 +31,10 @@ try {
     platform: "browser",
     format: "iife",
     jsx: "automatic",
-    define: { "process.env.NODE_ENV": '"production"' },
+    define: {
+      "process.env.NODE_ENV": '"production"',
+      "import.meta.env": '{"DEV":false,"MODE":"production"}',
+    },
     /*
       The reduction hands its clone to the platform's text serializer, so the
       cascade *is* the reading and this fixture has to carry the real one.

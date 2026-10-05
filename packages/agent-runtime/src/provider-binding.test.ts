@@ -274,12 +274,9 @@ describe("Anthropic runtime endpoint", () => {
       .result();
 
     expect(result.stopReason).toBe("error");
-    expect(
-      Object.hasOwn(model.compat ?? {}, "supportsMidConvoSystemMessages"),
-    ).toBe(false);
-    expect(
-      Object.hasOwn(model.compat ?? {}, "supportsMidConvoToolChanges"),
-    ).toBe(false);
+    expect(model.compat).toMatchObject({
+      supportsMidConvoSystemMessages: false, supportsMidConvoToolChanges: false,
+    });
     expect(request?.headers.get("anthropic-beta") ?? "").not.toMatch(
       /mid-conversation-tool-changes|inline-tools/,
     );
@@ -424,6 +421,34 @@ describe("Anthropic adaptive thinking from models.dev reasoning options", () => 
     return requests[0];
   }
 
+  function genericAnthropicProvider(
+    modelId: string,
+    overrides: Partial<
+      Pick<ModelConfig, "reasoningOptions" | "thinkingProtocol" | "compat">
+    > = {},
+  ): RuntimeProviderConfig {
+    const baseUrl = "https://gateway.example";
+    const modelConfig = modelConfigWithBinding(
+      {
+        ...genericModelConfig(modelId, baseUrl),
+        ...overrides,
+      },
+      {
+        contextWindow: 200_000,
+        maxTokens: 16_000,
+        thinkingLevels: ["off", "medium"],
+        ...(overrides.thinkingProtocol
+          ? { thinkingProtocol: overrides.thinkingProtocol }
+          : {}),
+      },
+    );
+    return {
+      ...anthropicProvider(modelId, overrides.reasoningOptions ?? []),
+      baseUrl,
+      modelConfig,
+    };
+  }
+
   it("sends adaptive thinking to effort-only Claude models such as Opus 5.5", async () => {
     const request = await thinkingRequest(
       anthropicProvider("claude-opus-5-5", [
@@ -492,6 +517,87 @@ describe("Anthropic adaptive thinking from models.dev reasoning options", () => 
     expect(buildProviderModel(provider).compat).toMatchObject({
       forceAdaptiveThinking: true,
     });
+  });
+
+  it("keeps generic thinking defaults without inferring protocol from a Claude id", async () => {
+    const provider = genericAnthropicProvider("claude-opus-5-5");
+    expect(provider.modelConfig?.source).toBe("generic");
+
+    const request = await thinkingRequest(provider);
+
+    expect(request?.thinking).toMatchObject({ type: "enabled" });
+    expect(request?.thinking).toHaveProperty("budget_tokens");
+  });
+
+  it("keeps budget thinking when a generic model carries budget metadata", async () => {
+    const request = await thinkingRequest(
+      genericAnthropicProvider("claude-relay-model", {
+        reasoningOptions: [{ type: "budget_tokens", min: 1024 }],
+      }),
+    );
+
+    expect(request?.thinking).toMatchObject({ type: "enabled" });
+    expect(request?.thinking).toHaveProperty("budget_tokens");
+  });
+
+  it("keeps the legacy default for live-only OAuth Claude ids", async () => {
+    const provider = genericAnthropicProvider("claude-sonnet-99");
+    provider.authKind = "oauth";
+    provider.vendorKey = "github-copilot";
+    const request = await thinkingRequest(provider);
+
+    expect(request?.thinking).toMatchObject({ type: "enabled" });
+    expect(request?.thinking).toHaveProperty("budget_tokens");
+  });
+
+  it("honors an explicit legacy protocol on a generic Claude model", async () => {
+    const request = await thinkingRequest(
+      genericAnthropicProvider("claude-relay-model", {
+        thinkingProtocol: "legacy",
+      }),
+    );
+
+    expect(request?.thinking).toMatchObject({ type: "enabled" });
+    expect(request?.thinking).toHaveProperty("budget_tokens");
+  });
+
+  it("prioritizes an explicit protocol over a conflicting generic compat value", async () => {
+    const provider = genericAnthropicProvider("claude-relay-model", {
+      thinkingProtocol: "adaptive",
+    });
+    provider.modelConfig = {
+      ...provider.modelConfig!,
+      compat: { forceAdaptiveThinking: false },
+    };
+    const request = await thinkingRequest(provider);
+
+    expect(request?.thinking).toMatchObject({ type: "adaptive" });
+    expect(request?.thinking).not.toHaveProperty("budget_tokens");
+  });
+
+  it("honors per-model thinking compatibility on a generic model", async () => {
+    const optedOut = genericAnthropicProvider("claude-opus-5-5", {
+      compat: { forceAdaptiveThinking: false },
+    });
+    const model = buildProviderModel(optedOut);
+    expect(model.compat).toMatchObject({ forceAdaptiveThinking: false });
+    const request = await thinkingRequest(optedOut);
+    expect(request?.thinking).toMatchObject({ type: "enabled" });
+    expect(request?.thinking).toHaveProperty("budget_tokens");
+
+    // Precedence also holds when catalog reasoning options would derive the
+    // flag: the explicit record wins.
+    const effortOnly = anthropicProvider("claude-opus-5-5", [
+      { type: "effort", values: ["low", "medium", "high"] },
+    ]);
+    const derived = buildProviderModel({
+      ...effortOnly,
+      modelConfig: {
+        ...effortOnly.modelConfig!,
+        compat: { forceAdaptiveThinking: false },
+      },
+    });
+    expect(derived.compat).toMatchObject({ forceAdaptiveThinking: false });
   });
 });
 

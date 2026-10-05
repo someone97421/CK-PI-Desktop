@@ -2,6 +2,7 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { beginRenderDiagnostic } from "./render-diagnostics.ts";
 
 // Share the grammar with ReactMarkdown. A different block lexer can split a
 // valid math node at a list, quote, heading, or blank line inside its TeX.
@@ -165,13 +166,18 @@ export const emptyMarkdownBlockCache: MarkdownBlockCache = {
 export function advanceMarkdownBlocks(
   cache: MarkdownBlockCache,
   source: string,
+  maxTailCodeUnits = Number.POSITIVE_INFINITY,
 ): MarkdownBlockCache {
+  const finishDiagnostic = beginRenderDiagnostic("markdown-split", {
+    sourceLength: source.length,
+  });
   const appended =
     cache.blocks.length > 0 &&
     source.length >= cache.consumed.length &&
     source.startsWith(cache.consumed);
   // Latched one-way; see above for why a stale latch costs speed, not output.
   if (appended && cache.singleUnit) {
+    finishDiagnostic({ reason: "document-scoped-definition" });
     return { consumed: source, blocks: [source], singleUnit: true };
   }
   let stable: string[] = [];
@@ -182,6 +188,17 @@ export function advanceMarkdownBlocks(
       cache.consumed.length - cache.blocks[cache.blocks.length - 1].length;
     tail = source.slice(lastStart);
   }
+  // A growing unclosed block can otherwise be parsed from its first byte on
+  // every streaming frame. Keep the stable prefix and render this tail raw
+  // until it either closes or streaming ends.
+  if (tail.length > maxTailCodeUnits) {
+    finishDiagnostic({ sourceLength: tail.length, reason: "tail-limit" });
+    return {
+      consumed: source,
+      blocks: [...stable, tail],
+      singleUnit: false,
+    };
+  }
   // An unclosed math fence owns its entire body, including blank lines, so no
   // interior list or quote is mistaken for a completed streaming boundary.
   const split = tail
@@ -189,5 +206,9 @@ export function advanceMarkdownBlocks(
     : { blocks: [], hasDocumentScopedDefinition: false };
   const singleUnit = split.hasDocumentScopedDefinition;
   const blocks = singleUnit ? [source] : [...stable, ...split.blocks];
+  finishDiagnostic({
+    sourceLength: tail.length,
+    reason: singleUnit ? "document-scoped-definition" : undefined,
+  });
   return { consumed: source, blocks, singleUnit };
 }

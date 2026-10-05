@@ -24,8 +24,8 @@ mod repository;
 
 pub use approval::{expire_pending_approvals, gate_session_configure};
 pub use model::{
-    kind_for_mode, normalize_kind, PlanArtifact, PlanExecution, PlanManager, PlanProposal,
-    PlanResolution, PlanResolveParams, PlanSubmitParams, EXECUTION_COMPLETED,
+    kind_for_mode, normalize_kind, PlanArtifact, PlanExecution, PlanHistoryEntry, PlanManager,
+    PlanProposal, PlanResolution, PlanResolveParams, PlanSubmitParams, EXECUTION_COMPLETED,
     EXECUTION_INTERRUPTED, EXECUTION_QUEUED, EXECUTION_RUNNING, KIND_GOAL, KIND_PLAN,
     PLAN_MAX_MARKDOWN_BYTES, STATUS_APPROVED, STATUS_EXPIRED, STATUS_INTERRUPTED, STATUS_PENDING,
     STATUS_REJECTED,
@@ -37,8 +37,8 @@ pub(crate) use artifact::{
 };
 pub(crate) use execution::{execution_from_proposal, resolution_from_proposal};
 pub(crate) use repository::{
-    get_proposal, live_turn_belongs_to_session, proposal_from_row, session_submit_kind,
-    PROPOSAL_COLUMNS,
+    get_proposal, history_for_tool_calls, live_turn_belongs_to_session, proposal_from_row,
+    session_submit_kind, PROPOSAL_COLUMNS,
 };
 
 #[cfg(test)]

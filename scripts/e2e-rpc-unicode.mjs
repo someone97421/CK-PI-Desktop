@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(root, "packages/agent-runtime/package.json"));
@@ -44,7 +44,14 @@ try {
     platform: "node",
     format: "cjs",
     // Keep production development-path resolution pointed at this candidate.
-    define: { __dirname: JSON.stringify(join(root, "apps/desktop/electron/main")) },
+    // Electron main is an ESM runtime; the cjs bundle cannot evaluate
+    // `import.meta.url`, so point it at the candidate main entry explicitly.
+    define: {
+      __dirname: JSON.stringify(join(root, "apps/desktop/electron/main")),
+      "import.meta.url": JSON.stringify(
+        pathToFileURL(join(root, "apps/desktop/electron/main/index.js")).href,
+      ),
+    },
   });
   const { HostProcess, AgentSidecar } = require(bundle);
   process.env.PI_DESKTOP_HOST_BIN ??= join(root, "target/debug", `pi-desktop-host-core${process.platform === "win32" ? ".exe" : ""}`);

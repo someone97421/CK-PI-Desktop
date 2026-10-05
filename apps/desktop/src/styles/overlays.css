@@ -683,7 +683,7 @@
 }
 .backend-banner.warn .backend-dot {
   background: var(--ds-warning);
-  animation: pulse-soft 1.2s ease-in-out infinite;
+  animation: pulse-soft 1.2s ease-in-out 2;
 }
 .backend-banner.fatal .backend-dot {
   background: var(--ds-error);
@@ -723,6 +723,9 @@
   .provider-dialog-overlay,
   .provider-dialog {
     animation-duration: 0.01ms !important;
+  }
+  .backend-banner.warn .backend-dot {
+    animation: none;
   }
   .working-indicator-mark > span,
   .tool-row-name.running::after,

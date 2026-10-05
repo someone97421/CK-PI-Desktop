@@ -20,15 +20,11 @@ export type PluginSkillDef = {
 /**
  * Stable fingerprint of a skill catalog.
  *
- * `AgentRuntime.matches()` compares this so enabling a plugin, revoking its
- * prompt permission, or editing a skill's front matter starts a fresh runtime
- * instead of reusing a session whose catalog is already stale. Bodies are not
- * part of it: they never enter the prompt, and the `Skill` tool reads them
- * fresh from disk on every call.
+ * The runtime compares this before appending a skills section update. Bodies
+ * are excluded: the Skill tool reads them through the permission-checked host
+ * bridge on each invocation.
  */
 export function pluginSkillsDigest(skills?: PluginSkillDef[]): string {
   if (!skills?.length) return "";
-  return skills
-    .map((skill) => `${skill.id}:${skill.name}:${skill.description ?? ""}`)
-    .join("|");
+  return JSON.stringify(skills.map((skill) => [skill.id, skill.name, skill.description ?? ""]));
 }

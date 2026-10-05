@@ -149,7 +149,12 @@ test("flushing a scheduled adopt uses the Composer persist that rewrote home", (
 test("composer hydrates from the shared cache and persists across unmount and hidden windows", () => {
   assert.match(draftHook, /composer-draft-cache/);
   assert.match(composer, /readComposerDraft\(draftKey\)/);
-  assert.match(composer, /useState\(\(\) => initialDraft\?\.text \?\? ""\)/);
+  // A cached draft hydrates through the image attach helper so inline image
+  // chips come back together with their draft.
+  assert.match(
+    composer,
+    /return attachImageTokens\(initialDraft\?\.text \?\? "", references, nextChipToken\)/,
+  );
   assert.match(composer, /persistDraft\(draftKeyRef\.current\)/);
   assert.match(composer, /document\.visibilityState === "hidden"/);
   assert.match(composer, /window\.addEventListener\("blur", onWindowBlur\)/);
@@ -159,8 +164,8 @@ test("composer hydrates from the shared cache and persists across unmount and hi
   assert.match(composer, /persistDraft\(previousKey\)/);
   assert.match(composer, /flushScheduledHomeDraftAdopt\(draftKey\)/);
   assert.match(composer, /const nextDraft = readComposerDraft\(draftKey\)/);
-  assert.match(composer, /setValue\(nextDraft\?\.text \?\? ""\)/);
-  assert.match(composer, /setFileReferences\(\s*nextDraft\?\.fileReferences\.map/);
+  assert.match(composer, /setValue\(nextDraftState\.text\)/);
+  assert.match(composer, /setFileReferences\(nextDraftState\.references\)/);
   assert.doesNotMatch(composer, /new Map<string, ComposerDraftSnapshot>\(\)/);
   assert.doesNotMatch(composer, /draftCacheRef/);
 });

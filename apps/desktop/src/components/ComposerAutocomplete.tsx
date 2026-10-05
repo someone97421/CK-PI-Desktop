@@ -50,12 +50,13 @@ const GROUP_KEYS: Record<ComposerCommand["kind"], string> = {
   plugin: "chat.slashGroupPlugins",
   extension: "chat.slashGroupExtensions",
   skill: "chat.slashGroupSkills",
+  mcp: "chat.slashGroupMcp",
 };
 
 function CommandIcon({ kind }: { kind: ComposerCommand["kind"] }) {
   if (kind === "template") return <IconSlash size={14} />;
   if (kind === "skill") return <IconBookOpen size={14} />;
-  if (kind === "plugin" || kind === "extension") return <IconPlug size={14} />;
+  if (kind === "plugin" || kind === "extension" || kind === "mcp") return <IconPlug size={14} />;
   return <IconSparkles size={14} />;
 }
 
@@ -111,7 +112,7 @@ export function ComposerAutocomplete({
           <span className="composer-ac-name">
             /<Highlighted text={item.command.name} ranges={item.match.ranges} />
           </span>
-          {item.command.kind === "skill" && item.command.title !== item.command.name ? (
+          {(item.command.kind === "skill" || item.command.kind === "mcp") && item.command.title !== item.command.name ? (
             <span className="composer-ac-hint">{item.command.title}</span>
           ) : null}
           {item.command.argumentHint ? (

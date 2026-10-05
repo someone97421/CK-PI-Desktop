@@ -85,3 +85,34 @@ pub(crate) fn live_turn_belongs_to_session(
         |row| row.get(0),
     )?)
 }
+
+/// Return only submissions represented in this page. The transcript is immutable;
+/// approval/execution state belongs to SQLite and must never come from tool output.
+pub(crate) fn history_for_tool_calls(
+    db: &Database,
+    session_id: &str,
+    tool_call_ids: &[&str],
+) -> Result<Vec<PlanHistoryEntry>> {
+    if tool_call_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT {PROPOSAL_COLUMNS}, EXISTS(
+            SELECT 1 FROM plan_approvals newer
+            WHERE newer.session_id = history.session_id
+              AND COALESCE(newer.kind, 'plan') = COALESCE(history.kind, 'plan')
+              AND newer.rowid > history.rowid
+        ) FROM plan_approvals history
+        WHERE session_id = ?1 AND tool_call_id IN (SELECT value FROM json_each(?2))
+        ORDER BY rowid"
+    );
+    let ids = serde_json::to_string(tool_call_ids)?;
+    let mut statement = db.conn().prepare_cached(&sql)?;
+    let entries = statement.query_map(params![session_id, ids], |row| {
+        Ok(PlanHistoryEntry {
+            proposal: proposal_from_row(row)?,
+            superseded: row.get(23)?,
+        })
+    })?;
+    Ok(entries.collect::<rusqlite::Result<Vec<_>>>()?)
+}

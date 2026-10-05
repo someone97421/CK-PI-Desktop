@@ -50,6 +50,50 @@
   max-width: 240px;
 }
 
+/* A chip inside a message belongs to that message: it borrows the message's own
+   face, size and leading and only keeps the tile surface. The composer's fixed
+   11.5px/20px box is a draft-only metric, and as a message chip it clipped the
+   message's own line box. Sized by the inherited leading and aligned to the
+   line, the tile covers exactly one line of message text, so the label sits on
+   that line's baseline and the chip reads as a run of it. */
+.message-row .composer-chip {
+  height: auto;
+  padding: 0 6px;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: top;
+}
+
+/* A conversation reference is the message chip whose label can be as long as a
+   conversation title. An atomic chip that does not fit is pushed whole onto the
+   next line and leaves the rest of its line blank, so this one is an inline run
+   instead: it breaks with the text, its first line still reaches the right edge
+   of the line it started on, and the tile continues over the break. */
+.message-row .composer-chip[data-action="open-session-reference"] {
+  display: inline;
+  /* An inline box is as tall as the font (about 1.18em here), so half of the
+     leading has to come back as padding for the tile to cover the line box. */
+  padding: 0.186em 6px;
+  vertical-align: baseline;
+  white-space: normal;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* `gap` only spaces flex items: an inline run needs the icon's own gap. */
+.message-row .composer-chip[data-action="open-session-reference"] .composer-chip-icon {
+  margin-right: 4px;
+}
+
+/* Break the label where the line needs it instead of ellipsising it: on a full
+   line the label is the only part long enough to reach the right edge. */
+.message-row .composer-chip[data-action="open-session-reference"] .composer-chip-name {
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .message-row.assistant > .message-col,
 .message-row.system > .message-col,
 .message-row.tool > .message-col {
@@ -2050,11 +2094,13 @@
 }
 
 .message-attachments {
-  display: flex;
+  display: inline-flex;
   max-width: 100%;
   flex-wrap: wrap;
   gap: 5px;
-  margin-bottom: 7px;
+  /* The chips continue the body line instead of heading it. */
+  margin-left: 4px;
+  vertical-align: middle;
 }
 
 .message-row.user .message-attachments {
@@ -2082,29 +2128,12 @@
   white-space: nowrap;
 }
 
-.message-attachment-image {
+/* A user-message image is a chip like any other attachment; its preview card
+   appears on hover or focus and is rendered outside the message row. */
+.message-attachment-image-chip {
   display: inline-flex;
   min-width: 0;
   align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  padding: 3px;
-  background: var(--ds-tile);
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.message-attachment-image:hover {
-  background: var(--ds-raised);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--ds-accent) 18%, transparent);
-}
-
-.message-attachment-image img {
-  display: block;
-  max-width: 220px;
-  max-height: 220px;
-  object-fit: contain;
-  border-radius: var(--radius-sm);
 }
 
 .message-row.assistant > .message-col > .message-bubble,
@@ -3661,6 +3690,7 @@
   word-break: break-word;
   line-height: var(--leading-normal);
 }
+/* ── Smooth streaming cursor and layout stabilization ── */
 
 @keyframes smooth-stream-blink {
   0%, 100% { opacity: 1; }
@@ -3670,6 +3700,10 @@
 /* Keep the streaming indicator out of Markdown's block layout. */
 .assistant-turn-fragment .prose-chat {
   position: relative;
+}
+
+.assistant-turn-fragment.streaming .prose-chat {
+  text-wrap: wrap;
 }
 
 .assistant-turn-fragment.smooth-cursor .prose-chat[data-cursor-ready]::after {

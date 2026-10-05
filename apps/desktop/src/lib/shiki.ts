@@ -6,6 +6,8 @@ import type {
 } from "shiki/core";
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import { inspectHighlightLimits } from "./render-content-limits.ts";
+import { beginRenderDiagnostic } from "./render-diagnostics.ts";
 
 /*
  * Singleton Shiki highlighter for chat code blocks.
@@ -241,7 +243,18 @@ export function tokenizeIncremental(
   lang: string,
   theme: string,
 ): LineCache | null {
-  if (!highlighter || !readyLangs.has(lang)) return null;
+  const finishDiagnostic = beginRenderDiagnostic("code-highlight", {
+    sourceLength: code.length,
+  });
+  if (!highlighter || !readyLangs.has(lang)) {
+    finishDiagnostic({ reason: "language-unavailable" });
+    return null;
+  }
+  const limits = inspectHighlightLimits(code);
+  if (!limits.within) {
+    finishDiagnostic({ longestLine: limits.longestLine, inputNodeCount: limits.lineCount, reason: limits.reason });
+    return null;
+  }
 
   const lines = code.split("\n");
   const cache =
@@ -254,6 +267,11 @@ export function tokenizeIncremental(
   while (start < reusable && cache!.lines[start] === lines[start]) start += 1;
 
   if (cache && start === lines.length && cache.lines.length === lines.length) {
+    finishDiagnostic({
+      longestLine: limits.longestLine,
+      inputNodeCount: lines.length,
+      reason: "cache-hit",
+    });
     return cache;
   }
 
@@ -274,5 +292,6 @@ export function tokenizeIncremental(
     outStates.push(highlighter.getLastGrammarState(rows));
   }
 
+  finishDiagnostic({ longestLine: limits.longestLine, inputNodeCount: lines.length });
   return { lang, theme, lines: outLines, tokens: outTokens, states: outStates };
 }

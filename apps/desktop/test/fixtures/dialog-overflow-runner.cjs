@@ -42,9 +42,11 @@ app.whenReady().then(async () => {
   const original = await measure();
   check('extension source fits and close is reachable', original.contained && original.overflow <= 1 && original.closeContained && original.closeHit, original);
   check('full source path wraps without clipping or changing dialog width', original.sourceWrapped && original.width <= 420, original);
+  check('extension prompt suppresses native preview while open', await evaluate('window.dialogFixture.isBlockingOverlayActive()'));
   writeFileSync(join(process.env.PI_DIALOG_ARTIFACT_DIR, 'extension-path.png'), (await win.webContents.capturePage()).toPNG());
   await click('.session-rename-dialog-close');
   check('close dismisses the extension prompt', await evaluate('!document.querySelector("[role=dialog]") && window.dialogFixture.responses.length === 1'));
+  check('extension prompt releases native preview after close', await evaluate('!window.dialogFixture.isBlockingOverlayActive()'));
   await evaluate('window.dialogFixture.show("extension")');
   for (const keyCode of 'Ann') win.webContents.sendInputEvent({ type: 'char', keyCode });
   await click('button[type="submit"]');

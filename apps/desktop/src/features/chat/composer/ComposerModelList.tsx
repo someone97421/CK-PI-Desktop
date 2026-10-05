@@ -1,7 +1,8 @@
+import { providerDisplayName } from "../../../lib/provider-display";
 import { formatTokenCount, type ModelInfo, type ProviderPublic } from "@pi-desktop/shared";
 import type { TFunction } from "i18next";
 import type { RefObject } from "react";
-import { IconCheck, IconEye, IconSearch, IconSparkles } from "../../../components/icons";
+import { IconCheck, IconChevronDown, IconChevronRight, IconEye, IconSearch, IconSparkles } from "../../../components/icons";
 import {
   composerModelBadges,
   composerModelBinding,
@@ -19,7 +20,12 @@ export type ComposerModelGroup = {
 export function ComposerModelList({
   t, query, setQuery, modelSearchRef, modelListRef, modelGroups,
   modelHighlight, setModelHighlight, selectedProviderId, selectedModelId, selectModel,
+  recentEntries, hasOtherModels, otherModelsExpanded, setOtherModelsExpanded,
 }: {
+  recentEntries: Array<{ provider: ProviderPublic; model: ModelInfo }>;
+  hasOtherModels: boolean;
+  otherModelsExpanded: boolean;
+  setOtherModelsExpanded: (expanded: boolean) => void;
   t: TFunction;
   query: string;
   setQuery: (query: string) => void;
@@ -47,11 +53,44 @@ export function ComposerModelList({
                   autoCorrect="off"
                   autoCapitalize="off"
                   onChange={(event) => setQuery(event.target.value)}
+                  onBlur={() => setModelHighlight(-1)}
                 />
               </label>
               <div className="composer-model-list" ref={modelListRef}>
+                {recentEntries.length > 0 ? (
+                  <div className="composer-model-group" role="group" aria-label={t("chat.recentModels")}>
+                    <div className="composer-model-group-label">{t("chat.recentModels")}</div>
+                    {recentEntries.map(({ provider, model }, index) => {
+                      const active = provider.id === selectedProviderId && sameComposerModelId(model.modelId, selectedModelId ?? "");
+                      return (
+                        <button
+                          key={`${provider.id}:${model.modelId}`}
+                          type="button" role="menuitemradio" aria-checked={active}
+                          data-model-index={index}
+                          className={`composer-plus-item composer-model-option ${modelHighlight === index ? "kb-active" : ""}`}
+                          title={`${providerDisplayName(provider)} · ${model.modelId}`}
+                          onClick={() => void selectModel(provider, model.modelId)}
+                        >
+                          <span className="composer-model-option-main">
+                            <span className="composer-model-label">{composerModelDisplayName(provider, model.modelId)}</span>
+                            <span className="composer-model-option-meta">{providerDisplayName(provider)}</span>
+                          </span>
+                          {active ? <IconCheck size={14} aria-hidden="true" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {hasOtherModels ? (
+                  <button type="button" className="composer-menu-entry" role="menuitem"
+                    aria-expanded={otherModelsExpanded}
+                    onClick={() => setOtherModelsExpanded(!otherModelsExpanded)}>
+                    {otherModelsExpanded ? <IconChevronDown size={14} aria-hidden="true" /> : <IconChevronRight size={14} aria-hidden="true" />}
+                    <span className="composer-menu-entry-label">{t("chat.otherModels")}</span>
+                  </button>
+                ) : null}
                 {(() => {
-                  let flatIndex = 0;
+                  let flatIndex = recentEntries.length;
                   return modelGroups.map((group) => (
                     <div
                       key={group.provider.id}
@@ -83,7 +122,6 @@ export function ComposerModelList({
                             className={`composer-plus-item composer-model-option ${active ? "active" : ""} ${modelHighlight === index ? "kb-active" : ""}`}
                             role="menuitemradio"
                             aria-checked={active}
-                            onMouseMove={() => setModelHighlight(index)}
                             onClick={() => void selectModel(group.provider, model.modelId)}
                           >
                             <span className="composer-model-option-main">
@@ -136,7 +174,7 @@ export function ComposerModelList({
                     </div>
                   ));
                 })()}
-                {flatModels.length === 0 ? (
+                {flatModels.length === 0 && recentEntries.length === 0 ? (
                   <div className="composer-model-empty">{t("chat.noModelResults")}</div>
                 ) : null}
               </div>

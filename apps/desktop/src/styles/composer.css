@@ -319,7 +319,7 @@
 .composer-mode-chip[data-planning="true"] svg {
   color: var(--ds-purple) !important;
   animation: composer-mode-planning-pulse 1.2s var(--motion-ease-standard)
-    infinite;
+    2;
 }
 
 @keyframes composer-mode-face-in {
@@ -910,12 +910,35 @@
   transform: translateY(0);
 }
 
+/* The `0fr` row closes only if the clip can shrink below its content, and
+   vertical padding on the animating box holds that row open — as the list's
+   10px bottom inset did, leaving a blank band under the collapsed header.
+   The clip layer carries the collapse; the inset stays inside it. */
+.todo-dock-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .todo-dock-list {
   display: grid;
-  min-height: 0;
   gap: 6px;
   padding: 0 10px 10px;
-  overflow: hidden;
+}
+
+/* The expanded dock lists every row and scrolls inside its own box (#1319):
+   the Composer keeps its footprint, and reaching the list's end never scrolls
+   the transcript behind it. */
+.todo-dock.is-expanded .todo-dock-list {
+  max-height: min(280px, 30dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The scrollport is keyboard reachable while it is on screen; the inset ring
+   stays inside the clip layer that carries the disclosure animation. */
+.todo-dock-list:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--ds-accent) 72%, transparent);
+  outline-offset: -2px;
 }
 
 .todo-dock-row {
@@ -961,12 +984,11 @@
   white-space: nowrap;
 }
 
-.todo-dock-more {
-  color: var(--ds-text-muted);
-  font-size: var(--text-2xs);
-}
-
 @media (prefers-reduced-motion: reduce) {
+  .composer-mode-chip[data-planning="true"] svg {
+    animation: none;
+  }
+
   .todo-dock-header,
   .todo-dock-content,
   .todo-dock-row {

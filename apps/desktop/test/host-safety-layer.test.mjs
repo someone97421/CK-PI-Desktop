@@ -56,3 +56,16 @@ test("an extension prompt holds the plugin layers aside while it is up", async (
   const dialog = source.slice(source.indexOf("function ExtensionPromptDialog("));
   assert.match(dialog, /\n  useHostSafetySurface\(\);\n/);
 });
+
+test("the extension prompt also hides the docked native views while it is up", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(
+    new URL("../src/components/ExtensionPromptDialog.tsx", import.meta.url),
+    "utf8",
+  );
+  const dialog = source.slice(source.indexOf("function ExtensionPromptDialog("));
+  // The prompt is a centered modal over the whole shell, so a docked
+  // WebContentsView composites above it. The dialog mounts only while a prompt
+  // is queued, which is exactly the window that must block the panel.
+  assert.match(dialog, /\n  useBlockingOverlay\(\);\n/);
+});

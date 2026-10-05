@@ -1771,6 +1771,8 @@
   }
 
   .provider-setup-panes {
+    /* Let the body scroll instead of squeezing stacked lists below a row. */
+    flex: none;
     grid-template-columns: minmax(0, 1fr);
   }
 

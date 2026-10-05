@@ -7,6 +7,7 @@ import {
   type ModelModality,
 } from "@pi-desktop/shared";
 import type { ModelConfig, ThinkingCapabilitySet } from "./thinking-level.js";
+export { transcriptConfigFromPi } from "./transcript-compat.js";
 
 export {
   agentThinkingLevel,
@@ -24,6 +25,7 @@ export function modelConfigFromPi(model: Model<Api>): ModelConfig {
     ...metadata,
     ...(compat ? { compat: { ...compat } } : {}),
     source: "pi",
+    transcriptBinding: { modelId: model.id, api: model.api, baseUrl: model.baseUrl },
     nativeCost: cost,
     // Desktop's historical tier schema differs; do not invent a translation.
     cost: { input: cost.input, output: cost.output, cacheRead: cost.cacheRead, cacheWrite: cost.cacheWrite },

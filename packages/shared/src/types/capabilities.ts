@@ -62,6 +62,8 @@ export type McpServerRecord = {
   /** http: absolute endpoint; HTTP is allowed for local and LAN servers. */
   url?: string;
   headers?: Record<string, string>;
+  /** Handshake/connection timeout in seconds (optional override). */
+  timeoutSeconds?: number;
   enabled: boolean;
   scope?: ActivationScope;
   createdAt: string;
@@ -81,6 +83,8 @@ export type McpServerInput = {
   env?: Record<string, string>;
   url?: string;
   headers?: Record<string, string>;
+  /** Set to null to clear an existing server-specific timeout override. */
+  timeoutSeconds?: number | null;
   enabled?: boolean;
   scope?: ActivationScope;
 };

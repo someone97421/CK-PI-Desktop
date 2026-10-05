@@ -1,53 +1,18 @@
-/*
-  Session management — settings session import (groups and rows) and the
-  sidebar session controls: lists, toolbars, sort popover, checkboxes, project
-  grouping, and disclosure. Base thread row styles live in
-  sidebar-threads.css.
-*/
+/* Session controls: lists, toolbars, sort popover, project grouping, and
+   disclosure. Base thread row styles live in sidebar-threads.css. */
 
 /* -------------------------------------------------------------------------
- * Settings > Import. One workbench per kind — sessions, model configuration,
- * skills, MCP servers: a segmented kind switcher, one toolbar (select-all with
- * both counts, kind options, rescan, import selected), then one list panel
- * whose group headers are quiet label lines and whose rows are individual
- * tiles. The rhythm matches the agent capability destinations.
+ * Inline import workbenches inside their settings destinations.
  */
 
-.import-page {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 14px;
-}
-
-/*
-  Kind switcher. The shared `.settings-segment` already carries both theme
-  pairs and the raised active pill; only the page-scale pills are local.
-  Compound selectors on purpose: providers.css defines `.settings-segment-item`
-  further down the cascade, so a bare `.import-segment-btn` would lose to it.
-*/
-.settings-segment.import-segment {
-  align-self: flex-start;
-  max-width: 100%;
-  flex-wrap: wrap;
-}
-
-.settings-segment-item.import-segment-btn {
-  padding: 5px 12px;
-  font-size: var(--text-sm);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-}
-
-/* Tab panels stay mounted so a scan result survives a switch. */
-.import-view {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.import-view[hidden] {
+.import-inline-section[hidden],
+.import-inline-workbench[hidden] {
   display: none;
+}
+
+.import-inline-workbench {
+  min-width: 0;
+  padding: 10px 0;
 }
 
 .import-workbench {
@@ -247,17 +212,29 @@
 }
 
 .import-row:has(input:focus-visible),
-.import-group-header > input:focus-visible {
+.import-group-checkbox:has(> input:focus-visible) {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--ds-accent) 22%, transparent);
 }
 
 .import-row > input[type="checkbox"],
-.import-group-header > input[type="checkbox"] {
+.import-group-checkbox > input[type="checkbox"] {
   width: 14px;
   height: 14px;
   flex: 0 0 auto;
   margin: 0;
+}
+
+.import-row > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+}
+
+.import-group-checkbox > span {
+  display: none;
 }
 
 .import-row-main {
@@ -358,7 +335,7 @@
   background: var(--ds-purple);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--ds-purple) 15%, transparent);
   content: "";
-  animation: sidebar-status-pulse-purple 1.2s ease-in-out infinite;
+  animation: sidebar-status-pulse-purple 1.2s ease-in-out 2;
 }
 
 .thread-item-status.selected::before {

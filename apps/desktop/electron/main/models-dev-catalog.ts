@@ -32,7 +32,7 @@ import type {
   ThinkingProtocol,
   ModelBinding,
 } from "@pi-desktop/shared";
-import { genericModelConfig, modelConfigWithBinding, type ModelConfig } from "@pi-desktop/agent-runtime";
+import { genericModelConfig, modelConfigWithBinding, transcriptConfigFromPi, type ModelConfig } from "@pi-desktop/agent-runtime";
 import { resolveBindingLimits } from "@pi-desktop/shared";
 
 export const MODELS_DEV_API_URL = "https://models.dev/api.json";
@@ -1433,6 +1433,16 @@ export class ModelsDevCatalog {
     if (!custom && !model && !unpublishedConfig && input.apiStyle === "anthropic_messages") {
       const thinking = this.anthropicThinkingFor(input.modelId);
       if (thinking) baseline = { ...baseline, ...thinking };
+    }
+    // Pi owns wire capabilities, independently of models.dev's limits/prices.
+    // Use the original published record, never an account/relay projection.
+    const key = input.vendorKey?.trim().toLowerCase();
+    const vendor = (key ? PI_VENDOR_ALIASES[key] ?? key : undefined) ?? this.providerKeyForRow(input);
+    const transport = vendor ? this.operationModels.getModel(vendor, input.modelId) : undefined;
+    if (transport) {
+      const transcript = transcriptConfigFromPi(transport);
+      baseline = { ...baseline, transcriptBinding: transcript.transcriptBinding,
+        compat: { ...baseline.compat, ...transcript.compat } };
     }
     if (!binding) return baseline;
     const limits = resolveBindingLimits(baseline, binding);

@@ -43,6 +43,8 @@ import {
   IconTrash,
 } from "../icons";
 import { SkillMarketPanel } from "./SkillMarketPanel";
+import { AgentSkillImportPanel } from "../../features/settings/imports/AgentSkillImportPanel";
+import { ImportToggleButton } from "../../features/settings/import-workbench";
 
 import { TooltipButton } from "../ui";
 const GLOBAL_SKILLS_PATH = "~/.agents/skills";
@@ -98,6 +100,7 @@ export function AgentSkillsPage() {
     showToast(error instanceof Error ? error.message : String(error), { variant: "error" }),
   );
   const [filter, setFilter] = useState<CapabilityFilter>("all");
+  const [importOpen, setImportOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -645,6 +648,13 @@ export function AgentSkillsPage() {
           }
           actions={
             <>
+              <ImportToggleButton
+                open={importOpen}
+                controls="agent-skills-import-panel"
+                label={t("settings.importSkillFromTools")}
+                disabled={targetLevel === "project" && !selectedProjectPath}
+                onClick={() => setImportOpen((current) => !current)}
+              />
               <CapabilityButton variant="primary" title={newSkillTitle} onClick={openCreate}>
                 <IconPlus size={14} />
                 {t("settings.newSkill")}
@@ -655,6 +665,26 @@ export function AgentSkillsPage() {
         />
       }
     >
+      <section
+        id="agent-skills-import-panel"
+        className="settings-card-block import-inline-section"
+        hidden={!importOpen}
+      >
+        <div className="settings-card-heading-line">
+          <h3 className="settings-card-heading">
+            {t("settings.importAgentSkillsTitle")}
+          </h3>
+        </div>
+        <div className="import-inline-workbench">
+          <AgentSkillImportPanel
+            key={`${targetLevel}:${targetLevel === "project" ? selectedProjectPath ?? "" : ""}`}
+            level={targetLevel}
+            projectPath={targetLevel === "project" ? selectedProjectPath ?? undefined : undefined}
+            onImported={load}
+          />
+        </div>
+      </section>
+
       <CapabilityPanel
         loading={loading}
         refreshing={refreshing}

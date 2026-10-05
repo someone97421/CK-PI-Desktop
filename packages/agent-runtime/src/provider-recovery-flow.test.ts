@@ -85,6 +85,7 @@ function fixture(steps: Step[]) {
     },
     host: {
       async call<T>(method: string): Promise<T> {
+        if (method === "session.appendMessage") return undefined as T;
         if (method !== "tools.execute")
           throw new Error(`Unexpected host method: ${method}`);
         reads++;

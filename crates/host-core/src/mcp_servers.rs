@@ -5,7 +5,7 @@ use crate::agent_capabilities::{
     CapabilityLevel, CapabilityState, CapabilityTarget,
 };
 use anyhow::{bail, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -41,6 +41,8 @@ pub struct McpServerRecord {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
     pub enabled: bool,
     #[serde(default)]
     pub scope: ActivationScope,
@@ -68,6 +70,8 @@ struct McpConfig {
     url: Option<String>,
     #[serde(default)]
     headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -84,10 +88,21 @@ pub struct McpServerInput {
     pub env: Option<BTreeMap<String, String>>,
     pub url: Option<String>,
     pub headers: Option<BTreeMap<String, String>>,
+    #[serde(default, deserialize_with = "deserialize_timeout_override")]
+    pub timeout_seconds: Option<Option<u64>>,
     pub enabled: Option<bool>,
     /// Kept for protocol compatibility; capability state is app-local instead.
     #[allow(dead_code)]
     pub scope: Option<ActivationScope>,
+}
+
+fn deserialize_timeout_override<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<u64>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<u64>::deserialize(deserializer).map(Some)
 }
 
 pub struct McpServerRegistry {
@@ -242,6 +257,7 @@ impl McpServerRegistry {
                 env: config.env,
                 url: config.url,
                 headers: config.headers,
+                timeout_seconds: config.timeout_seconds,
                 enabled,
                 scope: scope_for(level, owner_project_path.as_deref()),
                 created_at: updated_at.clone(),
@@ -318,6 +334,11 @@ impl McpServerRegistry {
         check_len("label", &config.label)?;
         if let Some(description) = &config.description {
             check_len("description", description)?;
+        }
+        if let Some(timeout) = config.timeout_seconds {
+            if !(1..=600).contains(&timeout) {
+                bail!("MCP_INVALID: timeoutSeconds must be between 1 and 600");
+            }
         }
         match config.transport.as_str() {
             "stdio" => {
@@ -411,6 +432,9 @@ impl McpServerRegistry {
                 .filter(|value| !value.is_empty())
                 .or_else(|| current.and_then(|record| record.description.clone())),
             transport,
+            timeout_seconds: input
+                .timeout_seconds
+                .unwrap_or_else(|| current.and_then(|record| record.timeout_seconds)),
             ..Default::default()
         };
         if config.transport == "stdio" {
@@ -666,6 +690,12 @@ mod tests {
         assert!(McpServerRegistry::validate_config(&config).is_err());
         config.command = Some("node".into());
         assert!(McpServerRegistry::validate_config(&config).is_ok());
+        config.timeout_seconds = Some(0);
+        assert!(McpServerRegistry::validate_config(&config).is_err());
+        config.timeout_seconds = Some(601);
+        assert!(McpServerRegistry::validate_config(&config).is_err());
+        config.timeout_seconds = Some(60);
+        assert!(McpServerRegistry::validate_config(&config).is_ok());
     }
 
     #[test]
@@ -683,6 +713,30 @@ mod tests {
     }
 
     #[test]
+    fn clearing_a_custom_timeout_restores_the_default() {
+        let home = tempdir().unwrap();
+        let app = tempdir().unwrap();
+        test_support::with_global_agents(home.path(), || {
+            let mut registry = McpServerRegistry::new(app.path());
+            let mut initial = stdio("slow-server");
+            initial.timeout_seconds = Some(Some(45));
+            let saved = registry.upsert(initial).unwrap();
+            assert_eq!(saved.timeout_seconds, Some(45));
+
+            let preserve = serde_json::from_value(serde_json::json!({ "id": "slow-server" })).unwrap();
+            let preserved = registry.upsert(preserve).unwrap();
+            assert_eq!(preserved.timeout_seconds, Some(45));
+
+            let clear = serde_json::from_value(serde_json::json!({
+                "id": "slow-server",
+                "timeoutSeconds": null
+            })).unwrap();
+            let updated = registry.upsert(clear).unwrap();
+            assert_eq!(updated.timeout_seconds, None);
+        });
+    }
+
+    #[test]
     fn disabled_project_server_shadows_global_server() {
         let global = McpServerRecord {
             id: "files".into(),
@@ -697,6 +751,7 @@ mod tests {
             env: BTreeMap::new(),
             url: None,
             headers: BTreeMap::new(),
+            timeout_seconds: None,
             enabled: true,
             scope: ActivationScope::default(),
             created_at: String::new(),

@@ -128,3 +128,11 @@ pub struct PlanResolveParams<'a> {
     pub action: &'a str,
     pub target_permission_mode: Option<&'a str>,
 }
+
+/// Authoritative display metadata for one immutable submission in a history page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanHistoryEntry {
+    pub proposal: PlanProposal,
+    pub superseded: bool,
+}

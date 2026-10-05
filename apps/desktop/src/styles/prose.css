@@ -23,6 +23,25 @@
   letter-spacing: var(--tracking-normal);
 }
 
+.markdown-plain-fallback {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.markdown-plain-fallback > [role="status"] {
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+  margin-bottom: 0.5rem;
+}
+
+.markdown-plain-fallback pre {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .prose-chat > :first-child {
   margin-top: 0 !important;
 }

@@ -46,6 +46,9 @@ export type OutputCapContext = {
 export type OutputCapMessage = {
   role: string;
   content: unknown;
+  sections?: Record<string, string | null>;
+  toolsAdded?: readonly unknown[];
+  toolsRemoved?: readonly unknown[];
   api?: Api;
   provider?: string;
   model?: string;
@@ -227,6 +230,14 @@ export function estimateOutputCapInputTokens(
       message.content,
       replayOptionsFor(message, model),
     );
+    if (message.role === "system") {
+      // Canonical transcript requests carry instruction sections and schema
+      // updates on the message, without a separate systemPrompt/tools field.
+      const state = [message.sections, message.toolsAdded, message.toolsRemoved]
+        .filter((value) => value !== undefined).map(stringifyForEstimate).join("\n");
+      baseline += Math.ceil(state.length / CHARS_PER_TOKEN);
+      cjkChars += countCjkChars(state);
+    }
     baseline += estimated.baseline;
     cjkChars += estimated.cjkChars;
   }

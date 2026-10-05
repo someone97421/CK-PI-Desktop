@@ -3,7 +3,7 @@ import type { Mode } from "./common.js";
 import type { SessionThinkingLevel, ThinkingLevel } from "./models.js";
 import type { PermissionMode } from "./permissions.js";
 import type { UiMessage } from "./messages.js";
-import type { PlanningState } from "./plans.js";
+import type { PlanHistoryEntry, PlanningState } from "./plans.js";
 
 /**
  * Which authority owns a session's transcript.
@@ -62,6 +62,8 @@ export type SessionSummary = {
 
 export type SessionDetail = SessionSummary & {
   messages: UiMessage[];
+  /** Authoritative metadata scoped to the submitted contracts in this page. */
+  planHistory?: PlanHistoryEntry[];
   /** Owning Task for a nested search target; context only, outside page cursors. */
   navigationParent?: UiMessage;
   /** Zero-based offset of the first message returned by a bounded history read. */

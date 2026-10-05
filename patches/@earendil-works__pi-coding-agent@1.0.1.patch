@@ -1,5 +1,5 @@
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
-index 1da213f5fb33ff8d0e98ed044a1844c97463bcd3..a447789cfc1782cd7a0aaa96c2fc92b03d944ce6 100644
+index 33338d518743ba2fd4ee2d710c5496a6ddcd1856..7ea30773b6d3aa2e960fe8da753e0dd334c602d1 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
 @@ -68,10 +68,10 @@ function withoutDeletedHeaders(headers) {

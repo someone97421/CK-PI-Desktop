@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useBlockingOverlay } from "../lib/blocking-overlay";
 import { portalToBody } from "../lib/portal-visibility";
 import { useTranslation } from "react-i18next";
 import { ErrorCodes } from "@pi-desktop/shared";
@@ -28,6 +29,7 @@ export function ProjectDeleteDialog({
   onDeleted: () => void | Promise<void>;
   onError: (error: unknown) => void;
 }) {
+  useBlockingOverlay();
   const { t } = useTranslation();
   const deleteProject = useAppStore((s) => s.deleteProject);
   const abortSession = useAppStore((s) => s.abortSession);

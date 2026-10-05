@@ -318,6 +318,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
   const loadComposerTemplatesCached = createComposerTemplateLoader(logger);
   const composerCommandService = registerComposerIpc({
     registrar,
+    userMcp,
+    refreshUserMcp,
     plugins,
     agentExtensions,
     optionalWorkspaceRoot,

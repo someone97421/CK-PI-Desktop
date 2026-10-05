@@ -19,6 +19,7 @@ import { createSessionRuntime } from "../../apps/desktop/src/stores/runtime/sess
 import { createEventsSlice } from "../../apps/desktop/src/stores/slices/events-slice";
 import type { StoreSet } from "../../apps/desktop/src/stores/slices/types";
 import { useSmoothText } from "../../apps/desktop/src/hooks/useSmoothText";
+import { MAX_SMOOTH_TEXT_CODE_UNITS } from "../../apps/desktop/src/lib/render-content-limits";
 import { useAppStore } from "../../apps/desktop/src/stores/app-store";
 
 declare global {
@@ -860,10 +861,18 @@ globalThis.smoothTextThrottleProbe = async () => {
     );
     flushFrame(start + 361 * frameInterval);
     assert(callbacks.size === 0, "smooth text kept scheduling frames after catching up");
+
+    const largeSource = "large-stream-".repeat(Math.ceil((MAX_SMOOTH_TEXT_CODE_UNITS + 1) / 13));
+    flushSync(() => updateSource(largeSource));
+    await yieldToEffects();
+    assert(host.textContent === largeSource, "large streaming text was not shown in full immediately");
+    assert(callbacks.size === 0, "large streaming text still scheduled per-frame reveal work");
     return {
       ok: true,
       commits: commits.length,
       minimumGapMs,
+      largeSourceLength: largeSource.length,
+      largeSourceShownImmediately: host.textContent === largeSource,
       idleFramesAfterCatchUp: callbacks.size,
     };
   } finally {

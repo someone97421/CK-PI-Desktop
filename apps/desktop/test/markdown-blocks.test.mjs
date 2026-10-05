@@ -113,6 +113,16 @@ test("streaming an appended source splits it exactly like one full parse", () =>
   }
 });
 
+test("oversized streaming tails remain raw while settled prefix blocks are reused", () => {
+  const first = advanceMarkdownBlocks(emptyMarkdownBlockCache, "Heading\n\nFirst.", 16);
+  const growing = `${first.consumed}\n\nSecond paragraph.`;
+  const bounded = advanceMarkdownBlocks(first, growing, 16);
+  assert.deepEqual(bounded.blocks, ["Heading\n\n", "First.\n\nSecond paragraph."]);
+
+  const finished = advanceMarkdownBlocks(bounded, growing, Number.POSITIVE_INFINITY);
+  assert.deepEqual(finished.blocks, parseMarkdownBlocks(growing).blocks);
+});
+
 test("a source that stops extending the cached one is re-decided from scratch", () => {
   const withDefinition = stream("See [spec].\n\n[spec]: https://example.com\n");
   assert.equal(withDefinition.singleUnit, true);

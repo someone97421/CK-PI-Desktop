@@ -109,6 +109,7 @@ test("the delete dialog names the sessions and keeps the folder on disk", () => 
   assert.match(dialogSource, /t\("project\.deleteSessions", \{ count: project\.sessionCount \}\)/);
   assert.match(dialogSource, /t\("project\.deleteDescription", \{ name: project\.name \}\)/);
   assert.match(dialogSource, /t\("project\.deleteFolderKept"\)/);
+  assert.match(dialogSource, /useBlockingOverlay\(\)/);
   assert.match(dialogSource, /portalToBody\(dialog\)/);
 });
 

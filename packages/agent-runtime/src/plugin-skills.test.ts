@@ -40,3 +40,9 @@ describe("pluginSkillsDigest", () => {
     expect(pluginSkillsDigest([{ id: "a", name: "A", description: "" }])).toBe(without);
   });
 });
+
+it("does not confuse delimiter-containing catalog fields", () => {
+  expect(pluginSkillsDigest([{ id: "a", name: "b:c", description: "d" }])).not.toBe(
+    pluginSkillsDigest([{ id: "a", name: "b", description: "c:d" }]),
+  );
+});

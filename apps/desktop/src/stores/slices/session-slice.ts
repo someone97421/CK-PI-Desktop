@@ -467,6 +467,7 @@ export function createSessionSlice({
             messages: selectedMessages,
             settings: get().settings,
             providers: get().providers,
+            recentModels: get().recentModels,
           });
           if (pin.providerId && pin.modelId) {
             set((state) => ({

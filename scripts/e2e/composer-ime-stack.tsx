@@ -29,6 +29,8 @@ api.composerCommands = async () => ({
   commands: [
     { name: "review", title: "review", kind: "skill" },
     { name: "rewrite", title: "rewrite", kind: "skill" },
+    { name: "mcp:docs", title: "Documentation", kind: "mcp", mcpServerId: "docs" },
+    { name: "mcp:docs:search", title: "Documentation", kind: "mcp", mcpServerId: "docs", mcpToolName: "mcp_docs_search" },
   ],
 });
 
@@ -61,9 +63,9 @@ function Fixture() {
     cursor: draft.cursor,
     composing: draft.composing,
     enabled: true,
-    referenceSessionId: null,
+    referenceSessionId: "s1",
     fileReferencesRef: draft.fileReferencesRef,
-    applyEditorDraft: noop,
+    applyEditorDraft: draft.applyEditorDraft,
     handleInput: draft.handleInput,
     invalidatePromptEnhancement: noop,
   });
@@ -193,8 +195,32 @@ globalThis.composerImeStackProbe = async () => {
   await type("/", { composing: false });
   const recovered = snap("typed / after dropped compositionend");
 
+  // MCP completion uses the real editor, menu, and acceptance wiring (#1377).
+  await type("/Documentation");
+  const mcpMenu = document.querySelector('[role="listbox"]');
+  const mcpVisible = mcpMenu?.textContent?.includes("/mcp:docs") === true;
+  editor().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await settle();
+  const mcpKeyboard = draftValue === "/mcp:docs ";
+  await type("/mcp:");
+  const row = document.querySelector<HTMLElement>('[role="option"]');
+  row?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await settle();
+  const mcpMouse = draftValue === "/mcp:docs ";
+  await type("/mcp:docs:sea");
+  const toolVisible = document.querySelector('[role="listbox"]')?.textContent?.includes("/mcp:docs:search") === true;
+  editor().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await settle();
+  const toolKeyboard = draftValue === "/mcp:docs:search ";
+  await type("/mcp:docs:sea");
+  document.querySelector<HTMLElement>('[role="option"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await settle();
+  const toolMouse = draftValue === "/mcp:docs:search ";
+  snap("MCP tool accepted");
+
   return {
-    ok: normal === true && normalQuery === true && recovered === true,
+    ok: normal === true && normalQuery === true && recovered === true && mcpVisible && mcpKeyboard && mcpMouse && toolVisible && toolKeyboard && toolMouse,
+    mcpVisible, mcpKeyboard, mcpMouse, toolVisible, toolKeyboard, toolMouse,
     normal,
     normalQuery,
     recovered,

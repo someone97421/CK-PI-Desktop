@@ -59,6 +59,7 @@ const calls = {
 const state = {
   workspace: { path: "C:/project" },
   activeSessionId: "session-1",
+  sessions: [],
   pluginViews: [{ pluginId: "pi.file-manager", viewId: "manager" }],
   openFileInWorkPanel: (...args) => calls.files.push(args),
   openUrlInWorkPanel: (...args) => calls.urls.push(args),
@@ -96,6 +97,7 @@ const previewTarget = loadModule("../src/hooks/use-preview-target.ts", {
   react: React,
   "react-i18next": { useTranslation: translate },
   "../stores/app-store": { useAppStore: (selector) => selector(state) },
+  "../lib/session-workspace": { sessionWorkspacePath: (session, workspacePath) => session?.workspacePath ?? session?.projectPath ?? workspacePath },
   "../lib/api": {
     api: {
       fsResolveRef: async (ref) => {
@@ -108,7 +110,13 @@ const previewTarget = loadModule("../src/hooks/use-preview-target.ts", {
       },
     },
   },
-  "../lib/chat-links": loadModule("../src/lib/chat-links.ts", {}),
+  "../lib/chat-links": loadModule("../src/lib/chat-links.ts", {
+    "@pi-desktop/shared": await import("@pi-desktop/shared"),
+    "./chat-link-scanner.ts": loadModule("../src/lib/chat-link-scanner.ts", {
+      "./render-diagnostics.ts": { beginRenderDiagnostic: () => () => {} },
+    }),
+    "./render-diagnostics.ts": { beginRenderDiagnostic: () => () => {} },
+  }),
   "../lib/open-http-url": { openHttpUrl: (...args) => calls.urls.push(args) },
   "../lib/work-panel-tabs": loadModule("../src/lib/work-panel-tabs.ts", {}),
 });
@@ -343,9 +351,11 @@ test("every transcript surface that names a file opens that item", () => {
     /const \{ fileMenu, openFileMenu, closeFileMenu \} = useChatFileMenu\(\)/,
   );
   assert.match(shared, /onContextMenu=\{\(event\) => openFileMenu\(event, \{ path \}\)/);
+  // An image attachment is the same chip as any other attachment now, so that
+  // chip carries the file menu and the shared preview card hangs off it.
   assert.match(
     shared,
-    /onContextMenu=\{\(event\) => openFileMenu\(event, \{ path: attachment\.ref \}\)/,
+    /<ImageHoverCard src=\{dataUrl\} anchor=\{anchor\} onDismiss=\{dismiss\} \/>/,
   );
   assert.match(shared, /<ContextMenu state=\{fileMenu\} onClose=\{closeFileMenu\} \/>/);
   // A tool row's summary and a tool result's file and match lists name files

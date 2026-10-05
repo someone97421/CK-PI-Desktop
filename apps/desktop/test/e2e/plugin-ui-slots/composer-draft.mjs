@@ -14,8 +14,8 @@ function composerView() {
     mark: chip.dataset.pluginMark ?? null,
     name: chip.querySelector(".composer-chip-name")?.textContent ?? "",
   }));
-  const images = [...document.querySelectorAll(".composer-image-attachment-open")].map(
-    (open) => open.getAttribute("aria-label")?.split(" — ")[0] ?? "",
+  const images = [...(input?.querySelectorAll(".composer-chip[data-image]") ?? [])].map(
+    (chip) => chip.getAttribute("aria-label")?.split(" — ")[0] ?? "",
   );
   return {
     text: input ? (input.value ?? input.textContent) : null,
@@ -190,9 +190,10 @@ export async function driveComposerDraft({ renderer, check }) {
   const image = await step("attach-image", "the image", (out) => out.text === "image attached" || out.status === "error");
   const withImage = await view();
   check(
-    "an image attachment joins the draft's images, not its text",
-    image.status === "ok" && withImage.images.includes("lab-dot.png") && withImage.chips.length === withNote.chips.length,
-    JSON.stringify({ image, images: withImage.images }),
+    "an image attachment joins the draft as its own inline image chip",
+    image.status === "ok" && withImage.images.includes("lab-dot.png") &&
+      withImage.chips.some((chip) => chip.name === "lab-dot.png"),
+    JSON.stringify({ image, images: withImage.images, chips: withImage.chips }),
   );
   const path = await step("attach-path", "the path", (out) => out.status === "error");
   check("a path is refused, not read", path.text === "PLUGIN_ATTACHMENT_REFERENCE_REFUSED", JSON.stringify(path));

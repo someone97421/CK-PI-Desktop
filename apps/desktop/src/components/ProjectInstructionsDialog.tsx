@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { useBlockingOverlay } from "../lib/blocking-overlay";
 import type { AgentInstructionFile } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { Button, Textarea, TooltipButton } from "./ui";
@@ -17,6 +18,7 @@ export function ProjectInstructionsDialog({
   onSaved: () => void;
   onError: (error: unknown) => void;
 }) {
+  useBlockingOverlay();
   const { t } = useTranslation();
   const [file, setFile] = useState<AgentInstructionFile | null>(null);
   const [draft, setDraft] = useState("");

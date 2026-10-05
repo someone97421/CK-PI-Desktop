@@ -286,4 +286,18 @@ describe("compact file references", () => {
     expect(normalizeLargePasteThreshold(1_000_001)).toBe(600);
     expect(normalizeLargePasteThreshold(601)).toBe(601);
   });
+
+  it("sends a session reference as its link, never as an @path", () => {
+    const id = "6f1d2c3b-4a59-4e7f-8a90-b1c2d3e4f506";
+    const reference = { path: id, kind: "session", token: "\uE001" };
+    expect(serializeInlineComposerFileReferences(`look \uE001 now`, [reference])).toBe(
+      `look pi-desktop://session/${id} now`,
+    );
+    expect(serializeComposerFileReferences(`look \uE001 now`, [reference])).toBe(
+      `look pi-desktop://session/${id} now`,
+    );
+    // Token or not, a session reference never becomes an appended @path.
+    expect(serializeComposerFileReferences("", [reference])).toBe("");
+    expect(serializeComposerFileReferences("", [{ path: id, kind: "session" }])).toBe("");
+  });
 });

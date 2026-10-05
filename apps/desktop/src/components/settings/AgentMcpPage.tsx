@@ -35,6 +35,8 @@ import {
   type McpDraft,
 } from "../extensions/McpEditorSheet";
 import { McpMarketPanel } from "./McpMarketPanel";
+import { AgentMcpImportPanel } from "../../features/settings/imports/AgentMcpImportPanel";
+import { ImportToggleButton } from "../../features/settings/import-workbench";
 import {
   IconArrowUpDown,
   IconKey,
@@ -109,6 +111,7 @@ export function AgentMcpPage() {
   const setStatuses = (update: (current: McpServerStatus[]) => McpServerStatus[]) =>
     setServers((current) => ({ ...current, statuses: update(current.statuses) }));
   const [filter, setFilter] = useState<CapabilityFilter>("all");
+  const [importOpen, setImportOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -650,6 +653,13 @@ export function AgentMcpPage() {
           }
           actions={
             <>
+              <ImportToggleButton
+                open={importOpen}
+                controls="agent-mcp-import-panel"
+                label={t("settings.importMcpFromTools")}
+                disabled={targetLevel === "project" && !selectedProjectPath}
+                onClick={() => setImportOpen((current) => !current)}
+              />
               {addButton}
               {marketButton}
             </>
@@ -657,6 +667,26 @@ export function AgentMcpPage() {
         />
       }
     >
+      <section
+        id="agent-mcp-import-panel"
+        className="settings-card-block import-inline-section"
+        hidden={!importOpen}
+      >
+        <div className="settings-card-heading-line">
+          <h3 className="settings-card-heading">
+            {t("settings.importAgentMcpTitle")}
+          </h3>
+        </div>
+        <div className="import-inline-workbench">
+          <AgentMcpImportPanel
+            key={`${targetLevel}:${targetLevel === "project" ? selectedProjectPath ?? "" : ""}`}
+            level={targetLevel}
+            projectPath={targetLevel === "project" ? selectedProjectPath ?? undefined : undefined}
+            onImported={load}
+          />
+        </div>
+      </section>
+
       <CapabilityPanel
         loading={loading}
         refreshing={refreshing}

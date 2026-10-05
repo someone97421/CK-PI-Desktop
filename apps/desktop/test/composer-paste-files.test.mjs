@@ -40,10 +40,10 @@ test("composer converts oversized text paste and materializes clipboard files", 
     composer,
     /createFileReference\(file\.path, file\.name, sessionId, \{[\s\S]*kind: file\.kind/,
   );
-  assert.match(composer, /serializeComposerFileReferences\(text, activeFileReferences\)/);
+  assert.match(composer, /serializeComposerFileReferences\(outgoing\.text, outgoing\.references\)/);
   assert.match(
     composer,
-    /const serializedContent = serializeComposerFileReferences\(text, activeFileReferences\)/,
+    /const serializedContent = serializeComposerFileReferences\(outgoing\.text, outgoing\.references\)/,
   );
   // The draft is a contenteditable rich field: sentinels render as atomic
   // chips and every caret write goes through the DOM-range helper.
@@ -333,4 +333,21 @@ test("large pasted text is preserved byte-for-byte in session scratch", async ()
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("a pasted session link becomes an inline chip with the link as its text", () => {
+  // The paste path turns each link into a token-backed chip, and the draft
+  // keeps the conversation link as the text the model receives.
+  assert.match(composer, /const sessionIds = parseSessionLinks\(text\);/);
+  assert.match(composer, /pasteSessionLinks\(text\);/);
+  assert.match(composer, /for \(const span of \[\.\.\.sessionLinkSpans\(text\)\]\.reverse\(\)\)/);
+  assert.match(
+    composer,
+    /createFileReference\(span\.id, sessionChipName\(span\.id\), ownerSessionId, \{\s*kind: "session",\s*token,/,
+  );
+  assert.match(composer, /return `\$\{t\("chat\.sessionReference"\)\} · \$\{title \|\| id\.slice\(0, 8\)\}`;/);
+  // The chip opens its conversation, and its token serializes back to the link.
+  assert.match(composer, /if \(reference\.kind === "session"\) return "session";/);
+  assert.match(composer, /chip\.dataset\.action = editableText[\s\S]*?"open-session-reference"/);
+  assert.match(composer, /selectSession\(reference\.path\)/);
 });

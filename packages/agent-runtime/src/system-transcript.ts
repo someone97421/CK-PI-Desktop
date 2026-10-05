@@ -1,7 +1,7 @@
+import { TOOL_ACTIVATION_SECTION } from "./fixed-tool-declarations.js";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   contentText,
-  createInitialSystemMessage,
   getCurrentSystemMessage,
   getCurrentSystemPrompt,
   getCurrentTools,
@@ -11,12 +11,14 @@ import {
   toToolDeclaration,
 } from "@earendil-works/pi-ai";
 
+import { SKILL_SECTION_PREFIX } from "./plugin-skills-prompt.js";
+
 function systemMessages(messages: readonly AgentMessage[]): SystemMessage[] {
   return messages.filter((message): message is SystemMessage => message.role === "system");
 }
 
 function nextSystemTimestamp(messages: readonly AgentMessage[]): number {
-  // 同一毫秒内也必须晚于旧响应；时钟回拨时只前移，不伪造早于 usage 的时间。
+  // Never backdate a state change relative to the response it invalidates.
   return messages.reduce((timestamp, message) => Math.max(timestamp, message.timestamp + 1), Date.now());
 }
 
@@ -24,71 +26,116 @@ function currentSystemMessage(messages: readonly AgentMessage[]): SystemMessage 
   const systems = systemMessages(messages);
   if (systems.length < 2) return systems[0];
   const current = getCurrentSystemMessage(systems)!;
-  // 上游折叠器保留第一条的时间，但 sections/工具删除可能来自较晚的 delta。
-  // 快照的语义时间必须覆盖所有贡献者，否则旧 usage 会被错误地重新激活。
+  // The upstream fold retains the first timestamp. A checkpoint must cover
+  // every contributing update so old usage is not accidentally reactivated.
   return {
     ...current,
     timestamp: systems.reduce((timestamp, message) => Math.max(timestamp, message.timestamp), systems[0]!.timestamp),
   };
 }
 
-/** The unrendered content, without flattening named sections into the prompt. */
+/** Desktop-owned sections retain their order ahead of extension sections. */
+export const CONTEXT_BUDGET_SECTION = "context_budget";
+
+function desktopSectionNames(sections: Record<string, unknown>): string[] {
+  return ["runtime", TOOL_ACTIVATION_SECTION, "skills", ...Object.keys(sections)
+    .filter((name) => name.startsWith(SKILL_SECTION_PREFIX))
+    .sort((a, b) => a.localeCompare(b)), "context"];
+}
+
 export function systemPromptContent(messages: readonly AgentMessage[]): string {
-  return contentText(getCurrentSystemMessage(messages)?.content ?? "");
+  const current = getCurrentSystemMessage(messages);
+  const sections = current?.sections;
+  if (sections && desktopSectionNames(sections).some((name) => name in sections)) {
+    return desktopSectionNames(sections).map((name) => sections[name]).filter(Boolean).join("\n\n");
+  }
+  return contentText(current?.content ?? "");
+}
+
+export function syncSystemSections(
+  messages: AgentMessage[],
+  desired: Record<string, string>,
+): AgentMessage[] {
+  const current = getCurrentSystemMessage(messages)?.sections ?? {};
+  const sections: Record<string, string | null> = {};
+  for (const name of desktopSectionNames({ ...current, ...desired })) {
+    const next = desired[name] ?? null;
+    if ((current[name] ?? null) !== next) sections[name] = next;
+  }
+  if (Object.keys(sections).length === 0) return messages;
+  return [...messages, { role: "system", content: "", sections, timestamp: nextSystemTimestamp(messages) }];
 }
 
 export function initialSystemTranscript(
   prompt: string,
   tools: readonly Tool[],
   messages: AgentMessage[],
+  sections: Record<string, string> = { runtime: prompt },
 ): AgentMessage[] {
-  const system = createInitialSystemMessage(prompt, tools.map(toToolDeclaration));
-  // 持久化历史不记录 system 状态，重启后无法证明新配置与旧请求相同。
-  // 保守使用实际初始化时间；不能沿用上游初始值 0 来让历史 usage 假装有效。
-  return system
-    ? [{ ...system, timestamp: nextSystemTimestamp(messages) }, ...messages]
-    : messages;
+  if (messages.some((message) => message.role === "system")) {
+    return syncSystemSections(messages, sections);
+  }
+  if (!prompt && tools.length === 0) return messages;
+  // Old sessions have no recorded baseline. Declare the current state at the
+  // continuation boundary rather than inventing past instructions or tools.
+  return [...messages, {
+    role: "system", content: "", sections,
+    toolsAdded: tools.map(toToolDeclaration), timestamp: nextSystemTimestamp(messages),
+  }];
 }
 
 export function replaceSystemPrompt(messages: AgentMessage[], prompt: string): AgentMessage[] {
-  const current = currentSystemMessage(messages);
-  if (prompt === getCurrentSystemPrompt(messages) || prompt === contentText(current?.content ?? "")) {
-    return messages;
-  }
-  // prompt 只替换内容；命名 sections 与最终工具状态仍由上游 replay 负责。
-  // recovery 读写未渲染内容，避免把 sections 再嵌入 content 造成重复。
-  return [
-    { ...current, role: "system", content: prompt, timestamp: nextSystemTimestamp(messages) },
-    ...messages.filter((message) => message.role !== "system"),
-  ];
+  if (prompt === getCurrentSystemPrompt(messages) || prompt === systemPromptContent(messages)) return messages;
+  const activation = getCurrentSystemMessage(messages)?.sections?.[TOOL_ACTIVATION_SECTION];
+  return syncSystemSections(messages, { runtime: prompt, ...(activation ? { [TOOL_ACTIVATION_SECTION]: activation } : {}) });
 }
 
 export function rebuildSystemTranscript(
   previous: readonly AgentMessage[],
   messages: AgentMessage[],
 ): AgentMessage[] {
-  // recovery 传入完整 live transcript 的切片，保留其位置、对象及 delta，不重复加前缀。
-  if (messages.some((message) => message.role === "system")) return messages;
-  // durable projection 不含 system；用上游 replay 还原有效 sections 和工具集合，
-  // 而不是将渲染后的 systemPrompt 当成新消息。折叠不产生新的语义时间。
-  const system = currentSystemMessage(previous);
-  return system ? [system, ...messages] : messages;
+  let result = messages;
+  for (let i = 0; i < previous.length; i++) {
+    const message = previous[i];
+    if (message.role !== "system" || result.includes(message)) continue;
+    const following = previous.slice(i + 1).find((item) => result.includes(item));
+    const preceding = previous.slice(0, i).reverse().find((item) => result.includes(item));
+    let position = following ? result.indexOf(following) : preceding ? result.indexOf(preceding) + 1 : result.length;
+    if (!following) while (result[position]?.role === "system") position++;
+    if (result === messages) result = [...messages];
+    result.splice(position, 0, message);
+  }
+  return result;
 }
 
+/** fork 子代理快照继续复用这条接线；工具变化只追加到实际发生的位置。 */
 export function syncSystemTools(messages: AgentMessage[], tools: readonly Tool[]): AgentMessage[] {
-  const changes = getToolStateChanges(getCurrentTools(messages), tools);
-  if (changes.toolsAdded.length === 0 && changes.toolsRemoved.length === 0) return messages;
-  // 真正的工具变化成为较新的前缀，旧 usage 因此失效。保留删除/同名替换的 delta，
-  // 并让声明集合与可执行 catalog 一致，避免 agent-loop 下一轮再次自动追加同一变化。
-  return [
-    ...systemMessages(messages),
-    {
-      role: "system",
-      content: "",
-      ...(changes.toolsAdded.length ? { toolsAdded: changes.toolsAdded } : {}),
-      ...(changes.toolsRemoved.length ? { toolsRemoved: changes.toolsRemoved } : {}),
-      timestamp: nextSystemTimestamp(messages),
-    },
-    ...messages.filter((message) => message.role !== "system"),
-  ];
+  const changes = getToolStateChanges(getCurrentTools(messages), tools.map(toToolDeclaration));
+  if (!changes.toolsAdded.length && !changes.toolsRemoved.length) return messages;
+  return [...messages, { role: "system", content: "", ...changes, timestamp: nextSystemTimestamp(messages) }];
+}
+
+/** Fold state only at an explicit compaction boundary, with semantic time. */
+export function systemTranscriptCheckpoint(messages: readonly AgentMessage[]): SystemMessage | undefined {
+  const current = currentSystemMessage(messages);
+  if (!current) return undefined;
+  // Use the journal's durable shape, including extension-provided text blocks.
+  const checkpoint: SystemMessage = { ...current, content: contentText(current.content),
+    ...(current.toolsAdded ? { toolsAdded: current.toolsAdded.map(toToolDeclaration) } : {}) };
+  if (!checkpoint.sections || !(CONTEXT_BUDGET_SECTION in checkpoint.sections)) return checkpoint;
+  const { [CONTEXT_BUDGET_SECTION]: _expired, ...sections } = checkpoint.sections;
+  return { ...checkpoint, sections };
+}
+
+/** Recovery discards failed trailing responses even after a prompt cleanup delta. */
+export function removeTrailingAssistantMessages(messages: readonly AgentMessage[]): AgentMessage[] {
+  const result = [...messages];
+  for (let index = result.length - 1; index >= 0; index--) {
+    const message = result[index];
+    if (message.role === "system" || (message.role === "custom" &&
+      ["run-status", "subagent-coordination", "subagent-supervision"].includes(message.customType))) continue;
+    if (result[index].role !== "assistant") break;
+    result.splice(index, 1);
+  }
+  return result;
 }
