@@ -72,13 +72,17 @@ export class SystemTranscriptJournal {
     entries: MessageEntry[],
     append: (row: UiMessage) => Promise<void>,
   ): Promise<void> {
+    const persistedEntries = new Map(entries
+      .filter((entry) => entry.message.role !== "system")
+      .map((entry) => [entry.message, entry] as const));
     for (let index = 0; index < messages.length; index++) {
       const message = messages[index];
       if (message.role !== "system" || this.isPersisted(message)) continue;
-      const following = messages.slice(index + 1).find((candidate) => candidate.role !== "system");
-      const nextEntry = following && entries.find((entry) => entry.message === following);
-      const preceding = messages.slice(0, index).reverse().find((candidate) => candidate.role !== "system");
-      const previousEntry = preceding && entries.find((entry) => entry.message === preceding);
+      // 临时通知不入库，锚点必须落到实际持久化的会话消息。
+      const nextEntry = messages.slice(index + 1)
+        .map((candidate) => persistedEntries.get(candidate)).find((entry) => entry !== undefined);
+      const previousEntry = messages.slice(0, index).reverse()
+        .map((candidate) => persistedEntries.get(candidate)).find((entry) => entry !== undefined);
       const id = this.pending.get(message) ?? randomUUID();
       this.pending.set(message, id);
       const serialized: SystemMessage = {

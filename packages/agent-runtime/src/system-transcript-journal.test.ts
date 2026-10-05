@@ -32,6 +32,33 @@ describe("model system journal", () => {
     expect(append).not.toHaveBeenCalled();
   });
 
+  it("跳过未持久化通知，保持系统状态的会话锚点和恢复顺序", async () => {
+    const journal = new SystemTranscriptJournal();
+    const notice: AgentMessage = {
+      role: "custom", customType: "run-status", content: "运行状态",
+      display: false, timestamp: 3,
+    };
+    const coordination: AgentMessage = {
+      ...notice, customType: "subagent-coordination", timestamp: 5,
+    };
+    const delta: SystemMessage = {
+      role: "system", content: "", toolsRemoved: [{ name: "Read" }], timestamp: 4,
+    };
+    const nextUser: AgentMessage = { role: "user", content: "继续", timestamp: 6 };
+    const entries = [entry(user), entry(nextUser, "next-user")];
+    const rows: UiMessage[] = [userRow, { ...userRow, id: "next-user", content: "继续" }];
+    await journal.persist([initial, notice, user, notice, delta, coordination, nextUser], entries,
+      async (row) => { rows.push(row); });
+    expect(rows[2].modelSystem?.beforeMessageId).toBe("user");
+    expect(rows[3].modelSystem).toMatchObject({ beforeMessageId: "next-user", afterMessageId: "user" });
+    expect(orderSystemRows(rows).map((row) => row.id)).toEqual([rows[2].id, "user", rows[3].id, "next-user"]);
+    expect(entries.map((item) => item.message)).toEqual([initial, user, delta, nextUser]);
+
+    const tail: SystemMessage = { ...delta, timestamp: 7 };
+    await journal.persist([nextUser, notice, tail], entries, async (row) => { rows.push(row); });
+    expect(rows.at(-1)?.modelSystem).toMatchObject({ afterMessageId: "next-user" });
+  });
+
   it("retries failed persistence with the same id and never installs it before acknowledgement", async () => {
     const journal = new SystemTranscriptJournal();
     const entries = [entry(user)];

@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
@@ -42,10 +41,10 @@ import {
 } from "./TranscriptMenu";
 import { getExtraMessageAttachments } from "./extra-attachments";
 
-function SkillInvocationText({ message }: { message: UiMessage }) {
+function skillInvocationParts(message: UiMessage): { text: string; skillId?: string }[] {
   const command = message.command ?? "";
   const mentions = message.skillMentions ?? [];
-  const parts: ReactNode[] = [];
+  const parts: { text: string; skillId?: string }[] = [];
   let cursor = 0;
   for (const mention of mentions) {
     if (
@@ -55,22 +54,26 @@ function SkillInvocationText({ message }: { message: UiMessage }) {
       mention.end > command.length ||
       !command.slice(mention.start, mention.end).startsWith("/")
     ) {
-      return <LinkifiedText text={command} attachments={message.attachments} />;
+      return [{ text: command }];
     }
     if (mention.start > cursor) {
-      parts.push(<LinkifiedText key={`text-${cursor}`} text={command.slice(cursor, mention.start)} attachments={message.attachments} />);
+      parts.push({ text: command.slice(cursor, mention.start) });
     }
-    parts.push(
-      <code key={`skill-${mention.start}`} className="chat-command-chip" title={mention.id}>
-        {command.slice(mention.start, mention.end)}
-      </code>,
-    );
+    parts.push({ text: command.slice(mention.start, mention.end), skillId: mention.id });
     cursor = mention.end;
   }
   if (cursor < command.length) {
-    parts.push(<LinkifiedText key={`text-${cursor}`} text={command.slice(cursor)} attachments={message.attachments} />);
+    parts.push({ text: command.slice(cursor) });
   }
-  return <>{parts}</>;
+  return parts;
+}
+
+function SkillInvocationText({ message }: { message: UiMessage }) {
+  return <>{skillInvocationParts(message).map((part, index) => part.skillId !== undefined ? (
+    <code key={index} className="chat-command-chip" title={part.skillId}>{part.text}</code>
+  ) : (
+    <LinkifiedText key={index} text={part.text} attachments={message.attachments} />
+  ))}</>;
 }
 
 export const MessageRow = memo(function MessageRow({
@@ -119,13 +122,18 @@ export const MessageRow = memo(function MessageRow({
   const revisionCount = message.revisionCount ?? 0;
   const activeRevision = message.activeRevision ?? revisionCount;
   const showRevisionPager = editableUserMessage && revisionCount > 1;
+  const visibleUserText = requestTextWithoutAnnotations(String(message.content || ""));
   const extraAttachments = useMemo(() => {
     return getExtraMessageAttachments(
-      String(message.content || ""),
+      editableUserMessage && message.command
+        ? (message.skillMentions?.length
+          ? skillInvocationParts(message).map((part) => part.skillId === undefined ? part.text : "").join("\n")
+          : "")
+        : visibleUserText,
       message.attachments,
       workspaceRoot,
     );
-  }, [message.attachments, message.content, workspaceRoot]);
+  }, [message.attachments, message.command, message.skillMentions, editableUserMessage, visibleUserText, workspaceRoot]);
   // An attachment the body does not already name inline continues the body
   // text instead of taking a line of its own above it.
   const attachmentChips = extraAttachments.length ? (
@@ -309,7 +317,7 @@ export const MessageRow = memo(function MessageRow({
                       )
                     ) : (
                       <LinkifiedText
-                        text={requestTextWithoutAnnotations(String(message.content || ""))}
+                        text={visibleUserText}
                         attachments={message.attachments}
                       />
                     )}

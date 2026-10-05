@@ -1795,6 +1795,7 @@ export class DesktopAgentRuntime {
   private fullEntries: MessageEntry[];
   private readonly systemJournal = new SystemTranscriptJournal();
   private composedSections: Record<string, string> = {};
+  private composedSystemPrompt = "";
   private activeCompaction?: ContextCompactionRecord;
   private compactionEnabled: boolean;
   private readonly compactionStrategy: CompactionStrategy;
