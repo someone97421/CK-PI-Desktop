@@ -1,0 +1,6 @@
+{
+  "name": "computer-use-mac",
+  "version": "0.4.1",
+  "private": true,
+  "scripts": { "pack": "node scripts/build.mjs" }
+}

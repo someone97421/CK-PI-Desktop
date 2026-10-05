@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Computer Use · Mac 常驻版</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#17191d;color:#e9edf3}*{box-sizing:border-box}body{margin:0;padding:28px;max-width:760px}h1{font-size:24px;margin:0 0 8px}p{color:#a7b0be;line-height:1.7;margin:8px 0 20px}.card{border:1px solid #343a45;background:#20242c;padding:20px;border-radius:14px;margin:16px 0}.state{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:600}.dot{width:10px;height:10px;border-radius:50%;background:#929ba9}.dot.on{background:#57d9a0}.dot.wait{background:#f0bc61}.dot.error{background:#f58282}.permissions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}.permission{background:#171b22;border-radius:10px;padding:14px}.permission small{display:block;color:#a7b0be;margin-top:6px}.actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}button{font:inherit;border:1px solid #475061;border-radius:9px;padding:10px 15px;color:#e9edf3;background:#2b3341;cursor:pointer}button.primary{background:#d5e8ff;color:#172b43;border:0;font-weight:600}button:disabled{opacity:.5;cursor:wait}label{display:block;font-size:14px;margin-bottom:10px}textarea{width:100%;min-height:78px;background:#171b22;border:1px solid #475061;border-radius:9px;color:#e9edf3;font:inherit;padding:12px;resize:vertical}.hint{font-size:13px;margin-bottom:0}pre{white-space:pre-wrap;word-break:break-word;font-size:12px;color:#a7b0be;margin:0}#error{color:#ffaba9;white-space:pre-wrap;font-size:13px}a{color:#b8d7ff}.meta{font-size:13px;color:#a7b0be;margin-top:10px}
+</style>
+</head>
+<body>
+<h1>Computer Use <span style="font-weight:400;color:#a7b0be">· Mac 常驻版</span></h1>
+<p>完整离线运行环境。授权一次，随助手自动启动，意外退出自动恢复。</p>
+<section class="card">
+<div class="state"><span id="dot" class="dot"></span><span id="status">正在读取状态…</span></div>
+<div id="meta" class="meta">Apple Silicon / Intel Mac</div>
+<div class="permissions">
+<div class="permission">辅助功能<small id="accessibility">等待检查</small></div>
+<div class="permission">屏幕录制<small id="screen">等待检查</small></div>
+</div>
+<div class="actions"><button class="primary" data-channel="cu.setup">一键准备并授权</button><button data-channel="cu.start">启动</button><button data-channel="cu.stop">停止</button></div>
+<p class="hint">首次使用时，在 macOS 系统设置中允许 <b>Cua Driver</b> 的辅助功能和屏幕录制权限。如系统要求退出并重新打开，请授权后点击「启动」。点击「停止」后会保持停止，直到你再次启动。</p>
+<div class="actions"><button id="access-settings">打开辅助功能设置</button><button id="screen-settings">打开屏幕录制设置</button></div>
+<div id="error" role="status"></div>
+</section>
+<section class="card">
+<label for="allowlist">允许操作的应用</label><textarea id="allowlist" placeholder="留空使用插件默认范围；或输入应用名称，以逗号或换行分隔"></textarea>
+<div class="actions"><button id="save">保存</button><button data-channel="cu.repair">修复运行环境</button><button data-channel="cu.doctor">诊断</button></div>
+</section>
+<section id="diagnostic-card" class="card" hidden><pre id="diagnostic"></pre></section>
+<script src="panel.js"></script>
+</body>
+</html>

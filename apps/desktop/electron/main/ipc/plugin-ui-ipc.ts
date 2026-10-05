@@ -47,13 +47,34 @@ export function registerPluginUiIpc({
     [IPC.invoke.pluginComputerUseStatus, "cn.star.computer-use", "cu.indicator"],
   ] as const) {
     let pending: Promise<SidebarStatus> | null = null;
+    let legacyComputerPlugin: ReturnType<PluginRuntime["getLoaded"]>;
     handle(channel, async () => {
       const loaded = plugins.getLoaded(id);
       const isAvailable = () => !!loaded && plugins.getLoaded(id) === loaded
         && loaded.permissions.has("ui.panel") && pluginActiveInProject(id, currentWorkspacePath());
       if (!isAvailable()) return { available: false, running: false };
       if (!pending) {
-        pending = plugins.invokePanelBridge(id, indicator)
+        const readStatus = async () => {
+          if (legacyComputerPlugin !== loaded) {
+            try {
+              return await plugins.invokePanelBridge(id, indicator);
+            } catch (error) {
+              if (id !== "cn.star.computer-use" || (error as { code?: string } | null)?.code !== "UNSUPPORTED") throw error;
+              legacyComputerPlugin = loaded;
+            }
+          }
+          // 已安装的旧版电脑控制插件通过面板快照提供运行状态。
+          const state = await plugins.invokePanelBridge(id, "cu.state") as { status?: unknown; lastError?: unknown } | null;
+          if (!state || !["running", "starting", "stopped", "error"].includes(String(state.status))) {
+            throw new Error("Invalid computer-use state");
+          }
+          return {
+            running: state.status === "running",
+            starting: state.status === "starting",
+            failed: state.status === "error" || (state.status === "starting" && Boolean(state.lastError)),
+          };
+        };
+        pending = readStatus()
           .then((result) => {
             const available = isAvailable();
             const state = result as { running?: unknown; starting?: unknown; failed?: unknown } | null;

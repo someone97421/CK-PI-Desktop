@@ -1,0 +1,19 @@
+{
+  "name": "cua-driver",
+  "version": "0.28.2",
+  "platform": "darwin-universal",
+  "license": "MIT",
+  "repository": "https://github.com/trycua/cua",
+  "source": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.28.2/cua-driver-rs-0.28.2-darwin-universal.tar.gz",
+  "sourceSha256": "e273181b26709c88b1d809474deb3c592b4efae3530b11d76318f1887fc3fbb1",
+  "archiveSha256": "96dbe9f72edf0a67bd88a3c6b49716422099fa579bdcea60fc14e11b31f1d72c",
+  "files": {
+    "CuaDriver.app/Contents/CodeResources": "23d30402d6ec84858f399016810cd25a27c400bba278264221055886a18932ec",
+    "CuaDriver.app/Contents/Info.plist": "baf071895ee1ce5a8cb225cdca13eed3c1d25e42a26e381f35ec8f504b9d845b",
+    "CuaDriver.app/Contents/MacOS/cua-cursor-theme": "0febe861479183e8eca3296921035cbf54abaae88d81f711797776a9cd0ded03",
+    "CuaDriver.app/Contents/MacOS/cua-driver": "9a7731f7e961a57963f0deb132878367fdf7354e7327a4d558fe4a68e4686b81",
+    "CuaDriver.app/Contents/Resources/AppIcon.icns": "a23ece4fd5e883b511890fd917f3480141aa20a73ed1a862a98c50de984ab793",
+    "CuaDriver.app/Contents/_CodeSignature/CodeResources": "b9fbcded7554e508b8ce9b78dbce2c1b3c9e35765c299ae01fde10bc9761ec01",
+    "CuaDriver.app/Contents/embedded.provisionprofile": "6d0ef96f919a526c5245089d62319f53c81345a0a92cc3ef2a5911ca2e871b91"
+  }
+}
