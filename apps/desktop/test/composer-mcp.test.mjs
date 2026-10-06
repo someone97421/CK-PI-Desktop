@@ -28,7 +28,7 @@ test("slash source lists only ready MCP servers in the current project without c
 
 const { expandMcpInvocation } = await import("../electron/main/composer-mcp.ts");
 const { registerAgentIpc } = await import("../electron/main/ipc/agent-ipc.ts");
-const { IPC } = await import("@pi-desktop/shared");
+const { findSkillMentions, formatCommandInsert, IPC } = await import("@pi-desktop/shared");
 
 test("selection uses stable encoded IDs even when labels match", async () => {
   const records = [record("docs one"), record("docs/two")];
@@ -104,6 +104,44 @@ test("menu selection reaches runtime with MCP instructions and preserves the vis
   assert.deepEqual(fixture.sidecarCalls[0].params.mcpServerIds, ["docs"]);
   assert.equal(fixture.sidecarCalls[0].params.content, row.content);
   assert.equal(fixture.released(), true);
+});
+
+test("Skill commands use an explicit namespace and resolve original ids at send time", async () => {
+  const catalog = createComposerCommandService({
+    plugins: {
+      listLoaded: () => [],
+      getSkills: () => [{ id: "plugin/review", name: "Plugin review", pluginId: "review-plugin" }],
+      getCommands: () => [],
+    },
+    agentExtensions: { allCommands: () => [] },
+    activeUserSkills: async () => [{ id: "review", name: "User review" }],
+    pluginActiveInProject: () => true,
+    loadComposerTemplatesCached: async () => [{ name: "review" }],
+  });
+  const commands = await catalog.buildComposerCommands("/repo");
+  const skills = commands.filter((command) => command.kind === "skill");
+  const builtinSkill = skills.find((command) => command.skillId === "pi-desktop/imagegen");
+  const pluginSkill = skills.find((command) => command.skillId === "plugin/review");
+  const userSkill = skills.find((command) => command.skillId === "review");
+
+  assert.equal(builtinSkill?.name, "skill:pi-desktop/imagegen");
+  assert.equal(pluginSkill?.name, "skill:plugin/review");
+  assert.equal(userSkill?.name, "skill:review");
+  assert.equal(commands.find((command) => command.name === "review")?.kind, "template");
+
+  const activeSkills = new Map(skills.map(({ name, skillId }) => [name, skillId]));
+  assert.deepEqual(findSkillMentions("/review please", activeSkills), []);
+  const input = `${formatCommandInsert(pluginSkill.name)}review the plugin ${formatCommandInsert(userSkill.name)}also review this`;
+  const expectedMentions = findSkillMentions(input, activeSkills);
+  assert.deepEqual(expectedMentions.map((mention) => mention.id), ["plugin/review", "review"]);
+
+  const fixture = promptFixture(catalog);
+  await fixture.prompt(input);
+  const row = fixture.calls.find((call) => call.method === "session.appendMessage").params.message;
+  assert.equal(row.command, input);
+  assert.deepEqual(row.skillMentions, expectedMentions);
+  assert.match(row.content, /"plugin\/review", "review"/);
+  assert.match(row.content, /review the plugin.*also review this/s);
 });
 
 test("an attachment alone supplies request context for an MCP selection", async () => {

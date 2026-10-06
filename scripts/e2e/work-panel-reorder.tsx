@@ -130,6 +130,19 @@ globalThis.workPanelReorderProbe = async () => {
     );
     flushSync(() => cardRoot.render(<CardFixture moved={(id) => cardMoves.push(id)} />));
     assert(panelHost.querySelector('[role="tab"][aria-selected="true"]'), "active launcher tab did not render");
+    // Unused header space drags the window; tabs remain interactive.
+    assert(
+      !panelHost.querySelector(".work-panel-tab-strip-wrap")?.classList.contains("no-drag"),
+      "empty tab-strip space blocks native window dragging",
+    );
+    assert(
+      [...panelHost.querySelectorAll(".work-panel-tab")].every((tab) => tab.classList.contains("no-drag")),
+      "tab interactions must remain outside native window dragging",
+    );
+    assert(
+      panelHost.querySelector(".work-panel-actions")?.classList.contains("no-drag"),
+      "header actions must remain clickable",
+    );
 
     window.requestAnimationFrame = (callback) => {
       const id = ++nextFrameId;

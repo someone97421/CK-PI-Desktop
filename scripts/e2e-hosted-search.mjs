@@ -9,6 +9,7 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { pathToFileURL } from "node:url";
 import { isolatedEnv } from "./e2e/hosted-search-sidecar.mjs";
 import { runScenarios } from "./e2e/hosted-search-scenarios.mjs";
 
@@ -89,10 +90,10 @@ const { values } = parseArgs({ options: {
 } });
 if (values.help) {
   console.log(`Usage: node scripts/e2e-hosted-search.mjs [--bundle PATH] [--timeout-ms 15000]
-Default: pnpm --filter @pi-desktop/shared build, then @pi-desktop/agent-runtime bundle.
---bundle: skip rebuilding and run that explicit artifact, retaining its SHA-256.
+Default: build shared, agent-runtime, and the production sidecar bundle.
+--bundle: build the resolver module and run that explicit sidecar artifact.
 Evidence and isolated homes stay under PI_SCRATCH_DIR or mkdtemp(os.tmpdir()).
-Seven cases: next prompt, Read, instruction change, real Task/TaskWait, persisted restore, two invalid-history cases.
+Eight cases: next prompt, Read, instruction change, out-of-project instruction fallback, real Task/TaskWait, persisted restore, two invalid-history cases.
 Files are retained for inspection; no automatic deletion and no dependency installation.
 Reviewed source, patches, and lock metadata are fingerprinted before the build and again
 when the run ends; any change between the two fails the run.`);
@@ -173,17 +174,29 @@ when the run ends; any change between the two fails the run.`);
     evidence.lockfileSha256 = await hash(join(root, "pnpm-lock.yaml"));
     evidence.head = git("rev-parse", "HEAD");
     evidence.statusBefore = git("status", "--short");
-    evidence.build = values.bundle ? "explicit supplied artifact; not rebuilt by this invocation" : "production package build + bundle";
+    evidence.build = values.bundle ? "agent-runtime resolver build + explicit supplied artifact" : "shared + agent-runtime builds and production bundle";
     evidence.sourceFingerprintBefore = await fingerprint();
     assert.ok(evidence.head !== "unavailable" && evidence.sourceFingerprintBefore, "build source identity is unavailable");
     if (!values.bundle) {
-      for (const [pkg, script] of [["@pi-desktop/shared", "build"], ["@pi-desktop/agent-runtime", "bundle"]]) {
+      for (const [pkg, script, label] of [
+        ["@pi-desktop/shared", "build", "shared-build"],
+        ["@pi-desktop/agent-runtime", "build", "agent-runtime-build"],
+        ["@pi-desktop/agent-runtime", "bundle", "sidecar-bundle"],
+      ]) {
         const args = ["--filter", pkg, script];
         console.log(`Build: pnpm ${args.join(" ")}`);
         const output = runPnpm(args);
-        await writeFile(join(dir, `${script}.log`), output);
+        await writeFile(join(dir, `${label}.log`), output);
       }
+    } else {
+      const args = ["--filter", "@pi-desktop/agent-runtime", "build"];
+      console.log(`Build: pnpm ${args.join(" ")}`);
+      const output = runPnpm(args);
+      await writeFile(join(dir, "agent-runtime-build.log"), output);
     }
+    const instructionModule = await import(pathToFileURL(
+      join(root, "packages/agent-runtime/dist/project-instructions.js"),
+    ).href);
     const source = resolve(root, values.bundle ?? "packages/agent-runtime/dist-bundle/sidecar.js");
     const bundleDirectory = join(dir, "artifact");
     evidence.bundleSource = source;
@@ -197,7 +210,7 @@ when the run ends; any change between the two fails the run.`);
     evidence.results = await runScenarios(bundle, dir, timeoutMs, (result) => {
       console.log(`${result.passed ? "PASS" : "FAIL"} ${result.name} (${result.requests} provider requests)`);
       if (!result.passed) console.error(result.error);
-    });
+    }, instructionModule.loadInstructionChain);
     assert.equal(await bundleArtifactHash(bundle), evidence.sha256, "executed snapshot was modified");
     // The snapshot protects execution; qualification also requires the source
     // artifact and every relative chunk to remain stable during the run.

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { OfflineSidecar, fixtureHost } from "./hosted-search-sidecar.mjs";
 import { assertReplay, functionResult, providerConfig, SEARCH_ITEM, startProvider } from "./hosted-search-provider.mjs";
 
-function parameters(baseUrl, dir, sessionId) {
+function parameters(baseUrl, dir, sessionId, projectPath = dir) {
   return {
     sessionId, mode: "agent", thinkingLevel: "off", infiniteProviderRetry: false,
     commandShell: { id: "bash", label: "Bash", dialect: "posix", available: true, isDefault: true },
-    provider: providerConfig(baseUrl), scratchDir: dir, projectPath: dir,
+    provider: providerConfig(baseUrl), scratchDir: dir, projectPath,
     pluginTools: [], pluginSkills: [], trustedExtensions: [],
   };
 }
@@ -62,7 +62,7 @@ async function scenario(bundle, root, name, timeoutMs, handler, run) {
   }
 }
 
-export async function runScenarios(bundle, root, timeoutMs, report) {
+export async function runScenarios(bundle, root, timeoutMs, report, loadInstructionChain) {
   const results = [];
   const run = async (...args) => {
     const result = await scenario(bundle, root, args[0], timeoutMs, ...args.slice(1));
@@ -112,6 +112,65 @@ export async function runScenarios(bundle, root, timeoutMs, report) {
       assert.equal(sidecar.hostCalls.filter((call) => call.method === "project.instructions.resolve").length, 1);
     });
   }
+
+  const attachmentPath = join(root, "project-instructions-outside-target", "outside", "attachment.txt");
+  await run("project-instructions-outside-target", (body, requests) => {
+    const input = JSON.stringify(body.input);
+    if (requests.length === 1) {
+      assertTool(body, "Read");
+      return { tool: { name: "Read", args: { path: "nested/fixture.txt" } } };
+    }
+    if (requests.length === 2) {
+      assert.match(input, /OFFLINE_PROJECT_ROOT_RULE/);
+      assert.match(input, /OFFLINE_NESTED_RULE/);
+      assert.doesNotMatch(input, /OFFLINE_OUTSIDE_RULE/);
+      assert.match(functionResult(body, "Read"), /OFFLINE_NESTED_CONTENT/);
+      return { tool: { name: "Read", args: { path: attachmentPath } } };
+    }
+    assert.equal(requests.length, 3, "outside-target Read must continue without retry");
+    assert.match(input, /OFFLINE_PROJECT_ROOT_RULE/);
+    assert.doesNotMatch(input, /OFFLINE_NESTED_RULE|OFFLINE_OUTSIDE_RULE/);
+    assert.match(input, /OFFLINE_ATTACHMENT_CONTENT/);
+    return { text: "PROJECT_ROOT_INSTRUCTIONS_RETAINED" };
+  }, async ({ provider, start, dir }) => {
+    assert.equal(typeof loadInstructionChain, "function", "the production instruction resolver must be built");
+    const projectRoot = join(dir, "project");
+    const outside = join(dir, "outside");
+    const nestedFile = join(projectRoot, "nested", "fixture.txt");
+    const attachmentFile = join(outside, "attachment.txt");
+    const globalPath = join(dir, "global-AGENTS.md");
+    await mkdir(join(projectRoot, "nested"), { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(projectRoot, "AGENTS.md"), "OFFLINE_PROJECT_ROOT_RULE: keep project constraints.");
+    await writeFile(join(projectRoot, "nested", "AGENTS.md"), "OFFLINE_NESTED_RULE: follow nested constraints.");
+    await writeFile(join(outside, "AGENTS.md"), "OFFLINE_OUTSIDE_RULE: never load this file.");
+    await writeFile(nestedFile, "OFFLINE_NESTED_CONTENT");
+    await writeFile(attachmentFile, "OFFLINE_ATTACHMENT_CONTENT");
+
+    const baseHost = fixtureHost();
+    const host = async (method, params) => {
+      if (method === "project.instructions.resolve") {
+        return loadInstructionChain(projectRoot, params.path, globalPath);
+      }
+      if (method === "tools.execute") {
+        assert.equal(params.toolName, "Read");
+        return { ok: true, content: await readFile(resolve(projectRoot, params.args.path), "utf8") };
+      }
+      return baseHost(method, params);
+    };
+    const sidecar = await start("runtime", host);
+    await sidecar.prompt(
+      parameters(provider.baseUrl, dir, "outside-target", projectRoot),
+      "Read a nested source file, then inspect an attachment outside the project.",
+    );
+    assertText(sidecar, "PROJECT_ROOT_INSTRUCTIONS_RETAINED");
+    const instructionCalls = sidecar.hostCalls.filter((call) => call.method === "project.instructions.resolve");
+    assert.equal(instructionCalls.length, 2);
+    assert.equal(instructionCalls[0]?.params.path, "nested/fixture.txt");
+    assert.equal(instructionCalls[1]?.params.path, attachmentPath);
+    assert.equal(sidecar.hostCalls.filter((call) => call.method === "tools.execute").length, 2);
+    assert.equal(provider.requests.length, 3);
+  });
 
   let parentRequests = 0;
   let delegateRequests = 0;

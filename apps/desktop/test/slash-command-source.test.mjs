@@ -96,11 +96,19 @@ test("an unknown alias and a template still travel as prompt text", async () => 
   await withCommandSource(
     async () => ({
       commands: [
-        { name: "review", kind: "skill", title: "Review", id: "skill.review" },
+        { name: "skill:review", kind: "skill", title: "Review", skillId: "review" },
         { name: "plan", kind: "template", title: "Plan" },
       ],
     }),
     async () => {
+      const skill = await resolveComposerCommand("skill:review");
+      assert.equal(skill.status, "resolved");
+      assert.equal(skill.command.skillId, "review");
+      assert.equal(resolveSlashDispatch(parseSlashSubmission("/skill:review inspect"), skill).action, "prompt");
+
+      const legacy = await resolveComposerCommand("review");
+      assert.equal(legacy.status, "unknown");
+
       const unknown = await resolveComposerCommand("not-a-command");
       assert.equal(unknown.status, "unknown");
       assert.equal(

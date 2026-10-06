@@ -735,7 +735,7 @@ const AGENT_CORE_TOOL_NAMES = new Set([
   "Edit",
   "Bash",
   ASK_TOOL_NAME,
-  // The slash menu answers a user-invoked `/skill-id` with an instruction to
+  // The slash menu answers a user-invoked `/skill:<skill-id>` with an instruction to
   // call `Skill { id }` on the first turn (ADR 0219), and a capability the
   // model has to go looking for is one it will not use. Registration keeps its
   // own gate: the tool only exists when the catalog is non-empty.

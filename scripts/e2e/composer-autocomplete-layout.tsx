@@ -24,7 +24,7 @@ const items: AutocompleteItem[] = [
   command("qa-agent", "审查代码并验证功能。".repeat(80)),
   command("short", "Brief description"),
   command("bare"),
-  command("review", longDescription, { title: "Code review", argumentHint: "<path>" }),
+  command("skill:review", longDescription, { title: "Code review", argumentHint: "<path>" }),
   command("template", longDescription, { kind: "template", argumentHint: "<file>" }),
   command("very-long-command-".repeat(20), longDescription),
 ];

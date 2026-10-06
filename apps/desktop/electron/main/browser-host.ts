@@ -302,7 +302,7 @@ export class BrowserHost {
 
   async screenshot(input: { fullPage?: boolean } = {}, sessionId?: string): Promise<{ mimeType: string; data: string; path?: string }> {
     const page = this.currentPage();
-    const shot = await page.cdp.screenshot(this.requireWebContents(), input);
+    const shot = await page.pane.captureScreenshot((wc) => page.cdp.screenshot(wc, input));
     const scratch = this.deps.getScratchDir?.(sessionId ?? page.sessionId);
     if (!scratch) return shot;
     try {
@@ -322,7 +322,13 @@ export class BrowserHost {
     void this.active.cdp.attach(wc);
     return { messages: this.active.cdp.console(limit) };
   }
-  async cdpCommand(method: string, params?: unknown): Promise<unknown> { return this.currentPage().cdp.send(this.requireWebContents(), method, params); }
+  async cdpCommand(method: string, params?: unknown): Promise<unknown> {
+    const page = this.currentPage();
+    if (method === "Page.captureScreenshot") {
+      return page.pane.captureScreenshot((wc) => page.cdp.send(wc, method, params));
+    }
+    return page.cdp.send(this.requireWebContents(), method, params);
+  }
 
   /** The renderer-created resource tab is the preview's only navigation owner. */
   async previewWorkspaceFile(_sessionId: string, _path: string, _root: string): Promise<{ ok: true } | { ok: false; content: string }> {

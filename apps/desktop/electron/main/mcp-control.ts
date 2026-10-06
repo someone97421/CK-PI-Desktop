@@ -586,7 +586,28 @@ const COMPACTION_SCALAR_KEYS = [
 ] as const;
 
 /**
- * Bounds the `session/get` answer for the control plane (mocode #495).
+ * Keeps only the compact identity of one `ContextCompactionRecord`.
+ *
+ * `summary`, `retainedTail`, and `details.modifiedFiles` grow without bound and
+ * are not part of the tools contract, so they are dropped here.
+ */
+function projectCompactionRecord(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  const bounded: Record<string, unknown> = {};
+  for (const key of COMPACTION_SCALAR_KEYS) {
+    if (source[key] !== undefined) bounded[key] = source[key];
+  }
+  const details = source.details;
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    const generation = (details as Record<string, unknown>).generation;
+    if (generation !== undefined) bounded.details = { generation };
+  }
+  return bounded;
+}
+
+/**
+ * Bounds the `session/get` answer for the control plane (mocode #495, #506).
  *
  * A durable session's `ContextCompactionRecord` (`summary` / `retainedTail` /
  * `details.modifiedFiles`) grows without bound: on a long session it alone can
@@ -600,27 +621,39 @@ const COMPACTION_SCALAR_KEYS = [
  * the retained tail, or the artifact list. Keep that whitelist and drop the
  * rest, so the transcript survives bounding. Non-`session/get` shapes and
  * sessions without a compaction record are returned untouched.
+ *
+ * `session.compaction` is only the NEWEST record; `session.compactions` is the
+ * unbounded history and every entry carries its own `summary` / `retainedTail` /
+ * `details.modifiedFiles`. Projecting the newest record alone was not enough:
+ * on a session compacted several times the history array alone still exceeded
+ * the limit, so the answer stayed a truncation envelope and shrinking the
+ * transcript page could not help (the overflow was independent of
+ * `messageLimit` / `contentLimit`). Project every entry in the history too.
  */
 export function projectSessionGetResult(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const root = value as Record<string, unknown>;
   const session = root.session;
   if (!session || typeof session !== "object" || Array.isArray(session)) return value;
-  const compaction = (session as Record<string, unknown>).compaction;
-  if (!compaction || typeof compaction !== "object" || Array.isArray(compaction)) return value;
+  const source = session as Record<string, unknown>;
 
-  const source = compaction as Record<string, unknown>;
-  const bounded: Record<string, unknown> = {};
-  for (const key of COMPACTION_SCALAR_KEYS) {
-    if (source[key] !== undefined) bounded[key] = source[key];
-  }
-  const details = source.details;
-  if (details && typeof details === "object" && !Array.isArray(details)) {
-    const generation = (details as Record<string, unknown>).generation;
-    if (generation !== undefined) bounded.details = { generation };
+  let projected: Record<string, unknown> | undefined;
+
+  const compaction = source.compaction;
+  if (compaction && typeof compaction === "object" && !Array.isArray(compaction)) {
+    projected = { ...source, compaction: projectCompactionRecord(compaction) };
   }
 
-  return { ...root, session: { ...(session as Record<string, unknown>), compaction: bounded } };
+  const compactions = source.compactions;
+  if (Array.isArray(compactions)) {
+    projected = {
+      ...(projected ?? source),
+      compactions: compactions.map(projectCompactionRecord),
+    };
+  }
+
+  if (!projected) return value;
+  return { ...root, session: projected };
 }
 
 function errorInfo(error: unknown): { code: string; message: string; details?: unknown } {

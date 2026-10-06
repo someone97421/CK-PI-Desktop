@@ -70,7 +70,7 @@ export function createComposerCommandService({
       seen.add(skill.id);
       return [
         {
-          name: skill.id,
+          name: `skill:${skill.id}`,
           kind: "skill" as const,
           title: skill.name,
           ...(skill.description ? { description: skill.description } : {}),

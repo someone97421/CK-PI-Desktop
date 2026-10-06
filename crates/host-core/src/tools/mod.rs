@@ -1497,6 +1497,51 @@ fn tool_write(
     }))
 }
 
+/// Lower a legacy `old_string`/`new_string` replacement to one line-anchored op.
+///
+/// The match may start or end mid-line (#1106), so the op is derived from the
+/// full substring result and anchors only the lines that actually differ;
+/// returns `None` when the replacement changes nothing.
+fn legacy_replace_ops(text: &str, start: usize, old: &str, new: &str) -> Option<String> {
+    let replaced = format!("{}{new}{}", &text[..start], &text[start + old.len()..]);
+    let old_lines = hashline::split_lines(text);
+    let new_lines = hashline::split_lines(&replaced);
+    let prefix = old_lines
+        .iter()
+        .zip(&new_lines)
+        .take_while(|(old, new)| old == new)
+        .count();
+    let suffix = old_lines[prefix..]
+        .iter()
+        .rev()
+        .zip(new_lines[prefix..].iter().rev())
+        .take_while(|(old, new)| old == new)
+        .count();
+    let old_end = old_lines.len() - suffix;
+    let new_span = &new_lines[prefix..new_lines.len() - suffix];
+    let first = prefix + 1;
+    let mut ops = if prefix == old_end {
+        if new_span.is_empty() {
+            return None;
+        }
+        if prefix == 0 {
+            "PUT <1:\n".to_string()
+        } else {
+            format!("PUT >{prefix}:\n")
+        }
+    } else if new_span.is_empty() {
+        return Some(format!("CUT {first}.={old_end}\n"));
+    } else {
+        format!("PUT {first}.={old_end}:\n")
+    };
+    for line in new_span {
+        ops.push('+');
+        ops.push_str(line);
+        ops.push('\n');
+    }
+    Some(ops)
+}
+
 fn tool_edit(
     workspace: Option<&Path>,
     scratch: Option<&Path>,
@@ -1557,15 +1602,12 @@ fn tool_edit(
                     ),
                 ));
             }
-            let start = matches[0];
-            let first_line = file.text[..start].bytes().filter(|b| *b == b'\n').count() + 1;
-            let old_lines = old.split('\n').count().max(1);
-            let mut ops = format!("PUT {first_line}.={}:\n", first_line + old_lines - 1);
-            for line in new.split('\n') {
-                ops.push('+');
-                ops.push_str(line);
-                ops.push('\n');
-            }
+            let ops = legacy_replace_ops(&file.text, matches[0], old, new).ok_or_else(|| {
+                hashline::ToolError::new(
+                    "EDIT_NO_CHANGE",
+                    "new_string is identical to old_string; nothing to change",
+                )
+            })?;
             (tag, ops)
         }
         (None, _, _, _) => {
@@ -4762,6 +4804,174 @@ mod tests {
             not_found.error_code.as_deref(),
             Some("EDIT_LEGACY_MATCH_FAILED")
         );
+    }
+
+    #[tokio::test]
+    async fn edit_legacy_replacement_preserves_unmatched_bytes() {
+        let cases = [
+            (
+                "1: partial-line suffix match keeps prefix",
+                "let x = foo;\nnext\n",
+                "= foo;",
+                "= bar;",
+                "let x = bar;\nnext\n",
+            ),
+            (
+                "2: partial-line prefix match keeps trailing comment",
+                "value = 1; // keep me\n",
+                "value = 1;",
+                "value = 2;",
+                "value = 2; // keep me\n",
+            ),
+            (
+                "3: mid-line match keeps both sides",
+                "call(alpha, beta);\n",
+                "alpha",
+                "gamma",
+                "call(gamma, beta);\n",
+            ),
+            (
+                "4: multi-line match keeps both partial boundary lines",
+                "fn a() { one();\n    two(); } // end\n",
+                "one();\n    two();",
+                "uno();",
+                "fn a() { uno(); } // end\n",
+            ),
+            (
+                "5: multi-line replacement keeps partial-match boundaries",
+                "let x = foo;\n",
+                "foo",
+                "bar(\n    1,\n)",
+                "let x = bar(\n    1,\n);\n",
+            ),
+            (
+                "6: empty replacement removes only matched text",
+                "keep remove keep\nz\n",
+                " remove",
+                "",
+                "keep keep\nz\n",
+            ),
+            (
+                "7: whole-line deletion including newline leaves no blank line",
+                "a\nfoo\nb\n",
+                "foo\n",
+                "",
+                "a\nb\n",
+            ),
+            (
+                "8: partial match preserves CRLF and unmatched text",
+                "let x = foo;\r\nnext\r\n",
+                "= foo;",
+                "= bar;",
+                "let x = bar;\r\nnext\r\n",
+            ),
+            (
+                "9: whole-line multi-line replacement stays compatible",
+                "a\nb\nc\nd\n",
+                "b\nc",
+                "B\nC",
+                "a\nB\nC\nd\n",
+            ),
+            (
+                "10: pure insertion after a whole line",
+                "a\nc\n",
+                "a\n",
+                "a\nb\n",
+                "a\nb\nc\n",
+            ),
+            (
+                "11: joining two lines preserves unmatched text",
+                "ab\ncd\n",
+                "b\nc",
+                "b c",
+                "ab cd\n",
+            ),
+        ];
+        let mut failures = Vec::new();
+        for (label, input, old_string, new_string, expected) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("legacy.txt");
+            std::fs::write(&target, input).unwrap();
+
+            let result = execute_tool(
+                Some(dir.path()),
+                None,
+                "Edit",
+                &serde_json::json!({
+                    "path": "legacy.txt",
+                    "old_string": old_string,
+                    "new_string": new_string
+                }),
+                5_000,
+            )
+            .await;
+            // Collect every failed check so one regression cannot hide another case.
+            if !result.ok {
+                failures.push(format!(
+                    "{label}: Edit should succeed: {:?}",
+                    result.content
+                ));
+            }
+            if result.content["tag"]
+                .as_str()
+                .map(|tag| tag.chars().count())
+                != Some(4)
+            {
+                failures.push(format!(
+                    "{label}: expected a 4-character tag, got {:?}",
+                    result.content["tag"]
+                ));
+            }
+            match std::fs::read(&target) {
+                Ok(written) if written == expected.as_bytes() => {}
+                Ok(written) => failures.push(format!(
+                    "{label}: file bytes differ: expected {expected:?}, got {:?}",
+                    String::from_utf8_lossy(&written)
+                )),
+                Err(error) => {
+                    failures.push(format!("{label}: could not read edited file: {error}"))
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn edit_legacy_identical_replacement_leaves_file_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("legacy.txt");
+        let input = "keep foo keep\n";
+        std::fs::write(&target, input).unwrap();
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &json!({"path": "legacy.txt", "old_string": "foo", "new_string": "foo"}),
+            5_000,
+        )
+        .await;
+        assert!(!result.ok);
+        assert_eq!(result.error_code.as_deref(), Some("EDIT_NO_CHANGE"));
+        assert_eq!(std::fs::read(&target).unwrap(), input.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn edit_legacy_terminal_newline_only_change_reports_no_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("legacy.txt");
+        let input = "keep\n";
+        std::fs::write(&target, input).unwrap();
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &json!({"path": "legacy.txt", "old_string": "\n", "new_string": ""}),
+            5_000,
+        )
+        .await;
+        assert!(!result.ok);
+        assert_eq!(result.error_code.as_deref(), Some("EDIT_NO_CHANGE"));
+        assert_eq!(std::fs::read(&target).unwrap(), input.as_bytes());
     }
 
     #[tokio::test]

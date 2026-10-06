@@ -3,27 +3,12 @@ import type { LiveBinding } from "@pi-desktop/shared";
 import { LIVE_WORK_TOOL_NAME, MAX_LIVE_AUDIO_BYTES, MAX_LIVE_JSON_BYTES, parseLiveWorkArguments, parseRealtimeMessage, RealtimeResponseTracker, realtimeAudioMessage, realtimeSessionMatches, realtimeSessionUpdateMessage, realtimeToolReceiptMessage, realtimeTruncateMessages, realtimeWorkFeedbackMessages } from "@pi-desktop/voice-runtime/live";
 import type { LiveAdapter, LiveAdapterContext, LivePlaybackCursor, LiveReceiptDelivery } from "./types";
 import type { LiveWorkFeedback } from "@pi-desktop/shared";
+import { realtimeSocketUrl } from "./websocket-endpoint";
 import { openLiveWebSocket } from "./websocket-transport";
 import { sendJsonBounded, waitForReady, waitForSocketReady, websocketJson } from "./websocket-wire";
 import { WebSocket } from "ws";
 
 const MAX_FRAME_BYTES = 24000 * 2 / 10;
-
-function realtimeUrl(baseUrl: string, modelId: string): string {
-  let base: URL;
-  try { base = new URL(baseUrl); } catch { throw Object.assign(new Error("Realtime Provider URL is invalid"), { errorCode: "LIVE_PROTOCOL_UNSUPPORTED" }); }
-  if (base.protocol !== "https:" || base.username || base.password || base.search || base.hash) {
-    throw Object.assign(new Error("Realtime Provider must use an HTTPS base URL without credentials or query parameters"), { errorCode: "LIVE_PROTOCOL_UNSUPPORTED" });
-  }
-  let path = base.pathname.replace(/\/+$/, "");
-  if (!path.endsWith("/realtime")) path = `${path}/realtime`;
-  base.pathname = path;
-  base.protocol = "wss:";
-  base.search = "";
-  base.searchParams.set("model", modelId);
-  base.hash = "";
-  return base.toString();
-}
 
 export function createOpenAIRealtimeAdapter(context: LiveAdapterContext): LiveAdapter {
   const binding = context.binding as Extract<LiveBinding, { adapterId: "openai-realtime" }>;
@@ -166,7 +151,7 @@ export function createOpenAIRealtimeAdapter(context: LiveAdapterContext): LiveAd
     mediaKind: "pcm",
     async connect() {
       if (closed || context.signal.aborted) throw Object.assign(new Error("Live call was cancelled"), { errorCode: "LIVE_STALE_CALL" });
-      const url = realtimeUrl(baseUrl, binding.modelId);
+      const url = realtimeSocketUrl(baseUrl, binding.modelId);
       const liveSocket = await openLiveWebSocket({ url, headers: { Authorization: `Bearer ${apiKey}`, ...(binding.wireProfile === "realtime-compat-v1" ? { "OpenAI-Beta": "realtime=v1" } : {}) }, signal: context.signal, endpointOrigin: "user" });
       socket = liveSocket;
       liveSocket.on("message", onSocketMessage);

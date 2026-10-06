@@ -7,6 +7,7 @@ import { net, session } from "electron";
 import { WebSocket } from "ws";
 import { allowInsecureUserEndpointsEnabled, noteInsecureUserEndpoint, relaxedNetworkPolicyEnabled } from "../endpoint-policy";
 import { createPublicHttpsClient } from "../public-https-fetch";
+import { liveSocketGuardUrl } from "./websocket-endpoint";
 import { responseCodeError } from "./websocket-errors";
 
 const HANDSHAKE_TIMEOUT_MS = 15_000;
@@ -79,16 +80,19 @@ export async function openLiveWebSocket(input: {
   signal: AbortSignal;
   endpointOrigin: "user" | "third-party";
 }): Promise<WebSocket> {
-  const parsedUrl = new URL(input.url);
-  if (parsedUrl.protocol !== "wss:") {
-    throw Object.assign(new Error("Live WebSocket endpoints must use TLS"), {
-      errorCode: "LIVE_NETWORK_POLICY_UNSUPPORTED",
-    });
-  }
-  await endpointGuard.assertPublicUrl(input.url.replace(/^wss:/, "https:"), input.endpointOrigin);
+  const guardUrl = liveSocketGuardUrl(input.url, input.endpointOrigin);
+  await endpointGuard.assertPublicUrl(guardUrl, input.endpointOrigin);
   if (input.signal.aborted) throw input.signal.reason;
   const route = await session.defaultSession.resolveProxy(input.url);
   const proxy = parseResolvedProxy(route);
+  // The proxy tunnel speaks TLS to the destination. A plaintext user endpoint
+  // is expected to sit outside the proxy (ADR 0304 bypass list), so a proxied
+  // `ws` route fails closed instead of being tunneled in the clear.
+  if (proxy && new URL(guardUrl).protocol === "http:") {
+    throw Object.assign(new Error("plain ws endpoints cannot be reached through the network proxy"), {
+      errorCode: "LIVE_NETWORK_POLICY_UNSUPPORTED",
+    });
+  }
   const agent = proxy ? new ProxyTunnelAgent(proxy) : undefined;
 
   try {

@@ -29,7 +29,7 @@ use crate::scratch;
 use crate::sessions::{self, UiMessage};
 use crate::state::{AppState, HOST_VERSION, PROTOCOL_VERSION};
 use crate::tools::{self, ToolsExecuteParams};
-use crate::transcripts::CompactionRecord;
+use crate::transcripts::{self, CompactionRecord};
 use crate::turn_queue;
 use crate::workspace;
 
@@ -530,30 +530,20 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
                 request_tasks.spawn(async move {
                     let _permit = permit;
                     let budget = request_budget_ms(&method, &params);
-                    let result = with_request_budget(budget, async {
-                        if DirectConfigReads::handles(&method) {
-                            direct_config.read(&method, params).await
-                        } else {
-                            handle_request(state, &method, params, tx.clone()).await
-                        }
-                    }).await;
-                    if method == "app.handshake" && result.is_ok() {
+                    let (handled, committed) = transcripts::commit_writes_of(
+                        with_request_budget(budget, async {
+                            if DirectConfigReads::handles(&method) {
+                                direct_config.read(&method, params).await
+                            } else {
+                                handle_request(state, &method, params, tx.clone()).await
+                            }
+                        }),
+                    )
+                    .await;
+                    if method == "app.handshake" && handled.is_ok() {
                         direct_config.handshook.store(true, Ordering::Release);
                     }
-                    let out = match result {
-                        Ok(result) => JsonRpcResponse {
-                            jsonrpc: "2.0",
-                            id,
-                            result: Some(result),
-                            error: None,
-                        },
-                        Err(err) => JsonRpcResponse {
-                            jsonrpc: "2.0",
-                            id,
-                            result: None,
-                            error: Some(err),
-                        },
-                    };
+                    let out = response_for(id, handled, committed);
                     if let Ok(raw) = serde_json::to_string(&out) {
                         let _ = tx.send(format!("{raw}\n"));
                     }
@@ -668,6 +658,45 @@ fn rpc_err(code: i64, message: impl Into<String>, error_code: &str) -> JsonRpcEr
         code,
         message: message.into(),
         data: Some(json!({ "errorCode": error_code })),
+    }
+}
+
+/// The response for one handled request, given the handler's own outcome and
+/// the outcome of committing deferred checkpoint writes.
+///
+/// Transcript append failures reach the client directly from the handler,
+/// before the SQLite index update. A deferred checkpoint failure is returned
+/// here. If the handler already failed, its error remains the response and the
+/// checkpoint failure is logged because a response carries one error.
+fn response_for(
+    id: Value,
+    handled: Result<Value, JsonRpcError>,
+    committed: anyhow::Result<()>,
+) -> JsonRpcResponse {
+    let error = match (handled, committed) {
+        (Ok(result), Ok(())) => {
+            return JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: Some(result),
+                error: None,
+            }
+        }
+        (Ok(_), Err(device)) => rpc_err(1000, device.to_string(), "INTERNAL"),
+        (Err(error), Ok(())) => error,
+        (Err(error), Err(device)) => {
+            tracing::error!(
+                error = %device,
+                "transcript device flush failed behind a request that failed anyway"
+            );
+            error
+        }
+    };
+    JsonRpcResponse {
+        jsonrpc: "2.0",
+        id,
+        result: None,
+        error: Some(error),
     }
 }
 
@@ -1308,7 +1337,7 @@ fn resolve_persisted_project_workspace(
     state: &AppState,
     session_id: &str,
 ) -> Result<Option<String>, JsonRpcError> {
-    match sessions::get_session_summary(&state.db, session_id) {
+    match sessions::session_summary(&state.db, session_id) {
         Ok(Some(summary)) => Ok(summary.project_path),
         // A tool request must name a persisted session: an unknown id never
         // inherits the mutable global workspace.
@@ -1321,7 +1350,7 @@ fn resolve_tool_workspace(
     state: &AppState,
     session_id: &str,
 ) -> Result<Option<String>, JsonRpcError> {
-    match sessions::get_session_summary(&state.db, session_id) {
+    match sessions::session_summary(&state.db, session_id) {
         Ok(Some(summary)) => {
             if let Some(project_path) = summary.project_path {
                 return Ok(Some(project_path));
@@ -1427,7 +1456,7 @@ fn resolve_plan_workspace_if_available(
     state: &AppState,
     session_id: &str,
 ) -> Result<Option<PathBuf>, JsonRpcError> {
-    match sessions::get_session_summary(&state.db, session_id) {
+    match sessions::session_summary(&state.db, session_id) {
         Ok(Some(summary)) => Ok(summary
             .project_path
             .or(summary.temporary_workspace_path)
@@ -3229,8 +3258,17 @@ async fn handle_request(
                 ));
             }
             let offset = params.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+            // The desktop merges this cursor with the sidecar's cursorless
+            // native catalog, so it asks for the whole prefix in one reply
+            // instead of walking the query from the beginning once per page.
+            // The default keeps the thirty-row contract for every other
+            // caller, and host-core clamps the request to a bounded maximum.
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(crate::session_search::SEARCH_PAGE_SIZE);
             let st = state.lock().await;
-            let page = crate::session_search::search(&st.db, query, offset)
+            let page = crate::session_search::search(&st.db, query, offset, limit)
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             Ok(json!(page))
         }
@@ -5095,8 +5133,9 @@ mod tests {
         capability_err, handle_request, parse_capability_query, parse_capability_target,
         peek_jsonrpc_id, provider_rpc_err, request_budget_ms, resolve_persisted_project_workspace,
         resolve_plan_workspace, resolve_plan_workspace_if_available, resolve_tool_workspace,
-        resolve_tool_workspace_for_call, scope_err, skill_err, with_request_budget, JsonRpcError,
-        RPC_REQUEST_BUDGET_MS, RPC_COMPACT_BUDGET_MS, RPC_CONFIG_SYNC_BUDGET_MS,
+        resolve_tool_workspace_for_call, response_for, rpc_err, scope_err, skill_err,
+        with_request_budget, JsonRpcError, RPC_REQUEST_BUDGET_MS, RPC_COMPACT_BUDGET_MS,
+        RPC_CONFIG_SYNC_BUDGET_MS,
     };
     use crate::agent_capabilities::CapabilityLevel;
     use crate::plans::{PlanResolveParams, PlanSubmitParams};
@@ -5310,6 +5349,39 @@ mod tests {
             capability_err("missing project").data.unwrap()["errorCode"],
             "CAPABILITY_INVALID"
         );
+    }
+
+    /// A request whose transcript lines never reached the device must not answer
+    /// success, and a handler that failed anyway keeps its own error.
+    #[test]
+    fn a_request_that_could_not_flush_its_transcript_does_not_answer_success() {
+        let device = Err(anyhow::anyhow!(
+            "flush /data/sessions/s1.jsonl: Input/output error"
+        ));
+        let unflushed = response_for(Value::Null, Ok(json!({ "ok": true })), device);
+        assert!(
+            unflushed.result.is_none(),
+            "a request whose bytes never reached the device cannot succeed"
+        );
+        assert_eq!(unflushed.error.unwrap().code, 1000);
+
+        let handler_error = || rpc_err(1000, "db is locked", "INTERNAL");
+        let handler_failed = response_for(Value::Null, Err(handler_error()), Ok(()));
+        assert_eq!(handler_failed.error.unwrap().message, "db is locked");
+
+        // Only one error fits in a response; the device error is logged rather
+        // than answered, and the request still does not report success.
+        let both_failed = response_for(
+            Value::Null,
+            Err(handler_error()),
+            Err(anyhow::anyhow!("flush failed")),
+        );
+        assert!(both_failed.result.is_none());
+        assert_eq!(both_failed.error.unwrap().message, "db is locked");
+
+        let answered = response_for(Value::Null, Ok(json!({ "ok": true })), Ok(()));
+        assert!(answered.error.is_none());
+        assert_eq!(answered.result.unwrap()["ok"], true);
     }
 
     #[test]
