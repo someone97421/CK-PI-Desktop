@@ -240,10 +240,17 @@ fn load_layout_cache(data_dir: &Path, session_id: &str) -> Result<Option<Transcr
     ) else {
         return Ok(None);
     };
+    // 任务汇总也属于布局缓存；旧缓存缺少该字段时重新扫描转录。
+    let Some(task_summaries) = raw.lines().last().and_then(|line| {
+        serde_json::from_str::<std::collections::HashMap<String, Value>>(line).ok()
+    }) else {
+        return Ok(None);
+    };
     let mut layout = TranscriptLayout {
         message_offsets: Vec::with_capacity(messages),
         compaction_offsets: Vec::with_capacity(compactions),
         file_len,
+        task_summaries,
     };
     for _ in 0..messages + compactions {
         let Some(offset) = tokens.next().and_then(|token| token.parse::<u64>().ok()) else {
@@ -341,6 +348,7 @@ fn store_layout_cache(data_dir: &Path, session_id: &str, layout: &TranscriptLayo
                 writeln!(writer)?;
             }
         }
+        writeln!(writer, "{}", serde_json::to_string(&layout.task_summaries)?)?;
         writer.flush()?;
     }
     swap_into_place(&tmp, &cache)
@@ -2612,6 +2620,7 @@ mod tests {
             message_offsets,
             compaction_offsets: Vec::new(),
             file_len: raw.len() as u64,
+            ..TranscriptLayout::default()
         }
     }
 
