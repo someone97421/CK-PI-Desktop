@@ -3,7 +3,7 @@
   "id": "local.codex-pet",
   "name": "Codex 宠物",
   "description": "导入 Codex 格式的宠物，使用桌面浮窗、快捷聊天和会话活动面板。",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "main": "main.cjs",
   "i18n": {
     "en": { "name": "Codex Pets", "description": "Import Codex pets, chat from a floating companion, and follow session activity." },

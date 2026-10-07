@@ -31,5 +31,16 @@
     const area = display?.workArea || display?.bounds || { x: 0, y: 0, width: 1280, height: 800 };
     return clampBounds({ ...size, x: area.x + area.width - size.width - 24, y: area.y + area.height - size.height - 24 }, displays);
   }
-  return { displayFor, clampBounds, initialBounds };
+  function inHoverRegion(x, y, controls, pop) {
+    const contains = (rect, padding = 8) => rect && rect.right > rect.left && rect.bottom > rect.top &&
+      x >= rect.left - padding && x < rect.right + padding && y >= rect.top - padding && y < rect.bottom + padding;
+    if (contains(controls) || contains(pop)) return true;
+    if (!controls || !pop) return false;
+    // 顶层弹层脱离控制栏 DOM，保留二者之间的鼠标通道。
+    return contains({
+      left: Math.min(controls.left, pop.left), right: Math.max(controls.right, pop.right),
+      top: Math.min(controls.bottom, pop.bottom), bottom: Math.max(controls.top, pop.top),
+    });
+  }
+  return { displayFor, clampBounds, initialBounds, inHoverRegion };
 });

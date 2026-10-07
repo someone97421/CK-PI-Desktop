@@ -5,6 +5,7 @@
    root 中始终保留 #pet-stage（canvas 由主代理挂载，本层不重建）、#pet-hit、#pet-controls。
    控制条 / 展开面板 / 弹层 / 设置面 / 预览横幅均带 data-interactive，供主代理做透明区域穿透。 */
 import { createI18n, resolveLocale } from "./i18n.js";
+import "../shared/geometry.js";
 
 const ICONS = {
   pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
@@ -90,7 +91,7 @@ export function createUI(options) {
   let disposed = false;
   let busy = false;
   let sending = false;
-  let hoverTimer;
+  let hoverTimer, hoveringControls = false;
   let readingAttachments = 0, draftWrites = Promise.resolve();
   const ioWaiters = [];
   let expanded = null; // 'composer' | 'activity' | null
@@ -720,7 +721,7 @@ export function createUI(options) {
     if (surface !== "pet") return;
     hoverTimer = setTimeout(() => {
       const editing = !composerPanel.hidden && document.hasFocus() && document.activeElement === textarea;
-      if (controls.matches(":hover") || activePop?.pop.matches(":hover") || editing || sending || readingAttachments) return;
+      if (hoveringControls || editing || sending || readingAttachments) return;
       setExpanded(null);
       bar.hidden = true;
       controls.dataset.revealed = "false";
@@ -728,8 +729,26 @@ export function createUI(options) {
       notifyLayout();
     }, 350);
   }
-  controls.addEventListener("pointerenter", revealControls);
-  controls.addEventListener("pointerleave", queueHideControls);
+  function updateCursor(x, y) {
+    if (surface !== "pet" || disposed) return false;
+    const inside = globalThis.CodexPetGeometry.inHoverRegion(x, y, controls.getBoundingClientRect(), activePop?.pop.getBoundingClientRect());
+    const wasInside = hoveringControls;
+    hoveringControls = inside;
+    if (inside) {
+      if (!wasInside || bar.hidden) revealControls();
+    } else if (wasInside) queueHideControls();
+    return inside;
+  }
+  const trackCursor = (event) => updateCursor(event.clientX, event.clientY);
+  const leaveDocument = () => updateCursor(-Infinity, -Infinity);
+  controls.addEventListener("pointerenter", trackCursor);
+  controls.addEventListener("pointerleave", trackCursor);
+  document.addEventListener("pointermove", trackCursor);
+  document.addEventListener("pointerleave", leaveDocument);
+  cleanups.push(() => {
+    document.removeEventListener("pointermove", trackCursor);
+    document.removeEventListener("pointerleave", leaveDocument);
+  });
   controls.addEventListener("focusin", revealControls);
   controls.addEventListener("focusout", queueHideControls);
   handle.addEventListener("click", revealControls);
@@ -761,8 +780,8 @@ export function createUI(options) {
     revealControls();
     if (!pop.dataset.hoverHook) {
       pop.dataset.hoverHook = "true";
-      pop.addEventListener("pointerenter", revealControls);
-      pop.addEventListener("pointerleave", queueHideControls);
+      pop.addEventListener("pointerenter", trackCursor);
+      pop.addEventListener("pointerleave", trackCursor);
     }
     root.append(pop);
     pop.setAttribute("popover", "manual");
@@ -1266,6 +1285,7 @@ export function createUI(options) {
   /* ---------- API ---------- */
   const api = {
     update,
+    updateCursor,
     setBusy(value) {
       busy = !!value;
       root.dataset.busy = String(busy);

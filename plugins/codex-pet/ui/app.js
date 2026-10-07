@@ -125,6 +125,8 @@ async function resizeWindow() {
   const size = settingsSurface ? { width: 760, height: 680 } : { width: 384, height: Math.max(120, Math.ceil(bounds.bottom + 12)) };
   if (!anchor) anchor = geometry.initialBounds(size, nativeState.displays, nativeState.cursor, settingsSurface ? null : model?.settings.position);
   const target = geometry.clampBounds({ ...size, x: anchor.x, y: anchor.y }, nativeState.displays);
+  // 记住裁剪后的实际位置，收起面板时不再弹回屏幕底部。
+  anchor = { x: target.x, y: target.y };
   const current = nativeState.bounds;
   if (Object.keys(target).some((key) => Math.abs(target[key] - current[key]) > 1)) await setBounds(target);
 }
@@ -160,7 +162,8 @@ async function cursorUpdate() {
   const y = nativeState.cursor.y - nativeState.bounds.y;
   const element = document.elementFromPoint(x, y);
   const focused = document.activeElement?.matches('input,textarea,select,[contenteditable="true"]') && document.hasFocus();
-  const interactive = !!focused || !!element?.closest('[data-interactive]') || !!sprite?.hitTest(x, y);
+  const controlsHovered = ui.updateCursor(x, y);
+  const interactive = !!focused || controlsHovered || !!element?.closest('[data-interactive]') || !!sprite?.hitTest(x, y);
   const wanted = !interactive;
   if (wanted !== ignoreMouse) { await widget('setIgnoreMouse', { ignore: wanted }); ignoreMouse = wanted; }
   const rect = sprite?.canvas.getBoundingClientRect();

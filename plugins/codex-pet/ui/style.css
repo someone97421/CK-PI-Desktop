@@ -142,8 +142,11 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
   align-items: center;
   gap: 6px;
   width: max-content;
+  min-height: 64px; /* 16px 手柄 + 6px 间距 + 42px 控制栏，展开时不改变窗口位置。 */
   max-width: min(92vw, 360px);
 }
+.pet-controls-wrap::before { content: ""; position: absolute; inset: -8px; }
+.pet-controls-wrap > * { position: relative; }
 .pet-handle { display: flex; align-items: center; justify-content: center; width: 80px; height: 16px; padding: 0; border: 0; background: transparent; border-radius: 999px; }
 .pet-handle::before { content: ""; width: 56px; height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--pet-fg) 32%, transparent); }
 .pet-handle:hover::before, .pet-handle:focus-visible::before { background: var(--pet-fg); }
