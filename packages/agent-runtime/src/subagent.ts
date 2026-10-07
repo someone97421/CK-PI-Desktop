@@ -262,6 +262,8 @@ export function composeSubagentSystemPrompt(options: {
   guidance?: string[];
   /** Spawn-time tool names after inherit resolution. */
   toolNames?: readonly string[];
+  /** Effective reporting interval selected for this delegation. */
+  reportIntervalSteps?: number;
 }): string {
   const { definition } = options;
   const resolved = options.toolNames;
@@ -280,7 +282,14 @@ export function composeSubagentSystemPrompt(options: {
     "Your final message is the report the main agent receives when you finish. Make it self-contained: what you did, what you found with exact paths and line numbers, and anything you could not finish.",
     "Keep the report tight. Report findings, not narration, and never pad it with a summary of your own process.",
   ].join("\n");
-  return [framing, definition.prompt, ...(options.guidance ?? [])]
+  const interval = definition.reportIntervalSteps ?? options.reportIntervalSteps;
+  const prompt = interval === undefined
+    ? definition.prompt
+    : definition.prompt.replaceAll(
+        "{{convergenceToolCalls}}",
+        String(Math.max(1, Math.floor(interval * 2 / 3))),
+      );
+  return [framing, prompt, ...(options.guidance ?? [])]
     .filter((block) => block.trim().length > 0)
     .join("\n\n");
 }

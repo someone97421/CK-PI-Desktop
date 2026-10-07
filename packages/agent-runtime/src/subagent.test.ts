@@ -96,6 +96,23 @@ function assistantMessage(overrides: {
 }
 
 describe("composeSubagentSystemPrompt", () => {
+  it.each([
+    { fixed: 32, requested: 16, expected: 21 },
+    { fixed: undefined, requested: 16, expected: 10 },
+    { fixed: undefined, requested: 1, expected: 1 },
+  ])("按实际汇报间隔代入收敛次数：$expected", ({ fixed, requested, expected }) => {
+    const prompt = composeSubagentSystemPrompt({
+      definition: definition({
+        reportIntervalSteps: fixed,
+        prompt: "Return by {{convergenceToolCalls}} completed tool calls.",
+      }),
+      reportIntervalSteps: requested,
+    });
+
+    expect(prompt).toContain(`Return by ${expected} completed tool calls.`);
+    expect(prompt).not.toContain("{{convergenceToolCalls}}");
+  });
+
   it("states the read-only boundary and keeps project guidance last", () => {
     const prompt = composeSubagentSystemPrompt({
       definition: definition(),

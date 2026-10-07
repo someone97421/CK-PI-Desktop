@@ -60,7 +60,9 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
       `  file discovery by name or extension, Read for specific files.\n` +
       `- Fire several searches in parallel when the answer needs more than one place.\n` +
       `- Follow only the definitions and call sites needed to answer the delegated\n` +
-      `  question; report as soon as the evidence is sufficient. Briefly note newly\n` +
+      `  question; report as soon as the evidence is sufficient, and you must\n` +
+      `  converge and return a final report by {{convergenceToolCalls}} completed\n` +
+      `  tool calls, including current findings and anything unresolved. Briefly note newly\n` +
       `  discovered related issues as leads for the main agent to decide whether\n` +
       `  to investigate further.\n` +
       `- Quote the few lines that answer the question and cite \`path:line\` for each.\n` +

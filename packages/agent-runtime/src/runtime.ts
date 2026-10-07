@@ -4515,6 +4515,7 @@ Delegation rules:
           },
           systemPrompt: composeSubagentSystemPrompt({
             definition,
+            reportIntervalSteps,
             guidance: this.subagentGuidance(definition),
             toolNames: declaredToolNames,
           }),
@@ -5573,6 +5574,7 @@ Delegation rules:
               compactionEnabled: this.compactionEnabled,
               systemPrompt: composeSubagentSystemPrompt({
                 definition,
+                reportIntervalSteps: cp.observer.interval,
                 guidance: this.subagentGuidance(definition),
                 toolNames: declaredToolNames,
               }),
