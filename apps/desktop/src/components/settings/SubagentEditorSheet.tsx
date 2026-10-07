@@ -120,7 +120,7 @@ export const SUBAGENT_PRESET_COPY = {
   worker: { name: "presetWorkerName", desc: "presetWorkerDesc" },
   fixer: { name: "presetFixerName", desc: "presetFixerDesc" },
   "ui-designer": { name: "presetUiDesignerName", desc: "presetUiDesignerDesc" },
-  "media-analyst": { name: "presetMediaAnalystName", desc: "presetMediaAnalystDesc" },
+  "native-media-analyst": { name: "presetMediaAnalystName", desc: "presetMediaAnalystDesc" },
 } as const satisfies Record<SubagentPreset["id"], { name: string; desc: string }>;
 
 /** Full i18n path for a preset chip, or null when `id` is blank / unknown. */

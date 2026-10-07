@@ -1,5 +1,6 @@
 import {
   fallbackBuiltinDefinitions,
+  normalizeSubagentName,
   type SubagentDefinition,
   type UserSubagentRecord,
 } from "@pi-desktop/shared";
@@ -27,13 +28,12 @@ export const EMPTY_SUBAGENT_PAGE: SubagentPageData = {
 /**
  * Settings lists two sources: the writable global registry, and the shipped
  * defaults `Task` offers. Catalog load failures must not hide the user list, so
- * builtins fall back to the shared preset catalog — reported enabled, because a
- * failed read cannot say which handles the user turned off.
+ * builtins fall back to the shared preset catalog with its default switches.
  */
 export async function fetchSubagentPageData(): Promise<SubagentPageData> {
   const ownedResult = await api.listUserSubagents({ level: "global" });
   const owned = ownedResult.subagents ?? [];
-  const enabledHandles = new Set(owned.filter((row) => row.enabled).map((row) => row.id));
+  const enabledHandles = new Set(owned.filter((row) => row.enabled).map((row) => normalizeSubagentName(row.id)));
   try {
     const catalog = await api.subagentCatalog();
     // Older main processes answer without `builtins`; derive the group from the
@@ -54,7 +54,7 @@ export async function fetchSubagentPageData(): Promise<SubagentPageData> {
     return {
       owned,
       builtins: fallbackBuiltinDefinitions()
-        .map((item) => ({ ...item, enabled: true }))
+        .map((item) => ({ ...item, enabled: item.name !== "native-media-analyst" }))
         .filter((item) => !enabledHandles.has(item.name)),
     };
   }

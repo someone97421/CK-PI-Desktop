@@ -20,7 +20,7 @@ import { DEFAULT_SUBAGENT_TOOLS, type SubagentDefinition } from "./subagent-defi
  */
 export type SubagentPreset = {
   /** Stable id used for i18n keys and analytics; matches `definition.name`. */
-  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer" | "media-analyst";
+  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer" | "native-media-analyst";
   /** Display name shown on the preset chip. */
   name: string;
   /** One-line description mirroring the definition's frontmatter. */
@@ -38,7 +38,7 @@ export const BUILTIN_SUBAGENT_REPORT_INTERVALS: Readonly<Record<SubagentPreset["
   worker: 64,
   fixer: 64,
   "ui-designer": 64,
-  "media-analyst": 32,
+  "native-media-analyst": 32,
 };
 
 /**
@@ -190,8 +190,8 @@ Report in this shape:
 `,
   },
   {
-    id: "media-analyst",
-    name: "Media Analyst",
+    id: "native-media-analyst",
+    name: "Native Media Analyst",
     description: "Native Gemini audio/video understanding. Processes complete videos, including long videos within input limits, in one pass without frame extraction or clipping. Provide source paths and questions.",
     tools: ["Read", "Glob"],
     body: `Use a Gemini model with native audio/video understanding.
@@ -203,7 +203,7 @@ Return findings and relevant original timestamps; report any input limitations.
 
 /** Lookup by preset id, used by the editor's "apply preset" handler. */
 export function findSubagentPreset(id: string): SubagentPreset | undefined {
-  return SUBAGENT_PRESETS.find((preset) => preset.id === id);
+  return SUBAGENT_PRESETS.find((preset) => preset.id === (id === "media-analyst" ? "native-media-analyst" : id));
 }
 
 /** Tools a fresh subagent draft starts with when no preset is chosen. */

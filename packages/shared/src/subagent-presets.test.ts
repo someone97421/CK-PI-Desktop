@@ -23,7 +23,7 @@ describe("SUBAGENT_PRESETS", () => {
       "worker",
       "fixer",
       "ui-designer",
-      "media-analyst",
+      "native-media-analyst",
     ]);
   });
 
@@ -75,6 +75,8 @@ describe("findSubagentPreset", () => {
     expect(findSubagentPreset("worker")?.id).toBe("worker");
     expect(findSubagentPreset("fixer")?.id).toBe("fixer");
     expect(findSubagentPreset("ui-designer")?.id).toBe("ui-designer");
+    expect(findSubagentPreset("media-analyst")?.id).toBe("native-media-analyst");
+    expect(findSubagentPreset("native-media-analyst")?.name).toBe("Native Media Analyst");
   });
 
   it("returns undefined for unknown ids", () => {

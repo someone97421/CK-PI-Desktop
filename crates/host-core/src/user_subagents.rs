@@ -601,6 +601,12 @@ impl UserSubagentRegistry {
             disabled.push("media-analyst".to_string());
             disabled.sort();
         }
+        for name in &mut disabled {
+            if name == "media-analyst" {
+                *name = "native-media-analyst".to_string();
+            }
+        }
+        disabled.sort();
         disabled
     }
 
@@ -615,13 +621,15 @@ impl UserSubagentRegistry {
         if name.is_empty() {
             bail!("SUBAGENT_INVALID: a builtin handle is required");
         }
+        // 保留旧持久化键，两种名称共用已有开关，不迁移用户文件。
+        let stored_name = if name == "native-media-analyst" { "media-analyst" } else { &name };
         self.builtins.set_explicit_enabled(
             SUBAGENT_BUILTIN_KIND,
             CapabilityLevel::Global,
-            &name,
+            stored_name,
             enabled,
         )?;
-        Ok(name)
+        Ok(if name == "media-analyst" { "native-media-analyst".to_string() } else { name })
     }
 }
 
@@ -897,21 +905,21 @@ Keep the body.
     fn builtin_defaults_and_switches_are_respected() {
         let dir = tempdir().unwrap();
         let mut registry = UserSubagentRegistry::new(dir.path());
-        assert_eq!(registry.disabled_builtins(), vec!["media-analyst".to_string()]);
+        assert_eq!(registry.disabled_builtins(), vec!["native-media-analyst".to_string()]);
 
         let handle = registry.set_builtin_enabled("Fixer", false).unwrap();
         assert_eq!(handle, "fixer");
-        assert_eq!(registry.disabled_builtins(), vec!["fixer".to_string(), "media-analyst".to_string()]);
+        assert_eq!(registry.disabled_builtins(), vec!["fixer".to_string(), "native-media-analyst".to_string()]);
 
         registry.set_builtin_enabled("fixer", true).unwrap();
-        assert_eq!(registry.disabled_builtins(), vec!["media-analyst".to_string()]);
-        registry.set_builtin_enabled("media-analyst", true).unwrap();
+        assert_eq!(registry.disabled_builtins(), vec!["native-media-analyst".to_string()]);
+        assert_eq!(registry.set_builtin_enabled("media-analyst", true).unwrap(), "native-media-analyst");
         assert!(registry.disabled_builtins().is_empty());
         let mut reopened = UserSubagentRegistry::new(dir.path());
         assert!(reopened.disabled_builtins().is_empty());
-        reopened.set_builtin_enabled("media-analyst", false).unwrap();
+        reopened.set_builtin_enabled("native-media-analyst", false).unwrap();
         let reopened = UserSubagentRegistry::new(dir.path());
-        assert_eq!(reopened.disabled_builtins(), vec!["media-analyst".to_string()]);
+        assert_eq!(reopened.disabled_builtins(), vec!["native-media-analyst".to_string()]);
     }
 
     #[test]
@@ -927,7 +935,7 @@ Keep the body.
         // Sorted, so the answer never depends on insertion order.
         assert_eq!(
             reopened.disabled_builtins(),
-            vec!["code-reviewer".to_string(), "fixer".to_string(), "media-analyst".to_string()]
+            vec!["code-reviewer".to_string(), "fixer".to_string(), "native-media-analyst".to_string()]
         );
     }
 
@@ -937,7 +945,7 @@ Keep the body.
         let mut registry = UserSubagentRegistry::new(dir.path());
         let error = registry.set_builtin_enabled("   ", false).unwrap_err();
         assert!(error.to_string().contains("SUBAGENT_INVALID"));
-        assert_eq!(registry.disabled_builtins(), vec!["media-analyst".to_string()]);
+        assert_eq!(registry.disabled_builtins(), vec!["native-media-analyst".to_string()]);
     }
 
     #[test]
@@ -955,14 +963,14 @@ Keep the body.
         test_support::with_global_agents(agents.path(), || {
             registry.list().unwrap();
         });
-        assert_eq!(registry.disabled_builtins(), vec!["fixer".to_string(), "media-analyst".to_string()]);
+        assert_eq!(registry.disabled_builtins(), vec!["fixer".to_string(), "native-media-analyst".to_string()]);
 
         // And a rebuilt registry still agrees after the listing.
         let mut reopened = UserSubagentRegistry::new(dir.path());
         test_support::with_global_agents(agents.path(), || {
             reopened.list().unwrap();
         });
-        assert_eq!(reopened.disabled_builtins(), vec!["fixer".to_string(), "media-analyst".to_string()]);
+        assert_eq!(reopened.disabled_builtins(), vec!["fixer".to_string(), "native-media-analyst".to_string()]);
 
         // The document kind keeps its own file, so the builtin entry is not
         // mistaken for a user subagent either.

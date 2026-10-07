@@ -267,7 +267,8 @@ export function normalizeSubagentName(value: string): string {
     .split("/")
     .pop()!
     .replace(/\.md$/i, "");
-  return basename.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  const name = basename.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  return name === "media-analyst" ? "native-media-analyst" : name;
 }
 
 export type SubagentParseResult =

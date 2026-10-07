@@ -20,6 +20,7 @@ import {
   BUILTIN_SUBAGENT_REPORT_INTERVALS,
   SUBAGENT_PRESETS,
   mergeSubagentDefinitions,
+  normalizeSubagentName,
   parseSubagentDefinition,
   subagentModelKey,
   subagentPinnedProviders,
@@ -192,7 +193,7 @@ Report in this shape:
 - Browser: [what was opened and checked, issues fixed, issues remaining]
 - Build: [passed / failed / skipped: reason]
 </verification>`,
-  ...SUBAGENT_PRESETS.filter((preset) => preset.id === "media-analyst").map((preset) =>
+  ...SUBAGENT_PRESETS.filter((preset) => preset.id === "native-media-analyst").map((preset) =>
     `---\nname: ${preset.id}\ndescription: ${preset.description}\ntools: [${preset.tools.join(", ")}]\nreportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS[preset.id]}\n---\n\n${preset.body}`,
   ),
 ];
@@ -340,7 +341,7 @@ export async function loadSubagentDefinitions(
   // A switched-off builtin is excluded from the delegation catalog and from
   // nothing else: a user document of the same name still shadows it, and a
   // handle the user re-enables needs no document of its own to come back.
-  const disabled = new Set(options.disabledBuiltins ?? []);
+  const disabled = new Set((options.disabledBuiltins ?? []).map(normalizeSubagentName));
   const builtins = merged.definitions.filter(
     (definition) => definition.source === "builtin",
   );

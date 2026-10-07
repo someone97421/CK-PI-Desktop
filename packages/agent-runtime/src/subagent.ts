@@ -906,7 +906,7 @@ export class SubagentRun {
       thinkingLevel,
       sessionId: this.opts.sessionId,
       maxTokens: this.opts.definition.maxTokens,
-      requestLimitBytes: this.opts.definition.name === "media-analyst" ? GEMINI_INLINE_REQUEST_BYTES : undefined,
+      requestLimitBytes: ["native-media-analyst", "media-analyst"].includes(this.opts.definition.name) ? GEMINI_INLINE_REQUEST_BYTES : undefined,
       onUsage: usage => this.recordUsage(usage),
     }, this.retryState);
   }
@@ -955,7 +955,7 @@ export class SubagentRun {
       provider,
       model,
       models: createProviderModels(provider, model,
-        this.opts.definition.name === "media-analyst" ? GEMINI_INLINE_REQUEST_BYTES : undefined),
+        ["native-media-analyst", "media-analyst"].includes(this.opts.definition.name) ? GEMINI_INLINE_REQUEST_BYTES : undefined),
       thinkingLevel: compactionThinkingLevel(provider, this.thinkingLevel),
     };
   }

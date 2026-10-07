@@ -2918,7 +2918,7 @@ importConfirm: "Imported extensions run inside the agent process with the same a
       presetFixerDesc: "Diagnose and fix bugs, regressions or other observed failures.",
       presetUiDesignerName: "UI designer",
       presetUiDesignerDesc: "Design and implement an interface from a brief, verified in the browser preview.",
-      presetMediaAnalystName: "Media Analyst",
+      presetMediaAnalystName: "Native Media Analyst",
       presetMediaAnalystDesc: "Off by default. Requires a Gemini model with native audio/video input. Understands complete sources in one pass within input limits and returns findings with key timestamps.",
       presetBlank: "Start blank",
       presetBlankDesc: "Default tools. Write your own instructions.",

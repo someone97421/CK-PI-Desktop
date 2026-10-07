@@ -34,7 +34,7 @@ describe("builtin subagent documents", () => {
       "worker",
       "fixer",
       "ui-designer",
-      "media-analyst",
+      "native-media-analyst",
     ]);
     expect(definitions).toHaveLength(BUILTIN_SUBAGENT_DOCUMENTS.length);
     // The turn cap is gone (ADR 0253): no builtin document declares one.
@@ -66,7 +66,7 @@ describe("builtin subagent documents", () => {
     expect("maxTurns" in designer).toBe(false);
     expect(designer.description).toBe(findSubagentPreset("ui-designer")?.description);
     expect(designer.prompt).toBe(findSubagentPreset("ui-designer")?.body.trim());
-    for (const name of ["worker", "fixer", "media-analyst"]) {
+    for (const name of ["worker", "fixer", "native-media-analyst"]) {
       const definition = definitions.find((item) => item.name === name)!;
       const preset = findSubagentPreset(name)!;
       expect(definition.description).toBe(preset.description);
@@ -126,6 +126,19 @@ describe("loadSubagentDefinitions", () => {
     // builtin has no document to delete.
     expect(builtins.map((d) => d.name)).toContain("fixer");
     expect(builtins.every((d) => d.source === "builtin")).toBe(true);
+  });
+
+  it("旧媒体代理名称的关闭设置与模型绑定继续生效", async () => {
+    const disabled = await loadSubagentDefinitions(null, { disabledBuiltins: ["media-analyst"] });
+    expect(disabled.definitions.map((d) => d.name)).not.toContain("native-media-analyst");
+    expect(disabled.builtins.map((d) => d.name)).toContain("native-media-analyst");
+    const bound = await loadSubagentDefinitions(null, {
+      userDocuments: [{ id: "media-analyst", document: "---\nname: media-analyst\ndescription: 已绑定的媒体代理\nmodel: custom/gemini\ntools: [Read]\n---\n理解音视频\n" }],
+    });
+    const media = bound.definitions.filter((d) => d.name === "native-media-analyst");
+    expect(media).toHaveLength(1);
+    expect(media[0].source).toBe("user");
+    expect(media[0].model).toEqual({ providerId: "custom", modelId: "gemini" });
   });
 
   it("lets a user document keep a handle the user switched the builtin off", async () => {
