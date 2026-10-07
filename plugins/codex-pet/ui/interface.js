@@ -168,6 +168,17 @@ export function createUI(options) {
   stage.append(hit);
   stageWrap.append(stage);
 
+  const bubble = el("button", "pet-output-bubble");
+  bubble.type = "button";
+  bubble.hidden = true;
+  bubble.setAttribute("data-interactive", "");
+  bubble.dataset.i18nTitle = "activity.open";
+  const bubbleTitle = el("span", "pet-output-title");
+  const bubbleText = el("span", "pet-output-text");
+  bubble.append(bubbleTitle, bubbleText);
+  bubble.addEventListener("click", () => onAction("open-session", { sessionId: state?.activity?.output?.sessionId }));
+  stageWrap.prepend(bubble);
+
   // #pet-controls
   const controls = el("section", "pet-controls-wrap");
   controls.id = "pet-controls";
@@ -533,6 +544,18 @@ export function createUI(options) {
     motionSelect.append(option("system", "settings.motionSystem"), option("reduce", "settings.motionReduce"), option("full", "settings.motionFull"));
     motionField.append(motionLabel, motionSelect);
 
+    const fpsField = field("settings.frameRate", "settings.frameRateHint");
+    const fpsRow = el("div", "pet-field-inline");
+    const fpsInput = el("input", "pet-input");
+    fpsInput.type = "number"; fpsInput.min = "1"; fpsInput.max = "60"; fpsInput.step = "1";
+    fpsInput.dataset.i18nPh = "settings.frameRateOriginal";
+    const fpsUnit = el("span", "", "FPS");
+    const fpsReset = el("button", "pet-btn");
+    fpsReset.type = "button"; fpsReset.dataset.i18n = "settings.frameRateOriginal";
+    fpsReset.style.whiteSpace = "nowrap";
+    fpsRow.append(fpsInput, fpsUnit, fpsReset);
+    fpsField.append(fpsRow);
+
     const pollField = el("label", "pet-field");
     const pollLabel = el("span"); pollLabel.dataset.i18n = "settings.poll";
     const pollRow = el("div", "pet-field-inline");
@@ -565,7 +588,7 @@ export function createUI(options) {
     const shortcutHint = el("small"); shortcutHint.dataset.i18n = "settings.shortcutHint";
     shortcutField.append(shortcutLabel, shortcutRow, shortcutHint);
 
-    prefGrid.append(sizeField, filterField, motionField, pollField, shortcutField, topRow, visibleRow);
+    prefGrid.append(sizeField, filterField, motionField, fpsField, pollField, shortcutField, topRow, visibleRow);
     pref.append(prefH2, prefGrid);
 
     wrap.append(head, lib, pref);
@@ -660,6 +683,12 @@ export function createUI(options) {
     sizeRange.addEventListener("input", () => { sizeOut.textContent = `${sizeRange.value} ${t("settings.sizeUnit")}`; patchDebounced({ size: Number(sizeRange.value) }); });
     filterSelect.addEventListener("change", () => patch({ filter: filterSelect.value }));
     motionSelect.addEventListener("change", () => patch({ motion: motionSelect.value }));
+    fpsInput.addEventListener("change", () => {
+      const value = fpsInput.value === "" ? null : Math.round(Math.min(60, Math.max(1, Number(fpsInput.value) || 1)));
+      fpsInput.value = value ?? "";
+      patch({ frameRate: value });
+    });
+    fpsReset.addEventListener("click", () => { fpsInput.value = ""; patch({ frameRate: null }); });
     pollInput.addEventListener("change", () => {
       const v = Math.min(60, Math.max(2, Number(pollInput.value) || 8));
       pollInput.value = String(v);
@@ -702,7 +731,7 @@ export function createUI(options) {
 
     return {
       wrap, grid, libEmpty,
-      sizeRange, sizeOut, filterSelect, motionSelect, pollInput, topCheck, visibleCheck, shortcutInput,
+      sizeRange, sizeOut, filterSelect, motionSelect, fpsInput, pollInput, topCheck, visibleCheck, shortcutInput,
       gridSignature: "",
     };
   }
@@ -1000,6 +1029,17 @@ export function createUI(options) {
     const rows = state?.activity?.rows || [];
     return rows.reduce((n, r) => n + (r.unreadCount || 0), 0);
   }
+  function renderBubble() {
+    const output = state?.activity?.output;
+    const visible = surface === "pet" && !!state?.settings?.selectedPetId && !!output?.text && output.expiresAt > Date.now();
+    bubble.hidden = !visible;
+    if (visible) {
+      bubbleTitle.textContent = output.title || t("activity.title");
+      bubbleText.textContent = output.text;
+      bubbleText.scrollTop = bubbleText.scrollHeight;
+      bubble.setAttribute("aria-label", `${t("activity.open")}: ${bubbleTitle.textContent}`);
+    }
+  }
   function renderActivity() {
     const activity = state?.activity;
     const rows = activity?.rows || [];
@@ -1194,6 +1234,7 @@ export function createUI(options) {
     settingsEls.sizeOut.textContent = `${s.size ?? 96} ${t("settings.sizeUnit")}`;
     setIfIdle(settingsEls.filterSelect, s.filter || "pixelated");
     setIfIdle(settingsEls.motionSelect, s.motion || "system");
+    setIfIdle(settingsEls.fpsInput, s.frameRate ?? "");
     setIfIdle(settingsEls.pollInput, s.pollSeconds ?? 8);
     settingsEls.topCheck.checked = s.alwaysOnTop !== false;
     settingsEls.visibleCheck.checked = s.visible !== false;
@@ -1246,6 +1287,7 @@ export function createUI(options) {
     }
     renderStage();
     renderActivity();
+    renderBubble();
     renderAttachments();
     renderComposerError();
     syncSendState();
@@ -1285,6 +1327,12 @@ export function createUI(options) {
   /* ---------- API ---------- */
   const api = {
     update,
+    updateActivity(activity) {
+      if (disposed || !state) return;
+      state = { ...state, activity };
+      renderActivity();
+      renderBubble();
+    },
     updateCursor,
     setBusy(value) {
       busy = !!value;

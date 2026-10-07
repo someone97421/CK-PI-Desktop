@@ -244,3 +244,62 @@ test('第41之后的旧会话最终全部轻量探测，发现 busy 和 awaiting
   assert.deepEqual(new Set(data.subscriptions.values()), new Set(['s41', 's69']));
   assert.ok(data.reads.every((id) => id === 's41' || id === 's69'));
 });
+
+test('模型正文更新气泡并限制长度，忽略思考、工具、子代理与任务汇总', async (t) => {
+  const { pi, data } = host([session('a', true)]);
+  const value = monitor(t, pi); await value.start();
+  const message = { id: 'm-a', role: 'assistant', content: '正在检查接口。', thinking: '隐藏思考' };
+  data.emit('a', { type: 'message_start', message });
+  assert.equal(value.getState().output.text, message.content);
+  data.emit('a', { type: 'message_update', message: { ...message, content: '正在检查接口。已找到事件订阅。' } });
+  const output = value.getState().output;
+  assert.equal(output.text, '正在检查接口。已找到事件订阅。');
+  assert.equal(output.sessionId, 'a'); assert.equal(output.title, '会话 a');
+  data.emit('a', { type: 'message_update', stream: 'delta', deltaThinking: '隐藏思考', message: { ...message, content: '' } });
+  data.emit('a', { type: 'message_update', message: { ...message, content: '子代理' } }, { parentToolCallId: 'child' });
+  data.emit('a', { type: 'message_end', taskSummary: true, message: { ...message, content: '任务汇总' } });
+  data.emit('a', { type: 'message_end', message: { id: 'tool', role: 'tool', content: '工具结果' } });
+  assert.deepEqual(value.getState().output, output);
+  data.emit('a', { type: 'message_end', message: { ...message, content: '长'.repeat(500) + '最新进度' } });
+  assert.equal(value.getState().output.text.length, 240); assert.ok(value.getState().output.text.endsWith('最新进度'));
+  assert.ok(!JSON.stringify(value.getState()).includes('隐藏思考'));
+  value.getState().output.text = '外部修改'; assert.notEqual(value.getState().output.text, '外部修改');
+});
+
+test('气泡到期后相同快照不重播；只恢复当前轮文本，新轮与旧轮隔离', async (t) => {
+  const { pi, data } = host([session('a', true)]);
+  const active = { status: 'running', activeTurn: { id: 't-a', status: 'running' }, activeItems: [
+    { turnId: 'old', content: { id: 'old', role: 'assistant', content: '旧轮内容' } },
+    { turnId: 't-a', content: { id: 'm-a', role: 'assistant', content: '当前进度' } },
+  ] };
+  data.snapshots.set('a', snapshot('a', active));
+  const value = monitor(t, pi); await value.start();
+  assert.equal(value.getState().output.text, '当前进度');
+  const future = Date.now() + 13000;
+  t.mock.method(Date, 'now', () => future);
+  assert.equal(value.getState().output, null);
+  await value.refresh(); assert.equal(value.getState().output, null);
+  data.emit('a', { type: 'message_update', message: { id: 'm-a', role: 'assistant', content: '更新进度' } });
+  assert.equal(value.getState().output.text, '更新进度');
+  data.emit('a', { type: 'agent_start' }, { turnId: 'new' });
+  assert.equal(value.getState().output, null);
+  data.emit('a', { type: 'message_end', message: { id: 'm-a', role: 'assistant', content: '迟到的旧消息' } });
+  assert.equal(value.getState().output, null);
+  data.emit('a', { type: 'message_update', message: { id: 'new-message', role: 'assistant', content: '新轮进度' } }, { turnId: 'new' });
+  assert.equal(value.getState().output.text, '新轮进度');
+  data.sessions = []; await value.refresh(); assert.equal(value.getState().output, null);
+});
+
+test('流式增量保留空格并累加，resetText 和最终完整正文覆盖旧片段', async (t) => {
+  const { pi, data } = host([session('a', true)]);
+  const value = monitor(t, pi); await value.start();
+  const message = { id: 'm', role: 'assistant', content: '', status: 'streaming' };
+  data.emit('a', { type: 'message_start', message });
+  data.emit('a', { type: 'message_update', stream: 'delta', message, deltaText: '正在检查 ' });
+  data.emit('a', { type: 'message_update', stream: 'delta', message, deltaText: 'SDK' });
+  assert.equal(value.getState().output.text, '正在检查 SDK');
+  data.emit('a', { type: 'message_update', stream: 'delta', message, resetText: true, deltaText: '改为检查 UI' });
+  assert.equal(value.getState().output.text, '改为检查 UI');
+  data.emit('a', { type: 'message_end', message: { ...message, content: '检查完成', status: 'complete' } });
+  assert.equal(value.getState().output.text, '检查完成');
+});

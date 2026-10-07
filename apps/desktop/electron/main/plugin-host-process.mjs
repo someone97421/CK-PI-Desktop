@@ -246,6 +246,7 @@ function buildApi() {
     ui: {
       openPanel: (options) => call("ui.openPanel", [options]),
       closePanel: () => call("ui.closePanel"),
+      showMainWindow: () => call("ui.showMainWindow"),
       showToast: (message, level) => call("ui.showToast", [message, level]),
       notify: (input) => call("ui.notify", [input]),
       getNotificationPermission: () => call("ui.getNotificationPermission"),

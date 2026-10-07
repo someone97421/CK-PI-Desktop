@@ -332,6 +332,14 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     state.desktopControl = control;
     plugins.setServices({
       desktopControl: control,
+      showMainWindow: async () => {
+        await deps.ensureWindow();
+        const window = deps.getMainWindow();
+        if (!window || window.isDestroyed()) throw new Error("主程序窗口不可用");
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+      },
       // The live session state a subscription starts from. Read through the
       // Agent Host's desktop snapshot: tool approvals follow permissions.pending
       // rather than the separate RACP response deadline.

@@ -6,6 +6,9 @@ const CONCURRENCY = 4;
 const FALLBACK_BATCH = 8;
 const STATUS_BATCH = 16;
 const short = (value) => String(value || '').replace(/[\r\n]+/g, ' ').slice(0, 120);
+const OUTPUT_LIMIT = 240;
+const OUTPUT_TTL = 12000;
+const messageText = (message) => message?.role === 'assistant' && typeof message.content === 'string' ? message.content.slice(-OUTPUT_LIMIT).trim() : '';
 const now = () => new Date().toISOString();
 const runningStatus = (status) => ['running', 'starting', 'busy', 'waiting', 'awaiting_approval', 'awaiting_input', 'awaiting_permission', 'waiting_approval', 'waiting_input', 'waiting_permission'].includes(status);
 
@@ -21,9 +24,8 @@ async function bounded(values, action) {
   if (errors.length) throw errors[0];
 }
 
-/** 仅暴露简短活动摘要；历史聊天内容不会进入内部缓存或回调。
- * 当前运行/等待状态优先于旧通知。结束状态仅由最新持久化未读通知决定，
- * 已知新轮次之后，旧轮次通知也不能重新成为本轮结果。
+/** 活动保留简短状态与当前轮最近一条模型正文的末尾片段。
+ * 结束状态仍以最新持久化未读通知为准，旧轮次不会覆盖当前轮状态。
  */
 class ActivityMonitor {
   constructor(pi, { pollSeconds = 8, onChange = () => {} } = {}) {
@@ -38,6 +40,7 @@ class ActivityMonitor {
     this._subscriptions = new Map();
     this._notifications = [];
     this._state = { rows: [], state: null, updatedAt: null, stale: false, error: null };
+    this._output = null;
     this._statusQueue = [];
     this._statusCandidates = new Set();
     this._fallbackCursor = 0;
@@ -73,6 +76,7 @@ class ActivityMonitor {
       this._live.clear();
       this._sessions.clear();
       this._notifications = [];
+      this._output = null;
       this._statusQueue = [];
       this._statusCandidates.clear();
     })().finally(() => { this._stopping = null; });
@@ -96,7 +100,8 @@ class ActivityMonitor {
   }
 
   getState() {
-    return { ...this._state, rows: this._state.rows.map((row) => ({ ...row })) };
+    const output = this._output && this._output.expiresAt > Date.now() && this._sessions.has(this._output.sessionId) ? { ...this._output, title: short(this._sessions.get(this._output.sessionId)?.title || '未命名会话') } : null;
+    return { ...this._state, output, rows: this._state.rows.map((row) => ({ ...row })) };
   }
 
   _publish(stale = false, error = null) {
@@ -134,6 +139,20 @@ class ActivityMonitor {
       this._state = { rows, state: rows[0]?.state || null, updatedAt: now(), stale: false, error: null };
     }
     this.onChange(this.getState());
+  }
+
+  _captureOutput(sessionId, live, message, at) {
+    if (message?.parentToolCallId || message?.role !== 'assistant' || typeof message.content !== 'string') return;
+    const content = message.content.slice(-OUTPUT_LIMIT);
+    if (live.outputMessageId === message.id && live.outputContent === content) return;
+    live.outputMessageId = message.id;
+    live.outputContent = content;
+    const text = messageText(message);
+    if (!text) {
+      if (this._output?.sessionId === sessionId && this._output.messageId === message.id) this._output = null;
+      return;
+    }
+    this._output = { sessionId, messageId: message.id, text, updatedAt: at, expiresAt: Date.now() + OUTPUT_TTL };
   }
 
   async _desktop(method, input, epoch) {
@@ -257,11 +276,20 @@ class ActivityMonitor {
     const inputs = new Map((snapshot.pendingInputs || []).map((request) => [request.id, true]));
     if (!running && !approvals.size && !inputs.size) this._statusCandidates.delete(sessionId);
     const toolItem = (snapshot.activeItems || []).find((item) => !item.parentToolCallId && (item.content?.toolName || item.content?.message?.toolName));
-    this._live.set(sessionId, { sequence, revision: snapshot.revision, running, approvals, inputs, extraPending: 0,
-      queuedCount: (snapshot.queuedTurns || []).length,
-      turnId: activeTurn?.id || activeTurn?.turnId || old?.turnId,
+    const turnId = activeTurn?.id || activeTurn?.turnId || old?.turnId;
+    const sameTurn = !old?.turnId || !turnId || old.turnId === turnId;
+    if (!sameTurn && this._output?.sessionId === sessionId) this._output = null;
+    const live = { sequence, revision: snapshot.revision, running, approvals, inputs, extraPending: 0,
+      queuedCount: (snapshot.queuedTurns || []).length, turnId,
+      outputMessageId: sameTurn ? old?.outputMessageId : undefined, outputContent: sameTurn ? old?.outputContent : undefined,
       startedAt: activeTurn?.startedAt || old?.startedAt,
-      updatedAt: snapshot.generatedAt || now(), tool: short(toolItem?.content?.toolName || toolItem?.content?.message?.toolName) });
+      updatedAt: snapshot.generatedAt || now(), tool: short(toolItem?.content?.toolName || toolItem?.content?.message?.toolName) };
+    if (running && activeTurn) {
+      const items = (snapshot.activeItems || []).filter((item) => !item.parentToolCallId && item.turnId === turnId && item.content?.role === 'assistant');
+      const message = items.at(-1)?.content;
+      this._captureOutput(sessionId, live, message, snapshot.generatedAt || now());
+    }
+    this._live.set(sessionId, live);
   }
   _hint() {
     if (this._hintTimer || !this._active) return;
@@ -291,6 +319,8 @@ class ActivityMonitor {
       if (event.type === 'agent_start') {
         live.running = true; live.turnId = payload.turnId; live.startedAt = at;
         live.approvals.clear(); live.inputs.clear(); live.extraPending = 0; live.tool = '';
+        live.outputMessageId = undefined; live.outputContent = undefined;
+        if (this._output?.sessionId === sessionId) this._output = null;
       } else if (event.type === 'status') {
         live.running = !!event.status?.isRunning;
         if (event.status?.currentTurnId) live.turnId = event.status.currentTurnId;
@@ -298,6 +328,14 @@ class ActivityMonitor {
         this._hint();
       } else if (event.type === 'tool_start') live.tool = short(event.toolName);
       else if (event.type === 'tool_end') live.tool = '';
+      else if (['message_start', 'message_update', 'message_end'].includes(event.type)) {
+        if (event.message?.role !== 'assistant' || event.taskSummary || (payload.turnId && live.turnId && payload.turnId !== live.turnId)) return;
+        if (event.stream === 'delta') {
+          const seed = live.outputMessageId === event.message.id ? live.outputContent || '' : event.message.content || '';
+          const content = event.resetText ? event.deltaText || '' : seed + (event.deltaText || '');
+          this._captureOutput(sessionId, live, { ...event.message, content }, at);
+        } else this._captureOutput(sessionId, live, event.message, at);
+      }
       else if (event.type === 'tool_permission_request') { live.approvals.set(event.request.id, true); live.extraPending = 0; }
       else if (event.type === 'asktool_request') live.inputs.set(event.request.id, true);
       else return; // turn_end 只是模型轮结束，不能结束根会话。

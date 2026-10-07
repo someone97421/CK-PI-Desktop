@@ -8,7 +8,7 @@ const { importInstallLink } = require('./lib/install-link.cjs');
 
 const SERVICE = 'codex-pet-activity';
 const SHORTCUT = 'show-pet';
-const DEFAULTS = { selectedPetId: null, visible: true, size: 96, alwaysOnTop: true, filter: 'pixelated', motion: 'system', gaze: true, position: null, pollSeconds: 8, shortcut: process.platform === 'darwin' ? 'Alt+Space' : 'Super+Alt+P' };
+const DEFAULTS = { selectedPetId: null, visible: true, size: 96, alwaysOnTop: true, filter: 'pixelated', motion: 'system', frameRate: null, gaze: true, position: null, pollSeconds: 8, shortcut: process.platform === 'darwin' ? 'Alt+Space' : 'Super+Alt+P' };
 
 function createPlugin(providedHost) {
   let host, library, chat, monitor, ready, unloaded = false;
@@ -38,6 +38,8 @@ function createPlugin(providedHost) {
       if (patch.selectedPetId === null || (typeof patch.selectedPetId === 'string' && library.list().some((pet) => pet.id === patch.selectedPetId))) next.selectedPetId = patch.selectedPetId;
       if (Number.isFinite(patch.size)) next.size = Math.round(Math.max(32, Math.min(256, patch.size)));
       if (Number.isFinite(patch.pollSeconds)) next.pollSeconds = Math.max(2, Math.min(60, patch.pollSeconds));
+      if (patch.frameRate === null) next.frameRate = null;
+      else if (Number.isFinite(patch.frameRate)) next.frameRate = Math.round(Math.max(1, Math.min(60, patch.frameRate)));
       if (['pixelated', 'smooth'].includes(patch.filter)) next.filter = patch.filter;
       if (['system', 'reduce', 'full'].includes(patch.motion)) next.motion = patch.motion;
       if (patch.position === null || (Number.isFinite(patch.position?.x) && Number.isFinite(patch.position?.y))) next.position = patch.position;
@@ -123,6 +125,7 @@ function createPlugin(providedHost) {
     try {
       switch (channel) {
         case 'pet.state': locale = (await host.app.getLocale()) === 'en' ? 'en' : 'zh-CN'; return state();
+        case 'pet.activity': return monitor.getState();
         case 'pet.asset': return await library.asset(payload.id);
         case 'pet.importDirectory': {
           const selected = await host.fs.requestDirectory();
@@ -156,7 +159,17 @@ function createPlugin(providedHost) {
         case 'pet.draft': await chat.saveDraft(payload); return state();
         case 'pet.commands': return commands;
         case 'pet.send': { const receipt = await chat.send(payload); await monitor.refresh(); return { ...receipt, state: state() }; }
-        case 'pet.openSession': await host.desktop.invoke({ operation: 'session/open', args: [payload.sessionId] }); await monitor.markRead(payload.sessionId); return state();
+        case 'pet.openSession': {
+          if (typeof host.ui.showMainWindow !== 'function') fail('PET_HOST_VERSION', '请更新主程序以使用点击宠物唤起会话功能。', 'Update the desktop app to open the main window from the pet.');
+          const activity = monitor.getState();
+          const sessionId = payload.sessionId || activity.output?.sessionId || chat.getDraft().sessionId || activity.rows[0]?.sessionId;
+          await host.ui.showMainWindow();
+          if (sessionId) {
+            await host.desktop.invoke({ operation: 'session/open', args: [sessionId] });
+            await monitor.markRead(sessionId);
+          }
+          return state();
+        }
         case 'pet.markRead': await monitor.markRead(payload.sessionId); return state();
         case 'pet.markAllRead': await monitor.markAllRead(); return state();
         case 'pet.revealLibrary': {

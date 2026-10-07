@@ -58,6 +58,12 @@ export class SpritePlayer {
   }
   configure(settings) {
     this.settings = settings;
+    if (this.spec && (this.playbackSpec !== this.spec || this.frameRate !== settings.frameRate)) {
+      this.playbackSpec = this.spec;
+      this.frameRate = settings.frameRate;
+      this.animations = Object.fromEntries(Object.entries(this.spec.animations).map(([name, animation]) => [name, format.playbackAnimation(animation, settings.frameRate)]));
+      this.started = performance.now();
+    }
     this.size = settings.size || 96;
     this.reduced = settings.motion === 'reduce' || (settings.motion !== 'full' && this.media.matches);
     this.canvas.style.width = `${this.size}px`;
@@ -78,7 +84,7 @@ export class SpritePlayer {
     this.action = wanted;
     this.started = performance.now();
     this.transient = transient;
-    this.primaryLoop = primaryLoop;
+    this.primaryLoop = primaryLoop || (!transient && this.state === 'running' && wanted === format.STATE_ACTION.running);
     this.look = null;
     this.lastFrame = null;
   }
@@ -98,13 +104,13 @@ export class SpritePlayer {
     if (this.disposed) return;
     if (this.image && this.spec && !document.hidden) {
       try {
-        let animation = this.spec.animations[this.action] || this.spec.animations.idle;
-        if (this.primaryLoop && animation.primary) animation = { frames: animation.primary, loopStart: 0 };
+        let animation = this.animations[this.action] || this.animations.idle;
+        if (this.primaryLoop) animation = { frames: animation.primary || animation.frames, loopStart: 0 };
         const elapsed = time - this.started;
         const prefixTime = animation.frames.slice(0, animation.loopStart || animation.frames.length).reduce((total, frame) => total + frame.duration, 0);
         if (this.transient && elapsed >= prefixTime) {
           this.play(format.STATE_ACTION[this.state] || 'idle', true);
-          animation = this.spec.animations[this.action] || this.spec.animations.idle;
+          animation = this.animations[this.action] || this.animations.idle;
         }
         const result = format.frameAt(animation, time - this.started);
         if (result.ended) this.play(animation.fallback || 'idle', true);

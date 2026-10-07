@@ -357,6 +357,7 @@ export type PluginHostServices = {
   readClipboardHistory: () => Promise<ClipboardHistoryEntry[]>;
   openPanel: (request: PluginPanelRequest) => Promise<void>;
   closePanel: (pluginId: string) => Promise<void>;
+  showMainWindow?: () => Promise<void>;
   fetch?: (input: {
     url: string;
     method?: string;
@@ -519,6 +520,7 @@ const HOST_API_ALLOWLIST = new Set([
   "plugin.getDataPath",
   "ui.openPanel",
   "ui.closePanel",
+  "ui.showMainWindow",
   "ui.showToast",
   "ui.notify",
   "ui.getNotificationPermission",
@@ -2362,6 +2364,9 @@ export class PluginRuntime {
         });
       case "ui.closePanel":
         await api.ui.closePanel();
+        return { ok: true };
+      case "ui.showMainWindow":
+        await api.ui.showMainWindow();
         return { ok: true };
       case "fs.readText":
         return api.fs.readText(String(payload?.path ?? ""));
@@ -5349,6 +5354,11 @@ export class PluginRuntime {
         },
         closePanel: async () => {
           await this.services.closePanel(pluginId);
+        },
+        showMainWindow: async () => {
+          this.assertPermission(loaded, "ui.panel");
+          if (!this.services.showMainWindow) throw apiError("UNSUPPORTED", "main window activation unavailable");
+          await this.services.showMainWindow();
         },
         showToast: async (message: string, level?: "info" | "warn" | "error") => {
           this.services.showToast(message, level);

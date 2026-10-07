@@ -23,7 +23,7 @@ const files = (id) => [{ name: 'pet.json', dataBase64: Buffer.from(JSON.stringif
 async function fixture(t, settings = {}) {
   assert.ok(process.env.PI_SCRATCH_DIR, '测试临时文件必须位于 PI_SCRATCH_DIR');
   const root = await fs.mkdtemp(path.join(process.env.PI_SCRATCH_DIR, 'pet-plugin-test-'));
-  const data = { settings, commands: new Map(), services: new Map(), shortcuts: new Map(), shortcutCalls: [], calls: [], prompts: [], notes: [], saved: [], opened: 0, closed: 0, conflict: null };
+  const data = { settings, commands: new Map(), services: new Map(), shortcuts: new Map(), shortcutCalls: [], calls: [], prompts: [], notes: [], saved: [], opened: 0, closed: 0, mainOpened: 0, conflict: null };
   const pi = {
     app: { getLocale: async () => 'zh-CN' },
     plugin: { getSettings: async () => data.settings, getDataPath: async () => root, setSettings: async (value) => { data.settings = { ...value }; data.saved.push({ ...value }); } },
@@ -35,7 +35,7 @@ async function fixture(t, settings = {}) {
       unregisterGlobalShortcut: async (id) => { data.shortcuts.delete(id); },
     },
     services: { register: (service) => { data.services.set(service.id, service); }, unregister: async (id) => { data.services.delete(id); } },
-    ui: { openPanel: async () => { data.opened++; }, closePanel: async () => { data.closed++; } },
+    ui: { openPanel: async () => { data.opened++; }, closePanel: async () => { data.closed++; }, showMainWindow: async () => { data.mainOpened++; } },
     fs: { requestDirectory: async () => null },
     desktop: { getSessionSnapshot: async () => { throw new Error('空列表不应读取快照'); }, invoke: async ({ operation, args }) => {
       data.calls.push({ operation, args });
@@ -115,4 +115,26 @@ test('pet.send 返回原 session，打开该会话并持久化通知已读', asy
   assert.deepEqual(data.calls.find((call) => call.operation === 'session/open').args, [receipt.sessionId]);
   assert.ok(data.notes[0].readAt); assert.equal(data.notes[1].readAt, null);
   assert.ok(!opened.activity.rows.some((row) => row.sessionId === receipt.sessionId));
+});
+
+test('点击无关联宠物只唤起主窗口，发送后点击沿用关联会话', async (t) => {
+  const { plugin, data } = await fixture(t); await plugin.onLoad();
+  await plugin.onPanelInvoke('pet.openSession');
+  assert.equal(data.mainOpened, 1);
+  assert.ok(!data.calls.some((call) => ['session/create', 'session/open'].includes(call.operation)));
+  await plugin.onPanelInvoke('pet.send', { text: '关联会话', requestId: 'linked' });
+  await plugin.onPanelInvoke('pet.openSession');
+  assert.equal(data.mainOpened, 2);
+  assert.deepEqual(data.calls.find((call) => call.operation === 'session/open').args, ['pet-session']);
+});
+
+test('FPS 设置持久化且可恢复素材节奏；轻量活动接口不回传聊天草稿', async (t) => {
+  const { plugin, data } = await fixture(t); await plugin.onLoad();
+  const original = await plugin.onPanelInvoke('pet.state'); assert.equal(original.settings.frameRate, null);
+  const fast = await plugin.onPanelInvoke('pet.settings', { patch: { frameRate: 24 } }); assert.equal(fast.settings.frameRate, 24);
+  assert.equal(data.settings.frameRate, 24);
+  await plugin.onUnload(); await plugin.onLoad();
+  assert.equal((await plugin.onPanelInvoke('pet.state')).settings.frameRate, 24);
+  assert.equal((await plugin.onPanelInvoke('pet.settings', { patch: { frameRate: null } })).settings.frameRate, null);
+  const activity = await plugin.onPanelInvoke('pet.activity'); assert.ok(Array.isArray(activity.rows)); assert.equal(activity.draft, undefined);
 });

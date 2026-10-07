@@ -38,3 +38,20 @@ test('移除显示器后归位，初次位置跟随光标所在屏幕', () => {
   assert.deepEqual(geometry.initialBounds({ width: 384, height: 200 }, [displays[1]], { x: 100, y: 100 }, { x: -1800, y: 120 }), { x: 0, y: 120, width: 384, height: 200 });
   assert.deepEqual(geometry.initialBounds({ width: 384, height: 200 }, displays, { x: -100, y: 100 }, null), { x: -408, y: 816, width: 384, height: 200 });
 });
+
+test('指定 FPS 覆盖标准和自定义动作时长，保留循环/回退和原始素材', () => {
+  const spec = format.makeSpec({ animations: { jumping: { frames: [32, 33], fps: 5, loop: false, fallback: 'idle' } } });
+  const idle = format.playbackAnimation(spec.animations.idle, 20);
+  assert.equal(format.frameAt(idle, 49).index, 0);
+  assert.equal(format.frameAt(idle, 50).index, 1);
+  assert.equal(format.frameAt(idle, 300).index, 0);
+  const wave = format.playbackAnimation(spec.animations.waving, 10);
+  assert.ok(wave.primary.every((frame) => frame.duration === 100));
+  assert.equal(format.frameAt(wave, 1200).index, 0);
+  const jump = format.playbackAnimation(spec.animations.jumping, 10);
+  assert.deepEqual(format.frameAt(jump, 200), { index: 33, ended: true });
+  assert.equal(jump.fallback, 'idle');
+  assert.equal(spec.animations.jumping.frames[0].duration, 200);
+  assert.equal(spec.animations.idle.frames[0].duration, 280);
+  assert.equal(format.playbackAnimation(spec.animations.idle, null), spec.animations.idle);
+});

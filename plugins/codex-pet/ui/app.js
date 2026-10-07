@@ -7,14 +7,14 @@ const bridge = window.pluginBridge;
 const preview = !bridge;
 const root = document.querySelector('#app');
 let model, ui, sprite, nativeState, anchor, dragging, closed = false, syncing = false;
-let loadedPet = null, loadedStamp = null, pollTimer, cursorTimer, resizeFrame, ignoreMouse = false;
+let loadedPet = null, loadedStamp = null, pollTimer, activityTimer, cursorTimer, resizeFrame, ignoreMouse = false;
 let boundsQueue = Promise.resolve(), seenIntent = { settings: 0, focus: 0 };
 let embeddedView = document.documentElement.dataset.piPluginPanelShape === 'view';
 let settingsSurface = new URLSearchParams(location.search).get('surface') === 'settings' || embeddedView;
 let nativeAvailable = false;
 const previewState = {
   locale: new URLSearchParams(location.search).get('locale') === 'en' ? 'en' : 'zh-CN', preview: true,
-  settings: { selectedPetId: null, visible: true, size: 96, alwaysOnTop: true, filter: 'pixelated', motion: 'system', position: null, pollSeconds: 8, shortcut: '' },
+  settings: { selectedPetId: null, visible: true, size: 96, alwaysOnTop: true, filter: 'pixelated', motion: 'system', frameRate: null, position: null, pollSeconds: 8, shortcut: '' },
   pets: [], activity: { rows: [], state: null, stale: false, error: null, updatedAt: null }, models: [], commands: [],
   draft: { text: '', attachments: [], skills: [], modelKey: '' }, intent: { settings: 0, focus: 0 }, warnings: [],
 };
@@ -24,6 +24,7 @@ async function previewRequest(channel, payload) {
   const unavailable = () => { throw new Error(previewState.locale === 'en' ? 'This is a browser preview. Install the plugin to use desktop and chat features.' : '当前为浏览器预览。安装插件后可使用桌面和聊天功能。'); };
   switch (channel) {
     case 'pet.state': case 'pet.refresh': return previewState;
+    case 'pet.activity': return previewState.activity;
     case 'pet.asset': return previewAssets.get(payload.id);
     case 'pet.settings': Object.assign(previewState.settings, payload.patch); return previewState;
     case 'pet.select': previewState.settings.selectedPetId = payload.id; return previewState;
@@ -145,6 +146,7 @@ async function onAction(action, payload) {
       case 'wave': return sprite?.perform('waving');
       case 'jump': return sprite?.perform('jumping');
       case 'focus-composer': return ui.focusComposer();
+      case 'open-session': return await request('pet.openSession', { sessionId: payload?.sessionId || model?.activity?.output?.sessionId });
       case 'reset-position': anchor = null; await request('pet.resetPosition'); return scheduleLayout();
       case 'close':
         if (preview) { location.search = ''; return; }
@@ -205,14 +207,13 @@ function attachPetInteraction() {
     sprite.endDrag();
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
     if (moved && !preview) { await boundsQueue; await request('pet.position', { position: anchor }); }
-    else if (!moved) sprite.perform('waving');
+    else if (!moved && event.type !== 'pointercancel') await onAction('open-session');
     scheduleLayout();
   };
   canvas.addEventListener('pointerup', (event) => void finish(event).catch(showError));
   canvas.addEventListener('pointercancel', (event) => void finish(event).catch(showError));
-  canvas.addEventListener('dblclick', () => ui.focusComposer());
   canvas.addEventListener('keydown', async (event) => {
-    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); sprite.perform('waving'); return ui.focusComposer(); }
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); return onAction('open-session'); }
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Escape'].includes(event.key) || preview) return;
     event.preventDefault();
     if (event.key === 'Escape') return onAction('reset-position');
@@ -228,6 +229,18 @@ async function sync() {
   syncing = true;
   try { await request('pet.state'); } catch (error) { showError(error); }
   finally { syncing = false; if (!closed) pollTimer = setTimeout(sync, 1200); }
+}
+async function activityLoop() {
+  if (closed || settingsSurface || preview) return;
+  try {
+    const activity = await bridge.invoke('pet.activity');
+    if (!closed && model) {
+      model = { ...model, activity };
+      ui.updateActivity(activity);
+      sprite?.setState(activity.state);
+    }
+  } catch (error) { if (!closed) showError(error); }
+  finally { if (!closed) activityTimer = setTimeout(activityLoop, 300); }
 }
 async function cursorLoop() {
   try { await cursorUpdate(); } catch (error) { if (!closed) showError(error); }
@@ -250,7 +263,8 @@ const stage = root.querySelector('#pet-stage');
 if (stage && !settingsSurface) { sprite = new SpritePlayer(stage, showError); sprite.clear(); attachPetInteraction(); }
 const observer = new ResizeObserver(scheduleLayout);
 observer.observe(root);
-window.addEventListener('beforeunload', () => { closed = true; clearTimeout(pollTimer); clearTimeout(cursorTimer); cancelAnimationFrame(resizeFrame); observer.disconnect(); sprite?.dispose(); ui.dispose(); });
+window.addEventListener('beforeunload', () => { closed = true; clearTimeout(pollTimer); clearTimeout(activityTimer); clearTimeout(cursorTimer); cancelAnimationFrame(resizeFrame); observer.disconnect(); sprite?.dispose(); ui.dispose(); });
 bridge?.on?.('appearance:changed', () => void sync());
 await sync();
+if (!settingsSurface && !preview) void activityLoop();
 if (nativeAvailable && !settingsSurface) void cursorLoop();

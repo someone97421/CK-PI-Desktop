@@ -1323,6 +1323,8 @@ export type PluginHostApi = {
   ui: {
     openPanel: (opts?: { title?: string }) => Promise<void>;
     closePanel: () => Promise<void>;
+    /** 恢复并聚焦主程序窗口，不创建会话（使用已有 ui.panel 权限）。 */
+    showMainWindow: () => Promise<void>;
     showToast: (message: string, level?: "info" | "warn" | "error") => Promise<void>;
     notify: (input: { title: string; body?: string }) => Promise<void>;
     getNotificationPermission: () => Promise<PluginNotificationPermission>;

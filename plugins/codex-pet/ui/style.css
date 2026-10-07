@@ -118,7 +118,35 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
   display: none;
 }
 
-.pet-stage-wrap { position: relative; line-height: 0; }
+.pet-stage-wrap { position: relative; line-height: 0; width: 100%; display: flex; justify-content: center; padding-top: 124px; }
+.pet-output-bubble {
+  position: absolute;
+  bottom: calc(100% - 112px);
+  width: 320px;
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--pet-line);
+  border-radius: var(--pet-radius-lg);
+  background: var(--pet-panel-bg);
+  box-shadow: var(--pet-shadow);
+  text-align: left;
+  line-height: 1.5;
+}
+.pet-output-bubble::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 6px);
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  background: var(--pet-panel-bg);
+  border-right: 1px solid var(--pet-line);
+  border-bottom: 1px solid var(--pet-line);
+  transform: rotate(45deg);
+}
+.pet-output-bubble:hover { background: var(--pet-panel-solid); }
+.pet-output-title { display: block; font-size: 11px; color: var(--pet-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-bottom: 4px; }
+.pet-output-text { display: block; max-height: 58.5px; overflow: hidden; overflow-wrap: anywhere; font-size: 13px; white-space: pre-wrap; }
 #pet-stage {
   width: var(--pet-size);
   height: var(--pet-size);

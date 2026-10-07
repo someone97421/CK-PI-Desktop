@@ -54,6 +54,11 @@
     for (const [alias, name] of Object.entries(ALIASES)) if (!animations[alias] && animations[name]) animations[alias] = animations[name];
     return { geometry, animations, version: manifest.spriteVersionNumber ?? 1, hasLook: geometry.columns === 8 && geometry.rows === 11 && manifest.spriteVersionNumber === 2 };
   }
+  function playbackAnimation(animation, fps) {
+    if (!Number.isFinite(fps) || fps < 1 || fps > 60) return animation;
+    const retime = (frames) => frames.map((frame) => ({ ...frame, duration: 1000 / fps }));
+    return { ...animation, frames: retime(animation.frames), ...(animation.primary ? { primary: retime(animation.primary) } : {}) };
+  }
   function frameAt(animation, elapsed) {
     const frames = animation.frames;
     let time = Math.max(0, elapsed);
@@ -79,5 +84,5 @@
     const direction = ((Math.atan2(dy, dx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2));
     return 9 * 8 + (Math.round(direction / (Math.PI * 2) * 16) % 16);
   }
-  return { IDLE_MS, ROWS, ALIASES, STATE_ACTION, frameGeometry, makeSpec, frameAt, cellFor, lookIndex };
+  return { IDLE_MS, ROWS, ALIASES, STATE_ACTION, frameGeometry, makeSpec, playbackAnimation, frameAt, cellFor, lookIndex };
 });
