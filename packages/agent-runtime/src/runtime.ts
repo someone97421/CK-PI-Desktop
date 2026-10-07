@@ -1652,7 +1652,6 @@ export class DesktopAgentRuntime {
   private coordinationVersion = 0;
   private coordinationConsumedVersion = 0;
   private coordinationMessages = new WeakSet<AgentMessage>();
-  private coordinationMessage: AgentMessage | undefined;
   private coordinationSnapshotEpoch = -1;
   private coordinationRequiresSafeBudget = false;
   private checkpointCoordination(checkpoint: ContextCompactionRecord | undefined): string | undefined {
@@ -1863,7 +1862,7 @@ export class DesktopAgentRuntime {
   private runStatusRemindedAt = 0;
   private runStatusTurnUsage?: MessageUsage;
   /** 临时提醒按会话消息锚点保留，成功压缩后清理，不进入持久化记录。 */
-  private runStatusMessages: Array<{ entryCount: number; message: AgentMessage }> = [];
+  private transientStatusMessages: Array<{ entryCount: number; message: AgentMessage }> = [];
 
   constructor(opts: AgentRuntimeOptions) {
     this.sessionId = opts.sessionId;
@@ -2324,7 +2323,7 @@ Delegation rules:
       !this.coordinationMessages.has(message) &&
       (message.role !== "system" || !this.systemJournal.isPersisted(message)),
     );
-    this.agent.state.messages = rebuildSystemTranscript(previous, messages);
+    this.agent.state.messages = this.restoreTransientStatusMessages(rebuildSystemTranscript(previous, messages));
   }
 
   /** Steering is consumed after next-turn preparation; sync before dispatch. */
@@ -3063,8 +3062,8 @@ Delegation rules:
       summary: (() => {
         const snapshot = this.checkpointCoordination(checkpoint);
         const suffix = snapshot ? `\n\n${snapshot}` : "";
-        // 仅剥离有精确来源记录的程序段，兼容保留已有摘要。
-        return suffix && (!includeCoordination || this.coordinationSnapshotEpoch >= 0)
+        // 仅在生成下一份压缩摘要时剥离旧快照，正常请求保留既有前缀。
+        return suffix && !includeCoordination
           && checkpoint.summary.endsWith(suffix)
           ? checkpoint.summary.slice(0, -suffix.length) : checkpoint.summary;
       })(),
@@ -5906,19 +5905,15 @@ Delegation rules:
     ].join("\n");
   }
 
-  /** 事件合并到下一次请求，运行时只保留最新一份协调状态。 */
+  /** 事件合并到下一次请求，只追加快照，历史位置保留到压缩成功。 */
   private async prepareSubagentCoordination(context: AgentContext): Promise<AgentLoopTurnUpdate | undefined> {
     if (this.disposed || this.runCancelled || this.turnHadError) return;
     if (this.coordinationSnapshotEpoch === this.turnEpoch && this.coordinationVersion === this.coordinationConsumedVersion) return;
     const version = this.coordinationVersion;
     const hasRecords = [...this.delegations.values()].some((record) => record.startedEpoch === this.turnEpoch);
     const message = this.coordinationMessageFor(hasRecords ? this.subagentCoordinationSnapshot() : undefined);
-    const snapshot = this.checkpointCoordination(this.activeCompaction);
-    const suffix = snapshot ? `\n\n${snapshot}` : "";
-    const messages = context.messages.filter((entry) => !this.coordinationMessages.has(entry)).map((entry) =>
-      entry.role === "compactionSummary" && suffix && entry.summary === this.activeCompaction?.summary && entry.summary.endsWith(suffix)
-        ? { ...entry, summary: entry.summary.slice(0, -suffix.length) } : entry);
-    if (message) messages.push(message);
+    const restored = this.restoreTransientStatusMessages(context.messages);
+    const messages = message ? [...restored, message] : restored;
     const budget = this.contextBudget(messages);
     if (budget.tokens >= budget.hardLimit) {
       let compacted = false;
@@ -5938,7 +5933,7 @@ Delegation rules:
       return refreshed;
     }
     this.coordinationSnapshotEpoch = this.turnEpoch;
-    this.coordinationMessage = message;
+    if (message) this.rememberTransientStatusMessage(message);
     this.agent.state.messages = [...messages];
     this.coordinationConsumedVersion = version;
     return { context: { ...context, messages } };
@@ -7096,7 +7091,7 @@ Delegation rules:
    * 耗时为墙钟时间，包含长工具调用与子代理等待。
    */
   private withRunStatusReminder(context: AgentContext): AgentContext {
-    context = { ...context, messages: this.restoreRunStatusMessages(context.messages) };
+    context = { ...context, messages: this.restoreTransientStatusMessages(context.messages) };
     if (!this.runStatusReminder || !this.runStatusTurnStartedAt) return context;
     const now = Date.now();
     const anchor = this.runStatusRemindedAt || this.runStatusTurnStartedAt;
@@ -7113,14 +7108,18 @@ Delegation rules:
     const message: AgentMessage = {
       role: "custom", customType: "run-status", display: false, content, timestamp: now,
     };
-    this.runStatusMessages.push({ entryCount: this.fullEntries.filter((entry) => entry.message.role !== "system").length, message });
+    this.rememberTransientStatusMessage(message);
     return { ...context, messages: [...context.messages, message] };
   }
 
-  private restoreRunStatusMessages(messages: AgentMessage[]): AgentMessage[] {
+  private rememberTransientStatusMessage(message: AgentMessage): void {
+    this.transientStatusMessages.push({ entryCount: this.fullEntries.filter((entry) => entry.message.role !== "system").length, message });
+  }
+
+  private restoreTransientStatusMessages(messages: AgentMessage[]): AgentMessage[] {
     const restored = [...messages];
     // 在通知之后生成的首条会话消息前恢复，保持通知与对话的原始顺序。
-    for (const record of this.runStatusMessages) {
+    for (const record of this.transientStatusMessages) {
       if (restored.includes(record.message)) continue;
       const following = this.fullEntries.filter((entry) => entry.message.role !== "system").slice(record.entryCount)
         .find((entry) => restored.includes(entry.message));
@@ -7220,10 +7219,7 @@ Delegation rules:
       this.entriesWithCompaction(checkpoint),
       this.reasoningReplayIdentity(),
     );
-    if (this.coordinationSnapshotEpoch === this.turnEpoch && this.coordinationMessage) {
-      context.messages.push(this.coordinationMessage);
-    }
-    context.messages = this.restoreRunStatusMessages(context.messages);
+    context.messages = this.restoreTransientStatusMessages(context.messages);
     return context;
   }
 
@@ -7517,10 +7513,9 @@ Delegation rules:
       details: { ...(isRecord(checkpoint.details) ? checkpoint.details : checkpoint.details === undefined ? {} : { value: checkpoint.details }),
         subagentCoordination: snapshot ?? null,
         ...(systemMessage ? { systemMessageJson: JSON.stringify(systemMessage) } : {}) } };
-    const compactedBudget = this.contextBudget([
-      ...buildSessionContext(this.entriesWithCompaction(checkpoint, false), this.reasoningReplayIdentity()).messages,
-      ...(snapshot ? [this.coordinationMessageFor(snapshot)!] : []),
-    ]);
+    const compactedBudget = this.contextBudget(
+      buildSessionContext(this.entriesWithCompaction(checkpoint), this.reasoningReplayIdentity()).messages,
+    );
     if (
       (mustFitSafeBudget || this.coordinationRequiresSafeBudget) &&
       compactedBudget.tokens >= compactedBudget.hardLimit
@@ -7539,10 +7534,9 @@ Delegation rules:
     }
 
     this.activeCompaction = checkpoint;
-    this.runStatusMessages = [];
+    this.transientStatusMessages = [];
     this.coordinationConsumedVersion = coordinationVersion;
     this.coordinationSnapshotEpoch = this.turnEpoch;
-    this.coordinationMessage = this.coordinationMessageFor(snapshot);
     // A new window means both reminders are available again, matching Codex
     // resetting its `claim_*` flags when the context window turns over.
     this.contextReminderClaimed = false;
