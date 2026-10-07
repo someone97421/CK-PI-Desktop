@@ -92,6 +92,7 @@ jobs:
           find "$THIS_IS_A_AGENT_OUTPUT_DIR" -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' \) -exec cp {} "$RUNNER_TEMP/downloads/" \;
           find "$THIS_IS_A_AGENT_OUTPUT_DIR" -type f -name 'latest-mac*.yml' -exec cp {} "$RUNNER_TEMP/downloads/latest-mac-$EXPECTED_ARCH.yml" \;
           test -f "$RUNNER_TEMP/downloads/this-is-a-agent-${{ needs.version.outputs.display }}-$EXPECTED_ARCH.dmg"
+          node scripts/mac-update-feed.mjs export "$RUNNER_TEMP/downloads/mac-update-$EXPECTED_ARCH.json" "$RUNNER_TEMP/downloads/latest-mac-$EXPECTED_ARCH.yml"
           for dmg in "$RUNNER_TEMP/downloads/"*.dmg; do hdiutil verify "$dmg"; done
           cd "$RUNNER_TEMP/downloads"
           shasum -a 256 *.dmg *.zip > "SHA256SUMS-$EXPECTED_ARCH.txt"
@@ -164,6 +165,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - uses: actions/download-artifact@v8
         with:
           pattern: '*-${{ needs.version.outputs.display }}'
@@ -182,6 +187,9 @@ jobs:
           test -f "downloads/this-is-a-agent-$DISPLAY_VERSION-x64.dmg"
           test -f "downloads/this-is-a-agent-Setup-$DISPLAY_VERSION-x64.exe"
           test -f "downloads/this-is-a-agent-Portable-$DISPLAY_VERSION-x64.exe"
+          node scripts/mac-update-feed.mjs merge downloads/latest-mac.yml downloads/mac-update-arm64.json downloads/mac-update-x64.json
+          rm downloads/mac-update-arm64.json downloads/mac-update-x64.json
+          test -f "downloads/latest-mac.yml"
           test -f "downloads/latest.yml"
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
           macOS 双架构与 Windows x64 安装包，版本 $DISPLAY_VERSION。

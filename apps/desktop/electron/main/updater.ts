@@ -77,6 +77,19 @@ export const AUTO_CHECK_TIMEOUT_MS = 8_000;
 /** Manual check can wait a bit longer; still far below the socket timeout. */
 export const MANUAL_CHECK_TIMEOUT_MS = 15_000;
 
+
+/** 详细诊断写日志；界面只展示可读的失败原因。 */
+function updateErrorMessage(error: unknown, locale: string | null | undefined): string {
+  const detail = error as { code?: string; message?: string } | null;
+  const chinese = locale?.startsWith("zh") ?? false;
+  if (detail?.code === "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND") {
+    return chinese
+      ? "发布版本缺少更新描述文件，请前往 GitHub 下载或稍后重试。"
+      : "The release is missing its update manifest. Download from GitHub or try again later.";
+  }
+  const message = detail?.message ?? String(error);
+  return message.split(/\r?\n/, 1)[0].slice(0, 240);
+}
 export type UpdaterSettings = {
   updatePreference?: unknown;
   lastNotifiedUpdateVersion?: unknown;
@@ -566,7 +579,7 @@ export class AppUpdaterController {
       // Auto checks fail quietly (offline, private repo, rate limits);
       // the renderer only surfaces errors when `manual` is set.
       this.logger.app("updater", "warn", "updater error", { data: String(error) });
-      this.setState({ status: "error", error: error.message });
+      this.setState({ status: "error", error: updateErrorMessage(error, this.getLocale()) });
     });
   }
 
@@ -636,9 +649,10 @@ export class AppUpdaterController {
         }
         return this.state;
       }
-      // The 'error' listener already recorded state; rethrow for manual
-      // callers so the invoke rejects and the UI can toast it.
-      if (options.manual) throw error;
+      const message = updateErrorMessage(error, this.getLocale());
+      this.setState({ status: "error", error: message });
+      // 手动检查的 IPC 错误也使用简短提示，避免 toast 泄露整段诊断堆栈。
+      if (options.manual) throw new Error(message);
     }
     return this.state;
   }

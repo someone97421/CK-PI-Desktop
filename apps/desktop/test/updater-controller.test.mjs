@@ -56,7 +56,8 @@ function createController({ updater, settings = {}, persist = async () => {} }) 
     logger,
     send: (channel, payload) => sent.push({ channel, payload }),
     currentVersion: "0.16.0",
-    platform: "darwin",
+    platform: "win32",
+    distribution: "installed",
     isPackaged: true,
     autoUpdater: updater,
     readUpdateSettings: async () => settings,
@@ -118,5 +119,41 @@ test("a restored dismissal blocks that release and a newer release resumes autom
   assert.equal(updater.autoInstallOnAppQuit, true);
   assert.equal(controller.getState().dismissed, false);
   assert.deepEqual(persisted, [null]);
+  controller.dispose();
+});
+
+test("更新文件缺失时界面和手动检查只显示简短提示，完整错误留在日志", async () => {
+  const updater = new FakeUpdater();
+  const logs = [];
+  const error = Object.assign(new Error("Cannot find latest-mac.yml: HttpError: 404\nHeaders: private diagnostics\n at updater"), {
+    code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
+  });
+  updater.checkForUpdates = async () => {
+    updater.emit("checking-for-update");
+    updater.emit("error", error);
+    throw error;
+  };
+  const controller = new AppUpdaterController({
+    logger: { app: (...args) => logs.push(args) },
+    send: () => {}, currentVersion: "2610.713.2345", platform: "darwin", isPackaged: true,
+    autoUpdater: updater, getLocale: () => "zh-CN",
+  });
+  await assert.rejects(controller.check({ manual: true }), /发布版本缺少更新描述文件/);
+  assert.equal(controller.getState().status, "error");
+  assert.equal(controller.getState().error, "发布版本缺少更新描述文件，请前往 GitHub 下载或稍后重试。");
+  assert.match(JSON.stringify(logs), /private diagnostics/);
+  controller.dispose();
+});
+
+test("普通更新错误只展示首行，自动检查仍保持错误状态", async () => {
+  const updater = new FakeUpdater();
+  updater.checkForUpdates = async () => {
+    const error = new Error("Network unavailable\nHeaders: internal details");
+    updater.emit("error", error);
+    throw error;
+  };
+  const { controller } = createController({ updater });
+  await controller.check();
+  assert.equal(controller.getState().error, "Network unavailable");
   controller.dispose();
 });
