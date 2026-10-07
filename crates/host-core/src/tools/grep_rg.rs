@@ -43,6 +43,11 @@ thread_local! {
 pub struct TestRgGuard;
 
 #[cfg(test)]
+pub fn current_test_rg() -> Option<PathBuf> {
+    TEST_RG.with(|rg| rg.borrow().clone())
+}
+
+#[cfg(test)]
 pub fn install_test_rg(path: PathBuf) -> TestRgGuard {
     TEST_RG.with(|rg| *rg.borrow_mut() = Some(path));
     TestRgGuard

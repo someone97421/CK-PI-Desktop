@@ -49,6 +49,8 @@ export const PERMISSION_RISK: Record<string, RiskTier> = {
   "agent.extension": "high",
   // Its code runs in the app's own document, so the grant is the boundary.
   "renderer.extension": "high",
+  // The isolated plugin callback can read its own encrypted OAuth credentials.
+  "provider.oauth": "high",
   "desktop.control": "high",
   "session.read": "high",
   "browser.cdp": "high",

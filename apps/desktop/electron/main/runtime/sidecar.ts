@@ -27,6 +27,7 @@ import type { SubagentSnapshotStore } from "./subagent-snapshot-store";
 import { dispatchSubagentPersistence } from "./subagent-snapshot-rpc";
 import type { TaskTranscript } from "./task-transcript";
 import { formatSkillToolContent, type LoadedSkillDocument } from "../skill-document";
+import { currentSystemProxyRelayUrl } from "../network-proxy";
 
 export type SidecarRuntimeDependencies = {
   runtimeState: RuntimeState;
@@ -687,6 +688,7 @@ export function createSidecarRuntime({
     hostBinary: runtimeState.host?.binaryPath,
     dataDir,
     networkProxy: currentNetworkProxy(),
+    systemProxyRelayUrl: currentSystemProxyRelayUrl(),
   });
   logger.app("runtime", "info", "agent sidecar configured");
   };

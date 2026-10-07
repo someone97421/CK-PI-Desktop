@@ -913,15 +913,32 @@ describe("contributes.providers", () => {
     ).toMatch(/defaultThinkingLevel must be a string/);
   });
 
-  it("rejects oauth, which needs a Host-owned login flow", () => {
+  it("requires provider.oauth and accepts a declared OAuth provider", () => {
+    const oauthProvider: PluginProviderContrib = {
+      ...provider,
+      authKind: "oauth",
+      oauth: { loginLabel: "Continue in browser", isSubscription: true },
+    };
     expect(
-      validateContributions({ providers: [{ ...provider, authKind: "oauth" as never }] }),
-    ).toMatch(/unsupported authKind oauth/);
+      validateManifest({
+        ...base,
+        permissions: ["provider.register"],
+        contributes: { providers: [oauthProvider] },
+      }).error,
+    ).toMatch(/OAuth providers require the provider.oauth permission/);
+    expect(
+      validateManifest({
+        ...base,
+        permissions: ["provider.register", "provider.oauth"],
+        contributes: { providers: [oauthProvider] },
+      }).ok,
+    ).toBe(true);
     expect(
       validateContributions({
-        providers: [{ ...provider, oauth: { label: "Demo" } } as never],
+        providers: [{ ...oauthProvider, oauth: { label: "Demo" } } as never],
       }),
-    ).toMatch(/not supported in this release/);
+    ).toMatch(/oauth has unsupported field label/);
+    expect(PLUGIN_PERMISSIONS).toContain("provider.oauth");
   });
 
   it("requires a name", () => {

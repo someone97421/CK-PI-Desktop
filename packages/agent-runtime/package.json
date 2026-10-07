@@ -21,6 +21,10 @@
     "./media-store": {
       "types": "./dist/media-store.d.ts",
       "import": "./dist/media-store.js"
+    },
+    "./system-proxy-relay": {
+      "types": "./dist/system-proxy-relay.d.ts",
+      "import": "./dist/system-proxy-relay.js"
     }
   },
   "scripts": {

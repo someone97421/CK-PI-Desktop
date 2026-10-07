@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { ErrorCodes } from "@pi-desktop/shared";
+import { fetchPinnedDirect } from "../electron/main/public-https-direct.ts";
 import {
   createPublicHttpsClient,
   PublicNetworkPolicyError,
@@ -40,14 +42,36 @@ function response(status, body, location) {
 }
 
 /** A client whose session reports `route` and whose resolver answers `address`. */
-function clientFor({ route, address, fetchImpl, allowFakeIp }) {
+function clientFor({ route, address, addresses, fetchImpl, pinnedFetchImpl, allowFakeIp }) {
   return createPublicHttpsClient({
     fetchImpl: fetchImpl ?? (async () => response(200, "# skill\n")),
-    lookupImpl: async () => (address ? [{ address }] : []),
+    lookupImpl: async () => addresses ?? (address ? [{ address }] : []),
     ...(route === undefined ? {} : { routeImpl: async () => route }),
+    ...(pinnedFetchImpl ? { pinnedFetchImpl } : {}),
     ...(allowFakeIp === undefined ? {} : { allowFakeIp }),
   });
 }
+
+test("a direct request pins the selected IP and retains the original Host header", async (t) => {
+  const server = createServer((request, outgoing) => {
+    assert.equal(request.headers.host, `localhost:${server.address().port}`);
+    outgoing.writeHead(200, { "content-type": "text/plain" });
+    outgoing.end("pinned response");
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const response = await fetchPinnedDirect(
+    `http://localhost:${server.address().port}/document`,
+    { signal: AbortSignal.timeout(2_000) },
+    { address: "127.0.0.1", family: 4 },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), "pinned response");
+});
 
 test("a proxied route stops treating a fake-IP answer as a refusal", async () => {
   // The whole point of the change: `net.fetch` dials the proxy, so the local
@@ -125,6 +149,66 @@ test("a direct route keeps the strict verdict for fake-IP and private answers al
       `expected ${address} to stay refused on a direct route`,
     );
   }
+});
+
+test("a direct request pins its public answer when DNS also returns a ULA address", async () => {
+  const pinned = [];
+  const client = clientFor({
+    route: "DIRECT",
+    addresses: [{ address: "fd00::9c" }, { address: "151.101.1.229" }],
+    fetchImpl: async () => {
+      throw new Error("mixed DNS answers must use the pinned transport");
+    },
+    pinnedFetchImpl: async (_url, _init, address) => {
+      pinned.push(address);
+      return response(200, "# skill\n");
+    },
+  });
+
+  assert.equal(await client.request("https://cdn.jsdelivr.net/gh/x/SKILL.md", "text"), "# skill\n");
+  assert.deepEqual(pinned, [{ address: "151.101.1.229", family: 4 }]);
+});
+
+test("a direct TUN request pins the opted-in benchmark answer instead of a paired ULA answer", async () => {
+  const pinned = [];
+  const client = clientFor({
+    route: "DIRECT",
+    addresses: [{ address: "fd00::9c" }, { address: FAKE_IP }],
+    allowFakeIp: true,
+    fetchImpl: async () => {
+      throw new Error("paired fake-IP answers must use the pinned transport");
+    },
+    pinnedFetchImpl: async (_url, _init, address) => {
+      pinned.push(address);
+      return response(200, "# skill\n");
+    },
+  });
+
+  assert.equal(await client.request("https://cdn.jsdelivr.net/gh/x/SKILL.md", "text"), "# skill\n");
+  assert.deepEqual(pinned, [{ address: FAKE_IP, family: 4 }]);
+});
+
+test("a direct ULA-only answer remains refused even with fake-IP tolerance", async () => {
+  let fetched = false;
+  const client = clientFor({
+    route: "DIRECT",
+    address: "fd00::9c",
+    allowFakeIp: true,
+    pinnedFetchImpl: async () => {
+      fetched = true;
+      return response(200, "# skill\n");
+    },
+    fetchImpl: async () => {
+      fetched = true;
+      return response(200, "# skill\n");
+    },
+  });
+
+  await assert.rejects(
+    () => client.request("https://cdn.jsdelivr.net/gh/x/SKILL.md", "text"),
+    (error) => error instanceof PublicNetworkPolicyError && error.addressKind === "ula",
+  );
+  assert.equal(fetched, false);
 });
 test("an explicit fake-IP opt-in permits only the benchmark class on a direct route", async () => {
   const client = clientFor({ route: "DIRECT", address: FAKE_IP, allowFakeIp: true });
@@ -250,6 +334,7 @@ test("the market catalog client asks the session that carries its fetch", async 
   assert.match(source, /import \{ net, session \} from "electron"/);
   assert.match(source, /fetchImpl: \(url, init\) => net\.fetch\(url, init\)/);
   assert.match(source, /routeImpl: \(url\) => session\.defaultSession\.resolveProxy\(url\)/);
+  assert.match(source, /pinnedFetchImpl: \(url, init, address\) => fetchPinnedDirect\(url, init, address\)/);
 });
 
 test("a user-supplied endpoint reaches its own LAN on any route", async () => {

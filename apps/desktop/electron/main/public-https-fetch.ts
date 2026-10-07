@@ -1,4 +1,5 @@
 import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import {
   ErrorCodes,
   PUBLIC_NETWORK_POLICY_ERROR,
@@ -16,6 +17,7 @@ import {
   type PublicNetworkRefusalReason,
   type PublicNetworkRoute,
 } from "@pi-desktop/shared";
+import type { PinnedNetworkAddress } from "./public-https-direct";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_HOPS = 5;
@@ -24,6 +26,12 @@ const MAX_ATTEMPTS = 3;
 export type PublicHttpsFetch = (
   url: string,
   init: { redirect: "manual"; signal: AbortSignal },
+) => Promise<Response>;
+
+export type PublicHttpsPinnedFetch = (
+  url: string,
+  init: { redirect: "manual"; signal: AbortSignal },
+  address: PinnedNetworkAddress,
 ) => Promise<Response>;
 
 export type PublicHttpsLookup = (host: string) => Promise<Array<{ address: string }>>;
@@ -147,6 +155,8 @@ export type PublicHttpsClient = {
  */
 export function createPublicHttpsClient(options: {
   fetchImpl: PublicHttpsFetch;
+  /** Optional direct transport that connects only to the selected address. */
+  pinnedFetchImpl?: PublicHttpsPinnedFetch;
   lookupImpl?: PublicHttpsLookup;
   /** Must be the session that carries `fetchImpl`; absent stays strict. */
   routeImpl?: PublicHttpsRouteLookup;
@@ -196,10 +206,11 @@ export function createPublicHttpsClient(options: {
    * `third-party` is every hop this app learned from someone else and keeps the
    * public-only rule.
    */
-  async function assertPublicUrl(
+  async function inspectPublicUrl(
     url: string,
     origin: PublicHttpsEndpointOrigin = "third-party",
-  ): Promise<void> {
+    allowPinnedSelection = false,
+  ): Promise<{ route: PublicNetworkRoute; address?: PinnedNetworkAddress }> {
     const userSupplied = origin === "user";
     const accepted = userSupplied
       ? isSafeUserEndpointUrl(url, { allowInsecureHttp: insecureUserEndpointsAllowed() })
@@ -236,29 +247,74 @@ export function createPublicHttpsClient(options: {
         route,
       });
     }
-    for (const address of addresses) {
+    const allowFakeIp =
+      typeof options.allowFakeIp === "function"
+        ? options.allowFakeIp()
+        : options.allowFakeIp === true;
+    const classified = addresses.map((address) => {
       const addressKind = classifyIpLiteral(address.address);
-      const allowFakeIp =
-        typeof options.allowFakeIp === "function"
-          ? options.allowFakeIp()
-          : options.allowFakeIp === true;
       // A user-supplied endpoint reaches the user's own loopback and LAN; a
       // third-party hop keeps the public-only rule. Neither tolerates cloud
       // metadata, and neither tolerates a fake-IP answer on a direct route.
       const acceptable = userSupplied
         ? isAcceptableUserEndpointAddress(address.address, addressKind, route)
         : isAcceptableResolvedAddress(addressKind, route);
-      if (!acceptable && !(allowFakeIp && addressKind === "benchmark")) {
+      return {
+        address,
+        addressKind,
+        acceptable: acceptable || (allowFakeIp && addressKind === "benchmark"),
+      };
+    });
+
+    // A direct request can safely ignore unrelated DNS answers only when the
+    // transport is given the exact accepted address to connect to. This lets a
+    // public A answer or an opted-in TUN fake-IP survive a synthetic ULA AAAA
+    // answer without ever dialing that ULA address.
+    if (
+      allowPinnedSelection &&
+      route === "direct" &&
+      options.pinnedFetchImpl &&
+      classified.some((item) => !item.acceptable)
+    ) {
+      const selected = userSupplied
+        ? classified.find((item) => item.acceptable)
+        : classified.find((item) => item.addressKind === "public") ??
+          (allowFakeIp ? classified.find((item) => item.addressKind === "benchmark") : undefined);
+      const family = selected ? isIP(selected.address.address) : 0;
+      if (selected && (family === 4 || family === 6)) {
+        return {
+          route,
+          address: { address: selected.address.address, family },
+        };
+      }
+    }
+
+    for (const item of classified) {
+      if (!item.acceptable) {
         // The class travels with the refusal: `benchmark` is a TUN fake-IP
         // (198.18.0.0/15) and `private` is a real RFC1918 target. The explicit
         // fake-IP opt-in never changes the verdict for any other non-public
         // class (ADR 0272).
         throw new PublicNetworkPolicyError(
-          `hostname resolves to a non-public address: ${host} -> ${address.address} (${addressKind}, ${route} route)`,
-          { reason: "non-public-address", host, address: address.address, addressKind, route },
+          `hostname resolves to a non-public address: ${host} -> ${item.address.address} (${item.addressKind}, ${route} route)`,
+          {
+            reason: "non-public-address",
+            host,
+            address: item.address.address,
+            addressKind: item.addressKind,
+            route,
+          },
         );
       }
     }
+    return { route };
+  }
+
+  async function assertPublicUrl(
+    url: string,
+    origin: PublicHttpsEndpointOrigin = "third-party",
+  ): Promise<void> {
+    await inspectPublicUrl(url, origin);
   }
 
   async function requestOnce(
@@ -271,11 +327,15 @@ export function createPublicHttpsClient(options: {
       // Only the first hop is the address the user chose. Every redirect is a
       // destination this app learned from someone else, so it is judged by the
       // third-party policy without exception.
-      await assertPublicUrl(current, hop === 0 ? origin : "third-party");
-      const response = await options.fetchImpl(current, {
+      const target = await inspectPublicUrl(current, hop === 0 ? origin : "third-party", true);
+      const init = {
         redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
-      });
+      } as const;
+      const response =
+        target.address && options.pinnedFetchImpl
+          ? await options.pinnedFetchImpl(current, init, target.address)
+          : await options.fetchImpl(current, init);
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
         if (!location) throw new Error("redirect without a location header");

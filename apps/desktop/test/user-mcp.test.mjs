@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { UserMcpRuntime, configurationChanged } from "../electron/main/user-mcp.ts";
@@ -39,7 +39,12 @@ function handle(msg) {
       jsonrpc: "2.0",
       id: msg.id,
       result: {
-        tools: [{ name: "lookup", description: "Look something up" }, { name: "ping" }],
+        tools: [
+          { name: "lookup", description: "Look something up" },
+          { name: "ping" },
+          ...(process.env.STUB_REPORT_CWD ? [{ name: "cwd" }] : []),
+          ...(process.cwd() === process.env.STUB_TOOL_ONLY_IN_CWD ? [{ name: "project_only" }] : []),
+        ],
         // A server that keeps handing back the same cursor can never be listed
         // to its last page, so the client has to refuse it.
         ...(process.env.STUB_REPEAT_CURSOR ? { nextCursor: "more" } : {}),
@@ -52,7 +57,14 @@ function handle(msg) {
     send({
       jsonrpc: "2.0",
       id: msg.id,
-      result: { content: [{ type: "text", text: tag + ":" + msg.params.name }] },
+      result: {
+        content: [{
+          type: "text",
+          text: msg.params.name === "cwd"
+            ? process.cwd() + "|" + process.pid
+            : tag + ":" + msg.params.name,
+        }],
+      },
     });
     return;
   }
@@ -64,6 +76,10 @@ function stubDir() {
   const dir = mkdtempSync(join(tmpdir(), "pi-user-mcp-"));
   writeFileSync(join(dir, "server.mjs"), STUB);
   return dir;
+}
+
+function projectDir(name = "project") {
+  return realpathSync(mkdtempSync(join(tmpdir(), `pi-user-mcp-${name}-`)));
 }
 
 /** A saved record for the stub, scoped globally unless told otherwise. */
@@ -95,10 +111,11 @@ function runtime(t, options = {}) {
 
 test("a global server contributes mcp_-prefixed tools to any session", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const rt = runtime(t);
   rt.setRecords([stubRecord(dir)]);
 
-  const tools = await rt.toolsForProject("/repo");
+  const tools = await rt.toolsForProject(projectPath);
   assert.deepEqual(
     tools.map((tool) => tool.fullName),
     ["mcp_stub_lookup", "mcp_stub_ping"],
@@ -111,6 +128,141 @@ test("a global server contributes mcp_-prefixed tools to any session", async (t)
 
   // A session with no project at all still sees a global server.
   assert.equal((await rt.toolsForProject(null)).length, 2);
+});
+
+test("a stdio server runs from and is reused only within its session workspace", async (t) => {
+  const serverDir = stubDir();
+  const firstProject = projectDir("project-a");
+  const secondProject = projectDir("project-b");
+  const rt = runtime(t);
+  rt.setRecords([stubRecord(serverDir, {
+    env: { STUB_REPORT_CWD: "1", STUB_TOOL_ONLY_IN_CWD: firstProject },
+  })]);
+
+  const firstTools = await rt.toolsForProject(firstProject);
+  const secondTools = await rt.toolsForProject(secondProject);
+  const projectlessTools = await rt.toolsForProject(null);
+  assert.ok(firstTools.some((tool) => tool.fullName === "mcp_stub_cwd"));
+  assert.ok(secondTools.some((tool) => tool.fullName === "mcp_stub_cwd"));
+  assert.ok(firstTools.some((tool) => tool.fullName === "mcp_stub_project_only"));
+  assert.ok(!secondTools.some((tool) => tool.fullName === "mcp_stub_project_only"));
+  assert.ok(projectlessTools.some((tool) => tool.fullName === "mcp_stub_cwd"));
+
+  const firstResult = await rt.callTool("mcp_stub_cwd", {}, firstProject);
+  const firstAgain = await rt.callTool("mcp_stub_cwd", {}, firstProject);
+  const secondResult = await rt.callTool("mcp_stub_cwd", {}, secondProject);
+  const projectlessResult = await rt.callTool("mcp_stub_cwd", {}, null);
+  const firstValue = firstResult.content[0].text;
+  const firstAgainValue = firstAgain.content[0].text;
+  const secondValue = secondResult.content[0].text;
+  const projectlessValue = projectlessResult.content[0].text;
+
+  assert.equal(firstValue.split("|")[0], firstProject);
+  assert.equal(firstAgainValue, firstValue, "the same workspace should reuse its process");
+  assert.equal(secondValue.split("|")[0], secondProject);
+  assert.notEqual(secondValue.split("|")[1], firstValue.split("|")[1]);
+  assert.equal(projectlessValue.split("|")[0], realpathSync(homedir()));
+  await assert.rejects(
+    rt.callTool("mcp_stub_project_only", {}, secondProject),
+    { errorCode: "TOOL_NOT_FOUND" },
+    "a tool advertised in one workspace must not be dispatched through another",
+  );
+});
+
+test("临时会话按 scratch 或选定工作目录隔离并复用 stdio 进程", async (t) => {
+  const serverDir = stubDir();
+  const scratch = projectDir("scratch");
+  const selectedDirectory = projectDir("selected");
+  const rt = runtime(t);
+  rt.setRecords([stubRecord(serverDir, {
+    env: { STUB_REPORT_CWD: "1", STUB_TOOL_ONLY_IN_CWD: selectedDirectory },
+  })]);
+
+  const scratchTools = await rt.toolsForProject(null, scratch);
+  const selectedTools = await rt.toolsForProject(null, selectedDirectory);
+  assert.ok(!scratchTools.some((tool) => tool.fullName === "mcp_stub_project_only"));
+  assert.ok(selectedTools.some((tool) => tool.fullName === "mcp_stub_project_only"));
+  const scratchResult = await rt.callTool("mcp_stub_cwd", {}, null, "scratch-session", scratch);
+  const selectedResult = await rt.callTool("mcp_stub_cwd", {}, null, "selected-session", selectedDirectory);
+  const selectedAgain = await rt.callTool("mcp_stub_cwd", {}, null, "another-session", selectedDirectory);
+  const [scratchCwd, scratchPid] = scratchResult.content[0].text.split("|");
+  const [selectedCwd, selectedPid] = selectedResult.content[0].text.split("|");
+  assert.equal(scratchCwd, scratch);
+  assert.equal(selectedCwd, selectedDirectory);
+  assert.notEqual(scratchPid, selectedPid);
+  assert.equal(selectedAgain.content[0].text, selectedResult.content[0].text);
+  await assert.rejects(
+    rt.callTool("mcp_stub_project_only", {}, null, "scratch-session", scratch),
+    { errorCode: "TOOL_NOT_FOUND" },
+  );
+});
+
+test("项目 scope 由项目身份决定，stdio cwd 由工作目录决定", async (t) => {
+  const serverDir = stubDir();
+  const projectPath = projectDir("scope");
+  const workingDirectory = projectDir("cwd");
+  const rt = runtime(t);
+  rt.setRecords([stubRecord(serverDir, {
+    scope: { mode: "projects", projects: [projectPath] },
+    env: { STUB_REPORT_CWD: "1" },
+  })]);
+
+  const tools = await rt.toolsForProject(projectPath, workingDirectory);
+  assert.ok(tools.some((tool) => tool.fullName === "mcp_stub_cwd"));
+  const result = await rt.callTool("mcp_stub_cwd", {}, projectPath, "project-session", workingDirectory);
+  assert.equal(result.content[0].text.split("|")[0], workingDirectory);
+  // 临时会话选择已登记项目的目录，也不会获得该项目的 MCP scope。
+  assert.deepEqual(await rt.toolsForProject(null, projectPath), []);
+  assert.deepEqual(await rt.toolsForProject(workingDirectory, projectPath), []);
+  await assert.rejects(
+    rt.callTool("mcp_stub_cwd", {}, null, "temporary-session", projectPath),
+    { errorCode: "TOOL_NOT_FOUND" },
+  );
+});
+
+test("the stdio connection cache stays bounded and evicted workspaces reconnect", async (t) => {
+  let active = 0;
+  let peakActive = 0;
+  let handshakes = 0;
+  const rt = new UserMcpRuntime({
+    createClient: () => {
+      let connected = false;
+      const tools = [{ name: "lookup" }];
+      return {
+        connect: async () => {
+          handshakes += 1;
+          connected = true;
+          active += 1;
+          peakActive = Math.max(peakActive, active);
+          return tools;
+        },
+        getTools: () => connected ? tools : [],
+        isConnected: () => connected,
+        callTool: async () => "called",
+        ping: async () => {},
+        close: () => {
+          if (!connected) return;
+          connected = false;
+          active -= 1;
+        },
+      };
+    },
+  });
+  t.after(() => rt.disposeAll());
+  rt.setRecords([stubRecord("/unused")]);
+
+  for (let index = 0; index < 65; index += 1) {
+    await rt.toolsForProject(`/workspace/${index}`);
+  }
+  assert.equal(active, 64);
+  assert.equal(peakActive, 64);
+
+  assert.equal(await rt.callTool("mcp_stub_lookup", {}, "/workspace/0"), "called");
+  assert.equal(active, 64);
+  assert.equal(handshakes, 66, "the evicted workspace should reconnect on demand");
+
+  rt.disposeAll();
+  assert.equal(active, 0);
 });
 
 test("refreshing HTTP MCP status detects a server that went offline", async (t) => {
@@ -191,13 +343,16 @@ test("stopping one session cancels only its active MCP call", async (t) => {
 
 test("a project-scoped server is invisible outside its projects", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
+  const nestedProject = join(projectPath, "apps", "web");
+  mkdirSync(nestedProject, { recursive: true });
   const rt = runtime(t);
-  rt.setRecords([stubRecord(dir, { scope: { mode: "projects", projects: ["/repo"] } })]);
+  rt.setRecords([stubRecord(dir, { scope: { mode: "projects", projects: [projectPath] } })]);
 
   assert.deepEqual(await rt.toolsForProject("/elsewhere"), []);
   assert.deepEqual(await rt.toolsForProject(null), []);
   // Subdirectories of a scoped project count as inside it.
-  assert.equal((await rt.toolsForProject("/repo/apps/web")).length, 2);
+  assert.equal((await rt.toolsForProject(nestedProject)).length, 2);
 });
 
 test("a disabled server contributes nothing and is never connected", async (t) => {
@@ -213,16 +368,18 @@ test("a disabled server contributes nothing and is never connected", async (t) =
 // narrowed the scope still remembers the tool name.
 test("a call is refused once the server no longer applies to the session", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
+  const otherProject = projectDir("other");
   const rt = runtime(t);
   rt.setRecords([stubRecord(dir)]);
-  await rt.toolsForProject("/repo");
+  await rt.toolsForProject(projectPath);
 
-  const before = await rt.callTool("mcp_stub_lookup", {}, "/repo");
+  const before = await rt.callTool("mcp_stub_lookup", {}, projectPath);
   assert.match(JSON.stringify(before), /lookup/);
 
-  rt.setRecords([stubRecord(dir, { scope: { mode: "projects", projects: ["/other"] } })]);
-  await rt.toolsForProject("/other");
-  await assert.rejects(rt.callTool("mcp_stub_lookup", {}, "/repo"), (error) => {
+  rt.setRecords([stubRecord(dir, { scope: { mode: "projects", projects: [otherProject] } })]);
+  await rt.toolsForProject(otherProject);
+  await assert.rejects(rt.callTool("mcp_stub_lookup", {}, projectPath), (error) => {
     assert.equal(error.errorCode, "TOOL_NOT_FOUND");
     assert.match(error.message, /not active for this session/);
     return true;
@@ -231,11 +388,12 @@ test("a call is refused once the server no longer applies to the session", async
 
 test("a name the server never advertised is refused, not forwarded", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const rt = runtime(t);
   rt.setRecords([stubRecord(dir)]);
-  await rt.toolsForProject("/repo");
+  await rt.toolsForProject(projectPath);
 
-  await assert.rejects(rt.callTool("mcp_stub_delete_everything", {}, "/repo"), (error) => {
+  await assert.rejects(rt.callTool("mcp_stub_delete_everything", {}, projectPath), (error) => {
     assert.equal(error.errorCode, "TOOL_NOT_FOUND");
     return true;
   });
@@ -243,46 +401,49 @@ test("a name the server never advertised is refused, not forwarded", async (t) =
 
 test("editing what a server runs drops the live connection", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const rt = runtime(t);
   rt.setRecords([stubRecord(dir, { env: { STUB_TAG: "first" } })]);
-  await rt.toolsForProject("/repo");
-  assert.match(JSON.stringify(await rt.callTool("mcp_stub_lookup", {}, "/repo")), /first:lookup/);
+  await rt.toolsForProject(projectPath);
+  assert.match(JSON.stringify(await rt.callTool("mcp_stub_lookup", {}, projectPath)), /first:lookup/);
 
   rt.setRecords([stubRecord(dir, { env: { STUB_TAG: "second" } })]);
   // Routing survives the edit, but dispatch must handshake the new config.
   assert.equal(rt.hasTool("mcp_stub_lookup"), true);
   assert.equal(rt.statusFor("stub").state, "idle");
 
-  assert.match(JSON.stringify(await rt.callTool("mcp_stub_lookup", {}, "/repo")), /second:lookup/);
+  assert.match(JSON.stringify(await rt.callTool("mcp_stub_lookup", {}, projectPath)), /second:lookup/);
 });
 
 test("a terminated stdio process recovers on the next tool call", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const pidFile = join(dir, "pid");
   let client;
   const rt = runtime(t, {
     createClient: (config) => { client = new McpServerClient(config); return client; },
   });
   rt.setRecords([stubRecord(dir, { env: { STUB_PID_FILE: pidFile } })]);
-  await rt.toolsForProject("/repo");
+  await rt.toolsForProject(projectPath);
   process.kill(Number(readFileSync(pidFile, "utf8")), "SIGTERM");
   for (let attempt = 0; client.isConnected() && attempt < 100; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.equal(client.isConnected(), false);
   assert.deepEqual(client.getTools(), []);
-  assert.match(JSON.stringify(await rt.callTool("mcp_stub_lookup", {}, "/repo")), /lookup/);
+  assert.match(JSON.stringify(await rt.callTool("mcp_stub_lookup", {}, projectPath)), /lookup/);
   assert.equal(rt.statusFor("stub").state, "ready");
 });
 
 test("changing only scope or label keeps the connection", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const rt = runtime(t);
   rt.setRecords([stubRecord(dir)]);
-  await rt.toolsForProject("/repo");
+  await rt.toolsForProject(projectPath);
 
   rt.setRecords([
-    stubRecord(dir, { label: "Renamed", scope: { mode: "projects", projects: ["/repo"] } }),
+    stubRecord(dir, { label: "Renamed", scope: { mode: "projects", projects: [projectPath] } }),
   ]);
   assert.equal(rt.statusFor("stub").state, "ready");
   assert.equal(rt.hasTool("mcp_stub_lookup"), true);
@@ -460,10 +621,11 @@ test("testing a server that is not saved reports it instead of throwing", async 
 
 test("statuses are listed for every saved server, connected or not", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const rt = runtime(t);
   rt.setRecords([stubRecord(dir), stubRecord(dir, { id: "second", enabled: false })]);
 
-  await rt.toolsForProject("/repo");
+  await rt.toolsForProject(projectPath);
   const statuses = rt.listStatuses();
   assert.deepEqual(
     statuses.map((entry) => [entry.serverId, entry.state]),
@@ -476,6 +638,7 @@ test("statuses are listed for every saved server, connected or not", async (t) =
 
 test("disposing the runtime kills the server processes", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const pidFile = join(dir, "pid");
   const rt = new UserMcpRuntime({
     createClient: (config) => new McpServerClient(config),
@@ -484,7 +647,7 @@ test("disposing the runtime kills the server processes", async (t) => {
   });
 
   rt.setRecords([stubRecord(dir, { env: { STUB_PID_FILE: pidFile } })]);
-  await rt.toolsForProject("/repo");
+  await rt.toolsForProject(projectPath);
 
   const pid = Number(readFileSync(pidFile, "utf8"));
   rt.disposeAll();
@@ -531,19 +694,20 @@ test("configurationChanged separates what a server is from who may use it", () =
 
 test("a server whose catalog cannot be listed lands as failed with the reason", async (t) => {
   const dir = stubDir();
+  const projectPath = projectDir();
   const rt = runtime(t);
   rt.setRecords([stubRecord(dir, { env: { STUB_REPEAT_CURSOR: "1" } })]);
 
   // The guard trips inside the handshake, so the server contributes nothing
   // rather than a prefix of its catalog.
-  assert.deepEqual(await rt.toolsForProject("/repo"), []);
+  assert.deepEqual(await rt.toolsForProject(projectPath), []);
   const status = rt.statusFor("stub");
   assert.equal(status.state, "failed");
   assert.equal(status.toolCount, 0);
   assert.match(status.message, /repeated a tools\/list cursor/);
 
   // A server that already failed this run is not handshaken again per session.
-  assert.deepEqual(await rt.toolsForProject("/repo"), []);
+  assert.deepEqual(await rt.toolsForProject(projectPath), []);
   assert.equal(rt.statusFor("stub").state, "failed");
 });
 

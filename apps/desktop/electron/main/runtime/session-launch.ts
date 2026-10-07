@@ -43,6 +43,7 @@ import type { UserMcpRuntime } from "../user-mcp";
 import type { RuntimeState } from "./context";
 import type { RuntimeProvider } from "./provider-catalog";
 import { getSessionCompactionModel } from "./session-compaction-models";
+import { resolveSessionWorkspace } from "./session-workspace";
 import type { LoadedSkillDocument } from "../skill-document";
 
 const ErrorCodes = {
@@ -507,7 +508,8 @@ export function createSessionLaunchRuntime({
     // is a tool it will try.
     const userSkills = await activeUserSkills(projectPath);
     await refreshUserMcp(projectPath);
-    const userMcpTools = await userMcp.toolsForProject(projectPath ?? null);
+    const mcpWorkingDirectory = projectPath ?? (await resolveSessionWorkspace(runtimeState.host!, sessionId)).path;
+    const userMcpTools = await userMcp.toolsForProject(projectPath ?? null, mcpWorkingDirectory);
     // Skill catalog (D174): only id/name/description cross to the sidecar; the
     // document body is fetched on demand through the local `Skill` tool. Host
     // skills come first so a plugin's entry reads as a refinement of them, and

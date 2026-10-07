@@ -269,6 +269,12 @@ export class SocketReader {
     });
   }
 
+  takeBuffered(): Buffer {
+    const value = this.buffer;
+    this.buffer = Buffer.alloc(0);
+    return value;
+  }
+
   /** Include the delimiter in the returned buffer. */
   readUntil(delimiter: Buffer): Promise<Buffer> {
     const found = this.indexOf(delimiter);

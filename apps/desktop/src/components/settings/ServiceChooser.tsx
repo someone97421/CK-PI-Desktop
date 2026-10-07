@@ -198,6 +198,7 @@ export function ServiceChooser({
                     key={vendor.vendorId}
                     type="button"
                     data-service-tile
+                    data-subscription-vendor-id={vendor.vendorId}
                     className={cx(
                       "service-chooser-tile",
                       enterTarget === `subscription:${vendor.vendorId}` && "is-active",

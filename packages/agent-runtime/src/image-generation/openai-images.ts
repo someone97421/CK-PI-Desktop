@@ -16,6 +16,24 @@ export function imageGenerationUrl(baseUrl: string, edit = false): string {
   return url.href;
 }
 
+/**
+ * The Codex image routes sit under the vendor's Codex prefix, beside its chat
+ * routes: a provider stored as `https://chatgpt.com/backend-api` serves images
+ * at `.../backend-api/codex/images/...`. Already-prefixed base URLs are kept.
+ */
+export function codexImagesBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  return /\/codex$/i.test(trimmed) ? trimmed : `${trimmed}/codex`;
+}
+
+/**
+ * How the images endpoint encodes its request.
+ *
+ * `multipart` is the OpenAI Images API: a form for edits, JSON for generation.
+ * `codex-json` is the Codex backend: JSON for both, input images as data URLs.
+ */
+export type ImageRequestTransport = "multipart" | "codex-json";
+
 export function safeImageError(error: unknown): string {
   return error && typeof error === "object" && "errorCode" in error &&
     typeof error.errorCode === "string" && /^IMAGE_[A-Z0-9_]+$/.test(error.errorCode)
@@ -23,7 +41,10 @@ export function safeImageError(error: unknown): string {
 }
 
 /** Only the generations/edits protocol missing from Pi; auth and dispatch belong to Models. */
-export function openAIImagesAdapter(downloadOptions: ImageDownloadOptions = {}): ProviderImages {
+export function openAIImagesAdapter(
+  downloadOptions: ImageDownloadOptions = {},
+  transport: ImageRequestTransport = "multipart",
+): ProviderImages {
   return {
     async generateImages(model, context, options) {
       const result: AssistantImages = {
@@ -43,7 +64,20 @@ export function openAIImagesAdapter(downloadOptions: ImageDownloadOptions = {}):
         const images = context.input.filter(item => item.type === "image");
         const responseFormat = /^dall-e-[23]$/i.test(model.id) ? "b64_json" : undefined;
         let body: BodyInit;
-        if (images.length) {
+        if (transport === "codex-json") {
+          // The shape the Codex client sends: one JSON body for generation and
+          // editing alike, input images inline as data URLs, size at the
+          // backend's own auto default.
+          headers.set("Content-Type", "application/json");
+          body = JSON.stringify({
+            model: model.id,
+            prompt,
+            size: "auto",
+            ...(images.length
+              ? { images: images.map((image) => ({ image_url: inputImageDataUrl(image.data) })) }
+              : {}),
+          });
+        } else if (images.length) {
           const form = new FormData();
           form.set("model", model.id);
           form.set("prompt", prompt);
@@ -113,4 +147,11 @@ export function decodeImageBase64(data: string): Uint8Array {
   if (!data.length || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(data))
     throw imageError("IMAGE_INVALID_RESPONSE");
   return Buffer.from(data, "base64");
+}
+
+/** Inline data URL for one input image, the form the Codex edit route takes. */
+function inputImageDataUrl(data: string): string {
+  const bytes = decodeImageBase64(data);
+  const type = generatedImageType(bytes);
+  return `data:${type.mimeType};base64,${Buffer.from(bytes).toString("base64")}`;
 }

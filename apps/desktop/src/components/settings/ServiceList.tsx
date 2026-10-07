@@ -80,9 +80,10 @@ export function ServiceList({
 
   const menuItems = (provider: ProviderPublic, isDefault: boolean): CapabilityMenuItem[] => {
     const kind = serviceRowKind(provider);
+    const pluginOAuth = kind === "account" && !!provider.ownerPluginId;
     const items: CapabilityMenuItem[] = [];
     // A plugin owns its row's fields and lifetime; only its key is the user's.
-    if (kind !== "plugin") {
+    if (kind !== "plugin" && !pluginOAuth) {
       items.push({
         key: "edit",
         label: t(kind === "account" ? "settings.editVendorAccount" : "settings.editProvider"),
@@ -141,7 +142,9 @@ export function ServiceList({
         key: "remove",
         label: isArmed
           ? t("settings.capabilityRemoveConfirm")
-          : t(kind === "account" ? "settings.vendorRemoveAccount" : "settings.delete"),
+          : t(pluginOAuth
+              ? "settings.vendorSignOut"
+              : kind === "account" ? "settings.vendorRemoveAccount" : "settings.delete"),
         icon: <IconTrash size={14} />,
         danger: true,
         onSelect: () => {
@@ -164,7 +167,9 @@ export function ServiceList({
         const isDefault = defaultProviderId === provider.id;
         const rowBusy = reorder.saving || isRowBusy(provider.id);
         const onOpen =
-          kind !== "plugin"
+          kind === "account" && provider.ownerPluginId
+            ? undefined
+            : kind !== "plugin"
             ? () => onEdit(provider)
             : provider.authKind === "api_key"
               ? () => toggleKeyEntry(provider)

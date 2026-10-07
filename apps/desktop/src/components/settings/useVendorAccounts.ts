@@ -189,9 +189,14 @@ export function useVendorAccounts() {
         useAppStore.setState({ settings: nextSettings });
       }
       await Promise.all([loadVendors(), refreshProviders()]);
-      showToast(t("settings.vendorAccountRemoved", { vendor: vendorName }), {
+      showToast(
+        provider.ownerPluginId
+          ? t("settings.vendorSignedOut", { vendor: vendorName })
+          : t("settings.vendorAccountRemoved", { vendor: vendorName }),
+        {
         variant: "success",
-      });
+        },
+      );
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), {
         variant: "error",

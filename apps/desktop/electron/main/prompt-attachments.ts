@@ -22,7 +22,9 @@ import { MediaStore } from "@pi-desktop/agent-runtime/media-store";
 import {
   ErrorCodes,
   formatFileInsert,
+  formatPromptPathText,
   isSvgAttachment,
+  locateInlinePromptPaths,
   SVG_MIME_TYPE,
   MAX_INLINE_IMAGE_BYTES,
   mediaMimeType,
@@ -239,10 +241,15 @@ export async function preparePromptAttachments(
   attachments: readonly AgentPromptAttachment[],
   supportsVision: boolean,
   mediaCapabilities: MediaInputCapabilities = {},
+  promptContent = "",
 ): Promise<PreparedPromptAttachment[]> {
   const prepared: PreparedPromptAttachment[] = [];
   let inlineBytes = 0;
-  for (const attachment of attachments) {
+  const inlineSpans = locateInlinePromptPaths(
+    promptContent,
+    attachments.map((attachment) => attachment.path),
+  );
+  for (const [index, attachment] of attachments.entries()) {
     const source = resolvePromptPath(dataRoot, sessionId, projectPath, attachment.path);
     if (!source) {
       throw Object.assign(new Error(`Attachment path is outside the session roots: ${attachment.path}`), {
@@ -286,6 +293,9 @@ export async function preparePromptAttachments(
       source.root === "attachment" && attachment.path.trim().startsWith("attachments/")
         ? attachment.path.trim()
         : await ensureAttachmentBlobFromFile(dataRoot, source.absolute));
+    const inlinePath = isImage && inlineSpans[index]
+      ? formatPromptPathText(attachment.path)
+      : undefined;
     const fallbackPath = inline
       ? displayPromptPath(source, projectPath)
       : await fallbackPathForStoredAttachment(
@@ -301,6 +311,7 @@ export async function preparePromptAttachments(
         ref,
         mimeType,
         size,
+        ...(inlinePath ? { inlinePath } : {}),
       },
       fallbackPath,
       ...(inline
@@ -339,6 +350,11 @@ export function appendPromptFallbackPaths(
 ): string {
   const paths = attachments
     .filter((attachment) => !attachment.inlineData && !attachment.mediaRef)
+    // 已在正文中的原路径无需追加；历史副本的新路径仍需保留。
+    .filter(
+      (attachment) =>
+        attachment.message.inlinePath !== formatPromptPathText(attachment.fallbackPath),
+    )
     .map((attachment) => formatFileInsert(attachment.fallbackPath, "file"))
     .join("")
     .trim();

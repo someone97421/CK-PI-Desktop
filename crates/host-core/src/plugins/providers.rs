@@ -29,11 +29,8 @@ const PLUGIN_API_STYLES: [&str; 7] = [
     "pi_messages",
 ];
 
-/// Auth kinds a manifest may declare today. `oauth` is deliberately absent: a
-/// plugin OAuth broker needs a Host-owned login flow that does not exist yet,
-/// so a declaration that asks for one is refused instead of materializing a
-/// row nobody can sign in to.
-const PLUGIN_AUTH_KINDS: [&str; 2] = ["api_key", "none"];
+/// Auth kinds a manifest may declare.
+const PLUGIN_AUTH_KINDS: [&str; 3] = ["api_key", "none", "oauth"];
 
 pub(crate) fn is_known_api_style(value: &str) -> bool {
     PLUGIN_API_STYLES.contains(&value)
@@ -308,8 +305,8 @@ pub(crate) fn sync_plugin_providers(
         .map(|binding| binding.id)
         .collect::<Vec<_>>();
         providers::forget_cached_models(db, &row_id, &removed_models)?;
-        // The merge replaces only the model bindings: headers and the OAuth
-        // account label a login flow wrote are not this function's to drop.
+        // The merge replaces only model bindings; headers and OAuth metadata
+        // are not this declaration's to drop.
         let config = providers::config_with_model_bindings(
             existing_config.as_deref().unwrap_or("{}"),
             &models,
@@ -329,6 +326,13 @@ pub(crate) fn sync_plugin_providers(
             }
             None
         };
+        if provider.auth_kind != "oauth" {
+            let oauth_ref = crate::secrets::secret_ref_for_provider_oauth(&row_id);
+            secrets.delete(&oauth_ref)?;
+            db.conn()
+                .prepare_cached("DELETE FROM secrets_meta WHERE secret_ref = ?1")?
+                .execute(params![oauth_ref])?;
+        }
         // The public projection derives the default from the first binding, so
         // the declared order is the plugin's choice of default.
         let default_model_id = models.first().map(|model| model.id.clone());

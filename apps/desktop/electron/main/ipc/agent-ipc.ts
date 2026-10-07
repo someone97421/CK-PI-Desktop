@@ -316,9 +316,12 @@ export function registerAgentIpc({
           Boolean(req.attachments?.length),
         )
       : null;
+    // The inline text the user's draft carried decides both what the message
+    // shows and where each image block sits in the prompt.
+    const steerContent = mcpExpansion?.expanded ?? req.content;
     const prepared = await preparePromptAttachments(
-      dataDir, req.sessionId, context.projectPath, req.attachments ?? [], context.supportsVision,
-      context,
+      dataDir, req.sessionId, context.projectPath, req.attachments ?? [],
+      context.supportsVision, context, steerContent,
     );
     const session = await host.call<{ session?: { messages?: UiMessage[]; projectPath?: string; temporaryWorkspacePath?: string } }>("session.get", {
       id: req.sessionId, messageLimit: 1,
@@ -334,7 +337,7 @@ export function registerAgentIpc({
       role: "user",
       // 接收与回执重放使用相同的任务归属。
       taskId: req.expectedTurnId,
-      content: mcpExpansion?.expanded ?? req.content,
+      content: steerContent,
       ...(mcpExpansion ? { command: mcpExpansion.command } : {}),
       status: "complete",
       createdAt: new Date().toISOString(),
@@ -364,13 +367,14 @@ export function registerAgentIpc({
     dispatched = true;
     const result = await sidecar.call<{ accepted: boolean; turnId: string }>("agent.steer", {
       sessionId: req.sessionId, expectedTurnId: req.expectedTurnId, message,
-      content: appendPromptFallbackPaths(mcpExpansion?.expanded ?? req.content, prepared),
+      content: appendPromptFallbackPaths(steerContent, prepared),
       ...(mcpExpansion ? { mcpServerIds: mcpExpansion.mcpServerIds, mcpToolNames: mcpExpansion.mcpToolNames } : {}),
       attachments: [
         ...prepared.filter((attachment) => attachment.inlineData || attachment.mediaRef).map((attachment) => ({
           path: attachment.message.ref, name: attachment.message.name, kind: attachment.message.kind,
           mimeType: attachment.message.mimeType, size: attachment.message.size, data: attachment.inlineData,
           mediaRef: attachment.mediaRef,
+          ...(attachment.message.inlinePath ? { inlinePath: attachment.message.inlinePath } : {}),
         })),
         ...sessionReferences.map((attachment) => ({
           path: attachment.ref, name: attachment.name, kind: attachment.kind, text: attachment.text,
@@ -655,6 +659,7 @@ export function registerAgentIpc({
         req.attachments ?? [],
         supportsVision,
         mediaCapabilitiesForProvider(launch.sidecarParams.provider),
+        promptContent,
       );
     } catch (error) {
       await finishTurn(req.sessionId, "error", (error as any)?.errorCode, {
@@ -777,6 +782,9 @@ export function registerAgentIpc({
                 size: attachment.message.size,
                 data: attachment.inlineData,
                 mediaRef: attachment.mediaRef,
+                ...(attachment.message.inlinePath
+                  ? { inlinePath: attachment.message.inlinePath }
+                  : {}),
               })),
             ...sessionReferences.map((attachment) => ({
               path: attachment.ref,

@@ -4951,6 +4951,15 @@ async fn handle_request(
             Ok(json!({ "id": id, "enabled": enabled }))
         }
 
+        "network.configureSystemProxyRelay" => {
+            let url = params
+                .get("url")
+                .and_then(Value::as_str)
+                .ok_or_else(|| rpc_err(1002, "url required", "INVALID_PARAMS"))?;
+            crate::network_proxy::set_system_proxy_relay(url)
+                .map_err(|message| rpc_err(1002, message, "INVALID_PARAMS"))?;
+            Ok(json!({ "ok": true }))
+        }
         "market.refresh" => {
             let force = params
                 .get("force")

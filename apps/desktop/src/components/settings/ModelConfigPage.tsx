@@ -17,6 +17,7 @@ import {
   imageGenerationBindings,
   isImageGenerationModel,
   modelWireIdsEqual,
+  vendorAccountImageCandidates,
   type ImageGenerationBinding,
   type ModelBinding,
   type ProviderPublic,
@@ -186,8 +187,11 @@ export function ModelConfigPage() {
   }, []);
 
   const imageGenerationCandidates = useMemo(
-    () => imageGenerationBindings(settings?.imageGenerationModels, settings?.imageGeneration),
-    [settings?.imageGenerationModels, settings?.imageGeneration],
+    () => imageGenerationBindings([
+      ...imageGenerationBindings(settings?.imageGenerationModels, settings?.imageGeneration),
+      ...vendorAccountImageCandidates(providers),
+    ], null),
+    [settings?.imageGenerationModels, settings?.imageGeneration, providers],
   );
   // One readiness rule for the picker, the provider rows and the add-provider
   // guard: both call `providerServesChatModels`.
@@ -391,8 +395,11 @@ export function ModelConfigPage() {
     try {
       const current = await api.getSettings();
       const candidates = imageGenerationBindings(
-        current.imageGenerationModels,
-        current.imageGeneration,
+        [
+          ...imageGenerationBindings(current.imageGenerationModels, current.imageGeneration),
+          ...vendorAccountImageCandidates(useAppStore.getState().providers),
+        ],
+        null,
       );
       if (!isImageGenerationModel(candidates, binding.providerId, binding.modelId)) return;
       const nextSettings = { ...current, imageGeneration: binding };

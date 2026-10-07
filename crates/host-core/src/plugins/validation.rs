@@ -257,14 +257,6 @@ pub(crate) fn validate_contributions(root: &Path, manifest: &PluginManifest) -> 
                     bail!("PLUGIN_INVALID: provider {id} has unsupported apiStyle {style}");
                 }
             }
-            // `oauth` declarations arrive with the Host-owned plugin login
-            // flow. Until it exists, a manifest that asks for one is refused
-            // rather than turned into a row nobody can sign in to.
-            if obj.get("oauth").is_some() {
-                bail!(
-                    "PLUGIN_INVALID: provider {id} declares oauth; plugin OAuth providers are not supported in this release"
-                );
-            }
             let auth_kind = obj
                 .get("authKind")
                 .and_then(Value::as_str)
@@ -272,6 +264,7 @@ pub(crate) fn validate_contributions(root: &Path, manifest: &PluginManifest) -> 
             if !is_known_auth_kind(auth_kind) {
                 bail!("PLUGIN_INVALID: provider {id} has unsupported authKind {auth_kind}");
             }
+            validate_declared_provider_oauth(id, obj, auth_kind, manifest)?;
             if let Some(base_url) = obj.get("baseUrl").and_then(Value::as_str) {
                 // The runtime reaches this endpoint, so a declaration may only
                 // name an absolute http(s) URL.
@@ -396,7 +389,9 @@ pub(crate) fn validate_contributions(root: &Path, manifest: &PluginManifest) -> 
                             anyhow!("PLUGIN_INVALID: theme {id} asset missing: {raw}")
                         })?;
                         if !asset_path.starts_with(&package_root) {
-                            bail!("PLUGIN_INVALID: theme {id} asset {raw} resolves outside the plugin package");
+                            bail!(
+                                "PLUGIN_INVALID: theme {id} asset {raw} resolves outside the plugin package"
+                            );
                         }
                         asset_path
                     };
@@ -707,7 +702,11 @@ fn array_of<'a>(value: &'a Value, field: &str) -> Result<&'a [Value]> {
         .ok_or_else(|| anyhow!("PLUGIN_INVALID: {field} must be an array"))
 }
 
-fn require_permission(manifest: &PluginManifest, permission: &str, what: &str) -> Result<()> {
+pub(super) fn require_permission(
+    manifest: &PluginManifest,
+    permission: &str,
+    what: &str,
+) -> Result<()> {
     if manifest.permissions.iter().any(|p| p == permission) {
         return Ok(());
     }

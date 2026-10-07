@@ -38,8 +38,24 @@ export type ChatRefRoots = {
    */
   project?: readonly FsChatRefProjectRoot[] | null;
   scratch?: string | null;
+  /**
+   * Roots an absolute reference may name without being searched by shorthand.
+   *
+   * A generated image lives in the scratch store of the session that produced
+   * it, and the user clicks it from whatever conversation they are reading —
+   * usually a later one. Every read guard (`fsRead`, `fsOpen`, the image
+   * reader, `fsReveal`) already accepts the whole scratch store, so completing
+   * against the session's own store alone reported a restriction for a file the
+   * app can open. These entries widen the absolute-path check only: a shorthand
+   * still searches the session's own root, so it never lands in another
+   * session's files.
+   */
+  containment?: readonly ChatRefContainmentRoot[] | null;
   attachments?: string | null;
 };
+
+/** A root an absolute reference may name, though no shorthand searches it. */
+export type ChatRefContainmentRoot = { kind: FsChatRefRoot; path: string };
 
 /** A root to search, and — for a project folder — which folder it is. */
 type ChatRefRootEntry = {
@@ -154,6 +170,23 @@ function orderedRoots(roots: ChatRefRoots): ChatRefRootEntry[] {
   return list;
 }
 
+/**
+ * The containment-only roots, in the same vocabulary as the searched ones.
+ *
+ * They answer absolute references and nothing else: the shorthand walk below
+ * keeps searching `orderedRoots`, so a reference is never completed from
+ * another session's store.
+ */
+function containmentEntries(roots: ChatRefRoots): ChatRefRootEntry[] {
+  const list: ChatRefRootEntry[] = [];
+  for (const root of roots.containment ?? []) {
+    const path = String(root?.path ?? "").trim();
+    if (!path) continue;
+    list.push({ kind: root.kind, path: resolve(path) });
+  }
+  return list;
+}
+
 async function isRegularFile(target: string): Promise<boolean> {
   try {
     return (await stat(target)).isFile();
@@ -210,7 +243,7 @@ export async function isChatRefOutsideRoots(ref: string, roots: ChatRefRoots): P
   const cleaned = cleanRef(ref);
   if (!isAbsolute(cleaned)) return true;
   const absolutePath = resolve(cleaned);
-  const rootList = await canonicalRoots(orderedRoots(roots));
+  const rootList = await canonicalRoots([...orderedRoots(roots), ...containmentEntries(roots)]);
   if (!couldShareVolume(absolutePath, rootList)) return true;
   const targetPath = await canonicalPathOrMissingTail(absolutePath);
   if (!targetPath) return !rootList.some((root) => relativeInside(root.path, absolutePath) !== null);
@@ -359,7 +392,10 @@ export async function resolveChatFileRef(
     const cleaned = cleanRef(ref);
     if (!isAbsolute(cleaned)) return null;
     const absolutePath = resolve(cleaned);
-    const canonicalRootList = await canonicalRoots(rootList);
+    const canonicalRootList = await canonicalRoots([
+      ...rootList,
+      ...containmentEntries(roots),
+    ]);
     let targetPath: string;
     try {
       targetPath = await realpath(absolutePath);

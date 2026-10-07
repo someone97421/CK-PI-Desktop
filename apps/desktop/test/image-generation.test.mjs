@@ -117,3 +117,105 @@ test("the default imagegen skill is discoverable and loads in an ordinary sessio
   assert.match(body, /Do not retry/);
   assert.equal(loadBuiltinSkillBody("../../outside"), null);
 });
+
+/** The user path for a ChatGPT (Codex) login: pick its image model, then generate. */
+test("a signed-in Codex account generates and edits through its own image routes", async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), "pi-images-codex-"));
+  t.after(() => rm(dataDir, { recursive: true, force: true }));
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk.toString("utf8");
+    requests.push({
+      url: request.url,
+      body,
+      authorization: request.headers.authorization,
+      originator: request.headers.originator,
+      contentType: request.headers["content-type"],
+    });
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify({ data: [{ b64_json: png.toString("base64") }] }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const host = {
+    call: async (method) => {
+      if (method === "settings.get")
+        return {
+          defaultModelId: "gpt-6.1-sol",
+          defaultProviderId: "codex-account",
+          imageGeneration: { providerId: "codex-account", modelId: "gpt-image-2.5" },
+        };
+      if (method === "providers.get")
+        return {
+          provider: {
+            id: "codex-account",
+            enabled: true,
+            authKind: "oauth",
+            hasOauth: true,
+            vendorKey: "openai-codex",
+            // The account's chat models; its image model is not one of them.
+            models: [{ id: "gpt-6.1-sol" }],
+            baseUrl: `http://127.0.0.1:${server.address().port}/backend-api`,
+          },
+        };
+      if (method === "session.getScratchPath") return { path: join(dataDir, "scratch", "session") };
+      if (method === "session.get") return { session: {} };
+      throw new Error(method);
+    },
+  };
+  const call = (args) =>
+    createImageGenerationTool({
+      dataDir,
+      getHost: () => host,
+      resolveAuth: async () => ({ apiKey: "chatgpt-account-token" }),
+    })({ sessionId: "session", toolCallId: "call", args, signal: new AbortController().signal });
+
+  const batch = await call({ items: [{ prompt: "cover" }] });
+  assert.equal(batch.ok, true);
+  assert.deepEqual(await readFile(batch.content.results[0].path), png);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "/backend-api/codex/images/generations");
+  assert.equal(requests[0].authorization, "Bearer chatgpt-account-token");
+  assert.equal(requests[0].originator, "pi");
+  assert.deepEqual(JSON.parse(requests[0].body), { model: "gpt-image-2.5", prompt: "cover", size: "auto" });
+
+  const edited = await call({
+    items: [{ prompt: "make it blue", images: [batch.content.results[0].path] }],
+  });
+  assert.equal(edited.ok, true);
+  assert.equal(requests.at(-1).url, "/backend-api/codex/images/edits");
+  assert.equal(requests.at(-1).contentType, "application/json");
+  assert.match(requests.at(-1).body, /"image_url":"data:image\/png;base64,/);
+});
+
+test("a Codex image binding without a signed-in credential is refused", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "pi-images-codex-empty-"));
+  await rm(dataDir, { recursive: true, force: true });
+  const host = {
+    call: async (method) => {
+      if (method === "settings.get")
+        return { imageGeneration: { providerId: "codex-account", modelId: "gpt-image-2" } };
+      if (method === "providers.get")
+        return {
+          provider: {
+            id: "codex-account",
+            enabled: true,
+            authKind: "oauth",
+            hasOauth: false,
+            vendorKey: "openai-codex",
+            models: [],
+            baseUrl: "https://chatgpt.example/backend-api",
+          },
+        };
+      throw new Error(method);
+    },
+  };
+  const result = await createImageGenerationTool({ dataDir, getHost: () => host })({
+    sessionId: "session",
+    toolCallId: "call",
+    args: { items: [{ prompt: "cover" }] },
+    signal: new AbortController().signal,
+  });
+  assert.equal(result.errorCode, "IMAGE_MODEL_UNAVAILABLE");
+});

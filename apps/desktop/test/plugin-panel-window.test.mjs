@@ -96,8 +96,11 @@ test("plugin panel close does not read destroyed webContents", () => {
     hostSource.indexOf("this.windows.set(request.pluginId, win);"),
   );
   assert.doesNotMatch(closedHandler, /win\.webContents/);
-  assert.match(hostSource, /await win\.loadURL\(/);
-  assert.match(hostSource, /if \(!win\.isDestroyed\(\)\) \{\s*win\.destroy\(\);\s*\}/);
+  // The hidden window loads through the ready budget (issue #998 item 5), and
+  // the open path's catch still destroys it on a failed load.
+  const open = hostSource.slice(hostSource.indexOf("async open(request: PluginPanelOpenRequest)"), hostSource.indexOf("async close(pluginId"));
+  assert.match(open, /await panelReadyWithin\(\s*win\.loadURL\(pathToFileURL\(request\.htmlPath\)\.toString\(\)\),\s*request\.pluginId,/);
+  assert.match(open, /\} catch \(err\) \{[\s\S]*?if \(token\.canceled \|\| win\.isDestroyed\(\)\) \{[\s\S]*?return;\s*\}\s*win\.destroy\(\);\s*throw err;/);
 });
 
 test("plugin content is offset below the strict 46px host drag band", () => {
@@ -120,9 +123,8 @@ test("plugin content is offset below the strict 46px host drag band", () => {
   assert.match(preloadSource, /locale\.startsWith\("de"\)/);
   assert.match(preloadSource, /locale\.startsWith\("es"\)/);
   assert.match(preloadSource, /locale\.startsWith\("fr"\)/);
-  assert.match(preloadSource, /locale\.startsWith\("pt"\)/);
-  assert.match(preloadSource, /Controles de janela do painel do plugin/);
-  assert.match(preloadSource, /os 46px superiores são apenas para arrastar/);
+  assert.match(preloadSource, /toolbar: "Plugin panel window controls"/);
+  assert.match(preloadSource, /safeArea: "Dev hint · top 46px is drag-only"/);
   assert.match(preloadSource, /locale === "zh-tw"/);
   assert.match(preloadSource, /locale === "zh-hant"/);
   assert.match(preloadSource, /--pi-plugin-panel-theme=/);

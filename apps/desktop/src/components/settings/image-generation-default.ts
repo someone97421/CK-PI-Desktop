@@ -11,15 +11,17 @@
  * "Can run it" is one rule everywhere: this file, the picker row
  * (`ImageGenerationModelRow.tsx`) and the runtime
  * (`electron/main/services/image-generation-service.ts`) all require an
- * enabled, non-OAuth provider with a base URL, a usable credential and a
- * configured model exactly matching the binding. A binding that only looks
- * present — disabled provider, missing key, OAuth-only row, or a model id the
- * provider does not configure — fails at send time, so it must never be kept as
- * the default either.
+ * enabled provider with a base URL, a usable credential and a model that
+ * provider serves — either one it configures, or the image model a signed-in
+ * vendor account answers with (see `imageModelOfferedByProvider`). A binding
+ * that only looks present — disabled provider, missing credential, or a model
+ * id the provider does not serve — fails at send time, so it must never be
+ * kept as the default either.
  */
 import {
   MAX_IMAGE_GENERATION_MODELS,
   imageGenerationBindings,
+  imageModelOfferedByProvider,
   type ImageGenerationBinding,
   type ProviderPublic,
   modelWireIdsEqual as sameComposerModelId,
@@ -38,12 +40,11 @@ export function imageGenerationBindingAvailable(
 ): boolean {
   if (!provider || !provider.enabled) return false;
   return (
-    provider.authKind !== "oauth" &&
     !!provider.baseUrl &&
-    (provider.hasSecret || provider.authKind === "none") &&
-    // Mirror image-generation-service's exact availability guard. A different
-    // case is a different outbound wire ID for a case-sensitive endpoint.
-    provider.models.some((model) => model.id === modelId)
+    (provider.hasSecret || provider.hasOauth === true || provider.authKind === "none") &&
+    // Mirror image-generation-service's availability guard exactly: the same
+    // model offer, so a choice the row shows can never fail at send time.
+    imageModelOfferedByProvider(provider, modelId)
   );
 }
 

@@ -4,8 +4,10 @@ import test from "node:test";
 import * as React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
+import { splitInlineContent } from "@pi-desktop/shared";
 import ts from "typescript";
-import { requestTextWithoutAnnotations } from "../src/lib/response-annotations.ts";
+import { requestTextWithoutAnnotations, responseAnnotationPrompt } from "../src/lib/response-annotations.ts";
+import { getExtraMessageAttachments } from "../src/features/chat/transcript/extra-attachments.ts";
 
 const t = (key, values) => values?.name ? `${key}: ${values.name}` : key;
 const store = {
@@ -22,8 +24,10 @@ const TooltipButton = ({ children, ariaLabel, tooltip, ...props }) =>
 const shared = {
   CopyButton: ({ label }) => React.createElement("button", { "aria-label": label }),
   FileRefChip: () => null,
-  LinkifiedText: ({ text }) => text,
-  MessageAttachmentImage: () => null,
+  LinkifiedText: ({ text, sourceOffset = 0 }) =>
+    React.createElement("span", { "data-source-start": sourceOffset, "data-source-end": sourceOffset + text.length }, text),
+  MessageAttachmentImage: ({ attachment, ...props }) =>
+    React.createElement("span", { "data-image": attachment.name, "data-source-start": props["data-source-start"], "data-source-end": props["data-source-end"] }),
   MessageTimestamp: () => null,
 };
 
@@ -55,7 +59,7 @@ function loadComponent(name, extras = {}) {
     },
     "./ActionBarSlots": { ActionSlotSide: () => null },
     "../../../plugins/renderer-slots/slot-message": { slotMessage: () => undefined },
-    "./extra-attachments": { getExtraMessageAttachments: () => [] },
+    "@pi-desktop/shared": { splitInlineContent },
     ...extras,
   };
   const module = { exports: {} };
@@ -69,7 +73,7 @@ function loadComponent(name, extras = {}) {
 const origin = loadComponent("SessionMessageOrigin");
 const { MessageRow } = loadComponent("MessageRow", {
   "./SessionMessageOrigin": origin,
-  "./extra-attachments": { getExtraMessageAttachments: () => [] },
+  "./extra-attachments": { getExtraMessageAttachments },
 });
 const userMessage = {
   id: "incoming-row",
@@ -126,4 +130,50 @@ test("ordinary text cannot forge another session's provenance", () => {
   assert.match(html, /class="message-row user"/);
   assert.match(html, /aria-label="chat.editMessage"/);
   assert.doesNotMatch(html, /session-message-origin|data-session-message-kind/);
+});
+
+test("行内图片在普通消息与带批注消息中保留位置和源偏移", () => {
+  const request = "before @/scratch/pasted/a.png after";
+  const annotated = responseAnnotationPrompt(request, [{ messageId: "answer", text: "quoted", annotation: "review" }]);
+  for (const content of [request, annotated]) {
+    const html = render({
+      ...userMessage,
+      content,
+      attachments: [{
+        kind: "image",
+        name: "a.png",
+        ref: "attachments/abc",
+        mimeType: "image/png",
+        inlinePath: "@/scratch/pasted/a.png",
+      }],
+    });
+    const before = html.indexOf("before ");
+    const image = html.indexOf('data-image="a.png"');
+    const after = html.indexOf(" after");
+    assert.ok(before >= 0 && image > before && after > image, html);
+    assert.doesNotMatch(html, /scratch\/pasted\/a\.png|response-annotations|quoted/);
+    assert.equal(html.match(/data-image="a\.png"/g)?.length, 1);
+    const start = content.lastIndexOf("before ");
+    const imageStart = content.lastIndexOf("@/scratch/pasted/a.png");
+    const imageEnd = imageStart + "@/scratch/pasted/a.png".length;
+    assert.ok(html.includes(`data-source-start="${start}" data-source-end="${imageStart}"`), html);
+    assert.ok(html.includes(`data-image="a.png" data-source-start="${imageStart}" data-source-end="${imageEnd}"`), html);
+    assert.ok(html.includes(`data-source-start="${imageEnd}" data-source-end="${content.length}"`), html);
+  }
+});
+
+test("an image without a recorded position still follows the body", () => {
+  const html = render({
+    ...userMessage,
+    content: "look at this",
+    attachments: [
+      { kind: "image", name: "b.png", ref: "attachments/def", mimeType: "image/png" },
+    ],
+  });
+  const text = html.indexOf("look at this");
+  const image = html.indexOf('data-image="b.png"');
+  assert.ok(text >= 0 && image > text, html);
+  const media = { kind: "file", name: "voice.mp3", ref: "attachments/audio", mimeType: "audio/mpeg" };
+  const session = { kind: "session", name: "Context", ref: "context-session" };
+  assert.deepEqual(getExtraMessageAttachments("look at this", [media, session]), [media, session]);
 });

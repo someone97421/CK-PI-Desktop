@@ -62,6 +62,10 @@ import {
   type PluginNativeNotificationResult,
   type PluginNotificationPermission,
   type PluginNetEgressGrant,
+  type PluginProviderOAuthEvent,
+  type PluginProviderOAuthPrompt,
+  type PluginProviderOAuthRequest,
+  type PluginProviderContrib,
   type PluginServiceContrib,
   type PluginSettingContrib,
   type PluginSkillContrib,
@@ -332,6 +336,18 @@ export type PluginHostServices = {
     input: PluginNativeNotificationInput,
   ) => Promise<PluginNativeNotificationResult>;
   openExternal: (url: string) => Promise<void>;
+  /** Host-rendered prompts for an active provider OAuth login. */
+  providerOAuthPrompt?: (
+    pluginId: string,
+    loginId: string,
+    input: PluginProviderOAuthPrompt,
+  ) => Promise<string>;
+  /** Host-rendered, non-secret progress for an active provider OAuth login. */
+  providerOAuthNotify?: (
+    pluginId: string,
+    loginId: string,
+    event: PluginProviderOAuthEvent,
+  ) => Promise<void>;
   /** Open one already-authorized file with the OS-associated application. */
   openPath: (fullPath: string) => Promise<void>;
   /** Reveal one already-authorized file in the OS file manager. */
@@ -478,6 +494,16 @@ export type PluginHostServices = {
   };
 };
 
+export type PluginOAuthProvider = {
+  pluginId: string;
+  runtimeId: string;
+  contributionId: string;
+  providerId: string;
+  name: string;
+  loginLabel?: string;
+  isSubscription: boolean;
+};
+
 /** Host APIs a plugin process may reach. Anything else does not exist (spec 04 §2). */
 const HOST_API_ALLOWLIST = new Set([
   "app.getVersion",
@@ -560,6 +586,8 @@ const HOST_API_ALLOWLIST = new Set([
   "session.delete",
   "usage.listTurns",
   "agent.complete",
+  "providers.oauth.prompt",
+  "providers.oauth.notify",
   "keyboard.registerGlobalShortcut",
   "keyboard.unregisterGlobalShortcut",
   "keyboard.listGlobalShortcuts",
@@ -585,6 +613,8 @@ const PLUGIN_TOOL_TIMEOUT_MS = 110_000;
 export const PLUGIN_COMPLETE_TIMEOUT_MS = 90_000;
 /** Fixed panel operations are user-facing and must not hang the renderer. */
 const PLUGIN_PANEL_TIMEOUT_MS = 30_000;
+/** OAuth login may wait for browser or device approval by the user. */
+const PLUGIN_PROVIDER_OAUTH_TIMEOUT_MS = 5 * 60_000;
 const PANEL_SKILL_CHANNELS = new Set([
   "skill.list",
   "skill.read",
@@ -732,6 +762,7 @@ type PendingCall = {
 
 type LoadedPlugin = {
   manifest: PluginManifest;
+  runtimeId: string;
   path: string;
   development: boolean;
   permissions: Set<string>;
@@ -1644,6 +1675,94 @@ export class PluginRuntime {
     return this.loaded.get(pluginId);
   }
 
+  /** OAuth provider entries exposed to the Host's provider sign-in surface. */
+  listOAuthProviders(): PluginOAuthProvider[] {
+    const result: PluginOAuthProvider[] = [];
+    for (const loaded of this.loaded.values()) {
+      if (!loaded.permissions.has("provider.oauth")) continue;
+      const providers = (loaded.manifest.contributes?.providers ?? []) as PluginProviderContrib[];
+      for (const provider of providers) {
+        if (provider.authKind !== "oauth") continue;
+        result.push({
+          pluginId: loaded.manifest.id,
+          runtimeId: loaded.runtimeId,
+          contributionId: provider.id,
+          providerId: `plugin:${loaded.manifest.id}:${provider.id}`,
+          name: provider.name,
+          loginLabel: provider.oauth?.loginLabel,
+          isSubscription: provider.oauth?.isSubscription === true,
+        });
+      }
+    }
+    return result;
+  }
+
+  /** Invoke a declared provider's OAuth hook after rechecking its grant and owner. */
+  async invokeProviderOAuth(
+    pluginId: string,
+    contributionId: string,
+    request: PluginProviderOAuthRequest,
+    signal?: AbortSignal,
+    expectedRuntimeId?: string,
+  ): Promise<unknown> {
+    const loaded = this.loaded.get(pluginId);
+    if (!loaded || loaded.disposing) {
+      throw apiError("NOT_FOUND", `plugin not loaded: ${pluginId}`);
+    }
+    if (expectedRuntimeId && loaded.runtimeId !== expectedRuntimeId) {
+      throw apiError("PLUGIN_UNLOADED", "provider OAuth plugin runtime changed");
+    }
+    this.assertPermission(loaded, "provider.oauth");
+    const providers = (loaded.manifest.contributes?.providers ?? []) as PluginProviderContrib[];
+    const provider = providers.find((entry) => entry.id === contributionId);
+    if (!provider || provider.authKind !== "oauth") {
+      throw apiError("PERMISSION_DENIED", "provider OAuth contribution is not declared");
+    }
+    if (request.providerId !== contributionId) {
+      throw apiError("INVALID_ARGUMENT", "provider OAuth contribution does not match");
+    }
+    try {
+      const value = await this.sendToChild(
+        loaded,
+        { t: "call", method: "provider.oauth", payload: request },
+        PLUGIN_PROVIDER_OAUTH_TIMEOUT_MS,
+        signal,
+      );
+      if (this.loaded.get(pluginId) !== loaded || loaded.disposing) {
+        throw apiError("PLUGIN_UNLOADED", "provider OAuth plugin runtime changed");
+      }
+      let bytes = 0;
+      try {
+        bytes = Buffer.byteLength(JSON.stringify(value ?? null), "utf8");
+      } catch {
+        throw apiError("INVALID_ARGUMENT", "provider OAuth result must be JSON serializable");
+      }
+      if (bytes > 64 * 1024) {
+        throw apiError("LIMIT_EXCEEDED", "provider OAuth result exceeds 64 KiB");
+      }
+      this.services.audit?.({
+        pluginId,
+        api: "provider.oauth",
+        operation: request.operation,
+        providerId: contributionId,
+        ok: true,
+        ts: Date.now(),
+      });
+      return value;
+    } catch (error) {
+      this.services.audit?.({
+        pluginId,
+        api: "provider.oauth",
+        operation: request.operation,
+        providerId: contributionId,
+        ok: false,
+        errorCode: (error as { code?: string } | null | undefined)?.code ?? "PLUGIN_OAUTH_FAILED",
+        ts: Date.now(),
+      });
+      throw error;
+    }
+  }
+
   /**
    * Read a persisted declared variable without exposing the plugin's private
    * settings record. Host-rendered scenic destinations use this only after
@@ -1908,6 +2027,7 @@ export class PluginRuntime {
 
     const loaded: LoadedPlugin = {
       manifest,
+      runtimeId: randomUUID(),
       path: pluginPath,
       development: options.development ?? this.devPlugins.has(manifest.id),
       permissions: granted,
@@ -2390,9 +2510,11 @@ export class PluginRuntime {
     const id = `h${loaded.nextCallId++}`;
     return new Promise((resolvePromise, rejectPromise) => {
       const cancelChild = (error: Error) => {
-        if (typeof message.invocationId !== "string") return;
+        const cancellation = typeof message.invocationId === "string"
+          ? { invocationId: message.invocationId }
+          : { callId: id };
         try {
-          child.postMessage({ t: "cancel", invocationId: message.invocationId, reason: error.message });
+          child.postMessage({ t: "cancel", ...cancellation, reason: error.message });
         } catch {
           // The process may already be gone; the host still revokes the call.
         }
@@ -2873,6 +2995,38 @@ export class PluginRuntime {
           throw apiError("UNSUPPORTED", "host api not available: project.create");
         }
         return this.services.project.create(loaded.manifest.id, { path: path.trim() });
+      }
+      case "providers.oauth.prompt": {
+        this.assertPermission(loaded, "provider.oauth");
+        this.assertHasOAuthProvider(loaded);
+        const loginId = args[0];
+        const input = args[1];
+        if (typeof loginId !== "string" || !loginId || !input || typeof input !== "object") {
+          throw apiError("INVALID_ARGUMENT", "provider OAuth prompt requires a loginId and request");
+        }
+        if (!this.services.providerOAuthPrompt) {
+          throw apiError("UNSUPPORTED", "provider OAuth prompts are unavailable in this host");
+        }
+        this.services.audit?.({ pluginId, api, ok: true, ts: Date.now(), kind: "prompt" });
+        return this.services.providerOAuthPrompt(pluginId, loginId, input as PluginProviderOAuthPrompt);
+      }
+      case "providers.oauth.notify": {
+        this.assertPermission(loaded, "provider.oauth");
+        this.assertHasOAuthProvider(loaded);
+        const loginId = args[0];
+        const event = args[1];
+        if (typeof loginId !== "string" || !loginId || !event || typeof event !== "object") {
+          throw apiError("INVALID_ARGUMENT", "provider OAuth notification requires a loginId and event");
+        }
+        if (!this.services.providerOAuthNotify) {
+          throw apiError("UNSUPPORTED", "provider OAuth notifications are unavailable in this host");
+        }
+        const kind = (event as { kind?: unknown }).kind;
+        if (!new Set(["info", "authUrl", "deviceCode", "progress"]).has(String(kind))) {
+          throw apiError("INVALID_ARGUMENT", "unsupported provider OAuth event");
+        }
+        this.services.audit?.({ pluginId, api, ok: true, ts: Date.now(), kind });
+        return this.services.providerOAuthNotify(pluginId, loginId, event as PluginProviderOAuthEvent);
       }
       case "session.list": {
         this.assertPermission(loaded, "session.read.own");
@@ -4532,6 +4686,13 @@ export class PluginRuntime {
         ts: Date.now(),
       });
       throw apiError("PERMISSION_DENIED", `missing permission: ${perm}`);
+    }
+  }
+
+  private assertHasOAuthProvider(loaded: LoadedPlugin): void {
+    const providers = (loaded.manifest.contributes?.providers ?? []) as PluginProviderContrib[];
+    if (!providers.some((provider) => provider.authKind === "oauth")) {
+      throw apiError("PERMISSION_DENIED", "provider OAuth requires a declared OAuth provider");
     }
   }
 

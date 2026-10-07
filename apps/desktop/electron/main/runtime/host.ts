@@ -7,6 +7,7 @@ import type { PluginRuntime } from "../plugin-runtime";
 import type { UserMcpRuntime } from "../user-mcp";
 import type { RuntimeState } from "./context";
 import type { FinishTurn } from "./plans";
+import { resolveSessionWorkspace } from "./session-workspace";
 
 export type HostRuntimeDependencies = {
   runtimeState: RuntimeState;
@@ -41,6 +42,7 @@ export type HostRuntimeDependencies = {
   importLegacyScheduled: () => Promise<unknown>;
   superviseRestart: (kind: "host" | "sidecar") => Promise<void>;
   isQuitting: () => boolean;
+  ensureSystemProxyRelay: () => Promise<string>;
 };
 
 export function createHostRuntime({
@@ -66,6 +68,7 @@ export function createHostRuntime({
   importLegacyScheduled,
   superviseRestart,
   isQuitting,
+  ensureSystemProxyRelay,
 }: HostRuntimeDependencies): {
   wireHost: (host: HostProcess) => void;
   startHost: () => Promise<void>;
@@ -163,7 +166,13 @@ export function createHostRuntime({
         let payload: Record<string, unknown>;
         if (q.toolName.startsWith("mcp_")) {
           try {
-            const result = await userMcp.callTool(q.toolName, q.args, projectPath, q.sessionId);
+            const workingDirectory = projectPath ?? (q.sessionId
+              ? (await resolveSessionWorkspace(h, q.sessionId)).path
+              : null);
+            if (q.sessionId && q.turnId && !isTurnDispatchable(q.sessionId, q.turnId)) {
+              throw Object.assign(new Error("The target turn has ended"), { code: "TOOL_ABORTED" });
+            }
+            const result = await userMcp.callTool(q.toolName, q.args, projectPath, q.sessionId, workingDirectory);
             payload = { executionId: q.executionId, ok: true, content: result ?? null };
           } catch (e) {
             payload = {
@@ -362,11 +371,15 @@ export function createHostRuntime({
   const startHost = async (): Promise<void> => {
 
   assertLinuxGlibcSupported();
+  const systemProxyRelayUrl = await ensureSystemProxyRelay();
   const h = new HostProcess(dataDir, (text) => logger.child("host", text));
   wireHost(h);
   runtimeState.host = h;
   try {
     await h.handshake();
+    await h.call("network.configureSystemProxyRelay", {
+      url: systemProxyRelayUrl,
+    });
     logger.app("runtime", "info", "host-core handshake ok", {
       data: { generation: h.generation },
     });

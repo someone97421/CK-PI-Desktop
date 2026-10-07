@@ -8,6 +8,7 @@
  */
 import { net, session } from "electron";
 import type { SkillCatalogEntry, SkillMarketSource } from "@pi-desktop/shared";
+import { fetchPinnedDirect } from "./public-https-direct";
 import { createPublicHttpsClient } from "./public-https-fetch";
 import {
   allowInsecureUserEndpointsEnabled,
@@ -31,6 +32,11 @@ export { guessSkillCategories } from "./skill-market-scan";
  */
 const client = createPublicHttpsClient({
   fetchImpl: (url, init) => net.fetch(url, init),
+  // A mixed DNS answer may include a public address (or an opted-in
+  // benchmark fake-IP) alongside a synthetic ULA IPv6 address. When the route
+  // is direct, pinning the selected acceptable address keeps net.fetch from
+  // choosing the rejected ULA result itself.
+  pinnedFetchImpl: (url, init, address) => fetchPinnedDirect(url, init, address),
   routeImpl: (url) => session.defaultSession.resolveProxy(url),
   // Fake-IP answers come from the network policy, not from the proxy switch:
   // the relaxed mode is what tolerates a transparent router's placeholder

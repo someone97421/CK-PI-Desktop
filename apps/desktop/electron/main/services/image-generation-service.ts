@@ -5,7 +5,9 @@ import { createImageBinding, generateImageBatch, type ImageOperationMetadata } f
 import type { ImageApi, ImageModel } from "@earendil-works/pi-ai";
 import type { VendorOAuth } from "../oauth";
 import {
+  CODEX_IMAGE_VENDOR_KEY,
   imageGenerationPrompts,
+  imageModelOfferedByProvider,
   parseImageGenerationBinding,
   type AppSettings,
   type ProviderPublic,
@@ -48,7 +50,7 @@ export function createImageGenerationTool(options: {
     if (
       !provider?.enabled ||
       !provider.baseUrl ||
-      !provider.models.some((model) => model.id === binding.modelId)
+      !imageModelOfferedByProvider(provider, binding.modelId)
     ) {
       return failure(
         "IMAGE_MODEL_UNAVAILABLE",
@@ -61,12 +63,18 @@ export function createImageGenerationTool(options: {
     if (provider.authKind !== "none" && provider.authKind !== "oauth" && !value)
       return failure("IMAGE_AUTH_FAILED", "The image provider needs an API key.");
     const downloadOptions = { allowFakeIp: options.allowFakeIp?.() === true };
+    // A signed-in Codex account serves images on the vendor's Codex routes and
+    // identifies the calling client with `originator`, the header its chat
+    // traffic sends. A configured header still wins.
+    const codexImages = provider.authKind === "oauth" &&
+      provider.vendorKey === CODEX_IMAGE_VENDOR_KEY;
+    const headers = codexImages ? { originator: "pi", ...provider.headers } : provider.headers;
     let imageBinding;
     try {
       imageBinding = createImageBinding({
         nativeModel: await options.resolveImageModel?.(provider, binding.modelId),
         providerId: provider.id, vendorKey: provider.vendorKey, authKind: provider.authKind,
-        baseUrl: provider.baseUrl, modelId: binding.modelId, apiKey: value, headers: provider.headers,
+        baseUrl: provider.baseUrl, modelId: binding.modelId, apiKey: value, headers,
         ...(provider.authKind === "oauth" && options.resolveAuth
           ? { resolveAuth: () => options.resolveAuth!(provider.id) } : {}),
       }, downloadOptions);

@@ -418,3 +418,44 @@ test("a project folder never loses to the scratch store", async () => {
   assert.equal(match?.root, "workspace");
   assert.equal(match?.projectRoot?.path, sibling);
 });
+
+/**
+ * A generated image belongs to the session that made it, but the chat that
+ * shows it belongs to whatever session the user is reading. The read guards
+ * (`fsRead`, `fsOpen`, the image reader) already accept the whole scratch
+ * store, so completion must not report a restriction for a file the app can
+ * open — while a shorthand still never crosses into another session's files.
+ */
+test("an absolute path in the wider store opens though another session wrote it", async () => {
+  const store = tempTree("scratch-store", []);
+  const other = join(store, "session-b");
+  mkdirSync(other, { recursive: true });
+  const image = join(other, "generated-1.png");
+  writeFileSync(image, "png\n");
+  const scratch = join(store, "session-a");
+  mkdirSync(scratch, { recursive: true });
+  const containment = [{ kind: "scratch", path: store }];
+
+  assert.equal(await isChatRefOutsideRoots(image, roots({ scratch, containment })), false);
+  const match = await resolve(image, { scratch, containment });
+  assert.equal(match?.root, "scratch");
+  assert.equal(match?.matchedBy, "exact-absolute");
+  assert.equal(match?.absolutePath, image);
+});
+
+test("a shorthand still searches the session's own store and not the wider one", async () => {
+  const store = tempTree("scratch-store-shorthand", ["session-b/generated-1.png"]);
+  const scratch = join(store, "session-a");
+  mkdirSync(scratch, { recursive: true });
+  const containment = [{ kind: "scratch", path: store }];
+  assert.equal(await resolve("generated-1.png", { scratch, containment }), null);
+});
+
+test("an absolute path outside every root is still reported as restricted", async () => {
+  const store = tempTree("scratch-store-outside", []);
+  const outside = tempTree("outside-store", ["generated-1.png"]);
+  const image = join(outside, "generated-1.png");
+  const options = roots({ scratch: null, containment: [{ kind: "scratch", path: store }] });
+  assert.equal(await isChatRefOutsideRoots(image, options), true);
+  assert.equal(await resolveChatFileRef(image, options), null);
+});

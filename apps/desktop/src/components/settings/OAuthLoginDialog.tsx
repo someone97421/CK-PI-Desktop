@@ -89,7 +89,11 @@ export function OAuthLoginDialog({
           break;
         case "error":
           setPrompt(null);
-          setError(event.message);
+          setError(
+            event.code === "PLUGIN_OAUTH_FAILED"
+              ? t("settings.pluginOauthFailed")
+              : event.message,
+          );
           break;
         case "cancelled":
           if (settled.current) break;
@@ -98,7 +102,7 @@ export function OAuthLoginDialog({
           break;
       }
     });
-  }, [session]);
+  }, [session, t]);
 
   const cancel = useCallback(async () => {
     if (closing) return;

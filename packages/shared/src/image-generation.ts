@@ -135,3 +135,78 @@ export function imageGenerationItems(value: unknown): ImageGenerationItem[] {
 export function imageGenerationPrompts(value: unknown): string[] {
   return imageGenerationItems(value).map((item) => item.prompt);
 }
+
+/**
+ * Vendors whose signed-in subscription account serves image models on the
+ * vendor backend rather than through `provider.models`.
+ *
+ * A ChatGPT (Codex) account answers image generation and editing on the Codex
+ * routes — `{baseUrl}/codex/images/generations` / `images/edits` — with the same
+ * OAuth access token its chat traffic uses, so it needs no API key. Those image
+ * models never appear in the vendor's chat model list, so the offer is defined
+ * here instead of being smuggled into `provider.models`, where a chat picker
+ * could then select an id the chat routes do not serve.
+ *
+ * The ids are ordered newest first and every one is verified against the
+ * backend, so a user can fall back when a rollout does not reach their account.
+ */
+export const CODEX_IMAGE_VENDOR_KEY = "openai-codex";
+export const CODEX_IMAGE_MODEL_IDS = ["gpt-image-2.5", "gpt-image-2"];
+
+/** The provider fields the image rules read; anything else is ignored. */
+export type ImageProviderFacts = {
+  id?: string;
+  vendorKey?: string;
+  authKind?: string;
+  /** True only once the vendor-account credential is actually stored. */
+  hasOauth?: boolean;
+  models?: readonly { id: string }[];
+};
+
+/**
+ * Image model ids this provider offers beyond the models it configures.
+ *
+ * A vendor account must be signed in: an OAuth row without a stored credential
+ * fails at send time, so it must not offer a choice either.
+ */
+export function vendorAccountImageModelIds(provider: ImageProviderFacts): string[] {
+  return provider.authKind === "oauth" &&
+    provider.hasOauth === true &&
+    provider.vendorKey === CODEX_IMAGE_VENDOR_KEY
+    ? [...CODEX_IMAGE_MODEL_IDS]
+    : [];
+}
+
+/**
+ * Whether the provider serves `modelId` for image generation.
+ *
+ * Configured models match exactly, mirroring the wire ids. A vendor account is
+ * the exception in both directions: it offers the image models this module
+ * knows its backend answers with, and it never runs one of its *chat* models —
+ * only the vendors here have an image operation behind their OAuth token, and
+ * inventing an entitlement for the rest would fail at send time.
+ */
+export function imageModelOfferedByProvider(
+  provider: ImageProviderFacts,
+  modelId: string,
+): boolean {
+  if (!modelId) return false;
+  if (vendorAccountImageModelIds(provider).includes(modelId)) return true;
+  if (provider.authKind === "oauth") return false;
+  return (provider.models ?? []).some((model) => model.id === modelId);
+}
+
+/** Vendor-account image models as picker candidates, one row per account. */
+export function vendorAccountImageCandidates(
+  providers: readonly ImageProviderFacts[],
+): ImageGenerationBinding[] {
+  const candidates: ImageGenerationBinding[] = [];
+  for (const provider of providers) {
+    const providerId = provider.id;
+    if (!providerId) continue;
+    for (const modelId of vendorAccountImageModelIds(provider)) {
+      candidates.push({ providerId, modelId });
+    }
+  }
+  return candidates;
+}

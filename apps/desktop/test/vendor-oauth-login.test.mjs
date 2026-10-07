@@ -189,6 +189,7 @@ function harness(options = {}) {
       return options.createModels ? options.createModels(store) : fakeModels(store, options);
     },
     modelConfigFor: options.modelConfigFor,
+    getPluginOAuthBridge: options.getPluginOAuthBridge,
     onAccountModels: options.onAccountModels,
     onAccountRemoved: options.onAccountRemoved,
     log: options.log,
@@ -306,6 +307,209 @@ test("a completed login stores the credential and configures the row", async () 
       connected: true,
     },
   ]);
+});
+
+test("plugin OAuth uses host login slots, encrypted credentials, refresh, and sign-out", async () => {
+  const provider = {
+    pluginId: "test.clinepress",
+    runtimeId: "runtime-1",
+    contributionId: "clinepress",
+    providerId: "plugin:test.clinepress:clinepress",
+    name: "ClinePress",
+    loginLabel: "Sign in with ClinePress",
+    isSubscription: false,
+  };
+  const invoked = [];
+  let oauth;
+  const bridge = {
+    listOAuthProviders: () => [provider],
+    invokeProviderOAuth: async (pluginId, contributionId, request, signal, expectedRuntimeId) => {
+      invoked.push({ pluginId, contributionId, request, signal, expectedRuntimeId });
+      assert.equal(pluginId, provider.pluginId);
+      assert.equal(contributionId, provider.contributionId);
+      assert.equal(expectedRuntimeId, provider.runtimeId);
+      if (request.operation === "login") {
+        await oauth.notifyPluginOAuth(pluginId, request.loginId, {
+          kind: "deviceCode",
+          userCode: "ABCD-EFGH",
+          verificationUri: "https://auth.example.com/device",
+        });
+        const code = await oauth.promptPluginOAuth(pluginId, request.loginId, {
+          type: "secret",
+          message: "Enter the device code",
+        });
+        return {
+          accessToken: `access-${code}`,
+          refreshToken: "refresh-plugin-token",
+          expiresAt: Date.now() + 60_000,
+          accountLabel: "user@example.com",
+        };
+      }
+      assert.equal(request.operation, "refresh");
+      assert.equal(request.credential.refreshToken, "refresh-plugin-token");
+      assert.equal(signal.aborted, false);
+      return {
+        accessToken: "refreshed-plugin-access",
+        expiresAt: Date.now() + 3_600_000,
+      };
+    },
+  };
+  const removed = [];
+  const h = harness({
+    getPluginOAuthBridge: () => bridge,
+    onAccountRemoved: (providerId) => removed.push(providerId),
+  });
+  oauth = h.oauth;
+  h.host.providers.set(provider.providerId, {
+    id: provider.providerId,
+    name: provider.name,
+    vendorKey: "custom",
+    ownerPluginId: provider.pluginId,
+    authKind: "oauth",
+    baseUrl: "https://api.example.com/v1",
+    apiStyle: "chat_completions",
+    models: [{ id: "cline-model", contextWindow: 128_000, maxTokens: 8_192, thinkingLevels: [] }],
+    enabled: true,
+  });
+
+  const unconnected = await oauth.listVendors();
+  const vendor = unconnected.find((entry) => entry.vendorId === provider.providerId);
+  assert.equal(vendor.name, "ClinePress");
+  assert.equal(vendor.accounts[0].connected, false);
+
+  const { loginId } = await oauth.start(provider.providerId);
+  const device = await waitFor(h.events, "deviceCode");
+  assert.equal(device.userCode, "ABCD-EFGH");
+  const prompt = await waitFor(h.events, "prompt");
+  assert.equal(prompt.request.message, "Enter the device code");
+  assert.equal(oauth.respond({ loginId, promptId: prompt.request.promptId, value: "123456" }), true);
+  const done = await waitFor(h.events, "done");
+  assert.equal(done.accountLabel, "user@example.com");
+
+  const secretRef = secretRefForProviderOauth(provider.providerId);
+  const stored = JSON.parse(h.host.secrets.get(secretRef));
+  assert.equal(stored.accessToken, "access-123456");
+  assert.equal(stored.refreshToken, "refresh-plugin-token");
+  assert.equal(stored.accountLabel, "user@example.com");
+  assert.equal(await oauth.resolveAuth(provider.providerId).then((auth) => auth.apiKey), "access-123456");
+  assert.deepEqual(await oauth.listModels(provider.providerId), [{
+    modelId: "cline-model",
+    apiStyle: "chat_completions",
+    baseUrl: "https://api.example.com/v1",
+  }]);
+  const binding = await oauth.bindingFor(provider.providerId, "cline-model");
+  assert.equal(binding.baseUrl, "https://api.example.com/v1");
+  assert.equal(binding.modelConfig.name, "cline-model");
+
+  stored.expiresAt = Date.now() - 1;
+  h.host.secrets.set(secretRef, JSON.stringify(stored));
+  assert.deepEqual(await oauth.resolveAuth(provider.providerId), {
+    apiKey: "refreshed-plugin-access",
+  });
+  assert.equal(invoked.filter((entry) => entry.request.operation === "refresh").length, 1);
+  assert.equal(
+    JSON.parse(h.host.secrets.get(secretRef)).refreshToken,
+    "refresh-plugin-token",
+    "an omitted refresh token keeps the current refresh token",
+  );
+
+  const connected = (await oauth.listVendors()).find((entry) => entry.vendorId === provider.providerId);
+  assert.equal(connected.accounts[0].connected, true);
+  assert.equal(connected.accounts[0].accountLabel, "user@example.com");
+  await oauth.deleteAccount(provider.providerId);
+  assert.equal(h.host.secrets.has(secretRef), false);
+  assert.equal(h.host.providers.has(provider.providerId), true, "sign-out keeps the manifest-owned provider row");
+  assert.deepEqual(removed, [provider.providerId]);
+});
+
+test("cancelling plugin OAuth aborts its callback and rejects an active host prompt", async () => {
+  const provider = {
+    pluginId: "test.cancel-oauth",
+    runtimeId: "runtime-1",
+    contributionId: "cancel",
+    providerId: "plugin:test.cancel-oauth:cancel",
+    name: "Cancel OAuth",
+    isSubscription: false,
+  };
+  let oauth;
+  let callbackSignal;
+  const bridge = {
+    listOAuthProviders: () => [provider],
+    invokeProviderOAuth: async (pluginId, contributionId, request, signal) => {
+      callbackSignal = signal;
+      return oauth.promptPluginOAuth(pluginId, request.loginId, {
+        type: "manual_code",
+        message: "Paste the callback code",
+      });
+    },
+  };
+  const h = harness({ getPluginOAuthBridge: () => bridge });
+  oauth = h.oauth;
+  h.host.providers.set(provider.providerId, {
+    id: provider.providerId,
+    name: provider.name,
+    ownerPluginId: provider.pluginId,
+    authKind: "oauth",
+    baseUrl: "https://api.example.com/v1",
+    enabled: true,
+  });
+
+  const { loginId } = await oauth.start(provider.providerId);
+  await waitFor(h.events, "prompt");
+  assert.equal(oauth.cancel(loginId), true);
+  await waitFor(h.events, "cancelled");
+  assert.equal(callbackSignal.aborted, true);
+  assert.equal(h.host.secrets.has(secretRefForProviderOauth(provider.providerId)), false);
+});
+
+test("signing out aborts an in-flight plugin token refresh before clearing its secret", async () => {
+  const provider = {
+    pluginId: "test.refresh-cancel",
+    runtimeId: "runtime-1",
+    contributionId: "refresh-cancel",
+    providerId: "plugin:test.refresh-cancel:refresh-cancel",
+    name: "Refresh cancellation",
+    isSubscription: false,
+  };
+  let refreshSignal;
+  let markRefreshStarted;
+  const refreshStarted = new Promise((resolve) => {
+    markRefreshStarted = resolve;
+  });
+  const bridge = {
+    listOAuthProviders: () => [provider],
+    invokeProviderOAuth: async (_pluginId, _contributionId, request, signal) => {
+      assert.equal(request.operation, "refresh");
+      refreshSignal = signal;
+      markRefreshStarted();
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  };
+  const h = harness({ getPluginOAuthBridge: () => bridge });
+  h.host.providers.set(provider.providerId, {
+    id: provider.providerId,
+    name: provider.name,
+    ownerPluginId: provider.pluginId,
+    authKind: "oauth",
+    baseUrl: "https://api.example.com/v1",
+    enabled: true,
+  });
+  const secretRef = secretRefForProviderOauth(provider.providerId);
+  h.host.secrets.set(secretRef, JSON.stringify({
+    accessToken: "expired-access",
+    refreshToken: "refresh-token",
+    expiresAt: Date.now() - 1,
+  }));
+
+  const auth = h.oauth.resolveAuth(provider.providerId);
+  await refreshStarted;
+  await h.oauth.deleteAccount(provider.providerId);
+  await assert.rejects(auth, /provider sign-out requested/);
+  assert.equal(refreshSignal.aborted, true);
+  assert.equal(h.host.secrets.has(secretRef), false);
+  assert.equal(h.host.providers.has(provider.providerId), true);
 });
 
 test("the pi-ai 1.0 Anthropic copy-code flow uses the select and manual-code bridge", async () => {

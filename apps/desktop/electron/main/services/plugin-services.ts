@@ -242,6 +242,10 @@ export function createPluginServices({
   const plugins: PluginRuntime = new PluginRuntime({
     pluginShortcuts,
     pluginSockets,
+    providerOAuthPrompt: (pluginId, loginId, input) =>
+      vendorOAuth.promptPluginOAuth(pluginId, loginId, input),
+    providerOAuthNotify: (pluginId, loginId, event) =>
+      vendorOAuth.notifyPluginOAuth(pluginId, loginId, event),
     getWorkspacePath: () => {
       // Filled after host boots; temporary stub until services rebinding.
       return null;

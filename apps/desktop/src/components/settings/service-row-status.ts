@@ -81,7 +81,7 @@ export function serviceRowBadges(
   if (!provider.enabled) {
     badges.push({ key: "disabled", label: t("settings.providerDisabledBadge"), tone: "neutral" });
   }
-  if (kind === "plugin") {
+  if (kind === "plugin" || provider.ownerPluginId) {
     badges.push({
       key: "plugin",
       label: t("settings.pluginProviderBadge"),

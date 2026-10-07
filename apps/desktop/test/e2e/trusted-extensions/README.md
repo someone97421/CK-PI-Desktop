@@ -34,12 +34,18 @@ What the automated run proves:
   `sendUserMessage` through the Host-owned queue (E2E-243);
 - a throwing module and unsupported terminal-UI imports degrading to
   diagnostics while the remaining extensions continue to run (E2E-244).
+- plugin-declared OAuth permission projection, the real Settings sign-in picker
+  and Host-rendered device-code/secret prompt, provider-scoped refresh, model
+  request auth, cancellation, and sign-out against a local fixture (E2E-PLUGIN
+  declared-provider scenario).
 
 The native picker/import journey and explicit enable/disable UI flow in
 E2E-241 are not faked by this headless driver. The 30-second stalled-handler
 fixture in E2E-244 and the packaged sidecar/jiti journey in E2E-245 remain
 outside this command; E2E-245 has contract coverage in
 `packages/agent-runtime/src/extensions/bundle.test.ts`.
+The OAuth journey uses synthetic credentials and a loopback provider; it does
+not contact a real identity provider or verify a live account.
 
 For manual inspection, the lower-level steps remain available:
 

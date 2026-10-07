@@ -32,12 +32,19 @@ import type {
   MutableModels,
   Provider,
 } from "@earendil-works/pi-ai";
+import type {
+  PluginProviderOAuthCredential,
+  PluginProviderOAuthEvent,
+  PluginProviderOAuthPrompt,
+  PluginProviderOAuthRequest,
+} from "@pi-desktop/plugin-sdk";
 import { registerBunOAuthFlows } from "@earendil-works/pi-ai/bun-oauth";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   capabilitiesFromModelConfig,
   genericModelConfig,
   installProviderHeadersFetch,
+  modelConfigWithBinding,
   runWithProviderHeaders,
   type ModelConfig,
   type VendorModelBinding,
@@ -135,13 +142,39 @@ export type HostCall = <T = unknown>(
 /** The slice of a provider row this module reads; the rest stays in index.ts. */
 export type OAuthProviderRow = {
   id: string;
+  name?: string;
   vendorKey?: string;
+  ownerPluginId?: string;
   authKind?: string;
   hasOauth?: boolean;
   oauthAccountLabel?: string;
   headers?: Record<string, string>;
   baseUrl?: string;
+  apiStyle?: string;
+  models?: ModelBinding[];
+  enabled?: boolean;
   defaultModelId?: string;
+};
+
+export type PluginOAuthProvider = {
+  pluginId: string;
+  runtimeId: string;
+  contributionId: string;
+  providerId: string;
+  name: string;
+  loginLabel?: string;
+  isSubscription: boolean;
+};
+
+export type PluginOAuthBridge = {
+  listOAuthProviders: () => PluginOAuthProvider[];
+  invokeProviderOAuth: (
+    pluginId: string,
+    contributionId: string,
+    request: PluginProviderOAuthRequest,
+    signal?: AbortSignal,
+    expectedRuntimeId?: string,
+  ) => Promise<unknown>;
 };
 
 /** A model ID offered by a signed-in account and its required wire identity. */
@@ -158,6 +191,8 @@ export type VendorOAuthDeps = {
   emit: (event: OAuthLoginEvent) => void;
   /** Open the vendor's consent page; rejects when no browser could be launched. */
   openExternal: (url: string) => Promise<void>;
+  /** Loaded plugin OAuth providers and their isolated callback hooks. */
+  getPluginOAuthBridge?: () => PluginOAuthBridge | undefined;
   log?: (
     level: "info" | "warn" | "error",
     message: string,
@@ -218,6 +253,20 @@ type LoginSession = {
   finished?: Promise<void>;
 };
 
+type PluginLoginSession = {
+  loginId: string;
+  vendorId: string;
+  providerId: string;
+  pluginId: string;
+  contributionId: string;
+  runtimeId: string;
+  prompts: Map<string, PendingPrompt>;
+  controller: AbortController;
+  tail: Promise<void>;
+  cancelled: boolean;
+  finished?: Promise<void>;
+};
+
 function promptRequest(
   promptId: string,
   prompt: AuthPrompt,
@@ -238,9 +287,100 @@ function promptRequest(
   };
 }
 
+function clippedText(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function isHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 4_096) return false;
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function normalizePluginCredential(raw: unknown): PluginProviderOAuthCredential {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("plugin OAuth credential must be an object");
+  }
+  const value = raw as Record<string, unknown>;
+  const accessToken = value.accessToken;
+  if (
+    typeof accessToken !== "string" ||
+    !accessToken.trim() ||
+    Buffer.byteLength(accessToken, "utf8") > 16 * 1024
+  ) {
+    throw new Error("plugin OAuth credential has an invalid accessToken");
+  }
+  const result: PluginProviderOAuthCredential = { accessToken };
+  if (value.refreshToken !== undefined) {
+    if (typeof value.refreshToken !== "string" || Buffer.byteLength(value.refreshToken, "utf8") > 16 * 1024) {
+      throw new Error("plugin OAuth credential has an invalid refreshToken");
+    }
+    result.refreshToken = value.refreshToken;
+  }
+  if (value.expiresAt !== undefined) {
+    if (
+      typeof value.expiresAt !== "number" ||
+      !Number.isSafeInteger(value.expiresAt) ||
+      value.expiresAt <= 0
+    ) {
+      throw new Error("plugin OAuth credential has an invalid expiresAt");
+    }
+    result.expiresAt = value.expiresAt;
+  }
+  if (value.accountLabel !== undefined) {
+    if (typeof value.accountLabel !== "string" || value.accountLabel.length > 256) {
+      throw new Error("plugin OAuth credential has an invalid accountLabel");
+    }
+    result.accountLabel = value.accountLabel.trim();
+  }
+  if (value.headers !== undefined) {
+    if (!value.headers || typeof value.headers !== "object" || Array.isArray(value.headers)) {
+      throw new Error("plugin OAuth credential headers must be an object");
+    }
+    const entries = Object.entries(value.headers as Record<string, unknown>);
+    if (entries.length > 32) throw new Error("plugin OAuth credential has too many headers");
+    const headers: Record<string, string> = {};
+    const seenHeaderNames = new Set<string>();
+    const blocked = new Set([
+      "authorization",
+      "proxy-authorization",
+      "host",
+      "cookie",
+      "set-cookie",
+      "content-length",
+      "transfer-encoding",
+      "connection",
+      "proxy-connection",
+    ]);
+    for (const [name, headerValue] of entries) {
+      const normalizedName = name.toLowerCase();
+      if (
+        !/^[A-Za-z0-9-]{1,128}$/.test(name) ||
+        blocked.has(normalizedName) ||
+        seenHeaderNames.has(normalizedName) ||
+        typeof headerValue !== "string" ||
+        Buffer.byteLength(headerValue, "utf8") > 4_096 ||
+        /[\r\n\0]/.test(headerValue)
+      ) {
+        throw new Error("plugin OAuth credential has an invalid header");
+      }
+      seenHeaderNames.add(normalizedName);
+      headers[name] = headerValue;
+    }
+    result.headers = headers;
+  }
+  return result;
+}
+
 export class VendorOAuth {
   private readonly deps: VendorOAuthDeps;
   private readonly logins = new Map<string, LoginSession>();
+  private readonly pluginLogins = new Map<string, PluginLoginSession>();
+  private readonly pluginRefreshControllers = new Map<string, AbortController>();
   /** One pi-ai collection and credential store per local OAuth account row. */
   private readonly accountModels = new Map<string, AccountModels>();
   /** Successful and failed account model lists, so launch does not refetch per model. */
@@ -262,7 +402,7 @@ export class VendorOAuth {
   async listVendors(): Promise<OAuthVendor[]> {
     const models = await this.ensureCatalogModels();
     const rows = await this.rows();
-    return models
+    const vendors = models
       .getProviders()
       .filter((provider) => provider.auth.oauth)
       .map((provider) => {
@@ -271,6 +411,7 @@ export class VendorOAuth {
           .filter(
             (candidate) =>
               candidate.authKind === OAUTH_AUTH_KIND &&
+              !candidate.ownerPluginId &&
               candidate.vendorKey === provider.id,
           )
           .map((row) => ({
@@ -286,6 +427,30 @@ export class VendorOAuth {
           accounts,
         };
       });
+    const pluginBridge = this.deps.getPluginOAuthBridge?.();
+    if (!pluginBridge) return vendors;
+    for (const provider of pluginBridge.listOAuthProviders()) {
+      const row = rows.find(
+        (candidate) =>
+          candidate.id === provider.providerId &&
+          candidate.ownerPluginId === provider.pluginId &&
+          candidate.authKind === OAUTH_AUTH_KIND,
+      );
+      if (!row) continue;
+      const credential = row.hasOauth ? await this.readPluginCredential(row.id) : undefined;
+      vendors.push({
+        vendorId: row.id,
+        name: provider.name,
+        loginLabel: provider.loginLabel,
+        isSubscription: provider.isSubscription,
+        accounts: [{
+          providerId: row.id,
+          accountLabel: credential?.accountLabel || undefined,
+          connected: row.hasOauth === true,
+        }],
+      });
+    }
+    return vendors;
   }
 
   /**
@@ -294,6 +459,20 @@ export class VendorOAuth {
    * accounts instead of silently replacing the first one.
    */
   async start(vendorId: string): Promise<OAuthStartResult> {
+    const pluginProvider = this.deps
+      .getPluginOAuthBridge?.()
+      ?.listOAuthProviders()
+      .find((provider) => provider.providerId === vendorId);
+    if (pluginProvider) {
+      const row = (await this.rows()).find(
+        (candidate) =>
+          candidate.id === vendorId &&
+          candidate.ownerPluginId === pluginProvider.pluginId &&
+          candidate.authKind === OAUTH_AUTH_KIND,
+      );
+      if (!row) throw new Error(`unknown plugin OAuth provider: ${vendorId}`);
+      return this.startPluginLogin(pluginProvider);
+    }
     const models = await this.ensureCatalogModels();
     const provider = models.getProvider(vendorId);
     if (!provider?.auth.oauth) {
@@ -335,14 +514,38 @@ export class VendorOAuth {
     return { loginId: session.loginId };
   }
 
+  private startPluginLogin(provider: PluginOAuthProvider): OAuthStartResult {
+    const superseded = [...this.pluginLogins.values()].filter(
+      (running) => running.providerId === provider.providerId,
+    );
+    for (const running of superseded) this.cancelPluginLogin(running);
+    const session: PluginLoginSession = {
+      loginId: this.nextId(),
+      vendorId: provider.providerId,
+      providerId: provider.providerId,
+      pluginId: provider.pluginId,
+      contributionId: provider.contributionId,
+      runtimeId: provider.runtimeId,
+      prompts: new Map(),
+      controller: new AbortController(),
+      tail: Promise.resolve(),
+      cancelled: false,
+    };
+    this.pluginLogins.set(session.loginId, session);
+    session.finished = this.runPluginLogin(session);
+    return { loginId: session.loginId };
+  }
+
   /** Answer a prompt. An absent value cancels the prompt and the login. */
   respond(input: OAuthRespondInput): boolean {
     const session = this.logins.get(input.loginId);
-    const pending = session?.prompts.get(input.promptId);
-    if (!session || !pending) return false;
+    const pluginSession = this.pluginLogins.get(input.loginId);
+    const pending = session?.prompts.get(input.promptId) ?? pluginSession?.prompts.get(input.promptId);
+    if ((!session && !pluginSession) || !pending) return false;
     if (input.value === undefined) {
       pending.reject(new Error("login cancelled"));
-      session.controller.abort();
+      if (session) session.controller.abort();
+      if (pluginSession) this.cancelPluginLogin(pluginSession);
     } else {
       pending.resolve(input.value);
     }
@@ -352,9 +555,133 @@ export class VendorOAuth {
   /** Abort a login: stops the local callback server or device-code polling. */
   cancel(loginId: string): boolean {
     const session = this.logins.get(loginId);
-    if (!session) return false;
-    session.controller.abort();
+    if (session) {
+      session.controller.abort();
+      return true;
+    }
+    const pluginSession = this.pluginLogins.get(loginId);
+    if (!pluginSession) return false;
+    this.cancelPluginLogin(pluginSession);
     return true;
+  }
+
+  /** Plugin callbacks can ask the same Host-rendered question as native OAuth flows. */
+  promptPluginOAuth(
+    pluginId: string,
+    loginId: string,
+    input: PluginProviderOAuthPrompt,
+  ): Promise<string> {
+    const session = this.pluginLogins.get(loginId);
+    if (!session || session.pluginId !== pluginId || session.cancelled) {
+      return Promise.reject(new Error("provider OAuth login is no longer active"));
+    }
+    if (
+      !input ||
+      typeof input !== "object" ||
+      !["text", "secret", "select", "manual_code"].includes(input.type) ||
+      typeof input.message !== "string" ||
+      !input.message.trim() ||
+      input.message.length > 2_000
+    ) {
+      return Promise.reject(new Error("provider OAuth prompt is invalid"));
+    }
+    if (input.type === "select" && (!Array.isArray(input.options) || input.options.length === 0 || input.options.length > 32)) {
+      return Promise.reject(new Error("provider OAuth select prompt requires 1 to 32 options"));
+    }
+    const options = input.type === "select"
+      ? (input.options ?? []).flatMap((option) =>
+          option && typeof option.id === "string" && typeof option.label === "string"
+            ? [{
+                id: option.id.slice(0, 128),
+                label: option.label.slice(0, 256),
+                ...(typeof option.description === "string"
+                  ? { description: option.description.slice(0, 512) }
+                  : {}),
+              }]
+            : [],
+        )
+      : undefined;
+    if (input.type === "select" && options?.length === 0) {
+      return Promise.reject(new Error("provider OAuth select prompt options are invalid"));
+    }
+    const promptId = this.nextId();
+    return new Promise((resolve, reject) => {
+      const settle = () => session.prompts.delete(promptId);
+      session.prompts.set(promptId, {
+        resolve: (value) => { settle(); resolve(value); },
+        reject: (error) => { settle(); reject(error); },
+      });
+      const request: OAuthPromptRequest = {
+        promptId,
+        type: input.type,
+        message: input.message.trim(),
+        ...(typeof input.placeholder === "string" && input.placeholder.length <= 512
+          ? { placeholder: input.placeholder }
+          : {}),
+        ...(options ? { options } : {}),
+      };
+      this.pushPluginEvent(session, { kind: "prompt", request });
+    });
+  }
+
+  /** Relay only bounded, non-secret progress to the renderer. */
+  async notifyPluginOAuth(
+    pluginId: string,
+    loginId: string,
+    event: PluginProviderOAuthEvent,
+  ): Promise<void> {
+    const session = this.pluginLogins.get(loginId);
+    if (!session || session.pluginId !== pluginId || session.cancelled) {
+      throw new Error("provider OAuth login is no longer active");
+    }
+    if (event.kind === "authUrl") {
+      if (!isHttpUrl(event.url)) throw new Error("provider OAuth URL must use HTTP or HTTPS");
+      const url = event.url.slice(0, 4_096);
+      session.tail = session.tail.then(async () => {
+        const opened = await this.deps.openExternal(url).then(() => true, () => false);
+        this.deps.emit({
+          loginId,
+          vendorId: session.vendorId,
+          kind: "authUrl",
+          url,
+          instructions: clippedText(event.instructions, 2_000),
+          opened,
+        });
+      });
+      await session.tail;
+      return;
+    }
+    if (event.kind === "deviceCode") {
+      if (!isHttpUrl(event.verificationUri)) throw new Error("verificationUri must use HTTP or HTTPS");
+      this.pushPluginEvent(session, {
+        kind: "deviceCode",
+        userCode: clippedText(event.userCode, 256),
+        verificationUri: event.verificationUri.slice(0, 4_096),
+        ...(Number.isFinite(event.intervalSeconds) ? { intervalSeconds: event.intervalSeconds } : {}),
+        ...(Number.isFinite(event.expiresInSeconds) ? { expiresInSeconds: event.expiresInSeconds } : {}),
+      });
+      await session.tail;
+      return;
+    }
+    if (event.kind === "info") {
+      this.pushPluginEvent(session, {
+        kind: "info",
+        message: clippedText(event.message, 2_000),
+        ...(Array.isArray(event.links)
+          ? {
+              links: event.links.slice(0, 4).flatMap((link) =>
+                isHttpUrl(link?.url)
+                  ? [{ url: link.url.slice(0, 4_096), ...(typeof link.label === "string" ? { label: link.label.slice(0, 128) } : {}) }]
+                  : [],
+              ),
+            }
+          : {}),
+      });
+      await session.tail;
+      return;
+    }
+    this.pushPluginEvent(session, { kind: "progress", message: clippedText(event.message, 2_000) });
+    await session.tail;
   }
 
   /**
@@ -365,6 +692,20 @@ export class VendorOAuth {
     const row = (await this.rows()).find((candidate) => candidate.id === providerId);
     if (!row || row.authKind !== OAUTH_AUTH_KIND) {
       throw new Error(`unknown vendor account provider: ${providerId}`);
+    }
+    if (row.ownerPluginId) {
+      this.pluginRefreshControllers.get(providerId)?.abort(new Error("provider sign-out requested"));
+      const running = [...this.pluginLogins.values()].find(
+        (session) => session.providerId === providerId,
+      );
+      if (running) this.cancelPluginLogin(running);
+      await this.serialize(providerId, () =>
+        this.deps.call("secrets.delete", {
+          secretRef: secretRefForProviderOauth(providerId),
+        }),
+      );
+      this.clearAccountModels(providerId);
+      return;
     }
     const running = [...this.logins.values()].find(
       (session) => session.providerId === providerId,
@@ -386,6 +727,10 @@ export class VendorOAuth {
    * short-lived access token, headers and per-credential baseUrl.
    */
   async resolveAuth(providerId: string): Promise<ModelAuth> {
+    const row = (await this.rows()).find((candidate) => candidate.id === providerId);
+    if (row?.ownerPluginId && row.authKind === OAUTH_AUTH_KIND) {
+      return this.resolvePluginAuth(row);
+    }
     return this.withRowHeaders(providerId, async () => {
       const account = await this.accountForProvider(providerId);
       if (!account) throw new Error(`vendor account not signed in: ${providerId}`);
@@ -403,6 +748,16 @@ export class VendorOAuth {
    * be read. Radius keeps its gateway refresh and does not get a second probe.
    */
   async listModels(providerId: string): Promise<OAuthModelOption[]> {
+    const row = (await this.rows()).find((candidate) => candidate.id === providerId);
+    if (row?.ownerPluginId && row.authKind === OAUTH_AUTH_KIND) {
+      if (!row.baseUrl) return [];
+      const baseUrl = row.baseUrl;
+      return (row.models ?? []).map((model) => ({
+        modelId: model.id,
+        apiStyle: row.apiStyle ?? "chat_completions",
+        baseUrl,
+      }));
+    }
     return this.withRowHeaders(providerId, async () => {
       const account = await this.accountForProvider(providerId);
       if (!account) throw new Error(`unknown vendor account provider: ${providerId}`);
@@ -434,6 +789,38 @@ export class VendorOAuth {
     providerId: string,
     modelId: string,
   ): Promise<VendorModelBinding | undefined> {
+    const row = (await this.rows()).find((candidate) => candidate.id === providerId);
+    if (row?.ownerPluginId && row.authKind === OAUTH_AUTH_KIND) {
+      const declared = row.models?.find((model) => model.id === modelId);
+      if (!declared || !row.baseUrl) return undefined;
+      const option: OAuthModelOption = {
+        modelId: declared.id,
+        apiStyle: row.apiStyle ?? "chat_completions",
+        baseUrl: row.baseUrl,
+      };
+      const published = await this.deps.modelConfigFor?.({
+        providerId: row.id,
+        vendorKey: row.vendorKey ?? "custom",
+        option,
+      }).catch(() => undefined);
+      const baseline = withMappedThinkingLevels(
+        published ?? genericModelConfig(option.modelId, option.baseUrl),
+      );
+      const model = modelConfigWithBinding(baseline, {
+        ...declared,
+        contextWindow: declared.contextWindow > 0 ? declared.contextWindow : baseline.contextWindow,
+        maxTokens: declared.maxTokens > 0 ? declared.maxTokens : baseline.maxTokens,
+      });
+      const modelConfig = declared.thinkingLevels.length > 0
+        ? withMappedThinkingLevels(model)
+        : { ...model, reasoning: false, supportedThinkingLevels: [] };
+      return {
+        apiStyle: option.apiStyle,
+        baseUrl: option.baseUrl,
+        modelConfig,
+        ...capabilitiesFromModelConfig(modelConfig),
+      };
+    }
     return this.withRowHeaders(providerId, () =>
       this.bindingForUnscoped(providerId, modelId),
     );
@@ -601,6 +988,221 @@ export class VendorOAuth {
       await session.tail;
       this.logins.delete(session.loginId);
     }
+  }
+
+  private async runPluginLogin(session: PluginLoginSession): Promise<void> {
+    try {
+      const bridge = this.deps.getPluginOAuthBridge?.();
+      if (!bridge) throw new Error("provider OAuth is unavailable");
+      const raw = await bridge.invokeProviderOAuth(
+        session.pluginId,
+        session.contributionId,
+        {
+          operation: "login",
+          providerId: session.contributionId,
+          loginId: session.loginId,
+        },
+        session.controller.signal,
+        session.runtimeId,
+      );
+      if (session.cancelled) throw new Error("login cancelled");
+      const credential = normalizePluginCredential(raw);
+      await this.serialize(session.providerId, async () => {
+        const row = (await this.rows()).find((candidate) => candidate.id === session.providerId);
+        const currentProvider = bridge.listOAuthProviders().find(
+          (candidate) => candidate.providerId === session.providerId,
+        );
+        if (
+          session.cancelled ||
+          currentProvider?.runtimeId !== session.runtimeId ||
+          row?.ownerPluginId !== session.pluginId ||
+          row.authKind !== OAUTH_AUTH_KIND ||
+          row.enabled === false
+        ) {
+          throw new Error("plugin provider changed during OAuth sign-in");
+        }
+        await this.writePluginCredential(session.providerId, credential);
+        const savedRow = (await this.rows()).find((candidate) => candidate.id === session.providerId);
+        const savedProvider = this.deps.getPluginOAuthBridge?.()
+          ?.listOAuthProviders()
+          .find((candidate) => candidate.providerId === session.providerId);
+        if (
+          savedRow?.ownerPluginId !== session.pluginId ||
+          savedRow.authKind !== OAUTH_AUTH_KIND ||
+          savedRow.enabled === false ||
+          savedProvider?.runtimeId !== session.runtimeId
+        ) {
+          await this.deps.call("secrets.delete", {
+            secretRef: secretRefForProviderOauth(session.providerId),
+          });
+          throw new Error("plugin provider changed during OAuth sign-in");
+        }
+      });
+      this.invalidateAccountModels(session.providerId);
+      this.pushPluginEvent(session, {
+        kind: "done",
+        providerId: session.providerId,
+        accountLabel: credential.accountLabel,
+      });
+    } catch {
+      if (session.cancelled) {
+        this.pushPluginEvent(session, { kind: "cancelled" });
+      } else {
+        // Callback errors are plugin-controlled and may contain token material.
+        // Keep the user-facing diagnostic useful without reflecting the error.
+        this.pushPluginEvent(session, {
+          kind: "error",
+          code: "PLUGIN_OAUTH_FAILED",
+          message: "",
+        });
+        this.log("warn", "plugin provider OAuth sign-in failed", {
+          pluginId: session.pluginId,
+          providerId: session.providerId,
+        });
+      }
+    } finally {
+      for (const pending of session.prompts.values()) {
+        pending.reject(new Error("login finished"));
+      }
+      await session.tail;
+      this.pluginLogins.delete(session.loginId);
+    }
+  }
+
+  private cancelPluginLogin(session: PluginLoginSession): void {
+    if (session.cancelled) return;
+    session.cancelled = true;
+    session.controller.abort(new Error("login cancelled"));
+    for (const pending of session.prompts.values()) {
+      pending.reject(new Error("login cancelled"));
+    }
+  }
+
+  private pushPluginEvent(
+    session: PluginLoginSession,
+    event: OAuthEventBody,
+  ): void {
+    session.tail = session.tail.then(() => {
+      if (session.cancelled && event.kind !== "cancelled") return;
+      this.deps.emit({
+        ...event,
+        loginId: session.loginId,
+        vendorId: session.vendorId,
+      } as OAuthLoginEvent);
+    });
+  }
+
+  private async resolvePluginAuth(row: OAuthProviderRow): Promise<ModelAuth> {
+    if (!row.ownerPluginId || !row.hasOauth) {
+      throw new Error(`plugin provider account not signed in: ${row.id}`);
+    }
+    const credential = await this.serialize(row.id, async () => {
+      let current = await this.readPluginCredential(row.id);
+      if (!current) throw new Error(`plugin provider account not signed in: ${row.id}`);
+      if (current.expiresAt !== undefined && current.expiresAt <= Date.now() + 30_000) {
+        if (!current.refreshToken) throw new Error(`plugin provider credential expired: ${row.id}`);
+        const provider = this.deps.getPluginOAuthBridge?.()
+          ?.listOAuthProviders()
+          .find((candidate) => candidate.providerId === row.id);
+        const bridge = this.deps.getPluginOAuthBridge?.();
+        if (!provider || !bridge) throw new Error(`plugin provider OAuth is unavailable: ${row.id}`);
+        const refreshController = new AbortController();
+        this.pluginRefreshControllers.set(row.id, refreshController);
+        let rawRefreshed: unknown;
+        try {
+          rawRefreshed = await bridge.invokeProviderOAuth(
+            provider.pluginId,
+            provider.contributionId,
+            {
+              operation: "refresh",
+              providerId: provider.contributionId,
+              credential: current,
+            },
+            refreshController.signal,
+            provider.runtimeId,
+          );
+        } finally {
+          if (this.pluginRefreshControllers.get(row.id) === refreshController) {
+            this.pluginRefreshControllers.delete(row.id);
+          }
+        }
+        const refreshed = normalizePluginCredential(rawRefreshed);
+        current = {
+          ...refreshed,
+          ...(refreshed.refreshToken ? {} : { refreshToken: current.refreshToken }),
+          ...(refreshed.accountLabel ? {} : current.accountLabel ? { accountLabel: current.accountLabel } : {}),
+          ...(refreshed.headers ? {} : current.headers ? { headers: current.headers } : {}),
+        };
+        const latest = (await this.rows()).find((candidate) => candidate.id === row.id);
+        if (
+          !latest ||
+          latest.ownerPluginId !== row.ownerPluginId ||
+          latest.authKind !== OAUTH_AUTH_KIND ||
+          latest.enabled === false
+        ) {
+          throw new Error(`plugin provider changed during OAuth refresh: ${row.id}`);
+        }
+        await this.writePluginCredential(row.id, current);
+        const savedRow = (await this.rows()).find((candidate) => candidate.id === row.id);
+        const savedProvider = this.deps.getPluginOAuthBridge?.()
+          ?.listOAuthProviders()
+          .find((candidate) => candidate.providerId === row.id);
+        if (
+          !savedRow ||
+          savedRow.ownerPluginId !== row.ownerPluginId ||
+          savedRow.authKind !== OAUTH_AUTH_KIND ||
+          savedRow.enabled === false ||
+          savedProvider?.runtimeId !== provider.runtimeId
+        ) {
+          await this.deps.call("secrets.delete", {
+            secretRef: secretRefForProviderOauth(row.id),
+          });
+          throw new Error(`plugin provider changed during OAuth refresh: ${row.id}`);
+        }
+      }
+      return current;
+    });
+    return {
+      apiKey: credential.accessToken,
+      ...(credential.headers ? { headers: credential.headers } : {}),
+    };
+  }
+
+  private async readPluginCredential(
+    providerId: string,
+  ): Promise<PluginProviderOAuthCredential | undefined> {
+    const { value } = await this.deps.call<{ value?: string | null }>(
+      "secrets.getForRuntime",
+      { secretRef: secretRefForProviderOauth(providerId) },
+    );
+    if (!value) return undefined;
+    try {
+      return normalizePluginCredential(JSON.parse(value));
+    } catch {
+      this.log("warn", "stored plugin provider credential is not readable", { providerId });
+      return undefined;
+    }
+  }
+
+  private async writePluginCredential(
+    providerId: string,
+    credential: PluginProviderOAuthCredential,
+  ): Promise<void> {
+    await this.deps.call("secrets.set", {
+      secretRef: secretRefForProviderOauth(providerId),
+      value: JSON.stringify(credential),
+    });
+  }
+
+  private clearAccountModels(providerId: string): void {
+    this.invalidateAccountModels(providerId);
+    this.deps.onAccountRemoved?.(providerId);
+  }
+
+  private invalidateAccountModels(providerId: string): void {
+    this.accountModels.delete(providerId);
+    this.liveModelCache.delete(providerId);
+    this.liveModelLoads.delete(providerId);
   }
 
   /** Point the row at a usable model now that the catalog can be read. */

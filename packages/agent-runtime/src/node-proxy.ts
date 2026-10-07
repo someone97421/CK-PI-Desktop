@@ -56,11 +56,13 @@ let activeDirectDispatcher: Dispatcher | null = null;
 export type NodeTransportRoute =
   | "direct"
   | "environment-proxy"
+  | "system-proxy"
   | "http-proxy"
   | "socks5-proxy";
 
 /** Settings behind the installed pair, so a rebuild reproduces exactly them. */
 let activeCustomSettings: NetworkProxySettings | null = null;
+let activeSystemProxyRelayUrl: string | null = null;
 /** Negative infinity: a process that has never rebuilt is never throttled. */
 let lastTransportRebuildAt = Number.NEGATIVE_INFINITY;
 
@@ -79,9 +81,8 @@ function routeForSettings(settings: NetworkProxySettings): NodeTransportRoute {
  * identical in an errno (issue #234).
  */
 export function activeNodeTransportRoute(): NodeTransportRoute {
-  return activeCustomSettings
-    ? routeForSettings(activeCustomSettings)
-    : defaultRoute();
+  if (activeCustomSettings) return routeForSettings(activeCustomSettings);
+  return activeSystemProxyRelayUrl ? "system-proxy" : defaultRoute();
 }
 
 function ensurePatched(): void {
@@ -117,13 +118,25 @@ function restoreDefault(): void {
 export function applyNodeNetworkProxy(
   settings: NetworkProxySettings,
   env: Record<string, string | undefined> = process.env,
+  systemProxyRelayUrl?: string,
 ): void {
   ensurePatched();
   applyProxyEnvAssignments(proxyEnvAssignments(settings), env);
   if (settings.mode !== "custom") {
+    activeSystemProxyRelayUrl = null;
+    if (settings.mode === "system" && systemProxyRelayUrl) {
+      const built = createSystemProxyDispatcher(systemProxyRelayUrl);
+      if (built) {
+        installCustomProxyDispatchers(built);
+        activeCustomSettings = null;
+        activeSystemProxyRelayUrl = systemProxyRelayUrl;
+        return;
+      }
+    }
     restoreDefault();
     return;
   }
+  activeSystemProxyRelayUrl = null;
   const built = createCustomProxyDispatchers(settings);
   if (!built) {
     restoreDefault();
@@ -162,6 +175,22 @@ function createCustomProxyDispatchers(
     dispatcher,
     direct,
     route: parsed.value.isSocks ? "socks5-proxy" : "http-proxy",
+  };
+}
+
+/** Build an authenticated SOCKS dispatcher backed by Electron's system/PAC resolver. */
+function createSystemProxyDispatcher(
+  relayUrl: string,
+): CustomProxyDispatchers | null {
+  const parsed = parseProxyUrl(relayUrl);
+  if (!parsed.ok || !parsed.value.isSocks) return null;
+  const dispatcher: Dispatcher = new Agent({
+    connect: socksConnector(parsed.value),
+  });
+  return {
+    dispatcher,
+    direct: new Agent(),
+    route: "system-proxy",
   };
 }
 
@@ -229,7 +258,9 @@ export function rebuildNodeNetworkTransport(
   const customSettings = activeCustomSettings;
   const rebuilt = customSettings
     ? createCustomProxyDispatchers(customSettings)
-    : null;
+    : activeSystemProxyRelayUrl
+      ? createSystemProxyDispatcher(activeSystemProxyRelayUrl)
+      : null;
   if (rebuilt) {
     installCustomProxyDispatchers(rebuilt);
     return { rebuilt: true, route: rebuilt.route };
@@ -390,4 +421,3 @@ function socksConnector(proxy: ParsedProxyUrl): buildConnector.connector {
       .catch((error: Error) => callback(error, null));
   };
 }
-

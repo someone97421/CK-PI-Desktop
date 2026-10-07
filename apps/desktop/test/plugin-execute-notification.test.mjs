@@ -141,6 +141,7 @@ function fixture({ activeTurn } = {}) {
     importLegacyScheduled: async () => undefined,
     superviseRestart: async () => undefined,
     isQuitting: () => false,
+    ensureSystemProxyRelay: async () => "socks5://system-auto:test@127.0.0.1:1",
   });
   runtime.wireHost(host);
 

@@ -120,6 +120,7 @@ import {
   normalizeSubagentName,
   proposalKindForMode,
   resolveSubagentToolNames,
+  splitInlineContent,
   subagentModelKey,
   subagentToolsLabel,
   type ProposalKind,
@@ -341,25 +342,31 @@ function promptText(input: RuntimePrompt): string {
 function promptContent(input: string | RuntimePrompt, capabilities: MediaInputCapabilities = {}): UserMessage["content"] {
   if (typeof input === "string") return input;
   const text = promptText(input);
-  const blocks = promptMedia(input, capabilities);
-  if (!blocks.length) return text;
-  return [
-    ...(text.trim() ? [{ type: "text" as const, text }] : []),
-    ...blocks,
-  ];
+  const media = (input.attachments ?? []).flatMap((attachment) => {
+    const block = promptMediaBlock(attachment, capabilities);
+    return block ? [{ inlinePath: attachment.inlinePath, block }] : [];
+  });
+  if (!media.length) return text;
+  const { parts, trailing } = splitInlineContent(text, media);
+  const blocks: Array<{ type: "text"; text: string } | ImageContent | MediaReferenceBlock> = parts.flatMap(
+    (part): Array<{ type: "text"; text: string } | ImageContent | MediaReferenceBlock> =>
+      part.kind === "text"
+        ? part.text ? [{ type: "text", text: part.text }] : []
+        : [part.attachment.block],
+  );
+  blocks.push(...trailing.map((attachment) => attachment.block));
+  return blocks;
 }
 
-function promptMedia(input: RuntimePrompt, capabilities: MediaInputCapabilities): Array<ImageContent | MediaReferenceBlock> {
-  return (input.attachments ?? []).flatMap<ImageContent | MediaReferenceBlock>((attachment) => {
-    const media = mediaMimeType(attachment.mimeType, attachment.name, attachment.path);
-    if ((!attachment.data && !attachment.mediaRef) || (media ? !supportsMediaMime(media, capabilities) : attachment.kind !== "image")) return [];
-    if (attachment.mediaRef) return [mediaReferenceBlock(attachment.mediaRef)];
-    return [{
-      type: "image" as const,
-      data: attachment.data!,
-      mimeType: media ?? attachment.mimeType ?? "image/png",
-    }];
-  });
+function promptMediaBlock(attachment: RuntimePromptAttachment, capabilities: MediaInputCapabilities): ImageContent | MediaReferenceBlock | undefined {
+  const media = mediaMimeType(attachment.mimeType, attachment.name, attachment.path);
+  if ((!attachment.data && !attachment.mediaRef) || (media ? !supportsMediaMime(media, capabilities) : attachment.kind !== "image")) return undefined;
+  if (attachment.mediaRef) return mediaReferenceBlock(attachment.mediaRef);
+  return {
+    type: "image",
+    data: attachment.data!,
+    mimeType: media ?? attachment.mimeType ?? "image/png",
+  };
 }
 
 function runtimeAttachmentFromMessage(
@@ -373,6 +380,9 @@ function runtimeAttachmentFromMessage(
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     ...(attachment.size !== undefined ? { size: attachment.size } : {}),
     ...(attachment.text ? { text: attachment.text } : {}),
+    // Recorded placement: the message content names this image at that spot, so
+    // the restored prompt keeps the block there too.
+    ...(attachment.inlinePath ? { inlinePath: attachment.inlinePath } : {}),
     ...(data ? { data } : {}),
     ...(attachment.mediaRef ? { mediaRef: attachment.mediaRef } : {}),
   };
@@ -8921,7 +8931,7 @@ Delegation rules:
       if (typeof modelInput === "string") {
         await this.agent.prompt(modelInput);
       } else {
-        await this.agent.prompt({ role: "user", content: promptContent(modelInput, mediaCapabilitiesForProvider(this.provider)), timestamp: Date.now() });
+        await this.agent.prompt(incomingUserMessage);
       }
       await this.waitForIdleAndSteering();
       void this.extensionRunner?.emit("agent_settled", { type: "agent_settled" });

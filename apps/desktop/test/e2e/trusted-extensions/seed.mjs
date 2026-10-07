@@ -141,21 +141,76 @@ function pluginFor(name) {
   const dir = join(pluginsDir, name);
   mkdirSync(join(dir, "src"), { recursive: true });
   writeFileSync(join(dir, "src", `${name}.ts`), readFileSync(join(extDir, `${name}.ts`)));
-  writeFileSync(join(dir, "main.js"), "module.exports = {};\n");
+  const mainSource = name === "agent"
+    ? `const { appendFileSync } = require("node:fs");
+const log = (line) => appendFileSync(${JSON.stringify(hookLog)}, line + "\\n");
+module.exports = {
+  async onProviderOAuth(request, { signal }) {
+    if (request.operation === "login") {
+      signal.addEventListener("abort", () => log("provider_oauth_aborted"), { once: true });
+      await globalThis.pi.providers.oauth.notify(request.loginId, {
+        kind: "deviceCode",
+        userCode: "E2E-OAUTH-42",
+        verificationUri: "http://127.0.0.1:${stubPort}/oauth/verify",
+      });
+      const approval = await globalThis.pi.providers.oauth.prompt(request.loginId, {
+        type: "secret",
+        message: "Approve E2E OAuth fixture",
+        placeholder: "Fixture approval",
+      });
+      if (signal.aborted) throw new Error("OAuth login cancelled");
+      if (approval !== "e2e-approved") throw new Error("Unexpected fixture approval");
+      return {
+        accessToken: "expired-plugin-access",
+        refreshToken: "plugin-refresh",
+        expiresAt: Date.now() - 1,
+        accountLabel: "e2e-oauth@example.test",
+      };
+    }
+    if (request.operation === "refresh") {
+      if (request.credential?.refreshToken !== "plugin-refresh") {
+        throw new Error("OAuth refresh credential was not provider-scoped");
+      }
+      log("provider_oauth_refresh");
+      return {
+        accessToken: "refreshed-plugin-access",
+        refreshToken: "plugin-refresh",
+        expiresAt: Date.now() + 60_000,
+        accountLabel: "e2e-oauth@example.test",
+      };
+    }
+    throw new Error("Unsupported fixture OAuth operation");
+  },
+};
+`
+    : "module.exports = {};\n";
+  writeFileSync(join(dir, "main.js"), mainSource);
   const permissions = ["agent.extension"];
   const contributes = { agentExtensions: [`src/${name}.ts`] };
   // The agent fixture also declares a provider row (ADR 0259): the declaration
   // materializes in the native provider list, owned by this plugin.
   if (name === "agent") {
     permissions.push("provider.register");
-    contributes.providers = [{
-      id: "declared",
-      name: "E2E declared",
-      baseUrl: `http://127.0.0.1:${stubPort}/v1`,
-      apiStyle: "chat_completions",
-      authKind: "api_key",
-      models: [{ id: "stub-1", name: "Stub 1", contextWindow: 128000, maxTokens: 4096 }],
-    }];
+    permissions.push("provider.oauth");
+    contributes.providers = [
+      {
+        id: "declared",
+        name: "E2E declared",
+        baseUrl: `http://127.0.0.1:${stubPort}/v1`,
+        apiStyle: "chat_completions",
+        authKind: "api_key",
+        models: [{ id: "stub-1", name: "Stub 1", contextWindow: 128000, maxTokens: 4096 }],
+      },
+      {
+        id: "declared-oauth",
+        name: "E2E OAuth",
+        baseUrl: `http://127.0.0.1:${stubPort}/v1`,
+        apiStyle: "chat_completions",
+        authKind: "oauth",
+        oauth: { loginLabel: "E2E fixture login", isSubscription: true },
+        models: [{ id: "oauth-stub-1", name: "OAuth Stub 1", contextWindow: 128000, maxTokens: 4096 }],
+      },
+    ];
   }
   writeFileSync(join(dir, "manifest.json"), JSON.stringify({
     schemaVersion: 1,
@@ -201,7 +256,7 @@ const created = await call("providers.create", {
   defaultModelId: "stub-1",
 });
 const providerId = created.provider?.id ?? created.id;
-await call("settings.set", { defaultProviderId: providerId, defaultModelId: "stub-1", defaultMode: "agent" });
+await call("settings.set", { language: "en", defaultProviderId: providerId, defaultModelId: "stub-1", defaultMode: "agent" });
 // Register the fixture plugins as development plugins; dev loads enable them
 // with their declared permissions. `proj` is limited to the fixture project.
 for (const [name, dir] of Object.entries(pluginDirs)) {

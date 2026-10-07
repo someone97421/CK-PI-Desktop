@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
+import { splitInlineContent } from "@pi-desktop/shared";
 import { useOpenChatFileRef } from "../../../hooks/use-preview-target";
 import { useAppStore } from "../../../stores/app-store";
 import { Markdown } from "../../../components/Markdown";
@@ -123,6 +124,12 @@ export const MessageRow = memo(function MessageRow({
   const activeRevision = message.activeRevision ?? revisionCount;
   const showRevisionPager = editableUserMessage && revisionCount > 1;
   const visibleUserText = requestTextWithoutAnnotations(String(message.content || ""));
+  // 批注前缀不显示，但选区的源位置仍指向持久化正文。
+  const userSourceOffset = (message.content || "").length - visibleUserText.length;
+  const userContentParts = useMemo(
+    () => splitInlineContent(visibleUserText, message.attachments ?? []).parts,
+    [message.attachments, visibleUserText],
+  );
   const extraAttachments = useMemo(() => {
     return getExtraMessageAttachments(
       editableUserMessage && message.command
@@ -132,8 +139,53 @@ export const MessageRow = memo(function MessageRow({
         : visibleUserText,
       message.attachments,
       workspaceRoot,
+    ).filter((attachment) => !userContentParts.some(
+      (part) => part.kind === "attachment" && part.attachment === attachment,
+    ));
+  }, [message.attachments, message.command, message.skillMentions, editableUserMessage, visibleUserText, workspaceRoot, userContentParts]);
+  const renderContentPart = (
+    part: (typeof userContentParts)[number],
+    index: number,
+    keyPrefix: string,
+  ) => {
+    const position = {
+      "data-source-start": userSourceOffset + part.start,
+      "data-source-end": userSourceOffset + part.end,
+    };
+    return part.kind === "text" ? (
+      <LinkifiedText
+        key={`${keyPrefix}-${index}`}
+        text={part.text}
+        attachments={message.attachments}
+        sourceOffset={userSourceOffset + part.start}
+      />
+    ) : part.attachment.kind === "image" ? (
+      <MessageAttachmentImage
+        key={`${keyPrefix}-${index}`}
+        attachment={part.attachment}
+        onOpenFile={openFileRef}
+        inline
+        {...position}
+      />
+    ) : part.attachment.kind === "session" ? (
+      <SessionLinkChip
+        key={`${keyPrefix}-${index}`}
+        sessionId={part.attachment.ref}
+        fallbackName={part.attachment.name}
+        {...position}
+      />
+    ) : (
+      <FileRefChip
+        key={`${keyPrefix}-${index}`}
+        name={part.attachment.name}
+        path={part.attachment.ref}
+        kind={part.attachment.kind}
+        mimeType={part.attachment.mimeType}
+        onOpen={openFileRef}
+        {...position}
+      />
     );
-  }, [message.attachments, message.command, message.skillMentions, editableUserMessage, visibleUserText, workspaceRoot]);
+  };
   // An attachment the body does not already name inline continues the body
   // text instead of taking a line of its own above it.
   const attachmentChips = extraAttachments.length ? (
@@ -302,24 +354,28 @@ export const MessageRow = memo(function MessageRow({
                 {message.content ? (
                   <div className="message-user-text selectable">
                     {editableUserMessage && message.command ? (
-                      message.skillMentions?.length ? (
-                        <SkillInvocationText message={message} />
-                      ) : (
-                        // Templates retain the existing whole-invocation chip.
-                        <code
-                          className="chat-command-chip"
-                          data-source-start={0}
-                          data-source-end={message.content.length}
-                          title={String(message.content || "")}
-                        >
-                          {message.command}
-                        </code>
-                      )
+                      <>
+                        {message.skillMentions?.length ? (
+                          <SkillInvocationText message={message} />
+                        ) : (
+                          // Templates retain the existing whole-invocation chip.
+                          <code
+                            className="chat-command-chip"
+                            data-source-start={0}
+                            data-source-end={message.content.length}
+                            title={String(message.content || "")}
+                          >
+                            {message.command}
+                          </code>
+                        )}
+                        {userContentParts
+                          .filter((part) => part.kind === "attachment")
+                          .map((part, index) => renderContentPart(part, index, "inline"))}
+                      </>
                     ) : (
-                      <LinkifiedText
-                        text={visibleUserText}
-                        attachments={message.attachments}
-                      />
+                      userContentParts.map((part, index) =>
+                        renderContentPart(part, index, "content"),
+                      )
                     )}
                     {attachmentChips}
                   </div>

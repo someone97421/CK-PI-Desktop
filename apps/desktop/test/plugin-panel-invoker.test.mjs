@@ -8,8 +8,10 @@ register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 const {
   PanelOperationSerializer,
   PanelSenders,
+  PLUGIN_PANEL_LOAD_SETTLE_MS,
   PLUGIN_PAGE_CLOSE_SETTLE_MS,
   pageGoneWithin,
+  panelReadyWithin,
   resolvePanelInvocation,
   teardownPanelWindow,
 } = await import("../electron/main/plugin-panel-senders.ts");
@@ -141,7 +143,7 @@ test(
 test("panel windows and docked views bind bridge identity to the page", () => {
   assert.match(
     panelHostSource,
-    /import \{ PanelSenders, pageGoneWithin, resolvePanelInvocation \} from "\.\/plugin-panel-senders"/,
+    /import \{[^}]*\bPanelSenders\b[^}]*\bpageGoneWithin\b[^}]*\bresolvePanelInvocation\b[^}]*\} from "\.\/plugin-panel-senders"/,
   );
   assert.match(panelHostSource, /private senders = new PanelSenders\(\)/);
   // Registered before the document loads, released with the page — not with the
@@ -172,9 +174,10 @@ test("panel windows and docked views bind bridge identity to the page", () => {
   assert.ok(close.length > 0);
   // The close waits for that page, so its bridge calls reach a live runtime.
   assert.match(close, /await pageGoneWithin\(page\)/);
-  // Nothing is unregistered after `win.close()`: the `closed` handler owns the
-  // removal, so a page that refuses the close stays an open panel.
-  assert.doesNotMatch(close.slice(close.indexOf("win.close();")), /windows\.delete/);
+  // 只检查主面板关闭分支：其余 widget 和已销毁窗口有独立清理路径。
+  const primaryClose = close.slice(close.indexOf("if (win && !win.isDestroyed()) {"));
+  assert.ok(primaryClose.length > 0);
+  assert.doesNotMatch(primaryClose.slice(primaryClose.indexOf("win.close();")), /windows\.delete/);
   // `closeAll` is the shutdown path: every panel's page is waited for.
   const closeAll = panelHostSource.slice(panelHostSource.indexOf("async closeAll("));
   assert.match(closeAll, /this\.close\(pluginId\)/);
@@ -327,4 +330,49 @@ test("teardownPanelWindow leaves window registered when not forced and page refu
   assert.equal(closed, true, "win.close() was called");
   assert.equal(destroyed, false, "win.destroy() was not called without force");
   assert.equal(win.isDestroyed(), false);
+});
+
+test("a panel page that never settles still fails the open request (#998)", async () => {
+  // The window is hidden until the page loads: a hang must become an error the
+  // asking page can show, not a click that does nothing.
+  const hang = new Promise(() => undefined);
+  await assert.rejects(
+    panelReadyWithin(hang, "demo.plugin", 40),
+    /PANEL_LOAD_TIMEOUT: the panel page of demo\.plugin did not report ready within 0s/,
+  );
+});
+
+test("a panel page that loads before its budget shows normally", async () => {
+  await panelReadyWithin(Promise.resolve("loaded"), "demo.plugin", 5_000);
+});
+
+test("a panel page that fails its own load keeps the original error", async () => {
+  await assert.rejects(
+    panelReadyWithin(
+      Promise.reject(new Error("ERR_FILE_NOT_FOUND: views/panel.html")),
+      "demo.plugin",
+      5_000,
+    ),
+    /ERR_FILE_NOT_FOUND/,
+  );
+});
+
+test("the panel load budget is a generous, seconds-scale default", () => {
+  assert.equal(PLUGIN_PANEL_LOAD_SETTLE_MS, 15_000);
+});
+
+test("the open path races the page load against that budget (#998)", () => {
+  const open = panelHostSource.slice(
+    panelHostSource.indexOf("async open(request: PluginPanelOpenRequest)"),
+    panelHostSource.indexOf("async close(pluginId"),
+  );
+  assert.ok(open.length > 0);
+  assert.match(open, /await panelReadyWithin\(\s*win\.loadURL\(/);
+  assert.match(open, /win\.loadURL\(pathToFileURL\(request\.htmlPath\)\.toString\(\)\),\s*request\.pluginId,/);
+  const loadFailure = open.slice(open.indexOf("} catch (err) {"), open.indexOf("      if (token.canceled) {", open.indexOf("} catch (err) {")));
+  assert.ok(loadFailure.length > 0);
+  // 取消或已关闭时收回发送者身份，且不把正常关闭报告为加载失败。
+  assert.match(loadFailure, /if \(token\.canceled \|\| win\.isDestroyed\(\)\) \{[\s\S]*this\.senders\.release\(webContentsId\);[\s\S]*if \(this\.windows\.get\(request\.pluginId\) === win\) \{[\s\S]*this\.windows\.delete\(request\.pluginId\);[\s\S]*return;/);
+  // 超时及实际加载失败销毁隐藏窗口，再把原始错误交给调用方。
+  assert.match(loadFailure, /win\.destroy\(\);\s*throw err;/);
 });

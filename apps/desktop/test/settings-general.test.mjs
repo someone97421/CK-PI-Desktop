@@ -317,8 +317,14 @@ test("a service row opens its editor and keeps only a switch and one menu", () =
   // An account has no enable switch; a plugin's switch belongs to the plugin.
   assert.match(serviceRowSource, /kind !== "account" \? \(/);
   assert.match(serviceRowSource, /disabled=\{busy \|\| kind === "plugin"\}/);
-  // A plugin owns its row, so neither edit nor remove is offered for one.
-  assert.match(serviceListSource, /if \(kind !== "plugin"\) \{\s*items\.push\(\{\s*key: "edit"/);
+  // Plugin-owned rows are not editable, including OAuth account rows; those
+  // rows still expose sign-out through the overflow menu.
+  assert.match(serviceListSource, /const pluginOAuth = kind === "account" && !!provider\.ownerPluginId/);
+  assert.match(
+    serviceListSource,
+    /if \(kind !== "plugin" && !pluginOAuth\) \{\s*items\.push\(\{\s*key: "edit"/,
+  );
+  assert.match(serviceListSource, /t\(pluginOAuth\s*\?\s*"settings\.vendorSignOut"/);
   assert.match(serviceListSource, /if \(kind !== "plugin"\) \{\s*const isArmed/);
   // Removal is confirmed inside the menu rather than by a second row button.
   assert.match(serviceListSource, /useArmedDelete\(\)/);

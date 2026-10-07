@@ -24,6 +24,7 @@ pub mod marketplace;
 mod model;
 mod permissions;
 pub(crate) mod progress;
+mod provider_validation;
 mod providers;
 mod registry;
 mod renderer;
@@ -68,6 +69,7 @@ pub(crate) use marketplace::{
     latest_market_version,
 };
 pub(crate) use permissions::{derive_capabilities, derive_settings, permission_diff, sanitize_id};
+pub(crate) use provider_validation::validate_declared_provider_oauth;
 pub(crate) use providers::{
     declared_providers, is_known_api_style, is_known_auth_kind, owned_provider_ids,
     plugin_provider_row_id, reconcile_all, reconcile_plugin, remove_plugin_providers,

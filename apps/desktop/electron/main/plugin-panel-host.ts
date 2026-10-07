@@ -9,7 +9,7 @@ import {
 import { builtinWindowBackground } from "@pi-desktop/shared";
 import { suppressLinuxFramelessSystemMenu } from "./frameless-system-menu";
 import { getModuleDirectory } from "./module-path";
-import { PanelSenders, pageGoneWithin, resolvePanelInvocation } from "./plugin-panel-senders";
+import { PanelSenders, panelReadyWithin, pageGoneWithin, resolvePanelInvocation } from "./plugin-panel-senders";
 import { PanelOperationSerializer } from "./plugin-panel-senders";
 import {
   isPluginPanelWindowControlAction,
@@ -810,7 +810,10 @@ export class PluginPanelHost {
       // gone (see the `closed` handler above).
       this.senders.register(webContentsId, request.pluginId);
       try {
-        await win.loadURL(pathToFileURL(request.htmlPath).toString());
+        await panelReadyWithin(
+          win.loadURL(pathToFileURL(request.htmlPath).toString()),
+          request.pluginId,
+        );
       } catch (err) {
         if (token.canceled || win.isDestroyed()) {
           this.senders.release(webContentsId);
@@ -819,6 +822,7 @@ export class PluginPanelHost {
           }
           return;
         }
+        win.destroy();
         throw err;
       }
       if (token.canceled) {

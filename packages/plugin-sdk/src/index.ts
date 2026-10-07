@@ -503,14 +503,63 @@ export const PLUGIN_PROVIDER_API_STYLES = [
 export type PluginProviderApiStyle = (typeof PLUGIN_PROVIDER_API_STYLES)[number];
 
 /**
- * Credential a contributed provider accepts. Absent means `api_key`. `oauth`
- * is deliberately absent: a plugin OAuth provider needs a Host-owned login
- * flow that does not exist yet, so a declaration asking for one is refused
- * instead of materializing a row nobody can sign in to.
+ * Credential a contributed provider accepts. Absent means `api_key`.
  */
-export const PLUGIN_PROVIDER_AUTH_KINDS = ["api_key", "none"] as const;
+export const PLUGIN_PROVIDER_AUTH_KINDS = ["api_key", "none", "oauth"] as const;
 
 export type PluginProviderAuthKind = (typeof PLUGIN_PROVIDER_AUTH_KINDS)[number];
+
+/** Host-rendered sign-in metadata for an OAuth provider contribution. */
+export type PluginProviderOAuthContrib = {
+  loginLabel?: string;
+  isSubscription?: boolean;
+};
+
+/** Secret state stored encrypted by the Host and passed only to the plugin callback. */
+export type PluginProviderOAuthCredential = {
+  accessToken: string;
+  refreshToken?: string;
+  /** Unix epoch milliseconds. Omit when the access token does not expire. */
+  expiresAt?: number;
+  accountLabel?: string;
+  headers?: Record<string, string>;
+};
+
+export type PluginProviderOAuthPrompt = {
+  type: "text" | "secret" | "select" | "manual_code";
+  message: string;
+  placeholder?: string;
+  options?: Array<{ id: string; label: string; description?: string }>;
+};
+
+/** Non-secret progress the Host may show during a plugin-owned OAuth flow. */
+export type PluginProviderOAuthEvent =
+  | { kind: "info"; message: string; links?: Array<{ url: string; label?: string }> }
+  | { kind: "authUrl"; url: string; instructions?: string }
+  | {
+      kind: "deviceCode";
+      userCode: string;
+      verificationUri: string;
+      intervalSeconds?: number;
+      expiresInSeconds?: number;
+    }
+  | { kind: "progress"; message: string };
+
+export type PluginProviderOAuthRequest = {
+  operation: "login" | "refresh";
+  /** Plugin-local provider contribution id. */
+  providerId: string;
+  /** Present during login; use it for Host-rendered prompts and progress. */
+  loginId?: string;
+  /** Present during refresh; never sent to the renderer or Agent Runtime. */
+  credential?: PluginProviderOAuthCredential;
+};
+
+/** Runtime context for a provider OAuth callback. */
+export type PluginProviderOAuthContext = {
+  /** Aborted when the user cancels sign-in, the plugin unloads, or the call times out. */
+  signal: AbortSignal;
+};
 
 /** Upper bound on `contributes.providers` entries one plugin may declare. */
 export const MAX_PLUGIN_PROVIDERS_PER_PLUGIN = 8;
@@ -544,10 +593,10 @@ export type PluginProviderModelContrib = {
 };
 
 /**
- * One provider a plugin adds to Settings' provider list. The plugin supplies
- * the endpoint and model catalog; the user's API key stays in the host and is
- * never handed to the plugin. The row appears as `plugin:<pluginId>:<id>` and
- * is read-only in Settings.
+ * One provider a plugin adds to Settings' provider list. The row appears as
+ * `plugin:<pluginId>:<id>` and is read-only in Settings. API-key credentials
+ * stay in the Host; OAuth callbacks can access only this provider's own OAuth
+ * credential under the `provider.oauth` permission.
  */
 export type PluginProviderContrib = {
   /** Plugin-local id matching [a-zA-Z][a-zA-Z0-9_-]{0,63}, unique per plugin. */
@@ -560,6 +609,8 @@ export type PluginProviderContrib = {
   baseUrl?: string;
   apiStyle?: PluginProviderApiStyle;
   authKind?: PluginProviderAuthKind;
+  /** OAuth sign-in metadata; valid only when `authKind` is `oauth`. */
+  oauth?: PluginProviderOAuthContrib;
   /** 1..64 models with unique ids. */
   models: PluginProviderModelContrib[];
 };
@@ -1283,6 +1334,13 @@ export type PluginHostApi = {
   project: {
     create: (input: { path: string }) => Promise<PluginProjectRecord>;
   };
+  /** Host-rendered interaction surface for a declared OAuth provider. */
+  providers: {
+    oauth: {
+      prompt: (loginId: string, input: PluginProviderOAuthPrompt) => Promise<string>;
+      notify: (loginId: string, event: PluginProviderOAuthEvent) => Promise<void>;
+    };
+  };
   workspace: {
     get: () => Promise<{ path: string; name: string } | null>;
   };
@@ -1508,6 +1566,11 @@ export type PluginHostApi = {
 export type PluginModule = {
   onLoad?: () => Promise<void> | void;
   onUnload?: () => Promise<void> | void;
+  /** Performs OAuth login or refresh for one `contributes.providers` entry. */
+  onProviderOAuth?: (
+    request: PluginProviderOAuthRequest,
+    context: PluginProviderOAuthContext,
+  ) => Promise<PluginProviderOAuthCredential> | PluginProviderOAuthCredential;
   /** Optional fixed-channel operations for an isolated plugin panel. */
   onPanelInvoke?: (channel: string, payload: unknown) => Promise<unknown> | unknown;
   /**
@@ -1545,6 +1608,7 @@ export const PLUGIN_PERMISSIONS = [
   // renderer itself. One umbrella permission, like `agent.extension`.
   "renderer.extension",
   "provider.register",
+  "provider.oauth",
   "desktop.control",
   "models.list",
   "project.create",
@@ -1667,6 +1731,13 @@ export function validateManifest(raw: unknown): {
     !(m.permissions ?? []).includes("provider.register")
   ) {
     return { ok: false, error: "contributes.providers requires the provider.register permission" };
+  }
+  if (
+    !contributesError &&
+    (m.contributes?.providers ?? []).some((provider) => provider?.authKind === "oauth") &&
+    !(m.permissions ?? []).includes("provider.oauth")
+  ) {
+    return { ok: false, error: "OAuth providers require the provider.oauth permission" };
   }
   if (
     !contributesError &&
@@ -1919,11 +1990,38 @@ export function validateContributions(
         return `provider "${provider.id}" has unsupported authKind ${provider.authKind}`;
       }
     }
-    // A Host-owned plugin login flow does not exist yet, so a declaration that
-    // asks for one is refused rather than turned into a row nobody can sign in
-    // to.
-    if ((provider as { oauth?: unknown }).oauth !== undefined) {
-      return `provider "${provider.id}" declares oauth; plugin OAuth providers are not supported in this release`;
+    const oauth = (provider as { oauth?: unknown }).oauth;
+    if (oauth !== undefined) {
+      if (provider.authKind !== "oauth") {
+        return `provider "${provider.id}" oauth metadata requires authKind "oauth"`;
+      }
+      if (!oauth || typeof oauth !== "object" || Array.isArray(oauth)) {
+        return `provider "${provider.id}" oauth must be an object`;
+      }
+      const oauthMetadata = oauth as { loginLabel?: unknown; isSubscription?: unknown };
+      const unsupportedOAuthField = Object.keys(oauthMetadata).find(
+        (key) => key !== "loginLabel" && key !== "isSubscription",
+      );
+      if (unsupportedOAuthField) {
+        return `provider "${provider.id}" oauth has unsupported field ${unsupportedOAuthField}`;
+      }
+      if (
+        oauthMetadata.loginLabel !== undefined &&
+        (typeof oauthMetadata.loginLabel !== "string" ||
+          !oauthMetadata.loginLabel.trim() ||
+          oauthMetadata.loginLabel.length > 128)
+      ) {
+        return `provider "${provider.id}" oauth.loginLabel must be a non-empty string of at most 128 characters`;
+      }
+      if (
+        oauthMetadata.isSubscription !== undefined &&
+        typeof oauthMetadata.isSubscription !== "boolean"
+      ) {
+        return `provider "${provider.id}" oauth.isSubscription must be a boolean`;
+      }
+    }
+    if (provider.authKind === "oauth" && !provider.baseUrl) {
+      return `provider "${provider.id}" requires baseUrl for OAuth`;
     }
     if (!Array.isArray(provider.models)) {
       return `provider "${provider.id}" requires models`;

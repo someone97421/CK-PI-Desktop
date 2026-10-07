@@ -1,7 +1,7 @@
-import type { MessageAttachment } from "@pi-desktop/shared";
+import { splitInlineContent, type MessageAttachment } from "@pi-desktop/shared";
 import { splitChatText } from "../../../lib/chat-links.ts";
 
-/** 正文已有的引用保持内嵌，旧消息未写入正文的附件仍可打开。 */
+/** 正文已有的引用与行内附件保持内嵌，旧消息未写入正文的附件仍可打开。 */
 export function getExtraMessageAttachments(
   content: string,
   attachments: readonly MessageAttachment[] | undefined,
@@ -15,7 +15,7 @@ export function getExtraMessageAttachments(
     if (segment.target.kind === "file") inlineFiles.add(segment.target.path);
     if (segment.target.kind === "session") inlineSessions.add(segment.target.sessionId);
   }
-  return attachments.filter((attachment) =>
+  return splitInlineContent(content, attachments).trailing.filter((attachment) =>
     attachment.kind === "session"
       ? !inlineSessions.has(attachment.ref)
       : !inlineFiles.has(attachment.ref),

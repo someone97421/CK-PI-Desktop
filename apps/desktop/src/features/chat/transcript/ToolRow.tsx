@@ -595,7 +595,7 @@ function HostToolRow({
             label={t("chat.collapseToolOutput")}
             onCollapse={collapseRow}
           />
-          <ToolDetailBlocks blocks={blocks} plain={runHead} />
+          <ToolDetailBlocks blocks={blocks} plain={runHead} streaming={status === "running"} />
         </div>
       ) : null}
       {!imagesInTurn && <GeneratedImages message={message} />}

@@ -102,3 +102,51 @@ it("bounds native data URLs and does not claim zero pricing for custom image mod
     fetchImpl: async () => new Response("", { headers: { "content-length": "999999999" } }) });
   expect(results[0].errorCode).toBe("IMAGE_TOO_LARGE");
 });
+
+/** A signed-in ChatGPT (Codex) account: an OAuth token, no API key, no catalog entry. */
+const codexAccount = {
+  baseUrl: "https://chatgpt.example/backend-api",
+  modelId: "gpt-image-2.5",
+  vendorKey: "openai-codex",
+  authKind: "oauth",
+  resolveAuth: async () => ({ apiKey: "codex-account-token" }),
+};
+
+it("serves a signed-in Codex account's image model on the vendor's Codex routes", async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ data: [{ b64_json: png }] }));
+  const results = await generateImageBatch({ endpoint: codexAccount, input, signal: signal(), save, fetchImpl: transport });
+  expect(results.map(result => result.status)).toEqual(["succeeded"]);
+  const [url, init] = transport.mock.calls[0];
+  expect(String(url)).toBe("https://chatgpt.example/backend-api/codex/images/generations");
+  expect(new Headers(init?.headers).get("authorization")).toBe("Bearer codex-account-token");
+  expect(JSON.parse(String(init?.body))).toEqual({ model: "gpt-image-2.5", prompt: "draw", size: "auto" });
+});
+
+it("edits a Codex account's image as inline data URLs instead of a multipart form", async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ data: [{ b64_json: png }] }));
+  const bytes = Buffer.from(png, "base64");
+  const results = await generateImageBatch({
+    endpoint: codexAccount,
+    input: { items: [{ prompt: "draw", images: ["0.png"] }] },
+    signal: signal(), save, fetchImpl: transport,
+    loadImages: async () => [{ bytes, mimeType: "image/png", extension: "png" }],
+  });
+  expect(results.map(result => result.status)).toEqual(["succeeded"]);
+  const [url, init] = transport.mock.calls[0];
+  expect(String(url)).toBe("https://chatgpt.example/backend-api/codex/images/edits");
+  expect(new Headers(init?.headers).get("content-type")).toBe("application/json");
+  const body = JSON.parse(String(init?.body));
+  expect(Object.keys(body).sort()).toEqual(["images", "model", "prompt", "size"]);
+  expect(body.images[0].image_url).toBe(`data:image/png;base64,${png}`);
+});
+
+it("keeps an already-prefixed Codex base URL and still requires the account token", async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ data: [{ b64_json: png }] }));
+  await generateImageBatch({
+    endpoint: { ...codexAccount, baseUrl: "https://chatgpt.example/backend-api/codex/" },
+    input, signal: signal(), save, fetchImpl: transport,
+  });
+  expect(String(transport.mock.calls[0][0])).toBe("https://chatgpt.example/backend-api/codex/images/generations");
+  expect(() => createImageBinding({ ...codexAccount, resolveAuth: undefined }))
+    .toThrow("IMAGE_AUTH_UNSUPPORTED");
+});

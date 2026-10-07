@@ -15,6 +15,7 @@ pub enum ProxyMode {
 }
 
 static MARKET_PROXY: RwLock<ProxyMode> = RwLock::new(ProxyMode::System);
+static SYSTEM_PROXY_RELAY: RwLock<Option<String>> = RwLock::new(None);
 
 /// Mirrors `DEFAULT_NETWORK_PROXY_BYPASS` in `packages/shared`: loopback plus
 /// the private ranges a user's own LAN devices live in, so a custom proxy never
@@ -27,6 +28,38 @@ pub fn apply_from_settings(value: Option<&Value>) {
     if let Ok(mut slot) = MARKET_PROXY.write() {
         *slot = next;
     }
+}
+
+/// Configure Electron's ephemeral, loopback-only system/PAC proxy relay.
+/// This value is runtime-only and is never copied into host-core's environment.
+pub fn set_system_proxy_relay(value: &str) -> Result<(), String> {
+    let value = value.trim();
+    if value.len() > PROXY_URL_MAX {
+        return Err("system proxy relay URL is too long".into());
+    }
+    let Some((credentials, address)) = value.split_once('@') else {
+        return Err("system proxy relay URL must contain local credentials".into());
+    };
+    let Some(token) = credentials.strip_prefix("socks5://system-auto:") else {
+        return Err("system proxy relay must use the internal SOCKS5 route".into());
+    };
+    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("system proxy relay credential is invalid".into());
+    }
+    let Some(port) = address.strip_prefix("127.0.0.1:") else {
+        return Err("system proxy relay must bind to IPv4 loopback".into());
+    };
+    let port = port
+        .parse::<u16>()
+        .map_err(|_| "system proxy relay port is invalid")?;
+    if port == 0 {
+        return Err("system proxy relay port is invalid".into());
+    }
+    let mut slot = SYSTEM_PROXY_RELAY
+        .write()
+        .map_err(|_| "system proxy relay state unavailable")?;
+    *slot = Some(value.to_string());
+    Ok(())
 }
 
 pub fn proxy_from_settings(value: Option<&Value>) -> ProxyMode {
@@ -126,15 +159,20 @@ pub fn parse_proxy_url(raw: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-/// Extra curl arguments so marketplace downloads honor Custom/Direct without
-/// mutating host-core process env (Bash must not inherit proxy credentials).
+/// Extra curl arguments so marketplace downloads honor the selected route
+/// without mutating host-core process env (Bash must not inherit credentials).
 pub fn curl_proxy_args() -> Vec<String> {
     let mode = MARKET_PROXY
         .read()
         .map(|guard| guard.clone())
         .unwrap_or_default();
     match mode {
-        ProxyMode::System => Vec::new(),
+        ProxyMode::System => SYSTEM_PROXY_RELAY
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .map(|url| vec!["--proxy".into(), url.replacen("socks5://", "socks5h://", 1)])
+            .unwrap_or_default(),
         ProxyMode::Direct => vec!["--noproxy".into(), "*".into()],
         ProxyMode::Custom { url, bypass } => {
             let noproxy = bypass
@@ -157,6 +195,9 @@ pub fn curl_proxy_args() -> Vec<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::Mutex;
+
+    static TEST_STATE_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn parse_accepts_http_and_socks5() {
@@ -185,6 +226,7 @@ mod tests {
 
     #[test]
     fn curl_args_follow_applied_settings() {
+        let _guard = TEST_STATE_LOCK.lock().unwrap();
         apply_from_settings(Some(&json!({
             "networkProxy": { "mode": "custom", "url": "socks5://127.0.0.1:1080" }
         })));
@@ -200,5 +242,36 @@ mod tests {
 
         apply_from_settings(Some(&json!({})));
         assert!(curl_proxy_args().is_empty());
+    }
+
+    #[test]
+    fn system_relay_requires_authenticated_loopback_and_routes_curl() {
+        let _guard = TEST_STATE_LOCK.lock().unwrap();
+        let token = "a".repeat(64);
+        let relay_url = format!("socks5://system-auto:{token}@127.0.0.1:43210");
+
+        for invalid in [
+            "socks5://system-http:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@127.0.0.1:43210",
+            "socks5://system-auto:short@127.0.0.1:43210",
+            "socks5://system-auto:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@0.0.0.0:43210",
+            "socks5://system-auto:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@127.0.0.1:0",
+        ] {
+            assert!(set_system_proxy_relay(invalid).is_err());
+        }
+
+        set_system_proxy_relay(&relay_url).unwrap();
+        apply_from_settings(Some(&json!({})));
+        let args = curl_proxy_args();
+        if let Ok(mut relay) = SYSTEM_PROXY_RELAY.write() {
+            *relay = None;
+        }
+
+        assert_eq!(
+            args,
+            vec![
+                "--proxy".to_string(),
+                format!("socks5h://system-auto:{token}@127.0.0.1:43210")
+            ]
+        );
     }
 }
