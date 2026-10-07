@@ -76,13 +76,13 @@
 
 桌面包包含浏览器、文件管理器、终端、[子代理观测](apps/desktop/resources/plugins/local.subagent-observer/README.md)和 Responses 生图等内置插件资源。子代理观测通过输入框旁的任务状态条、聊天任务卡或工作面板打开，展示当前会话的任务详情和过程记录；插件 ID 为 `local.subagent-observer`，源码位于 `apps/desktop/resources/plugins/local.subagent-observer/`，随主程序装配。Responses 生图使用兼容服务的原生 `image_generation` 能力，是否可用取决于服务端支持与当前认证配置。
 
-仓库 `plugins/` 下还提供三个独立插件，需要在应用的插件页面导入对应 `.piplug`：
+仓库 `plugins/` 下还提供以下独立插件，需要在应用的插件页面导入对应 `.piplug`：
 
 | 插件 | 当前能力 | 说明 |
 | --- | --- | --- |
 | [Computer Use（Win 版）](plugins/computer-use-win/README.md) | Windows x64 桌面控制、UI Automation、截图、键鼠、Office 操作与工作流技能 | 0.4.0 源码内置 cua-driver 0.28.2 离线包；支持自动启动、修复启动、允许列表和急停。WPS 实际兼容性需按应用验证 |
 | [局域网远程控制](plugins/lan-remote-control/README.md) | 手机浏览器查看项目与会话、聊天和附件、待发队列、子代理观测、模型与思考级别设置、审批与 Plan/Goal 决议 | 插件 ID `local.lan-remote-control`；电脑设置密码并开启服务，设备登录后操作由宿主直接执行 |
-| [桌面宠物](plugins/dsh-pet/README.md) | 多宠物、透明动画、拖拽与甩抛、多屏漫游、会话状态联动、可选模型碎碎念 | 插件 ID `local.dsh-pet`；支持女仆视频角色和 Xiao Dino 精灵图角色，依赖本 fork 的 widget 接口 |
+| [Codex 宠物](plugins/codex-pet/README.md) | Codex 格式宠物导入、动画浮窗、悬停控制条、单行快捷聊天与富媒体粘贴、会话活动和未读通知 | 插件 ID `local.codex-pet`；消息沿用宠物关联对话，不附带预设素材；v2 原版规格及其他缺口见 [下一阶段](plugins/codex-pet/docs/PHASE-2.md) |
 
 Computer Use 与局域网远控在侧栏提供状态入口，面板负责启停和设置。仅更新插件不能获得旧主程序尚未具备的宿主接口；运行时或宿主能力变化需要更新主程序。
 
@@ -90,17 +90,24 @@ Computer Use 与局域网远控在侧栏提供状态入口，面板负责启停�
 
 ### 插件构建
 
-远控和桌宠使用各自的构建脚本：
+局域网远控使用自己的构建脚本：
 
 ```bash
 npm --prefix plugins/lan-remote-control ci --ignore-scripts
 npm --prefix plugins/lan-remote-control run pack
-
-npm --prefix plugins/dsh-pet ci --ignore-scripts
-npm --prefix plugins/dsh-pet run pack
 ```
 
-成功打包后生成各自 `dist/` 中的 `.piplug`，并按脚本递增补丁版本。Computer Use 按其 README 使用宿主 `PluginPack` 打包，文件名标注 `-win-x64`；外层采用安装器支持的无压缩格式，内部保留驱动压缩包。
+成功打包后在插件的 `dist/` 中生成 `.piplug`，并按脚本递增补丁版本。Computer Use 按其 README 使用宿主 `PluginPack` 打包，文件名标注 `-win-x64`；外层采用安装器支持的无压缩格式，内部保留驱动压缩包。
+
+Codex 宠物在准备好工作区依赖后单独构建：
+
+```bash
+npm --prefix plugins/codex-pet run test
+npm --prefix plugins/codex-pet run check
+npm --prefix plugins/codex-pet run pack
+```
+
+安装包输出到 `plugins/codex-pet/dist/`，只保留最近一次成功生成的 `.piplug`；不构建主程序，不自动提交或推送。
 
 ## 远程主机
 

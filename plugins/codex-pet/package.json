@@ -1,0 +1,14 @@
+{
+  "name": "@local/codex-pet",
+  "version": "0.1.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pack": "node scripts/build.mjs --pack",
+    "check": "node scripts/build.mjs --check",
+    "test": "node --test test/*.test.cjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

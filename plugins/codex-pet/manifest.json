@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "local.codex-pet",
+  "name": "Codex 宠物",
+  "description": "导入 Codex 格式的宠物，使用桌面浮窗、快捷聊天和会话活动面板。",
+  "version": "0.1.3",
+  "main": "main.cjs",
+  "i18n": {
+    "en": { "name": "Codex Pets", "description": "Import Codex pets, chat from a floating companion, and follow session activity." },
+    "zh-CN": { "name": "Codex 宠物", "description": "导入 Codex 格式的宠物，使用桌面浮窗、快捷聊天和会话活动面板。" }
+  },
+  "engines": { "piDesktop": ">=2610.610.2408" },
+  "permissions": ["ui.panel", "ui.view", "background.service", "desktop.control", "models.list", "fs.read", "keyboard.globalShortcut", "net.fetch", "net.anyHost"],
+  "fs": { "read": { "root": "userSelected", "scope": ["**/*"] } },
+  "activationEvents": ["onStartup", "onCommand:pet", "onCommand:codex-pet.show", "onCommand:codex-pet.hide", "onCommand:codex-pet.settings"],
+  "ui": { "panel": "ui/index.html", "shape": "widget", "width": 360, "height": 200, "title": "Codex 宠物", "alwaysOnTop": true, "resizable": false },
+  "contributes": {
+    "commands": [
+      { "id": "pet", "title": "显示或隐藏宠物", "keywords": ["宠物", "pet", "Codex"], "category": "宠物" },
+      { "id": "codex-pet.show", "title": "显示宠物", "category": "宠物" },
+      { "id": "codex-pet.hide", "title": "隐藏宠物", "category": "宠物" },
+      { "id": "codex-pet.settings", "title": "宠物设置", "keywords": ["导入", "大小", "pet"], "category": "宠物" }
+    ],
+    "globalShortcuts": [],
+    "services": [{ "id": "codex-pet-activity", "label": "宠物活动面板", "autoRestart": true }],
+    "views": [{ "id": "settings", "title": { "zh-CN": "宠物设置", "en": "Pet settings" }, "icon": "wrench", "entry": "ui/index.html", "order": 80 }]
+  }
+}
