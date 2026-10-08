@@ -122,6 +122,23 @@ through `pluginBridge.on`. Mark `document.documentElement` (or `body`) with
 event; handling `contextmenu` with `preventDefault()` likewise keeps the host's widget menu
 out of the way.
 
+## Renderer slots
+
+插件在宿主窗口内绘制界面时，在 manifest 声明 `renderer` ES 模块入口及
+`renderer.extension` 权限。入口导出 `onLoad(pi)`，通过
+`pi.slots.register({ slot, component })` 注册 React 组件；React 使用宿主
+import map，组件属性只承载数据，宿主 API 由模块保存的 `pi` 提供。
+
+可用插槽为 `composerControl`、`composerTrigger`、`userAction`、
+`assistantAction`、`entryExtra`、`toolCard` 和 `blockRenderer`。
+自定义浮层使用 `pi.ui.openLayer()`，样式使用 `pi.ui.injectStyle()`，
+宿主操作使用 `pi.dispatch()`；注册返回的 disposer 用于卸载清理。
+
+manifest 的 `rendererActions` 声明允许派发的操作（最多 16 项），
+`rendererCallMethods` 声明 `plugin.call` 可调用的方法（最多 32 项）。
+该模块与宿主共用 document，不是隔离沙箱。准确类型与参数见
+`packages/plugin-sdk/src/renderer.ts`，完整示例见 `examples/plugins/ui-slots-lab`。
+
 ## Permissions
 
 Every permission is declared in the manifest and granted at install time; an undeclared call
@@ -129,8 +146,8 @@ fails at runtime. Ask for the least you need — the plugins page shows the risk
 user.
 
 - High risk: `net.fetch`, `fs.write`, `fs.delete`, `agent.prompt.inject`,
-  `agent.tool.register`, `agent.complete`, `session.read`, `mcp.server.local`,
-  `mcp.server.remote`
+  `agent.tool.register`, `agent.complete`, `renderer.extension`, `session.read`,
+  `mcp.server.local`, `mcp.server.remote`
 - Medium: `fs.read`, `clipboard.read`, `clipboard.write`, `shell.openExternal`,
   `background.service`, `bus.publish`, `bus.subscribe`, `models.list`, `usage.read`
 - Low: `ui.panel`, `ui.theme`, `notify` (Toast and best-effort native notifications)

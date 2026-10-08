@@ -3545,6 +3545,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_powershell_utf16le_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("build.log");
+        let mut log = vec![0xff, 0xfe];
+        log.extend(
+            "build passed\r\nnext line\r\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        );
+        std::fs::write(&path, log).unwrap();
+
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &serde_json::json!({ "path": "build.log" }),
+            5_000,
+        )
+        .await;
+        assert!(
+            result.ok,
+            "UTF-16LE log should be readable: {:?}",
+            result.content
+        );
+        assert!(result.content["content"]
+            .as_str()
+            .unwrap()
+            .contains("build passed"));
+        assert!(result.content["content"]
+            .as_str()
+            .unwrap()
+            .contains("2:next line"));
+
+        let tag = result.content["tag"].as_str().unwrap();
+        let edit = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &serde_json::json!({
+                "path": "build.log",
+                "tag": tag,
+                "ops": "PUT 2.=2:\n+final line\n"
+            }),
+            5_000,
+        )
+        .await;
+        assert!(edit.ok, "UTF-16LE edit failed: {:?}", edit.content);
+        let written = std::fs::read(path).unwrap();
+        let mut expected = vec![0xff, 0xfe];
+        expected.extend(
+            "build passed\r\nfinal line\r\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        );
+        assert_eq!(written, expected);
+        assert_eq!(
+            hashline::normalize_file(&written).text,
+            "build passed\nfinal line\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_and_edit_utf16be_chinese_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("status.log");
+        let mut log = vec![0xfe, 0xff];
+        log.extend("开始\n完成\n".encode_utf16().flat_map(u16::to_be_bytes));
+        std::fs::write(&path, log).unwrap();
+
+        let read = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &serde_json::json!({ "path": "status.log" }),
+            5_000,
+        )
+        .await;
+        assert!(read.ok, "UTF-16BE Read failed: {:?}", read.content);
+        let content = read.content["content"].as_str().unwrap();
+        assert!(content.contains("1:开始"));
+        assert!(content.contains("2:完成"));
+
+        let edit = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &serde_json::json!({
+                "path": "status.log",
+                "tag": read.content["tag"],
+                "ops": "PUT 2.=2:\n+已完成\n"
+            }),
+            5_000,
+        )
+        .await;
+        assert!(edit.ok, "UTF-16BE Edit failed: {:?}", edit.content);
+        let written = std::fs::read(path).unwrap();
+        let mut expected = vec![0xfe, 0xff];
+        expected.extend("开始\n已完成\n".encode_utf16().flat_map(u16::to_be_bytes));
+        assert_eq!(written, expected);
+        assert_eq!(hashline::normalize_file(&written).text, "开始\n已完成\n");
+    }
+
+    #[tokio::test]
     async fn read_returns_image_blocks_for_image_files() {
         // Minimal real signatures so the sniffing branch is exercised.
         let png = b"\x89PNG\r\n\x1a\nfake-png-body";

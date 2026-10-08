@@ -1,3 +1,8 @@
+import {
+  MAX_MUTATION_RECOVERY_FAILURES, BASH_PATCH_FAILURE_KEY,
+  RECOVERABLE_MUTATION_ERROR_CODES, mutationFailureKey, isPatchCommand,
+  mutationTerminationAdvice, mutationTerminationMessage,
+} from "./mutation-recovery.js";
 import { resolveMcpToolSelection } from "./mcp-tool-selection.js";
 import { TOOL_ACTIVATION_SECTION, toolDeclarationPolicy, toolActivationSection, restoredToolActivation, syncToolActivation, type ToolDeclarationPolicy } from "./fixed-tool-declarations.js";
 import { orderSystemRows, SystemTranscriptJournal } from "./system-transcript-journal.js";
@@ -9,6 +14,7 @@ import { requestExtensionUi } from "./extensions/ui-request.js";
 import { readLocalRequestErrorDetails } from "./local-request-errors.js";
 import { imageGenerationDescription, imageGenerationParameters } from "./image-generation/tool.js";
 import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
+import { createJevClassifierTool } from "./jev-classifier-tool.js";
 import { scheduledToolParameters, scheduledToolDescriptions } from "./scheduled-tools.js";
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
@@ -201,6 +207,7 @@ import {
   SUBAGENT_TOOL_NAME,
   SUBAGENT_WAIT_TOOL_NAME,
   type SubagentRunResult,
+  type SubagentToolOutcome,
 } from "./subagent.js";
 import { SubagentPersistenceClient } from "./subagent-persistence-client.js";
 import {
@@ -413,45 +420,6 @@ export function sessionReferenceBlock(attachment: RuntimePromptAttachment): stri
 // pi-ai's adapter retry is disabled here so setup and mid-stream 429s share
 // one runtime-owned budget instead of multiplying nested retry loops.
 const PROVIDER_REQUEST_MAX_RETRIES = 0;
-const MAX_MUTATION_RECOVERY_FAILURES = 3;
-const BASH_PATCH_FAILURE_KEY = "__bash_patch_command__";
-/**
- * Edit failures the line-anchored contract expects and already answers: each
- * one hands back the live tag, or the content of the lines it refused to write
- * blind (spec 18-line-anchored-edit-contract §9.3). One honest retry is the designed response, so each of
- * these codes gets a single free attempt per path before it counts toward the
- * recovery guard. Everything else — malformed ops, bad ranges, a no-op apply —
- * counts immediately, because a second one is the model guessing.
- */
-const RECOVERABLE_MUTATION_ERROR_CODES = new Set([
-  "EDIT_TAG_MISMATCH",
-  "EDIT_TAG_UNKNOWN",
-  "EDIT_LINES_UNSEEN",
-]);
-
-function mutationTerminationAdvice(
-  kind: "edit" | "patch-command",
-  errorCode?: string,
-): string {
-  if (kind === "patch-command") {
-    return "Use Edit on the specific lines instead of repeating a shell patch command.";
-  }
-  if (errorCode === "EDIT_PARSE_FAILED") {
-    return "Fix the Edit ops syntax and retry with a corrected payload; do not repeat the same ops. A PUT with body rows must end its header with `:`, for example `PUT 48.=48:`.";
-  }
-  if (errorCode === "EDIT_RANGE_INVALID") {
-    return "Correct the Edit range or operation overlap before retrying; re-reading is not needed unless the file changed.";
-  }
-  if (errorCode === "EDIT_NO_CHANGE") {
-    return "Send only changed body rows, or use CUT when the intended result is deletion.";
-  }
-  if (RECOVERABLE_MUTATION_ERROR_CODES.has(errorCode ?? "")) {
-    return errorCode === "EDIT_LINES_UNSEEN"
-      ? "Use the revealed lines for one unchanged retry when the reveal is complete; otherwise re-read the range and regenerate the Edit."
-      : "Re-read the live file and regenerate the Edit with the fresh tag and narrower anchors.";
-  }
-  return "Re-read the live file, regenerate a narrower Edit, and avoid repeating the same payload.";
-}
 export const TOOL_SEARCH_NAME = "ToolSearch";
 /** Stands in for a persisted tool row that never recorded a result. */
 const MISSING_TOOL_RESULT_PLACEHOLDER = "[no tool result recorded]";
@@ -983,6 +951,8 @@ export type AgentRuntimeOptions = {
   infiniteProviderRetry?: boolean;
   /** 运行状态提醒开关；缺省开启（false 关闭）。 */
   runStatusReminder?: boolean;
+  /** TypeSafe Jev credential, resolved by Electron main only when enabled. */
+  jevApiKey?: string;
   systemPrompt?: string;
   /** pi-compatible SYSTEM.md / APPEND_SYSTEM.md resolved for the session. */
   customSystemPrompt?: CustomSystemPrompt;
@@ -1044,6 +1014,7 @@ export type RuntimeMatchConfig = {
   mode: Mode;
   provider: RuntimeProviderConfig;
   thinkingLevel: SessionThinkingLevel;
+  jevApiKey?: string;
   pluginTools?: PluginToolDef[];
   pluginSkills?: PluginSkillDef[];
   trustedExtensions?: TrustedExtensionSpec[];
@@ -1101,22 +1072,6 @@ export function isProgressOnlyAssistantTurn(message: unknown): boolean {
   return hasProgressForwardIntent(text.replace(PROGRESS_TERMINAL_LEAD, ""));
 }
 
-function mutationFailureKey(path: unknown): string {
-  return String(path).replaceAll("\\", "/").replace(/^\.\//, "");
-}
-
-function isPatchCommand(command: unknown): boolean {
-  if (typeof command !== "string") return false;
-  return (
-    /(?:^|[;&|]\s*)(?:env\s+|command\s+)?(?:\S+\/)?apply_patch(?:\s|$)/m.test(
-      command,
-    ) ||
-    /\bgit(?:\s+\S+)*\s+apply(?:\s|$)/m.test(command) ||
-    /(?:^|[;&|]\s*)(?:env\s+|command\s+)?(?:\S+\/)?patch(?:\s|$)/m.test(
-      command,
-    )
-  );
-}
 
 type CheckpointPersistResult = "persisted" | "oversized" | "failed";
 
@@ -1752,6 +1707,7 @@ export class DesktopAgentRuntime {
   private providerRateLimitRetryAttempt = 0;
   /** Opt-in mode removes only the retry-count ceiling; abort and backoff stay intact. */
   private infiniteProviderRetry = false;
+  private jevApiKey?: string;
   private activeProviderRetryAttempt = 0;
   private providerRetryInProgress = false;
   private suppressProviderRetryRunEnd = false;
@@ -1794,6 +1750,8 @@ export class DesktopAgentRuntime {
   private mutationFailureCounts = new Map<string, number>();
   /** `<failure key> <error code>` pairs that already spent their free retry. */
   private mutationRecoveryGraces = new Set<string>();
+  /** Tool-call ownership keeps concurrent delegates' mutation budgets apart. */
+  private mutationOwners = new Map<string, string>();
   /** Why the recovery guard ended the turn, pending its visible error row. */
   private pendingMutationTermination?: {
     kind: "edit" | "patch-command";
@@ -1801,6 +1759,7 @@ export class DesktopAgentRuntime {
     lastErrorCode?: string;
   };
   private terminatingToolCalls = new Set<string>();
+  private delegateMutationTerminations = new Map<string, { code: string; message: string }>();
   private fullEntries: MessageEntry[];
   private readonly systemJournal = new SystemTranscriptJournal();
   private composedSections: Record<string, string> = {};
@@ -1873,6 +1832,7 @@ export class DesktopAgentRuntime {
     this.thinkingLevel = clampThinkingLevel(opts.provider, opts.thinkingLevel);
     this.infiniteProviderRetry = opts.infiniteProviderRetry === true;
     this.runStatusReminder = opts.runStatusReminder !== false;
+    this.jevApiKey = opts.jevApiKey;
     this.host = opts.host;
     this.persistenceClient = new SubagentPersistenceClient(opts.host, opts.sessionId);
     this.hostCloseUnsubscribe = this.host.onClose?.(() => {
@@ -2392,13 +2352,16 @@ Delegation rules:
    */
   private resolveOwnToolOutcome({
     toolCall,
-  }: AfterToolCallContext): AfterToolCallResult | undefined {
+  }: AfterToolCallContext): SubagentToolOutcome | undefined {
     const terminate = this.terminatingToolCalls.delete(toolCall.id);
     const failed = this.failedHostToolCalls.delete(toolCall.id);
+    const error = this.delegateMutationTerminations.get(toolCall.id);
+    this.delegateMutationTerminations.delete(toolCall.id);
     if (!failed) return terminate ? { terminate: true } : undefined;
     return {
       isError: true,
       ...(terminate ? { terminate: true } : {}),
+      ...(error ? { error } : {}),
     };
   }
 
@@ -2609,6 +2572,7 @@ Delegation rules:
       !this.disposed &&
       providerMatches &&
       this.mode === config.mode &&
+      this.jevApiKey === config.jevApiKey &&
       this.thinkingLevel ===
         clampThinkingLevel(config.provider, config.thinkingLevel) &&
       current === next &&
@@ -3425,11 +3389,15 @@ Delegation rules:
           toolName === "Bash" &&
           failedToolExecution &&
           isPatchCommand(recordParams?.command);
-        const failureKey = failedEditPath
+        const mutationOwner = this.mutationOwners.get(toolCallId);
+        const targetKey = failedEditPath
           ? failedEditPath
           : failedPatchCommand
             ? BASH_PATCH_FAILURE_KEY
             : undefined;
+        const failureKey = targetKey
+          ? `${mutationOwner ?? "parent"}\0${targetKey}`
+          : undefined;
         const mutationFailureKind = failedEditPath
           ? "edit"
           : failedPatchCommand
@@ -3464,12 +3432,15 @@ Delegation rules:
         // progress, so it clears that path's history instead of leaving one
         // stale strike to terminate the next unrelated failure.
         if (!failureKey && result.ok) {
-          const succeededKey =
+          const succeededTarget =
             PATH_MUTATING_TOOLS.has(toolName) && typeof recordParams?.path === "string"
               ? mutationFailureKey(recordParams.path)
               : toolName === "Bash" && isPatchCommand(recordParams?.command)
                 ? BASH_PATCH_FAILURE_KEY
                 : undefined;
+          const succeededKey = succeededTarget
+            ? `${mutationOwner ?? "parent"}\0${succeededTarget}`
+            : undefined;
           if (succeededKey !== undefined) {
             this.mutationFailureCounts.delete(succeededKey);
             for (const key of this.mutationRecoveryGraces) {
@@ -3484,13 +3455,25 @@ Delegation rules:
           // The loop stops after this batch, so nothing downstream would
           // explain why. Hold the reason for agent_end to turn into a visible
           // row instead of a turn that just ends.
-          this.pendingMutationTermination = {
-            kind: mutationFailureKind ?? "edit",
-            target: failedEditPath ?? "the patch command",
-            ...(typeof result.errorCode === "string"
-              ? { lastErrorCode: result.errorCode }
-              : {}),
-          };
+          if (!mutationOwner) {
+            this.pendingMutationTermination = {
+              kind: mutationFailureKind ?? "edit",
+              target: failedEditPath ?? "the patch command",
+              ...(typeof result.errorCode === "string"
+                ? { lastErrorCode: result.errorCode }
+                : {}),
+            };
+          } else {
+            const kind = mutationFailureKind ?? "edit";
+            this.delegateMutationTerminations.set(toolCallId, {
+              code: "MUTATION_RETRY_BUDGET_EXHAUSTED",
+              message: mutationTerminationMessage(
+                kind,
+                failedEditPath ?? "the patch command",
+                result.errorCode,
+              ),
+            });
+          }
         }
         const rawContent = result.content;
         const inputCapabilities = this.delegateInputCapabilities.get(toolCallId) ?? {
@@ -3701,6 +3684,10 @@ Delegation rules:
       tools.push("PluginScaffold", "PluginPack", "GenerateImages", ...Object.keys(scheduledToolParameters));
     }
     const builtins = tools.map(exec);
+    const jevTools: AgentTool[] =
+      this.mode === "agent" && this.jevApiKey
+        ? [createJevClassifierTool(this.jevApiKey)]
+        : [];
 
     // Plugins contribute Agent tools by default. Plan/Goal modes only
     // expose plugins that declare plan-safe actions (ADR 0211); the
@@ -3780,6 +3767,7 @@ Delegation rules:
     const extensionTools = this.extensionRunner?.getAgentTools() ?? [];
     return [
       ...builtins,
+      ...jevTools,
       askTool,
       ...pluginTools,
       ...skillTools,
@@ -4477,7 +4465,7 @@ Delegation rules:
           record.pendingBegin = undefined;
         }
         try {
-          const scopedTools = this.scopeDelegateTools(tools, definition, () => record.run?.inputCapabilities ?? {
+          const scopedTools = this.scopeDelegateTools(tools, definition, delegationId, () => record.run?.inputCapabilities ?? {
             supportsVision: visionFromModelConfig(provider.modelConfig),
             ...mediaCapabilitiesForProvider(provider),
           });
@@ -4586,12 +4574,11 @@ Delegation rules:
 
   }
 
-  /** Wrap a delegate's tools so each call carries the definition's permission
-   * scope to host-core (ADR 0089). Keyed by tool call id, so concurrent
-   * delegates with different scopes never cross over. */
+  /** 按子代理隔离权限、媒体输入能力与编辑恢复计数。 */
   private scopeDelegateTools(
     tools: AgentTool[],
     definition: SubagentDefinition,
+    mutationOwner: string,
     getInputCapabilities: () => ToolInputCapabilities,
   ): AgentTool[] {
     const scope = definition.permission ?? DEFAULT_SUBAGENT_PERMISSION;
@@ -4600,11 +4587,13 @@ Delegation rules:
       execute: async (toolCallId, args, signal, onUpdate) => {
         if (scope !== DEFAULT_SUBAGENT_PERMISSION) this.delegatePermissionScopes.set(toolCallId, scope);
         this.delegateInputCapabilities.set(toolCallId, getInputCapabilities());
+        this.mutationOwners.set(toolCallId, mutationOwner);
         try {
           return await tool.execute(toolCallId, args, signal, onUpdate);
         } finally {
           this.delegatePermissionScopes.delete(toolCallId);
           this.delegateInputCapabilities.delete(toolCallId);
+          this.mutationOwners.delete(toolCallId);
         }
       },
     }));
@@ -4746,6 +4735,7 @@ Delegation rules:
       record.settling = false;
       this.markSubagentCoordination(record);
       resolveExecution();
+      this.clearMutationRecovery(record.delegationId);
       this.refreshDelegationWait();
       this.pruneFinishedDelegations();
     }
@@ -5533,7 +5523,7 @@ Delegation rules:
             const tools = declaredToolNames
               .map((name) => this.toolCatalog.get(name))
               .filter((tool): tool is AgentTool => tool !== undefined);
-            const scopedTools = this.scopeDelegateTools(tools, definition, () => record.run?.inputCapabilities ?? {
+            const scopedTools = this.scopeDelegateTools(tools, definition, record.delegationId, () => record.run?.inputCapabilities ?? {
               supportsVision: visionFromModelConfig(provider!.modelConfig),
               ...mediaCapabilitiesForProvider(provider!),
             });
@@ -6529,6 +6519,16 @@ Delegation rules:
     );
   }
 
+  private clearMutationRecovery(owner: string): void {
+    const prefix = `${owner}\0`;
+    for (const key of this.mutationFailureCounts.keys()) {
+      if (key.startsWith(prefix)) this.mutationFailureCounts.delete(key);
+    }
+    for (const key of this.mutationRecoveryGraces) {
+      if (key.startsWith(prefix)) this.mutationRecoveryGraces.delete(key);
+    }
+  }
+
   /**
    * Clear the per-run recovery state that every entry point driving the agent
    * loop must start from. Each recovery arms itself mid-run by setting a
@@ -6561,10 +6561,8 @@ Delegation rules:
     this.suppressProgressTurnRunEnd = false;
     this.providerRetryAbort?.abort();
     this.providerRetryAbort = undefined;
-    this.mutationFailureCounts.clear();
-    this.mutationRecoveryGraces.clear();
+    this.clearMutationRecovery("parent");
     this.pendingMutationTermination = undefined;
-    this.terminatingToolCalls.clear();
     this.turnHadError = false;
   }
 
@@ -8629,13 +8627,11 @@ Delegation rules:
       termination.kind,
       termination.lastErrorCode,
     );
-    const lastError = termination.lastErrorCode
-      ? ` Last error: ${termination.lastErrorCode}.`
-      : "";
-    const message =
-      termination.kind === "edit"
-        ? `Stopped after ${MAX_MUTATION_RECOVERY_FAILURES} failed Edit attempts on ${termination.target}.${lastError} ${recovery}`
-        : `Stopped after ${MAX_MUTATION_RECOVERY_FAILURES} failed patch commands.${lastError} ${recovery}`;
+    const message = mutationTerminationMessage(
+      termination.kind,
+      termination.target,
+      termination.lastErrorCode,
+    );
     const error = {
       code: "MUTATION_RETRY_BUDGET_EXHAUSTED",
       message,
@@ -9204,6 +9200,8 @@ Delegation rules:
     this.failedHostToolCalls.clear();
     this.mutationFailureCounts.clear();
     this.mutationRecoveryGraces.clear();
+    this.mutationOwners.clear();
+    this.delegateMutationTerminations.clear();
     this.pendingMutationTermination = undefined;
     this.terminatingToolCalls.clear();
     this.gracefulStopRequested = false;

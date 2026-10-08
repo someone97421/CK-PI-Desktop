@@ -1081,6 +1081,7 @@ registerShutdownHandlers({
     await persistenceOutbox.flush(getHost);
   },
   inflightCheckpointer,
+  flushEventPersistence: eventPersistence.flush,
   pluginPanels,
   plugins,
   userMcp,

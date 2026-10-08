@@ -29,7 +29,8 @@ import { ModelSelectionPanes, useModelSelection } from "./ModelSelectionPanes";
 import { ProviderConnectionFields } from "./ProviderConnectionFields";
 import { useProbeFeedback } from "./useProbeFeedback";
 import { ServiceChooser } from "./ServiceChooser";
-import { CUSTOM_SERVICE } from "./service-catalog";
+import { CUSTOM_SERVICE, JEV_SERVICE } from "./service-catalog";
+import { JevServiceForm } from "./JevServiceForm";
 import { useRecommendedModelSelection } from "./useRecommendedModelSelection";
 import type { ProviderCopyDraft } from "./provider-copy";
 import {
@@ -61,6 +62,23 @@ function initialBaseUrl(provider?: ProviderPublic | null): string {
   return providerSetupPreset(provider)?.baseUrl ?? provider?.baseUrl ?? "";
 }
 
+/**
+ * Which service the dialog opens on: the caller's own choice first (Jev has no
+ * preset and no row), then a copied draft's format, then the edited row's.
+ */
+function initialServiceId(
+  initialService: string | null | undefined,
+  initialDraft: ProviderCopyDraft | null | undefined,
+  provider: ProviderPublic | null | undefined,
+): string {
+  if (initialService) return initialService;
+  if (!initialDraft) return serviceIdFor(provider);
+  return initialDraft.apiStyle === OPENCODE_GO_API_STYLE
+    ? NAMED_ENDPOINT_PRESETS.find((preset) => preset.apiStyle === OPENCODE_GO_API_STYLE)?.id ??
+        CUSTOM_SERVICE
+    : CUSTOM_SERVICE;
+}
+
 export type ProviderSetupDialogProps = {
   provider?: ProviderPublic | null;
   initialDraft?: ProviderCopyDraft | null;
@@ -71,6 +89,10 @@ export type ProviderSetupDialogProps = {
   vendors?: OAuthVendor[] | null;
   /** Leaves this dialog for the vendor's browser sign-in. */
   onPickSubscription?: (vendor: OAuthVendor) => void;
+  /** Opens straight on this service; Jev has no preset tile to land on. */
+  initialService?: string | null;
+  /** Jev was configured from inside this dialog. */
+  onJevConfigured?: () => void;
 };
 
 export function ProviderSetupDialog({
@@ -81,16 +103,16 @@ export function ProviderSetupDialog({
   imageModelIds,
   vendors,
   onPickSubscription,
+  initialService,
+  onJevConfigured,
 }: ProviderSetupDialogProps) {
   const { t } = useTranslation();
   const [imageModelDraft, setImageModelDraft] = useState<string[] | undefined>();
   const editing = !!provider;
   const apiKeyRef = useRef<HTMLInputElement>(null);
-  const [service, setService] = useState(() => initialDraft
-    ? initialDraft.apiStyle === OPENCODE_GO_API_STYLE
-      ? NAMED_ENDPOINT_PRESETS.find((preset) => preset.apiStyle === OPENCODE_GO_API_STYLE)?.id ?? CUSTOM_SERVICE
-      : CUSTOM_SERVICE
-    : serviceIdFor(provider));
+  const [service, setService] = useState(() =>
+    initialServiceId(initialService, initialDraft, provider),
+  );
   const [name, setName] = useState(() => initialDraft?.name ?? initialName(provider));
   const [baseUrl, setBaseUrl] = useState(() => initialDraft?.baseUrl ?? initialBaseUrl(provider));
   const [apiKey, setApiKey] = useState("");
@@ -114,6 +136,8 @@ export function ProviderSetupDialog({
   const named = Boolean(namedPreset);
   const custom = service === CUSTOM_SERVICE;
   const selectedVendorKey = providerSetupVendorKey(provider, namedPreset?.vendorKey, serviceChanged);
+  // Jev 独立配置密钥，不创建模型提供商条目。
+  const jevService = service === JEV_SERVICE;
   const resolvedName = namedPreset ? name.trim() || namedPreset.name : name;
   const resolvedBaseUrl = namedPreset?.baseUrl ?? baseUrl;
   /*
@@ -507,8 +531,18 @@ export function ProviderSetupDialog({
         current={service}
         onPickService={pickService}
         onPickSubscription={editing ? undefined : onPickSubscription}
+        showClassifiers={!editing}
       />
     </>
+  );
+
+  /*
+    Jev is the one entry here that is not a provider row: a key and no models,
+    so it renders its own half of the dialog instead of the connection form and
+    the model panes.
+  */
+  const jevView = (
+    <JevServiceForm onClose={onClose} onConfigured={() => onJevConfigured?.()} />
   );
 
   return portalOverlay(
@@ -527,7 +561,7 @@ export function ProviderSetupDialog({
         aria-labelledby="provider-setup-title"
         onClick={(event) => event.stopPropagation()}
       >
-        {chooserOpen ? chooserView : formView}
+        {chooserOpen ? chooserView : jevService ? jevView : formView}
       </div>
 
       {advancedOpen && (named || custom) ? (

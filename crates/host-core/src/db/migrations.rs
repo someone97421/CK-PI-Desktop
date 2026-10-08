@@ -57,6 +57,13 @@ impl Database {
                 .execute_batch("ALTER TABLE messages ADD COLUMN streaming INTEGER");
         }
         let tx = self.conn.unchecked_transaction()?;
+        // 仅维护可重建索引，保持 schema 21 与旧版共用数据库兼容。
+        // 先建立复合索引，再删除冗余单列索引；事务失败时保留原索引。
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_updated_id
+               ON sessions(updated_at DESC, id DESC);
+             DROP INDEX IF EXISTS idx_sessions_updated;",
+        )?;
         tx.execute(
             "UPDATE turns
          SET status = 'aborted', error_code = COALESCE(error_code, 'TURN_ABORTED'),

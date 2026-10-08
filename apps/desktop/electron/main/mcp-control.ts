@@ -487,6 +487,8 @@ export const MCP_CONTROL_BLOCKED_CHANNEL_KEYS = [
   "providersUpdate",
   "providersDelete",
   "providersTest",
+  // A key check spends a credential the control surface must not hold.
+  "jevTest",
   "providersOauthStart",
   "providersOauthRespond",
   "providersOauthCancel",

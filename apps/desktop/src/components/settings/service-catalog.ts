@@ -5,7 +5,18 @@
  * the preset's canonical name, id, vendor key, aliases, base URL and host, so
  * "kimi", "moonshot" and "api.moonshot.cn" all land on the same entry.
  */
-import { NAMED_ENDPOINT_PRESETS, type NamedEndpointPreset } from "@pi-desktop/shared";
+import {
+  NAMED_ENDPOINT_PRESETS,
+  TYPESAFE_SYSTEM_ONE_URL,
+  type NamedEndpointPreset,
+} from "@pi-desktop/shared";
+
+/**
+ * Jev is offered where a service is added, not where a provider is edited: it
+ * owns no provider row and no model list, so it is never a target of "change
+ * the service on this row".
+ */
+export const JEV_SERVICE = "jev";
 
 export const CUSTOM_SERVICE = "custom";
 
@@ -65,4 +76,20 @@ export function filterServiceOptions<T extends { haystack: string }>(
   const needle = query.trim().toLowerCase();
   if (!needle) return [...options];
   return options.filter((option) => option.haystack.includes(needle));
+}
+
+/**
+ * TypeSafe Jev, the classifier on the add path. Its detail line names the
+ * address the key is spent on, because there is no model list to describe.
+ */
+export function jevServiceOption(translate: Translate): ServiceOption {
+  const label = translate("settings.jevTitle");
+  const endpoint = endpointLabel(TYPESAFE_SYSTEM_ONE_URL);
+  return {
+    id: JEV_SERVICE,
+    label,
+    endpoint,
+    haystack:
+      `${label} jev typesafe classifier ${endpoint} ${TYPESAFE_SYSTEM_ONE_URL}`.toLowerCase(),
+  };
 }

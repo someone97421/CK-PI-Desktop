@@ -103,7 +103,7 @@ CREATE TABLE sessions (
   created_at  INTEGER NOT NULL,
   updated_at  INTEGER NOT NULL
 );
-CREATE INDEX idx_sessions_updated ON sessions(updated_at DESC);
+CREATE INDEX idx_sessions_updated_id ON sessions(updated_at DESC, id DESC);
 CREATE INDEX idx_sessions_project ON sessions(project_id) WHERE project_id IS NOT NULL;
 CREATE INDEX idx_sessions_deleted ON sessions(deleted_at) WHERE deleted_at IS NOT NULL;
 

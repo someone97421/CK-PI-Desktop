@@ -182,6 +182,7 @@ export type SubagentRunResult = {
 export type SubagentToolOutcome = {
   isError?: boolean;
   terminate?: boolean;
+  error?: { code: string; message: string };
 };
 
 export type SubagentRunOptions = {
@@ -339,6 +340,7 @@ export class SubagentRun {
   private executing = false;
   private lastStatus?: SubagentRunStatus;
   private streamError?: { code: string; message: string };
+  private mutationTermination?: { code: string; message: string };
   private turnAborted = false;
   private pendingProviderRetry?: ReturnType<typeof classifyAgentError>;
   private providerRetryInProgress = false;
@@ -852,6 +854,9 @@ export class SubagentRun {
     }
     if (this.contextFailure) {
       return this.result("failed", "", this.contextFailure);
+    }
+    if (this.mutationTermination) {
+      return this.result("failed", this.lastReportText, this.mutationTermination);
     }
     if (caughtError) {
       if (caughtError.code === "TURN_ABORTED") {
@@ -1390,6 +1395,7 @@ export class SubagentRun {
     const parent = this.opts.resolveToolOutcome?.(context);
     const terminate = parent?.terminate === true;
     const result = await mediaStore.externalize(context.result);
+    if (terminate && parent?.error) this.mutationTermination = parent.error;
     return {
       content: result.content,
       details: result.details,

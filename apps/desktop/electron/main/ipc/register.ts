@@ -18,6 +18,7 @@ import { searchMcpMarket } from "../mcp-registry-catalog";
 import { registerNotificationIpc } from "./notification-ipc";
 import { registerPluginIpc } from "./plugin-ipc";
 import { registerPluginUiIpc } from "./plugin-ui-ipc";
+import { registerJevIpc } from "./jev-ipc";
 import { registerProviderIpc } from "./provider-ipc";
 import { registerPiSyncIpc } from "./pi-sync-ipc";
 import { registerPullsIpc } from "./pulls-ipc";
@@ -315,6 +316,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getHost,
     logger,
   });
+  registerJevIpc({ registrar, logger });
   const loadComposerTemplatesCached = createComposerTemplateLoader(logger);
   const composerCommandService = registerComposerIpc({
     registrar,

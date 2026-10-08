@@ -102,6 +102,8 @@ type RuntimeParams = {
   infiniteProviderRetry?: boolean;
   /** 运行状态提醒开关；缺省开启（false 关闭）。 */
   runStatusReminder?: boolean;
+  /** Opt-in TypeSafe classifier credential resolved by Electron main. */
+  jevApiKey?: string;
   provider: RuntimeProviderConfig;
   /**
    * Optional dedicated context-compaction model, fully resolved by Electron
@@ -248,6 +250,7 @@ async function runtimeFor(
     subagents,
     subagentProviders,
     subagentModelKeys,
+    jevApiKey: params.jevApiKey,
     projectInstructions: params.projectInstructions,
     customSystemPrompt: params.customSystemPrompt,
     projectMemory: params.projectMemory,
@@ -326,6 +329,7 @@ async function runtimeFor(
     thinkingLevel,
     infiniteProviderRetry: params.infiniteProviderRetry === true,
     runStatusReminder: params.runStatusReminder !== false,
+    jevApiKey: params.jevApiKey,
     history,
     compaction,
     compactionSettings: params.compactionSettings,

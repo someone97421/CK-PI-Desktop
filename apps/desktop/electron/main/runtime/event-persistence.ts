@@ -54,8 +54,22 @@ export function createEventPersistence({
 }: EventPersistenceDependencies): {
   subagentTagged: (message: UiMessage, envelope: AgentEventEnvelope) => UiMessage;
   persistAgentEvent: (envelope: AgentEventEnvelope) => UiMessage | undefined;
+  flush: () => Promise<void>;
 } {
   const inflightSnapshots = new Map<string, UiMessage>();
+  const pendingWrites = new Set<Promise<void>>();
+  function trackWrite(write: Promise<void>): void {
+    pendingWrites.add(write);
+    void write.then(
+      () => pendingWrites.delete(write),
+      () => pendingWrites.delete(write),
+    );
+  }
+  async function flush(): Promise<void> {
+    while (pendingWrites.size > 0) {
+      await Promise.allSettled([...pendingWrites]);
+    }
+  }
 function subagentTagged(message: UiMessage, envelope: AgentEventEnvelope): UiMessage {
   return tagMessageToolLineage(message, envelope);
 }
@@ -163,7 +177,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
       event.error.code,
       { turnId: envelope.turnId ?? "" },
     );
-    void turnFinalization
+    trackWrite(turnFinalization
       .then(() =>
         executionId
           ? finishApprovedExecution(executionId, "interrupted", event.error.code)
@@ -174,7 +188,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
           sessionId: envelope.sessionId,
           data: String(error),
         });
-      });
+      }));
     return;
   }
   if (event.type === "agent_end") {
@@ -187,7 +201,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
     // The finalizer's promise can reject — its body attempts the durable end and
     // its release handler no longer swallows a throwing body — so the chain is
     // observed even when no approved execution follows this turn.
-    void turnFinalization
+    trackWrite(turnFinalization
       .then(() =>
         executionId ? finishApprovedExecution(executionId, "completed") : undefined,
       )
@@ -196,10 +210,10 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
           sessionId: envelope.sessionId,
           data: String(error),
         });
-      });
+      }));
     // Persist the completed branch as the active regenerate revision when the
     // latest user turn carries revision metadata (ChatGPT-style history).
-    void (async () => {
+    trackWrite((async () => {
       try {
         if (!runtimeState.host) return;
         // The turn's final assistant message may still be in the outbox. Archive
@@ -237,7 +251,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
           data: String(error),
         });
       }
-    })();
+    })());
     return;
   }
   if (event.type === "message_end" && event.message.role === "user" && !envelope.parentToolCallId) {
@@ -376,5 +390,5 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
     return message;
   }
 }
-  return { subagentTagged, persistAgentEvent };
+  return { subagentTagged, persistAgentEvent, flush };
 }

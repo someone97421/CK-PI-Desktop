@@ -14,7 +14,7 @@ import test from "node:test";
 import { loadStyles } from "./helpers/styles.mjs";
 
 register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
-const { normalizeApiStyle } = await import("@pi-desktop/shared");
+const { normalizeApiStyle, modelWireIdsEqual } = await import("@pi-desktop/shared");
 const { normalizeBaseUrlInput } = await import("../src/components/settings/provider-endpoint-guidance.ts");
 
 const read = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
@@ -329,7 +329,7 @@ test("adding a service only claims the app default while none resolves", () => {
   // default provider to be runnable (enabled, credentialed, a chat model
   // configured), so a keyless default row cannot block the new provider.
   // Provider readiness and default selection use the same exact chat choices.
-  assert.match(pageSource, /chatModelOptions\(\[currentProvider\], imageGenerationCandidates\)/);
+  assert.match(pageSource, /keepsAppDefaultModel\(\s*providers,\s*settings\.defaultProviderId,\s*settings\.defaultModelId,\s*imageGenerationCandidates/);
   assert.match(pageSource, /providerServesChatModels\(provider, imageGenerationCandidates\)/);
 });
 
@@ -354,14 +354,13 @@ test("a hand-typed id is seeded from the model library, not only from generic de
 });
 
 test("settings match complete case-normalized wire ids, not proxy suffixes", () => {
-  const identity = pageSource.match(/const sameWireId = \(left: string, right: string\) => ([^;]+);/);
-  assert.ok(identity);
-  const sameWireId = new Function("left", "right", `return ${identity[1]}`);
-  assert.equal(sameWireId("PROXY/model", "proxy/MODEL"), true);
-  assert.equal(sameWireId("proxy/model", "model"), false);
-  assert.match(pageSource, /isImageCandidate\(imageModels, provider\.id, id\)/);
-  assert.match(pageSource, /!models\.some\(\(model\) => sameWireId\(model\.id, settings\.defaultModelId/);
-  assert.doesNotMatch(pageSource, /modelIdsMatch|isImageGenerationModel/);
+  assert.equal(modelWireIdsEqual("PROXY/model", "proxy/MODEL"), true);
+  assert.equal(modelWireIdsEqual("proxy/model", "model"), false);
+  // fork 默认模型规则与生图选择验证都沿用完整 wire id。
+  assert.match(pageSource, /defaultModelOptions\(readyProviders, imageGenerationCandidates\)/);
+  assert.match(pageSource, /isImageGenerationPickerCandidate\(candidates, binding\.providerId, binding\.modelId\)/);
+  assert.match(pageSource, /!models\.some\(\(model\) => modelWireIdsEqual\(model\.id, settings\.defaultModelId/);
+  assert.doesNotMatch(pageSource, /modelIdsMatch/);
   assert.doesNotMatch(setupSource, /modelIdsMatch/);
   assert.doesNotMatch(pickerSource, /modelIdsMatch/);
   // The host decides identity now: a record the service's id reduces to (a route
@@ -375,7 +374,7 @@ test("settings match complete case-normalized wire ids, not proxy suffixes", () 
 });
 
 test("new chat default skips an image-only first model", () => {
-  assert.match(pageSource, /const firstModelId = models\.find\(\(model\) =>\s*!selectedImageIds\.some\(\(id\) => sameWireId\(id, model\.id\)\)/);
+  assert.match(pageSource, /const firstModelId = models\.find\(\(model\) =>\s*!selectedImageIds\.some\(\(id\) => modelWireIdsEqual\(id, model\.id\)\)/);
   assert.match(pageSource, /if \(!keepsCurrentDefault && firstModelId\)/);
 });
 

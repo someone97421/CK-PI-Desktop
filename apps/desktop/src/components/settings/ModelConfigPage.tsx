@@ -17,7 +17,6 @@ import {
   imageGenerationBindings,
   isImageGenerationModel,
   modelWireIdsEqual,
-  vendorAccountImageCandidates,
   type ImageGenerationBinding,
   type ModelBinding,
   type ProviderPublic,
@@ -46,7 +45,11 @@ import {
   keepsAppDefaultModel,
   providerServesChatModels,
 } from "./default-model";
-import { planImageGenerationDefaults } from "./image-generation-default";
+import {
+  imageGenerationPickerCandidates,
+  isImageGenerationPickerCandidate,
+  planImageGenerationDefaults,
+} from "./image-generation-default";
 import { copyProviderConfiguration, type ProviderCopyDraft } from "./provider-copy";
 import { ImageGenerationModelRow } from "./ImageGenerationModelRow";
 import { OAuthLoginDialog } from "./OAuthLoginDialog";
@@ -57,6 +60,8 @@ import { useVendorAccounts } from "./useVendorAccounts";
 import { VendorAccountDialog, type VendorAccountForm } from "./VendorAccountDialog";
 import { ModelConfigImportPanel } from "../../features/settings/imports/ModelConfigImportPanel";
 import { ImportToggleButton } from "../../features/settings/import-workbench";
+import { JevSettingsCard } from "./JevSettingsCard";
+import { JEV_SERVICE } from "./service-catalog";
 
 /**
  * A row of the context-compaction picker: the follow entry, which names the
@@ -104,6 +109,9 @@ export function ModelConfigPage() {
   const [defaultModelQuery, setDefaultModelQuery] = useState("");
   const [pickingCompaction, setPickingCompaction] = useState(false);
   const [compactionModelQuery, setCompactionModelQuery] = useState("");
+  // Jev 卡片沿用添加服务对话框，并在密钥保存后刷新状态。
+  const [jevSetup, setJevSetup] = useState(false);
+  const [jevStatusRevision, setJevStatusRevision] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [changingImageModel, setChangingImageModel] = useState(false);
@@ -187,10 +195,11 @@ export function ModelConfigPage() {
   }, []);
 
   const imageGenerationCandidates = useMemo(
-    () => imageGenerationBindings([
-      ...imageGenerationBindings(settings?.imageGenerationModels, settings?.imageGeneration),
-      ...vendorAccountImageCandidates(providers),
-    ], null),
+    () => imageGenerationPickerCandidates(
+      settings?.imageGenerationModels,
+      settings?.imageGeneration,
+      providers,
+    ),
     [settings?.imageGenerationModels, settings?.imageGeneration, providers],
   );
   // One readiness rule for the picker, the provider rows and the add-provider
@@ -394,14 +403,15 @@ export function ModelConfigPage() {
     setChangingImageModel(true);
     try {
       const current = await api.getSettings();
-      const candidates = imageGenerationBindings(
-        [
-          ...imageGenerationBindings(current.imageGenerationModels, current.imageGeneration),
-          ...vendorAccountImageCandidates(useAppStore.getState().providers),
-        ],
-        null,
+      // 读取保存时最新的账号列表，与生图选择器使用同一候选整理规则。
+      const candidates = imageGenerationPickerCandidates(
+        current.imageGenerationModels,
+        current.imageGeneration,
+        useAppStore.getState().providers,
       );
-      if (!isImageGenerationModel(candidates, binding.providerId, binding.modelId)) return;
+      if (!isImageGenerationPickerCandidate(candidates, binding.providerId, binding.modelId)) {
+        return;
+      }
       const nextSettings = { ...current, imageGeneration: binding };
       await api.setSettings(nextSettings);
       useAppStore.setState({ settings: nextSettings });
@@ -801,6 +811,15 @@ export function ModelConfigPage() {
         </div>
       </section>
 
+      <JevSettingsCard
+        settings={settings}
+        onConfigure={() => {
+          setJevSetup(true);
+          setSetupFor("");
+        }}
+        statusRevision={jevStatusRevision}
+      />
+
       <section className="settings-card-block">
         <div className="model-config-section-head">
           <div className="settings-card-heading-line">
@@ -957,13 +976,25 @@ export function ModelConfigPage() {
         <ProviderSetupDialog
           provider={editingProvider}
           initialDraft={copyDraft}
-          onClose={() => { setSetupFor(null); setCopyDraft(null); }}
+          initialService={jevSetup ? JEV_SERVICE : undefined}
+          onClose={() => {
+            setSetupFor(null);
+            setCopyDraft(null);
+            setJevSetup(false);
+          }}
           imageModelIds={editingProvider
             ? imageGenerationCandidates
                 .filter((binding) => binding.providerId === editingProvider.id)
                 .map((binding) => binding.modelId)
             : undefined}
           onSaved={afterSaved}
+          onJevConfigured={() => {
+            setSetupFor(null);
+            setCopyDraft(null);
+            setJevSetup(false);
+            // The card is already mounted: tell it the key it read has changed.
+            setJevStatusRevision((revision) => revision + 1);
+          }}
           vendors={vendors}
           onPickSubscription={(vendor) => {
             setSetupFor(null);

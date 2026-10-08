@@ -27,7 +27,7 @@ const rule = (selector) => {
 test("a new service starts on a searchable chooser, not a closed menu (D625)", () => {
   assert.match(setupSource, /<ServiceChooser/);
   assert.match(setupSource, /const chooserOpen = choosing \|\| !service/);
-  assert.match(setupSource, /\{chooserOpen \? chooserView : formView\}/);
+  assert.match(setupSource, /\{chooserOpen \? chooserView : jevService \? jevView : formView\}/);
   assert.doesNotMatch(setupSource, /<ServicePicker/);
   assert.doesNotMatch(setupSource, /<optgroup/);
   assert.match(chooserSource, /settings\.searchService/);
@@ -60,6 +60,12 @@ test("subscriptions and API services share the chooser, custom endpoint first", 
   assert.doesNotMatch(chooserSource, /presetGroupInternational|presetGroupChina/);
   assert.doesNotMatch(chooserSource, /NAMED_PRESET_GROUPS/);
   assert.doesNotMatch(catalogSource, /NAMED_PRESET_GROUPS/);
+  // Jev is a classifier, not a row anyone edits: it is offered on the add path
+  // only, and it renders its own view instead of the connection form.
+  assert.match(chooserSource, /settings\.chooserClassifiers/);
+  assert.match(chooserSource, /showClassifiers \? \[jevServiceOption\(t\)\] : \[\]/);
+  assert.match(setupSource, /showClassifiers=\{!editing\}/);
+  assert.match(setupSource, /const jevService = service === JEV_SERVICE/);
 });
 
 test("the chooser answers the keyboard and never dead-ends", () => {

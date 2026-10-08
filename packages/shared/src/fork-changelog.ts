@@ -5,6 +5,10 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "Read 和 Edit 支持带 BOM 的 UTF-16 文本，编辑后保留原编码和换行符。",
+  "各子代理独立计算编辑失败次数，失败不再干扰主代理与其他任务，继续保留 TaskResume。",
+  "退出前等待重新生成回答的历史归档，并在保持数据库版本兼容的前提下优化会话排序索引。",
+  "新增默认关闭的 Jev 结构化分类服务，可从添加服务入口校验密钥并启用；统一账号生图候选选择与保存。",
   "图片附件保留在撰写时的位置，模型请求、当前轮引导和历史对话使用相同顺序，并继续支持 Gemini 音视频输入。",
   "支持使用已登录的 ChatGPT 账号生成和编辑图片，保留现有生图模型与默认选择。",
   "插件提供商支持 OAuth 登录、令牌刷新和退出登录，继续隔离插件托管配置与手动导入导出。",
@@ -30,6 +34,10 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Read and edit BOM-marked UTF-16 text while preserving its encoding and line endings.",
+  "Isolate each delegate's edit failure budget from the parent and other tasks while retaining TaskResume.",
+  "Wait for regenerated-answer archival before quitting and optimize session sorting indexes without changing the database version.",
+  "Add an opt-in Jev structured classifier with a checked key from Add Service, and align account image-model selection with saving.",
   "Keep image attachments at their draft positions across requests, steering and restored history while retaining Gemini audio and video input.",
   "Generate and edit images with a signed-in ChatGPT account while preserving existing image models and defaults.",
   "Support plugin-provider OAuth sign-in, token refresh and sign-out while isolating managed configuration from manual imports and exports.",

@@ -1708,3 +1708,39 @@ fn v16_and_v17_upgrade_to_v18_without_losing_waiting_inputs() {
         assert_eq!(title, "Keep my conversation");
     }
 }
+
+#[test]
+fn boot_maintenance_replaces_session_index_without_schema_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("pi.sqlite");
+    {
+        let db = Database::open(&db_path).unwrap();
+        db.conn()
+            .execute_batch(
+                "DROP INDEX IF EXISTS idx_sessions_updated_id;
+                 CREATE INDEX idx_sessions_updated ON sessions(updated_at DESC);
+                 PRAGMA user_version = 21;",
+            )
+            .unwrap();
+        db.set_project_memory("/workspace/index-check", "保留业务记录").unwrap();
+    }
+
+    // 重复打开验证维护幂等；只维护索引，不推进版本或改写业务记录。
+    for _ in 0..2 {
+        let db = Database::open(&db_path).unwrap();
+        let version: i64 = db.conn().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 21);
+        assert_eq!(crate::db::SCHEMA_VERSION, 21);
+        let old_index_exists: bool = db.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_sessions_updated')",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert!(!old_index_exists);
+        let index_sql: String = db.conn().query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_sessions_updated_id'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert!(index_sql.contains("sessions(updated_at DESC, id DESC)"));
+        assert_eq!(db.get_project_memory("/workspace/index-check").unwrap().content, "保留业务记录");
+    }
+}

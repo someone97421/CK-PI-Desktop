@@ -40,6 +40,7 @@ import type {
   AgentInstructionFile,
   AppSettings,
   FontMetadata,
+  JevKeyCheckResult,
   CommandShellCatalog,
   AppVersionInfo,
   BrowserAction,
@@ -152,6 +153,7 @@ import {
   validateNetworkPolicy,
   validateNetworkProxy,
   validateSpeechSettings,
+  JEV_API_KEY_SECRET_REF,
 } from "@pi-desktop/shared";
 
 export type ImportSource = "claude-code" | "opencode" | "codex" | "pi";
@@ -394,6 +396,7 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
       (settings as { infiniteProviderRetry?: unknown }).infiniteProviderRetry === true,
     temporaryWorkspaceContextMenu:
       (settings as { temporaryWorkspaceContextMenu?: unknown }).temporaryWorkspaceContextMenu === true,
+    jevEnabled: (settings as { jevEnabled?: unknown }).jevEnabled === true,
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
     )
@@ -434,6 +437,7 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     chatContentMaxWidth?: unknown;
     infiniteProviderRetry?: unknown;
     temporaryWorkspaceContextMenu?: unknown;
+    jevEnabled?: unknown;
     smoothStreaming?: unknown;
     updatePreference?: unknown;
     lastNotifiedUpdateVersion?: unknown;
@@ -486,6 +490,14 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     typeof value.temporaryWorkspaceContextMenu !== "boolean"
   ) {
     throw Object.assign(new Error("temporaryWorkspaceContextMenu is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, "jevEnabled") &&
+    typeof value.jevEnabled !== "boolean"
+  ) {
+    throw Object.assign(new Error("jevEnabled is invalid"), {
       errorCode: "INVALID_PARAMS",
     });
   }
@@ -717,6 +729,18 @@ export const api = {
   getAppearanceSystemIcon: () =>
     invoke<{ supported: boolean; pending: boolean; message?: string }>(IPC.invoke.appearanceSystemIconGet),
   applyAppearanceSystemIcon: () => invoke<void>(IPC.invoke.appearanceSystemIconApply),
+  /** Store the Jev key in Host secure storage; it is never returned to renderer state. */
+  setJevApiKey: (value: string) =>
+    invoke<void>(IPC.invoke.secretsSet, { secretRef: JEV_API_KEY_SECRET_REF, value }),
+  deleteJevApiKey: () => invoke<void>(IPC.invoke.secretsDelete, JEV_API_KEY_SECRET_REF),
+  hasJevApiKey: () =>
+    invoke<{ has: boolean }>(IPC.invoke.secretsHas, JEV_API_KEY_SECRET_REF).then((result) => result.has),
+  /**
+   * Ask TypeSafe whether this key works, without storing anything. Jev keeps
+   * a key only after this answered it; the check text is TypeSafe's own.
+   */
+  testJevApiKey: (value: string) =>
+    invoke<JevKeyCheckResult>(IPC.invoke.jevTest, value),
   configSyncGetState: () => invoke<ConfigSyncState>(IPC.invoke.configSyncGetState),
   configSyncConfigure: (input: ConfigSyncConfigureInput) =>
     invoke<ConfigSyncState>(IPC.invoke.configSyncConfigure, input),

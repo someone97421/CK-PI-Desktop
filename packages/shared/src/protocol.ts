@@ -238,6 +238,14 @@ export const IPC = {
      */
     providersSetSecret: "pi-desktop/providers/setSecret",
     providersTest: "pi-desktop/providers/testConnection",
+    /**
+     * Check a TypeSafe key before the Jev settings row keeps it.
+     *
+     * Jev is not a provider row, so `providersTest` cannot answer this: the
+     * key is checked by the same System One round trip the Agent's
+     * `JevClassify` tool makes, and only a key that answered is stored.
+     */
+    jevTest: "pi-desktop/jev/test",
     providersListModels: "pi-desktop/providers/listModels",
     /**
      * Look one model id up in the local models.dev snapshot.
