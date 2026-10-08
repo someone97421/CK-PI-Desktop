@@ -3,20 +3,123 @@ import test from "node:test";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import {
   fileDirOf,
   getToolPreviewTarget,
+  handleMarkdownFileLinkClick,
   isHttpUrl,
   linkifyMdastTree,
   parseFileRef,
   parseFileRefPosition,
   remarkChatFileLinks,
+  rehypeWindowsFileLinks,
   resolvePreviewTarget,
   splitChatText,
   toWorkspaceRel,
 } from "../src/lib/chat-links.ts";
 
 const ROOT = "/Users/dev/project";
+
+function renderSanitizedMarkdown(source, root = "D:\\person") {
+  return renderToStaticMarkup(
+    React.createElement(ReactMarkdown, {
+      remarkPlugins: [remarkGfm, remarkChatFileLinks(root)],
+      rehypePlugins: [rehypeRaw, rehypeWindowsFileLinks, rehypeSanitize],
+      children: source,
+    }),
+  );
+}
+
+function assertMarkdownLinkClick(markup, expectedPath) {
+  const href = markup.match(/<a href="([^"]+)"/)?.[1];
+  assert.ok(href, `rendered Markdown link has no href: ${markup}`);
+  const calls = [];
+  let prevented = false;
+  const handled = handleMarkdownFileLinkClick(
+    { preventDefault: () => { prevented = true; } },
+    href,
+    "D:\\person",
+    undefined,
+    (...args) => calls.push(args),
+  );
+  assert.equal(handled, true);
+  assert.equal(prevented, true);
+  assert.deepEqual(calls, [[expectedPath, undefined, undefined, undefined]]);
+}
+
+test("Windows Markdown file links survive parsing and sanitization without changing their paths", () => {
+  const paths = [
+    String.raw`D:\person\test.js`,
+    "D:/person/test.js",
+    String.raw`D:\person\dir name\报告 2026.js`,
+    "D:/person/dir name/报告 2026.js",
+  ];
+
+  for (const path of paths) {
+    const source = `[file](<${path}>)`;
+    const markup = renderSanitizedMarkdown(source);
+    const href = markup.match(/<a href="([^"]+)"/)?.[1];
+    assert.ok(href, `sanitized Markdown link lost href for ${path}: ${markup}`);
+    assert.equal(decodeURIComponent(href), path);
+    assertMarkdownLinkClick(markup, path);
+  }
+
+  const plainMarkdown = String.raw`[test.js](D:\person\test.js)`;
+  const plainMarkup = renderSanitizedMarkdown(plainMarkdown);
+  assert.match(plainMarkup, /<a href="D%3A%5Cperson%5Ctest\.js">test\.js<\/a>/);
+  assertMarkdownLinkClick(plainMarkup, String.raw`D:\person\test.js`);
+
+  const referencePath = String.raw`D:\person\dir name\报告 2026.js`;
+  const referenceMarkup = renderSanitizedMarkdown(
+    `[file][local]\n\n[local]: <${referencePath}>`,
+  );
+  const referenceHref = referenceMarkup.match(/<a href="([^"]+)"/)?.[1];
+  assert.ok(referenceHref, `reference-style link lost href: ${referenceMarkup}`);
+  assert.equal(decodeURIComponent(referenceHref), referencePath);
+  assertMarkdownLinkClick(referenceMarkup, referencePath);
+
+  const encodedPath = "D%3A%5Cperson%5Cdir%20name%5C%E6%8A%A5%E5%91%8A.js";
+  const encodedMarkup = renderSanitizedMarkdown(`[file](${encodedPath})`);
+  const encodedHref = encodedMarkup.match(/<a href="([^"]+)"/)?.[1];
+  assert.ok(encodedHref, `encoded path link lost href: ${encodedMarkup}`);
+  assert.equal(decodeURIComponent(encodedHref), String.raw`D:\person\dir name\报告.js`);
+  assert.equal(encodedHref, encodedPath, "normalization must not double-encode an existing URI path");
+  assertMarkdownLinkClick(encodedMarkup, String.raw`D:\person\dir name\报告.js`);
+
+  const encodedSlashPath = "D%3A%2Fperson%2Fdir%20name%2F%E6%8A%A5%E5%91%8A.js";
+  const encodedSlashMarkup = renderSanitizedMarkdown(`[file](${encodedSlashPath})`);
+  const encodedSlashHref = encodedSlashMarkup.match(/<a href="([^"]+)"/)?.[1];
+  assert.ok(encodedSlashHref, `encoded forward-slash link lost href: ${encodedSlashMarkup}`);
+  assert.equal(decodeURIComponent(encodedSlashHref), "D:/person/dir name/报告.js");
+  assert.equal(encodedSlashHref, encodedSlashPath);
+  assertMarkdownLinkClick(encodedSlashMarkup, "D:/person/dir name/报告.js");
+});
+
+test("Markdown link normalization leaves web, relative, automatic, and unsafe links alone", () => {
+  const httpMarkup = renderSanitizedMarkdown("[web](https://example.com/a%20b)");
+  assert.match(httpMarkup, /href="https:\/\/example\.com\/a%20b"/);
+
+  const relativeMarkup = renderSanitizedMarkdown("[relative](../docs/readme.md)");
+  assert.match(relativeMarkup, /href="\.\.\/docs\/readme\.md"/);
+
+  const autoPath = String.raw`D:\person\test.js`;
+  const autoMarkup = renderSanitizedMarkdown(`Open ${autoPath}`);
+  assert.match(autoMarkup, /href="D%3A%5Cperson%5Ctest\.js"/);
+
+  for (const destination of [
+    "javascript:alert%281%29",
+    "data:text/html,unsafe",
+    "file:///C:/secret.txt",
+    "ms-msdt:/diagnostics",
+    "custom:payload",
+  ]) {
+    const unsafeMarkup = renderSanitizedMarkdown(`[unsafe](${destination})`);
+    assert.doesNotMatch(unsafeMarkup, /href=/, destination);
+  }
+});
 
 test("parseFileRef accepts pathy tokens and strips line refs", () => {
   assert.equal(parseFileRef("apps/desktop/src/App.tsx"), "apps/desktop/src/App.tsx");
@@ -113,6 +216,10 @@ test("resolvePreviewTarget classifies urls and workspace files", () => {
   assert.deepEqual(resolvePreviewTarget("./README.md", ROOT, "docs"), {
     kind: "file",
     path: "docs/README.md",
+  });
+  assert.deepEqual(resolvePreviewTarget("核查报告.md", ROOT), {
+    kind: "file",
+    path: "核查报告.md",
   });
   assert.deepEqual(resolvePreviewTarget(`${ROOT}/src/a.ts`, ROOT), {
     kind: "file",
@@ -640,6 +747,12 @@ test("markdown linkification encodes a Windows file path without losing its sour
   assert.equal(uncLink.children[0].value, unc);
 });
 
+test("a relative Unicode Markdown anchor reaches the local file opener", () => {
+  const markup = renderSanitizedMarkdown("[核查报告.md](核查报告.md)");
+  assert.match(markup, /<a href="[^"]+">核查报告\.md<\/a>/);
+  assertMarkdownLinkClick(markup, "核查报告.md");
+});
+
 test("splitChatText keeps unknown extensions literal", () => {
   assert.deepEqual(splitChatText("安装包.dmg 在下载目录", ROOT), [
     { kind: "text", text: "安装包.dmg 在下载目录" },
@@ -786,4 +899,52 @@ test("session links segment as their own target", () => {
   // A remote id and a bare scheme are not local conversations.
   assert.equal(resolvePreviewTarget("pi-desktop://session/remote:abc", ROOT), null);
   assert.equal(resolvePreviewTarget("pi-desktop://session/", ROOT), null);
+});
+
+test("文件链接的行列号经过渲染和点击后仍完整保留", () => {
+  for (const path of [String.raw`D:\person\test.js`, "readme.md", "src/a.ts"]) {
+    for (const source of [`[file](<${path}:42:7>)`, `\`${path}:42:7\``]) {
+      const markup = renderSanitizedMarkdown(source);
+      const href = markup.match(/<a href="([^"]+)"/)?.[1];
+      assert.ok(href, markup);
+      const calls = [];
+      let prevented = false;
+      assert.equal(handleMarkdownFileLinkClick(
+        { preventDefault: () => { prevented = true; } },
+        href, "D:/person", undefined, (...args) => calls.push(args),
+      ), true);
+      assert.equal(prevented, true);
+      assert.deepEqual(calls, [[path, undefined, undefined, { line: 42, column: 7 }]]);
+    }
+  }
+});
+
+test("Windows 原始 HTML 链接保留 fork 的盘符兼容与行号跳转", () => {
+  const markup = renderSanitizedMarkdown('<a href="D:/person/test.js:42">file</a>');
+  const href = markup.match(/<a href="([^"]+)"/)?.[1];
+  assert.ok(href, markup);
+  const calls = [];
+  handleMarkdownFileLinkClick({ preventDefault() {} }, href, "D:/person", undefined, (...args) => calls.push(args));
+  assert.deepEqual(calls, [["D:/person/test.js", undefined, undefined, { line: 42 }]]);
+});
+
+test("文档相对链接只锚定一次，目录外的绝对路径仍交给宿主解析", () => {
+  for (const [href, expected] of [
+    ["./a.ts:42:7", "docs/a.ts"],
+    ["../a.ts:42:7", "a.ts"],
+    ["/outside/a.ts:42:7", "/outside/a.ts"],
+    ["/D:/outside/a.ts:42:7", "D:/outside/a.ts"],
+  ]) {
+    const calls = [];
+    handleMarkdownFileLinkClick({ preventDefault() {} }, href, ROOT, "docs", (...args) => calls.push(args));
+    assert.deepEqual(calls, [[expected, undefined, undefined, { line: 42, column: 7 }]]);
+  }
+  for (const href of ["https://example.com", "annotation:1", "pi-desktop://session/id", "#anchor"]) {
+    let prevented = false;
+    assert.equal(handleMarkdownFileLinkClick(
+      { preventDefault: () => { prevented = true; } }, href, ROOT, undefined,
+      () => { assert.fail("其他链接不得进入文件解析"); },
+    ), false);
+    assert.equal(prevented, false);
+  }
 });

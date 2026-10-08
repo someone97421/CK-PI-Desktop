@@ -31,6 +31,7 @@ import {
   pluginCompleteContext,
   pluginSessionContextFromSession,
 } from "../plugin-agent-complete";
+import type { LegacyPromptEnhancementSettings } from "../plugin-prompt-enhancement-migration";
 import {
   completeOneShot,
   type RuntimeProviderConfig,
@@ -172,6 +173,8 @@ export function createPluginServices({
         Number((result as { imported?: unknown })?.imported ?? 0) > 0) ||
       (method === "plugin.session.rename" &&
         (result as { updated?: unknown })?.updated === true) ||
+      (method === "plugin.session.setAutoTitle" &&
+        (result as { updated?: unknown })?.updated === true) ||
       (method === "plugin.session.delete" &&
         (result as { deleted?: unknown })?.deleted === true);
     if (changed) {
@@ -249,6 +252,18 @@ export function createPluginServices({
     getWorkspacePath: () => {
       // Filled after host boots; temporary stub until services rebinding.
       return null;
+    },
+    getLegacyPromptEnhancementSettings: async (): Promise<LegacyPromptEnhancementSettings | null> => {
+      const host = getHost();
+      if (!host?.isAvailable()) return null;
+      const settings = await host.call<AppSettings>("settings.get");
+      return {
+        promptEnhancementProviderId: settings.promptEnhancementProviderId,
+        promptEnhancementModelId: settings.promptEnhancementModelId,
+        promptEnhancementThinkingLevel: settings.promptEnhancementThinkingLevel,
+        promptEnhancementCustomTemplate: settings.promptEnhancementCustomTemplate,
+        promptEnhancementUserTemplate: settings.promptEnhancementUserTemplate,
+      };
     },
     showToast: (message) => sendToRenderer(IPC.event.toast, { message }),
     notify: (input) =>
@@ -384,6 +399,10 @@ export function createPluginServices({
       get: (pluginId, input) => callPluginSessionHost("plugin.session.get", pluginId, input),
       listMessages: (pluginId, input) =>
         callPluginSessionHost("plugin.session.listMessages", pluginId, input),
+      getAutoTitleContext: (pluginId, input) =>
+        callPluginSessionHost("plugin.session.autoTitleContext", pluginId, input),
+      setAutoTitle: (pluginId, input) =>
+        callPluginSessionHost("plugin.session.setAutoTitle", pluginId, input),
       import: (pluginId, input) => callPluginSessionHost("plugin.session.import", pluginId, input),
       importBatch: (pluginId, input) =>
         callPluginSessionHost("plugin.session.importBatch", pluginId, input),

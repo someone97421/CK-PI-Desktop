@@ -73,8 +73,7 @@ pub(crate) use provider_validation::validate_declared_provider_oauth;
 pub(crate) use providers::{
     declared_providers, is_known_api_style, is_known_auth_kind, owned_provider_ids,
     plugin_provider_row_id, reconcile_all, reconcile_plugin, remove_plugin_providers,
-    set_plugin_providers_enabled, sync_plugin_providers, MAX_PLUGIN_PROVIDERS,
-    MAX_PLUGIN_PROVIDER_MODELS,
+    set_plugin_providers_enabled, sync_plugin_providers, MAX_PLUGIN_PROVIDER_MODELS,
 };
 pub(crate) use renderer::validate_renderer;
 pub(crate) use validation::{is_local_package_url, package_host_allowed, validate_contributions};

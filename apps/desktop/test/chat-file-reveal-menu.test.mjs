@@ -66,6 +66,13 @@ const state = {
   openWorkPanelTab: (tab) => calls.tabs.push(tab),
   showToast: (...args) => calls.toasts.push(args),
 };
+const useAppStore = Object.assign(
+  (selector) => selector(state),
+  {
+    getState: () => state,
+    setState: (update) => Object.assign(state, update),
+  },
+);
 
 let nextMatch = null;
 let revealFails = false;
@@ -92,14 +99,17 @@ Object.defineProperty(globalThis, "navigator", {
 const translate = () => ({
   t: (key, values) => `${key}:${values?.name ?? ""}`,
 });
+const sharedPackage = await import("@pi-desktop/shared");
 
 const previewTarget = loadModule("../src/hooks/use-preview-target.ts", {
   react: React,
   "react-i18next": { useTranslation: translate },
-  "../stores/app-store": { useAppStore: (selector) => selector(state) },
-  "../lib/session-workspace": { sessionWorkspacePath: (session, workspacePath) => session?.workspacePath ?? session?.projectPath ?? workspacePath },
+  "@pi-desktop/shared": sharedPackage,
+  "../stores/app-store": { useAppStore },
+  "../lib/session-workspace": loadModule("../src/lib/session-workspace.ts", {}),
   "../lib/api": {
     api: {
+      listPluginViews: async () => state.pluginViews,
       fsResolveRef: async (ref) => {
         calls.resolved.push(ref);
         return { match: nextMatch };
@@ -111,7 +121,7 @@ const previewTarget = loadModule("../src/hooks/use-preview-target.ts", {
     },
   },
   "../lib/chat-links": loadModule("../src/lib/chat-links.ts", {
-    "@pi-desktop/shared": await import("@pi-desktop/shared"),
+    "@pi-desktop/shared": sharedPackage,
     "./chat-link-scanner.ts": loadModule("../src/lib/chat-link-scanner.ts", {
       "./render-diagnostics.ts": { beginRenderDiagnostic: () => () => {} },
     }),
@@ -188,8 +198,8 @@ test("a project file is revealed at the address the click opens", async () => {
   await clickAndReveal("src/dir/a.ts");
   // Completion ran for both actions, so neither can act on a different file.
   assert.deepEqual(calls.resolved, ["src/dir/a.ts", "src/dir/a.ts"]);
-  assert.equal(calls.tabs[0].location, "src/dir/a.ts");
-  assert.deepEqual(calls.reveals, ["src/dir/a.ts"]);
+  assert.equal(calls.tabs[0].location, "C:/project/src/dir/a.ts");
+  assert.deepEqual(calls.reveals, ["C:/project/src/dir/a.ts"]);
   assert.deepEqual(calls.toasts, []);
 });
 

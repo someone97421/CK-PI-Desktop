@@ -8,6 +8,8 @@
 import {
   NAMED_ENDPOINT_PRESETS,
   TYPESAFE_SYSTEM_ONE_URL,
+  type PluginProviderCatalogMeta,
+  type ProviderPublic,
   type NamedEndpointPreset,
 } from "@pi-desktop/shared";
 
@@ -28,6 +30,13 @@ export type ServiceOption = {
   /** Endpoint host and path shown under the label; empty for the custom endpoint. */
   endpoint: string;
   haystack: string;
+};
+
+/** A declared API-key provider shown in the plugin's Add Service category. */
+export type PluginProviderServiceOption = ServiceOption & {
+  category: string;
+  pluginName: string;
+  description: string;
 };
 
 export function endpointLabel(url: string): string {
@@ -92,4 +101,53 @@ export function jevServiceOption(translate: Translate): ServiceOption {
     haystack:
       `${label} jev typesafe classifier ${endpoint} ${TYPESAFE_SYSTEM_ONE_URL}`.toLowerCase(),
   };
+}
+
+/**
+ * Resolve catalog declarations to their Host-owned provider rows. Rows with a
+ * stored key are already configured and stay in the provider list rather than
+ * being offered as a second add action.
+ */
+export function pluginProviderServiceOptions(
+  declarations: readonly PluginProviderCatalogMeta[],
+  providers: readonly ProviderPublic[],
+): PluginProviderServiceOption[] {
+  const rowsById = new Map(providers.map((provider) => [provider.id, provider]));
+  return declarations.flatMap((declaration) => {
+    const provider = rowsById.get(declaration.providerId);
+    if (
+      !provider ||
+      provider.ownerPluginId !== declaration.pluginId ||
+      !provider.enabled ||
+      provider.authKind !== "api_key" ||
+      provider.hasSecret ||
+      !provider.baseUrl
+    ) {
+      return [];
+    }
+    const endpoint = endpointLabel(provider.baseUrl);
+    const models = provider.models.map((model) => `${model.id} ${model.alias ?? ""}`).join(" ");
+    return [{
+      id: provider.id,
+      label: provider.name,
+      endpoint: `${endpoint} · ${declaration.pluginName}`,
+      category: declaration.category.trim() || declaration.pluginName,
+      pluginName: declaration.pluginName,
+      description: declaration.description ?? "",
+      haystack: [
+        provider.name,
+        provider.id,
+        provider.baseUrl,
+        endpoint,
+        declaration.category,
+        declaration.pluginName,
+        declaration.description ?? "",
+        models,
+      ].join(" ").toLowerCase(),
+    }];
+  }).sort((a, b) =>
+    a.category.localeCompare(b.category) ||
+    a.label.localeCompare(b.label) ||
+    a.pluginName.localeCompare(b.pluginName),
+  );
 }

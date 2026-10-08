@@ -67,11 +67,8 @@ import {
   type InteractionRuntime,
 } from "./runtime/interaction-runtime";
 import {
-  createSessionTitleRuntime,
-  isDefaultSessionTitle,
-  promptFallbackSessionTitle,
   untitledTaskTitle,
-} from "./runtime/session-title-runtime";
+} from "../lib/session-title-utils";
 import { createInteractivePromptNotifier } from "./runtime/notification-runtime";
 import { createTranscriptReadingRuntime } from "./runtime/transcript-reading-runtime";
 export type {
@@ -82,7 +79,7 @@ export type {
   ToastOptions,
   ToastVariant,
 } from "./app-state";
-export { isDefaultSessionTitle } from "./runtime/session-title-runtime";
+export { isDefaultSessionTitle } from "../lib/session-title-utils";
 
 export type { WorkPanelTab } from "../lib/work-panel-tabs";
 
@@ -129,13 +126,6 @@ const runtimeStoreAccess: StoreAccess = {
 const sessionRuntime: SessionRuntime = createSessionRuntime(runtimeStoreAccess);
 const catalogRuntime: CatalogRuntime = createCatalogRuntime();
 const interactionRuntime: InteractionRuntime = createInteractionRuntime();
-const titleRuntime = createSessionTitleRuntime({
-  ...runtimeStoreAccess,
-  sessionRuntime,
-  initialSessionMeta: initialSidebarPreferences.sessionMeta,
-});
-const manuallyRenamedSessionIds = titleRuntime.manualSessionTitles;
-const { triggerAutoTitleSummarization } = titleRuntime;
 const notifyInteractivePrompt = createInteractivePromptNotifier(
   runtimeStoreAccess.get,
 );
@@ -191,9 +181,6 @@ export const useAppStore = create<AppState>((set, get) => {
     runtime: sessionRuntime,
     promptAttachmentsFromDraft,
     withoutRecordKey,
-    promptFallbackSessionTitle,
-    untitledTaskTitle,
-    isDefaultSessionTitle,
     viewingSessionIdForPrompt,
     messageErrorFromUnknown,
     assistantErrorMessage,
@@ -213,7 +200,6 @@ export const useAppStore = create<AppState>((set, get) => {
     get,
     set,
     runtime: sessionRuntime,
-    manualSessionTitles: manuallyRenamedSessionIds,
     withoutRecordKey,
     withProjectDisplayName,
     promoteProjectPath,
@@ -239,7 +225,6 @@ export const useAppStore = create<AppState>((set, get) => {
     sessionModeForPlanningState,
     openPlanArtifact,
     notifyInteractivePrompt,
-    triggerAutoTitleSummarization,
     flushPendingSessionConfiguration,
     assistantErrorMessage,
     withCompactionMark,

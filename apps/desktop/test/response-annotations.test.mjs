@@ -169,7 +169,7 @@ test("annotations attach to assistant turns, not to the draft", () => {
 test("sending carries the annotations and consumes them", () => {
   assert.match(store, /const outgoing = responseAnnotationPrompt\(content, annotations\);/);
   assert.match(store, /content: outgoing,/);
-  assert.match(store, /isDefaultSessionTitle\(current\?\.title\)[\s\S]*?promptFallbackSessionTitle\(\s*content,/);
+  assert.doesNotMatch(store, /promptFallbackSessionTitle|api\.renameSession\(sessionId,/);
   assert.match(store, /consumeAnnotations\(\)/);
   // Queued prompts are sends too.
   assert.match(store, /await get\(\)\.enqueuePrompt\(outgoing, draft, sessionId\);/);

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -209,6 +209,13 @@ function createRuntime(
     pluginSkills: overrides.pluginSkills,
     onEvent: overrides.onEvent ?? vi.fn(),
   });
+}
+
+function runtimeTool(runtime: DesktopAgentRuntime, name: string): AgentTool {
+  const internal = runtime as unknown as { agent: { state: { tools: AgentTool[] } } };
+  const tool = internal.agent.state.tools.find((entry) => entry.name === name);
+  if (!tool) throw new Error(`Runtime tool not found: ${name}`);
+  return tool;
 }
 
 /** Minimal pi-ai assistant message; overrides carry the shape under test. */
@@ -735,6 +742,151 @@ describe("DesktopAgentRuntime configuration matching", () => {
     ).resolves.toEqual({ isError: true, terminate: true });
 
     await runtime.dispose();
+  });
+
+  it.each(["lexical", "directory-link", ...(process.platform === "win32" ? ["windows-case"] : [])])(
+    "shares Edit failure counts across %s file aliases", async (aliasKind) => {
+      const root = await mkdtemp(join(tmpdir(), "pi-edit-identity-"));
+      await mkdir(join(root, "src"));
+      await writeFile(join(root, "src", "example.ts"), "original\n");
+      let aliases = ["src/example.ts", "src/./example.ts", join(root, "src", "..", "src", "example.ts")];
+      if (aliasKind === "directory-link") {
+        await symlink(join(root, "src"), join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+        aliases = ["src/example.ts", "linked/example.ts", join(root, "linked", "example.ts")];
+      } else if (aliasKind === "windows-case") {
+        aliases = ["src/example.ts", "SRC/EXAMPLE.TS", join(root, "SRC", "example.ts")];
+      }
+      const host = { call: vi.fn(async (method: string, _params?: unknown) => method === "tools.execute"
+        ? { ok: false, isError: true, errorCode: "EDIT_PARSE_FAILED", content: {} }
+        : undefined) };
+      const runtime = createRuntime({ host, projectPath: root });
+      const edit = runtimeTool(runtime, "Edit");
+      try {
+        for (const [index, path] of aliases.entries()) {
+          const result = await edit.execute(`alias-${index}`, { path, tag: "ABCD", ops: "bad ops" });
+          expect(result.terminate).toBe(index === 2 ? true : undefined);
+        }
+        // Bookkeeping must not rewrite arguments or replace Host authority.
+        expect(host.call.mock.calls.filter(([method]) => method === "tools.execute").map(([, params]) => (params as { args: { path: string } }).args.path)).toEqual(aliases);
+      } finally {
+        await runtime.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("shares recoverable Edit grace across file aliases", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-edit-grace-"));
+    await writeFile(join(root, "example.ts"), "original\n");
+    const host = { call: vi.fn(async (method: string) => method === "tools.execute"
+      ? { ok: false, isError: true, errorCode: "EDIT_TAG_MISMATCH", content: {} }
+      : undefined) };
+    const runtime = createRuntime({ host, projectPath: root });
+    const edit = runtimeTool(runtime, "Edit");
+    try {
+      const aliases = ["example.ts", "./example.ts", join(root, "example.ts"), "sub/../example.ts"];
+      for (const [index, path] of aliases.entries()) {
+        const result = await edit.execute(`grace-${index}`, { path, tag: "ABCD", ops: "PUT 1.=1:\n+fresh" });
+        expect(result.terminate).toBe(index === 3 ? true : undefined);
+      }
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["Edit", "Write"])("clears alias failure counts and graces after successful %s", async (toolName) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-edit-reset-"));
+    await writeFile(join(root, "example.ts"), "original\n");
+    let callIndex = 0;
+    const host = { call: vi.fn(async (method: string) => {
+      if (method !== "tools.execute") return undefined;
+      return ++callIndex === 4
+        ? { ok: true, content: { tag: "CDEF" } }
+        : { ok: false, isError: true, errorCode: "EDIT_TAG_MISMATCH", content: {} };
+    }) };
+    const runtime = createRuntime({ host, projectPath: root });
+    const edit = runtimeTool(runtime, "Edit");
+    const succeedingTool = runtimeTool(runtime, toolName);
+    try {
+      const args = { path: "example.ts", tag: "ABCD", ops: "PUT 1.=1:\n+fresh", content: "fresh" };
+      for (let i = 0; i < 3; i++) expect((await edit.execute(`before-${i}`, args)).terminate).toBeUndefined();
+      expect((await succeedingTool.execute("success", { ...args, path: join(root, "example.ts") })).isError).toBe(false);
+      for (let i = 0; i < 4; i++) {
+        const result = await edit.execute(`after-${i}`, args);
+        expect(result.terminate).toBe(i === 3 ? true : undefined);
+      }
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps different files' Edit failure budgets independent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-edit-independent-"));
+    await writeFile(join(root, "a.ts"), "a\n");
+    await writeFile(join(root, "b.ts"), "b\n");
+    const host = { call: vi.fn(async (method: string) => method === "tools.execute"
+      ? { ok: false, isError: true, errorCode: "EDIT_PARSE_FAILED", content: {} }
+      : undefined) };
+    const runtime = createRuntime({ host, projectPath: root });
+    const edit = runtimeTool(runtime, "Edit");
+    try {
+      for (const [index, path] of ["a.ts", "./a.ts", "b.ts", join(root, "a.ts")].entries()) {
+        const result = await edit.execute(`independent-${index}`, { path, tag: "ABCD", ops: "bad ops" });
+        expect(result.terminate).toBe(index === 3 ? true : undefined);
+      }
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the scratch root for temporary-session Edit aliases", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-scratch-edit-"));
+    await writeFile(join(root, "example.ts"), "original\n");
+    const host = { call: vi.fn(async (method: string) => method === "tools.execute"
+      ? { ok: false, isError: true, errorCode: "EDIT_PARSE_FAILED", content: {} }
+      : undefined) };
+    const runtime = createRuntime({ host, scratchDir: root });
+    const edit = runtimeTool(runtime, "Edit");
+    try {
+      for (const [index, path] of ["example.ts", join(root, "example.ts"), "./example.ts"].entries()) {
+        const result = await edit.execute(`scratch-${index}`, { path, tag: "ABCD", ops: "bad ops" });
+        expect(result.terminate).toBe(index === 2 ? true : undefined);
+      }
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("clears the pre-mutation identity when a successful Edit removes a linked target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-remove-edit-"));
+    await mkdir(join(root, "src"));
+    await writeFile(join(root, "src", "example.ts"), "original\n");
+    await symlink(join(root, "src"), join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+    let callIndex = 0;
+    const host = { call: vi.fn(async (method: string) => {
+      if (method !== "tools.execute") return undefined;
+      if (++callIndex === 3) {
+        await rm(join(root, "linked", "example.ts"));
+        return { ok: true, content: {} };
+      }
+      return { ok: false, isError: true, errorCode: "EDIT_PARSE_FAILED", content: {} };
+    }) };
+    const runtime = createRuntime({ host, projectPath: root });
+    const edit = runtimeTool(runtime, "Edit");
+    try {
+      const args = { path: "src/example.ts", tag: "ABCD", ops: "bad ops" };
+      expect((await edit.execute("remove-before-1", args)).terminate).toBeUndefined();
+      expect((await edit.execute("remove-before-2", args)).terminate).toBeUndefined();
+      expect((await edit.execute("remove-success", { ...args, path: "linked/example.ts", ops: "REM" })).isError).toBe(false);
+      expect((await edit.execute("remove-after", args)).terminate).toBeUndefined();
+    } finally {
+      await runtime.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("terminates repeated failed shell patch recovery", async () => {

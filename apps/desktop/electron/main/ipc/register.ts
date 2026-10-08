@@ -415,7 +415,6 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
       userMcp.cancelSessionCalls(sessionId);
     },
     logger,
-    vendorOAuth,
     agentExtensions,
     persistenceOutbox,
     queuedSteeringJournal,

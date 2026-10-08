@@ -89,6 +89,8 @@ CREATE TABLE sessions (
   provider_id TEXT,
   model_id    TEXT,
   mode        TEXT NOT NULL DEFAULT 'agent',
+  title_source TEXT NOT NULL DEFAULT 'legacy'
+               CHECK (title_source IN ('legacy', 'default', 'manual', 'generated')),
   thinking_level TEXT NOT NULL DEFAULT 'off'
                 CHECK (thinking_level IN ('off', 'minimal', 'low', 'medium',
                                           'high', 'xhigh', 'max', 'omit')),

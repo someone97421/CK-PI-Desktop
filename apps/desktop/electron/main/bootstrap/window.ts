@@ -1911,25 +1911,20 @@ export async function createWindow({
               document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
             `);
             await new Promise((r) => setTimeout(r, 200));
-            // Plugins marketplace: the source picker lives beside the catalog,
-            // including the custom URL row that only appears for that source.
+            // 插件市场渠道选择及自定义 URL 截图。
             await setPage("plugins");
             await windowState.mainWindow!.webContents.executeJavaScript(
               `document.querySelector('#plugins-tab-market')?.dispatchEvent(new MouseEvent('click',{bubbles:true}))`,
             );
             await new Promise((r) => setTimeout(r, 350));
             await shot("pi-settings-extensions");
-            await windowState.mainWindow!.webContents.executeJavaScript(`
-              (() => {
-                const select = document.querySelector('.plugins-market-settings select');
-                if (!select) return;
-                const setter = Object.getOwnPropertyDescriptor(
-                  window.HTMLSelectElement.prototype, 'value',
-                )?.set;
-                setter?.call(select, 'custom');
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-              })()
-            `);
+            await windowState.mainWindow!.webContents.executeJavaScript(
+              `document.querySelector('.plugins-market-settings .settings-menu-select-trigger')?.click()`,
+            );
+            await new Promise((r) => setTimeout(r, 200));
+            await windowState.mainWindow!.webContents.executeJavaScript(
+              `Array.from(document.querySelectorAll('.settings-menu-select-option')).at(-1)?.click()`,
+            );
             await new Promise((r) => setTimeout(r, 350));
             await shot("pi-settings-extensions-custom");
             await setPage("chat");

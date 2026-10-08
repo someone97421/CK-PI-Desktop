@@ -28,10 +28,7 @@ const scheduledSource = await readFile(
 );
 const pluginsPageSource = await readPluginsSource();
 const marketplaceSettingsSource = await readFile(
-  new URL(
-    "../src/components/plugins/MarketplaceSourceSettings.tsx",
-    import.meta.url,
-  ),
+  new URL("../src/components/plugins/MarketplaceSourceSettings.tsx", import.meta.url),
   "utf8",
 );
 // API services and vendor accounts share one list (D625).
@@ -130,7 +127,7 @@ test("基础、外观和 AI 设置各自显示对应控件", () => {
   assert.match(aiSource, /infiniteProviderRetry: settings\.infiniteProviderRetry !== true/);
   assert.match(aiSource, /LargePasteThresholdRow/);
   assert.match(aiSource, /ContextUsageDisplayRow/);
-  assert.match(aiSource, /PromptEnhancementCard/);
+  assert.doesNotMatch(aiSource, /PromptEnhancementCard|promptEnhancement/);
   assert.doesNotMatch(aiSource, /EnhancementModelCard/);
   assert.match(
     settingsPageSource,
@@ -417,7 +414,7 @@ test("settings nav keeps a flat searchable index with titled visual groups", () 
   assert.doesNotMatch(generalEntry, /settings\.defaultsTitle/);
   assert.match(aiEntry, /settings\.defaultsTitle/);
   assert.match(aiEntry, /settings\.commandShell/);
-  assert.match(aiEntry, /settings\.promptEnhancementModelTitle/);
+  assert.doesNotMatch(aiEntry, /settings\.promptEnhancementModelTitle/);
   assert.match(settingsSearchSource, /keywordKeys/);
   assert.match(settingsSearchSource, /settings\.projectArchive/);
   assert.doesNotMatch(stylesSource, /\.token-usage-page/);
@@ -455,12 +452,18 @@ test("settings rail uses short parallel labels and descriptive page titles", () 
   assert.match(settingsPageSource, /titleKey: entry\.titleKey/);
 });
 
-test("marketplace source settings live inside the Plugins marketplace surface", () => {
+test("市场渠道设置位于插件市场页面并保留刷新入口", () => {
   assert.match(pluginsPageSource, /<MarketplaceSourceSettings/);
   assert.match(marketplaceSettingsSource, /api\.marketRefresh\(true\)/);
   assert.match(marketplaceSettingsSource, /settings\.marketProvider/);
   assert.match(marketplaceSettingsSource, /<SettingsMenuSelect/);
   assert.doesNotMatch(marketplaceSettingsSource, /<Select/);
+  for (const channel of ["official", "github", "mirror", "custom"]) {
+    assert.ok(marketplaceSettingsSource.includes(`id: "${channel}"`), `缺少市场渠道 ${channel}`);
+  }
+  assert.match(marketplaceSettingsSource, /source === "custom"/);
+  assert.match(pluginsPageSource, /api\.marketRefresh\(true\)/);
+  assert.match(pluginsPageSource, /refreshMarket\(query, \{ refreshRemote: true \}\)/);
   assert.doesNotMatch(settingsPageSource, /ExtensionMarketSection/);
   assert.doesNotMatch(settingsPageSource, /tab === "extensions"/);
 });

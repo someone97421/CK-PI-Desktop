@@ -5,10 +5,15 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "会话自动命名和提示词增强改由独立可选插件提供；移除宿主内置入口，保留手动改名与原增强设置迁移。",
+  "数据库跟随上游升级到 schema 23，迁移前自动备份，并持久记录标题来源以保护手动命名。",
+  "添加服务支持插件提供商与动态模型发现；插件安装更快回退下载，继续保留官方、GitHub、CNB 和自定义来源。",
+  "修复 Windows Python MCP 启动和文件链接，点击项目文件可按需启动文件管理器；临时会话扩展使用正确工作目录。",
+  "阻止 Edit 将文件移动到自身，并按真实文件路径统一编辑失败计数。",
   "代码高亮改由独立 Worker 执行，异常或超时自动显示纯文本，修复 Go 工具输出导致整个界面卡死。",
   "Read 和 Edit 支持带 BOM 的 UTF-16 文本，编辑后保留原编码和换行符。",
   "各子代理独立计算编辑失败次数，失败不再干扰主代理与其他任务，继续保留 TaskResume。",
-  "退出前等待重新生成回答的历史归档，并在保持数据库版本兼容的前提下优化会话排序索引。",
+  "退出前等待重新生成回答的历史归档，并优化会话排序索引。",
   "新增默认关闭的 Jev 结构化分类服务，可从添加服务入口校验密钥并启用；统一账号生图候选选择与保存。",
   "图片附件保留在撰写时的位置，模型请求、当前轮引导和历史对话使用相同顺序，并继续支持 Gemini 音视频输入。",
   "支持使用已登录的 ChatGPT 账号生成和编辑图片，保留现有生图模型与默认选择。",
@@ -35,10 +40,15 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Move automatic session titles and prompt enhancement into optional plugins; remove built-in actions while retaining manual renaming and legacy setting migration.",
+  "Upgrade to upstream schema 23 with pre-migration backups and persistent title sources that protect manual names.",
+  "Add plugin providers and dynamic model discovery to Add Service; speed up install fallback while keeping official, GitHub, CNB and custom sources.",
+  "Fix Windows Python MCP launching and file links, start the file manager on demand, and use the correct directory for temporary-session extensions.",
+  "Reject Edit moves to the same file and track edit failures by canonical file identity.",
   "Run syntax highlighting in an isolated worker with a plain-text fallback on errors or timeouts, fixing Go tool output freezing the window.",
   "Read and edit BOM-marked UTF-16 text while preserving its encoding and line endings.",
   "Isolate each delegate's edit failure budget from the parent and other tasks while retaining TaskResume.",
-  "Wait for regenerated-answer archival before quitting and optimize session sorting indexes without changing the database version.",
+  "Wait for regenerated-answer archival before quitting and optimize session sorting indexes.",
   "Add an opt-in Jev structured classifier with a checked key from Add Service, and align account image-model selection with saving.",
   "Keep image attachments at their draft positions across requests, steering and restored history while retaining Gemini audio and video input.",
   "Generate and edit images with a signed-in ChatGPT account while preserving existing image models and defaults.",

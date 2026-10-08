@@ -41,7 +41,7 @@ function loadModule(relative, imports) {
   return module.exports;
 }
 
-const calls = { tabs: [], files: [], urls: [], toasts: [], resolved: [] };
+const calls = { tabs: [], files: [], urls: [], toasts: [], resolved: [], enabled: [], reloaded: [] };
 
 /** The store the hook reads: mutable state plus recorded actions. */
 const state = {
@@ -54,24 +54,62 @@ const state = {
   openWorkPanelTab: (tab) => calls.tabs.push(tab),
   showToast: (...args) => calls.toasts.push(args),
 };
+const useAppStore = Object.assign((selector) => selector(state), {
+  getState: () => state,
+  setState: (patch) => Object.assign(state, patch),
+});
+
+let pluginSummary = {
+  id: "pi.file-manager",
+  bundled: true,
+  enabled: true,
+  status: "ready",
+  permissions: ["ui.view"],
+  scope: { mode: "global", projects: [] },
+};
+let listedPluginViews = [];
 
 /** What the next `fs.resolveRef` reply is; each case sets it. */
 let nextMatch = null;
 let nextReason = null;
 let resolveFails = false;
+let pluginOperationFails = false;
+let duringResolve = null;
+let duringViewList = null;
 
 const workPanelTabs = loadModule("../src/lib/work-panel-tabs.ts", {});
+const shared = await import("@pi-desktop/shared");
 const { useOpenPreviewTarget } = loadModule("../src/hooks/use-preview-target.ts", {
   react: React,
   "react-i18next": { useTranslation: () => ({ t: (key, values) => `${key}:${values?.name ?? ""}` }) },
-  "../stores/app-store": { useAppStore: (selector) => selector(state) },
-  "../lib/session-workspace": { sessionWorkspacePath: (session, workspacePath) => session?.workspacePath ?? session?.projectPath ?? workspacePath },
+  "@pi-desktop/shared": shared,
+  "../stores/app-store": { useAppStore },
+  "../lib/session-workspace": loadModule("../src/lib/session-workspace.ts", {}),
   "../lib/api": {
     api: {
       fsResolveRef: async (ref) => {
         calls.resolved.push(ref);
+        duringResolve?.();
         if (resolveFails) throw new Error("host unavailable");
         return { match: nextMatch, ...(nextReason ? { reason: nextReason } : {}) };
+      },
+      listPlugins: async () => ({ plugins: [pluginSummary] }),
+      listPluginViews: async () => {
+        duringViewList?.();
+        return listedPluginViews;
+      },
+      enablePlugin: async (id) => {
+        calls.enabled.push(id);
+        if (pluginOperationFails) throw new Error("plugin start failed");
+        pluginSummary = { ...pluginSummary, enabled: true, status: "ready" };
+        listedPluginViews = [{ pluginId: id, viewId: "manager" }];
+      },
+      reloadPlugin: async (id) => {
+        calls.reloaded.push(id);
+        if (pluginOperationFails) throw new Error("plugin reload failed");
+        pluginSummary = { ...pluginSummary, status: "ready" };
+        listedPluginViews = [{ pluginId: id, viewId: "manager" }];
+        return {};
       },
     },
   },
@@ -90,12 +128,29 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 function reset({ pluginView = false } = {}) {
   Object.values(calls).forEach((list) => list.splice(0, list.length));
+  state.workspace = { path: "C:/project" };
+  state.activeSessionId = "session-1";
+  state.sessions = [];
+  duringResolve = null;
+  duringViewList = null;
   state.pluginViews = pluginView
     ? [{ pluginId: "pi.file-manager", viewId: "manager" }]
     : [];
   nextMatch = null;
   nextReason = null;
   resolveFails = false;
+  pluginOperationFails = false;
+  pluginSummary = {
+    id: "pi.file-manager",
+    bundled: true,
+    enabled: true,
+    status: "ready",
+    permissions: ["ui.view"],
+    scope: { mode: "global", projects: [] },
+  };
+  listedPluginViews = pluginView
+    ? [{ pluginId: "pi.file-manager", viewId: "manager" }]
+    : [];
 }
 
 /**
@@ -111,6 +166,19 @@ async function click(target) {
   }
   renderToStaticMarkup(React.createElement(Harness));
   assert.equal(typeof open, "function", "the hook returned a click handler");
+  open(target);
+  await flush();
+}
+
+async function clickTwice(target) {
+  let open = null;
+  function Harness() {
+    open = useOpenPreviewTarget();
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+  assert.equal(typeof open, "function", "the hook returned a click handler");
+  open(target);
   open(target);
   await flush();
 }
@@ -155,12 +223,85 @@ test("a Windows tool path reaches resolution intact and opens its exact project 
   assert.deepEqual(calls.toasts, []);
 });
 
-test("without the file view a project file keeps falling back to the host file tab", async () => {
+test("a project file still falls back when the bundled manager is absent", async () => {
   reset();
+  pluginSummary = { ...pluginSummary, bundled: false };
   nextMatch = projectMatch();
   await click({ kind: "file", path: "src/dir/a.ts" });
   assert.deepEqual(calls.tabs, []);
   assert.equal(calls.files.length, 1);
+  assert.equal(calls.files[0][0], "src/dir/a.ts");
+  assert.equal(calls.toasts[0][0], "chat.fileManagerUnavailable:");
+});
+
+test("a project file click enables the bundled file manager before opening it", async () => {
+  reset();
+  pluginSummary = { ...pluginSummary, enabled: false, status: "disabled" };
+  nextMatch = projectMatch();
+  await click({ kind: "file", path: "src/dir/a.ts" });
+  assert.deepEqual(calls.enabled, ["pi.file-manager"]);
+  assert.deepEqual(calls.tabs, [
+    {
+      id: "plugin:pi.file-manager/manager",
+      kind: "plugin",
+      resource: "pi.file-manager/manager",
+      location: "C:/project/src/dir/a.ts",
+    },
+  ]);
+  assert.deepEqual(calls.files, []);
+});
+
+test("a project file click retries a bundled view missing during startup", async () => {
+  reset();
+  nextMatch = projectMatch();
+  await click({ kind: "file", path: "src/dir/a.ts" });
+  assert.deepEqual(calls.reloaded, ["pi.file-manager"]);
+  assert.equal(calls.tabs[0].resource, "pi.file-manager/manager");
+  assert.deepEqual(calls.files, []);
+});
+
+test("simultaneous file clicks share one bundled view startup", async () => {
+  reset();
+  nextMatch = projectMatch();
+  await clickTwice({ kind: "file", path: "src/dir/a.ts" });
+  assert.deepEqual(calls.reloaded, ["pi.file-manager"]);
+  assert.equal(calls.tabs.length, 2);
+});
+
+test("a project-scoped file manager is not enabled outside its selected projects", async () => {
+  reset();
+  pluginSummary = {
+    ...pluginSummary,
+    enabled: false,
+    status: "disabled",
+    scope: { mode: "projects", projects: ["C:/another-project"] },
+  };
+  nextMatch = projectMatch();
+  await click({ kind: "file", path: "src/dir/a.ts" });
+  assert.deepEqual(calls.enabled, []);
+  assert.equal(calls.files[0][0], "src/dir/a.ts");
+  assert.equal(calls.toasts[0][0], "chat.fileManagerUnavailable:");
+});
+
+test("a missing ui.view grant is not restored by a file click", async () => {
+  reset();
+  pluginSummary = { ...pluginSummary, enabled: false, status: "disabled", permissions: [] };
+  nextMatch = projectMatch();
+  await click({ kind: "file", path: "src/dir/a.ts" });
+  assert.deepEqual(calls.enabled, []);
+  assert.deepEqual(calls.reloaded, []);
+  assert.equal(calls.files[0][0], "src/dir/a.ts");
+  assert.equal(calls.toasts[0][0], "chat.fileManagerUnavailable:");
+});
+
+test("a failed file-manager start reports the fallback and opens the host viewer", async () => {
+  reset();
+  pluginSummary = { ...pluginSummary, enabled: false, status: "disabled" };
+  pluginOperationFails = true;
+  nextMatch = projectMatch();
+  await click({ kind: "file", path: "src/dir/a.ts" });
+  assert.deepEqual(calls.enabled, ["pi.file-manager"]);
+  assert.equal(calls.toasts[0][0], "chat.fileManagerUnavailable:");
   assert.equal(calls.files[0][0], "src/dir/a.ts");
 });
 
@@ -230,4 +371,52 @@ test("a URL target keeps the embedded browser and never reaches file resolution"
   assert.deepEqual(calls.resolved, []);
   assert.deepEqual(calls.urls, [["https://example.com/docs"]]);
   assert.deepEqual(calls.tabs, []);
+});
+
+test("临时会话的自选目录可按需启动文件管理器并用绝对路径定位", async () => {
+  reset();
+  state.workspace = null;
+  state.sessions = [{ id: "session-1", projectPath: null, temporaryWorkspacePath: "C:/chosen" }];
+  pluginSummary = { ...pluginSummary, enabled: false };
+  nextMatch = projectMatch({ relativePath: "notes.md", absolutePath: "C:/chosen/notes.md" });
+  await click({ kind: "file", path: "notes.md" });
+  assert.deepEqual(calls.enabled, ["pi.file-manager"]);
+  assert.equal(calls.tabs[0].location, "C:/chosen/notes.md");
+  assert.deepEqual(calls.files, []);
+  assert.deepEqual(calls.toasts, []);
+});
+
+test("定位引用保留行列号，且不启动文件管理器", async () => {
+  reset();
+  nextMatch = projectMatch();
+  await click({ kind: "file", path: "src/dir/a.ts", line: 42, column: 7 });
+  assert.deepEqual(calls.files, [["src/dir/a.ts", undefined, { line: 42, column: 7 }]]);
+  assert.deepEqual(calls.tabs, []);
+  assert.deepEqual(calls.reloaded, []);
+});
+
+test("解析期间切换会话不会打开文件或启动插件", async () => {
+  reset();
+  nextMatch = projectMatch();
+  duringResolve = () => { state.activeSessionId = "session-2"; };
+  await click({ kind: "file", path: "src/dir/a.ts" });
+  assert.deepEqual(calls.tabs, []);
+  assert.deepEqual(calls.files, []);
+  assert.deepEqual(calls.enabled, []);
+  assert.deepEqual(calls.reloaded, []);
+});
+
+test("刷新视图期间切换有效目录不会写入旧视图或打开文件", async () => {
+  reset({ pluginView: true });
+  state.sessions = [{ id: "session-1", projectPath: null, temporaryWorkspacePath: "C:/chosen" }];
+  nextMatch = projectMatch({ absolutePath: "C:/chosen/src/dir/a.ts" });
+  const originalViews = state.pluginViews;
+  duringViewList = () => {
+    state.sessions = [{ id: "session-1", projectPath: null, temporaryWorkspacePath: "C:/changed" }];
+  };
+  await click({ kind: "file", path: "src/dir/a.ts" });
+  assert.equal(state.pluginViews, originalViews);
+  assert.deepEqual(calls.tabs, []);
+  assert.deepEqual(calls.files, []);
+  assert.deepEqual(calls.toasts, []);
 });

@@ -110,6 +110,11 @@ export function ModelConfigPage() {
   const [pickingCompaction, setPickingCompaction] = useState(false);
   const [compactionModelQuery, setCompactionModelQuery] = useState("");
   // Jev 卡片沿用添加服务对话框，并在密钥保存后刷新状态。
+  const [pluginCatalogSetup, setPluginCatalogSetup] = useState<{
+    providerId: string;
+    pluginName: string;
+  } | null>(null);
+
   const [jevSetup, setJevSetup] = useState(false);
   const [jevStatusRevision, setJevStatusRevision] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -342,7 +347,25 @@ export function ModelConfigPage() {
         !selectedImageIds.some((id) => modelWireIdsEqual(id, model.id)))
         ? firstModelId : undefined;
     try {
-      if (imageModelIds !== undefined) {
+      if (pluginCatalogSetup?.providerId === saved.id) {
+        const defaultsProviders = [...providers.filter((provider) => provider.id !== saved.id), saved];
+        const keepsCurrentDefault = keepsAppDefaultModel(
+          defaultsProviders,
+          settings.defaultProviderId,
+          settings.defaultModelId,
+          imageGenerationCandidates,
+        );
+        if (!keepsCurrentDefault && firstModelId) {
+          const nextSettings = {
+            ...settings,
+            defaultProviderId: saved.id,
+            defaultModelId: firstModelId,
+          };
+          await api.setSettings(nextSettings);
+          useAppStore.setState({ settings: nextSettings });
+        }
+        showToast(t("settings.pluginProviderKeySaved"), { variant: "success" });
+      } else if (imageModelIds !== undefined) {
         const current = await api.getSettings();
         const plan = planImageGenerationDefaults(
           current,
@@ -391,6 +414,7 @@ export function ModelConfigPage() {
       }
       setSetupFor(null);
       setCopyDraft(null);
+      setPluginCatalogSetup(null);
       await refreshProviders();
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), {
@@ -974,12 +998,16 @@ export function ModelConfigPage() {
 
       {setupFor !== null ? (
         <ProviderSetupDialog
+          key={setupFor}
           provider={editingProvider}
+          pluginCatalogSetup={Boolean(pluginCatalogSetup && pluginCatalogSetup.providerId === editingProvider?.id)}
+          pluginCatalogPluginName={pluginCatalogSetup?.pluginName}
           initialDraft={copyDraft}
           initialService={jevSetup ? JEV_SERVICE : undefined}
           onClose={() => {
             setSetupFor(null);
             setCopyDraft(null);
+            setPluginCatalogSetup(null);
             setJevSetup(false);
           }}
           imageModelIds={editingProvider
@@ -999,9 +1027,16 @@ export function ModelConfigPage() {
           onPickSubscription={(vendor) => {
             setSetupFor(null);
             setCopyDraft(null);
+            setPluginCatalogSetup(null);
             // Started here, not in the dialog: a click happens once, where
             // StrictMode would run a mount effect twice and open two browsers.
             startLogin(vendor);
+          }}
+          onPickPluginProvider={(providerId, pluginName) => {
+            setPluginCatalogSetup({ providerId, pluginName });
+            setCopyDraft(null);
+            setJevSetup(false);
+            setSetupFor(providerId);
           }}
         />
       ) : null}

@@ -1678,6 +1678,14 @@ fn tool_edit(
             let (code, message) = ignore_rules::denied_error(dest);
             return Err(hashline::ToolError::new(code, message));
         }
+        // Both paths have passed the same canonical, permission-aware resolver.
+        // Writing then unlinking an alias of the source would delete the file.
+        if dest_resolved == resolved {
+            return Err(hashline::ToolError::new(
+                "EDIT_NO_CHANGE",
+                "MV destination resolves to the source file; choose a different destination",
+            ));
+        }
         if let Some(parent) = dest_resolved.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 hashline::ToolError::new("TOOL_FAILED", format!("mkdir failed: {e}"))
@@ -4887,6 +4895,143 @@ mod tests {
         .await;
         assert_eq!(native.content["exitCode"], 7);
     }
+    #[tokio::test]
+    async fn edit_move_to_self_preserves_source_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        // macOS temp roots may spell /private/var as /var. Use the same
+        // canonical spelling for the workspace and its absolute destination.
+        let root = crate::workspace::simple_canonicalize(dir.path()).unwrap();
+        let target = root.join("source.txt");
+        let input = b"original\r\n";
+        std::fs::write(&target, input).unwrap();
+        let mut destinations = vec![
+            "source.txt".to_string(),
+            "./source.txt".to_string(),
+            "sub/../source.txt".to_string(),
+            target.to_string_lossy().into_owned(),
+        ];
+        // Probe this directory rather than assuming case sensitivity by OS.
+        if root.join("SOURCE.TXT").try_exists().unwrap() {
+            destinations.push("SOURCE.TXT".to_string());
+        }
+        let mut failures = Vec::new();
+        for dest in destinations {
+            std::fs::write(&target, input).unwrap();
+            let read = execute_tool(
+                Some(&root),
+                None,
+                "Read",
+                &json!({"path": "source.txt"}),
+                5_000,
+            )
+            .await;
+            assert!(read.ok, "Read failed: {:?}", read.content);
+            // A mixed call must reject the move before even the PUT bytes land.
+            let result = execute_tool(
+                Some(&root),
+                None,
+                "Edit",
+                &json!({"path": "source.txt", "tag": read.content["tag"],
+                    "ops": format!("PUT 1.=1:\n+changed\nMV \"{dest}\"\n")}),
+                5_000,
+            )
+            .await;
+            if result.ok || result.error_code.as_deref() != Some("EDIT_NO_CHANGE") {
+                failures.push(format!("{dest}: expected EDIT_NO_CHANGE, got {result:?}"));
+            }
+            if std::fs::read(&target).ok().as_deref() != Some(input.as_slice()) {
+                failures.push(format!("{dest}: source bytes changed or file disappeared"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn edit_move_through_directory_link_preserves_source_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        let alias = dir.path().join("alias");
+        std::fs::create_dir(&real).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        #[cfg(windows)]
+        {
+            // Junctions exercise real filesystem aliases without symlink privilege.
+            let output = std::process::Command::new("cmd.exe")
+                .args(["/d", "/c", "mklink", "/J"])
+                .arg(&alias)
+                .arg(&real)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "junction creation failed: {output:?}"
+            );
+        }
+        let target = real.join("source.txt");
+        std::fs::write(&target, b"original\n").unwrap();
+        let read = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &json!({"path": "real/source.txt"}),
+            5_000,
+        )
+        .await;
+        assert!(read.ok, "Read failed: {:?}", read.content);
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &json!({"path": "real/source.txt", "tag": read.content["tag"],
+                "ops": "MV alias/source.txt\n"}),
+            5_000,
+        )
+        .await;
+        assert!(
+            !result.ok,
+            "Move through alias succeeded: {:?}",
+            result.content
+        );
+        assert_eq!(result.error_code.as_deref(), Some("EDIT_NO_CHANGE"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"original\n");
+        #[cfg(windows)]
+        std::fs::remove_dir(&alias).unwrap();
+    }
+
+    #[tokio::test]
+    async fn edit_move_to_different_path_applies_edits_and_removes_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("source.txt");
+        std::fs::write(&target, b"original\r\n").unwrap();
+        let read = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &json!({"path": "source.txt"}),
+            5_000,
+        )
+        .await;
+        assert!(read.ok, "Read failed: {:?}", read.content);
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &json!({"path": "source.txt", "tag": read.content["tag"],
+                "ops": "PUT 1.=1:\n+changed\nMV nested/destination.txt\n"}),
+            5_000,
+        )
+        .await;
+        assert!(result.ok, "Move failed: {:?}", result.content);
+        assert!(!target.exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("nested/destination.txt")).unwrap(),
+            b"changed\r\n"
+        );
+        assert_eq!(result.content["movedFrom"], "source.txt");
+        assert_eq!(result.content["tag"].as_str().unwrap().len(), 4);
+    }
+
     #[tokio::test]
     async fn edit_preserves_crlf_line_endings() {
         let dir = tempfile::tempdir().unwrap();

@@ -122,6 +122,54 @@ fn v18_database_migrates_session_thinking_omit() {
     assert!(sql.contains("'omit'"), "{sql}");
 }
 
+#[test]
+fn v22_database_migrates_session_title_sources_without_losing_titles() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pi.sqlite");
+    let (default_id, manual_id) = {
+        let db = Database::open(&path).unwrap();
+        let default_session =
+            crate::sessions::create_session(&db, None, None, None, None, None).unwrap();
+        let manual_session = crate::sessions::create_session(
+            &db,
+            Some("A title chosen by the user".into()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        db.conn()
+            .execute_batch("ALTER TABLE sessions DROP COLUMN title_source;")
+            .unwrap();
+        db.conn().pragma_update(None, "user_version", 22).unwrap();
+        (default_session.id, manual_session.id)
+    };
+
+    let db = Database::open(&path).unwrap();
+    assert_eq!(schema_version(db.conn()), SCHEMA_VERSION);
+    assert!(migration_backup_path(&path, 22).exists());
+    let sources: (String, String) = db
+        .conn()
+        .query_row(
+            "SELECT
+                (SELECT title_source FROM sessions WHERE id = ?1),
+                (SELECT title_source FROM sessions WHERE id = ?2)",
+            params![default_id, manual_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(sources, ("default".into(), "manual".into()));
+    assert_eq!(
+        crate::sessions::get_session(&db, &manual_id)
+            .unwrap()
+            .unwrap()
+            .summary
+            .title,
+        "A title chosen by the user"
+    );
+}
+
 /// v21 owns the session checklist. A real v20 database has neither the
 /// `sessions` stamps nor the `session_todo` table, so the upgrade must add
 /// both, keep the v20 rows, leave a readable pre-migration backup, and stay
@@ -1688,7 +1736,7 @@ fn v16_and_v17_upgrade_to_v18_without_losing_waiting_inputs() {
             db.conn().pragma_update(None, "user_version", previous).unwrap();
         }
         let db = Database::open(&path).unwrap();
-        assert_eq!(schema_version(db.conn()), 18);
+        assert_eq!(schema_version(db.conn()), SCHEMA_VERSION);
         assert!(migration_backup_path(&path, previous).exists());
         assert!(migration_backup_path(&path, 17).exists());
         let provider: (String, Option<String>) = db.conn().query_row(
@@ -1710,7 +1758,7 @@ fn v16_and_v17_upgrade_to_v18_without_losing_waiting_inputs() {
 }
 
 #[test]
-fn boot_maintenance_replaces_session_index_without_schema_upgrade() {
+fn session_index_migration_preserves_records_and_reopens() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("pi.sqlite");
     {
@@ -1725,12 +1773,13 @@ fn boot_maintenance_replaces_session_index_without_schema_upgrade() {
         db.set_project_memory("/workspace/index-check", "保留业务记录").unwrap();
     }
 
-    // 重复打开验证维护幂等；只维护索引，不推进版本或改写业务记录。
+    // 迁移前备份，重复打开保持版本、索引和业务记录。
     for _ in 0..2 {
         let db = Database::open(&db_path).unwrap();
         let version: i64 = db.conn().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 21);
-        assert_eq!(crate::db::SCHEMA_VERSION, 21);
+        assert_eq!(version, SCHEMA_VERSION);
+        assert!(migration_backup_path(&db_path, 21).exists());
+        assert!(migration_backup_path(&db_path, 22).exists());
         let old_index_exists: bool = db.conn().query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_sessions_updated')",
             [], |r| r.get(0),

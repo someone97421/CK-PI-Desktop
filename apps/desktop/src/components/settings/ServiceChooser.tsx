@@ -12,7 +12,7 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { OAuthVendor } from "@pi-desktop/shared";
-import { cx, Input } from "../ui";
+import { cx, Input, TooltipButton } from "../ui";
 import { IconPlus, IconSearch } from "../icons";
 import { ServiceMonogram } from "./ServiceMonogram";
 import {
@@ -21,6 +21,7 @@ import {
   filterServiceOptions,
   jevServiceOption,
   namedServiceOptions,
+  type PluginProviderServiceOption,
 } from "./service-catalog";
 
 export type ServiceChooserProps = {
@@ -33,6 +34,10 @@ export type ServiceChooserProps = {
   onPickSubscription?: (vendor: OAuthVendor) => void;
   /** Offers the classifier group; a new service, never an existing row. */
   showClassifiers?: boolean;
+  /** API-key providers contributed by enabled plugins, grouped by category. */
+  pluginProviders?: readonly PluginProviderServiceOption[];
+  /** Selects an existing plugin-owned provider row for key setup. */
+  onPickPluginProvider?: (providerId: string, pluginName: string) => void;
 };
 
 type SubscriptionOption = { vendor: OAuthVendor; haystack: string };
@@ -46,6 +51,8 @@ export function ServiceChooser({
   onPickService,
   onPickSubscription,
   showClassifiers = false,
+  pluginProviders = [],
+  onPickPluginProvider,
 }: ServiceChooserProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -87,17 +94,33 @@ export function ServiceChooser({
     () => filterServiceOptions(classifierOptions, query),
     [classifierOptions, query],
   );
+  const visiblePluginProviders = useMemo(
+    () => filterServiceOptions(pluginProviders, query),
+    [pluginProviders, query],
+  );
+  const pluginProviderGroups = useMemo(() => {
+    const groups = new Map<string, PluginProviderServiceOption[]>();
+    for (const option of visiblePluginProviders) {
+      const group = groups.get(option.category) ?? [];
+      group.push(option);
+      groups.set(option.category, group);
+    }
+    return [...groups].map(([category, options]) => ({ category, options }));
+  }, [visiblePluginProviders]);
   const nothingMatches =
     visibleServices.length === 0 &&
     visibleSubscriptions.length === 0 &&
-    visibleClassifiers.length === 0;
+    visibleClassifiers.length === 0 &&
+    visiblePluginProviders.length === 0;
 
   // Enter prefers a service the pick only moves to the key field for: the
   // classifier keeps the same dialog, while a subscription leaves it.
   const enterTarget = query.trim()
     ? visibleServices[0]
       ? `service:${visibleServices[0].id}`
-      : visibleClassifiers[0]
+      : visiblePluginProviders[0]
+        ? `plugin:${visiblePluginProviders[0].id}`
+        : visibleClassifiers[0]
         ? `service:${visibleClassifiers[0].id}`
         : visibleSubscriptions[0]
           ? `subscription:${visibleSubscriptions[0].vendor.vendorId}`
@@ -107,12 +130,17 @@ export function ServiceChooser({
   const pickService = (id: string) => {
     if (!disabled) onPickService(id);
   };
+  const pickPluginProvider = (providerId: string) => {
+    const option = visiblePluginProviders.find((candidate) => candidate.id === providerId);
+    if (!disabled && option) onPickPluginProvider?.(providerId, option.pluginName);
+  };
   const pickSubscription = (vendor: OAuthVendor) => {
     if (!disabled) onPickSubscription?.(vendor);
   };
 
   const pickEnterTarget = () => {
     if (visibleServices[0]) pickService(visibleServices[0].id);
+    else if (visiblePluginProviders[0]) pickPluginProvider(visiblePluginProviders[0].id);
     else if (visibleClassifiers[0]) pickService(visibleClassifiers[0].id);
     else if (visibleSubscriptions[0]) pickSubscription(visibleSubscriptions[0].vendor);
     else pickService(CUSTOM_SERVICE);
@@ -286,6 +314,48 @@ export function ServiceChooser({
             </div>
           </section>
         ) : null}
+
+        {pluginProviderGroups.map(({ category, options }, index) => (
+          <section
+            key={`${category}-${index}`}
+            className="service-chooser-group"
+            aria-labelledby={`service-chooser-plugin-category-${index}`}
+            data-plugin-provider-category={category}
+          >
+            <h4
+              id={`service-chooser-plugin-category-${index}`}
+              className="service-chooser-group-title"
+            >
+              {category}
+            </h4>
+            <div className="service-chooser-grid">
+              {options.map((option) => (
+                <TooltipButton
+                  key={option.id}
+                  type="button"
+                  data-service-tile
+                  data-plugin-provider-id={option.id}
+                  tooltip={option.description}
+                  tooltipClassName="ui-tooltip-help"
+                  ariaLabel={option.label}
+                  aria-description={option.description || undefined}
+                  className={cx(
+                    "service-chooser-tile",
+                    enterTarget === `plugin:${option.id}` && "is-active",
+                  )}
+                  disabled={disabled || !onPickPluginProvider}
+                  onKeyDown={onTileKeyDown}
+                  onClick={() => pickPluginProvider(option.id)}
+                >
+                  <ServiceMonogram name={option.label} />
+                  <span className="service-chooser-tile-copy">
+                    <span className="service-chooser-tile-name">{option.label}</span>
+                  </span>
+                </TooltipButton>
+              ))}
+            </div>
+          </section>
+        ))}
 
         {visibleClassifiers.length > 0 ? (
           <section className="service-chooser-group" aria-labelledby="service-chooser-classifiers">

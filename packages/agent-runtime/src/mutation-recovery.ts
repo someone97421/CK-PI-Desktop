@@ -1,3 +1,6 @@
+import { realpath } from "node:fs/promises";
+import { resolve } from "node:path";
+
 export const MAX_MUTATION_RECOVERY_FAILURES = 3;
 export const BASH_PATCH_FAILURE_KEY = "__bash_patch_command__";
 /**
@@ -37,8 +40,21 @@ export function mutationTerminationAdvice(
   }
   return "Re-read the live file, regenerate a narrower Edit, and avoid repeating the same payload.";
 }
-export function mutationFailureKey(path: unknown): string {
-  return String(path).replaceAll("\\", "/").replace(/^\.\//, "");
+/** Bookkeeping identity only; Host still resolves and authorizes the original path. */
+export async function mutationFailureKey(path: string, projectPath?: string): Promise<string> {
+  const absolute = resolve(projectPath ?? process.cwd(), path);
+  try {
+    // The runtime and Host run on the same machine, including headless hosts.
+    // Keep the filesystem's canonical spelling: lowercasing would merge distinct
+    // files on POSIX and on case-sensitive Windows directories.
+    return await realpath(absolute);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (!["ENOENT", "ENOTDIR", "EACCES", "EPERM", "EINVAL", "ELOOP"].includes(code ?? "")) throw error;
+    // Missing or inaccessible targets have no usable canonical spelling. Keep
+    // their lexical identity, and let the Host report the actual tool error.
+    return absolute;
+  }
 }
 
 export function isPatchCommand(command: unknown): boolean {

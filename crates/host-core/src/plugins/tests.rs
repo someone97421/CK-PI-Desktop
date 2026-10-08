@@ -2078,6 +2078,51 @@ fn global_shortcut_entries_are_validated() {
 }
 
 #[test]
+fn composer_transforms_require_permission_and_localized_titles() {
+    let dir = tempdir().unwrap();
+    let transform = json!({
+        "id": "enhance",
+        "title": { "en": "Enhance prompt", "zh-CN": "增强提示词" },
+        "undoTitle": { "en": "Undo enhancement", "zh-CN": "撤销增强" }
+    });
+
+    let valid = dir.path().join("valid");
+    write_plugin(
+        &valid,
+        capability_manifest(
+            json!({ "composerTransforms": [transform.clone()] }),
+            json!(["composer.transform"]),
+        ),
+        &[],
+    );
+    let manifest = PluginManager::read_manifest(&valid).unwrap();
+    assert!(derive_capabilities(&manifest).contains(&"composerTransform".to_string()));
+
+    let no_permission = dir.path().join("no-permission");
+    write_plugin(
+        &no_permission,
+        capability_manifest(
+            json!({ "composerTransforms": [transform.clone()] }),
+            json!([]),
+        ),
+        &[],
+    );
+    assert!(read_manifest_err(&no_permission)
+        .contains("composer transforms require the composer.transform permission"));
+
+    let malformed = dir.path().join("malformed");
+    write_plugin(
+        &malformed,
+        capability_manifest(
+            json!({ "composerTransforms": [{ "id": "enhance", "title": { "en": "Only English" } }] }),
+            json!(["composer.transform"]),
+        ),
+        &[],
+    );
+    assert!(read_manifest_err(&malformed).contains("has an invalid title"));
+}
+
+#[test]
 fn plugin_rows_read_the_i18n_block_for_the_active_locale() {
     let _env = lock_market_env();
     let dir = tempdir().unwrap();

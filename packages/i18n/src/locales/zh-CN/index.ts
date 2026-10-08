@@ -378,12 +378,6 @@ export const zhCN = {
     moveQueuedPromptDown: "下移",
     editQueuedPrompt: "编辑",
     editQueuedPromptBusy: "请先清空输入框，再编辑这条待发送消息",
-    enhancePrompt: "增强提示词",
-    enhancingPrompt: "增强中…",
-    undoEnhancement: "撤回增强",
-    enhancementFailed: "提示词增强失败",
-    enhancementTimeout: "改写超时。请重试，或在设置里换一个更快的增强模型。",
-    dismissEnhancementError: "关闭增强错误",
     abort: "停止",
     sendWhileRunning: "发送后续消息 · {{shortcut}} 立即转向",
     steeringUnavailable: "当前轮已无法接收转向输入，草稿已保留。",
@@ -430,6 +424,7 @@ export const zhCN = {
     fileRefMissing: "没有匹配 {{name}} 的文件",
     fileRefRestricted: "{{name}} 不在应用允许访问的范围内",
     fileRefLookupFailed: "无法检查此文件引用。",
+    fileManagerUnavailable: "文件管理器当前不可用，已在内置文件查看器中打开。",
     revealFileInFolder: "在文件夹中显示",
     fileRevealFailed: "无法在文件夹中打开该文件。",
     copyFullPath: "复制完整地址",
@@ -1784,6 +1779,7 @@ sklm: {
     modelsFetchFailed: "无法获取模型列表。",
     modelsFetchFailedStatus: "请求失败（{{status}}）。",
     modelsFetchNotFound: "该地址没有模型列表。",
+    providerUnavailable: "所选服务已不可用。",
     modelsFetchInvalidResponse: "服务未返回可用的模型列表。",
     searchOrEnterModel: "搜索或输入模型 ID",
     selectModels: "模型",
@@ -1976,33 +1972,6 @@ sklm: {
     fontSizeSaveError: "无法保存字体大小。",
     bottomPanel: "底部面板",
     bottomPanelDesc: "在应用标题栏中显示底部面板控件。",
-    promptEnhancementTitle: "提示词增强",
-    promptEnhancementDesc:
-      "作用于输入框的「增强提示词」操作。系统提示词为内置，可自定义用户模板与增强模型。",
-    promptEnhancementCustomTemplate: "使用自定义提示词",
-    promptEnhancementCustomTemplateDesc:
-      "用你自己的用户模板替换内置模板。系统提示词保持内置。",
-    promptEnhancementCustomTemplateActive: "自定义模板已启用",
-    promptEnhancementCustomTemplateNeedsTemplate:
-      "请先保存自定义模板；保存后即可用开关在内置模板与自定义模板之间切换。",
-    promptEnhancementEdit: "编辑",
-    promptEnhancementModelTitle: "增强提示词",
-    promptEnhancementModel: "默认模型",
-    promptEnhancementThinking: "思考强度",
-    promptEnhancementThinkingDesc:
-      "改写时使用的思考强度。默认关闭，最快。",
-    promptEnhancementThinkingOff: "关闭思考",
-    promptEnhancementModelFollow: "跟随当前模型",
-    promptEnhancementModelUnavailable: "不可用 — 增强时会回退到当前模型",
-    promptEnhancementUserTemplate: "用户模板",
-    promptEnhancementUserTemplateDesc:
-      "用于包裹草稿。必须包含草稿变量，请用插入按钮写入。",
-    promptEnhancementInsertDraft: "插入草稿变量",
-    promptEnhancementRestore: "恢复默认",
-    promptEnhancementMissingDraftVariable:
-      "用户模板必须包含草稿变量，否则草稿无法发送给模型。",
-    promptEnhancementTooLong: "用户模板最多 8000 个字符。",
-    promptEnhancementSaveError: "无法保存提示词增强设置。",
   },
   project: {
     open: "打开项目",
@@ -2590,6 +2559,7 @@ sklm: {
       tools: "智能体工具",
       agentExtension: "Agent 扩展",
       rendererUi: "对话界面扩展",
+      composerTransform: "输入框操作",
       skills: "技能",
       themes: "主题",
       mcp: "MCP 服务",
@@ -2627,6 +2597,7 @@ sklm: {
       "agent.tool.register": "为智能体添加工具",
       "agent.prompt.inject": "调整智能体指令",
       "agent.complete": "用你的模型发起一次补全",
+      "composer.transform": "转换输入框中的文本",
       "agent.extension": "在 agent 内运行代码",
       "renderer.extension": "在聊天插槽绘制界面",
       "provider.register": "将服务添加到模型列表",
@@ -2651,6 +2622,7 @@ sklm: {
       "bus.subscribe": "接收其他插件的消息",
       "browser.cdp": "控制工作面板浏览器",
       "usage.read": "读取用量统计",
+      "session.autoTitle": "读取首轮标题上下文并更新自动标题",
     },
     permissionHelp: {
       "ui.panel": "允许插件在应用内显示独立面板。",
@@ -2668,6 +2640,7 @@ sklm: {
       "agent.tool.register": "允许 AI 调用此插件提供的额外工具。",
       "agent.prompt.inject": "可能修改发送给智能体的指令。",
       "agent.complete": "会消耗你的模型额度发起一次补全。插件拿不到 API 密钥。",
+      "composer.transform": "允许插件转换你在输入框中主动选择的文本。插件会收到草稿文本和所选模型标识，不会收到对话历史或附件。",
       "agent.extension": "在 agent 进程内运行 ExtensionAPI 模块，拥有与 agent 自身工具相同的权限。只启用你信任的代码。",
       "renderer.extension": "把该插件的渲染模块加载进应用窗口，在消息操作栏、回复追加区、工具卡、代码块、输入区等插槽绘制界面。模块与 这是一个助手 同文档运行，只启用你信任的代码。",
       "provider.register": "把此插件定义的服务添加到设置的服务列表。接口地址和模型由插件提供，API 密钥则留在 这是一个助手 中。",
@@ -2695,6 +2668,8 @@ sklm: {
         "可导航工作面板浏览器、读取页面、运行 JavaScript，并发送白名单内的 Chrome DevTools 命令。Cookie 与存储相关方法会被拒绝。",
       "usage.read":
         "分页列出已完成回合的用量事实（每回合 token 计数与会话标题）。不包含任何消息内容。",
+      "session.autoTitle":
+        "只能读取符合条件会话的首条提示和首条回复，并仅在标题未被手动修改时更新；不能读取完整会话记录。",
     },
   },
   extensions: {

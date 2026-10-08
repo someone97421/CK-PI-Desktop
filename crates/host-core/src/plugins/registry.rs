@@ -23,7 +23,7 @@ pub struct PluginManager {
     /// build stops shipping must stop being protected immediately, whatever the
     /// row that survives it looks like.
     pub(crate) bundled_ids: BTreeSet<String>,
-    /// Catalog channel pinned by app settings, and the URL for `custom`.
+    /// 应用设置选定的市场渠道及自定义目录 URL。
     pub(crate) market_channel: MarketChannel,
     pub(crate) market_custom_url: Option<String>,
     /// Cancel token of the install currently running, when one is.
@@ -41,11 +41,7 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    /// Build a manager against a specific catalog channel.
-    ///
-    /// The channel is applied before the first catalog fetch so a non-default
-    /// source configured in settings is honoured on the very first launch, not
-    /// only after an explicit refresh.
+    /// 首次加载目录前应用所选渠道和自定义 URL，确保启动时沿用保存的来源。
     pub fn new(
         data_dir: &Path,
         market_channel: MarketChannel,

@@ -95,6 +95,23 @@ function isAbsoluteFilePath(path: string): boolean {
   return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
 }
 
+function encodeWindowsPathForHref(path: string): string {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\")
+    ? encodeURIComponent(path)
+    : path;
+}
+
+function normalizeMarkdownWindowsPath(url: string): string {
+  // Keep a drive letter from being interpreted as a URI scheme by the
+  // renderer and sanitizer; the anchor decodes this back before file lookup.
+  const decoded = safeDecodeUri(url).replace(/^\/(?=[A-Za-z]:[/\\])/, "");
+  if (/^[A-Za-z]:[\\/]/.test(decoded)) return encodeWindowsPathForHref(decoded);
+  const suffix = /:\d+(?::\d+)?$/.exec(url)?.[0];
+  return suffix && isLocalFileHref(url)
+    ? `${url.slice(0, -suffix.length)}${encodeURIComponent(suffix)}`
+    : url;
+}
+
 /**
  * Returns the cleaned path when `text` plausibly names a file (trailing
  * `:line[:col]` refs are stripped), otherwise null. A leading `@` — the
@@ -227,6 +244,7 @@ export function isLocalFileHref(href: string): boolean {
   if (!decoded || decoded.startsWith("#")) return false;
   if (/^https?:\/\//i.test(decoded)) return false;
   if (/^\/?[A-Za-z]:[/\\]/.test(decoded)) return true;
+  if (parseFileRefPosition(decoded) && parseFileRef(decoded)) return true;
   return !/^[a-z][a-z0-9+.-]*:/i.test(decoded);
 }
 
@@ -263,6 +281,34 @@ export function resolvePreviewTarget(
   if (isAbsoluteFilePath(file)) return { kind: "file", path: file, ...(position ?? {}) };
   const rel = toWorkspaceRel(file, root, baseDir);
   return rel ? { kind: "file", path: rel, ...(position ?? {}) } : null;
+}
+
+/** Route a plain click on a local Markdown link through the existing file opener. */
+export function handleMarkdownFileLinkClick(
+  event: { preventDefault(): void },
+  href: string,
+  root: string | null | undefined,
+  baseDir: string | undefined,
+  openFileRef: (
+    path: string,
+    baseDir?: string,
+    mimeType?: string,
+    position?: { line?: number; column?: number },
+  ) => void,
+): boolean {
+  if (!isLocalFileHref(href)) return false;
+  let decoded = safeDecodeUri(href).trim();
+  if (decoded.startsWith("@")) decoded = decoded.slice(1).trim();
+  if (decoded.startsWith('"') && decoded.endsWith('"')) decoded = decoded.slice(1, -1);
+  decoded = decoded.replace(/^\/(?=[A-Za-z]:[/\\])/, "");
+  if (!decoded) return false;
+  const position = parseFileRefPosition(decoded) ?? undefined;
+  const path = stripLineRef(decoded);
+  const relative = /^\.{1,2}[/\\]/.test(path);
+  const anchored = relative ? toWorkspaceRel(path, root, baseDir) : null;
+  event.preventDefault();
+  openFileRef(anchored ?? path, relative && !anchored ? baseDir : undefined, undefined, position);
+  return true;
 }
 
 /** Tool-call args → preview target (Read/Write/Edit paths, fetch URLs). */
@@ -408,9 +454,14 @@ const SKIP_MDAST = new Set([
 function previewTargetHref(target: ChatPreviewTarget): string {
   if (target.kind === "url") return target.url;
   if (target.kind === "session") return formatSessionLink(target.sessionId);
-  const path = /^[A-Za-z]:[\\/]/.test(target.path) || target.path.startsWith("\\\\")
-    ? encodeURIComponent(target.path) : target.path;
-  return `${path}${target.line != null ? `:${target.line}${target.column != null ? `:${target.column}` : ""}` : ""}`;
+  const path = encodeWindowsPathForHref(target.path);
+  return `${path}${target.line != null ? encodeURIComponent(`:${target.line}${target.column != null ? `:${target.column}` : ""}`) : ""}`;
+}
+
+function normalizeMarkdownLinkDestination(node: MdastNode): void {
+  if ((node.type === "link" || node.type === "definition") && typeof node.url === "string") {
+    node.url = normalizeMarkdownWindowsPath(node.url);
+  }
 }
 
 /**
@@ -443,6 +494,7 @@ export function linkifyMdastTree(
   function walk(node: MdastNode | null | undefined, skip: boolean) {
     if (!node || typeof node.type !== "string") return;
     inputNodeCount += 1;
+    normalizeMarkdownLinkDestination(node);
     if ((node.type === "text" || node.type === "inlineCode") && typeof node.value === "string") {
       sourceLength += node.value.length;
     }

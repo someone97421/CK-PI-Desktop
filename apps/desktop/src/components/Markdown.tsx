@@ -80,8 +80,8 @@ import {
   type ChatFileMenuTarget,
 } from "../hooks/use-chat-file-menu";
 import {
-  parseFileRefPosition,
   isLocalFileHref,
+  handleMarkdownFileLinkClick,
   remarkChatFileLinks,
   rehypeWindowsFileLinks,
   resolvePreviewTarget,
@@ -671,18 +671,7 @@ function Anchor({
       void useAppStore.getState().selectSession(sessionId).catch(() => undefined);
       return;
     }
-    if (isLocalFileHref(href)) {
-      e.preventDefault();
-      const { path, lineSuffix } = cleanChatFileRef(href);
-      const position = parseFileRefPosition(`${path}${lineSuffix}`) ?? undefined;
-      if (/^\.{1,2}[/\\]/.test(path)) {
-        const anchored = toWorkspaceRel(path, root, baseDir);
-        if (anchored) openFileRef(anchored, undefined, undefined, position);
-        else showToast(t("chat.fileRefMissing", { name: path }), { variant: "error" });
-      } else {
-        openFileRef(path, undefined, undefined, position);
-      }
-    }
+    handleMarkdownFileLinkClick(e, href, root, baseDir, openFileRef);
   };
   // Local file references (relative, POSIX-absolute, or Windows `I:/…` /
   // `/I:/…` hrefs) get the full-path hover tooltip and the file context menu;

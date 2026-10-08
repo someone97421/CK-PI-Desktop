@@ -118,6 +118,11 @@ test("marketplace source settings omit redundant explanatory copy", () => {
     /marketProviderDesc|marketProviderMirrorHint|marketActiveSource|plugins-market-settings-active/,
   );
   assert.match(marketSettingsSrc, /marketCustomUrlDesc/);
+  for (const channel of ["official", "github", "mirror", "custom"]) {
+    assert.ok(marketSettingsSrc.includes(`id: "${channel}"`), `缺少市场渠道 ${channel}`);
+  }
+  assert.match(marketSettingsSrc, /source === "custom"/);
+  assert.match(pageSrc, /MarketplaceSourceSettings/);
 });
 
 test("installed plugin rows keep secondary detail behind a disclosure", () => {

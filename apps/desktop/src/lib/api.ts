@@ -20,14 +20,10 @@ import type {
   UiMessage,
   MessageRevisionSummary,
   AgentPromptResponse,
-  PromptEnhancementRequest,
-  PromptEnhancementResponse,
   SpeechStatus,
   SpeechSynthesizeRequest,
   SpeechSynthesizeResult,
   SpeechTranscribeRequest,
-  SessionSummarizeTitleRequest,
-  SessionSummarizeTitleResponse,
   AgentStopResponse,
   SubagentStopResult,
   SubagentRecallStatus,
@@ -73,6 +69,7 @@ import type {
   PluginPermissionReview,
   PluginSettingDefinition,
   PluginServiceStatus,
+  PluginProviderCatalogMeta,
   PluginViewMeta,
   PluginInlineNode,
   PluginInlineViewMeta,
@@ -674,8 +671,6 @@ export const api = {
       sessionId,
       projectPath,
     }).then((result) => ({ ...result, session: normalizeSession(result.session) })),
-  summarizeSessionTitle: (req: SessionSummarizeTitleRequest) =>
-    invoke<SessionSummarizeTitleResponse>(IPC.invoke.sessionSummarizeTitle, req),
   configureSession: (
     id: string,
     config: Pick<SessionSummary, "mode" | "providerId" | "modelId"> &
@@ -1045,8 +1040,6 @@ export const api = {
     invoke<AgentPromptResponse>(IPC.invoke.agentSteer, req),
   prompt: (req: AgentPromptRequest) =>
     invoke<AgentPromptResponse>(IPC.invoke.agentPrompt, req),
-  enhancePrompt: (req: PromptEnhancementRequest) =>
-    invoke<PromptEnhancementResponse>(IPC.invoke.promptEnhance, req),
   speechStatus: () => invoke<SpeechStatus>(IPC.invoke.speechGetStatus),
   speechTranscribe: (req: SpeechTranscribeRequest) =>
     invoke<{ text: string }>(IPC.invoke.speechTranscribe, req),
@@ -1153,6 +1146,12 @@ export const api = {
     invoke(IPC.invoke.pluginSetAutoUpdate, { id, enabled }),
   getPluginSettings: (id: string) =>
     invoke<{ settings: PluginSettingDefinition[] }>(IPC.invoke.pluginSettingsGet, id),
+  runPluginComposerTransform: (input: {
+    pluginId: string;
+    id: string;
+    text: string;
+    modelKey?: string;
+  }) => invoke<string>(IPC.invoke.pluginComposerTransform, input),
   setPluginSettings: (id: string, settings: Record<string, unknown>) =>
     invoke<{ settings: PluginSettingDefinition[] }>(IPC.invoke.pluginSettingsSet, {
       id,
@@ -1376,6 +1375,8 @@ export const api = {
   togglePluginLauncher: () => invoke(IPC.invoke.pluginLauncherToggle),
   dismissPluginLauncher: () => invoke(IPC.invoke.pluginLauncherDismiss),
   listPluginThemes: () => invoke<PluginTheme[]>(IPC.invoke.pluginThemes),
+  listPluginProviderCatalog: () =>
+    invoke<PluginProviderCatalogMeta[]>(IPC.invoke.pluginProviderCatalog),
   listPluginScenicThemesDestinations: () => invoke<PluginScenicThemesDestinationMeta[]>(IPC.invoke.pluginScenicThemesDestinations),
   setPluginScenicThemeBlur: (pluginId: string, themeId: string, blur: number) => invoke(IPC.invoke.pluginScenicThemesSetBlur, { pluginId, themeId, blur }),
   listPluginServices: () => invoke<PluginServiceStatus[]>(IPC.invoke.pluginServices),

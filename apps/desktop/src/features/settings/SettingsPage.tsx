@@ -76,7 +76,6 @@ import {
   UpdatesRow,
 } from "./agent-sections";
 import { SessionImportPanel } from "./imports/SessionImportPanel";
-import { PromptEnhancementCard } from "./prompt-enhancement-card";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginScenicThemesDestination } from "../../components/settings/PluginScenicThemesDestination";
 import { ConfigSyncPage } from "../../components/settings/ConfigSyncPage";
@@ -586,10 +585,6 @@ export function SettingsPage() {
                 />
               </SettingsCard>
 
-              <PromptEnhancementCard
-                settings={settings}
-                saveSettings={saveSettings}
-              />
             </div>
           )}
           {tab === "shortcuts" && settings && (

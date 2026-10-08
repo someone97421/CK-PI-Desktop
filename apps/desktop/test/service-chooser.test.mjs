@@ -27,7 +27,7 @@ const rule = (selector) => {
 test("a new service starts on a searchable chooser, not a closed menu (D625)", () => {
   assert.match(setupSource, /<ServiceChooser/);
   assert.match(setupSource, /const chooserOpen = choosing \|\| !service/);
-  assert.match(setupSource, /\{chooserOpen \? chooserView : jevService \? jevView : formView\}/);
+  assert.match(setupSource, /chooserOpen \? chooserView : pluginCatalogSetup/);
   assert.doesNotMatch(setupSource, /<ServicePicker/);
   assert.doesNotMatch(setupSource, /<optgroup/);
   assert.match(chooserSource, /settings\.searchService/);
@@ -35,6 +35,16 @@ test("a new service starts on a searchable chooser, not a closed menu (D625)", (
   // Matching itself is covered behaviorally in service-catalog.test.mjs.
   assert.match(chooserSource, /filterServiceOptions\(serviceOptions, query\)/);
   assert.match(chooserSource, /filterServiceOptions\(subscriptionOptions, query\)/);
+  assert.match(chooserSource, /filterServiceOptions\(pluginProviders, query\)/);
+  assert.match(chooserSource, /data-plugin-provider-category=\{category\}/);
+  assert.match(chooserSource, /tooltip=\{option\.description\}/);
+  assert.match(chooserSource, /aria-description=\{option\.description/);
+  const pluginChooserSource = chooserSource.slice(
+    chooserSource.indexOf("{pluginProviderGroups.map"),
+    chooserSource.indexOf("{visibleClassifiers.length > 0"),
+  );
+  assert.doesNotMatch(pluginChooserSource, /service-chooser-tile-detail|option\.endpoint/);
+  assert.match(setupSource, /api\.listPluginProviderCatalog\(\)/);
   // Filtering stays in the renderer; a keystroke must not IPC.
   assert.doesNotMatch(chooserSource, /\bapi\./);
   assert.doesNotMatch(catalogSource, /\bapi\.\w+\(/);
@@ -81,6 +91,7 @@ test("the chooser answers the keyboard and never dead-ends", () => {
   assert.match(chooserSource, /settings\.useCustomEndpoint/);
   assert.match(chooserSource, /pickService\(CUSTOM_SERVICE\)/);
   assert.match(chooserSource, /data-service-id=\{option\.id\}/);
+  assert.match(chooserSource, /data-plugin-provider-id=\{option\.id\}/);
 });
 
 test("chooser tiles are toned in-flow surfaces without strokes (D297)", () => {
