@@ -95,16 +95,8 @@ import {
   MermaidSourceTooLargeError,
   renderMermaidSvg,
 } from "../lib/mermaid";
-import {
-  ensureLang,
-  getHighlightVersion,
-  resolveLang,
-  subscribeHighlighter,
-  themeForMode,
-  tokenizeIncremental,
-  type LineCache,
-  type ThemeMode,
-} from "../lib/shiki";
+import type { ThemeMode } from "../lib/shiki";
+import { useHighlightedTokens } from "../hooks/use-highlighted-tokens";
 
 /*
  * Streaming-optimized chat markdown renderer.
@@ -186,35 +178,6 @@ const TokenLine = memo(function TokenLine({ line }: { line: ThemedToken[] }) {
   );
 });
 
-function useHighlightedTokens(
-  code: string,
-  lang: string,
-): ThemedToken[][] | null {
-  const resolved = resolveLang(lang);
-  const mode = useThemeMode();
-  const version = useSyncExternalStore(
-    subscribeHighlighter,
-    getHighlightVersion,
-    getHighlightVersion,
-  );
-  useEffect(() => {
-    if (resolved) ensureLang(resolved);
-  }, [resolved]);
-  const cacheRef = useRef<LineCache | null>(null);
-  return useMemo(() => {
-    if (!resolved) return null;
-    const next = tokenizeIncremental(
-      cacheRef.current,
-      code,
-      resolved,
-      themeForMode(mode),
-    );
-    cacheRef.current = next;
-    return next?.tokens ?? null;
-    // `version` re-runs this once the language finishes lazy-loading.
-  }, [code, resolved, mode, version]);
-}
-
 /**
  * Tokenized code body (no chrome). Shared with the transcript's tool result
  * blocks so both use the one incremental highlighter cache.
@@ -226,7 +189,8 @@ export function HighlightedCode({
   code: string;
   lang: string;
 }) {
-  const tokens = useHighlightedTokens(code, lang);
+  const mode = useThemeMode();
+  const tokens = useHighlightedTokens(code, lang, mode);
   if (!tokens) return <>{code}</>;
   return (
     <>

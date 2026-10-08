@@ -13,7 +13,7 @@ const filesTabSource = await readFile(
   "utf8",
 );
 const shikiSource = await readFile(
-  new URL("../src/lib/shiki.ts", import.meta.url),
+  new URL("../src/lib/shiki-languages.ts", import.meta.url),
   "utf8",
 );
 

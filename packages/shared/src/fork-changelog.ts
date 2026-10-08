@@ -5,6 +5,7 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "代码高亮改由独立 Worker 执行，异常或超时自动显示纯文本，修复 Go 工具输出导致整个界面卡死。",
   "Read 和 Edit 支持带 BOM 的 UTF-16 文本，编辑后保留原编码和换行符。",
   "各子代理独立计算编辑失败次数，失败不再干扰主代理与其他任务，继续保留 TaskResume。",
   "退出前等待重新生成回答的历史归档，并在保持数据库版本兼容的前提下优化会话排序索引。",
@@ -34,6 +35,7 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Run syntax highlighting in an isolated worker with a plain-text fallback on errors or timeouts, fixing Go tool output freezing the window.",
   "Read and edit BOM-marked UTF-16 text while preserving its encoding and line endings.",
   "Isolate each delegate's edit failure budget from the parent and other tasks while retaining TaskResume.",
   "Wait for regenerated-answer archival before quitting and optimize session sorting indexes without changing the database version.",

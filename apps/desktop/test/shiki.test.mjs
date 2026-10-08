@@ -2,13 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ensureLang,
-  getHighlightVersion,
   resolveLang,
-  subscribeHighlighter,
   SUPPORTED_LANGUAGES,
   themeForMode,
   tokenizeIncremental,
-} from "../src/lib/shiki.ts";
+} from "../src/lib/shiki-engine.ts";
 
 const EXPECTED_LANGUAGES = [
   "astro",
@@ -95,26 +93,8 @@ const EXPECTED_ALIASES = {
   yml: "yaml",
 };
 
-function waitForHighlightChange(version) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      unsubscribe();
-      reject(new Error("Timed out waiting for Shiki language loading"));
-    }, 10_000);
-    const unsubscribe = subscribeHighlighter(() => {
-      if (getHighlightVersion() <= version) return;
-      clearTimeout(timer);
-      unsubscribe();
-      resolve();
-    });
-  });
-}
-
 async function loadAndTokenize(lang) {
-  const before = getHighlightVersion();
-  const changed = waitForHighlightChange(before);
-  ensureLang(lang);
-  await changed;
+  await ensureLang(lang);
   return tokenizeIncremental(null, "value", lang, themeForMode("dark"));
 }
 

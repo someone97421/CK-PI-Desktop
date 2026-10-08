@@ -106,6 +106,7 @@ export default defineConfig({
     },
   },
   renderer: {
+    worker: { format: "es" },
     root: ".",
     build: {
       // electron-vite's renderer preset hard-defaults minify to false, unlike

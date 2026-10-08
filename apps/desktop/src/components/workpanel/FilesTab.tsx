@@ -15,15 +15,8 @@ import { Markdown } from "../Markdown";
 import { fileDirOf } from "../../lib/chat-links";
 import { Button, cx } from "../ui";
 import { TooltipButton } from "../ui";
-import {
-  ensureLang,
-  getHighlightVersion,
-  resolveLang,
-  subscribeHighlighter,
-  themeForMode,
-  tokenizeIncremental,
-  type LineCache,
-} from "../../lib/shiki";
+import { resolveLang } from "../../lib/shiki";
+import { useHighlightedTokens } from "../../hooks/use-highlighted-tokens";
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -104,10 +97,6 @@ function useThemeMode(): "light" | "dark" {
 
 function HighlightedText({ path, content }: { path: string; content: string }) {
   const mode = useThemeMode();
-  const highlightVersion = useSyncExternalStore(
-    subscribeHighlighter,
-    getHighlightVersion,
-  );
   const lang = langForPath(path);
   const lines = useMemo(() => content.split("\n"), [content]);
   const capped = lines.length > VIEWER_LINE_CAP;
@@ -116,17 +105,12 @@ function HighlightedText({ path, content }: { path: string; content: string }) {
     [capped, lines, content],
   );
 
-  const tokens = useMemo<LineCache | null>(() => {
-    void highlightVersion;
-    if (!lang) return null;
-    ensureLang(lang);
-    return tokenizeIncremental(null, visible, lang, themeForMode(mode));
-  }, [lang, visible, mode, highlightVersion]);
+  const tokens = useHighlightedTokens(visible, lang ?? "", mode);
 
   return (
     <pre className="file-viewer-code">
       {tokens
-        ? tokens.tokens.map((row, i) => (
+        ? tokens.map((row, i) => (
             <div className="file-viewer-line" data-line={i + 1} key={i}>
               {row.length === 0
                 ? "\n"
