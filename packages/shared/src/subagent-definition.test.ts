@@ -511,7 +511,6 @@ describe("resolveSubagentToolNames", () => {
     "Task",
     "TaskWait",
     "asktool",
-    "EnterPlanMode",
     "new_context",
     "mcp-foo",
   ];

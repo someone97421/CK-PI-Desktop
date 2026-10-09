@@ -2292,8 +2292,6 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
       "Grep",
       "asktool",
       "Skill",
-      "EnterPlanMode",
-      "EnterGoalMode",
       "new_context",
       "ToolSearch",
     ]);
@@ -2561,12 +2559,13 @@ describe("DesktopAgentRuntime mode and tool composition", () => {
         "Write",
         "Edit",
         "Bash",
-        "EnterPlanMode",
         "ToolSearch",
       ]),
     );
     expect(agentTools).not.toContain("SubmitPlan");
     expect(agentTools).not.toContain("SubmitGoal");
+    expect(agentTools).not.toContain("EnterPlanMode");
+    expect(agentTools).not.toContain("EnterGoalMode");
 
     runtime.setMode("plan");
     expect((runtime as any).agent).toBe(initialAgent);
@@ -2594,7 +2593,8 @@ describe("DesktopAgentRuntime mode and tool composition", () => {
 
     runtime.setMode("agent");
     expect((runtime as any).agent).toBe(initialAgent);
-    expect(agent.state.tools.map((tool: any) => tool.name)).toContain("EnterPlanMode");
+    expect(agent.state.tools.map((tool: any) => tool.name)).not.toContain("EnterPlanMode");
+    expect(agent.state.tools.map((tool: any) => tool.name)).not.toContain("EnterGoalMode");
     await runtime.dispose();
   });
 
@@ -2868,35 +2868,22 @@ describe("DesktopAgentRuntime plan transitions", () => {
 
   it("guards transition batches and terminates after durable plan submission", async () => {
     const host = { call: vi.fn() };
-    const runtime = createRuntime({ host, turnId: "turn-1" });
+    const runtime = createRuntime({ host, mode: "plan", turnId: "turn-1" });
     const agent = (runtime as any).agent;
     const beforeToolCall = agent.beforeToolCall as Function;
 
     const mixedBatch = {
       assistantMessage: {
         content: [
-          { type: "toolCall", id: "enter-call", name: "EnterPlanMode", arguments: {} },
+          { type: "toolCall", id: "submit-call", name: "SubmitPlan", arguments: {} },
           { type: "toolCall", id: "read-call", name: "Read", arguments: { path: "a.txt" } },
         ],
       },
-      toolCall: { id: "enter-call", name: "EnterPlanMode", arguments: {} },
+      toolCall: { id: "submit-call", name: "SubmitPlan", arguments: {} },
       args: {},
       context: {},
     };
     await expect(beforeToolCall(mixedBatch)).resolves.toMatchObject({ block: true });
-
-    host.call.mockResolvedValueOnce({ ok: true, state: "planning" });
-    const enterTool = agent.state.tools.find((tool: any) => tool.name === "EnterPlanMode");
-    const enterResult = await enterTool.execute("enter-call", {});
-    expect(enterResult.terminate).toBeUndefined();
-    expect(runtime.getMode()).toBe("plan");
-    expect(agent.state.tools.map((tool: any) => tool.name)).toContain("SubmitPlan");
-    expect(host.call).toHaveBeenNthCalledWith(1, "plans.enter", {
-      sessionId: "session-1",
-      turnId: "turn-1",
-      toolCallId: "enter-call",
-      kind: "plan",
-    });
 
     const exactMarkdown = "  # Implement it\n\n1. Make the change.  \n";
     const proposal = {
@@ -2944,28 +2931,15 @@ describe("DesktopAgentRuntime plan transitions", () => {
         question: proposal.question,
       }),
     );
-    expect(host.call).toHaveBeenCalledTimes(2);
+    expect(host.call).toHaveBeenCalledTimes(1);
 
     await runtime.dispose();
   });
 
   it("routes the Goal contract through the same host approval with kind goal", async () => {
     const host = { call: vi.fn() };
-    const runtime = createRuntime({ host, turnId: "turn-1" });
+    const runtime = createRuntime({ host, mode: "goal", turnId: "turn-1" });
     const agent = (runtime as any).agent;
-
-    host.call.mockResolvedValueOnce({ ok: true, state: "planning" });
-    const enterTool = agent.state.tools.find(
-      (tool: any) => tool.name === "EnterGoalMode",
-    );
-    await enterTool.execute("enter-goal-call", {});
-    expect(runtime.getMode()).toBe("goal");
-    expect(host.call).toHaveBeenNthCalledWith(1, "plans.enter", {
-      sessionId: "session-1",
-      turnId: "turn-1",
-      toolCallId: "enter-goal-call",
-      kind: "goal",
-    });
 
     const markdown = "# Goal\n\nCheckout works.\n\n## Acceptance criteria\n- tests pass\n";
     const proposal = {
@@ -3034,19 +3008,6 @@ describe("DesktopAgentRuntime plan transitions", () => {
       block: true,
       reason: "SubmitPlan is available only in Plan mode.",
     });
-
-    await expect(
-      beforeToolCall({
-        assistantMessage: {
-          content: [
-            { type: "toolCall", id: "e1", name: "EnterGoalMode", arguments: {} },
-          ],
-        },
-        toolCall: { id: "e1", name: "EnterGoalMode", arguments: {} },
-        args: {},
-        context: {},
-      }),
-    ).resolves.toMatchObject({ block: true });
 
     await runtime.dispose();
   });

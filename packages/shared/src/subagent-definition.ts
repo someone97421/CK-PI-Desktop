@@ -104,8 +104,8 @@ export const SUBAGENT_INHERIT_TOKEN = "inherit";
 
 /**
  * Tools that are never inherited, even with `tools: inherit`. Nested fan-out
- * and mode switches stay with the parent; the user-facing ask tool is out of
- * reach because a delegate has no user. `ToolSearch` and `new_context` mutate
+ * stays with the parent; the user-facing ask tool is out of reach because a
+ * delegate has no user. `ToolSearch` and `new_context` mutate
  * the parent runtime's deferred-tool set and compaction flag, so they stay
  * denied even though the child receives the full catalog without searching.
  */
@@ -117,8 +117,6 @@ export const SUBAGENT_INHERIT_DENY_TOOLS: readonly string[] = [
   "TaskGuide",
   "TaskInspect",
   "TaskResume",
-  "EnterPlanMode",
-  "EnterGoalMode",
   "TodoWrite",
   "asktool",
   "new_context",

@@ -724,32 +724,16 @@ const MAX_ON_DEMAND_TOOL_PROMPT_ENTRIES = 64;
 const MAX_TOOL_SEARCH_RESULT_NAMES = 24;
 
 
-/** Tools that ask the host to switch this session into a contract mode (D198). */
-const ENTER_TOOL_NAMES: Record<ProposalKind, string> = {
-  plan: "EnterPlanMode",
-  goal: "EnterGoalMode",
-};
 /** Tools that submit a contract of one kind for approval (D198). */
 const SUBMIT_TOOL_NAMES: Record<ProposalKind, string> = {
   plan: "SubmitPlan",
   goal: "SubmitGoal",
 };
 /**
- * Every mode transition must be the only call in its assistant message, so the
- * host commits one durable mode change per tool-call batch.
+ * Every contract submission must be the only call in its assistant message,
+ * so the host commits one durable proposal per tool-call batch.
  */
-const MODE_TRANSITION_TOOL_NAMES = new Set([
-  ...Object.values(ENTER_TOOL_NAMES),
-  ...Object.values(SUBMIT_TOOL_NAMES),
-]);
-
-function enterToolKind(name: string): ProposalKind | undefined {
-  return name === ENTER_TOOL_NAMES.plan
-    ? "plan"
-    : name === ENTER_TOOL_NAMES.goal
-      ? "goal"
-      : undefined;
-}
+const MODE_TRANSITION_TOOL_NAMES = new Set(Object.values(SUBMIT_TOOL_NAMES));
 
 function submitToolKind(name: string): ProposalKind | undefined {
   return name === SUBMIT_TOOL_NAMES.plan
@@ -2490,13 +2474,6 @@ Delegation rules:
       }
       return this.extensionToolCall(context);
     }
-    const enterKind = enterToolKind(context.toolCall.name);
-    if (enterKind && this.mode !== "agent") {
-      return {
-        block: true,
-        reason: `${context.toolCall.name} is available only in Agent mode.`,
-      };
-    }
     const submitKind = submitToolKind(context.toolCall.name);
     if (submitKind && this.mode !== submitKind) {
       return {
@@ -3763,7 +3740,7 @@ Delegation rules:
       : [];
     const modeTools =
       this.mode === "agent"
-        ? [this.buildEnterModeTool("plan"), this.buildEnterModeTool("goal")]
+        ? []
         : [this.buildSubmitTool(this.mode)];
     // Keep configured delegation declarations stable across mode changes.
     // Contract modes reject execution before handlers can spawn/control a
@@ -4023,43 +4000,6 @@ Delegation rules:
     };
   }
 
-  private buildEnterModeTool(kind: ProposalKind): AgentTool {
-    const name = ENTER_TOOL_NAMES[kind];
-    const label = modeLabel(kind);
-    return {
-      name,
-      label: `Enter ${label} Mode`,
-      description:
-        kind === "plan"
-          ? "Switch this same agent into Plan mode after the host confirms the durable session transition. Use when the user wants to agree on the implementation steps before any change is made."
-          : "Switch this same agent into Goal mode after the host confirms the durable session transition. Use when the user states an outcome and wants you to agree on the goal and its acceptance criteria, then reach it autonomously.",
-      parameters: Type.Object({}),
-      executionMode: "sequential",
-      execute: async (toolCallId) => {
-        await this.host.call("plans.enter", {
-          sessionId: this.sessionId,
-          turnId: this.turnId,
-          toolCallId,
-          kind,
-        });
-        // The host is authoritative. Rebuild the live prompt and tool set only
-        // after plans.enter has committed the new mode.
-        this.setMode(kind);
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                kind === "plan"
-                  ? "Plan mode is active. Inspect the workspace, formulate the plan, then call SubmitPlan for approval."
-                  : "Goal mode is active. Clarify the outcome and how it will be verified, then call SubmitGoal for approval.",
-            },
-          ],
-          details: { mode: kind, kind, planningState: "planning" },
-        };
-      },
-    };
-  }
 
   /** Provider a delegate runs on: the definition's pin resolved by Electron
    * main, or the session's own provider when it pins nothing. */
