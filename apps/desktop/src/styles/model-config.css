@@ -1347,7 +1347,11 @@
 .model-config-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
+}
+
+.model-config-page > .settings-card-block {
+  margin-bottom: 0;
 }
 
 .model-config-section-head {

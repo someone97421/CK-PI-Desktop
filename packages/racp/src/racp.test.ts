@@ -308,6 +308,37 @@ describe("RACP-WS remote-host profile", () => {
     await expect(client.request("session/get", { sessionId: "nope" })).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
+  it("derives the Host-owned first-prompt title and reports a refusal", async () => {
+    const h = await harness();
+    const { client, events } = await h.connect(OWNER_TOKEN);
+    await client.request("events/subscribe", { scope: "host" });
+    const created = await client.request<{ session: { id: string; title: string } }>("session/create", {});
+    expect(created.session.title).toBe("New session");
+
+    const derived = await client.request<{ updated: boolean }>("session/deriveTitle", {
+      sessionId: created.session.id,
+      title: "First prompt label",
+    });
+    expect(derived.updated).toBe(true);
+    const after = await client.request<{ session: { title: string } }>("session/get", { sessionId: created.session.id });
+    expect(after.session.title).toBe("First prompt label");
+    await flush();
+    expect(events.filter((event) => event.scope === "host").map((event) => event.kind)).toEqual([
+      "session.created",
+      "session.changed",
+    ]);
+
+    // A session that left the placeholder state refuses the fallback.
+    const stale = await client.request<{ updated: boolean }>("session/deriveTitle", {
+      sessionId: created.session.id,
+      title: "Second label",
+    });
+    expect(stale.updated).toBe(false);
+    await expect(client.request("session/deriveTitle", { sessionId: created.session.id })).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+    });
+  });
+
   it("serves projects and bounded workspace reads and maps Host path errors to stable codes", async () => {
     const h = await harness();
     const { client } = await h.connect(OWNER_TOKEN);

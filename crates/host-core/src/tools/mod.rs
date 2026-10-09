@@ -2783,7 +2783,12 @@ async fn tool_bash(
         program: invocation.program,
         args: invocation.args,
         workspace: root.to_path_buf(),
-        scratch_dir: scratch.map(Path::to_path_buf),
+        scratch_dir: scratch.map(|path| {
+            shell::format_scratch_dir_for_shell(
+                shell::dialect_for_id(&options.command_shell_id),
+                path,
+            )
+        }),
         env_path: shell::user_login_path().map(str::to_string),
     };
     let SpawnedToolRunner {
@@ -2866,7 +2871,13 @@ async fn tool_bash(
     notifier.finish();
 
     match stop {
-        BashStop::TimedOut => Err(("TOOL_TIMEOUT".into(), "bash timed out".into())),
+        BashStop::TimedOut => Err((
+            "TOOL_TIMEOUT".into(),
+            format!(
+                "bash timed out after {timeout_ms}ms and was stopped; \
+                 increase timeoutMs for a longer command or split the work"
+            ),
+        )),
         BashStop::Aborted => Err(("TOOL_ABORTED".into(), "bash aborted".into())),
         BashStop::LifecycleFailed(error) => Err((
             "TOOL_FAILED".into(),
@@ -4698,6 +4709,85 @@ mod tests {
             Some(scratch.to_str().unwrap())
         );
         assert!(scratch.is_dir(), "scratch dir created for Bash");
+    }
+
+    #[tokio::test]
+    async fn bash_timeout_error_names_the_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let shell_id = shell::catalog(None)
+            .effective
+            .expect("test platform must have a command shell")
+            .id;
+        let dialect = shell::dialect_for_id(&shell_id).unwrap_or("posix");
+        let command = match dialect {
+            "powershell" => "Start-Sleep -Seconds 5",
+            "cmd" => "ping -n 6 127.0.0.1 >NUL",
+            _ => "sleep 5",
+        };
+        let result = execute_tool_with_options(
+            Some(dir.path()),
+            None,
+            "Bash",
+            &serde_json::json!({ "command": command }),
+            Some(1_000),
+            Some(BashExecutionOptions {
+                session_id: "timeout-session".into(),
+                tool_call_id: "timeout-call".into(),
+                command_shell_id: shell_id,
+                timeout_ms: Some(1_000),
+                cancellation: None,
+                output_tx: None,
+            }),
+        )
+        .await;
+        assert!(!result.ok, "expected a timeout, got: {:?}", result.content);
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(result.error_code.as_deref(), Some("TOOL_TIMEOUT"));
+        let message = result.content["error"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("1000ms"),
+            "timeout message names the budget: {message:?}"
+        );
+        assert!(
+            message.contains("timeoutMs"),
+            "timeout message says how to extend the budget: {message:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn bash_scratch_dir_env_is_posix_formatted_for_git_bash() {
+        if shell::resolve_shell(shell::GIT_BASH_ID).is_err() {
+            eprintln!("git-bash is not installed; skipping the posix scratch env test");
+            return;
+        }
+        let ws = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let scratch = data.path().join("scratch").join("session-dialect");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let result = execute_tool_with_options(
+            Some(ws.path()),
+            Some(&scratch),
+            "Bash",
+            &serde_json::json!({ "command": "printf %s \"$PI_SCRATCH_DIR\"" }),
+            Some(15_000),
+            Some(BashExecutionOptions {
+                session_id: "dialect-session".into(),
+                tool_call_id: "dialect-call".into(),
+                command_shell_id: shell::GIT_BASH_ID.into(),
+                timeout_ms: Some(15_000),
+                cancellation: None,
+                output_tx: None,
+            }),
+        )
+        .await;
+        assert!(result.ok, "bash failed: {:?}", result.content);
+        let stdout = result.content["stdout"].as_str().unwrap_or_default();
+        let expected = scratch.to_str().unwrap().replace('\\', "/");
+        assert_eq!(
+            stdout, expected,
+            "PI_SCRATCH_DIR must be a path the posix shell can use directly"
+        );
     }
 
     #[tokio::test]

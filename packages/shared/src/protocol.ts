@@ -125,6 +125,8 @@ export const IPC = {
     sessionOpen: "pi-desktop/session/open",
     sessionDelete: "pi-desktop/session/delete",
     sessionRename: "pi-desktop/session/rename",
+    /** Deterministic first-prompt title for a session that is still untitled. */
+    sessionDeriveTitle: "pi-desktop/session/deriveTitle",
     sessionConfigure: "pi-desktop/session/configure",
     sessionImportScan: "pi-desktop/session/importScan",
     sessionImportRun: "pi-desktop/session/importRun",

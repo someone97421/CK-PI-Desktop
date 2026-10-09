@@ -126,10 +126,14 @@ fn v18_database_migrates_session_thinking_omit() {
 fn v22_database_migrates_session_title_sources_without_losing_titles() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("pi.sqlite");
-    let (default_id, manual_id) = {
+    let (default_id, localized_id, manual_id) = {
         let db = Database::open(&path).unwrap();
         let default_session =
             crate::sessions::create_session(&db, None, None, None, None, None).unwrap();
+        // A v22 install wrote the active locale's placeholder into the title.
+        let localized_session =
+            crate::sessions::create_session(&db, Some("새 작업".into()), None, None, None, None)
+                .unwrap();
         let manual_session = crate::sessions::create_session(
             &db,
             Some("A title chosen by the user".into()),
@@ -143,23 +147,27 @@ fn v22_database_migrates_session_title_sources_without_losing_titles() {
             .execute_batch("ALTER TABLE sessions DROP COLUMN title_source;")
             .unwrap();
         db.conn().pragma_update(None, "user_version", 22).unwrap();
-        (default_session.id, manual_session.id)
+        (default_session.id, localized_session.id, manual_session.id)
     };
 
     let db = Database::open(&path).unwrap();
     assert_eq!(schema_version(db.conn()), SCHEMA_VERSION);
     assert!(migration_backup_path(&path, 22).exists());
-    let sources: (String, String) = db
+    let sources: (String, String, String) = db
         .conn()
         .query_row(
             "SELECT
                 (SELECT title_source FROM sessions WHERE id = ?1),
-                (SELECT title_source FROM sessions WHERE id = ?2)",
-            params![default_id, manual_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+                (SELECT title_source FROM sessions WHERE id = ?2),
+                (SELECT title_source FROM sessions WHERE id = ?3)",
+            params![default_id, localized_id, manual_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
-    assert_eq!(sources, ("default".into(), "manual".into()));
+    assert_eq!(
+        sources,
+        ("default".into(), "default".into(), "manual".into())
+    );
     assert_eq!(
         crate::sessions::get_session(&db, &manual_id)
             .unwrap()

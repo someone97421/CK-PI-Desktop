@@ -11,7 +11,7 @@
 
 import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { compact } from "./pi-runtime-compaction-summary.js";
-import { estimateContextTokens, estimateTokens } from "./pi-runtime-estimates.js";
+import { ESTIMATED_TEXT_CHARS_PER_TOKEN, estimateContextTokens, estimateTokens } from "./pi-runtime-estimates.js";
 import type { CompactionPreparation, FileOperations } from "./pi-runtime-types.js";
 import type { Api, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@pi-desktop/shared";
@@ -168,7 +168,7 @@ function truncateUserMessageForCheckpoint(
     ...message,
     content: truncateTextForCheckpoint(
       userMessageTextForCheckpoint(message),
-      Math.max(1, tokenBudget) * 4,
+      Math.max(1, Math.floor(tokenBudget * ESTIMATED_TEXT_CHARS_PER_TOKEN)),
     ),
   };
 }
@@ -221,7 +221,7 @@ export function estimatePromptOverheadTokens(
       // A non-serializable schema is a caller bug; the tool's own length still counts.
     }
   }
-  return Math.ceil(chars / 4);
+  return Math.ceil(chars / ESTIMATED_TEXT_CHARS_PER_TOKEN);
 }
 
 /**

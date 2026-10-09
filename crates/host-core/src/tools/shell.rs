@@ -111,6 +111,19 @@ pub fn dialect_for_id(id: &str) -> Option<&'static str> {
     }
 }
 
+/// Format a scratch directory for the shell that will read `PI_SCRATCH_DIR`.
+///
+/// Mirrors `formatScratchDirForShell` in `agent-runtime`: POSIX shells
+/// (including Git Bash on Windows) can only consume forward-slash paths, so
+/// the env value must match the forward-slash path the prompt advertises.
+pub fn format_scratch_dir_for_shell(dialect: Option<&str>, path: &Path) -> PathBuf {
+    if dialect == Some("posix") {
+        PathBuf::from(path.to_string_lossy().replace('\\', "/"))
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// Build a public catalog using a caller-supplied availability probe. This
 /// pure seam keeps catalog/default/fallback tests independent of the host OS.
 pub fn catalog_for_platform(
@@ -692,6 +705,24 @@ mod tests {
         assert_eq!(
             catalog.effective.as_ref().map(|option| option.id.as_str()),
             Some(BASH_ID)
+        );
+    }
+
+    #[test]
+    fn scratch_dir_uses_posix_separators_only_for_posix_shells() {
+        let scratch = PathBuf::from(r"C:\Users\Lan\AppData\Local\PI Desktop\scratch");
+
+        assert_eq!(
+            format_scratch_dir_for_shell(Some("posix"), &scratch).to_string_lossy(),
+            "C:/Users/Lan/AppData/Local/PI Desktop/scratch"
+        );
+        assert_eq!(
+            format_scratch_dir_for_shell(Some("powershell"), &scratch).to_string_lossy(),
+            scratch.to_string_lossy()
+        );
+        assert_eq!(
+            format_scratch_dir_for_shell(Some("cmd"), &scratch).to_string_lossy(),
+            scratch.to_string_lossy()
         );
     }
 

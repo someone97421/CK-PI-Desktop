@@ -666,6 +666,9 @@ export const api = {
     invoke<{ ok: boolean; path: string }>(IPC.invoke.projectOpenFolder, path),
   renameSession: (id: string, title: string) =>
     invoke<{ ok: boolean }>(IPC.invoke.sessionRename, id, title),
+  /** Ask the host for a first-prompt title; it refuses a renamed session. */
+  deriveSessionTitle: (id: string, title: string) =>
+    invoke<{ updated: boolean }>(IPC.invoke.sessionDeriveTitle, id, title),
   moveSessionProject: (sessionId: string, projectPath: string) =>
     invoke<{ session: SessionSummary }>(IPC.invoke.sessionMoveProject, {
       sessionId,

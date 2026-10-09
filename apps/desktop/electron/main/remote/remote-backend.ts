@@ -77,6 +77,7 @@ const HANDLED_CHANNELS: ReadonlySet<string> = new Set([
   IPC.invoke.sessionConfigure,
   IPC.invoke.sessionFork,
   IPC.invoke.sessionRename,
+  IPC.invoke.sessionDeriveTitle,
   IPC.invoke.sessionDelete,
   IPC.invoke.toolResolvePermission,
   IPC.invoke.askToolResolve,
@@ -294,6 +295,14 @@ export function createRemoteBackend(options: RemoteBackendOptions): RemoteBacken
         const title = args[1] as string;
         await client.request("session/rename", { sessionId: hostIdFor(args), title });
         return { ok: true };
+      }
+      case IPC.invoke.sessionDeriveTitle: {
+        const title = args[1] as string;
+        const result = await client.request<{ updated?: boolean }>("session/deriveTitle", {
+          sessionId: hostIdFor(args),
+          title,
+        });
+        return { updated: result.updated === true };
       }
       case IPC.invoke.sessionDelete: {
         await client.request("session/delete", { sessionId: hostIdFor(args) });

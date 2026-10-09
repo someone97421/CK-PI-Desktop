@@ -1,5 +1,5 @@
 diff --git a/dist/agent-loop.js b/dist/agent-loop.js
-index edcfba73a4e8f548f19a17bdaf8982bd528c76bd..4374aa013b252013eca1bb9066cb1935ed3ca59c 100644
+index 77af960..b2faa02 100644
 --- a/dist/agent-loop.js
 +++ b/dist/agent-loop.js
 @@ -294,6 +294,12 @@ async function streamAssistantResponse(context, config, signal, emit, streamFunc
@@ -16,7 +16,7 @@ index edcfba73a4e8f548f19a17bdaf8982bd528c76bd..4374aa013b252013eca1bb9066cb1935
                      partialMessage = event.partial;
                      context.messages[context.messages.length - 1] = partialMessage;
 diff --git a/dist/agent.js b/dist/agent.js
-index a8ccfc0bd9bd84895b5f158c9dfa328e65f200ca..0f98e4736f7bbf4fed2c53a5596cda2f03fe0a26 100644
+index a8ccfc0..0f98e47 100644
 --- a/dist/agent.js
 +++ b/dist/agent.js
 @@ -1,3 +1,4 @@

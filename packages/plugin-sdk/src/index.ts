@@ -17,6 +17,23 @@ import {
   type PluginThemeVariableContrib,
 } from "./theme-variables.js";
 
+/** Host-mediated HTTP request; redirect defaults to the legacy follow policy. */
+export type PluginNetFetchInput = {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs?: number;
+  /** Defaults to follow. error refuses any 3xx; manual returns it unchanged. */
+  redirect?: "follow" | "error" | "manual";
+};
+
+export type PluginNetFetchResult = {
+  status: number;
+  headers: Record<string, string>;
+  bodyText: string;
+};
+
 /**
  * Manifest id shape frozen by docs/spec/07-plugins/02-plugin-manifest-schema.md:
  * a lowercase dotted namespace such as `demo.hello` or `pi.browser`.
@@ -1576,13 +1593,9 @@ export type PluginHostApi = {
     cdp: (input: { method: string; params?: unknown }) => Promise<unknown>;
   };
   net: {
-    fetch: (input: {
-      url: string;
-      method?: string;
-      headers?: Record<string, string>;
-      body?: string;
-      timeoutMs?: number;
-    }) => Promise<{ status: number; headers: Record<string, string>; bodyText: string }>;
+    /** Query before using redirect on hosts that may predate this API. */
+    getCapabilities: () => Promise<{ fetchRedirectModes: ("follow" | "error" | "manual")[] }>;
+    fetch: (input: PluginNetFetchInput) => Promise<PluginNetFetchResult>;
     /**
      * Real-time bidirectional sockets (`net.websocket`). A connect is confined
      * to `manifest.net.domains` exactly like `fetch`, and the host closes every

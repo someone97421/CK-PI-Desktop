@@ -5,7 +5,11 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
-  "会话自动命名和提示词增强改由独立可选插件提供；移除宿主内置入口，保留手动改名与原增强设置迁移。",
+  "恢复首条消息自动标题，保留手动标题优先及命名插件后续优化；提示词增强继续由可选插件提供。",
+  "升级 Pi 1.1.0，改进响应计时和上下文估算，保留独立压缩模型、原生搜索与 TaskResume。",
+  "全局和项目指令分别分配读取预算，截断时明确提示；修复系统事件重建后的重复记录。",
+  "插件网络请求支持跟随、手动或拒绝重定向；修复 Git Bash 临时目录路径并明确超时反馈。",
+  "优化模型设置顺序、导入说明和备用模型名称，保留逐模型思考配置；避免生图结果重复展示。",
   "数据库跟随上游升级到 schema 23，迁移前自动备份，并持久记录标题来源以保护手动命名。",
   "添加服务支持插件提供商与动态模型发现；插件安装更快回退下载，继续保留官方、GitHub、CNB 和自定义来源。",
   "修复 Windows Python MCP 启动和文件链接，点击项目文件可按需启动文件管理器；临时会话扩展使用正确工作目录。",
@@ -34,13 +38,17 @@ const zh = entry([
   "子智能体支持上下文预算、自动压缩与超限提示，模型预算优先采用用户填写的有效上下文窗口。",
   "新增可选的模型无限重试，以及项目和全局 SYSTEM.md、APPEND_SYSTEM.md 提示词支持。",
   "优化执行过程多级折叠、思考滑条和工具展示，修复预览会话隔离、草稿附件和默认模型保存。",
-  "采用 Pi 1.0.1 运行时与应用内压缩适配，保留独立压缩模型、工具激活恢复和 TaskResume。",
+  "采用 Pi 1.1.0 运行时与应用内压缩适配，保留独立压缩模型、工具激活恢复和 TaskResume。",
   "以编译日期和时间记录本 fork 版本。",
   "独立的安装身份、缓存与更新来源，继续共用原有对话、配置和插件数据。",
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
-  "Move automatic session titles and prompt enhancement into optional plugins; remove built-in actions while retaining manual renaming and legacy setting migration.",
+  "Restore first-prompt titles while preserving manual names and later plugin refinement; keep prompt enhancement in an optional plugin.",
+  "Upgrade to Pi 1.1.0 with improved response timing and context estimates while retaining dedicated compaction, hosted search and TaskResume.",
+  "Give global and project instructions separate budgets with explicit truncation notices, and deduplicate restored system events.",
+  "Support follow, manual and error redirect modes for plugin requests; fix Git Bash scratch paths and clarify timeout feedback.",
+  "Improve model-setting order, import guidance and fallback-model labels while retaining per-model reasoning settings; avoid duplicate generated-image previews.",
   "Upgrade to upstream schema 23 with pre-migration backups and persistent title sources that protect manual names.",
   "Add plugin providers and dynamic model discovery to Add Service; speed up install fallback while keeping official, GitHub, CNB and custom sources.",
   "Fix Windows Python MCP launching and file links, start the file manager on demand, and use the correct directory for temporary-session extensions.",
@@ -69,7 +77,7 @@ const en = entry([
   "Support subagent context budgets, automatic compaction and overflow reporting; prioritize user-configured context windows.",
   "Add optional unlimited provider retries and project/global SYSTEM.md and APPEND_SYSTEM.md prompt support.",
   "Improve nested process disclosure, the reasoning slider and tool display; fix preview session isolation, draft attachments and default-model saving.",
-  "Use Pi 1.0.1 with application-owned compaction while retaining a dedicated compaction model, deferred tools and TaskResume.",
+  "Use Pi 1.1.0 with application-owned compaction while retaining a dedicated compaction model, deferred tools and TaskResume.",
   "Version this fork by its build date and time.",
   "Separate installation identity, caches and updates while sharing existing conversations, settings and plugin data.",
   "Use the dinosaur icon and bundle the terminal with the Windows output fix.",

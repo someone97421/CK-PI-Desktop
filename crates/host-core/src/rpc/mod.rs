@@ -2720,6 +2720,22 @@ async fn handle_request(
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             Ok(json!({ "ok": ok }))
         }
+        "session.deriveTitle" => {
+            let id = params
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| rpc_err(1002, "id required", "INVALID_PARAMS"))?;
+            let title = params
+                .get("title")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| rpc_err(1002, "title required", "INVALID_PARAMS"))?;
+            let title = sessions::normalize_session_title(title)
+                .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
+            let st = state.lock().await;
+            let updated = sessions::derive_session_title(&st.db, id, &title)
+                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            Ok(json!({ "updated": updated }))
+        }
         "session.appendMessage" => {
             let session_id = params
                 .get("sessionId")

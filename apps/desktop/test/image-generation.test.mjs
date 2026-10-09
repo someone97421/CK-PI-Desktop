@@ -115,6 +115,8 @@ test("the default imagegen skill is discoverable and loads in an ordinary sessio
   assert.match(body, /GenerateImages/);
   assert.match(body, /previous result path/);
   assert.match(body, /Do not retry/);
+  assert.match(body, /desktop displays successful images directly from tool results/i);
+  assert.match(body, /Report generated items and failures without duplicating those previews/i);
   assert.equal(loadBuiltinSkillBody("../../outside"), null);
 });
 

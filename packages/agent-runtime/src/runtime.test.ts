@@ -222,6 +222,7 @@ function runtimeTool(runtime: DesktopAgentRuntime, name: string): AgentTool {
 function assistantMessage(overrides: {
   content: unknown[];
   stopReason?: string;
+  durationMs?: number;
 }) {
   return {
     role: "assistant",
@@ -238,6 +239,7 @@ function assistantMessage(overrides: {
     },
     stopReason: overrides.stopReason ?? "stop",
     timestamp: 2,
+    ...(overrides.durationMs !== undefined ? { durationMs: overrides.durationMs } : {}),
     content: overrides.content,
   };
 }
@@ -5591,6 +5593,85 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
   });
 });
 
+describe("DesktopAgentRuntime response duration", () => {
+  const fallbackDurations = [
+    { label: "missing", durationMs: undefined },
+    { label: "zero", durationMs: 0 },
+    { label: "non-finite", durationMs: Number.NaN },
+    { label: "negative", durationMs: -1 },
+  ] as const;
+
+  it("uses pi-ai's monotonic duration for a completed response", async () => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const internals = runtime as unknown as {
+      handleAgentEvent(event: unknown): Promise<void>;
+      streamStartedAt: number | undefined;
+    };
+
+    await internals.handleAgentEvent({
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    // Make the local fallback visibly different from Pi's request duration.
+    internals.streamStartedAt = Date.now() - 2_000;
+    await internals.handleAgentEvent({
+      type: "message_end",
+      message: assistantMessage({
+        content: [{ type: "text", text: "answer" }],
+        durationMs: 47,
+      }),
+    });
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "message_end",
+          message: expect.objectContaining({ responseDurationMs: 47 }),
+        }),
+      }),
+    );
+    await runtime.dispose();
+  });
+
+  it.each(fallbackDurations)(
+    "falls back to the sidecar stopwatch for a $label Pi duration",
+    async ({ durationMs }) => {
+      const onEvent = vi.fn();
+      const runtime = createRuntime({ onEvent });
+      const internals = runtime as unknown as {
+        handleAgentEvent(event: unknown): Promise<void>;
+        streamStartedAt: number | undefined;
+      };
+
+      await internals.handleAgentEvent({
+        type: "message_start",
+        message: { role: "assistant", content: [] },
+      });
+      internals.streamStartedAt = Date.now() - 2_000;
+      await internals.handleAgentEvent({
+        type: "message_end",
+        message: assistantMessage({
+          content: [{ type: "text", text: "answer" }],
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        }),
+      });
+
+      type Envelope = {
+        event?: {
+          type?: string;
+          message?: { responseDurationMs?: number };
+        };
+      };
+      const terminal = onEvent.mock.calls
+        .map(([envelope]) => envelope as Envelope)
+        .find(({ event }) => event?.type === "message_end");
+      expect(terminal?.event?.message?.responseDurationMs).toBeGreaterThanOrEqual(2_000);
+      await runtime.dispose();
+    },
+  );
+});
+
 describe("DesktopAgentRuntime compaction restore", () => {
   it("restores summary plus retained tail while keeping the full transcript", async () => {
     const retained = { role: "user" as const, content: "recent", timestamp: 2 };
@@ -9394,7 +9475,7 @@ describe("context estimate calibration", () => {
     expect(initialBudget).toBeGreaterThan(raw);
 
     // Two unanchored reports, each costing three times the estimate: CJK text
-    // against the estimator's `chars / 4` constant. Below the sample threshold
+    // against pi-ai's 3.5-characters-per-token estimate. Below the sample threshold
     // the gate has to stay exactly where it was.
     for (let i = 0; i < 2; i++) {
       (runtime as any).inFlightContextEstimate = {

@@ -182,6 +182,16 @@ window.settingsInlineMcpImportProbe = async () => {
   if (panel.hidden || toggle.getAttribute("aria-expanded") !== "true") {
     throw new Error("Inline MCP workbench did not expand");
   }
+  const scanDescription = requireNode(
+    panel.querySelector(".import-idle-description"),
+    "Expanded MCP workbench does not show its scan description",
+  );
+  if (!scanDescription.textContent.trim()) {
+    throw new Error("Expanded MCP scan description is empty");
+  }
+  if (panel.querySelector(".import-idle .ui-help-icon")) {
+    throw new Error("Expanded MCP workbench still hides its description behind a help icon");
+  }
   const scanCountBeforeExplicitClick = calls.filter(
     (call) => call.channel === IPC.invoke.mcpImportScan,
   ).length;

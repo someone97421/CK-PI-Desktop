@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 import { IPC } from "@pi-desktop/shared";
 
-test("sending the first prompt keeps the default session title for the title plugin", async (t) => {
+test("sending the first prompt derives a replaceable title instead of renaming", async (t) => {
   const server = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)),
     configFile: false,
@@ -18,10 +18,12 @@ test("sending the first prompt keeps the default session title for the title plu
   try {
     const { createQueueSlice } = await server.ssrLoadModule("/src/stores/slices/queue-slice.ts");
     const invoked = [];
-    globalThis.window = { piDesktop: { invoke: async (channel, payload) => {
-      invoked.push([channel, payload]);
-      if (channel !== IPC.invoke.agentPrompt) throw new Error(`Unexpected IPC: ${channel}`);
-      return { ok: true, data: { turnId: "turn-1" } };
+    let refreshed = 0;
+    globalThis.window = { piDesktop: { invoke: async (channel, ...args) => {
+      invoked.push([channel, ...args]);
+      if (channel === IPC.invoke.agentPrompt) return { ok: true, data: { turnId: "turn-1" } };
+      if (channel === IPC.invoke.sessionDeriveTitle) return { ok: true, data: { updated: true } };
+      throw new Error(`Unexpected IPC: ${channel}`);
     } } };
     let state = {
       activeSessionId: "session-a",
@@ -31,8 +33,12 @@ test("sending the first prompt keeps the default session title for the title plu
       runningSessions: {},
       latestTurnResults: {},
       sessionOutcomes: {},
+      responseAnnotations: {},
       showToast: assert.fail,
       rememberModel() {},
+      refreshSessions: async () => {
+        refreshed += 1;
+      },
     };
     const runtime = {
       submittedComposerDrafts: new Map(),
@@ -60,8 +66,17 @@ test("sending the first prompt keeps the default session title for the title plu
     });
 
     assert.equal(await slice.sendPrompt("Summarize the first turn", undefined, "session-a"), true);
+    // The host, not the renderer, owns the title: the sidebar keeps the
+    // placeholder until the derived title comes back, and the rename path stays
+    // unused so an installed title plugin can still replace the derived text.
     assert.equal(state.sessions[0].title, "New task");
-    assert.deepEqual(invoked.map(([channel]) => channel), [IPC.invoke.agentPrompt]);
+    assert.deepEqual(
+      invoked.filter(([channel]) => channel === IPC.invoke.sessionDeriveTitle),
+      [[IPC.invoke.sessionDeriveTitle, "session-a", "Summarize the first turn"]],
+    );
+    assert.equal(invoked.some(([channel]) => channel === IPC.invoke.sessionRename), false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(refreshed, 1);
   } finally {
     globalThis.window = previousWindow;
     await server.close();

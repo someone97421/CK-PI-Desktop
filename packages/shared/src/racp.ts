@@ -552,6 +552,8 @@ export const RACP_OPERATIONS = {
   "session/configure": { role: "controller", profile: "remote-host", mutation: true },
   "session/fork": { role: "controller", profile: "remote-host", mutation: true },
   "session/rename": { role: "controller", profile: "remote-host", mutation: true },
+  /** The Host's own deterministic first-prompt title; never a controller choice. */
+  "session/deriveTitle": { role: "controller", profile: "remote-host", mutation: true },
   "session/delete": { role: "owner", profile: "remote-host", mutation: true },
   "session/compact": { role: "controller", profile: "remote-host", mutation: true },
   "workspace/list": { role: "viewer", profile: "remote-host", mutation: false },

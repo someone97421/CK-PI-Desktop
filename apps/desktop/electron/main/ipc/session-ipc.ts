@@ -371,6 +371,15 @@ export function registerSessionIpc({
     if (!host) throw new Error("host unavailable");
     return host.call("session.rename", { id, title });
   });
+  handle(IPC.invoke.sessionDeriveTitle, async (id: string, title: string) => {
+    if (id.startsWith("native-pi:")) {
+      throw Object.assign(new Error("Native Pi session title derivation is not supported"), {
+        errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
+    if (!host) throw new Error("host unavailable");
+    return host.call("session.deriveTitle", { id, title });
+  });
   handle(
     IPC.invoke.sessionMoveProject,
     async (input: { sessionId?: string; projectPath?: string } = {}) => {

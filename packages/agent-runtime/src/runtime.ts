@@ -149,6 +149,7 @@ import { withExplicitRequired } from "./tool-schema.js";
 import { buildSessionContext } from "./session-context.js";
 import { prepareCompaction } from "./pi-runtime-compaction-plan.js";
 import {
+  ESTIMATED_TEXT_CHARS_PER_TOKEN,
   estimateContextTokens,
   estimateTokens,
 } from "./pi-runtime-estimates.js";
@@ -7390,7 +7391,7 @@ Delegation rules:
     maxSummaryChars: number,
     retentionMode: CompactionRetentionMode,
   ): AgentMessage[] {
-    const summaryTokens = Math.ceil(maxSummaryChars / 4);
+    const summaryTokens = Math.ceil(maxSummaryChars / ESTIMATED_TEXT_CHARS_PER_TOKEN);
     const available = Math.max(
       1,
       budget.hardLimit - summaryTokens - COMPACTION_FALLBACK_NOTICE_TOKENS,
@@ -7499,7 +7500,7 @@ Delegation rules:
   ): AgentMessage[][] | undefined {
     const reduced = reduceSummaryInput(preparation) ?? preparation;
     const reserveTokens = Math.max(
-      Math.ceil((preparation.previousSummary?.length ?? 0) / 4),
+      Math.ceil((preparation.previousSummary?.length ?? 0) / ESTIMATED_TEXT_CHARS_PER_TOKEN),
       compactionSummaryOutputBudget({
         requestHeadroom: budget.requestHeadroom,
         modelMaxTokens: (this.compactionModel ?? this.model).maxTokens,
@@ -8450,10 +8451,17 @@ Delegation rules:
             this.streamStartedAt = undefined;
             break;
           }
+          // Pi 1.1.0 measures from request start with a monotonic clock. Keep the
+          // sidecar stopwatch for stopped and older streams that have no final message.
+          const piDurationMs = event.message.durationMs;
           const responseDurationMs =
-            this.streamStartedAt !== undefined
-              ? Math.max(0, endedAt - this.streamStartedAt)
-              : undefined;
+            typeof piDurationMs === "number" &&
+            Number.isFinite(piDurationMs) &&
+            piDurationMs > 0
+              ? piDurationMs
+              : this.streamStartedAt !== undefined
+                ? Math.max(0, endedAt - this.streamStartedAt)
+                : undefined;
           const responseOutputTokens =
             aborted && (!usage || usage.outputTokens <= 0)
               ? estimateVisibleResponseOutputTokens({

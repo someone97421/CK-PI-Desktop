@@ -1071,14 +1071,6 @@
   min-height: var(--ds-field-height);
 }
 
-.jev-settings-privacy-note {
-  margin: 0;
-  padding: 0 16px 12px;
-  color: var(--ds-text-secondary);
-  font-size: var(--text-sm);
-  line-height: var(--leading-body);
-}
-
 /*
   The Jev row's control column: two actions and the switch. The row metric
   above only matches a bare toggle, so the group keeps its own height.

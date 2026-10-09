@@ -71,6 +71,7 @@
     "test:e2e:mcp-market": "node scripts/e2e-mcp-market.mjs",
     "test:e2e:skill-market": "node scripts/e2e-skill-market.mjs",
     "test:e2e:capability-move": "node scripts/e2e-capability-move.mjs",
+    "test:e2e:plugin-fetch-redirect": "node --test apps/desktop/test/plugin-fetch-redirect.test.mjs",
     "test:e2e:plugin-import-deps": "node scripts/e2e-plugin-import-deps.mjs",
     "test:e2e:trusted-extensions": "node scripts/e2e-trusted-extensions.mjs",
     "test:e2e:plugin-ui-slots": "node scripts/e2e-plugin-ui-slots.mjs",

@@ -361,11 +361,33 @@ pub struct SearchHit {
     pub created_at: String,
 }
 
+/// Titles the app writes for a session the user has not named yet.
+///
+/// The renderer creates a session with its localized `chat.untitledTask` label
+/// and also recognizes `nav.newChat`, so host-core has to recognize the same
+/// values: it owns title eligibility and cannot read the renderer catalog when
+/// it decides whether a title may still be replaced. German, Spanish, and
+/// French fall back to the English label. Keep this in sync with the migration
+/// list in `db/session_title_source_migration.rs` and `LEGACY_DEFAULT_TITLES`
+/// in the renderer.
+const PLACEHOLDER_TITLES: [&str; 13] = [
+    "",
+    "New task",
+    "New chat",
+    "新建任务",
+    "新对话",
+    "新建任務",
+    "新對話",
+    "새 작업",
+    "새 채팅",
+    "Tarefa sem título",
+    "Nova conversa",
+    "Yeni görev",
+    "Yeni sohbet",
+];
+
 fn is_default_title(title: &str) -> bool {
-    matches!(
-        title.trim(),
-        "" | "New task" | "New chat" | "新建任务" | "新对话"
-    )
+    PLACEHOLDER_TITLES.contains(&title.trim())
 }
 
 // ---- UiMessage ⇄ transcript record mapping -----------------------------------
@@ -2219,6 +2241,42 @@ pub fn rename_session(db: &Database, id: &str, title: &str) -> Result<bool> {
         .conn()
         .prepare_cached("UPDATE sessions SET title = ?1, title_source = ?2 WHERE id = ?3")?
         .execute(params![title, TITLE_SOURCE_MANUAL, id])?;
+    Ok(n > 0)
+}
+
+/// Replace a still-untitled session's placeholder with text derived from its
+/// first prompt.
+///
+/// This is the deterministic local fallback that keeps a new session readable
+/// without any plugin. It deliberately keeps the `default` title source: the
+/// derived text was not chosen by the user, so an installed title plugin may
+/// still upgrade it through `set_automatic_session_title`. The write only
+/// applies while host-core still sees a recognized placeholder, so a manual
+/// rename, a plugin-generated title, or an earlier derivation all win.
+pub fn derive_session_title(db: &Database, id: &str, title: &str) -> Result<bool> {
+    let title = normalize_session_title(title)?;
+    let current: Option<(String, String)> = db
+        .conn()
+        .query_row(
+            "SELECT title, title_source FROM sessions
+             WHERE id = ?1 AND deleted_at IS NULL",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((current_title, title_source)) = current else {
+        return Ok(false);
+    };
+    if title_source != TITLE_SOURCE_DEFAULT || !is_default_title(&current_title) {
+        return Ok(false);
+    }
+    let n = db
+        .conn()
+        .prepare_cached(
+            "UPDATE sessions SET title = ?1
+             WHERE id = ?2 AND title = ?3 AND title_source = ?4 AND deleted_at IS NULL",
+        )?
+        .execute(params![title, id, current_title, TITLE_SOURCE_DEFAULT])?;
     Ok(n > 0)
 }
 
@@ -5052,6 +5110,120 @@ mod tests {
             rename_session(&db, &session.id, &"x".repeat(MAX_SESSION_TITLE_CHARS + 1),).is_err()
         );
         assert!(!rename_session(&db, "missing", "Valid").unwrap());
+    }
+
+    #[test]
+    fn derived_prompt_title_stays_eligible_for_the_title_plugin() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        append_message(
+            &db,
+            &session.id,
+            &user_msg("user-1", "Fix the login button", "2026-01-01T00:00:01Z"),
+            None,
+        )
+        .unwrap();
+        let before: i64 = db
+            .conn()
+            .query_row(
+                "SELECT updated_at FROM sessions WHERE id = ?1",
+                params![session.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(derive_session_title(&db, &session.id, "Fix login bug").unwrap());
+        let derived = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(derived.summary.title, "Fix login bug");
+        let after: i64 = db
+            .conn()
+            .query_row(
+                "SELECT updated_at FROM sessions WHERE id = ?1",
+                params![session.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after, before);
+
+        // The derived text is still an automatic title: the plugin reads it as
+        // the expected title and may replace it.
+        let context = auto_title_context(&db, &session.id).unwrap().unwrap();
+        assert_eq!(context.expected_title, "Fix login bug");
+        assert_eq!(context.user_prompt, "Fix the login button");
+        assert!(
+            set_automatic_session_title(&db, &session.id, "Fix login bug", "Login fix").unwrap()
+        );
+        assert_eq!(
+            get_session(&db, &session.id)
+                .unwrap()
+                .unwrap()
+                .summary
+                .title,
+            "Login fix"
+        );
+        assert!(auto_title_context(&db, &session.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn derived_prompt_title_never_overrides_named_sessions() {
+        let db = test_db();
+        let manual = create_session(&db, None, None, None, None, None).unwrap();
+        assert!(rename_session(&db, &manual.id, "Picked by user").unwrap());
+        assert!(!derive_session_title(&db, &manual.id, "First prompt").unwrap());
+        assert_eq!(
+            get_session(&db, &manual.id).unwrap().unwrap().summary.title,
+            "Picked by user"
+        );
+
+        let generated = create_session(&db, None, None, None, None, None).unwrap();
+        assert!(set_automatic_session_title(&db, &generated.id, "New task", "Generated").unwrap());
+        assert!(!derive_session_title(&db, &generated.id, "First prompt").unwrap());
+
+        let named =
+            create_session(&db, Some("Named up front".into()), None, None, None, None).unwrap();
+        assert!(!derive_session_title(&db, &named.id, "First prompt").unwrap());
+
+        let returned = create_session(&db, None, None, None, None, None).unwrap();
+        assert!(derive_session_title(&db, &returned.id, "First prompt").unwrap());
+        assert!(!derive_session_title(&db, &returned.id, "Second prompt").unwrap());
+        assert_eq!(
+            get_session(&db, &returned.id)
+                .unwrap()
+                .unwrap()
+                .summary
+                .title,
+            "First prompt"
+        );
+
+        assert!(!derive_session_title(&db, "missing", "First prompt").unwrap());
+        assert!(derive_session_title(&db, &returned.id, "  ").is_err());
+    }
+
+    #[test]
+    fn localized_placeholder_titles_accept_the_first_prompt_fallback() {
+        let db = test_db();
+        for placeholder in [
+            "새 작업",
+            "新建任務",
+            "Tarefa sem título",
+            "Yeni görev",
+            "New chat",
+        ] {
+            let session =
+                create_session(&db, Some(placeholder.into()), None, None, None, None).unwrap();
+            assert!(
+                derive_session_title(&db, &session.id, "Derived label").unwrap(),
+                "{placeholder} must accept the first-prompt fallback"
+            );
+            assert_eq!(
+                get_session(&db, &session.id)
+                    .unwrap()
+                    .unwrap()
+                    .summary
+                    .title,
+                "Derived label"
+            );
+        }
     }
 
     #[test]

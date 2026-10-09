@@ -1,6 +1,6 @@
 /**
- * Model configuration tab: default model, the AI service list, and the
- * models.dev enrichment snapshot status.
+ * Model configuration tab: AI services, default models, Jev and image models,
+ * and the models.dev enrichment snapshot status.
  *
  * API services, plugin-declared services and vendor subscription accounts
  * share one list (D625). An account row still lives and dies through the
@@ -62,6 +62,7 @@ import { ModelConfigImportPanel } from "../../features/settings/imports/ModelCon
 import { ImportToggleButton } from "../../features/settings/import-workbench";
 import { JevSettingsCard } from "./JevSettingsCard";
 import { JEV_SERVICE } from "./service-catalog";
+import { isPluginCatalogSetupForProvider } from "./provider-setup-mode";
 
 /**
  * A row of the context-compaction picker: the follow entry, which names the
@@ -571,6 +572,158 @@ export function ModelConfigPage() {
     <div className="settings-stack model-config-page">
       <section className="settings-card-block">
         <div className="model-config-section-head">
+          <div className="settings-card-heading-line">
+            <h3 className="settings-card-heading">{t("settings.providers")}</h3>
+            {providers.length > 0 ? (
+              <span className="provider-section-count">{providers.length}</span>
+            ) : null}
+          </div>
+          <div className="provider-section-head-actions">
+            <ImportToggleButton
+              open={importOpen}
+              controls="model-config-import-panel"
+              label={t("settings.importTitle")}
+              onClick={() => setImportOpen((current) => !current)}
+            />
+            <Button
+              variant="secondary"
+              disabled={transferBusy !== null}
+              onClick={() => void exportProviders()}
+            >
+              <span className="model-config-btn-inner">
+                <IconDownload size={14} />
+                <span>{t("settings.exportProviders")}</span>
+              </span>
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={transferBusy !== null}
+              onClick={() => void importProviders()}
+            >
+              <span className="model-config-btn-inner">
+                <IconFolderOpen size={14} />
+                <span>{t("settings.importProviders")}</span>
+              </span>
+            </Button>
+            <Button
+              variant="primary"
+              className="model-provider-add"
+              onClick={() => setSetupFor("")}
+            >
+              <span className="model-config-btn-inner">
+                <IconPlus size={14} />
+                <span>{t("settings.addProvider")}</span>
+              </span>
+            </Button>
+          </div>
+        </div>
+
+        <div
+          id="model-config-import-panel"
+          className="import-inline-workbench"
+          hidden={!importOpen}
+        >
+          <ModelConfigImportPanel />
+        </div>
+
+        <div className="settings-panel model-provider-panel">
+          {providers.length === 0 ? (
+            <div className="model-provider-empty">
+              <div className="model-provider-empty-icon" aria-hidden>
+                <IconServer size={18} />
+              </div>
+              <div className="model-provider-empty-title">{t("settings.noProviders")}</div>
+              <div className="model-provider-empty-desc">{t("settings.noProvidersDesc")}</div>
+              <Button variant="primary" onClick={() => setSetupFor("")}>
+                <span className="model-config-btn-inner">
+                  <IconPlus size={14} />
+                  <span>{t("settings.addProvider")}</span>
+                </span>
+              </Button>
+            </div>
+          ) : (
+            <ServiceList
+              providers={providers}
+              defaultProviderId={settings.defaultProviderId}
+              isReady={providerReady}
+              accountFor={accountFor}
+              busy={
+                busyId !== null ||
+                testingId !== null ||
+                setupFor !== null ||
+                editingAccountId !== null ||
+                busyAccountId !== null ||
+                savingAccount ||
+                login !== null
+              }
+              isRowBusy={(id) => busyId === id || testingId === id || busyAccountId === id}
+              testingId={testingId}
+              onEdit={(provider) =>
+                serviceRowKind(provider) === "account"
+                  ? setEditingAccountId(provider.id)
+                  : setSetupFor(provider.id)
+              }
+              onMakeDefault={(provider) =>
+                void setDefaultModel(
+                  provider,
+                  defaultModelOptions([provider], imageGenerationCandidates)[0]?.modelId ?? "",
+                )
+              }
+              onTest={(provider) => void testProvider(provider)}
+              onCopy={(provider) => {
+                setCopyDraft(
+                  copyProviderConfiguration(
+                    provider,
+                    t("settings.copyProviderName", { name: provider.name }),
+                  ),
+                );
+                setSetupFor("");
+              }}
+              onToggleEnabled={(provider) => void toggleEnabled(provider)}
+              onRemove={(provider) =>
+                void (serviceRowKind(provider) === "account"
+                  ? removeAccount(provider)
+                  : removeProvider(provider))
+              }
+              onSaveKey={saveProviderKey}
+            />
+          )}
+        </div>
+      </section>
+
+      <div className="model-catalog-status">
+        <span className="model-catalog-status-text">
+          {catalogStatus
+            ? t("settings.catalogStatusLine", {
+                source: catalogSourceLabel,
+                models: catalogStatus.modelCount,
+                fetchedAt: catalogStatus.fetchedAt
+                  ? new Date(catalogStatus.fetchedAt).toLocaleString(
+                      i18n.resolvedLanguage ?? i18n.language,
+                    )
+                  : t("settings.catalogNeverFetched"),
+              })
+            : t("settings.catalogStatusUnknown")}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={refreshingCatalog}
+          onClick={() => void refreshCatalog()}
+        >
+          <span className="model-config-btn-inner">
+            <IconConfig size={13} />
+            <span>
+              {refreshingCatalog
+                ? t("settings.refreshingModelCatalog")
+                : t("settings.refreshModelCatalog")}
+            </span>
+          </span>
+        </Button>
+      </div>
+
+      <section className="settings-card-block">
+        <div className="model-config-section-head">
           <h3 className="settings-card-heading">{t("settings.defaultsTitle")}</h3>
         </div>
         <div className="settings-panel model-default-panel">
@@ -824,14 +977,6 @@ export function ModelConfigPage() {
               </div>
             </AnchoredMenu>
           </div>
-          {imageGenerationCandidates.length > 0 ? (
-            <ImageGenerationModelRow
-              settings={settings}
-              providers={providers}
-              busy={changingImageModel}
-              onChange={setImageGenerationDefault}
-            />
-          ) : null}
         </div>
       </section>
 
@@ -844,163 +989,27 @@ export function ModelConfigPage() {
         statusRevision={jevStatusRevision}
       />
 
-      <section className="settings-card-block">
-        <div className="model-config-section-head">
-          <div className="settings-card-heading-line">
-            <h3 className="settings-card-heading">{t("settings.providers")}</h3>
-            {providers.length > 0 ? (
-              <span className="provider-section-count">{providers.length}</span>
-            ) : null}
-          </div>
-          <div className="provider-section-head-actions">
-            <ImportToggleButton
-              open={importOpen}
-              controls="model-config-import-panel"
-              label={t("settings.importTitle")}
-              onClick={() => setImportOpen((current) => !current)}
-            />
-            <Button
-              variant="secondary"
-              disabled={transferBusy !== null}
-              onClick={() => void exportProviders()}
-            >
-              <span className="model-config-btn-inner">
-                <IconDownload size={14} />
-                <span>{t("settings.exportProviders")}</span>
-              </span>
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={transferBusy !== null}
-              onClick={() => void importProviders()}
-            >
-              <span className="model-config-btn-inner">
-                <IconFolderOpen size={14} />
-                <span>{t("settings.importProviders")}</span>
-              </span>
-            </Button>
-            <Button
-              variant="primary"
-              className="model-provider-add"
-              onClick={() => setSetupFor("")}
-            >
-              <span className="model-config-btn-inner">
-                <IconPlus size={14} />
-                <span>{t("settings.addProvider")}</span>
-              </span>
-            </Button>
-          </div>
-        </div>
-
-        <div
-          id="model-config-import-panel"
-          className="import-inline-workbench"
-          hidden={!importOpen}
-        >
-          <ModelConfigImportPanel />
-        </div>
-
-        <div className="settings-panel model-provider-panel">
-          {providers.length === 0 ? (
-            <div className="model-provider-empty">
-              <div className="model-provider-empty-icon" aria-hidden>
-                <IconServer size={18} />
-              </div>
-              <div className="model-provider-empty-title">{t("settings.noProviders")}</div>
-              <div className="model-provider-empty-desc">{t("settings.noProvidersDesc")}</div>
-              <Button variant="primary" onClick={() => setSetupFor("")}>
-                <span className="model-config-btn-inner">
-                  <IconPlus size={14} />
-                  <span>{t("settings.addProvider")}</span>
-                </span>
-              </Button>
-            </div>
-          ) : (
-            <ServiceList
+      {imageGenerationCandidates.length > 0 ? (
+        <section className="settings-card-block">
+          <div className="settings-panel model-default-panel">
+            <ImageGenerationModelRow
+              settings={settings}
               providers={providers}
-              defaultProviderId={settings.defaultProviderId}
-              isReady={providerReady}
-              accountFor={accountFor}
-              busy={
-                busyId !== null ||
-                testingId !== null ||
-                setupFor !== null ||
-                editingAccountId !== null ||
-                busyAccountId !== null ||
-                savingAccount ||
-                login !== null
-              }
-              isRowBusy={(id) => busyId === id || testingId === id || busyAccountId === id}
-              testingId={testingId}
-              onEdit={(provider) =>
-                serviceRowKind(provider) === "account"
-                  ? setEditingAccountId(provider.id)
-                  : setSetupFor(provider.id)
-              }
-              onMakeDefault={(provider) =>
-                void setDefaultModel(
-                  provider,
-                  defaultModelOptions([provider], imageGenerationCandidates)[0]?.modelId ?? "",
-                )
-              }
-              onTest={(provider) => void testProvider(provider)}
-              onCopy={(provider) => {
-                setCopyDraft(
-                  copyProviderConfiguration(
-                    provider,
-                    t("settings.copyProviderName", { name: provider.name }),
-                  ),
-                );
-                setSetupFor("");
-              }}
-              onToggleEnabled={(provider) => void toggleEnabled(provider)}
-              onRemove={(provider) =>
-                void (serviceRowKind(provider) === "account"
-                  ? removeAccount(provider)
-                  : removeProvider(provider))
-              }
-              onSaveKey={saveProviderKey}
+              busy={changingImageModel}
+              onChange={setImageGenerationDefault}
             />
-          )}
-        </div>
-      </section>
-
-      <div className="model-catalog-status">
-        <span className="model-catalog-status-text">
-          {catalogStatus
-            ? t("settings.catalogStatusLine", {
-                source: catalogSourceLabel,
-                models: catalogStatus.modelCount,
-                fetchedAt: catalogStatus.fetchedAt
-                  ? new Date(catalogStatus.fetchedAt).toLocaleString(
-                      i18n.resolvedLanguage ?? i18n.language,
-                    )
-                  : t("settings.catalogNeverFetched"),
-              })
-            : t("settings.catalogStatusUnknown")}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={refreshingCatalog}
-          onClick={() => void refreshCatalog()}
-        >
-          <span className="model-config-btn-inner">
-            <IconConfig size={13} />
-            <span>
-              {refreshingCatalog
-                ? t("settings.refreshingModelCatalog")
-                : t("settings.refreshModelCatalog")}
-            </span>
-          </span>
-        </Button>
-      </div>
+          </div>
+        </section>
+      ) : null}
 
       {setupFor !== null ? (
         <ProviderSetupDialog
           key={setupFor}
           provider={editingProvider}
-          pluginCatalogSetup={Boolean(pluginCatalogSetup && pluginCatalogSetup.providerId === editingProvider?.id)}
+          pluginCatalogSetup={isPluginCatalogSetupForProvider(
+            pluginCatalogSetup,
+            editingProvider,
+          )}
           pluginCatalogPluginName={pluginCatalogSetup?.pluginName}
           initialDraft={copyDraft}
           initialService={jevSetup ? JEV_SERVICE : undefined}

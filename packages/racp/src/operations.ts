@@ -303,6 +303,17 @@ export function createOperations(): Map<RacpOperation, OperationHandler> {
     if (summary) context.agentHost.publishSessionChange("session.changed", summary);
     return { ok: true };
   });
+  handlers.set("session/deriveTitle", async (context, params) => {
+    const input = check(Type.Object({ sessionId: Type.String({ minLength: 1 }), title: Type.String({ minLength: 1 }) }), params);
+    // The Host owns title eligibility: it refuses a session the user renamed,
+    // and the derived text stays replaceable by the title plugin.
+    const updated = await context.operations.sessions.deriveTitle(input.sessionId, input.title);
+    if (updated) {
+      const summary = (await context.operations.sessions.list()).find((candidate) => candidate.id === input.sessionId);
+      if (summary) context.agentHost.publishSessionChange("session.changed", summary);
+    }
+    return { updated };
+  });
   handlers.set("session/delete", async (context, params) => {
     const input = check(SessionIdParams, params);
     await context.operations.sessions.delete(input.sessionId);
