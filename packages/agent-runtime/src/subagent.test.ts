@@ -95,6 +95,32 @@ function assistantMessage(overrides: {
   };
 }
 
+describe("子智能体快照模型绑定", () => {
+  it.each([
+    { vendorKey: undefined, projectRealPath: "/fixture" },
+    { vendorKey: "fixture-vendor", projectRealPath: "/fixture" },
+    { vendorKey: undefined, projectRealPath: "" },
+  ])("按实际模型标识和目录保存并恢复：$vendorKey / $projectRealPath", ({ vendorKey, projectRealPath }) => {
+    const { run } = createRun({ provider: { ...provider, vendorKey, apiStyle: "responses" } });
+    const model = run.agent.state.model;
+    run.agent.state.messages = [{
+      ...assistantMessage({ content: [{ type: "text", text: "任务完成" }] }),
+      provider: model.provider, model: model.id, api: model.api, durationMs: 100,
+    }];
+    run.lastStatus = "completed";
+    const snapshot = run.exportSnapshot({ projectRealPath, executionId: "execution-1", generation: 1 });
+    expect(snapshot.modelBinding.provider.id).toBe(provider.id);
+    expect(snapshot.modelBinding.provider.api).toBe(model.api);
+    expect(snapshot.messages[0].provider).toBe(vendorKey ?? provider.id);
+    const restored = SubagentRun.restore(snapshot, {
+      ...run.opts, systemPrompt: "更新后的系统提示词",
+      definition: { ...run.opts.definition, description: "更新后的描述", prompt: "更新后的任务规则" },
+    });
+    expect(restored.exportSnapshot({ projectRealPath, executionId: "execution-1", generation: 2 }).messages)
+      .toEqual(snapshot.messages);
+  });
+});
+
 describe("composeSubagentSystemPrompt", () => {
   it.each([
     { fixed: 32, requested: 16, expected: 21 },

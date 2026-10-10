@@ -1,6 +1,6 @@
 /**
  * Subagent context checkpoint serialization, validation and codec.
- * Strictly whitelisted message serialization and state snapshotting (ADR 0089).
+ * Preserves supported conversation content while ignoring unrelated extension metadata.
  */
 
 import type {
@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type {
   AssistantMessage,
+  HostedSearchContent,
   ToolResultMessage,
   Usage,
   UserMessage,
@@ -118,19 +119,6 @@ export function assertNoDisallowedScratchAttachment(attachmentRef: unknown, loca
   }
 }
 
-/** Reject unknown properties in strict whitelist objects */
-function assertKnownKeys(obj: Record<string, unknown>, allowedKeys: readonly string[], location: string): void {
-  const allowed = new Set(allowedKeys);
-  for (const key of Object.keys(obj)) {
-    if (!allowed.has(key)) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_UNKNOWN_FIELD",
-        `Unrecognized property '${key}' found at ${location}`,
-      );
-    }
-  }
-}
-
 function checkedMediaReference(part: Record<string, unknown>): { mediaRef?: MediaReference; mediaUrl?: ExternalMediaReference } {
   if (part.mediaRef !== undefined && !isMediaReference(part.mediaRef)) {
     throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", "Invalid media reference");
@@ -178,7 +166,8 @@ export type SerializedImageContent = {
 export type SerializedAssistantContentPart =
   | SerializedTextContent
   | SerializedThinkingContent
-  | SerializedToolCallContent;
+  | SerializedToolCallContent
+  | HostedSearchContent;
 
 export type SerializedUserContentPart =
   | SerializedTextContent
@@ -197,9 +186,10 @@ export type SerializedAssistantMessage = {
   provider: string;
   model: string;
   usage?: Usage;
-  stopReason?: "stop" | "toolUse" | "length";
+  stopReason?: AssistantMessage["stopReason"];
+  errorMessage?: string;
   timestamp: number;
-} & Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "thinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">;
+} & Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "thinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn" | "durationMs" | "hostedSearchCitations">;
 
 export type SerializedToolResultMessage = {
   role: "toolResult";
@@ -209,6 +199,8 @@ export type SerializedToolResultMessage = {
   details?: Record<string, unknown>;
   usage?: Usage;
   addedToolNames?: string[];
+  nestedCalls?: ToolResultMessage["nestedCalls"];
+  durationMs?: number;
   isError: boolean;
   timestamp: number;
 };
@@ -420,7 +412,7 @@ export function validatePairedToolCalls(messages: readonly (AgentMessage | Seria
 }
 
 /** 保留模型库定义的响应元数据，供恢复上下文和诊断使用。 */
-function assistantMetadata(message: Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "thinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn">) {
+function assistantMetadata(message: Pick<AssistantMessage, "responseModel" | "responseId" | "providerThinkingLevel" | "thinkingLevel" | "diagnostics" | "rawStopReason" | "endTurn" | "durationMs" | "hostedSearchCitations">) {
   return {
     ...(typeof message.responseModel === "string" ? { responseModel: message.responseModel } : {}),
     ...(typeof message.responseId === "string" ? { responseId: message.responseId } : {}),
@@ -429,13 +421,14 @@ function assistantMetadata(message: Pick<AssistantMessage, "responseModel" | "re
     ...(Array.isArray(message.diagnostics) ? { diagnostics: message.diagnostics.map((item) => ({ ...item })) } : {}),
     ...(typeof message.rawStopReason === "string" ? { rawStopReason: message.rawStopReason } : {}),
     ...(typeof message.endTurn === "boolean" ? { endTurn: message.endTurn } : {}),
+    ...(typeof message.durationMs === "number" ? { durationMs: message.durationMs } : {}),
+    ...(message.hostedSearchCitations ? { hostedSearchCitations: message.hostedSearchCitations.map(({ url, title }) => ({ url, title })) } : {}),
   };
 }
 
-/** Encode AgentMessage sequence with strict whitelist codec */
+/** 显式提取可恢复内容；无关扩展字段不影响整份快照。 */
 export function encodeAgentMessages(
   messages: readonly AgentMessage[],
-  validBindings?: Array<{ providerId: string; modelId: string; api?: string }>,
 ): SerializedAgentMessage[] {
   validatePairedToolCalls(messages);
 
@@ -450,7 +443,6 @@ export function encodeAgentMessages(
     switch (message.role) {
       case "user": {
         const u = message as UserMessage;
-        assertKnownKeys(u as unknown as Record<string, unknown>, ["role", "content", "timestamp"], `messages[${idx}]`);
         let content: string | SerializedUserContentPart[];
         if (typeof u.content === "string") {
           content = u.content;
@@ -461,7 +453,6 @@ export function encodeAgentMessages(
             }
             const partObj = part as unknown as Record<string, unknown>;
             if (partObj.type === "text" && typeof partObj.text === "string") {
-              assertKnownKeys(partObj, ["type", "text", "textSignature", "mediaRef", "mediaUrl"], `messages[${idx}].content[${pIdx}]`);
               return {
                 type: "text" as const,
                 text: partObj.text,
@@ -470,7 +461,6 @@ export function encodeAgentMessages(
               };
             }
             if (partObj.type === "image") {
-              assertKnownKeys(partObj, ["type", "mimeType", "data"], `messages[${idx}].content[${pIdx}]`);
               const data = typeof partObj.data === "string" ? partObj.data : "";
               const mimeType = typeof partObj.mimeType === "string" ? partObj.mimeType : "";
               if (!data) {
@@ -497,50 +487,21 @@ export function encodeAgentMessages(
 
       case "assistant": {
         const a = message as AssistantMessage;
-        assertKnownKeys(
-          a as unknown as Record<string, unknown>,
-          ["role", "content", "api", "provider", "model", "usage", "stopReason", "timestamp",
-            "responseModel", "responseId", "providerThinkingLevel", "thinkingLevel", "diagnostics", "rawStopReason", "endTurn", "errorMessage", "deferred"],
-          `messages[${idx}]`,
-        );
-
-        if (validBindings && validBindings.length > 0) {
-          const match = validBindings.some((b) =>
-            b.providerId === a.provider &&
-            b.modelId === a.model &&
-            (!b.api || !a.api || b.api === a.api),
-          );
-          if (!match) {
-            throw new SubagentCodecError(
-              "SUBAGENT_CODEC_BINDING_MISMATCH",
-              `Assistant message binding (${a.provider}/${a.model}) at index ${idx} does not match any allowed task bindings`,
-            );
-          }
-        }
 
         if (!Array.isArray(a.content)) {
           throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", `Assistant message content at index ${idx} must be an array`);
         }
-        if (a.stopReason === "error" || a.stopReason === "aborted" || a.stopReason === "deferred") {
-          throw new SubagentCodecError(
-            "SUBAGENT_CODEC_INVALID_STRUCTURE",
-            `Assistant message at index ${idx} has incomplete stopReason: ${a.stopReason}`,
-          );
-        }
-
         const contentParts: SerializedAssistantContentPart[] = [];
         for (let pIdx = 0; pIdx < a.content.length; pIdx++) {
           const part = a.content[pIdx] as unknown as Record<string, unknown>;
           if (!part || typeof part !== "object") continue;
           if (part.type === "text" && typeof part.text === "string") {
-            assertKnownKeys(part, ["type", "text", "textSignature"], `messages[${idx}].content[${pIdx}]`);
             contentParts.push({
               type: "text",
               text: part.text,
               ...(typeof part.textSignature === "string" ? { textSignature: part.textSignature } : {}),
             });
           } else if (part.type === "thinking" && typeof part.thinking === "string") {
-            assertKnownKeys(part, ["type", "thinking", "thinkingSignature", "redacted"], `messages[${idx}].content[${pIdx}]`);
             contentParts.push({
               type: "thinking",
               thinking: part.thinking,
@@ -548,7 +509,6 @@ export function encodeAgentMessages(
               ...(typeof part.redacted === "boolean" ? { redacted: part.redacted } : {}),
             });
           } else if (part.type === "toolCall") {
-            assertKnownKeys(part, ["type", "id", "name", "arguments", "thoughtSignature", "namespace"], `messages[${idx}].content[${pIdx}]`);
             const id = typeof part.id === "string" ? part.id : "";
             const name = typeof part.name === "string" ? part.name : "";
             const args = (part.arguments && typeof part.arguments === "object" && !Array.isArray(part.arguments))
@@ -559,6 +519,15 @@ export function encodeAgentMessages(
               ...(typeof part.thoughtSignature === "string" ? { thoughtSignature: part.thoughtSignature } : {}),
               ...(typeof part.namespace === "string" ? { namespace: part.namespace } : {}),
             });
+          } else if (part.type === "hostedSearch" && typeof part.blockId === "string") {
+            if (part.phase === "server_tool_use") contentParts.push({ type: "hostedSearch", phase: part.phase,
+              blockId: part.blockId, name: String(part.name ?? ""), input: structuredClone(part.input ?? {}) as any });
+            else if (part.phase === "web_search_tool_result") contentParts.push({ type: "hostedSearch", phase: part.phase,
+              blockId: part.blockId, isError: part.isError === true, wire: structuredClone(part.wire ?? {}) as any });
+            else if (part.phase === "web_search_call") contentParts.push({ type: "hostedSearch", phase: part.phase,
+              blockId: part.blockId, ...(typeof part.status === "string" ? { status: part.status } : {}),
+              ...(part.wire ? { wire: structuredClone(part.wire) as any } : {}) });
+            else throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", `Unknown hosted search phase at index ${idx}`);
           } else {
             throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", `Unknown assistant content part type at index ${idx}`);
           }
@@ -574,9 +543,8 @@ export function encodeAgentMessages(
           ...assistantMetadata(a),
         };
 
-        if (a.stopReason === "stop" || a.stopReason === "toolUse" || a.stopReason === "length") {
-          assistantMsg.stopReason = a.stopReason;
-        }
+        assistantMsg.stopReason = a.stopReason;
+        if (typeof a.errorMessage === "string") assistantMsg.errorMessage = a.errorMessage;
 
         if (a.usage && typeof a.usage === "object") {
           const u = a.usage as Usage;
@@ -598,11 +566,6 @@ export function encodeAgentMessages(
 
       case "toolResult": {
         const t = message as ToolResultMessage;
-        assertKnownKeys(
-          t as unknown as Record<string, unknown>,
-          ["role", "toolCallId", "toolName", "content", "details", "usage", "isError", "timestamp", "addedToolNames"],
-          `messages[${idx}]`,
-        );
 
         const detailAddedToolNames =
           t.details && typeof t.details === "object" && !Array.isArray(t.details)
@@ -620,7 +583,6 @@ export function encodeAgentMessages(
           content = t.content.map((part, pIdx) => {
             const partObj = part as unknown as Record<string, unknown>;
             if (partObj.type === "text" && typeof partObj.text === "string") {
-              assertKnownKeys(partObj, ["type", "text", "textSignature", "mediaRef", "mediaUrl"], `messages[${idx}].content[${pIdx}]`);
               return {
                 type: "text" as const,
                 text: partObj.text,
@@ -629,7 +591,6 @@ export function encodeAgentMessages(
               };
             }
             if (partObj.type === "image") {
-              assertKnownKeys(partObj, ["type", "mimeType", "data"], `messages[${idx}].content[${pIdx}]`);
               const data = typeof partObj.data === "string" ? partObj.data : "";
               const mimeType = typeof partObj.mimeType === "string" ? partObj.mimeType : "";
               if (!data || !mimeType) {
@@ -653,6 +614,8 @@ export function encodeAgentMessages(
             ? { details: t.details as Record<string, unknown> }
             : {}),
           ...(addedToolNames && addedToolNames.length > 0 ? { addedToolNames } : {}),
+          ...(t.nestedCalls ? { nestedCalls: t.nestedCalls } : {}),
+          ...(typeof t.durationMs === "number" ? { durationMs: t.durationMs } : {}),
           ...(t.usage && typeof t.usage === "object" ? { usage: { ...t.usage, cost: { ...t.usage.cost } } } : {}),
           isError: Boolean(t.isError),
           timestamp: typeof t.timestamp === "number" ? t.timestamp : Date.now(),
@@ -662,7 +625,6 @@ export function encodeAgentMessages(
 
       case "compactionSummary": {
         const c = message as unknown as { summary?: string; tokensBefore?: number; timestamp?: number };
-        assertKnownKeys(c as unknown as Record<string, unknown>, ["role", "summary", "tokensBefore", "timestamp"], `messages[${idx}]`);
         serialized.push({
           role: "compactionSummary",
           summary: typeof c.summary === "string" ? c.summary : "",
@@ -713,6 +675,7 @@ export function decodeAgentMessages(serialized: readonly SerializedAgentMessage[
           timestamp: raw.timestamp,
           ...assistantMetadata(raw),
           stopReason: (raw.stopReason ?? "stop") as any,
+          ...(raw.errorMessage ? { errorMessage: raw.errorMessage } : {}),
           usage: {
             input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
@@ -747,6 +710,8 @@ export function decodeAgentMessages(serialized: readonly SerializedAgentMessage[
           toolName: raw.toolName,
           content: raw.content as any,
           ...(Object.keys(details).length > 0 ? { details } : {}),
+          ...(raw.nestedCalls ? { nestedCalls: raw.nestedCalls } : {}),
+          ...(typeof raw.durationMs === "number" ? { durationMs: raw.durationMs } : {}),
           ...(raw.usage ? { usage: { ...raw.usage, cost: { ...raw.usage.cost } } } : {}),
           isError: raw.isError,
           timestamp: raw.timestamp,
@@ -792,7 +757,7 @@ export function validateCheckpoint(checkpoint: unknown): SubagentCheckpoint {
       `Unsupported contextCodecVersion: ${cp.header?.contextCodecVersion}, expected ${SUBAGENT_CONTEXT_CODEC_VERSION}`,
     );
   }
-  if (!cp.header.sessionId || !cp.header.delegationId || !cp.header.projectRealPath) {
+  if (!cp.header.sessionId || !cp.header.delegationId || typeof cp.header.projectRealPath !== "string") {
     throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", "Missing sessionId, delegationId, or projectRealPath in checkpoint header");
   }
   if (!cp.execution || cp.execution.lastStatus !== "completed") {
@@ -809,9 +774,6 @@ export function validateCheckpoint(checkpoint: unknown): SubagentCheckpoint {
   }
   if (cp.execution.execution !== cp.observer.execution) {
     throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", "Execution count mismatch between execution header and observer");
-  }
-  if (cp.observer.completed !== cp.usage.toolCalls) {
-    throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", "Tool call counts mismatch between observer completed and usage");
   }
 
   // Ensure all observer guides are settled

@@ -1,6 +1,6 @@
 /**
- * Subagent persistence port and protocol contracts (ADR 0089).
- * Defines the narrow storage port interface and CAS control protocol
+ * Subagent snapshot persistence protocol.
+ * Defines background storage requests and execution-version fencing
  * between agent runtime/sidecar and the desktop host SubagentSnapshotStore.
  */
 
@@ -15,7 +15,7 @@ import type {
 
 export type { SubagentPersistenceSettings, SubagentPersistenceState, SubagentRecallStatus };
 
-/** Persistent execution status in durable control record */
+/** Last observed execution status in the snapshot index */
 export type SubagentPersistenceStatus =
   | "running"
   | "completed"
@@ -45,13 +45,12 @@ export interface SubagentCommandReceiptRecord {
 }
 
 /**
- * Control record representing the authoritative source of truth
- * for subagent recall eligibility and execution lifecycle.
+ * Snapshot index for cross-process recovery. Live execution decisions belong to runtime.
  */
 export interface SubagentControlRecord {
   sessionId: string;
   delegationId: string;
-  /** Monotonic revision number incremented on every control state mutation (CAS) */
+  /** Monotonic storage revision; independent of runtime admission */
   revision: number;
   /** Current or last execution count (1-based) */
   execution: number;
@@ -59,7 +58,7 @@ export interface SubagentControlRecord {
   executionId: string;
   /** Immutable snapshot generation currently pointed to by completed state */
   snapshotGeneration: number;
-  /** Authoritative task state */
+  /** Last persisted task state */
   status: SubagentPersistenceStatus;
   /** Sidecar/host instance epoch to fence off delayed callbacks from replaced instances */
   instanceGeneration: number;
@@ -120,7 +119,7 @@ export interface SubagentClaimSessionReceipt {
   settings?: SubagentPersistenceSettings;
 }
 
-/** Request to initiate or advance an execution under CAS */
+/** Background registration of an execution already admitted by runtime */
 export interface SubagentBeginRequest {
   sessionId: string;
   delegationId: string;
@@ -135,12 +134,10 @@ export interface SubagentBeginRequest {
   commandDigest: string;
   parentTurnId?: string;
   parentToolCallId: string;
-  /** Encrypted recall instruction payload or task definition */
+  /** Task definition retained for protocol compatibility */
   instructionPayload?: string;
   /**
-   * In-memory continuation flag set strictly by runtime when previous execution
-   * completed in memory but failed durable commit (persistence-error), allowing
-   * advancement from status "running" without rolling back execution or bypassing CAS.
+   * Legacy caller hint. Runtime now admits memory continuation independently of storage.
    */
   memoryContinuation?: boolean;
 }
@@ -181,7 +178,7 @@ export interface SubagentCommitReceipt {
   durableReady: boolean;
 }
 
-/** Request to transition execution to failed or interrupted under CAS */
+/** Background recording of a failed or interrupted execution */
 export interface SubagentFailRequest {
   sessionId: string;
   delegationId: string;
@@ -258,6 +255,7 @@ export interface SubagentDirectoryEntry {
   modelId?: string;
   agentName?: string;
   lastReportSummary?: string;
+  taskInstruction?: string;
   /** Bounded last execution outcome to satisfy cold TaskWait without parsing full messages */
   lastResult?: {
     status: string;
@@ -307,13 +305,13 @@ export interface SubagentPersistencePort {
   /** Claim or re-claim a session epoch, acquiring the server instanceGeneration */
   claimSession(req: SubagentClaimSessionRequest): Promise<SubagentClaimSessionReceipt>;
 
-  /** Begin execution under CAS; enforces single active owner and idempotency */
+  /** Record execution after local admission; storage rejects stale owners and versions */
   beginExecution(req: SubagentBeginRequest): Promise<SubagentBeginReceipt>;
 
   /** Commit immutable snapshot and update control to completed */
   commitSnapshot(req: SubagentCommitRequest): Promise<SubagentCommitReceipt>;
 
-  /** Record execution failure or interruption under CAS */
+  /** Record execution failure or interruption without gating the live task */
   failExecution(req: SubagentFailRequest): Promise<SubagentFailReceipt>;
 
   /** Mark execution revoked across restarts */

@@ -805,18 +805,7 @@ const { persistAgentEvent } = eventPersistence;
 const subagentSnapshots = new SubagentSnapshotStore({
   dataDir,
   sessionAuthority: createSubagentSessionAuthority(dataDir, getHost),
-  deliverEvent: async (envelope) => {
-    const host = getHost();
-    if (!host || envelope.event.type !== "message_end" || envelope.event.message.role !== "tool" ||
-        envelope.event.message.toolName !== "TaskExecution") throw new Error("Invalid durable subagent event");
-    const message = { ...envelope.event.message,
-      parentToolCallId: envelope.parentToolCallId ?? envelope.event.message.parentToolCallId,
-      agentName: envelope.agentName ?? envelope.event.message.agentName };
-    await host.call("session.appendMessage", { sessionId: envelope.sessionId, message, turnId: envelope.turnId });
-    emitAgentEvent(envelope);
-  },
 });
-persistenceOutbox.setOnMessagePersisted((sessionId) => subagentSnapshots.recordCoverage(sessionId));
 
 const sidecarRuntime = createSidecarRuntime({
   runtimeState,

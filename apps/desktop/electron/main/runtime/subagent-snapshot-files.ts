@@ -41,7 +41,7 @@ export class SubagentSnapshotFiles {
   }
 
   /** 检查根目录的每一层，包含首次创建之前的祖先目录。 */
-  async ensureDirectory(path: string): Promise<void> {
+  async ensureDirectory(path: string, create = true): Promise<void> {
     this.assertWithinRoot(path);
     const inspect = async (current: string): Promise<void> => {
       const parent = dirname(current);
@@ -51,7 +51,13 @@ export class SubagentSnapshotFiles {
         if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("快照目录不能使用链接或非目录节点。");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        await mkdir(current, { mode: 0o700 });
+        if (!create) throw error;
+        try { await mkdir(current, { mode: 0o700 }); }
+        catch (createError) {
+          if ((createError as NodeJS.ErrnoException).code !== "EEXIST") throw createError;
+          const info = await lstat(current);
+          if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("快照目录不能使用链接或非目录节点。");
+        }
       }
     };
     await inspect(resolve(path));
@@ -64,7 +70,7 @@ export class SubagentSnapshotFiles {
 
   async readBounded(path: string, limit = SNAPSHOT_FILE_LIMIT): Promise<Buffer> {
     this.assertWithinRoot(path);
-    await this.ensureDirectory(dirname(path));
+    await this.ensureDirectory(dirname(path), false);
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink() || info.size > limit) throw new Error("快照文件类型或大小无效。");
     const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));

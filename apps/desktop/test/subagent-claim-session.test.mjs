@@ -15,7 +15,6 @@ test("新会话及重复登记不读取正在写入的历史转录", async () =>
   try {
     const store = new SubagentSnapshotStore({
       dataDir: dir,
-      deliverEvent: async () => {},
       sessionAuthority: async (_id, mode) => {
         modes.push(mode);
         if (mode !== "identity") throw new Error("转录正在变化，请在保存完成后重新校验。");
@@ -36,7 +35,7 @@ test("新会话及重复登记不读取正在写入的历史转录", async () =>
   }
 });
 
-test("登记失败可重试，成功后连续派发不重复登记", async () => {
+test("磁盘登记失败后台重试，任务启动仍返回本地回执", async () => {
   let claims = 0;
   const client = new SubagentPersistenceClient({ call: async (_method, request) => {
     if (request.operation === "capabilities") {
@@ -52,10 +51,9 @@ test("登记失败可重试，成功后连续派发不重复登记", async () =>
   const request = (id) => ({ sessionId: "fixture-session", delegationId: id,
     runtimeInstanceId: "fixture-runtime", instanceGeneration: 1,
     expectedExecution: 0, expectedRevision: 0, nextExecution: 1, executionId: id });
-  await assert.rejects(client.beginExecution(request("first")), /转录正在变化/);
-  assert.equal(client.isClaimed, false);
-  await client.beginExecution(request("first"));
-  await client.beginExecution(request("second"));
+  assert.equal((await client.beginExecution(request("first"))).status, "running");
+  assert.equal((await client.beginExecution(request("second"))).status, "running");
+  await client.flush();
   assert.equal(client.isClaimed, true);
   assert.equal(claims, 2);
 });

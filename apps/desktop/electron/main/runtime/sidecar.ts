@@ -357,7 +357,7 @@ export function createSidecarRuntime({
   });
   };
   const startSidecar = async (): Promise<void> => {
-  await subagentSnapshots.initialize();
+  void subagentSnapshots.initialize().catch(() => undefined);
 
   const s = new AgentSidecar((text) => logger.child("agent", text), dataDir);
   wireSidecar(s);

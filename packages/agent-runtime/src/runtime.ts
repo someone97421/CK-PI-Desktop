@@ -17,7 +17,7 @@ import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
 import { createJevClassifierTool } from "./jev-classifier-tool.js";
 import { scheduledToolParameters, scheduledToolDescriptions } from "./scheduled-tools.js";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { withPiFileOpToolNames } from "./pi-file-ops.js";
 import {
   settledDelegationMessage,
@@ -64,7 +64,6 @@ import {
   type MediaReferenceBlock,
   DEFAULT_COMMAND_TIMEOUT_MS,
   OAUTH_AUTH_KIND,
-  subagentCanMutate,
   type TrustedExtensionCommand,
   type TrustedExtensionDiagnostic,
   type TrustedExtensionSpec,
@@ -211,14 +210,12 @@ import {
   type SubagentToolOutcome,
 } from "./subagent.js";
 import { SubagentPersistenceClient } from "./subagent-persistence-client.js";
+import { subagentResultsFromHistory } from "./subagent-recovery.js";
 import {
-  computeToolsFingerprint,
-  sanitizeBaseUrl,
   simplePromptFingerprint,
 } from "./subagent-checkpoint.js";
 import type {
   SubagentBeginReceipt,
-  SubagentCommitReceipt,
   SubagentDirectoryEntry,
   SubagentPersistenceState,
   SubagentRecallStatus,
@@ -549,6 +546,7 @@ export type DelegationRecord = {
   taskInstruction?: string;
   resumingLock?: boolean;
   settling?: boolean;
+  snapshotPending?: boolean;
   pendingBegin?: Promise<SubagentBeginReceipt>;
   stopPersistence?: Promise<void>;
   interruptionReceipt?: Promise<void>;
@@ -558,16 +556,12 @@ export function delegationExecutionId(delegationId: string, execution = 1): stri
   return execution === 1 ? delegationId : `${delegationId}:${execution}`;
 }
 
-function normalizePath(p: string): string {
-  return process.platform === "win32" ? p.toLowerCase() : p;
-}
-
 function delegationSummary(record: DelegationRecord): Record<string, unknown> {
   return {
     execution: record.execution ?? 1,
     executionId: delegationExecutionId(record.delegationId, record.execution ?? 1),
     canResume: (!record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested) &&
-      (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? record.persistenceState === "durable-ready" : false)),
+      (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "") : false)),
     persistenceState: record.persistenceState ?? (record.isColdDisk ? "durable-ready" : "memory-only"),
     ...(record.persistenceState === "persistence-error" && record.persistenceReason ? { reason: record.persistenceReason } : {}),
     source: record.source ?? (record.isColdDisk ? "disk" : "memory"),
@@ -1585,6 +1579,8 @@ export class DesktopAgentRuntime {
    */
   private delegations = new Map<string, DelegationRecord>();
   readonly persistenceClient: SubagentPersistenceClient;
+  private readonly savedDelegationResults: Map<string, SubagentDirectoryEntry>;
+  private subagentDiscovery?: Promise<void>;
   private supervisionInbox = new Map<string, { delegationId: string; epoch: number; text: string; priority: number;
     reportRange?: { first: number; last: number; fromStep: number; toStep: number } }>();
   private supervisionWaiters = new Set<() => void>();
@@ -1858,6 +1854,7 @@ export class DesktopAgentRuntime {
     this.applyCompactionBinding();
 
     this.fullEntries = this.historyToEntries(opts.history ?? []);
+    this.savedDelegationResults = subagentResultsFromHistory(opts.history ?? []);
     this.activeCompaction = opts.compaction;
     const defaultSystemPromptParts = [
       DEFAULT_RUNTIME_SYSTEM_PROMPT,
@@ -2112,71 +2109,58 @@ Delegation rules:
         this.logEventHandlerFailure(event, error);
       }),
     );
+    this.importSubagentEntries([...this.savedDelegationResults.values()]);
   }
 
-  async initSubagentPersistence(): Promise<void> {
-    await this.persistenceClient.claimSession().catch(() => null);
-    if (!this.persistenceClient.supported) return;
-    const entries: SubagentDirectoryEntry[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await this.persistenceClient.listEntries({ sessionId: this.sessionId, limit: 100, cursor }).catch(() => null);
-      if (!page) break;
-      entries.push(...page.entries);
-      if (!page.nextCursor || page.nextCursor === cursor) break;
-      cursor = page.nextCursor;
-    } while (entries.length < 10_000);
-    const listRes = { entries };
-    if (listRes && Array.isArray(listRes.entries)) {
-      for (const entry of listRes.entries) {
-        if (!this.delegations.has(entry.delegationId)) {
-          let resolveComp: () => void = () => {};
-          const comp = new Promise<void>((res) => { resolveComp = res; });
-          const coldRecord: DelegationRecord = {
-            delegationId: entry.delegationId,
-            execution: entry.execution,
-            sessionId: entry.sessionId,
-            agentName: entry.agentName ?? "subagent",
-            modelId: entry.modelId ?? "",
-            thinkingLevel: "off",
-            status: entry.status === "completed" ? "completed" : entry.status === "revoked" ? "stopped" : "failed",
-            startedAt: entry.updatedAt,
-            completedAt: entry.updatedAt,
-            turns: entry.lastResult?.turns ?? 0,
-            toolCalls: entry.lastResult?.toolCalls ?? 0,
-            result: entry.lastResult ? {
-              agentName: entry.agentName ?? "subagent",
-              modelId: entry.modelId ?? "",
-              thinkingLevel: "off",
-              status: entry.status === "completed" ? "completed" : "failed",
-              report: entry.lastResult.report,
-              turns: entry.lastResult.turns,
-              toolCalls: entry.lastResult.toolCalls,
-              usage: entry.lastResult.usage,
-              executionUsage: entry.lastResult.executionUsage,
-              error: entry.lastResult.error,
-            } : undefined,
-            completion: comp,
-            resolveCompletion: resolveComp,
-            abort: () => {},
-            stopRequested: entry.status === "revoked",
-            startedEpoch: this.turnEpoch,
-            reportDelivered: true,
-            parentToolCallId: entry.parentToolCallId,
-            taskTurnId: entry.parentTurnId,
-            persistenceState: entry.persistenceState,
-            durableRevision: entry.revision,
-            durableGeneration: entry.snapshotGeneration,
-            source: "disk",
-            isColdDisk: true,
-            diskEntry: entry,
-            activeDurationMs: 0,
-            lastActivityAt: entry.updatedAt,
-          };
-          this.delegations.set(entry.delegationId, coldRecord);
-          resolveComp();
-        }
-      }
+  initSubagentPersistence(): Promise<void> {
+    this.importSubagentEntries([...this.savedDelegationResults.values()].filter((entry) => !this.delegations.has(entry.delegationId)));
+    return this.subagentDiscovery ??= (async () => {
+      const deadline = Date.now() + 5_000;
+      let cursor: string | undefined;
+      do {
+        if (this.disposed) return;
+        const page = await this.persistenceClient.listEntries({ sessionId: this.sessionId, limit: 100, cursor }).catch(() => null);
+        if (!page || this.disposed) return;
+        this.importSubagentEntries(page.entries);
+        if (!page.nextCursor || page.nextCursor === cursor) return;
+        cursor = page.nextCursor;
+      } while (Date.now() < deadline);
+    })().finally(() => { this.subagentDiscovery = undefined; });
+  }
+
+  private importSubagentEntries(entries: SubagentDirectoryEntry[]): void {
+    for (const diskEntry of entries) {
+      const existing = this.delegations.get(diskEntry.delegationId);
+      if (this.disposed || (existing && (!existing.isColdDisk || existing.run || existing.resumingLock ||
+          existing.stopRequested || (existing.execution ?? 1) > diskEntry.execution))) continue;
+      const history = this.savedDelegationResults.get(diskEntry.delegationId);
+      const useHistory = history && (history.execution > diskEntry.execution ||
+        (history.execution === diskEntry.execution && (history.status !== "completed" || diskEntry.status !== "completed")));
+      const entry = useHistory ? history : { ...diskEntry,
+        taskInstruction: diskEntry.taskInstruction ?? history?.taskInstruction,
+        ...(history?.execution === diskEntry.execution && history.lastReportSummary
+          ? { lastResult: history.lastResult, lastReportSummary: history.lastReportSummary } : {}),
+      };
+      this.delegations.set(entry.delegationId, {
+        delegationId: entry.delegationId, execution: entry.execution, sessionId: this.sessionId,
+        taskInstruction: entry.taskInstruction, agentName: entry.agentName ?? "subagent",
+        modelId: entry.modelId ?? "", thinkingLevel: "off",
+        status: entry.status === "completed" ? "completed" : entry.status === "revoked" ? "stopped" : "failed",
+        startedAt: entry.updatedAt, completedAt: entry.updatedAt,
+        turns: entry.lastResult?.turns ?? 0, toolCalls: entry.lastResult?.toolCalls ?? 0,
+        result: entry.lastResult ? {
+          agentName: entry.agentName ?? "subagent", modelId: entry.modelId ?? "", thinkingLevel: "off",
+          status: entry.status === "completed" ? "completed" : "failed", report: entry.lastResult.report,
+          turns: entry.lastResult.turns, toolCalls: entry.lastResult.toolCalls, usage: entry.lastResult.usage,
+          executionUsage: entry.lastResult.executionUsage, error: entry.lastResult.error,
+        } : undefined,
+        completion: Promise.resolve(), resolveCompletion: () => {}, abort: () => {},
+        stopRequested: entry.status === "revoked", startedEpoch: this.turnEpoch, reportDelivered: true,
+        parentToolCallId: entry.parentToolCallId, taskTurnId: entry.parentTurnId,
+        persistenceState: entry.persistenceState, durableRevision: entry.revision,
+        durableGeneration: entry.snapshotGeneration, source: "disk", isColdDisk: true,
+        diskEntry: entry, activeDurationMs: 0, lastActivityAt: entry.updatedAt,
+      });
     }
   }
 
@@ -4394,7 +4378,7 @@ Delegation rules:
         };
         this.delegations.set(delegationId, record);
         this.markSubagentCoordination(record);
-        // 先登记名额与取消句柄，开始回执等待期间的停止也必须可见。
+        // 先登记名额与取消句柄；下面的执行回执只涉及内存状态。
         try {
           record.pendingBegin = this.persistenceClient.beginExecution({
             sessionId: this.sessionId, delegationId, expectedRevision: 0, expectedExecution: 0,
@@ -4528,8 +4512,6 @@ Delegation rules:
           ).catch(() => {
             if ((record.execution ?? 1) !== execution) return;
             record.settling = false;
-            // 事件发布失败不能覆盖已取得的快照提交状态。
-            if (record.persistenceState === "saving") record.persistenceState = "persistence-error";
             record.resolveCompletion();
           });
 
@@ -4566,139 +4548,106 @@ Delegation rules:
     result: SubagentRunResult,
     execution = record.execution ?? 1,
   ): Promise<void> {
-    if (record.status !== "running" || record.settling || execution !== (record.execution ?? 1)) return;
+    if (execution !== (record.execution ?? 1)) return;
+    if (record.status === "stopped" && record.stopRequested) {
+      // 停止已立即交付；迟到的工具收尾仍补记真实结果与用量，不重新激活任务。
+      record.result = result;
+      const usage = "executionUsage" in result ? result.executionUsage : result.usage;
+      if (usage && record.startedEpoch === this.turnEpoch) this.turnSubagentUsage = addUsage(this.turnSubagentUsage, usage);
+      if (!this.disposed) {
+        this.publishSubagentExecution(record, "finished", { ...delegationSummary(record), report: result.report, usage, cumulativeUsage: result.usage });
+        this.publishDelegationSettlement(record);
+      }
+      this.clearMutationRecovery(record.delegationId);
+      return;
+    }
+    if (record.status !== "running" || record.settling) return;
     record.settling = true;
     const resolveExecution = record.resolveCompletion;
     try {
-    record.status = record.interruptionReceipt ? "failed" : record.stopRequested ? "stopped" : result.status;
-    record.result = result;
-    record.completedAt = Date.now();
-    record.activeDurationMs = (record.activeDurationMs ?? 0) + Math.max(0, record.completedAt - record.startedAt);
-    const usage = "executionUsage" in result ? result.executionUsage : result.usage;
-    if (usage && record.startedEpoch === this.turnEpoch) {
-      this.turnSubagentUsage = addUsage(this.turnSubagentUsage, usage);
-    }
-    if (record.status === "completed" && this.persistenceClient.isMemoryOnly(record.delegationId)) {
-      this.persistenceClient.completeMemoryExecution(record.delegationId, execution);
-      record.persistenceState = "memory-only";
-    }
-
-    if (record.interruptionReceipt) {
-      await record.interruptionReceipt;
-    } else if (record.status === "completed" && record.run && !this.persistenceClient.isMemoryOnly(record.delegationId)) {
-      let persistencePhase = "导出上下文快照";
-      try {
-        record.persistenceState = "saving";
-        record.persistenceReason = undefined;
-        let realProjectPath = "";
-        if (this.projectPath) {
-          try {
-            realProjectPath = realpathSync(this.projectPath);
-          } catch {
-            realProjectPath = this.projectPath;
-          }
-        }
-        const targetGen = (record.durableGeneration ?? 0) + 1;
-        const checkpoint = record.run.exportSnapshot({
-          projectRealPath: realProjectPath,
-          executionId: delegationExecutionId(record.delegationId, execution),
-          generation: targetGen,
-          appVersion: APP_VERSION,
-        });
-        const deliveryId = `subagent-execution:${record.delegationId}:${execution}:finished`;
-        const envelope: AgentEventEnvelope = {
-          sessionId: this.sessionId,
-          turnId: record.taskTurnId,
-          ts: Date.now(),
-          parentToolCallId: record.parentToolCallId,
-          agentName: record.agentName,
-          event: {
-            type: "message_end",
-            message: {
-              id: deliveryId,
-              role: "tool",
-              toolName: "TaskExecution",
-              toolCallId: deliveryId,
-              parentToolCallId: record.parentToolCallId,
-              agentName: record.agentName,
-              createdAt: nowIso(),
-              status: "complete",
-              toolStatus: "success",
-              content: JSON.stringify({ ...delegationSummary(record), report: result.report, phase: "finished" }),
-              toolResult: {
-                content: [{ type: "text", text: result.report }],
-                details: delegationSummary(record),
-              },
-            },
-          },
-        };
-        persistencePhase = "写入上下文快照";
-        const commitReceipt = await this.persistenceClient.commitSnapshot({
-          sessionId: this.sessionId,
-          delegationId: record.delegationId,
-          expectedRevision: record.durableRevision ?? 0,
-          expectedExecution: execution,
-          executionId: delegationExecutionId(record.delegationId, execution),
-          instanceGeneration: this.persistenceClient.instanceGeneration,
-          targetGeneration: targetGen,
-          checkpoint,
-          pendingDeliveries: [
-            {
-              deliveryId,
-              eventKind: "result",
-              envelope,
-              createdAt: Date.now(),
-            },
-          ],
-        });
-        if (!record.stopRequested && record.execution === execution) {
-          record.durableRevision = commitReceipt.revision;
-          record.durableGeneration = commitReceipt.durableReady ? commitReceipt.snapshotGeneration : 0;
-          record.persistenceState = commitReceipt.durableReady ? "durable-ready" : "memory-only";
-        }
-      } catch (commitErr) {
-        if (!record.stopRequested) {
-          record.persistenceState = "persistence-error";
-          const code = (commitErr as { code?: unknown } | null)?.code;
-          const errorCode = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "UNKNOWN";
-          record.persistenceReason = `${persistencePhase}失败（${errorCode}），当前上下文仍保留在内存中。`;
-        }
+      record.status = record.interruptionReceipt ? "failed" : record.stopRequested ? "stopped" : result.status;
+      record.result = result;
+      record.completedAt = Date.now();
+      record.activeDurationMs = (record.activeDurationMs ?? 0) + Math.max(0, record.completedAt - record.startedAt);
+      const usage = "executionUsage" in result ? result.executionUsage : result.usage;
+      if (usage && record.startedEpoch === this.turnEpoch) {
+        this.turnSubagentUsage = addUsage(this.turnSubagentUsage, usage);
       }
-    } else if (record.status === "failed" && !record.stopRequested) {
-      await this.persistenceClient.failExecution({
-        sessionId: this.sessionId,
-        delegationId: record.delegationId,
-        expectedRevision: record.durableRevision ?? 0,
-        expectedExecution: execution,
-        executionId: delegationExecutionId(record.delegationId, execution),
-        instanceGeneration: this.persistenceClient.instanceGeneration,
-        status: "failed",
-        error: {
-          code: result.error?.code ?? "SUBAGENT_FAILED",
-          message: result.error?.message ?? "Subagent failed",
-        },
-      }).catch(() => undefined);
-      record.persistenceState = "failed";
-    }
-    if (!record.interruptionReceipt && (record.stopRequested || record.status === "stopped" || record.status === "aborted")) {
-      try { await this.stopSubagentAsync(record.delegationId, "parent", execution); }
-      catch { record.persistenceState = "persistence-error"; }
-      record.status = "stopped";
-    }
+      if (record.status === "completed") {
+        this.persistenceClient.completeMemoryExecution(record.delegationId, execution);
+        record.persistenceState = this.persistenceClient.isMemoryOnly(record.delegationId) ? "memory-only" : "saving";
+        record.persistenceReason = undefined;
+      } else if (record.status === "failed" && !record.stopRequested && !record.interruptionReceipt) {
+        void this.persistenceClient.failExecution({
+          sessionId: this.sessionId, delegationId: record.delegationId,
+          expectedRevision: record.durableRevision ?? 0, expectedExecution: execution,
+          executionId: delegationExecutionId(record.delegationId, execution),
+          instanceGeneration: this.persistenceClient.instanceGeneration, status: "failed",
+          error: { code: result.error?.code ?? "SUBAGENT_FAILED", message: result.error?.message ?? "Subagent failed" },
+        }).catch(() => undefined);
+        record.persistenceState = "failed";
+      }
+      if (record.stopRequested || record.status === "stopped" || record.status === "aborted") {
+        record.status = "stopped";
+        void this.stopSubagentAsync(record.delegationId, "parent", execution).catch(() => undefined);
+      }
 
-    record.settling = false;
-    const summary = { ...delegationSummary(record), report: result.report, usage, cumulativeUsage: result.usage };
-    (record.executionHistory ??= []).push(summary);
-    if (record.executionHistory.length > 20) record.executionHistory.shift();
-    this.publishSubagentExecution(record, "finished", summary);
-    this.publishDelegationSettlement(record);
+      record.settling = false;
+      const summary = { ...delegationSummary(record), report: result.report, usage, cumulativeUsage: result.usage };
+      (record.executionHistory ??= []).push(summary);
+      if (record.executionHistory.length > 20) record.executionHistory.shift();
+      this.publishSubagentExecution(record, "finished", summary);
+      this.publishDelegationSettlement(record);
     } finally {
       record.settling = false;
       this.markSubagentCoordination(record);
       resolveExecution();
+      // 冻结本轮上下文后后台写盘；TaskWait 和后续内存续跑不等待磁盘回执。
+      if (record.status === "completed" && record.persistenceState === "saving") {
+        void this.saveDelegationSnapshot(record, execution).catch(() => undefined);
+      }
       this.clearMutationRecovery(record.delegationId);
       this.refreshDelegationWait();
       this.pruneFinishedDelegations();
+    }
+  }
+
+  private async saveDelegationSnapshot(record: DelegationRecord, execution: number): Promise<void> {
+    let phase = "导出上下文快照";
+    record.snapshotPending = true;
+    try {
+      if (!record.run) throw new Error("子任务上下文已释放");
+      const checkpoint = record.run.exportSnapshot({ projectRealPath: this.projectPath ?? "",
+        executionId: delegationExecutionId(record.delegationId, execution), generation: execution, appVersion: APP_VERSION });
+      phase = "写入上下文快照";
+      const receipt = await this.persistenceClient.commitSnapshot({
+        sessionId: this.sessionId, delegationId: record.delegationId,
+        expectedRevision: record.durableRevision ?? 0, expectedExecution: execution,
+        executionId: delegationExecutionId(record.delegationId, execution),
+        instanceGeneration: this.persistenceClient.instanceGeneration, targetGeneration: execution, checkpoint,
+      });
+      if (!this.disposed && !record.stopRequested && record.execution === execution && record.status === "completed") {
+        record.durableGeneration = receipt.durableReady ? receipt.snapshotGeneration : 0;
+        record.persistenceState = receipt.durableReady ? "durable-ready" : "memory-only";
+        record.persistenceReason = undefined;
+      }
+    } catch (error) {
+      if (!this.disposed && !record.stopRequested && record.execution === execution && record.status === "completed") {
+        record.persistenceState = this.persistenceClient.isMemoryOnly(record.delegationId) ? "memory-only" : "persistence-error";
+        const code = (error as { code?: unknown } | null)?.code;
+        const label = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "UNKNOWN";
+        const detail = error instanceof Error ? `：${error.message.replace(/^\[[A-Z_]+\]\s*/, "").replace(/\s+/g, " ").slice(0, 500)}` : "";
+        record.persistenceReason = record.persistenceState === "memory-only" ? undefined : `${phase}失败（${label}）${detail}`;
+      }
+    } finally {
+      if (record.execution === execution) {
+        record.snapshotPending = false;
+        if (!this.disposed) {
+          try { this.publishDelegationSettlement(record); this.markSubagentCoordination(record); }
+          catch { /* 状态展示失败不改变任务结果。 */ }
+          this.pruneFinishedDelegations();
+        }
+      }
     }
   }
 
@@ -4718,22 +4667,20 @@ Delegation rules:
     );
   }
 
-  /** Cap retained history so a long session cannot grow the registry forever.
-   * Finished records are dropped oldest-first; running ones never are. */
+  /** 释放超出上限的完整上下文，保留轻量结果供查询和降级续接。 */
   private pruneFinishedDelegations(): void {
     const finished = [...this.delegations.values()]
-      .filter((record) => record.status !== "running" && !record.isColdDisk && !record.settling && !record.resumingLock)
+      .filter((record) => record.status !== "running" && !record.isColdDisk && !record.settling && !record.resumingLock && !record.snapshotPending)
       .sort((left, right) => (left.completedAt ?? 0) - (right.completedAt ?? 0));
     const excess = finished.length - MAX_RETAINED_DELEGATIONS;
     for (const record of finished.slice(0, Math.max(0, excess))) {
       record.contextReleased = !record.durableGeneration;
+      record.isColdDisk = true;
+      record.source = "disk";
       this.publishDelegationSettlement(record);
-      if (record.durableGeneration && record.durableGeneration > 0) {
-        record.isColdDisk = true;
-        record.run = undefined;
-      } else {
-        this.delegations.delete(record.delegationId);
-      }
+      record.run = undefined;
+      record.taskMessage = undefined;
+      record.executionHistory = undefined;
     }
   }
 
@@ -5255,28 +5202,28 @@ Delegation rules:
     record.stopRequested = true;
     record.run?.stop(source);
     record.abort();
-    if (record.status !== "running") record.status = "stopped";
+    if (record.status === "running") record.activeDurationMs = (record.activeDurationMs ?? 0) + Math.max(0, Date.now() - record.startedAt);
+    record.status = "stopped";
+    record.persistenceState = "revoked";
+    record.completedAt ??= Date.now();
+    record.resolveCompletion();
+    this.markSubagentCoordination(record);
+    this.refreshDelegationWait();
     if (!record.stopPersistence) {
       record.stopPersistence = (async () => {
-        const accepted = await record.pendingBegin;
-        const receipt = await this.persistenceClient.revokeExecution({
-          sessionId: this.sessionId, delegationId,
-          expectedExecution: accepted?.execution ?? record.execution ?? 1,
-          instanceGeneration: this.persistenceClient.instanceGeneration,
+        await record.pendingBegin;
+        await this.persistenceClient.revokeExecution({
+          sessionId: this.sessionId, delegationId, expectedExecution: record.execution ?? 1,
           reason: `Subagent stopped by ${source}`, source,
         });
-        record.durableRevision = receipt.revision;
-        record.persistenceState = this.persistenceClient.isMemoryOnly(delegationId) ? "memory-only" : "revoked";
-      })();
-    }
-    try { await record.stopPersistence; }
-    catch (error) {
-      record.persistenceState = "persistence-error";
-      record.stopPersistence = undefined;
-      this.publishDelegationSettlement(record);
-      throw error;
+      })().catch(() => {
+        record.persistenceState = "persistence-error";
+        record.persistenceReason = "停止状态暂未保存";
+        if (!this.disposed) this.publishDelegationSettlement(record);
+      });
     }
     this.publishDelegationSettlement(record);
+    this.publishSubagentExecution(record, "finished", { ...delegationSummary(record), report: record.result?.report ?? "" });
     return { ok: true, ...delegationSummary(record) };
   }
 
@@ -5302,7 +5249,7 @@ Delegation rules:
     const persistenceState: SubagentPersistenceState = record.persistenceState ?? (this.persistenceClient.available ? "durable-ready" : "memory-only");
 
     if (record.isColdDisk) {
-      canResume = isCompleted && record.persistenceState === "durable-ready";
+      canResume = isCompleted && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "");
     } else {
       canResume = !this.disposed && isCompleted && !record.contextReleased && record.run?.canResume === true;
     }
@@ -5365,12 +5312,33 @@ Delegation rules:
 
   private publishSubagentExecution(record: DelegationRecord, phase: "started" | "finished", details: Record<string, unknown>): void {
     const id = `subagent-execution:${record.delegationId}:${record.execution ?? 1}:${phase}`;
-    const content = JSON.stringify({ ...details, phase });
+    const persisted = { ...details, ...(record.taskInstruction ? { task: record.taskInstruction } : {}), phase };
+    const content = JSON.stringify(persisted);
+    const message: UiMessage = { id, role: "tool", toolName: "TaskExecution", toolCallId: id,
+      parentToolCallId: record.parentToolCallId, agentName: record.agentName, createdAt: nowIso(),
+      status: "complete", toolStatus: "success", content,
+      toolResult: { content: [{ type: "text", text: content }], details: persisted } };
+    const recovery = subagentResultsFromHistory([message]).get(record.delegationId);
+    if (recovery) this.savedDelegationResults.set(record.delegationId, recovery);
     this.onEvent({ sessionId: this.sessionId, turnId: record.taskTurnId, ts: Date.now(),
       parentToolCallId: record.parentToolCallId, agentName: record.agentName,
-      event: { type: "message_end", message: { id, role: "tool", toolName: "TaskExecution", toolCallId: id,
-        parentToolCallId: record.parentToolCallId, agentName: record.agentName, createdAt: nowIso(),
-        status: "complete", toolStatus: "success", content, toolResult: { content: [{ type: "text", text: content }], details } } } });
+      event: { type: "message_end", message } });
+  }
+
+  private subagentRecoveryResult(toolCallId: string, record: DelegationRecord | undefined, instruction: string, reason: string): AgentToolResult<unknown> {
+    const report = record?.result?.report ?? record?.diskEntry?.lastReportSummary ?? "";
+    const recovery = {
+      mode: report ? "result-only" : "unavailable",
+      delegationId: record?.delegationId, execution: record?.execution,
+      agent: record?.agentName, task: record?.taskInstruction,
+      report, requestedInstruction: instruction,
+      originalContextRestored: false, newTaskStarted: false,
+      ...(record?.stopRequested ? { stopped: true } : { continuation: "parent-or-new-task" }),
+    };
+    const result = this.subagentToolError(toolCallId, reason);
+    return { ...result, isError: true,
+      content: [{ type: "text", text: `${reason}\n${JSON.stringify(recovery)}` }],
+      details: { error: reason, recovery } };
   }
 
   private buildSubagentResumeTool(): AgentTool {
@@ -5384,8 +5352,13 @@ Delegation rules:
         if (this.disposed || this.runCancelled || this.turnHadError || this.mode !== "agent") return fail("This parent turn cannot resume subagents.");
         if (!isRecord(params) || typeof params.delegationId !== "string" || typeof params.instruction !== "string" ||
           !params.instruction.trim() || params.instruction.length > 12_000 || !Number.isSafeInteger(params.expectedExecution) || Number(params.expectedExecution) < 1) return fail("Provide delegationId, instruction (1–12000 characters) and a positive expectedExecution from TaskList.");
-        const record = this.delegations.get(params.delegationId);
-        if (!record) return fail("Subagent context is unavailable or released in this session.");
+        let found = this.delegations.get(params.delegationId);
+        if (!found || (found.isColdDisk && found.persistenceState === "unavailable")) {
+          await this.initSubagentPersistence();
+          found = this.delegations.get(params.delegationId);
+        }
+        const record = found;
+        if (!record) return this.subagentRecoveryResult(toolCallId, undefined, params.instruction, "Subagent context is unavailable in this session.");
 
         const commandDigest = simplePromptFingerprint(`${params.expectedExecution}:${params.instruction}`);
 
@@ -5403,27 +5376,15 @@ Delegation rules:
 
         // 2. Stale execution check
         if (params.expectedExecution !== (record.execution ?? 1)) {
-          if (!this.persistenceClient.isMemoryOnly(record.delegationId) && Number(params.expectedExecution) < (record.execution ?? 1)) {
-            try {
-              const receipt = await this.persistenceClient.beginExecution({
-                sessionId: this.sessionId, delegationId: record.delegationId,
-                expectedRevision: record.durableRevision ?? 0, expectedExecution: Number(params.expectedExecution),
-                nextExecution: Number(params.expectedExecution) + 1,
-                executionId: delegationExecutionId(record.delegationId, Number(params.expectedExecution) + 1),
-                instanceGeneration: this.persistenceClient.instanceGeneration,
-                commandId: `${this.sessionId}:${this.turnId ?? ""}:${toolCallId}`, commandDigest,
-                parentTurnId: this.turnId, parentToolCallId: toolCallId, instructionPayload: params.instruction,
-              });
-              if (receipt.isDuplicate) return { content: [{ type: "text", text: "This recall command was already accepted; it will not execute again." }], details: { ...receipt, duplicate: true } };
-            } catch { /* 非重复命令继续按旧轮次拒绝。 */ }
-          }
           return fail("Stale execution number. Read TaskList before deciding whether further work is needed.");
         }
 
         // 3. CanResume check
         const coldCandidate = record.isColdDisk && record.status === "completed" && !record.stopRequested &&
           (record.persistenceState === "pending-validation" || record.persistenceState === "durable-ready");
-        if (!coldCandidate && !this.subagentRecallStatus(record.delegationId).canResume) return fail("Only normally completed contexts can resume; saving/stopped/failed contexts cannot resume.");
+        if (!coldCandidate && !this.subagentRecallStatus(record.delegationId).canResume) {
+          return this.subagentRecoveryResult(toolCallId, record, params.instruction, "The original context is not available for this execution.");
+        }
 
         // 4. Concurrency check
         if (this.runningDelegations().length >= MAX_SUBAGENT_CONCURRENCY) return fail("Subagent concurrency is full; wait for a running execution to finish.");
@@ -5446,36 +5407,17 @@ Delegation rules:
             });
             const cp = await mediaStore.externalize(loadRes.checkpoint);
 
-            // Project real path check
-            let currentRealProjectPath = "";
-            if (this.projectPath) {
-              try { currentRealProjectPath = realpathSync(this.projectPath); } catch { currentRealProjectPath = this.projectPath; }
-            }
-            if (normalizePath(currentRealProjectPath) !== normalizePath(cp.header.projectRealPath)) {
-              throw new Error(`Project real path mismatch: expected '${cp.header.projectRealPath}', got '${currentRealProjectPath}'`);
-            }
-
             const definition = this.subagents.find((s) => s.name === cp.config.definition.name);
             if (!definition) {
               throw new Error(`Subagent definition '${cp.config.definition.name}' is not configured in this session.`);
             }
 
-            if (
-              definition.name !== cp.config.definition.name ||
-              definition.description !== cp.config.definition.description ||
-              definition.prompt !== cp.config.definition.prompt ||
-              definition.permission !== cp.config.definition.permission
-            ) {
-              throw new Error(`Subagent definition configuration mismatch for '${cp.config.definition.name}'`);
-            }
-
             const primary = cp.modelBinding.primaryModel ?? cp.modelBinding.provider;
-            let provider = [this.provider, ...Object.values(this.subagentProviders), ...Object.values(this.subagentOverrideProviders)]
-              .find((candidate) => candidate?.id === primary.id && candidate.modelId === primary.modelId);
-            if (!provider && !definition.model) provider = await this.resolveSubagentModel(`${primary.id}/${primary.modelId}`);
-            if (!provider) {
-              throw new Error(`Provider for subagent '${definition.name}' is not available in this session.`);
-            }
+            const provider = definition.model ? this.subagentProvider(definition)
+              : [this.provider, ...Object.values(this.subagentProviders), ...Object.values(this.subagentOverrideProviders)]
+                  .find((candidate) => candidate?.id === primary.id && candidate.modelId === primary.modelId)
+                ?? this.subagentProvider(definition);
+            if (!provider) throw new Error(`Provider for subagent '${definition.name}' is not available in this session.`);
 
             const declaredToolNames = resolveSubagentToolNames(
               definition,
@@ -5488,11 +5430,6 @@ Delegation rules:
               supportsVision: visionFromModelConfig(provider!.modelConfig),
               ...mediaCapabilitiesForProvider(provider!),
             });
-
-            const currentCanMutate = subagentCanMutate(definition, declaredToolNames);
-            if (currentCanMutate !== cp.config.permissions.subagentCanMutate) {
-              throw new Error("Subagent mutation permission mismatch with checkpoint");
-            }
 
             const thinkingLevel: SubagentThinkingLevel =
               definition.thinkingLevel === "omit"
@@ -5542,6 +5479,9 @@ Delegation rules:
               throw new Error("Recall cancelled while restoring context.");
             }
             record.run = restoredRun;
+            record.modelId = provider.modelId;
+            record.thinkingLevel = thinkingLevel;
+            record.taskInstruction = cp.config.task;
             record.isColdDisk = false;
             record.source = "memory";
             record.contextReleased = false;
@@ -5556,8 +5496,7 @@ Delegation rules:
             throw new Error("Recall cancelled before execution registration.");
           }
 
-          // CAS begin gate
-          const isMemoryContinuation = Boolean(record.run?.canResume && record.persistenceState === "persistence-error" && !record.isColdDisk);
+          // 本地执行登记；磁盘同步由客户端后台处理。
           record.pendingBegin = this.persistenceClient.beginExecution({
             sessionId: this.sessionId,
             delegationId: record.delegationId,
@@ -5571,7 +5510,6 @@ Delegation rules:
             parentTurnId: this.turnId,
             parentToolCallId: toolCallId,
             instructionPayload: params.instruction,
-            ...(isMemoryContinuation ? { memoryContinuation: true } : {}),
           });
           const beginReceipt = await record.pendingBegin;
           if (record.stopRequested || this.disposed || this.runCancelled || this.turnHadError || this.turnEpoch !== resumeEpoch) {
@@ -5592,6 +5530,8 @@ Delegation rules:
           this.takeSupervision([record]);
           record.durableRevision = beginReceipt.revision;
           record.execution = nextExecution;
+          record.durableGeneration = 0;
+          record.snapshotPending = false;
           record.status = "running";
           record.persistenceState = this.persistenceClient.isMemoryOnly(record.delegationId) ? "memory-only" : "saving";
           record.startedEpoch = this.turnEpoch;
@@ -5623,7 +5563,8 @@ Delegation rules:
         } catch (err) {
           record.status = record.stopRequested ? "stopped" : record.execution === nextExecution ? "failed" : previousStatus;
           if (record.execution === nextExecution) record.resolveCompletion();
-          return fail(`Failed to resume subagent: ${err instanceof Error ? err.message : String(err)}`);
+          return this.subagentRecoveryResult(toolCallId, record, params.instruction,
+            `Failed to resume subagent: ${err instanceof Error ? err.message : String(err)}`);
         } finally {
           record.resumingLock = false;
           record.pendingBegin = undefined;
@@ -9163,6 +9104,7 @@ Delegation rules:
       });
     }
     await Promise.all(interrupted.map((record) => record.interruptionReceipt));
+    await this.persistenceClient.flush();
     this.delegationWaitTargets = undefined;
     this.pathInstructionClaims.clear();
     this.failedHostToolCalls.clear();

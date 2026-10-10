@@ -8480,32 +8480,86 @@ describe("DesktopAgentRuntime subagents", () => {
     await runtime.dispose();
   });
 
-  it("does not replay a registration failure already returned by Task", async () => {
+  it("快照宿主失败不阻止 Task 启动和结果交付", async () => {
     const runtime = createRuntime({ subagents: [explorer] });
     const internal = runtime as any;
-    const begin = vi.spyOn(internal.persistenceClient, "beginExecution")
-      .mockRejectedValue(new Error("转录正在变化，请在保存完成后重新校验。"));
-    const prompt = vi.fn(async () => undefined);
-    internal.agent.prompt = prompt;
-    internal.agent.waitForIdle = vi.fn(async () => undefined);
+    const previousResult = subagentRuns.result;
+    subagentRuns.result = { agentName: "explorer", status: "completed", report: "done", turns: 1, toolCalls: 0 };
+    const originalCall = internal.host.call.bind(internal.host);
+    const call = vi.spyOn(internal.host, "call").mockImplementation((...args: any[]) =>
+      args[0] === "subagent.persistence" ? Promise.reject(new Error("disk unavailable")) : originalCall(...args));
     const callsBefore = subagentRuns.calls.length;
     try {
-      const result = await taskTool(runtime).execute("task-registration-failure", {
-        agent: "explorer",
-        task: "Find it.",
-      });
-      expect(result.content[0].text).toContain("Failed to register subagent execution");
-      expect(result.content[0].text).toContain("转录正在变化");
-      expect(subagentRuns.calls).toHaveLength(callsBefore);
-      expect([...internal.delegations.values()]).toEqual([
-        expect.objectContaining({ status: "failed", persistenceState: "persistence-error" }),
-      ]);
-      expect(internal.keepTurnOpenForDelegates()).toBe(false);
-      await internal.resumeAfterDelegations();
-      expect(prompt).not.toHaveBeenCalled();
+      const result = await taskTool(runtime).execute("task-storage-failure", { agent: "explorer", task: "Find it." });
+      expect(subagentRuns.calls).toHaveLength(callsBefore + 1);
+      const record = internal.delegations.get(result.details.delegationId);
+      await record.completion;
+      expect(record.status).toBe("completed");
+      expect(record.result.report).toBeTruthy();
     } finally {
-      begin.mockRestore();
       await runtime.dispose();
+      call.mockRestore();
+      subagentRuns.result = previousResult;
+    }
+  });
+
+  it("保存迟迟未完成时 TaskWait 已可读结果，旧回执不覆盖新执行", async () => {
+    const runtime = createRuntime({ subagents: [explorer] });
+    const internal = runtime as any;
+    subagentRuns.instances.length = 0;
+    subagentRuns.deferred = true;
+    let finishSave!: (receipt: unknown) => void;
+    const pendingSave = new Promise((resolve) => { finishSave = resolve; });
+    const commit = vi.spyOn(internal.persistenceClient, "commitSnapshot").mockReturnValue(pendingSave);
+    const memory = vi.spyOn(internal.persistenceClient, "isMemoryOnly").mockReturnValue(false);
+    try {
+      const started = await taskTool(runtime).execute("task-slow-storage", { agent: "explorer", task: "Find it." });
+      const record = internal.delegations.get(started.details.delegationId);
+      record.run.exportSnapshot = () => ({});
+      subagentRuns.resolveRun!({ agentName: "explorer", status: "completed", report: "可直接使用的结果", turns: 1, toolCalls: 0 });
+      await record.completion;
+      expect(commit).toHaveBeenCalledTimes(1);
+      expect(record.status).toBe("completed");
+      expect(record.result.report).toBe("可直接使用的结果");
+      record.execution = 2;
+      record.status = "running";
+      record.durableGeneration = 0;
+      finishSave({ durableReady: true, snapshotGeneration: 1 });
+      await pendingSave;
+      await Promise.resolve();
+      expect(record.status).toBe("running");
+      expect(record.durableGeneration).toBe(0);
+      expect(record.persistenceState).toBe("saving");
+    } finally {
+      subagentRuns.deferred = false;
+      await runtime.dispose();
+      commit.mockRestore();
+      memory.mockRestore();
+    }
+  });
+
+  it("本地停止不等待磁盘回执，记录失败也不恢复运行状态", async () => {
+    const runtime = createRuntime({ subagents: [explorer] });
+    const internal = runtime as any;
+    subagentRuns.instances.length = 0;
+    subagentRuns.deferred = true;
+    let rejectStop!: (error: Error) => void;
+    const pendingStop = new Promise((_resolve, reject) => { rejectStop = reject; });
+    const revoke = vi.spyOn(internal.persistenceClient, "revokeExecution").mockReturnValue(pendingStop);
+    try {
+      const started = await taskTool(runtime).execute("task-stop-storage", { agent: "explorer", task: "Find it." });
+      const record = internal.delegations.get(started.details.delegationId);
+      const stopped = await runtime.stopSubagentAsync(record.delegationId, "user", 1);
+      expect(stopped).toMatchObject({ status: "stopped", canResume: false });
+      await record.completion;
+      rejectStop(new Error("disk failure"));
+      await record.stopPersistence;
+      expect(record.status).toBe("stopped");
+      expect(record.persistenceState).toBe("persistence-error");
+    } finally {
+      subagentRuns.deferred = false;
+      await runtime.dispose();
+      revoke.mockRestore();
     }
   });
 

@@ -1217,7 +1217,7 @@ sklm: {
     subagentCreated: "Created {{name}}",
     subagentSaved: "Saved {{name}}",
     subagentPersistenceTitle: "Subagent Context Persistence",
-    subagentPersistenceDesc: "Saves completed subagent contexts for recall and rework after app restarts. Snapshots are stored locally as plain JSON files without encryption.",
+    subagentPersistenceDesc: "Saves completed subagent contexts for recall and rework after app restarts.",
     subagentPersistenceEnable: "Persist completed subagent contexts",
     subagentPersistenceQuota: "Retention & Quotas",
     subagentPersistenceQuotaDesc: "Retains for {{days}} days · up to {{sessions}} per session · max {{single}} per snapshot · global quota {{total}}",

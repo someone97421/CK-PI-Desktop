@@ -82,7 +82,7 @@ import {
 } from "./agent-messages.js";
 import { convertToLlm, createCompactionSummaryMessage } from "./pi-runtime-messages.js";
 import {
-  apiBindingForStyle,
+  apiBindingForProviderModel,
   buildProviderModel,
   createProviderModels,
   mediaCapabilitiesForProvider,
@@ -425,12 +425,7 @@ export class SubagentRun {
       this.lastReportText = cp.usage.lastReportText;
       this.lastStatus = "completed";
       this.executing = false;
-      this.thinkingLevel = cp.modelBinding.thinkingLevel;
-      this.fallbackIndex = cp.modelBinding.fallbackIndex;
-      for (const m of cp.modelBinding.attemptedModels) {
-        this.attemptedModels.add(m);
-      }
-      this.modelFailures.push(...cp.modelBinding.modelFailures);
+      this.attemptedModels.add(`${opts.provider.id}/${opts.provider.modelId}`);
     } else {
       this.attemptedModels.add(`${opts.provider.id}/${opts.provider.modelId}`);
     }
@@ -521,118 +516,13 @@ export class SubagentRun {
       );
     }
 
-    if (
-      opts.definition.name !== validated.config.definition.name ||
-      opts.definition.description !== validated.config.definition.description ||
-      opts.definition.prompt !== validated.config.definition.prompt ||
-      opts.definition.permission !== validated.config.definition.permission
-    ) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        `Subagent definition configuration mismatch for '${validated.config.definition.name}'`,
-      );
+    if (opts.definition.name !== validated.config.definition.name) {
+      throw new SubagentCodecError("SUBAGENT_CODEC_COMPATIBILITY_FAILED", "Subagent identity does not match checkpoint");
     }
-
-    const currentCanMutate = subagentCanMutate(opts.definition, opts.tools.map((t) => t.name));
-    if (currentCanMutate !== validated.config.permissions.subagentCanMutate) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        "Subagent mutation permission mismatch with checkpoint",
-      );
-    }
-
-    // Verify primary model configuration matches checkpoint
-    if (
-      opts.provider.id !== validated.modelBinding.primaryModel.id ||
-      opts.provider.modelId !== validated.modelBinding.primaryModel.modelId
-    ) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        `Primary model (${opts.provider.id}/${opts.provider.modelId}) does not match checkpoint primary model (${validated.modelBinding.primaryModel.id}/${validated.modelBinding.primaryModel.modelId})`,
-      );
-    }
-    const primaryEndpointFp = simplePromptFingerprint(sanitizeBaseUrl(opts.provider.baseUrl ?? ""));
-    if (primaryEndpointFp !== validated.modelBinding.primaryModel.endpointFingerprint) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        "Primary model endpoint fingerprint mismatch with checkpoint",
-      );
-    }
-    const primaryWireApi = apiBindingForStyle(opts.provider.apiStyle).api;
-    if (primaryWireApi !== validated.modelBinding.primaryModel.api) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        `Primary model wire API mismatch: expected '${validated.modelBinding.primaryModel.api}', got '${primaryWireApi}'`,
-      );
-    }
-
-    const currentPromptFingerprint = simplePromptFingerprint(opts.systemPrompt);
-    if (currentPromptFingerprint !== validated.config.systemPromptFingerprint) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        "System prompt fingerprint mismatch with persistent checkpoint",
-      );
-    }
-
-    const currentToolsFingerprint = computeToolsFingerprint(opts.tools);
-    if (currentToolsFingerprint !== validated.config.toolsFingerprint) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        "Tools schema fingerprint mismatch with persistent checkpoint",
-      );
-    }
-
-    let resolvedActiveProvider: RuntimeProviderConfig;
-    if (validated.modelBinding.fallbackIndex > 0) {
-      const fallbackEntry = opts.fallbackModels?.[validated.modelBinding.fallbackIndex - 1];
-      if (!fallbackEntry?.provider) {
-        throw new SubagentCodecError(
-          "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-          `Active fallback model at index ${validated.modelBinding.fallbackIndex - 1} is not configured in restore options`,
-        );
-      }
-      if (
-        fallbackEntry.provider.id !== validated.modelBinding.provider.id ||
-        fallbackEntry.provider.modelId !== validated.modelBinding.provider.modelId
-      ) {
-        throw new SubagentCodecError(
-          "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-          `Active fallback model (${fallbackEntry.provider.id}/${fallbackEntry.provider.modelId}) does not match checkpoint completed model (${validated.modelBinding.provider.id}/${validated.modelBinding.provider.modelId})`,
-        );
-      }
-      resolvedActiveProvider = fallbackEntry.provider;
-    } else {
-      if (
-        opts.provider.id !== validated.modelBinding.provider.id ||
-        opts.provider.modelId !== validated.modelBinding.provider.modelId
-      ) {
-        throw new SubagentCodecError(
-          "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-          `Primary provider (${opts.provider.id}/${opts.provider.modelId}) does not match checkpoint completed model (${validated.modelBinding.provider.id}/${validated.modelBinding.provider.modelId})`,
-        );
-      }
-      resolvedActiveProvider = opts.provider;
-    }
-
-    const endpointFp = simplePromptFingerprint(sanitizeBaseUrl(resolvedActiveProvider.baseUrl ?? ""));
-    if (endpointFp !== validated.modelBinding.provider.endpointFingerprint) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        "Active provider endpoint fingerprint mismatch with persistent checkpoint",
-      );
-    }
-
-    const wireApi = apiBindingForStyle(resolvedActiveProvider.apiStyle).api;
-    if (wireApi !== validated.modelBinding.provider.api) {
-      throw new SubagentCodecError(
-        "SUBAGENT_CODEC_COMPATIBILITY_FAILED",
-        `Active provider wire API '${wireApi}' does not match checkpoint api '${validated.modelBinding.provider.api}'`,
-      );
-    }
-
+    // 恢复对话与统计；本轮提示词、工具、权限和模型来自当前会话配置。
     return new SubagentRun({
       ...opts,
-      provider: resolvedActiveProvider,
+      provider: opts.provider,
       primaryProvider: opts.provider,
       task: validated.config.task,
       delegationId: validated.header.delegationId,
@@ -660,28 +550,10 @@ export class SubagentRun {
       throw new Error("Cannot export snapshot: subagent has pending provider retries.");
     }
 
-    const validBindings: Array<{ providerId: string; modelId: string; api?: string }> = [
-      {
-        providerId: this.primaryProvider.id,
-        modelId: this.primaryProvider.modelId,
-        api: apiBindingForStyle(this.primaryProvider.apiStyle).api,
-      },
-      {
-        providerId: this.provider.id,
-        modelId: this.provider.modelId,
-        api: apiBindingForStyle(this.provider.apiStyle).api,
-      },
-      ...(this.opts.fallbackModels ?? []).filter((f) => f.provider).map((f) => ({
-        providerId: f.provider!.id,
-        modelId: f.provider!.modelId,
-        api: apiBindingForStyle(f.provider!.apiStyle).api,
-      })),
-    ];
-
-    const snapshotMessages: AgentMessage[] = this.agent.state.messages.filter(
+    const snapshotMessages: AgentMessage[] = this.dedupeToolCalls(this.agent.state.messages).filter(
       (message) => message.role !== "system",
     );
-    const encodedMessages = encodeAgentMessages(snapshotMessages, validBindings);
+    const encodedMessages = encodeAgentMessages(snapshotMessages);
     const summaryIndex = this.summaryMessage
       ? snapshotMessages.indexOf(this.summaryMessage)
       : undefined;
@@ -725,7 +597,7 @@ export class SubagentRun {
           name: this.provider.name,
           baseUrl: sanitizeBaseUrl(this.provider.baseUrl ?? ""),
           modelId: this.provider.modelId,
-          api: apiBindingForStyle(this.provider.apiStyle).api,
+          api: apiBindingForProviderModel(this.provider).api,
           apiStyle: this.provider.apiStyle,
           authKind: this.provider.authKind ?? "",
           supportsReasoning: this.provider.supportsReasoning,
@@ -735,7 +607,7 @@ export class SubagentRun {
         primaryModel: {
           id: this.primaryProvider.id,
           modelId: this.primaryProvider.modelId,
-          api: apiBindingForStyle(this.primaryProvider.apiStyle).api,
+          api: apiBindingForProviderModel(this.primaryProvider).api,
           endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(this.primaryProvider.baseUrl ?? "")),
         },
         thinkingLevel: this.thinkingLevel,
@@ -750,7 +622,7 @@ export class SubagentRun {
                 name: f.provider.name,
                 baseUrl: sanitizeBaseUrl(f.provider.baseUrl ?? ""),
                 modelId: f.provider.modelId,
-                api: apiBindingForStyle(f.provider.apiStyle).api,
+                api: apiBindingForProviderModel(f.provider).api,
                 authKind: f.provider.authKind,
                 endpointFingerprint: simplePromptFingerprint(sanitizeBaseUrl(f.provider.baseUrl ?? "")),
               }

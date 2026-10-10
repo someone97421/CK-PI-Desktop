@@ -1346,7 +1346,7 @@ sklm: {
     subagentCreated: "已新建 {{name}}",
     subagentSaved: "已保存 {{name}}",
     subagentPersistenceTitle: "子智能体上下文持久化",
-    subagentPersistenceDesc: "保存已完成子智能体的上下文，供程序重启后召回与返工。快照以普通 JSON 文件保存在本地，不加密。",
+    subagentPersistenceDesc: "保存已完成子智能体的上下文，供程序重启后召回与返工。",
     subagentPersistenceEnable: "保存已完成子智能体上下文",
     subagentPersistenceQuota: "保留策略与配额",
     subagentPersistenceQuotaDesc: "默认保留 {{days}} 天 · 单会话最多 {{sessions}} 份 · 单份上限 {{single}} · 全局配额 {{total}}",
