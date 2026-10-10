@@ -191,17 +191,16 @@ jobs:
           rm downloads/mac-update-arm64.json downloads/mac-update-x64.json
           test -f "downloads/latest-mac.yml"
           test -f "downloads/latest.yml"
-          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          macOS 双架构与 Windows x64 安装包，版本 $DISPLAY_VERSION。
+          test -s docs/RELEASE-NOTES.md
+          cat docs/RELEASE-NOTES.md > "$RUNNER_TEMP/release-notes.md"
+          cat >> "$RUNNER_TEMP/release-notes.md" <<EOF
 
-          - Apple Silicon（M 系列）：选择 arm64.dmg。
-          - Intel：选择 x64.dmg。
-          - Windows 安装版：选择 Setup-x64.exe；单文件便携版：选择 Portable-x64.exe。
-          - 临时签名，未经过 Apple 公证。首次打开可能需要在系统设置的“隐私与安全性”中允许打开。
-          - 附带 ZIP、分架构更新描述文件及 SHA-256 校验文件。
-          - 源码提交：$SOURCE_SHA。
+          ## 下载选择
 
-          此版本为预发布，不替换稳定版更新入口。
+          - macOS：M 系列选择 arm64.dmg；Intel 选择 x64.dmg。
+          - Windows：安装版选择 Setup-x64.exe；单文件便携版选择 Portable-x64.exe。
+
+          源码版本：$SOURCE_SHA
           EOF
           gh release create "v$BUILD_VERSION" downloads/* \
             --target "$SOURCE_SHA" \
