@@ -8,7 +8,7 @@ const preview = !bridge;
 const root = document.querySelector('#app');
 let model, ui, sprite, nativeState, anchor, dragging, closed = false, syncing = false;
 let loadedPet = null, loadedStamp = null, pollTimer, activityTimer, cursorTimer, resizeFrame, ignoreMouse = false;
-let boundsQueue = Promise.resolve(), seenIntent = { settings: 0, focus: 0 };
+let boundsQueue = null, pendingBounds = null, seenIntent = { settings: 0, focus: 0 };
 let embeddedView = document.documentElement.dataset.piPluginPanelShape === 'view';
 let settingsSurface = new URLSearchParams(location.search).get('surface') === 'settings' || embeddedView;
 let nativeAvailable = false;
@@ -109,19 +109,30 @@ function scheduleLayout() {
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => resizeWindow().catch(showError));
 }
-async function setBounds(bounds) {
-  const task = boundsQueue.then(async () => {
-    if (closed) return;
-    const result = await widget('setBounds', bounds);
-    if (result?.bounds && nativeState) nativeState.bounds = result.bounds;
-  });
-  boundsQueue = task.catch(() => {});
-  return task;
+function setBounds(bounds) {
+  // 最多一个请求在途、一个最新目标待发送，不回放已过期的鼠标轨迹。
+  pendingBounds = bounds;
+  if (!boundsQueue) {
+    boundsQueue = Promise.resolve().then(async () => {
+      try {
+        while (pendingBounds && !closed) {
+          const target = pendingBounds;
+          pendingBounds = null;
+          const result = await widget('setBounds', target);
+          if (result?.bounds && nativeState) nativeState.bounds = result.bounds;
+        }
+      } finally {
+        pendingBounds = null;
+        boundsQueue = null;
+      }
+    });
+  }
+  return boundsQueue;
 }
 async function resizeWindow() {
   if (!nativeAvailable || embeddedView || dragging) return;
   nativeState ||= await widget('getState');
-  if (!nativeState) return;
+  if (!nativeState || closed || dragging) return;
   const bounds = root.getBoundingClientRect();
   const size = settingsSurface ? { width: 760, height: 680 } : { width: 384, height: Math.max(120, Math.ceil(bounds.bottom + 12)) };
   if (!anchor) anchor = geometry.initialBounds(size, nativeState.displays, nativeState.cursor, settingsSurface ? null : model?.settings.position);
@@ -158,8 +169,10 @@ async function onAction(action, payload) {
 
 async function cursorUpdate() {
   if (closed || !nativeAvailable || settingsSurface || dragging) return;
-  nativeState = await widget('getState');
-  if (!nativeState) return;
+  const state = await widget('getState');
+  // 查询期间可能已经按下宠物，旧悬停结果不能再打开鼠标穿透。
+  if (!state || closed || dragging) return;
+  nativeState = state;
   const x = nativeState.cursor.x - nativeState.bounds.x;
   const y = nativeState.cursor.y - nativeState.bounds.y;
   const element = document.elementFromPoint(x, y);
@@ -176,46 +189,100 @@ async function cursorUpdate() {
 }
 function attachPetInteraction() {
   const canvas = sprite.canvas;
-  canvas.addEventListener('pointerdown', async (event) => {
-    if (event.button !== 0 || !sprite.hitTest(event.clientX, event.clientY)) return;
+  async function updateDrag(pending, sampledState) {
+    pending.dirty = false;
+    if (!pending.bounds || dragging !== pending || closed) return;
+    const state = preview ? { cursor: pending.point, displays: [] } : sampledState || await widget('getState');
+    if (!state || dragging !== pending || closed) return;
+    if (!preview) nativeState = state;
+    // 鼠标与窗口都采用宿主 DIP 坐标，跨不同缩放的屏幕时不混用 screenX/Y。
+    const dx = state.cursor.x - pending.startX, dy = state.cursor.y - pending.startY;
+    if (Math.hypot(dx, dy) < 4 && !pending.moved) return;
+    pending.moved = true;
+    sprite.drag(dx);
+    const bounds = geometry.dragBounds({ ...pending.bounds, x: pending.bounds.x + dx, y: pending.bounds.y + dy }, state.displays);
+    anchor = { x: bounds.x, y: bounds.y };
+    if (!preview) await setBounds(bounds);
+  }
+  function scheduleDrag(pending) {
+    if (pending.frame || pending.update || pending.finishing || closed) return;
+    pending.frame = requestAnimationFrame(() => {
+      pending.frame = 0;
+      pending.update = updateDrag(pending).catch(showError).finally(() => {
+        pending.update = null;
+        if (pending.dirty && dragging === pending) scheduleDrag(pending);
+      });
+    });
+  }
+  canvas.addEventListener('pointerdown', (event) => {
+    if (dragging || event.button !== 0 || !sprite.hitTest(event.clientX, event.clientY)) return;
     event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
-    const pending = { startX: event.screenX, startY: event.screenY, bounds: null, moved: false, pointerId: event.pointerId };
+    const pending = { bounds: null, moved: false, pointerId: event.pointerId, point: { x: event.screenX, y: event.screenY }, frame: 0, update: null, dirty: false, finishing: false };
     dragging = pending;
-    try {
-      const state = preview ? { bounds: { x: 0, y: 0, width: 384, height: 200 }, cursor: { x: event.screenX, y: event.screenY }, displays: [] } : await widget('getState');
-      if (!state || closed || dragging !== pending) return;
-      nativeState = state;
-      pending.bounds = { ...state.bounds };
-      if (!preview) { await widget('setIgnoreMouse', { ignore: false }); ignoreMouse = false; }
-    } catch (error) { if (dragging === pending) dragging = null; showError(error); }
+    pending.ready = (async () => {
+      try {
+        // 等上一次布局落位，并覆盖可能在按下前已发出的穿透请求。
+        if (!preview) { await widget('setIgnoreMouse', { ignore: false }); ignoreMouse = false; }
+        await boundsQueue;
+        const state = preview ? { bounds: { x: 0, y: 0, width: 384, height: 200 }, displays: [] } : await widget('getState');
+        if (!state || closed || dragging !== pending) return;
+        nativeState = state;
+        pending.bounds = { ...state.bounds };
+        // 按下点相对于窗口的位置固定，初始化期间移动鼠标也不会丢失位移。
+        pending.startX = preview ? event.screenX : state.bounds.x + event.clientX;
+        pending.startY = preview ? event.screenY : state.bounds.y + event.clientY;
+        if (pending.dirty) scheduleDrag(pending);
+      } catch (error) {
+        if (dragging === pending) dragging = null;
+        if (canvas.hasPointerCapture(pending.pointerId)) canvas.releasePointerCapture(pending.pointerId);
+        showError(error);
+      }
+    })();
   });
   canvas.addEventListener('pointermove', (event) => {
-    if (!dragging?.bounds) return;
-    const dx = event.screenX - dragging.startX, dy = event.screenY - dragging.startY;
-    if (Math.hypot(dx, dy) < 4 && !dragging.moved) return;
-    dragging.moved = true;
-    sprite.drag(dx);
-    const bounds = geometry.clampBounds({ ...dragging.bounds, x: dragging.bounds.x + dx, y: dragging.bounds.y + dy }, nativeState?.displays || []);
-    anchor = { x: bounds.x, y: bounds.y };
-    if (!preview) void setBounds(bounds).catch(showError);
+    if (!dragging || dragging.finishing || event.pointerId !== dragging.pointerId) return;
+    dragging.point = { x: event.screenX, y: event.screenY };
+    dragging.dirty = true;
+    if (dragging.bounds) scheduleDrag(dragging);
   });
   const finish = async (event) => {
-    if (!dragging) return;
-    const moved = dragging.moved;
-    dragging = null;
-    sprite.endDrag();
+    const pending = dragging;
+    if (!pending || pending.finishing || event.pointerId !== pending.pointerId) return;
+    pending.finishing = true;
+    pending.point = { x: event.screenX, y: event.screenY };
+    cancelAnimationFrame(pending.frame);
+    pending.frame = 0;
+    // 松手时立刻采样，避免等待在途移动后读到鼠标已经离开的新位置。
+    const releasedState = !preview && event.type === 'pointerup' ? widget('getState') : Promise.resolve(null);
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    if (moved && !preview) { await boundsQueue; await request('pet.position', { position: anchor }); }
-    else if (!moved && event.type !== 'pointercancel') await onAction('open-session');
-    scheduleLayout();
+    try {
+      const [state] = await Promise.all([releasedState, pending.ready, pending.update]);
+      if (dragging !== pending || closed || !pending.bounds) return;
+      if (event.type === 'pointerup' && (preview || state)) await updateDrag(pending, state);
+      await boundsQueue;
+      if (pending.moved && !preview) {
+        const target = geometry.clampBounds(nativeState.bounds, nativeState.displays);
+        await setBounds(target);
+        anchor = { x: nativeState.bounds.x, y: nativeState.bounds.y };
+        await request('pet.position', { position: anchor });
+      } else if (!pending.moved && event.type === 'pointerup') await onAction('open-session');
+    } finally {
+      if (dragging === pending) {
+        dragging = null;
+        sprite.endDrag();
+        scheduleLayout();
+      }
+    }
   };
   canvas.addEventListener('pointerup', (event) => void finish(event).catch(showError));
   canvas.addEventListener('pointercancel', (event) => void finish(event).catch(showError));
+  canvas.addEventListener('lostpointercapture', (event) => void finish(event).catch(showError));
   canvas.addEventListener('keydown', async (event) => {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); return onAction('open-session'); }
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Escape'].includes(event.key) || preview) return;
     event.preventDefault();
+    if (dragging) return;
     if (event.key === 'Escape') return onAction('reset-position');
     const state = await widget('getState'), step = event.shiftKey ? 1 : 10;
     if (!state) return;
@@ -263,7 +330,13 @@ const stage = root.querySelector('#pet-stage');
 if (stage && !settingsSurface) { sprite = new SpritePlayer(stage, showError); sprite.clear(); attachPetInteraction(); }
 const observer = new ResizeObserver(scheduleLayout);
 observer.observe(root);
-window.addEventListener('beforeunload', () => { closed = true; clearTimeout(pollTimer); clearTimeout(activityTimer); clearTimeout(cursorTimer); cancelAnimationFrame(resizeFrame); observer.disconnect(); sprite?.dispose(); ui.dispose(); });
+window.addEventListener('beforeunload', () => {
+  closed = true;
+  clearTimeout(pollTimer); clearTimeout(activityTimer); clearTimeout(cursorTimer);
+  cancelAnimationFrame(resizeFrame); cancelAnimationFrame(dragging?.frame);
+  dragging = null; pendingBounds = null;
+  observer.disconnect(); sprite?.dispose(); ui.dispose();
+});
 bridge?.on?.('appearance:changed', () => void sync());
 await sync();
 if (!settingsSurface && !preview) void activityLoop();

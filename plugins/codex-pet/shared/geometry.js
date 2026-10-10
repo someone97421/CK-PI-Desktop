@@ -31,6 +31,20 @@
     const area = display?.workArea || display?.bounds || { x: 0, y: 0, width: 1280, height: 800 };
     return clampBounds({ ...size, x: area.x + area.width - size.width - 24, y: area.y + area.height - size.height - 24 }, displays);
   }
+  // 拖动允许跨屏，只要求留有可见区域；松手后再将整窗收进工作区。
+  function dragBounds(bounds, displays) {
+    let best = { ...bounds }, distance = Infinity;
+    for (const display of displays || []) {
+      const area = display.workArea || display.bounds;
+      const visibleX = Math.min(64, bounds.width, area.width);
+      const visibleY = Math.min(64, bounds.height, area.height);
+      const x = Math.round(Math.max(area.x + visibleX - bounds.width, Math.min(area.x + area.width - visibleX, bounds.x)));
+      const y = Math.round(Math.max(area.y + visibleY - bounds.height, Math.min(area.y + area.height - visibleY, bounds.y)));
+      const candidateDistance = (x - bounds.x) ** 2 + (y - bounds.y) ** 2;
+      if (candidateDistance < distance) { best = { ...bounds, x, y }; distance = candidateDistance; }
+    }
+    return best;
+  }
   function inHoverRegion(x, y, controls, pop) {
     const contains = (rect, padding = 8) => rect && rect.right > rect.left && rect.bottom > rect.top &&
       x >= rect.left - padding && x < rect.right + padding && y >= rect.top - padding && y < rect.bottom + padding;
@@ -42,5 +56,5 @@
       top: Math.min(controls.bottom, pop.bottom), bottom: Math.max(controls.top, pop.top),
     });
   }
-  return { displayFor, clampBounds, initialBounds, inHoverRegion };
+  return { displayFor, clampBounds, dragBounds, initialBounds, inHoverRegion };
 });

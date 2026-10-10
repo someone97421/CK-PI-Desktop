@@ -11,6 +11,7 @@ import { suppressLinuxFramelessSystemMenu } from "./frameless-system-menu";
 import { getModuleDirectory } from "./module-path";
 import { PanelSenders, panelReadyWithin, pageGoneWithin, resolvePanelInvocation } from "./plugin-panel-senders";
 import { PanelOperationSerializer } from "./plugin-panel-senders";
+import { installWidgetTopmost, setWidgetAlwaysOnTop } from "./plugin-widget-topmost";
 import {
   isPluginPanelWindowControlAction,
   isPluginWidgetAction,
@@ -641,7 +642,7 @@ export class PluginPanelHost {
         type: "checkbox",
         checked: window.isAlwaysOnTop(),
         click: (item) => {
-          if (!window.isDestroyed()) window.setAlwaysOnTop(item.checked);
+          if (!window.isDestroyed()) setWidgetAlwaysOnTop(window, item.checked);
         },
       },
       { type: "separator" },
@@ -758,6 +759,7 @@ export class PluginPanelHost {
           ],
         },
       });
+      if (widget) installWidgetTopmost(win, request.alwaysOnTop === true);
       // A panel owns its visible surface; do not add a native application menu
       // to the window around the plugin's own UI.
       win.setMenu(null);
@@ -1049,7 +1051,12 @@ export class PluginPanelHost {
         // 120 DIP is the floor for every surface: a plugin that shrinks its own
         // window knows what it is doing, and the host only refuses a size no
         // page could live in.
-        win.setBounds(clampWidgetBounds(requested, PLUGIN_PANEL_WIDGET_MIN_SIZE));
+        const target = clampWidgetBounds(requested, PLUGIN_PANEL_WIDGET_MIN_SIZE);
+        const current = win.getBounds();
+        if (target.x !== current.x || target.y !== current.y ||
+            target.width !== current.width || target.height !== current.height) {
+          win.setBounds(target);
+        }
         return { ok: true, bounds: win.getBounds() };
       }
       case "setIgnoreMouse": {
@@ -1066,7 +1073,7 @@ export class PluginPanelHost {
         if (typeof payload.value !== "boolean") {
           throw new Error("INVALID_ARGUMENT: value must be a boolean");
         }
-        win.setAlwaysOnTop(payload.value);
+        setWidgetAlwaysOnTop(win, payload.value);
         return { ok: true, value: win.isAlwaysOnTop() };
       }
       case "close": {
@@ -1186,6 +1193,7 @@ export class PluginPanelHost {
           ],
         },
       });
+      installWidgetTopmost(win, entry.alwaysOnTop === true);
       win.setMenu(null);
       suppressLinuxFramelessSystemMenu(win);
       win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));

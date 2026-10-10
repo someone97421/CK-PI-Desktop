@@ -39,6 +39,24 @@ test('移除显示器后归位，初次位置跟随光标所在屏幕', () => {
   assert.deepEqual(geometry.initialBounds({ width: 384, height: 200 }, displays, { x: -100, y: 100 }, null), { x: -408, y: 816, width: 384, height: 200 });
 });
 
+test('拖动跨屏时不按重叠面积跳边，松手才整窗归位', () => {
+  for (const x of [-194, -193, -192, -191, -190, -1, 0, 1]) {
+    const bounds = { x, y: 100, width: 384, height: 200 };
+    assert.deepEqual(geometry.dragBounds(bounds, displays), bounds);
+  }
+  assert.equal(geometry.clampBounds({ x: -190, y: 100, width: 384, height: 200 }, displays).x, 0);
+});
+
+test('拖动越过桌面外缘或屏幕间空洞时仍保留可见区域', () => {
+  assert.deepEqual(geometry.dragBounds({ x: -2400, y: 1200, width: 384, height: 200 }, displays), {
+    x: -2240, y: 976, width: 384, height: 200,
+  });
+  const separated = [displays[1], { workArea: { x: 3000, y: 0, width: 1920, height: 1040 } }];
+  const result = geometry.dragBounds({ x: 2350, y: 100, width: 384, height: 200 }, separated);
+  assert.equal(result.x, 2680);
+  assert.equal(result.width, 384);
+});
+
 test('指定 FPS 覆盖标准和自定义动作时长，保留循环/回退和原始素材', () => {
   const spec = format.makeSpec({ animations: { jumping: { frames: [32, 33], fps: 5, loop: false, fallback: 'idle' } } });
   const idle = format.playbackAnimation(spec.animations.idle, 20);
