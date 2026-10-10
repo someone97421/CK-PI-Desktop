@@ -3,7 +3,7 @@ import type {
   SessionSummary,
   UiMessage,
 } from "@pi-desktop/shared";
-import { applyMessageUpdate, toolResultText } from "@pi-desktop/shared";
+import { toolResultText } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { createNavigationIntentController } from "../../lib/navigation-intent";
 import {
@@ -11,10 +11,11 @@ import {
   durableCoversLiveSessionMessages,
   mergeLiveSessionMessages,
   projectMessageEnd,
+  projectMessageUpdate,
   removeLiveSessionMessage,
   upsertLiveSessionMessage,
 } from "../../lib/session-transcript";
-import { getSessionMessageSnapshot, getSessionToolMessagePositions } from "../../lib/session-transcript-updates";
+import { getSessionToolMessagePositions } from "../../lib/session-transcript-updates";
 import { sessionReadLooksEmpty } from "../../lib/session-transcript-read";
 import { sessionIsArchived, type SessionMeta } from "../../lib/sidebar-preferences";
 import {
@@ -298,10 +299,7 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
         next = upsertLiveSessionMessage(current, event.message);
         break;
       case "message_update": {
-        const normalized = dedupeSessionMessages(current);
-        const index = getSessionMessageSnapshot(normalized).positions.get(event.message.id);
-        const previous = index === undefined ? undefined : normalized[index];
-        next = upsertLiveSessionMessage(normalized, applyMessageUpdate(previous, event));
+        next = projectMessageUpdate(current, event);
         break;
       }
       case "message_end": {

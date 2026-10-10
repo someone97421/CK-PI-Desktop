@@ -3,6 +3,7 @@ import i18n from "i18next";
 import {
   dedupeSessionMessages,
   projectMessageEnd,
+  projectMessageUpdate,
   reconcilePersistedUserMessage,
   upsertLiveSessionMessage,
 } from "../../lib/session-transcript";
@@ -19,7 +20,6 @@ import type {
   UiMessage,
 } from "@pi-desktop/shared";
 import {
-  applyMessageUpdate,
   toolResultText,
   mergeAgentEventEnvelopes,
 } from "@pi-desktop/shared";
@@ -600,13 +600,7 @@ export function createEventsSlice({
           break;
         case "message_update":
           set((state) => {
-            const normalized = dedupeSessionMessages(state.messages);
-            const index = getSessionMessageSnapshot(normalized).positions.get(event.message.id);
-            const nextMessage = applyMessageUpdate(
-              index === undefined ? undefined : normalized[index],
-              event,
-            );
-            const messages = upsertLiveSessionMessage(normalized, nextMessage);
+            const messages = projectMessageUpdate(state.messages, event);
             return messages === state.messages ? state : { messages };
           });
           break;

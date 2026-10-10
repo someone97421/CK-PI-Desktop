@@ -8,6 +8,7 @@ const {
   durableCoversLiveSessionMessages,
   mergeLiveSessionMessages,
   optimisticUserMessage,
+  projectMessageUpdate,
   removeLiveSessionMessage,
   reconcilePersistedUserMessage,
   upsertLiveSessionMessage,
@@ -436,4 +437,23 @@ test("旧提问错位到共同消息之间后，切回会话仍能恢复提问�
   const merged = mergeLiveSessionMessages(durable, live);
   assert.deepEqual(merged, [prompt, firstTool, secondTool, streaming]);
   assert.deepEqual(mergeLiveSessionMessages(durable, merged), merged);
+});
+
+test("用户历史更新不新增消息，助手流式更新仍可补齐缺失的起始事件", () => {
+  const user = message("user", { role: "user", status: "complete" });
+  const initial = [user];
+  assert.strictEqual(projectMessageUpdate(initial, {
+    type: "message_update", message: message("old-user", { role: "user" }),
+  }), initial);
+
+  const event = {
+    type: "message_update", stream: "delta", deltaText: "正在",
+    message: message("answer", { content: "", status: "streaming" }),
+  };
+  const first = projectMessageUpdate(initial, event);
+  const second = projectMessageUpdate(first, { ...event, deltaText: "处理" });
+  assert.deepEqual(second.map(({ id }) => id), ["user", "answer"]);
+  assert.equal(second[1].content, "正在处理");
+  assert.equal(first[1].content, "正在");
+  assert.deepEqual(initial, [user]);
 });

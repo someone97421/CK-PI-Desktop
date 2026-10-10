@@ -211,8 +211,7 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
           data: String(error),
         });
       }));
-    // Persist the completed branch as the active regenerate revision when the
-    // latest user turn carries revision metadata (ChatGPT-style history).
+    // 更新当前分叉的归档引用；分叉起点可能早于本轮提问。
     trackWrite((async () => {
       try {
         if (!runtimeState.host) return;
@@ -240,10 +239,11 @@ function persistAgentEvent(envelope: AgentEventEnvelope): UiMessage | undefined 
         }>("session.saveActiveRevision", { sessionId: envelope.sessionId });
         const root = saved.saved?.root;
         if (!root) return;
+        // 这里只回填旧根的分支信息，不能将窗口外的历史消息作为新消息追加。
         emitAgentEvent({
           sessionId: envelope.sessionId,
           ts: Date.now(),
-          event: { type: "message_end", message: root },
+          event: { type: "message_update", message: root },
         } satisfies AgentEventEnvelope);
       } catch (error) {
         logger.app("persistence", "warn", "save active regenerate branch failed", {

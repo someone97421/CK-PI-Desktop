@@ -1,6 +1,6 @@
 import { preservePlanHistory } from "./plan-history";
 import type { AgentEvent, MessageAttachment, UiMessage } from "@pi-desktop/shared";
-import { formatPromptPathText, locateInlinePromptPaths } from "@pi-desktop/shared";
+import { applyMessageUpdate, formatPromptPathText, locateInlinePromptPaths } from "@pi-desktop/shared";
 import {
   getSessionMessageSnapshot,
   registerSessionMessageAppend,
@@ -61,6 +61,18 @@ export function optimisticUserMessage(
     status: "complete",
     ...(attachments.length ? { attachments } : {}),
   };
+}
+
+/** 用户更新只回填已加载的记录；窗口外的历史分叉根由历史分页加载。 */
+export function projectMessageUpdate(
+  messages: UiMessage[],
+  event: Extract<AgentEvent, { type: "message_update" }>,
+): UiMessage[] {
+  const normalized = dedupeSessionMessages(messages);
+  const index = getSessionMessageSnapshot(normalized).positions.get(event.message.id);
+  if (event.message.role === "user" && index === undefined) return normalized;
+  const previous = index === undefined ? undefined : normalized[index];
+  return upsertLiveSessionMessage(normalized, applyMessageUpdate(previous, event));
 }
 
 /**
