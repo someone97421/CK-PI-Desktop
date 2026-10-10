@@ -561,7 +561,7 @@ function delegationSummary(record: DelegationRecord): Record<string, unknown> {
     execution: record.execution ?? 1,
     executionId: delegationExecutionId(record.delegationId, record.execution ?? 1),
     canResume: (!record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested) &&
-      (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "") : false)),
+      (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? (record.durableGeneration ?? 0) > 0 && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "") : false)),
     persistenceState: record.persistenceState ?? (record.isColdDisk ? "durable-ready" : "memory-only"),
     ...(record.persistenceState === "persistence-error" && record.persistenceReason ? { reason: record.persistenceReason } : {}),
     source: record.source ?? (record.isColdDisk ? "disk" : "memory"),
@@ -1580,7 +1580,7 @@ export class DesktopAgentRuntime {
   private delegations = new Map<string, DelegationRecord>();
   readonly persistenceClient: SubagentPersistenceClient;
   private readonly savedDelegationResults: Map<string, SubagentDirectoryEntry>;
-  private subagentDiscovery?: Promise<void>;
+  private subagentDiscovery?: Promise<boolean>;
   private supervisionInbox = new Map<string, { delegationId: string; epoch: number; text: string; priority: number;
     reportRange?: { first: number; last: number; fromStep: number; toStep: number } }>();
   private supervisionWaiters = new Set<() => void>();
@@ -2114,17 +2114,37 @@ Delegation rules:
 
   initSubagentPersistence(): Promise<void> {
     this.importSubagentEntries([...this.savedDelegationResults.values()].filter((entry) => !this.delegations.has(entry.delegationId)));
+    return this.refreshSubagentSnapshots().then(() => undefined);
+  }
+
+  /** 合并并发的目录查询；只有完整查询成功后，才能把缺少记录判为不可用。 */
+  private refreshSubagentSnapshots(): Promise<boolean> {
     return this.subagentDiscovery ??= (async () => {
       const deadline = Date.now() + 5_000;
+      const before = new Map([...this.delegations].filter(([, record]) =>
+        record.isColdDisk && !record.run && !record.resumingLock && !record.stopRequested && record.status === "completed"));
+      const found = new Set<string>();
       let cursor: string | undefined;
       do {
-        if (this.disposed) return;
+        if (this.disposed) return false;
         const page = await this.persistenceClient.listEntries({ sessionId: this.sessionId, limit: 100, cursor }).catch(() => null);
-        if (!page || this.disposed) return;
+        if (!page || this.disposed) return false;
+        for (const entry of page.entries) found.add(entry.delegationId);
         this.importSubagentEntries(page.entries);
-        if (!page.nextCursor || page.nextCursor === cursor) return;
+        if (!page.nextCursor) {
+          for (const [id, record] of before) {
+            if (found.has(id) || this.delegations.get(id) !== record || !record.isColdDisk || record.run ||
+                record.resumingLock || record.stopRequested || record.status !== "completed") continue;
+            record.persistenceState = "unavailable";
+            record.persistenceReason = "未找到本轮可用的快照记录";
+            record.durableGeneration = 0;
+          }
+          return true;
+        }
+        if (page.nextCursor === cursor) return false;
         cursor = page.nextCursor;
       } while (Date.now() < deadline);
+      return false;
     })().finally(() => { this.subagentDiscovery = undefined; });
   }
 
@@ -2157,7 +2177,7 @@ Delegation rules:
         completion: Promise.resolve(), resolveCompletion: () => {}, abort: () => {},
         stopRequested: entry.status === "revoked", startedEpoch: this.turnEpoch, reportDelivered: true,
         parentToolCallId: entry.parentToolCallId, taskTurnId: entry.parentTurnId,
-        persistenceState: entry.persistenceState, durableRevision: entry.revision,
+        persistenceState: entry.persistenceState, persistenceReason: entry.reason, durableRevision: entry.revision,
         durableGeneration: entry.snapshotGeneration, source: "disk", isColdDisk: true,
         diskEntry: entry, activeDurationMs: 0, lastActivityAt: entry.updatedAt,
       });
@@ -5249,7 +5269,7 @@ Delegation rules:
     const persistenceState: SubagentPersistenceState = record.persistenceState ?? (this.persistenceClient.available ? "durable-ready" : "memory-only");
 
     if (record.isColdDisk) {
-      canResume = isCompleted && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "");
+      canResume = isCompleted && (record.durableGeneration ?? 0) > 0 && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "");
     } else {
       canResume = !this.disposed && isCompleted && !record.contextReleased && record.run?.canResume === true;
     }
@@ -5260,11 +5280,14 @@ Delegation rules:
       else if (record.status === "running") reason = "Still running; use TaskGuide.";
       else if (record.stopRequested || record.status === "stopped" || record.persistenceState === "revoked") reason = "Subagent was stopped/revoked.";
       else if (record.status === "failed" || record.persistenceState === "failed") reason = "Subagent execution failed.";
+      else if (record.isColdDisk && persistenceState === "pending-validation" && !record.durableGeneration) reason = "快照状态尚未查询";
       else if (record.contextReleased && !record.durableGeneration) reason = "Context released; persistent snapshot unavailable.";
       else reason = "Only normally completed executions with valid snapshots can resume.";
     }
 
-    if (persistenceState === "persistence-error" && record.persistenceReason) {
+    if (record.isColdDisk && !canResume && record.persistenceReason) {
+      reason = record.persistenceReason;
+    } else if (persistenceState === "persistence-error" && record.persistenceReason) {
       reason = reason ? `${record.persistenceReason} ${reason}` : record.persistenceReason;
     }
 
@@ -5281,33 +5304,20 @@ Delegation rules:
   }
 
   async subagentRecallStatusAsync(delegationId: string): Promise<SubagentRecallStatus> {
-    const syncStatus = this.subagentRecallStatus(delegationId);
-    if (syncStatus.status !== "unavailable") return syncStatus;
-    if (!this.persistenceClient.supported) return syncStatus;
-    try {
-      let cursor: string | undefined;
-      do {
-      const listRes = await this.persistenceClient.listEntries({ sessionId: this.sessionId, limit: 100, cursor });
-      const entry = listRes.entries.find((e) => e.delegationId === delegationId);
-      if (entry) {
-        return {
-          delegationId,
-          execution: entry.execution,
-          status: entry.status,
-          canResume: entry.canResume,
-          source: "disk",
-          persistenceState: entry.persistenceState,
-          reason: entry.reason,
-          snapshotVersion: entry.snapshotGeneration,
-        };
-      }
-      if (!listRes.nextCursor || listRes.nextCursor === cursor) break;
-      cursor = listRes.nextCursor;
-      } while (cursor);
-    } catch {
-      // Fallback to syncStatus
-    }
-    return syncStatus;
+    const isLive = () => {
+      const record = this.delegations.get(delegationId);
+      return record && (!record.isColdDisk || record.run || record.resumingLock || record.stopRequested);
+    };
+    if (isLive() || !this.persistenceClient.supported) return this.subagentRecallStatus(delegationId);
+    const complete = await this.refreshSubagentSnapshots();
+    // 查询期间可能开始续跑或停止；始终以此刻的内存状态为准。
+    const current = this.subagentRecallStatus(delegationId);
+    if (isLive()) return current;
+    if (current.status !== "completed" && current.status !== "unavailable") return current;
+    if (!complete) return { ...current, persistenceState: "pending-validation", canResume: false,
+      snapshotVersion: undefined, reason: "快照状态暂时查询失败，请稍后刷新" };
+    if (current.status === "unavailable") return { ...current, persistenceState: "unavailable", reason: "未找到该任务的快照记录" };
+    return current;
   }
 
   private publishSubagentExecution(record: DelegationRecord, phase: "started" | "finished", details: Record<string, unknown>): void {
@@ -5353,7 +5363,7 @@ Delegation rules:
         if (!isRecord(params) || typeof params.delegationId !== "string" || typeof params.instruction !== "string" ||
           !params.instruction.trim() || params.instruction.length > 12_000 || !Number.isSafeInteger(params.expectedExecution) || Number(params.expectedExecution) < 1) return fail("Provide delegationId, instruction (1–12000 characters) and a positive expectedExecution from TaskList.");
         let found = this.delegations.get(params.delegationId);
-        if (!found || (found.isColdDisk && found.persistenceState === "unavailable")) {
+        if (!found || (found.isColdDisk && !found.run && !found.stopRequested)) {
           await this.initSubagentPersistence();
           found = this.delegations.get(params.delegationId);
         }
@@ -5380,7 +5390,7 @@ Delegation rules:
         }
 
         // 3. CanResume check
-        const coldCandidate = record.isColdDisk && record.status === "completed" && !record.stopRequested &&
+        const coldCandidate = record.isColdDisk && record.status === "completed" && !record.stopRequested && (record.durableGeneration ?? 0) > 0 &&
           (record.persistenceState === "pending-validation" || record.persistenceState === "durable-ready");
         if (!coldCandidate && !this.subagentRecallStatus(record.delegationId).canResume) {
           return this.subagentRecoveryResult(toolCallId, record, params.instruction, "The original context is not available for this execution.");

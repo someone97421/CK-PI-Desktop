@@ -322,7 +322,10 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     const session = this.sessions.get(control.sessionId);
     const status = control.status === "running" && (!session || session.closed || session.instanceGeneration !== control.instanceGeneration) ? "interrupted" : control.status;
     const info = control.snapshotGeneration > 0
-      ? await lstat(this.files.path(control.sessionId, control.delegationId, `generation-${control.snapshotGeneration}.bin`)).catch(() => null) : null;
+      ? await lstat(this.files.path(control.sessionId, control.delegationId, `generation-${control.snapshotGeneration}.bin`)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }) : null;
     const exists = Boolean(info?.isFile() && !info.isSymbolicLink() && info.mtimeMs >= Date.now() - DEFAULT_RETENTION_DAYS * 86_400_000);
     const persistenceState = status === "completed" ? exists ? "pending-validation" : "cleaned" : status === "running" ? "saving" : status;
     return { sessionId: control.sessionId, delegationId: control.delegationId, revision: control.revision,
@@ -344,7 +347,15 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       try {
         const control = await this.control(req.sessionId, dir.name);
         if (control) {
-          entries.push(await this.directoryEntry(control));
+          entries.push(await this.directoryEntry(control).catch(() => ({
+            sessionId: control.sessionId, delegationId: control.delegationId,
+            execution: control.execution, executionId: control.executionId, revision: control.revision,
+            status: control.status, snapshotGeneration: 0, canResume: false, source: "disk" as const,
+            persistenceState: "pending-validation" as const, durableState: "pending-validation" as const,
+            updatedAt: control.updatedAt, agentName: control.agentName, modelId: control.modelId,
+            lastResult: control.lastResult, lastReportSummary: control.lastReportSummary,
+            reason: "快照状态暂时查询失败，请稍后刷新",
+          })));
         }
       }
       catch { /* 一份损坏记录不影响其余任务。 */ }
@@ -358,8 +369,11 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       await this.ready();
       const control = await this.control(sessionId, id);
       if (control) { const entry = await this.directoryEntry(control); return { ...entry, snapshotVersion: entry.snapshotGeneration }; }
-    } catch { /* 卡片查询不影响聊天。 */ }
-    return { delegationId: id, status: "unavailable", canResume: false, source: "disk", persistenceState: "unavailable", reason: "完整上下文暂不可用" };
+    } catch {
+      return { delegationId: id, status: "unavailable", canResume: false, source: "disk",
+        persistenceState: "pending-validation", reason: "快照状态暂时查询失败，请稍后刷新" };
+    }
+    return { delegationId: id, status: "unavailable", canResume: false, source: "disk", persistenceState: "unavailable", reason: "未找到该任务的快照记录" };
   }
 
   async confirmEvents(req: SubagentConfirmEventsRequest): Promise<SubagentEventAckReceipt> {

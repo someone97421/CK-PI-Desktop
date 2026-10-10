@@ -211,6 +211,66 @@ function createRuntime(
   });
 }
 
+describe("历史任务快照状态查询", () => {
+  const history = (): UiMessage[] => [{ id: "finished", role: "tool", toolName: "TaskExecution",
+    createdAt: "2026-10-10T00:00:00Z", content: "",
+    toolResult: { details: { delegationId: "saved-task", sessionId: "session-1", execution: 1,
+      status: "completed", report: "已有结果", agent: "explorer" } } } as UiMessage];
+  const entry = () => ({ sessionId: "session-1", delegationId: "saved-task", execution: 1,
+    executionId: "saved-task", revision: 2, snapshotGeneration: 1, status: "completed" as const,
+    persistenceState: "pending-validation" as const, durableState: "pending-validation" as const,
+    source: "disk" as const, canResume: true, updatedAt: 1 });
+
+  it("历史完成记录等待磁盘查询；并发卡片复用查询并读取已保存版本", async () => {
+    const runtime = createRuntime({ history: history() });
+    let finish!: (page: any) => void;
+    const list = vi.spyOn(runtime.persistenceClient, "listEntries").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    try {
+      expect(runtime.subagentRecallStatus("saved-task")).toMatchObject({
+        status: "completed", persistenceState: "pending-validation", canResume: false });
+      const initial = runtime.initSubagentPersistence();
+      const first = runtime.subagentRecallStatusAsync("saved-task");
+      const second = runtime.subagentRecallStatusAsync("saved-task");
+      expect(list).toHaveBeenCalledTimes(1);
+      finish({ sessionId: "session-1", entries: [entry()], totalCount: 1 });
+      await initial;
+      for (const result of await Promise.all([first, second])) {
+        expect(result).toMatchObject({ status: "completed", snapshotVersion: 1, canResume: true });
+      }
+    } finally { await runtime.dispose(); }
+  });
+
+  it("查询失败保持待查询，查询成功后才确认缺失，并允许再次发现快照", async () => {
+    const runtime = createRuntime({ history: history() });
+    const list = vi.spyOn(runtime.persistenceClient, "listEntries")
+      .mockRejectedValueOnce(new Error("storage offline"))
+      .mockResolvedValueOnce({ sessionId: "session-1", entries: [], totalCount: 0 })
+      .mockResolvedValueOnce({ sessionId: "session-1", entries: [entry()], totalCount: 1 });
+    try {
+      expect(await runtime.subagentRecallStatusAsync("saved-task")).toMatchObject({
+        persistenceState: "pending-validation", canResume: false, reason: "快照状态暂时查询失败，请稍后刷新" });
+      expect(await runtime.subagentRecallStatusAsync("saved-task")).toMatchObject({ persistenceState: "unavailable", canResume: false });
+      expect(await runtime.subagentRecallStatusAsync("saved-task")).toMatchObject({ snapshotVersion: 1, canResume: true });
+      expect(list).toHaveBeenCalledTimes(3);
+    } finally { await runtime.dispose(); }
+  });
+
+  it.each(["running", "stopped"])("迟到的目录结果不覆盖本地 %s 状态", async (status) => {
+    const runtime = createRuntime({ history: history() });
+    let finish!: (page: any) => void;
+    vi.spyOn(runtime.persistenceClient, "listEntries").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    try {
+      const pending = runtime.subagentRecallStatusAsync("saved-task");
+      const record = (runtime as any).delegations.get("saved-task");
+      Object.assign(record, { status, isColdDisk: false, execution: 2, stopRequested: status === "stopped",
+        persistenceState: status === "stopped" ? "revoked" : "saving" });
+      finish({ sessionId: "session-1", entries: [entry()], totalCount: 1 });
+      expect(await pending).toMatchObject({ status, execution: 2, canResume: false });
+      record.status = "stopped";
+    } finally { await runtime.dispose(); }
+  });
+});
+
 function runtimeTool(runtime: DesktopAgentRuntime, name: string): AgentTool {
   const internal = runtime as unknown as { agent: { state: { tools: AgentTool[] } } };
   const tool = internal.agent.state.tools.find((entry) => entry.name === name);

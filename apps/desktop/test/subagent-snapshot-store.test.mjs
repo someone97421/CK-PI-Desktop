@@ -88,3 +88,18 @@ test("一个任务控制文件损坏不影响其余快照目录", async () => fi
   const result = await store.listEntries({ sessionId: "session" });
   assert.deepEqual(result.entries.map((entry) => entry.delegationId), ["healthy"]);
 }));
+
+test("卡片查询区分缺少快照与读取失败，并可重新发现有效快照", async () => fixture(async ({ store, request }) => {
+  const missing = await store.readRecallStatus("session", "task");
+  assert.equal(missing.persistenceState, "unavailable");
+  await store.commitSnapshot(await request(1));
+  const read = store.files.readBounded.bind(store.files);
+  store.files.readBounded = async () => { throw new Error("temporary read failure"); };
+  const unavailable = await store.readRecallStatus("session", "task");
+  assert.equal(unavailable.persistenceState, "pending-validation");
+  assert.equal(unavailable.canResume, false);
+  store.files.readBounded = read;
+  const saved = await store.readRecallStatus("session", "task");
+  assert.equal(saved.snapshotVersion, 1);
+  assert.equal(saved.canResume, true);
+}));

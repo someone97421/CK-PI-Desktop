@@ -5,6 +5,7 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "修复已保存的子代理快照误报不可用，保存完成后更新卡片状态，并支持手动刷新查询结果。",
   "重构子代理快照保存与恢复：后台保存失败不阻断任务，优先使用内存续跑，快照不可用时提供已有结果供继续处理。",
   "修复新版运行库扩展字段导致的快照保存失败，移除历史指纹变化引起的整会话隔离，并简化保存设置说明。",
   "统一上下文溢出错误识别，避免超长请求被误判为临时故障而反复重试，保留主代理与子代理的压缩恢复。",
@@ -49,6 +50,7 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Fix saved subagent snapshots incorrectly appearing unavailable, refresh cards after saving, and allow manual status refresh.",
   "Refactor subagent snapshot saving and recovery: background storage failures do not block tasks, continuation prefers memory, and existing results remain available when snapshots cannot be restored.",
   "Fix snapshot failures caused by new runtime metadata, remove session-wide isolation on transcript changes, and simplify persistence settings text.",
   "Align context-overflow classification to avoid transient retries of oversized requests while preserving parent and subagent compaction recovery.",

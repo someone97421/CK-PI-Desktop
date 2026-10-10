@@ -26,7 +26,7 @@ export function subagentResultsFromHistory(messages: readonly UiMessage[]): Map<
       : previous?.execution === execution ? previous.lastReportSummary ?? "" : "";
     const task = typeof details.task === "string" ? details.task
       : object(message.toolArgs) && typeof message.toolArgs.task === "string" ? message.toolArgs.task : previous?.taskInstruction;
-    const persistenceState = status === "completed" ? "unavailable" : status;
+    const persistenceState = status === "completed" ? "pending-validation" : status;
     entries.set(details.delegationId, {
       sessionId: typeof details.sessionId === "string" ? details.sessionId : "",
       delegationId: details.delegationId, execution, executionId: typeof details.executionId === "string" ? details.executionId : "",

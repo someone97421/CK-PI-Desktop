@@ -9,7 +9,7 @@ function row(execution: number, status: string, report = ""): UiMessage {
 
 it("普通结果能独立成为续接材料，但不伪装为完整上下文", () => {
   const records = subagentResultsFromHistory([row(1, "completed", "问题在文件第十行")]);
-  expect(records.get("task")).toMatchObject({ canResume: false, persistenceState: "unavailable", taskInstruction: "定位问题", lastReportSummary: "问题在文件第十行" });
+  expect(records.get("task")).toMatchObject({ canResume: false, persistenceState: "pending-validation", snapshotGeneration: 0, taskInstruction: "定位问题", lastReportSummary: "问题在文件第十行" });
 });
 
 it("同轮迟到开始记录不覆盖完成结果，停止记录不被完成记录覆盖", () => {

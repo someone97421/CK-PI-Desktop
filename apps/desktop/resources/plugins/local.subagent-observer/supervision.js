@@ -51,6 +51,9 @@ const I18N = {
     "chat.subagentPersistenceState.unavailable": "快照不可用",
     "chat.subagentPersistenceState.persistence-error": "保存失败",
     "chat.subagentPersistenceState.cleaned": "已清理",
+    "chat.subagentSnapshotQueryPending": "快照待查询",
+    "chat.subagentSnapshotSaved": "快照已保存",
+    "chat.subagentRefreshRecall": "刷新状态",
   },
   "en": {
     "chat.subagentReportProgress": "Next report: {{current}} / {{interval}} calls · {{total}} total tool calls",
@@ -102,6 +105,9 @@ const I18N = {
     "chat.subagentPersistenceState.unavailable": "Snapshot unavailable",
     "chat.subagentPersistenceState.persistence-error": "Persistence error",
     "chat.subagentPersistenceState.cleaned": "Snapshot cleaned",
+    "chat.subagentSnapshotQueryPending": "Snapshot status pending",
+    "chat.subagentSnapshotSaved": "Snapshot saved",
+    "chat.subagentRefreshRecall": "Refresh status",
   },
 };
 
@@ -218,18 +224,21 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
   }
 
   if (!running && (execution !== undefined || recall)) {
-    const stateText = recall?.persistenceState
+    const stateText = recall?.persistenceState === "pending-validation"
+      ? translate(locale, recall.snapshotVersion > 0 ? "chat.subagentSnapshotSaved" : "chat.subagentSnapshotQueryPending")
+      : recall?.persistenceState
       ? translate(locale, `chat.subagentPersistenceState.${recall.persistenceState}`)
       : translate(locale, resumable ? "chat.subagentRecallReady" : "chat.subagentRecallCheck");
     const badges = [stateText];
-    if (recall?.source && recall.persistenceState !== "memory-only" && recall.persistenceState !== "durable-ready") {
+    if (recall?.source && recall.persistenceState !== "memory-only" && recall.persistenceState !== "durable-ready" &&
+        (recall.source !== "disk" || recall.snapshotVersion > 0)) {
       badges.push(translate(locale, recall.source === "disk" ? "chat.subagentSourceDisk" : "chat.subagentSourceMemory"));
     }
-    if (recall?.snapshotVersion !== undefined) {
+    if (recall?.snapshotVersion > 0) {
       badges.push(translate(locale, "chat.subagentSnapshotVersion", { version: recall.snapshotVersion }));
     }
     const tooltip = recall?.reason
-      ? (recall.snapshotVersion !== undefined
+      ? (recall.snapshotVersion > 0
           ? `${translate(locale, "chat.subagentSnapshotVersion", { version: recall.snapshotVersion })} · ${recall.reason}`
           : recall.reason)
       : (recall?.source === "memory" ? translate(locale, "chat.subagentRecallMemoryOnly") : undefined);
@@ -240,6 +249,10 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
       text: badges.join(" · "),
       ...(tooltip ? { title: tooltip } : {}),
     });
+    if (!recall || ["saving", "unavailable", "persistence-error", "pending-validation"].includes(recall.persistenceState)) {
+      statusCopyChildren.push({ kind: "action", key: "refresh-recall", action: "refresh",
+        text: translate(locale, "chat.subagentRefreshRecall") });
+    }
   }
 
   if (!live && running) {
@@ -439,6 +452,9 @@ async function handleSupervisionAction(context, action, { desktopInvoke, getSess
   if (typeof desktopInvoke !== "function") {
     throw new Error("desktopInvoke helper is required");
   }
+
+  // 动作完成后插件重新渲染，并通过只读接口获取最新状态。
+  if (action === "refresh") return { ok: true };
 
   const expectedExecution = Number.isSafeInteger(context.execution)
     ? context.execution

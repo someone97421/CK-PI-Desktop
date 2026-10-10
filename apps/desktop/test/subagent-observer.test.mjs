@@ -8,6 +8,21 @@ test("无 delegationId 时 renderSupervision 返回 null", async () => {
   assert.equal(node, null);
 });
 
+test("尚未查到快照不显示磁盘或零版本，刷新后显示已保存", async () => {
+  let recall = { execution: 1, status: "completed", persistenceState: "pending-validation", source: "disk", canResume: false, snapshotVersion: 0 };
+  const context = { sessionId: "s1", delegationId: "del-1", execution: 1, running: false, locale: "zh-CN" };
+  const helpers = { desktopInvoke: async () => recall };
+  const before = JSON.stringify(await renderSupervision(context, helpers));
+  assert.match(before, /快照待查询/);
+  assert.doesNotMatch(before, /磁盘|快照 v0/);
+  assert.match(before, /刷新状态/);
+  await handleSupervisionAction(context, "refresh", helpers);
+  recall = { ...recall, canResume: true, snapshotVersion: 1 };
+  const after = JSON.stringify(await renderSupervision(context, helpers));
+  assert.match(after, /快照已保存/);
+  assert.match(after, /快照 v1/);
+});
+
 test("运行中子代理正确生成进度文本和停止按钮，不查询 recall", async () => {
   let recallQueried = false;
   const desktopInvoke = async (operation) => {

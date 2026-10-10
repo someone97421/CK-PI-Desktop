@@ -74,6 +74,36 @@ test("观测条上下文经插件定向停止子代理，保留宿主专用 IPC"
   await assert.rejects(() => handlers.get(protocol.IPC.invoke.subagentStop)({ sessionId: "session-1" }), /delegationId/);
 });
 
+test("保存回执更新任务消息时，协作进度不变也刷新观测条上下文", async () => {
+  let previousDeps;
+  let previousContext;
+  const jsx = (type, props) => ({ type, props });
+  const component = await loadSource("../src/features/chat/transcript/SubagentSupervision.tsx", {
+    react: { useMemo: (factory, deps) => {
+      if (!previousDeps || deps.some((value, index) => value !== previousDeps[index])) {
+        previousContext = factory();
+        previousDeps = deps;
+      }
+      return previousContext;
+    } },
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+    "react-i18next": { useTranslation: () => ({ i18n: { resolvedLanguage: "zh-CN" } }) },
+    "../../../lib/tool-presentation": { toolResultPayload: (message) => message.toolResult.details },
+    "../../../stores/app-store": { useAppStore: (select) => select({ activeSessionId: "s1", runningSessions: {} }) },
+    "../../../components/PluginInlineSlot": { PluginInlineSlot: "plugin-inline" },
+  });
+  const details = { delegationId: "saved-task", persistenceState: "saving", collaboration: {
+    execution: 1, reportIntervalSteps: 4, phase: "finished", completedSteps: 4,
+  } };
+  const message = { toolResult: { details } };
+  const initial = component.SubagentSupervision({ message, running: false }).props.context;
+  assert.equal(component.SubagentSupervision({ message, running: false }).props.context, initial);
+  const savedMessage = { ...message, toolResult: { details: { ...details, persistenceState: "durable-ready" } } };
+  const saved = component.SubagentSupervision({ message: savedMessage, running: false }).props.context;
+  assert.notEqual(saved, initial);
+  assert.equal(saved.collaboration, initial.collaboration);
+});
+
 test("编辑器保留固定汇报间隔、允许留空并拒绝非法值", async () => {
   const editor = await loadSource("../src/components/settings/SubagentEditorSheet.tsx");
   const draft = { ...editor.emptySubagentDraft(), name: "worker", description: "Work", body: "Inspect" };

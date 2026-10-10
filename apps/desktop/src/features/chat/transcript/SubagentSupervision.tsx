@@ -33,11 +33,12 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
   const delegationId = payload && typeof payload === "object" ? (payload as { delegationId?: string }).delegationId : undefined;
   const execution = collaboration?.execution;
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  // 保存回执只更新任务消息时，也要重新查询插件状态。
   const context = useMemo<PluginInlineViewContext | null>(() => sessionId && delegationId ? {
     sessionId, delegationId, running, live, compact, locale,
     ...(execution !== undefined ? { execution } : {}),
     ...(parentTurnId ? { parentTurnId } : {}),
     ...(collaboration ? { collaboration } : {}),
-  } : null, [sessionId, delegationId, running, live, compact, locale, execution, parentTurnId, collaboration]);
+  } : null, [message, sessionId, delegationId, running, live, compact, locale, execution, parentTurnId, collaboration]);
   return context ? <PluginInlineSlot slot="subagent.supervision" context={context} /> : null;
 }
