@@ -96,6 +96,7 @@ test("the plugins page shows the file scope behind a file permission", () => {
   // so the row has to carry it or the user is approving a blank cheque.
   assert.match(pageSrc, /"fs\.write": "high"/);
   assert.match(pageSrc, /"fs\.read": "medium"/);
+  assert.match(pageSrc, /"background\.service": "medium"/);
   assert.match(pageSrc, /function FsScopeChips\(/);
   assert.match(pageSrc, /t\("plugins\.fsAsksEachTime"\)/);
   assert.match(pageSrc, /t\("plugins\.legacyFsDowngraded"\)/);
@@ -260,4 +261,34 @@ test("verified trust is not something a catalog entry can grant itself", () => {
   assert.match(pageSrc, /function showsVerifiedBadge\(/);
   assert.match(pageSrc, /\{showsVerifiedBadge\(item\) \?/);
   assert.match(pageSrc, /\{showsVerifiedBadge\(detail\) \?/);
+});
+
+test("插件风险分级覆盖自有会话与界面能力", () => {
+  const expected = {
+    "provider.register": "high",
+    "project.create": "high",
+    "session.import": "high",
+    "session.delete.own": "high",
+    "background.service": "medium",
+    "session.read.own": "medium",
+    "session.update.own": "medium",
+    "composer.transform": "medium",
+    "ui.view": "low",
+    "ui.settings": "low",
+    "ui.window.appearance": "low",
+    "notify": "low",
+  };
+  const modelEntries = [...pageSrc.matchAll(/"([a-zA-Z0-9.]+)":\s*"(low|medium|high)"/g)].map((m) => ({
+    permission: m[1],
+    risk: m[2],
+  }));
+  const modelMap = Object.fromEntries(modelEntries.map((e) => [e.permission, e.risk]));
+
+  for (const [permission, expectedRisk] of Object.entries(expected)) {
+    assert.equal(
+      modelMap[permission],
+      expectedRisk,
+      `${permission} 的风险等级应为 ${expectedRisk}`,
+    );
+  }
 });

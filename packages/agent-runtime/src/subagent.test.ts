@@ -1012,6 +1012,42 @@ describe("SubagentRun context budget (ADR 0299)", () => {
     expect(result.report).toContain("Narrow the task");
   });
 
+  it.each([
+    ["DashScope/Qwen", '400: {"code":"invalid_parameter_error","message":"Range of input length should be [1, 98304]"}'],
+    ["Bedrock", "Validation error: Input is too long for requested model."],
+  ])("remaps a %s overflow without retrying when compaction is disabled", async (_provider, errorMessage) => {
+    const { run } = createRun({ compactionEnabled: false });
+    const failure = {
+      ...assistantMessage({ content: [], stopReason: "error" }),
+      errorMessage,
+    };
+    const state = { messages: [] as Array<Record<string, unknown>> };
+    const prompt = vi.fn(async () => {
+      state.messages = [{ role: "user", content: "task" }, failure];
+      run.handleEvent({ type: "message_start", message: failure });
+      run.handleEvent({ type: "message_end", message: failure });
+      // An overflow re-sent unchanged fails identically; it must not claim
+      // the transient budget the way a gateway 502 does.
+      expect(run.pendingProviderRetry).toBeUndefined();
+    });
+    const continueRun = vi.fn(async () => undefined);
+    run.agent = {
+      state,
+      prompt,
+      continue: continueRun,
+      waitForIdle: vi.fn(async () => undefined),
+      abort: vi.fn(),
+    };
+
+    const result = await (run as unknown as SubagentRun).run();
+
+    expect(result.status).toBe("failed");
+    expect(result.error?.code).toBe("SUBAGENT_CONTEXT_OVERFLOW");
+    expect(result.report).toContain("Narrow the task");
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(continueRun).not.toHaveBeenCalled();
+  });
+
   it("keeps the actionable overflow code at the terminal boundary", () => {
     const { run } = createRun();
 

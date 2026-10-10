@@ -5,6 +5,9 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "统一上下文溢出错误识别，避免超长请求被误判为临时故障而反复重试，保留主代理与子代理的压缩恢复。",
+  "改善 Windows 插件下载的证书吊销查询容错，校准插件权限风险标识，并为失效的生图模型选择显示错误反馈。",
+  "修复侧栏菜单在窗口底部被截断，以及 Windows 窗口恢复后圆角丢失的问题。",
   "恢复首条消息自动标题，保留手动标题优先及命名插件后续优化；提示词增强继续由可选插件提供。",
   "升级 Pi 1.1.0，改进响应计时和上下文估算，保留独立压缩模型、原生搜索与 TaskResume。",
   "全局和项目指令分别分配读取预算，截断时明确提示；修复系统事件重建后的重复记录。",
@@ -44,6 +47,9 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Align context-overflow classification to avoid transient retries of oversized requests while preserving parent and subagent compaction recovery.",
+  "Improve Windows plugin-download tolerance for offline revocation checks, align permission risk labels and report stale image-model selections.",
+  "Keep sidebar menus reachable near the viewport bottom and restore Windows window corners after visibility changes.",
   "Restore first-prompt titles while preserving manual names and later plugin refinement; keep prompt enhancement in an optional plugin.",
   "Upgrade to Pi 1.1.0 with improved response timing and context estimates while retaining dedicated compaction, hosted search and TaskResume.",
   "Give global and project instructions separate budgets with explicit truncation notices, and deduplicate restored system events.",
