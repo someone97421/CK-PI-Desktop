@@ -1636,6 +1636,111 @@ fn a_project_scope_survives_a_reload_and_a_reinstall() {
     }
 }
 
+#[test]
+fn relocated_installed_plugins_use_the_current_data_directory() {
+    let _env = lock_market_env();
+    for source in ["installed", "marketplace"] {
+        for keep_old_directory in [true, false] {
+            let dir = tempdir().unwrap();
+            let old_data = dir.path().join("old-data");
+            let new_data = dir.path().join("new-data");
+            let manifest = json!({
+                "schemaVersion": 1,
+                "id": "demo.relocated",
+                "name": "Relocated",
+                "version": "0.1.0",
+                "main": "main.js",
+            });
+            let mut old = offline_manager(&old_data);
+            let old_path = old.installed_dir("demo.relocated");
+            write_plugin(&old_path, manifest.clone(), &[]);
+            let mut registered = old.load_dev(old_path.to_str().unwrap()).unwrap();
+            registered.source = source.into();
+            registered.enabled = false;
+            registered.scope = ActivationScope {
+                mode: ActivationMode::Projects,
+                projects: vec!["/work/project".into()],
+            };
+            old.upsert_summary(registered.clone()).unwrap();
+
+            let new_path = new_data.join("plugins/installed/demo.relocated");
+            write_plugin(&new_path, manifest, &[]);
+            fs::copy(old.registry_path(), new_data.join("plugins/registry.json")).unwrap();
+            if !keep_old_directory {
+                fs::remove_dir_all(&old_data).unwrap();
+            }
+
+            let mut migrated = offline_manager(&new_data);
+            let repaired = migrated.get("demo.relocated").unwrap();
+            assert_eq!(repaired.path.as_deref(), new_path.to_str());
+            assert_eq!(repaired.source, source);
+            assert!(!repaired.enabled);
+            assert_eq!(repaired.scope.mode, registered.scope.mode);
+            assert_eq!(repaired.scope.projects, registered.scope.projects);
+            assert_eq!(repaired.permissions, registered.permissions);
+            let persisted: Vec<PluginSummary> =
+                serde_json::from_str(&fs::read_to_string(migrated.registry_path()).unwrap()).unwrap();
+            assert_eq!(
+                persisted
+                    .iter()
+                    .find(|p| p.id == "demo.relocated")
+                    .unwrap()
+                    .path,
+                repaired.path,
+            );
+            // 再次读取保持结果；迁移保留的旧注册表不受影响。
+            migrated.reload_from_disk().unwrap();
+            assert_eq!(migrated.get("demo.relocated").unwrap().path, repaired.path);
+            if keep_old_directory {
+                let original: Vec<PluginSummary> =
+                    serde_json::from_str(&fs::read_to_string(old.registry_path()).unwrap()).unwrap();
+                assert_eq!(
+                    original
+                        .iter()
+                        .find(|p| p.id == "demo.relocated")
+                        .unwrap()
+                        .path
+                        .as_deref(),
+                    old_path.to_str(),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn relocation_preserves_external_paths_and_rejects_unrelated_copies() {
+    let _env = lock_market_env();
+    for (source, copied_id) in [
+        ("dev", Some("demo.relocated")),
+        ("builtin", Some("demo.relocated")),
+        ("installed", Some("demo.other")),
+        ("marketplace", None),
+    ] {
+        let dir = tempdir().unwrap();
+        let external = dir.path().join("external");
+        let mut manifest = json!({
+            "schemaVersion": 1,
+            "id": "demo.relocated",
+            "name": "Relocated",
+            "version": "0.1.0",
+            "main": "main.js",
+        });
+        write_plugin(&external, manifest.clone(), &[]);
+        let mut mgr = offline_manager(&dir.path().join("data"));
+        let mut registered = mgr.load_dev(external.to_str().unwrap()).unwrap();
+        registered.source = source.into();
+        mgr.upsert_summary(registered.clone()).unwrap();
+        if let Some(id) = copied_id {
+            manifest["id"] = json!(id);
+            write_plugin(&mgr.installed_dir("demo.relocated"), manifest, &[]);
+        }
+
+        mgr.reload_from_disk().unwrap();
+        assert_eq!(mgr.get("demo.relocated").unwrap().path, registered.path);
+    }
+}
+
 /// Build a manager whose catalog is already on disk.
 ///
 /// `PluginManager::new` falls back to a built-in catalog when no catalog exists

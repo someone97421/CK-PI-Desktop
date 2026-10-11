@@ -260,7 +260,22 @@ impl PluginManager {
         }
         let raw = fs::read_to_string(path)?;
         self.runtime = serde_json::from_str(&raw).unwrap_or_default();
+        let installed_root = self.data_dir.join("plugins/installed");
+        let mut relocated = false;
         for plugin in &mut self.runtime {
+            // 安装目录随数据目录迁移；旧副本仍存在时也必须使用当前目录。
+            // 内置资源和外部开发目录有各自的生命周期，不在这里重定位。
+            if matches!(plugin.source.as_str(), "installed" | "marketplace") {
+                let installed_path = installed_root.join(sanitize_id(&plugin.id));
+                if plugin.path.as_deref().map(Path::new) != Some(installed_path.as_path()) {
+                    if let Ok(manifest) = Self::read_manifest(&installed_path) {
+                        if manifest.id == plugin.id {
+                            plugin.path = Some(installed_path.to_string_lossy().into_owned());
+                            relocated = true;
+                        }
+                    }
+                }
+            }
             let Some(plugin_path) = plugin.path.as_deref() else {
                 continue;
             };
@@ -273,6 +288,9 @@ impl PluginManager {
             };
             plugin.settings = derive_settings(&manifest);
             plugin.i18n = manifest.i18n.clone();
+        }
+        if relocated {
+            self.save()?;
         }
         Ok(())
     }
