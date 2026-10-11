@@ -2,6 +2,7 @@ mod config_sync_rpc;
 mod scheduled_rpc;
 mod scheduled_tools;
 mod todos;
+mod window_corner_rpc;
 
 use std::io::{self, BufRead, BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -1912,6 +1913,7 @@ async fn handle_request(
                 }
             }))
         }
+        "window.setNativeCornerPreference" => window_corner_rpc::handle(params),
         "keyboard.setGlobalShortcut" => {
             let binding = params
                 .get("binding")

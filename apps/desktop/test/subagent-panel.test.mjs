@@ -13,10 +13,10 @@ const storeSource = await readStoreSource();
 
 
 test("a topology node toggles a session-scoped side-panel selection", () => {
-  assert.match(transcriptSource, /const toggleSubagentPanel = useAppStore\(\(s\) => s\.toggleSubagentPanel\)/);
+  assert.match(transcriptSource, /const openSubagentTab = useAppStore\(\(s\) => s\.openSubagentTab\)/);
   assert.match(transcriptSource, /const panelSelectionId =/);
-  assert.match(transcriptSource, /toggleSubagentPanel\(panelSelectionId\)/);
-  assert.match(transcriptSource, /aria-controls=\{panelOpen \? "subagent-panel" : undefined\}/);
+  assert.match(transcriptSource, /openSubagentTab\(panelSelectionId, agentName \|\| undefined\)/);
+  assert.match(transcriptSource, /work-panel-surface-subagent:/);
   assert.match(transcriptSource, /variant !== "topology" && open/);
   assert.match(transcriptSource, /variant !== "topology" && open && hasDetails/);
   assert.match(storeSource, /subagentPanel: SubagentPanelSelection \| null/);
@@ -47,6 +47,9 @@ test("the work-panel dock hosts subagent details without creating a resource tab
   assert.doesNotMatch(workPanelSource, /setContextOpen/);
 });
 
+const tabSource = await readFile(
+  new URL("../src/components/workpanel/SubagentTranscriptTab.tsx", import.meta.url), "utf8",
+);
 const panelSource = await readFile(
   new URL("../src/components/workpanel/SubagentPanel.tsx", import.meta.url), "utf8",
 );
@@ -61,7 +64,7 @@ test("宿主子代理窗口展示实时过程、任务卡片和失败原因", ()
   assert.match(panelSource, /<SubagentDetail/);
   assert.doesNotMatch(panelSource, /PluginViewTab|local\.subagent-observer/);
   assert.match(panelSource, /buildTranscriptEntries\(messages\)/);
-  assert.match(panelSource, /useTranscriptView\(selection\.sessionId\)/);
+  assert.match(panelSource, /useSubagentTranscriptView\(selection\.sessionId\)/);
   assert.match(panelSource, /collectDelegationFailures\(selected\.turnActivityItems\)/);
   assert.match(panelSource, /delegationFailures=\{delegationFailures\}/);
   assert.match(detailSource, /className="subagent-detail-hero"/);
@@ -74,6 +77,28 @@ test("宿主子代理窗口展示实时过程、任务卡片和失败原因", ()
   assert.match(detailSource, /failure && outcome !== "completed" && outcome !== "running"/);
   assert.match(detailSource, /data-testid="subagent-failure"/);
   assert.match(workPanelCss, /-webkit-line-clamp: 4/);
+});
+test("the delegation tab renders a message list with a read-only composer", () => {
+  assert.match(tabSource, /data-testid="subagent-transcript-tab"/);
+  assert.match(tabSource, /buildSubagentTranscript\(messages, delegationId\)/);
+  assert.match(tabSource, /className="message-row user"/);
+  assert.match(tabSource, /className="message-user-text selectable"/);
+  assert.match(tabSource, /className="message-row assistant"/);
+  assert.match(tabSource, /data-message-id=\{row\.message\.id\}/);
+  assert.match(tabSource, /<Textarea/);
+  assert.match(tabSource, /disabled/);
+  assert.match(tabSource, /rows=\{2\}/);
+  assert.match(tabSource, /placeholder=\{t\("panel\.subagentReadOnly"\)\}/);
+  assert.match(tabSource, /className="subagent-transcript-composer-controls"/);
+  assert.match(tabSource, /subagent-transcript-model-picker/);
+  assert.match(tabSource, /delegateModelId\(delegateMessage\)/);
+  assert.match(tabSource, /delegateThinkingLevel\(delegateMessage\)/);
+  assert.match(tabSource, /<SubagentStopButton sessionId=\{delegateExecution\.sessionId\} delegationId=\{delegateExecution\.delegationId\} execution=\{delegateExecution\.execution\}/);
+  assert.doesNotMatch(tabSource, /subagent-transcript-actions/);
+  assert.match(workPanelCss, /\.subagent-transcript-composer-controls \{/);
+  assert.match(workPanelCss, /\.subagent-transcript-model-picker \{/);
+  // Display-only: no send path may exist in the composer.
+  assert.doesNotMatch(tabSource, /onSubmit|onSend|api\.send/);
 });
 
 test("宿主子代理窗口保持单一滚动区、固定身份栏和过程时间线", () => {

@@ -319,3 +319,15 @@ export type AgentEventEnvelope = {
   /** Definition name of the emitting subagent. */
   agentName?: string;
 };
+
+/** Explicit user cancellation; omitted IDs select this session's running delegates. */
+export type AgentStopSubagentsRequest = {
+  sessionId: string;
+  delegationIds?: string[];
+  /** 可选执行轮次，拒绝历史界面对同一任务新执行的迟到取消。 */
+  expectedExecutions?: Record<string, number>;
+};
+
+export type AgentStopSubagentsResponse = {
+  pending: string[];
+};

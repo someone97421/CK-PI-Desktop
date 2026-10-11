@@ -1,4 +1,4 @@
-import { shell, WebContentsView, type BrowserWindow, type WebContents } from "electron";
+import { shell, View, WebContentsView, type BrowserWindow, type WebContents } from "electron";
 import { realpathSync, statSync, watch, type FSWatcher } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,8 +8,8 @@ import { isAllowedHttpUrl, parseAllowedExternalUrl } from "./safe-open-external"
 /**
  * Work panel embedded preview browser (D100, ADR 0019).
  *
- * A single WebContentsView owned by the main process, attached to the main
- * window and positioned from renderer-measured bounds. The renderer is the
+ * A single WebContentsView owned by the main process, clipped by a native
+ * presentation View positioned from renderer-measured bounds. The renderer is the
  * visibility authority: it hides the view whenever the browser tab is not
  * the active panel surface or a blocking overlay opens (the view always
  * composites above renderer content).
@@ -92,6 +92,7 @@ export function resolveLocalFile(raw: string, root: string | null): string | nul
 
 export class BrowserPane {
   private view: WebContentsView | null = null;
+  private surface: View | null = null;
   private window: BrowserWindow | null = null;
   private visible = false;
   private bounds = { x: 0, y: 0, width: 0, height: 0 };
@@ -309,23 +310,26 @@ export class BrowserPane {
   }
 
   private applyBounds(): void {
-    // Chromium restores capture-time viewport metrics on completion. Keep
-    // native bounds unchanged meanwhile, then apply the latest requested size.
-    if (this.view && this.visible && !this.capturing && !this.view.webContents.isDestroyed()) {
-      this.view.setBounds(this.bounds);
+    // Move and clip the presentation surface immediately, even while Chromium
+    // pins its capture-time viewport. A pending screenshot must not leave the
+    // guest over the conversation when the window or work panel moves.
+    this.surface?.setBounds(this.bounds);
+    if (this.view && this.visible && !this.capturing && this.getWebContents()) {
+      this.view.setBounds({ x: 0, y: 0, width: this.bounds.width, height: this.bounds.height });
     }
   }
 
   setVisible(visible: boolean): void {
     this.visible = visible;
     if (!this.view) return;
+    this.surface?.setVisible(visible);
     this.view.setVisible?.(visible);
     if (visible) this.attach();
     else this.detach();
   }
 
   openExternal(): void {
-    const url = this.view?.webContents.getURL();
+    const url = this.getWebContents()?.getURL();
     if (!url) return;
     const allowed = parseAllowedExternalUrl(url);
     if (allowed) {
@@ -346,30 +350,33 @@ export class BrowserPane {
     this.clearLiveReload();
     this.detach();
     if (this.view) {
-      this.view.webContents.close();
+      const wc = this.getWebContents();
+      this.surface?.removeChildView(this.view);
       this.view = null;
+      this.surface = null;
+      wc?.close();
     }
   }
 
   private attach(): void {
-    if (!this.window || this.window.isDestroyed() || !this.view) return;
+    if (!this.window || this.window.isDestroyed() || !this.surface) return;
     const children = this.window.contentView.children;
     // The guest hole sits on top of plugin chrome. Re-adding a plugin view
     // after this pane is attached would cover the guest unless we keep it last.
-    if (children.includes(this.view) && children[children.length - 1] !== this.view) {
-      this.window.contentView.removeChildView(this.view);
+    if (children.includes(this.surface) && children[children.length - 1] !== this.surface) {
+      this.window.contentView.removeChildView(this.surface);
     }
-    if (!this.window.contentView.children.includes(this.view)) {
-      this.window.contentView.addChildView(this.view);
+    if (!this.window.contentView.children.includes(this.surface)) {
+      this.window.contentView.addChildView(this.surface);
     }
     this.applyBounds();
   }
 
   private detach(): void {
-    if (!this.window || this.window.isDestroyed() || !this.view) return;
+    if (!this.window || this.window.isDestroyed() || !this.surface) return;
     const children = this.window.contentView.children;
-    if (children.includes(this.view)) {
-      this.window.contentView.removeChildView(this.view);
+    if (children.includes(this.surface)) {
+      this.window.contentView.removeChildView(this.surface);
     }
   }
 
@@ -417,7 +424,9 @@ export class BrowserPane {
   }
 
   private ensureView(): WebContentsView {
-    if (this.view && !this.view.webContents.isDestroyed()) return this.view;
+    if (this.view && this.getWebContents()) return this.view;
+    this.detach();
+    if (this.view) this.surface?.removeChildView(this.view);
     const view = new WebContentsView({
       webPreferences: {
         sandbox: true,
@@ -427,6 +436,11 @@ export class BrowserPane {
         partition: PARTITION,
       },
     });
+    const surface = new View();
+    surface.addChildView(view);
+    surface.setVisible(this.visible);
+    surface.setBounds(this.bounds);
+    this.surface = surface;
     const wc = view.webContents;
     wc.setWindowOpenHandler(({ url }) => {
       const allowed = parseAllowedExternalUrl(url);

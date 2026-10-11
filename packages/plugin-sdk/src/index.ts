@@ -667,9 +667,9 @@ export type PluginProviderContrib = {
  * `ui.window.appearance` grant.
  */
 export type PluginWindowAppearanceContrib = {
-  /** `#rrggbb` or `#rrggbbaa`, applied per resolved palette. */
+  /** `#rrggbb` or `#rrggbbaa`, applied per resolved palette; Windows 11 flattens alpha over the built-in palette. */
   backgroundColor?: { light?: string; dark?: string };
-  /** Windows main-window radius in DIP. Applies while a contributed theme is selected. */
+  /** Windows main-window radius request in DIP; Windows 11 uses the system radius for positive values. */
   cornerRadius?: number;
 };
 
@@ -1574,6 +1574,8 @@ export type PluginHostApi = {
     openExternal: (url: string) => Promise<void>;
   };
   browser: {
+    /** Reveal the Browser view for the calling session and wait until it is ready. */
+    reveal: () => Promise<void>;
     navigate: (input: { url?: string; path?: string }) => Promise<unknown>;
     action: (input: { action: "back" | "forward" | "reload" | "stop" }) => Promise<void>;
     setBounds: (hole: { x: number; y: number; width: number; height: number }) => Promise<unknown>;

@@ -26,6 +26,7 @@ import {
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
 import { CopyButton } from "./shared";
 import { SubagentSupervision, useSubagentExecution } from "./SubagentSupervision";
+import { SubagentStopButton } from "./SubagentStopButton";
 import { delegationExecutionKey } from "../../../lib/tool-display";
 import {
   delegateAgentName,
@@ -151,7 +152,8 @@ export function SubagentDetail({
   // created: the delegate runtime is spawning. Name that phase explicitly
   // instead of a generic running state, and keep the badge class distinct.
   const creating = outcome === "running" && delegationIsCreating(message);
-  const { live, phase } = useSubagentExecution(message);
+  const childExecution = useSubagentExecution(message);
+  const { live, phase } = childExecution;
   const statusKey = outcome === "running" && !live ? "chat.subagentHistorical"
     : outcome === "running" && phase === "stopping" ? "chat.subagentStoppingNow"
     : outcome === "running" && phase === "guiding" ? "chat.subagentGuidingNow" : creating
@@ -259,6 +261,7 @@ export function SubagentDetail({
               {duration}
             </span>
           ) : null}
+          <SubagentStopButton sessionId={childExecution.sessionId} delegationId={childExecution.delegationId} execution={childExecution.execution} running={outcome === "running" && live && !creating} name={agentName} />
         </div>
       </header>
       <SubagentSupervision message={message} running={outcome === "running"} />

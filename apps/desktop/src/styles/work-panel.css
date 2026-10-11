@@ -794,6 +794,26 @@
   background: var(--ds-accent);
 }
 
+.subagent-transcript-composer-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.subagent-transcript-model-picker {
+  flex: 1 1 auto;
+  max-width: calc(100% - 36px);
+  justify-content: flex-start;
+  cursor: not-allowed;
+}
+
+.subagent-transcript-composer-controls > .stop-btn {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+}
 /* Shared per-tool empty state used by Files and plugin fallback surfaces. */
 .work-tab-empty {
   display: flex;

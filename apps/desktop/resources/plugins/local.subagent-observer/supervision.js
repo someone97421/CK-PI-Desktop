@@ -133,9 +133,6 @@ function normalizeCollaboration(data) {
   return undefined;
 }
 
-function canStopSubagent({ id, sessionId, live, running, phase }) {
-  return Boolean(id && sessionId && live && running && phase !== "finished");
-}
 
 function canRevokeRecall({ id, sessionId, running, execution, recall }) {
   const resumable = Boolean(recall?.canResume && recall.execution === execution);
@@ -184,7 +181,6 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
 
   const resumable = Boolean(recall?.canResume && recall.execution === execution);
   const stopping = Boolean(live && running && (context.requested || data?.phase === "stopping"));
-  const canStop = canStopSubagent({ id, sessionId, live, running, phase: data?.phase });
   const canRevoke = canRevokeRecall({ id, sessionId, running, execution, recall });
 
   const reportInProgress = Boolean(live && running && !stopping && data?.phase !== "finished");
@@ -283,17 +279,6 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
     },
   ];
 
-  if (canStop) {
-    statusRowChildren.push({
-      kind: "action",
-      key: "action-stop",
-      action: "stop",
-      icon: "stop",
-      disabled: stopping,
-      text: translate(locale, "chat.stopThisSubagent"),
-      title: translate(locale, stopping ? "chat.subagentStoppingNow" : "chat.stopThisSubagent"),
-    });
-  }
 
   if (canRevoke) {
     statusRowChildren.push({
@@ -440,7 +425,7 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
   };
 }
 
-async function handleSupervisionAction(context, action, { desktopInvoke, getSessionSnapshot } = {}) {
+async function handleSupervisionAction(context, action, { desktopInvoke } = {}) {
   if (!context || typeof context !== "object") {
     throw new Error("context is required");
   }
@@ -462,37 +447,6 @@ async function handleSupervisionAction(context, action, { desktopInvoke, getSess
       ? context.collaboration.execution
       : undefined;
 
-  if (action === "stop") {
-    // 原始 running 取 context
-    if (!context.running || !context.live) {
-      throw new Error("Cannot stop a non-running or historical subagent");
-    }
-    if (context.collaboration?.phase === "finished") {
-      throw new Error("Subagent execution has already finished");
-    }
-
-    // 使用 getSessionSnapshot 辅助确认宿主最新运行状态
-    if (typeof getSessionSnapshot === "function") {
-      const snapshot = await getSessionSnapshot({ sessionId });
-      if (!snapshot || typeof snapshot !== "object") {
-        throw new Error("Failed to obtain session snapshot");
-      }
-      const sessionStatus = snapshot.session?.status;
-      if (sessionStatus !== "running" && sessionStatus !== "waiting_permission") {
-        throw new Error("Session is no longer running");
-      }
-      const activeTurnId = snapshot.session?.activeTurnId ?? snapshot.activeTurn?.id;
-      if (context.parentTurnId && activeTurnId && context.parentTurnId !== activeTurnId) {
-        throw new Error("Turn mismatch: subagent is historical");
-      }
-    }
-
-    const input = { sessionId, delegationId };
-    if (expectedExecution !== undefined) {
-      input.expectedExecution = expectedExecution;
-    }
-    return desktopInvoke("subagent/stop", [input]);
-  }
 
   if (action === "revoke") {
     if (context.running) {
@@ -544,7 +498,6 @@ module.exports = {
   I18N,
   translate,
   normalizeCollaboration,
-  canStopSubagent,
   canRevokeRecall,
   renderSupervision,
   handleSupervisionAction,

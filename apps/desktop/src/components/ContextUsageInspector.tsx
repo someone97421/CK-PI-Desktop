@@ -17,6 +17,7 @@ import { useAppStore } from "../stores/app-store";
 import { imageGenerationBindings, modelWireIdsEqual } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { defaultModelOptions, providerServesChatModels } from "./settings/default-model";
+import { formatToolDuration } from "../lib/tool-display";
 import { TooltipButton } from "./ui";
 import {
   aggregateToolTokenUsage,
@@ -31,6 +32,7 @@ import {
   placeContextInspector,
   type ContextInspectorPlacement,
 } from "../lib/context-inspector-position";
+import { useSessionTiming } from "../features/chat/context-usage/useSessionTiming";
 
 const CONTEXT_RING_RADIUS = 9;
 const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS;
@@ -116,6 +118,34 @@ export function ContextUsageInspector({
   const [open, setOpen] = useState(false);
   const [popoverPosition, setPopoverPosition] =
     useState<ContextInspectorPlacement | null>(null);
+  const session = useAppStore((state) =>
+    state.sessions.find((candidate) => candidate.id === state.activeSessionId),
+  );
+  const sessionMessages = useAppStore((state) => state.messages);
+  const sessionHistory = useAppStore((state) =>
+    state.activeSessionId
+      ? state.sessionHistory[state.activeSessionId]
+      : undefined,
+  );
+  const isSessionRunning = useAppStore((state) =>
+    state.activeSessionId
+      ? state.runningSessions[state.activeSessionId] ?? state.isRunning
+      : false,
+  );
+  const modelRequestActivity = useAppStore((state) =>
+    state.activeSessionId
+      ? state.agentStatuses[state.activeSessionId]?.activity
+      : undefined,
+  );
+  const sessionTiming = useSessionTiming({
+    enabled: open,
+    session,
+    sessionId,
+    messages: sessionMessages,
+    history: sessionHistory,
+    isRunning: isSessionRunning,
+    modelRequestActivity,
+  });
   const context = calculateContextUsage(
     compactedContextTokens !== undefined
       ? { inputTokens: compactedContextTokens, outputTokens: 0, totalTokens: compactedContextTokens }
@@ -140,6 +170,20 @@ export function ContextUsageInspector({
     usage.inputTokens,
     usage.cacheReadTokens,
   );
+  const modelResponseDuration = formatToolDuration(
+    (sessionTiming.timing?.modelResponseMs ?? 0) / 1_000,
+  );
+  const modelResponsePercent = sessionTiming.timing?.modelResponsePercent;
+  const modelResponseValue =
+    sessionTiming.historyStatus === "loading"
+      ? "…"
+      : sessionTiming.historyStatus === "error"
+        ? t("chat.usageTimingUnavailable")
+        : `${modelResponseDuration}${
+            modelResponsePercent === undefined
+              ? ""
+              : ` · ${modelResponsePercent}%`
+          }`;
   const toolRows = aggregateToolTokenUsage(tools);
   const toolTotal = toolRows.reduce(
     (total, row) => total + row.totalTokens,
@@ -362,6 +406,23 @@ export function ContextUsageInspector({
           </strong>
         </div>
       </div>
+      {sessionTiming.timing ? (
+        <div
+          className="context-inspector-kpis"
+          aria-busy={sessionTiming.historyStatus === "loading"}
+        >
+          <div>
+            <span>{t("chat.usageSessionTime")}</span>
+            <strong>
+              {formatToolDuration(sessionTiming.timing.elapsedMs / 1_000)}
+            </strong>
+          </div>
+          <div>
+            <span>{t("chat.usageModelResponse")}</span>
+            <strong>{modelResponseValue}</strong>
+          </div>
+        </div>
+      ) : null}
       <div className="context-inspector-summary">
         <div className="context-inspector-summary-row">
           <strong>{t("chat.usageProviderUsage")}</strong>

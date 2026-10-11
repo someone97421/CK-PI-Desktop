@@ -20,8 +20,9 @@ import {
 } from "../work-panel-window";
 import {
   DEFAULT_WINDOW_CORNER_RADIUS,
-  setWindowCornerRadius,
 } from "../window-shape";
+import { applyWindowCornerRadius, usesWindows11NativeCorners } from "../window-native-corners";
+import { applyMainWindowBackground } from "../window-background";
 import type { IpcRegistrar } from "./types";
 
 export type WindowIpcDependencies = {
@@ -146,13 +147,23 @@ export function registerWindowIpc({
     const color = isWindowBackgroundColor(requested)
       ? requested
       : builtinWindowBackground(theme);
+    const windows11NativeCorners = usesWindows11NativeCorners(
+      process.platform,
+      process.getSystemVersion(),
+    );
+    applyMainWindowBackground(
+      mainWindow,
+      process.platform,
+      color,
+      windows11NativeCorners,
+      builtinWindowBackground(theme),
+    );
     const cornerRadius = process.platform === "win32"
-      ? setWindowCornerRadius(
+      ? await applyWindowCornerRadius(
           mainWindow,
           typeof requestedRadius === "number" ? requestedRadius : DEFAULT_WINDOW_CORNER_RADIUS,
         )
       : null;
-    mainWindow.setBackgroundColor(color);
     return { applied: true, theme, color, cornerRadius };
   });
 

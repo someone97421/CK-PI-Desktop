@@ -259,6 +259,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       },
       router: state.backendRouter,
       emit: sendToRenderer,
+      getLocalHost: getHost,
       clientInfo: { name: APP_NAME, version: APP_VERSION },
       log: (level, message, data) =>
         logger.app("runtime", level, message, { data: formatRemoteLogData(data) }),
@@ -270,6 +271,8 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       if (opened > 0) {
         logger.app("runtime", "info", "remote hosts connected", { data: String(opened) });
       }
+    }).catch((error: unknown) => {
+      logger.app("runtime", "warn", "remote host boot failed", { data: String(error) });
     });
     state.agentHostBridge = createAgentHostBridge({
       invoke: invokeIpc,

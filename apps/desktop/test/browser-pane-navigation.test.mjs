@@ -11,6 +11,13 @@ import { pathToFileURL } from "node:url";
 const electron = `data:text/javascript,${encodeURIComponent(`
   import { EventEmitter } from "node:events";
   export const shell = {};
+  export class View {
+    children = [];
+    addChildView(view) { this.children.push(view); }
+    removeChildView(view) { this.children.splice(this.children.indexOf(view), 1); }
+    setVisible() {}
+    setBounds() {}
+  }
   export class WebContentsView {
     static instances = [];
     constructor() {

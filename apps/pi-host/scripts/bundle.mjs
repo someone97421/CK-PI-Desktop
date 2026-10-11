@@ -4,7 +4,7 @@
  *
  *   dist-bundle/pi-host-<version>-<platform>-<arch>/
  *     pi-host.js                 the CLI, esbuild-bundled with every workspace package
- *     agent-runtime/sidecar.js   the same sidecar bundle the desktop ships
+ *     agent-runtime/            the complete sidecar bundle (entry, chunks, manifest)
  *     bin/pi-desktop-host-core   the platform host-core binary
  *     node_modules/node-pty      optional; terminals are disabled without it
  *     package.json               { type: module, version }
@@ -17,6 +17,8 @@ import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readSync
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { copyAgentRuntimeBundle } from "./runtime-bundle.mjs";
+import { ensureDarwinSpawnHelperExecutable } from "./spawn-helper-permissions.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const app = resolve(here, "..");
@@ -31,10 +33,10 @@ const platform = String(args.platform ?? process.platform);
 const arch = String(args.arch ?? process.arch);
 const exe = platform === "win32" ? ".exe" : "";
 const hostCore = resolve(String(args["host-core"] ?? join(root, `target/release/pi-desktop-host-core${exe}`)));
-const sidecar = join(root, "packages/agent-runtime/dist-bundle/sidecar.js");
+const runtimeBundle = join(root, "packages/agent-runtime/dist-bundle");
 const out = resolve(String(args.out ?? join(app, "dist-bundle", `pi-host-${version}-${platform}-${arch}`)));
 
-for (const [label, path] of [["host-core binary", hostCore], ["sidecar bundle", sidecar]]) {
+for (const [label, path] of [["host-core binary", hostCore], ["sidecar bundle", join(runtimeBundle, "sidecar.js")]]) {
   if (!existsSync(path)) {
     console.error(`${label} missing: ${path}`);
     process.exit(1);
@@ -62,7 +64,7 @@ if (platform === "linux") {
 }
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "bin"), { recursive: true });
-mkdirSync(join(out, "agent-runtime"), { recursive: true });
+await copyAgentRuntimeBundle(runtimeBundle, join(out, "agent-runtime"));
 
 const { buildSync } = require("esbuild");
 buildSync({
@@ -75,8 +77,6 @@ buildSync({
   outfile: join(out, "pi-host.js"),
   banner: { js: "import { createRequire as __piCreateRequire } from 'node:module'; const require = __piCreateRequire(import.meta.url);" },
 });
-cpSync(sidecar, join(out, "agent-runtime/sidecar.js"));
-writeFileSync(join(out, "agent-runtime/package.json"), '{ "type": "module" }\n');
 cpSync(hostCore, join(out, `bin/pi-desktop-host-core${exe}`));
 chmodSync(join(out, `bin/pi-desktop-host-core${exe}`), 0o755);
 // node-pty 是带原生二进制的可选依赖：只有原生目标才允许用本机安装的
@@ -85,21 +85,28 @@ chmodSync(join(out, `bin/pi-desktop-host-core${exe}`), 0o755);
 // 时复制，否则沿用上游可选终端能力，明确警告本包不含终端。
 const nativeTarget = process.platform === platform && process.arch === arch;
 const ptyOverride = String(args.pty ?? process.env.THIS_IS_A_AGENT_PI_HOST_PTY ?? "").trim();
+let ptyPackageDir;
 if (nativeTarget) {
   try {
-    const pty = dirname(require.resolve("node-pty/package.json"));
-    cpSync(pty, join(out, "node_modules/node-pty"), { recursive: true, dereference: true });
-  } catch {
-    console.warn("node-pty not installed; the bundle ships without terminals");
+    ptyPackageDir = dirname(require.resolve("node-pty/package.json"));
+  } catch (error) {
+    if (error.code !== "MODULE_NOT_FOUND") throw error;
   }
 } else if (ptyOverride) {
-  if (!existsSync(join(resolve(ptyOverride), "package.json"))) {
+  ptyPackageDir = resolve(ptyOverride);
+  if (!existsSync(join(ptyPackageDir, "package.json"))) {
     console.error(`--pty / THIS_IS_A_AGENT_PI_HOST_PTY 不是 node-pty 目录：${ptyOverride}`);
     process.exit(1);
   }
-  cpSync(resolve(ptyOverride), join(out, "node_modules/node-pty"), { recursive: true, dereference: true });
+}
+if (ptyPackageDir) {
+  const bundledPty = join(out, "node_modules/node-pty");
+  cpSync(ptyPackageDir, bundledPty, { recursive: true, dereference: true });
+  ensureDarwinSpawnHelperExecutable(bundledPty, platform, arch);
+} else if (nativeTarget) {
+  console.warn("node-pty not installed; the bundle ships without terminals");
 } else {
-  console.warn(`跨平台打包 ${platform}-${arch} 未提供 linux-x64 node-pty；本包不含终端（如需终端请设置 THIS_IS_A_AGENT_PI_HOST_PTY）`);
+  console.warn(`跨平台打包 ${platform}-${arch} 未提供目标平台 node-pty；本包不含终端（如需终端请设置 THIS_IS_A_AGENT_PI_HOST_PTY）`);
 }
 writeFileSync(join(out, "package.json"), `${JSON.stringify({ name: "pi-host", version, type: "module", bin: { "pi-host": "./pi-host.js" } }, null, 2)}\n`);
 writeFileSync(

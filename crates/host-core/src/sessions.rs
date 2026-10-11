@@ -2465,6 +2465,7 @@ pub fn append_message(
                 )?;
             }
         } else {
+            update_delegation_snapshot(db, session_id, &record)?;
             return Ok(());
         }
     } else {
@@ -2473,6 +2474,7 @@ pub fn append_message(
                 let original_id = record.id.clone();
                 record.id = namespaced_message_id(session_id, &record.id);
                 if message_indexed(db, session_id, &record.id)? {
+                    update_delegation_snapshot(db, session_id, &record)?;
                     return Ok(());
                 }
                 // Old hosts wrote JSONL then failed UNIQUE. Replaying that
@@ -2700,15 +2702,20 @@ fn streaming_assistant_indexed(db: &Database, session_id: &str, message_id: &str
     }
 }
 
-/// The same question answered from the transcript: walk backwards from the tail
-/// 64 message lines at a time and stop at the last copy of the id. This is the
-/// fallback for a message the index cannot answer for, which is a row written
-/// before the cached column existed.
 fn streaming_assistant_in_transcript(
     db: &Database,
     session_id: &str,
     message_id: &str,
 ) -> Result<bool> {
+    Ok(indexed_message_record(db, session_id, message_id)?
+        .is_some_and(|record| record_is_streaming(&record)))
+}
+
+fn indexed_message_record(
+    db: &Database,
+    session_id: &str,
+    message_id: &str,
+) -> Result<Option<MessageRecord>> {
     let layout = session_layout(db, session_id)?;
     let mut end = layout.message_count();
     while end > 0 {
@@ -2722,15 +2729,89 @@ fn streaming_assistant_in_transcript(
         )?;
         if let Some(record) = window
             .messages
-            .iter()
+            .into_iter()
             .rev()
             .find(|record| record.id == message_id)
         {
-            return Ok(record_is_streaming(record));
+            return Ok(Some(record));
         }
         end = start;
     }
-    Ok(false)
+    Ok(None)
+}
+
+/// 同一工具调用、任务和执行的状态回写；兼容旧版仅 running → 终态的回执。
+/// 新版序号还允许停止中及完成后的快照保存状态更新，迟到回执不得覆盖新状态。
+fn update_delegation_snapshot(
+    db: &Database,
+    session_id: &str,
+    incoming: &MessageRecord,
+) -> Result<()> {
+    if incoming.role != "tool" || !matches!(incoming.tool_name.as_deref(), Some("Task" | "TaskResume")) {
+        return Ok(());
+    }
+    let Some(next) = incoming
+        .blocks
+        .as_array()
+        .and_then(|blocks| blocks.iter().find(|block| block["type"] == "tool_call"))
+    else {
+        return Ok(());
+    };
+    let details = &next["result"]["details"];
+    if !matches!(
+        details["status"].as_str(),
+        Some("running" | "completed" | "stopped" | "aborted" | "failed" | "timed_out")
+    ) {
+        return Ok(());
+    }
+    let Some(id) = details["delegationId"].as_str().filter(|id| !id.is_empty()) else {
+        return Ok(());
+    };
+    let Some(mut existing) = indexed_message_record(db, session_id, &incoming.id)? else {
+        return Ok(());
+    };
+    if existing.role != "tool" || existing.tool_name != incoming.tool_name {
+        return Ok(());
+    }
+    let Some(block) = existing
+        .blocks
+        .as_array_mut()
+        .and_then(|blocks| blocks.iter_mut().find(|block| block["type"] == "tool_call"))
+    else {
+        return Ok(());
+    };
+    let previous = &block["result"]["details"];
+    if block["callId"] != next["callId"]
+        || previous["delegationId"].as_str() != Some(id)
+        || previous["execution"].as_u64().unwrap_or(1) != details["execution"].as_u64().unwrap_or(1)
+    {
+        return Ok(());
+    }
+    match details["statusRevision"].as_u64() {
+        Some(revision) => {
+            if revision <= previous["statusRevision"].as_u64().unwrap_or(0)
+                || (previous["status"] != "running" && details["status"] == "running")
+            {
+                return Ok(());
+            }
+        }
+        None => {
+            if previous["statusRevision"].as_u64().is_some()
+                || previous["status"] != "running" || details["status"] == "running"
+            {
+                return Ok(());
+            }
+        }
+    }
+    block["result"] = next["result"].clone();
+    block["text"] = next["text"].clone();
+    invalidate_transcript_layout(session_id);
+    if !transcripts::update_message(db.data_dir(), session_id, &existing)? {
+        return Err(anyhow!(
+            "delegation snapshot is missing from its transcript"
+        ));
+    }
+    Ok(())
 }
 
 /// Append one canonical record: transcript line first, then the index row.
@@ -5575,6 +5656,72 @@ mod tests {
             )
             .unwrap();
         assert_eq!(last_seq, 2);
+    }
+
+    #[test]
+    fn delegation_settlement_updates_only_its_running_snapshot() {
+        let db = test_db();
+        let first = create_session(&db, None, None, None, None, None).unwrap();
+        let second = create_session(&db, None, None, None, None, None).unwrap();
+        let mut task = user_msg("task-shared-id", "partial", "2026-10-05T00:00:00Z");
+        task.role = "tool".into();
+        task.tool_name = Some("Task".into());
+        task.tool_call_id = Some(task.id.clone());
+        task.tool_args = Some(json!({"agent": "explorer"}));
+        task.tool_result =
+            Some(json!({"details": {"delegationId": "delegate-A", "status": "running"}}));
+        append_message(&db, &first.id, &task, None).unwrap();
+        append_message(&db, &second.id, &task, None).unwrap();
+        let mut stopped = task.clone();
+        stopped.tool_result =
+            Some(json!({"details": {"delegationId": "delegate-A", "status": "stopped"}}));
+        stopped.tool_args = Some(json!({"agent": "changed"}));
+        append_message(&db, &second.id, &stopped, None).unwrap();
+        // Late replay cannot reopen a settled delegation, including namespaced IDs.
+        append_message(&db, &second.id, &task, None).unwrap();
+        let read = |id: &str| get_session(&db, id).unwrap().unwrap().messages;
+        assert_eq!(read(&second.id).len(), 1);
+        assert_eq!(read(&second.id)[0].tool_result, stopped.tool_result);
+        assert_eq!(read(&second.id)[0].tool_args, task.tool_args);
+        assert_eq!(read(&first.id)[0].tool_result, task.tool_result);
+        let mut foreign = stopped.clone();
+        foreign.tool_result =
+            Some(json!({"details": {"delegationId": "different", "status": "stopped"}}));
+        append_message(&db, &first.id, &foreign, None).unwrap();
+        assert_eq!(read(&first.id)[0].tool_result, task.tool_result);
+        append_message(&db, &first.id, &stopped, None).unwrap();
+        append_message(&db, &first.id, &task, None).unwrap();
+        assert_eq!(read(&first.id)[0].tool_result, stopped.tool_result);
+    }
+
+    #[test]
+    fn delegation_state_preserves_execution_and_late_snapshot_receipts() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        for tool_name in ["Task", "TaskResume"] {
+            let mut task = user_msg(tool_name, "task", "2026-10-11T00:00:00Z");
+            task.role = "tool".into();
+            task.tool_name = Some(tool_name.into());
+            task.tool_call_id = Some(task.id.clone());
+            let result = |execution, revision, status, persistence| json!({"details": {
+                "delegationId": "delegate-A", "execution": execution, "statusRevision": revision,
+                "status": status, "persistenceState": persistence
+            }});
+            task.tool_result = Some(result(2, 0, "running", "saving"));
+            append_message(&db, &session.id, &task, None).unwrap();
+            task.tool_result = Some(result(2, 1, "completed", "saving"));
+            append_message(&db, &session.id, &task, None).unwrap();
+            task.tool_result = Some(result(2, 2, "completed", "durable-ready"));
+            append_message(&db, &session.id, &task, None).unwrap();
+            let saved = task.tool_result.clone();
+            for stale in [result(2, 1, "completed", "saving"), result(1, 99, "stopped", "revoked"), result(2, 3, "running", "saving")] {
+                task.tool_result = Some(stale);
+                append_message(&db, &session.id, &task, None).unwrap();
+            }
+            let detail = get_session(&db, &session.id).unwrap().unwrap();
+            let message = detail.messages.iter().find(|message| message.id == task.id).unwrap();
+            assert_eq!(message.tool_result, saved);
+        }
     }
 
     #[test]

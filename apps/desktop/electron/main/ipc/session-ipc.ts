@@ -30,6 +30,7 @@ import { searchSessionsAcrossSources } from "../services/session-search";
 import type { IpcRegistrar } from "./types";
 import type { SessionConfigurationQueue } from "../runtime/session-configuration";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
+import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts.js";
 
 type RuntimeSession = {
   id?: string;
@@ -170,6 +171,7 @@ export function registerSessionIpc({
           source: "desktop",
         })),
         ...native.sessions,
+        ...(getActiveRemoteHostsBoot()?.sessionSummaries() ?? []),
       ].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))),
     };
   });

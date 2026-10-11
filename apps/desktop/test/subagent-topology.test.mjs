@@ -569,3 +569,12 @@ test("其他任务和旧执行轮次的回执不能结束当前召回", () => {
   assert.equal(collectDelegationTimings([item]).get("child:2").completedAt, undefined);
   assert.equal(collectDelegationFailures([item]).size, 0);
 });
+
+test("主轮结束不提前终结带执行回执的子任务，停止中等待真实终态", () => {
+  const running = task("child", "success", "running", { execution: 1, statusRevision: 2 });
+  const pending = lifecycle("TaskStop", { stopped: [], stopPending: [{ delegationId: "child", execution: 1, status: "running" }] });
+  const statuses = collectDelegationStatuses([running, pending], { turnLive: false });
+  assert.equal(subagentOutcome(running.message, statuses), "running");
+  const ended = task("child", "success", "stopped", { execution: 1, statusRevision: 3 });
+  assert.equal(subagentOutcome(ended.message, collectDelegationStatuses([ended, pending], { turnLive: false })), "stopped");
+});

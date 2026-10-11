@@ -34,6 +34,12 @@ import {
 import { readWindowState, writeWindowState } from "../window-preferences";
 import { suppressLinuxFramelessSystemMenu } from "../frameless-system-menu";
 import { readAppearanceIconPath } from "../appearance-media";
+import { DEFAULT_WINDOW_CORNER_RADIUS, installWindowShape } from "../window-shape";
+import {
+  installWindows11CornerController,
+  usesWindows11NativeCorners,
+} from "../window-native-corners";
+import { applyMainWindowBackground, mainWindowBackgroundOptions } from "../window-background";
 import { recoverRendererAfterGone } from "../renderer-recovery";
 
 function windowsIconPath(dataDir: string): string | undefined {
@@ -163,6 +169,13 @@ export async function createWindow({
       { width: windowMinWidth, height: windowMinHeight },
       restoreWorkArea,
     );
+  const initialWindowBackground = builtinWindowBackground(
+    nativeTheme.shouldUseDarkColors ? "dark" : "light",
+  );
+  const windows11NativeCorners = usesWindows11NativeCorners(
+    process.platform,
+    process.getSystemVersion(),
+  );
   windowState.mainWindow = new BrowserWindow({
     ...(restoredBounds ?? { width: 1200, height: 800 }),
     minWidth: initialMinWidth,
@@ -189,8 +202,12 @@ export async function createWindow({
         }
       : {
           frame: false,
-          backgroundColor: builtinWindowBackground(
-            nativeTheme.shouldUseDarkColors ? "dark" : "light",
+          ...(process.platform === "win32" ? { thickFrame: false } : {}),
+          ...mainWindowBackgroundOptions(
+            process.platform,
+            initialWindowBackground,
+            windows11NativeCorners,
+            initialWindowBackground,
           ),
         }),
     ...(process.platform === "win32"
@@ -210,6 +227,26 @@ export async function createWindow({
     },
   });
   const window = windowState.mainWindow;
+  if (process.platform === "win32") {
+    if (windows11NativeCorners) {
+      await installWindows11CornerController(
+        window,
+        DEFAULT_WINDOW_CORNER_RADIUS,
+        () => windowState.host,
+        screen,
+        logger,
+      );
+    } else {
+      installWindowShape(window, DEFAULT_WINDOW_CORNER_RADIUS, screen);
+    }
+  }
+  applyMainWindowBackground(
+    window,
+    process.platform,
+    initialWindowBackground,
+    windows11NativeCorners,
+    initialWindowBackground,
+  );
   suppressLinuxFramelessSystemMenu(window);
   const initialBounds = window.getBounds();
   windowState.workPanelBaseBounds = restoredBounds

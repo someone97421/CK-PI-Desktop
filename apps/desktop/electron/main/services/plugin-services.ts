@@ -691,24 +691,25 @@ export function createPluginServices({
     },
     isPluginLoaded: (pluginId) => Boolean(plugins.getLoaded(pluginId)),
     getFileRoot: async (sessionId) => {
-      if (sessionId) {
-        try {
-          const res = (await getHost()?.call("session.get", { id: sessionId })) as
-            | { session: { projectPath?: string } | null }
-            | undefined;
-          const path = res?.session?.projectPath?.trim();
-          if (path) return path;
-        } catch {
-          // Fall through to the visible workspace.
-        }
+      if (!sessionId) return getWorkspacePath();
+      try {
+        const res = (await getHost()?.call("session.get", { id: sessionId })) as
+          | { session: { projectPath?: string; temporaryWorkspacePath?: string } | null }
+          | undefined;
+        if (!res?.session) return null;
+        return res.session.projectPath?.trim() ||
+          res.session.temporaryWorkspacePath?.trim() || join(dataDir, "scratch", sessionId);
+      } catch {
+        return null;
       }
-      return getWorkspacePath();
     },
     getScratchDir: (sessionId) => {
       if (!sessionId) return null;
       return join(dataDir, "scratch", sessionId);
     },
     onState: emitBrowserState,
+    onRevealView: (sessionId, tabId) =>
+      sendToRenderer(IPC.event.browserPreview, { sessionId, tabId, revealOnly: true }),
   });
   pluginViews.onSurface = (surface) => {
     browserHost.setChromeSurface(surface);
@@ -730,6 +731,7 @@ export function createPluginServices({
     agentExtensionsChanged: () =>
       sendToRenderer(IPC.event.pluginChanged, { reason: "agentExtensions" }),
     browser: {
+      reveal: (sessionId) => browserHost.reveal(sessionId),
       navigate: (input, sessionId, tabId) => browserHost.navigate(input, sessionId, tabId),
       action: (action, sessionId, tabId) => browserHost.action(action, sessionId, tabId),
       setBounds: (pluginId, hole) => browserHost.setGuestHole(pluginId, hole),

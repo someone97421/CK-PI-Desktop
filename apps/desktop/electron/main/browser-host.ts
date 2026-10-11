@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 export const BROWSER_PLUGIN_ID = "pi.browser";
 export const BROWSER_VIEW_ID = "browser";
+const BROWSER_REVEAL_TIMEOUT_MS = 5_000;
 
 export type BrowserRect = {
   x: number;
@@ -61,6 +62,7 @@ export type BrowserHostDeps = {
   getFileRoot: (sessionId?: string) => Promise<string | null>;
   getScratchDir?: (sessionId?: string) => string | null;
   onState: (state: BrowserState) => void;
+  onRevealView?: (sessionId: string, tabId?: string) => void;
 };
 
 type ChromeSurface = {
@@ -68,6 +70,13 @@ type ChromeSurface = {
   viewId: string;
   visible: boolean;
   bounds: BrowserRect;
+};
+
+type BrowserRevealWaiter = {
+  sessionId: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
 };
 
 type BrowserPage = {
@@ -90,6 +99,7 @@ export class BrowserHost {
   private readonly selectedTabs = new Map<string, string | null>();
   private readonly pendingSessions = new Map<string, string>();
   private readonly pendingTabs = new Set<string>();
+  private readonly revealWaiters = new Set<BrowserRevealWaiter>();
   private active: BrowserPage | null = null;
   private window: BrowserWindow | null = null;
   private chrome: ChromeSurface | null = null;
@@ -108,6 +118,52 @@ export class BrowserHost {
   setChromeSurface(surface: ChromeSurface | null): void {
     this.chrome = surface;
     this.applyGuest();
+    this.resolveVisibleRevealWaiters();
+  }
+
+  async reveal(sessionId?: string): Promise<void> {
+    const id = sessionId?.trim();
+    if (!id) throw this.unavailableError("Browser reveal requires an active session.");
+    if (!this.deps.isPluginLoaded(BROWSER_PLUGIN_ID)) {
+      throw this.unavailableError("The Browser plugin is unavailable.");
+    }
+    if (this.isBrowserVisibleForSession(id)) return;
+    const revealView = this.deps.onRevealView;
+    if (!revealView) throw this.unavailableError("Browser view cannot be opened by this host.");
+
+    let waiter: BrowserRevealWaiter | undefined;
+    const visible = new Promise<void>((resolve, reject) => {
+      const entry: BrowserRevealWaiter = {
+        sessionId: id,
+        resolve,
+        reject: (error) => reject(error),
+        timeout: setTimeout(() => {
+          this.rejectRevealWaiter(
+            entry,
+            this.unavailableError(
+              "Browser view did not become visible for the calling session. Switch to that session and retry.",
+            ),
+          );
+        }, BROWSER_REVEAL_TIMEOUT_MS),
+      };
+      waiter = entry;
+      this.revealWaiters.add(entry);
+    });
+
+    try {
+      const tabId = this.active?.sessionId === id
+        ? this.active.tabId ?? undefined
+        : this.selectedTabs.get(id) ?? undefined;
+      revealView(id, tabId);
+    } catch (error) {
+      if (waiter) {
+        this.rejectRevealWaiter(
+          waiter,
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    }
+    return visible;
   }
 
   getContext(): { sessionId?: string; tabId?: string } {
@@ -119,6 +175,32 @@ export class BrowserHost {
       ...(page.sessionId ? { sessionId: page.sessionId } : {}),
       ...(page.tabId ? { tabId: page.tabId } : {}),
     };
+  }
+
+  private isBrowserVisibleForSession(sessionId: string): boolean {
+    return this.chrome?.visible === true &&
+      this.chrome.pluginId === BROWSER_PLUGIN_ID &&
+      this.chrome.viewId === BROWSER_VIEW_ID &&
+      this.active?.sessionId === sessionId;
+  }
+
+  private resolveVisibleRevealWaiters(): void {
+    for (const waiter of [...this.revealWaiters]) {
+      if (!this.isBrowserVisibleForSession(waiter.sessionId)) continue;
+      this.revealWaiters.delete(waiter);
+      clearTimeout(waiter.timeout);
+      waiter.resolve();
+    }
+  }
+
+  private rejectRevealWaiter(waiter: BrowserRevealWaiter, error: Error): void {
+    if (!this.revealWaiters.delete(waiter)) return;
+    clearTimeout(waiter.timeout);
+    waiter.reject(error);
+  }
+
+  private unavailableError(message: string): Error & { code: string } {
+    return Object.assign(new Error(message), { code: "UNAVAILABLE" });
   }
 
   private key(sessionId: string, tabId: string | null): string {
@@ -186,6 +268,7 @@ export class BrowserHost {
       this.publishCurrent();
       this.applyGuest();
     }
+    this.resolveVisibleRevealWaiters();
     return true;
   }
 
@@ -368,6 +451,12 @@ export class BrowserHost {
   dispose(): void { this.disposeGuest(); }
 
   disposeGuest(): void {
+    for (const waiter of [...this.revealWaiters]) {
+      this.rejectRevealWaiter(
+        waiter,
+        this.unavailableError("Browser view was closed before it became visible."),
+      );
+    }
     for (const page of this.pages.values()) {
       page.navigationVersion += 1;
       page.cdp.detach(page.pane.getWebContents() ?? undefined);

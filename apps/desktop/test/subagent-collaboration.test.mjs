@@ -21,25 +21,9 @@ async function loadSource(relative, modules = {}, globals = {}, extra = "") {
   return sandbox.module.exports;
 }
 
-test("观测条上下文经插件定向停止子代理，保留宿主专用 IPC", async () => {
-  const handlers = new Map();
-  const requests = [];
-  const ipc = await loadSource("../electron/main/ipc/agent-ipc.ts");
-  ipc.registerAgentIpc({ registrar: { handle: (channel, fn) => handlers.set(channel, fn) },
-    getHost: () => null, getAgentHostBridge: () => null,
-    getSidecar: () => ({ call: async (method, params) => {
-      requests.push({ method, ...params });
-      return { delegationId: params.delegationId, status: "running", collaboration: { phase: "stopping" } };
-    } }),
-    cancelSessionTools: () => { throw new Error("must not stop the session"); },
-    finishTurn: () => { throw new Error("must not finish the parent turn"); },
-  });
-  assert.ok(protocol.IPC_WHITELIST.has(protocol.IPC.invoke.subagentStop));
-  const { api } = await loadSource("../src/lib/api.ts", {}, { window: { piDesktop: {
-    invoke: async (channel, payload) => ({ ok: true, data: await handlers.get(channel)(payload) }),
-  } } });
+test("子代理运行上下文按任务会话和执行版本隔离，不依赖主轮运行", async () => {
   const jsx = (type, props) => ({ type, props });
-  const state = { activeSessionId: "session-1", runningSessions: { "session-1": true } };
+  const state = { activeSessionId: "other-session", runningSessions: {}, messages: [], agentStatuses: {} };
   const component = await loadSource("../src/features/chat/transcript/SubagentSupervision.tsx", {
     react: { useMemo: (factory) => factory() },
     "react/jsx-runtime": { jsx, jsxs: jsx },
@@ -48,30 +32,23 @@ test("观测条上下文经插件定向停止子代理，保留宿主专用 IPC"
     "../../../stores/app-store": { useAppStore: (select) => select(state) },
     "../../../components/PluginInlineSlot": { PluginInlineSlot: "plugin-inline" },
   });
-  const message = { toolResult: { details: { delegationId: "child-1", collaboration: {
-    reportIntervalSteps: 4, intervalSource: "dispatch", phase: "running", completedSteps: 2, stepsSinceReport: 2,
-  } } } };
+  const message = { toolResult: { details: {
+    sessionId: "task-session", delegationId: "child-1", executionId: "child-1:2", execution: 2, status: "running",
+  } } };
   const tree = component.SubagentSupervision({ message, running: true, compact: true });
-  assert.equal(tree.type, "plugin-inline");
-  assert.equal(tree.props.slot, "subagent.supervision");
-  const plugin = await loadSource("../resources/plugins/local.subagent-observer/supervision.js");
-  const helpers = {
-    desktopInvoke: (operation, [input]) => {
-      assert.equal(operation, "subagent/stop");
-      return api.stopSubagent(input.sessionId, input.delegationId, input.expectedExecution);
-    },
-    getSessionSnapshot: async () => ({ session: { status: "running" } }),
-  };
-  await plugin.handleSupervisionAction(tree.props.context, "stop", helpers);
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].method, "agent.subagentStop");
-  assert.equal(requests[0].sessionId, "session-1");
-  assert.equal(requests[0].delegationId, "child-1");
-  state.runningSessions["session-1"] = false;
-  const historical = component.SubagentSupervision({ message, running: true, compact: true }).props.context;
-  assert.equal(historical.live, false);
-  await assert.rejects(() => plugin.handleSupervisionAction(historical, "stop", helpers), /historical/);
-  await assert.rejects(() => handlers.get(protocol.IPC.invoke.subagentStop)({ sessionId: "session-1" }), /delegationId/);
+  assert.equal(tree.props.context.sessionId, "task-session");
+  assert.equal(tree.props.context.delegationId, "child-1");
+  assert.equal(tree.props.context.execution, 2);
+  assert.equal(tree.props.context.live, true);
+  state.activeSessionId = "task-session";
+  state.messages = [{ toolResult: { details: { ...message.toolResult.details, execution: 3 } } }];
+  assert.equal(component.useSubagentExecution(message).live, false);
+  state.messages = [{ toolResult: { details: { ...message.toolResult.details, status: "completed" } } }];
+  assert.equal(component.useSubagentExecution(message).live, false);
+  const collaboration = { execution: 4, reportIntervalSteps: 5, phase: "running" };
+  assert.equal(component.subagentExecutionIdentity({ toolResult: { details: {
+    ...message.toolResult.details, collaboration,
+  } } }).execution, 4);
 });
 
 test("保存回执更新任务消息时，协作进度不变也刷新观测条上下文", async () => {
@@ -160,4 +137,49 @@ test("配置导入兼容旧文件，保留间隔并拒绝字符串或零", async
   assert.equal(transfer.parseFile(file({ reportIntervalSteps: 6 })).subagents.owned[0].reportIntervalSteps, 6);
   assert.equal(transfer.parseFile(file({ reportIntervalSteps: null })).subagents.owned[0].reportIntervalSteps, null);
   for (const value of [0, -1, 2.5, "6"]) assert.throws(() => transfer.parseFile(file({ reportIntervalSteps: value })), /汇报间隔/);
+});
+
+test("停止入口共享 busy，pending 按会话、任务和执行隔离", async () => {
+  const jsx = (type, props) => ({ type, props });
+  const requests = [];
+  const effects = [];
+  let finish;
+  const response = new Promise(resolve => { finish = resolve; });
+  const component = await loadSource("../src/features/chat/transcript/SubagentStopButton.tsx", {
+    react: { useEffect: (effect) => effects.push(effect) },
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+    "react-i18next": { useTranslation: () => ({ t: (key) => key }) },
+    zustand: { create: (init) => {
+      let state = init();
+      const useStore = (select) => select(state);
+      useStore.getState = () => state;
+      useStore.setState = (update) => { state = { ...state, ...update(state) }; };
+      return useStore;
+    } },
+    "../../../lib/api": { api: { stopSubagents: async (request) => {
+      requests.push(request);
+      await response;
+      return { pending: ["child"] };
+    } } },
+    "../../../stores/app-store": { useAppStore: (select) => select({ sessions: [{ id: "owner" }] }) },
+    "../../../components/ui": { Button: "button", TooltipButton: "button" },
+  });
+  const props = { sessionId: "owner", delegationId: "child", execution: 2, running: true, compact: true };
+  const first = component.SubagentStopButton(props);
+  first.props.onClick();
+  first.props.onClick();
+  assert.equal(requests.length, 1);
+  assert.equal(component.SubagentStopButton(props).props.disabled, true);
+  assert.equal(requests[0].sessionId, "owner");
+  assert.equal(JSON.stringify(requests[0].delegationIds), '["child"]');
+  assert.equal(requests[0].expectedExecutions.child, 2);
+  finish();
+  await new Promise(setImmediate);
+  assert.equal(component.SubagentStopButton(props).props.disabled, true);
+  assert.equal(component.SubagentStopButton({ ...props, execution: 3 }).props.disabled, false);
+  assert.equal(component.SubagentStopButton({ ...props, sessionId: "another" }).props.disabled, false);
+  component.SubagentStopButton({ ...props, running: false });
+  for (const effect of effects.splice(0)) effect();
+  assert.equal(component.SubagentStopButton(props).props.disabled, false);
+  assert.equal(component.SubagentStopButton({ ...props, execution: undefined }), null);
 });

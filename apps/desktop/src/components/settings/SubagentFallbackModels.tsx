@@ -1,20 +1,21 @@
 import { useTranslation } from "react-i18next";
-import { SUBAGENT_THINKING_LEVELS, type SubagentThinkingLevel } from "@pi-desktop/shared";
+import { SUBAGENT_THINKING_LEVELS, type SubagentThinkingLevel, type ProviderPublic } from "@pi-desktop/shared";
 import { Button, Field } from "../ui";
 import { SubagentModelPicker } from "./SubagentModelPicker";
 import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import {
   groupSubagentModelChoices,
-  pinMatchesChoice,
+  subagentModelDisplay,
   subagentModelSelectValue,
   type SubagentModelChoice,
 } from "./subagent-models";
 
 /** Ordered alternatives use the same configured-model catalog as the primary. */
-export function SubagentFallbackModels({ primary, values, choices, thinkingLevels, onChange, onThinkingChange }: {
+export function SubagentFallbackModels({ primary, values, choices, providers, thinkingLevels, onChange, onThinkingChange }: {
   primary: string;
   values: string[];
   choices: SubagentModelChoice[];
+  providers: readonly ProviderPublic[];
   thinkingLevels: Record<string, SubagentThinkingLevel>;
   onThinkingChange: (pin: string, level: SubagentThinkingLevel | "") => void;
   onChange: (values: string[]) => void;
@@ -23,7 +24,7 @@ export function SubagentFallbackModels({ primary, values, choices, thinkingLevel
   const selected = new Set([primary, ...values].map((pin) => subagentModelSelectValue(pin, choices)));
   const available = choices.filter((choice) => !selected.has(choice.value));
   const rows = values.map((pin) => {
-    const choice = choices.find((candidate) => pinMatchesChoice(pin, candidate));
+    const choice = subagentModelDisplay(pin, providers);
     return { choice, text: choice ? `${choice.providerName}/${choice.modelId}` : pin };
   });
   const move = (index: number, delta: number) => {
@@ -39,9 +40,13 @@ export function SubagentFallbackModels({ primary, values, choices, thinkingLevel
           const duplicate = rows.some((other, position) => position !== index && other.text === text);
           const sameProvider = choice && rows.some((other, position) =>
             position !== index && other.text === text && other.choice?.providerId === choice.providerId);
-          const label = duplicate
+          const identity = duplicate
             ? `${text} (${!choice || sameProvider ? `${index + 1}: ${pin}` : choice.providerId})`
             : text;
+          const status = choice?.status ?? "unavailable";
+          const label = status === "available" ? identity : `${identity} (${t(
+            status === "disabled" ? "settings.providerDisabledBadge" : "settings.catalogSourceEmpty",
+          )})`;
           return (
             <li key={`${index}:${pin}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-2">
               <span className="min-w-0 flex-1 break-all text-sm">{index + 1}. {label}</span>

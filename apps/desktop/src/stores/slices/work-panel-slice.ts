@@ -1,5 +1,6 @@
 import { removeSideChat, sideChatTabSessionId } from "../../lib/side-chat";
 import { api } from "../../lib/api";
+import { isRemoteSession } from "../../lib/remote-session-safety";
 import {
   activateWorkPanelTabState,
   browserPluginTab,
@@ -176,6 +177,7 @@ export function createWorkPanelSlice({
 
   openWorkPanelTabForSession: (sessionId, tab) => {
     if (!sessionId) return;
+    if (isRemoteSession(get().sessions.find((session) => session.id === sessionId)) || sessionId.startsWith("remote:")) return;
     set((state) => {
       const affectsVisibleSession =
         state.activeSessionId === sessionId &&
@@ -227,6 +229,7 @@ export function createWorkPanelSlice({
     set((state) => {
       const sessionId = state.activeSessionId;
       if (!sessionId) return {};
+      if (isRemoteSession(state.sessions.find((session) => session.id === sessionId)) || sessionId.startsWith("remote:")) return {};
       const next = replaceWorkPanelTabState(
         {
           tabs: state.workPanelTabs,
@@ -410,6 +413,7 @@ export function createWorkPanelSlice({
     });
   },
   openUrlInWorkPanel: (url) => {
+    if (isRemoteSession(get().sessions.find((session) => session.id === get().activeSessionId))) return;
     const hasBrowser = get().pluginViews.some(
       (view) => view.pluginId === "pi.browser" && view.viewId === "browser",
     );

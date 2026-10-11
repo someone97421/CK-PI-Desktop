@@ -1,3 +1,5 @@
+import { SubagentStopButton } from "./SubagentStopButton";
+import { subagentExecutionIdentity } from "./SubagentSupervision";
 import { activityTimingInputs, cachedVisibleActivityItems } from "../../../lib/transcript-activity-summary";
 import { reuseReferences } from "../../../lib/transcript-summary";
 import { ActivityItems } from "./ActivityItems";
@@ -36,6 +38,7 @@ import {
   delegationTimingBounds,
   isDelegationActivityItem,
   lifecycleKindOf,
+  subagentOutcome,
   summarizeSubagentActivity,
   type DelegationActivityItem,
   type SubagentOutcome,
@@ -252,6 +255,22 @@ export const ActivityGroup = memo(function ActivityGroup({
   // Parent tools after a Task fan-out live in a later activity part (D319), so
   // this card is not the turn's live tail while its delegates are still running.
   const topologyLive = hasSubagentTopology && subagentSummary.running > 0;
+  const activeSessionId = useAppStore(state => state.activeSessionId);
+  const stopTargets = useMemo(() => {
+    const expectedExecutions: Record<string, number> = {};
+    let sessionId: string | null | undefined;
+    for (const item of delegateItems) {
+      if (subagentOutcome(item.message, delegationStatuses) !== "running") continue;
+      const identity = subagentExecutionIdentity(item.message);
+      if (!identity.delegationId || identity.execution === undefined || identity.phase === "finished") continue;
+      const owner = identity.sessionId ?? activeSessionId;
+      if (!owner) continue;
+      if (sessionId && sessionId !== owner) return { sessionId: null, expectedExecutions: {} };
+      sessionId = owner;
+      expectedExecutions[identity.delegationId] = Math.max(expectedExecutions[identity.delegationId] ?? 0, identity.execution);
+    }
+    return { sessionId, expectedExecutions };
+  }, [delegateItems, delegationStatuses, activeSessionId]);
   const live = hasSubagentTopology ? topologyLive : isActive;
   const searchTarget = useContext(TranscriptSearchContext);
   const revealRequest = useMemo(() => searchTarget && items.some((item) => item.message.id === searchTarget.messageId)
@@ -358,6 +377,7 @@ export const ActivityGroup = memo(function ActivityGroup({
         runtimeActivity ? ` phase-${runtimeActivity.phase}` : ""
       }`}
     >
+      <div className="subagent-activity-header">
       <button
         ref={titleRef}
         className="tool-activity-header"
@@ -395,6 +415,8 @@ export const ActivityGroup = memo(function ActivityGroup({
           <IconChevronRight size={12} />
         </span>
       </button>
+      {delegateItems.length > 1 ? <SubagentStopButton {...stopTargets} running={topologyLive} /> : null}
+      </div>
       {tail ? (
         <div className="tool-activity-preview" aria-hidden>
           {tail}

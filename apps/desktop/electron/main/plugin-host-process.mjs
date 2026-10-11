@@ -397,6 +397,7 @@ function buildApi() {
       openExternal: (url) => call("shell.openExternal", [url]),
     },
     browser: {
+      reveal: () => call("browser.reveal"),
       navigate: (input) => call("browser.navigate", [input ?? {}]),
       action: (input) => call("browser.action", [input]),
       setBounds: (hole) => call("browser.setBounds", [hole]),

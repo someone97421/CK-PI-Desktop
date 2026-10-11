@@ -5,6 +5,11 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "统一子代理停止入口，等待真实执行结束后显示终态，保留跨重启召回、汇报与快照保存反馈。",
+  "改善问答历史展示，增加会话时长和主模型响应耗时统计，修复空压缩摘要及禁用提供商名称显示。",
+  "浏览器操作自动展开所属会话面板，截图期间调整窗口和面板位置保持正确裁剪。",
+  "Windows 11 使用系统原生圆角，改善旧 Windows 圆角合成与跨屏恢复。",
+  "补全实验性 SSH 远程文本会话、审批、只读文件和重连，支持手动导入模型配置与密钥，继续仅在开发者入口提供。",
   "修复已保存的子代理快照误报不可用，保存完成后更新卡片状态，并支持手动刷新查询结果。",
   "重构子代理快照保存与恢复：后台保存失败不阻断任务，优先使用内存续跑，快照不可用时提供已有结果供继续处理。",
   "修复新版运行库扩展字段导致的快照保存失败，移除历史指纹变化引起的整会话隔离，并简化保存设置说明。",
@@ -50,6 +55,11 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Unify subagent stop controls and confirm actual completion before showing a terminal state, retaining cross-restart recall, reports and snapshot feedback.",
+  "Improve question history, add session and model-response timing, reject empty compaction summaries and retain disabled-provider labels.",
+  "Automatically reveal the calling session's browser panel and keep capture clipping aligned while resizing or moving panels.",
+  "Use native Windows 11 corners and improve legacy Windows compositing and multi-monitor restoration.",
+  "Complete experimental SSH text sessions, approvals, read-only files and reconnection, with explicit model and credential import under the existing developer-only entry.",
   "Fix saved subagent snapshots incorrectly appearing unavailable, refresh cards after saving, and allow manual status refresh.",
   "Refactor subagent snapshot saving and recovery: background storage failures do not block tasks, continuation prefers memory, and existing results remain available when snapshots cannot be restored.",
   "Fix snapshot failures caused by new runtime metadata, remove session-wide isolation on transcript changes, and simplify persistence settings text.",

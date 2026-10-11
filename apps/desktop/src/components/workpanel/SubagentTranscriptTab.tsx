@@ -1,10 +1,15 @@
+import { toolResultPayload } from "../../lib/tool-presentation";
+import { SubagentStopButton } from "../../features/chat/transcript/SubagentStopButton";
+import { useSubagentExecution } from "../../features/chat/transcript/SubagentSupervision";
+import { delegationExecutionKey, isDelegationStartTool } from "../../lib/tool-display";
+import { collectDelegationStatuses, subagentOutcome } from "../../lib/subagent-topology";
 import { Fragment, useLayoutEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../../stores/app-store";
 import { useFollowScroll } from "../../hooks/use-follow-scroll";
 import { useSubagentTranscriptView } from "../../hooks/use-subagent-transcript-view";
 import { useTranscriptSearchFocus } from "../../hooks/use-transcript-search-focus";
-import { IconArrowDown } from "../icons";
+import { IconArrowDown, IconBot, IconChevronDown } from "../icons";
 import { Textarea, TooltipButton } from "../ui";
 import { DisclosureAnchorContext } from "../../lib/disclosure-anchor-context";
 import { TranscriptDisclosureProvider } from "../../features/chat/transcript/disclosure";
@@ -18,6 +23,7 @@ import {
 } from "../ReviewChangeCard";
 import { ToolRow } from "../../features/chat/transcript/ToolRow";
 import { Markdown } from "../Markdown";
+import { delegateModelId, delegateThinkingLevel } from "../../features/chat/transcript/model";
 
 /**
  * The work-panel tab showing one delegation as a conversation (issue #917).
@@ -29,7 +35,7 @@ import { Markdown } from "../Markdown";
  * on the same delegation append further turns, so a resumed delegate reads as
  * one continuing user/assistant exchange.
  *
- * The tab is display-only: the composer at the foot is a disabled textarea
+ * The tab allows explicit cancellation; the composer at the foot is a disabled textarea
  * whose placeholder says the delegate is driven by the main agent. There is
  * deliberately no send path.
  */
@@ -49,9 +55,21 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
   // the empty key keeps the hook's contract while nothing is active.
   const transcript = useSubagentTranscriptView(activeSessionId ?? "");
   const { messages } = transcript;
-  const isRunning = useAppStore(
-    (state) => (activeSessionId ? state.runningSessions[activeSessionId] ?? false : false),
-  );
+  const delegateMessage = useMemo(() => [...messages].reverse().find(message => {
+    if (message.role !== "tool" || !isDelegationStartTool(message.toolName)) return false;
+    return delegationExecutionKey(toolResultPayload(message)) === delegationId;
+  }), [messages, delegationId]);
+  const delegateExecution = useSubagentExecution(delegateMessage);
+  const delegateRunning = useMemo(() => {
+    if (!delegateMessage) return false;
+    const items = messages.filter(message => message.role === "tool")
+      .map(message => ({ kind: "tool" as const, message }));
+    return subagentOutcome(delegateMessage, collectDelegationStatuses(items)) === "running";
+  }, [messages, delegateMessage]);
+  const delegateSettings = {
+    modelId: delegateMessage ? delegateModelId(delegateMessage) : "",
+    thinkingLevel: delegateMessage ? delegateThinkingLevel(delegateMessage) : undefined,
+  };
   const transcriptResult = useMemo(
     () => buildSubagentTranscript(messages, delegationId),
     [messages, delegationId],
@@ -139,7 +157,7 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
                       <ThinkingRow
                         key={`thinking-${row.message.id}`}
                         message={row.message}
-                        streaming={isRunning && row.message.status === "streaming"}
+                        streaming={delegateRunning && delegateExecution.live && row.message.status === "streaming"}
                       />
                     ) : (
                       <div
@@ -189,6 +207,22 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
             aria-label={t("panel.subagentReadOnly")}
             placeholder={t("panel.subagentReadOnly")}
           />
+          <div className="subagent-transcript-composer-controls">
+            <button
+              type="button"
+              className="icon-btn composer-model-thinking-chip subagent-transcript-model-picker"
+              disabled
+              aria-haspopup="listbox"
+              aria-label={`${t("chat.model")}: ${delegateSettings.modelId || "—"}. ${t("chat.reasoningLevel")}: ${delegateSettings.thinkingLevel || "—"}`}
+            >
+              <span className="composer-model-thinking-icon" aria-hidden="true"><IconBot size={14} /></span>
+              <span className="composer-model-thinking-model">{delegateSettings.modelId || "—"}</span>
+              <span className="composer-model-thinking-dot" aria-hidden="true">·</span>
+              <span className="composer-model-thinking-level">{delegateSettings.thinkingLevel || "—"}</span>
+              <IconChevronDown size={12} aria-hidden="true" className="composer-model-thinking-chevron" />
+            </button>
+            <SubagentStopButton sessionId={delegateExecution.sessionId} delegationId={delegateExecution.delegationId} execution={delegateExecution.execution} running={delegateRunning && delegateExecution.live} compact />
+          </div>
         </footer>
       </div>
     </DisclosureAnchorContext.Provider>

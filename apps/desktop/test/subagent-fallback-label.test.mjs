@@ -28,14 +28,23 @@ test("fallback rows show provider names and disambiguate equal labels", async ()
         fallbackMoveDown: "Move {{model}} down",
         fallbackRemove: "Remove {{model}}",
       } },
+      settings: { providerDisabledBadge: "Disabled", catalogSourceEmpty: "unavailable" },
     } } } });
-    const render = (values, choices) => renderToStaticMarkup(
+    const render = (values, choices, providers = choices.map((choice) => ({
+      id: choice.providerId,
+      name: choice.providerName,
+      vendorKey: choice.vendorKey,
+      enabled: true,
+      hasSecret: true,
+      models: [{ id: choice.modelId }],
+    }))) => renderToStaticMarkup(
       createElement(I18nextProvider, { i18n }, createElement(SubagentFallbackModels, {
         primary: "",
         values,
         choices,
         thinkingLevels: {},
         onThinkingChange() {},
+        providers,
         onChange() {},
       })),
     );
@@ -77,6 +86,22 @@ test("fallback rows show provider names and disambiguate equal labels", async ()
 
     const unavailable = render([pin], []);
     assert.match(unavailable, /721fcc76-026e-4f35-a32d-5e2a8d204499\/deepseek-v4\.1-flash/);
+
+    // A saved ID pin must keep its identity when eligibility changes.
+    const disabledProvider = {
+      id: choices[1].providerId,
+      name: choices[1].providerName,
+      vendorKey: "custom",
+      enabled: false,
+      hasSecret: true,
+      models: [{ id: choices[1].modelId }],
+    };
+    const disabled = render([pin], [], [disabledProvider]);
+    assert.match(disabled, /DeepSeek Workspace\/deepseek-v4\.1-flash/);
+    assert.match(disabled, /Disabled/);
+    assert.match(disabled, /aria-label="Remove DeepSeek Workspace\/deepseek-v4\.1-flash \(Disabled\)"/);
+    assert.doesNotMatch(disabled, /721fcc76-026e-4f35-a32d-5e2a8d204499/);
+    assert.match(unavailable, /\(unavailable\)/);
   } finally {
     await server.close();
   }

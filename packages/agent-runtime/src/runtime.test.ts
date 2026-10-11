@@ -46,6 +46,7 @@ const subagentRuns = vi.hoisted(() => ({
   constructorError: undefined as unknown,
   /** When true, run() waits for resolveRun() so tests control settlement. */
   deferred: false,
+  ignoreAbort: false,
   instances: [] as Array<{ resolve: (r: unknown) => void; settled: boolean }>,
   /** Settles the oldest unresolved deferred run (tests control order). */
   resolveRun: undefined as ((result: unknown) => void) | undefined,
@@ -85,7 +86,7 @@ vi.mock("./subagent.js", async (importOriginal) => {
             this.signal?.addEventListener(
               "abort",
               () => {
-                if (instance.settled) return;
+                if (instance.settled || subagentRuns.ignoreAbort) return;
                 instance.settled = true;
                 resolve({
                   agentName: "explorer",
@@ -8267,8 +8268,8 @@ describe("DesktopAgentRuntime subagents", () => {
 
     // TaskStop acknowledges immediately; the terminal event confirms settlement separately.
     const stopped = await stop.execute("stop-1", { delegationIds: [secondId] });
-    expect(stopped.details.delegations).toHaveLength(1);
-    expect(stopped.details.delegations[0].collaboration.phase).toBe("stopping");
+    expect(stopped.details.stopPending).toHaveLength(1);
+    expect(stopped.details.stopPending[0].collaboration.phase).toBe("stopping");
     await (runtime as any).delegations.get(secondId).completion;
     expect((runtime as any).delegations.get(secondId).status).toBe("stopped");
     const afterStop = await wait.execute("wait-2", {
@@ -8278,6 +8279,88 @@ describe("DesktopAgentRuntime subagents", () => {
     expect(firstId).not.toBe(secondId);
     subagentRuns.deferred = false;
 
+    await runtime.dispose();
+  });
+
+  it("scopes direct cancellation to selected IDs and the owning session", async () => {
+    const runtime = createRuntime({ subagents: [explorer] });
+    const other = createRuntime({ subagents: [explorer] });
+    subagentRuns.deferred = true;
+    subagentRuns.instances.length = 0;
+    try {
+      const start = async (owner: typeof runtime, callId: string) => {
+        const result = await taskTool(owner).execute(callId, { agent: "explorer", task: callId });
+        return String(result.details.delegationId);
+      };
+      const first = await start(runtime, "direct-A");
+      const second = await start(runtime, "direct-B");
+      const foreign = await start(other, "other-session");
+      await expect(runtime.stopSubagents([first, second], { expectedExecutions: { [second]: 2 } })).rejects.toThrow("execution changed");
+      expect((runtime as any).delegations.get(first).stopRequested).toBe(false);
+      const stopped = await runtime.stopSubagents([first, first, foreign]);
+      expect(stopped.details.stopped).toMatchObject([{ delegationId: first, status: "stopped" }]);
+      expect((await runtime.stopSubagents([first])).details.stopped).toEqual([]);
+      // Both remaining delegates must still be running to be selected by stop-all.
+      expect((await runtime.stopSubagents()).details.stopped).toMatchObject([
+        { delegationId: second, status: "stopped" },
+      ]);
+      expect((await other.stopSubagents()).details.stopped).toMatchObject([
+        { delegationId: foreign, status: "stopped" },
+      ]);
+    } finally {
+      subagentRuns.deferred = false;
+      await runtime.dispose();
+      await other.dispose();
+    }
+  });
+
+  it.each(["tool", "desktop"])("returns pending cancellation when a delegate ignores %s stop", async (entry) => {
+    const runtime = createRuntime({ subagents: [explorer] });
+    subagentRuns.calls.length = 0;
+    subagentRuns.instances.length = 0;
+    subagentRuns.deferred = true;
+    subagentRuns.ignoreAbort = true;
+    subagentRuns.resolveRun = undefined;
+    const task = taskTool(runtime);
+    const stop = (runtime as any).agent.state.tools.find(
+      (tool: any) => tool.name === "TaskStop",
+    );
+    const started = await task.execute("task-unresponsive", {
+      agent: "explorer",
+      task: "Keep working unless cancellation reaches you.",
+    });
+    const delegationId = (started.details as any).delegationId as string;
+
+    vi.useFakeTimers();
+    try {
+      const stopping = entry === "desktop"
+        ? runtime.stopSubagents([delegationId])
+        : stop.execute("stop-unresponsive", { delegationIds: [delegationId] });
+      await vi.advanceTimersByTimeAsync(5_000);
+      const result = await stopping;
+      expect(result.content[0].text).toContain("remain running");
+      expect(result.details.stopped).toEqual([]);
+      expect(result.details.stopPending).toMatchObject([
+        { delegationId, status: "running" },
+      ]);
+      expect((runtime as any).delegations.get(delegationId).status).toBe(
+        "running",
+      );
+    } finally {
+      vi.useRealTimers();
+      subagentRuns.ignoreAbort = false;
+      subagentRuns.deferred = false;
+    }
+
+    (subagentRuns as any).resolveRun?.({
+      agentName: "explorer",
+      status: "aborted",
+      report: "The delegated task was aborted.",
+      turns: 0,
+      toolCalls: 0,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
     await runtime.dispose();
   });
 
@@ -8572,15 +8655,20 @@ describe("DesktopAgentRuntime subagents", () => {
     const pendingSave = new Promise((resolve) => { finishSave = resolve; });
     const commit = vi.spyOn(internal.persistenceClient, "commitSnapshot").mockReturnValue(pendingSave);
     const memory = vi.spyOn(internal.persistenceClient, "isMemoryOnly").mockReturnValue(false);
+    const emit = vi.spyOn(internal, "emit");
     try {
       const started = await taskTool(runtime).execute("task-slow-storage", { agent: "explorer", task: "Find it." });
       const record = internal.delegations.get(started.details.delegationId);
+      record.taskMessage = { id: "task-slow-storage", role: "tool", content: "", createdAt: new Date().toISOString(),
+        toolName: "Task", toolCallId: "task-slow-storage", toolResult: { details: started.details } };
       record.run.exportSnapshot = () => ({});
       subagentRuns.resolveRun!({ agentName: "explorer", status: "completed", report: "可直接使用的结果", turns: 1, toolCalls: 0 });
       await record.completion;
       expect(commit).toHaveBeenCalledTimes(1);
       expect(record.status).toBe("completed");
       expect(record.result.report).toBe("可直接使用的结果");
+      const savedRevision = record.taskMessage.toolResult.details.statusRevision;
+      record.taskMessage = undefined;
       record.execution = 2;
       record.status = "running";
       record.durableGeneration = 0;
@@ -8590,11 +8678,16 @@ describe("DesktopAgentRuntime subagents", () => {
       expect(record.status).toBe("running");
       expect(record.durableGeneration).toBe(0);
       expect(record.persistenceState).toBe("saving");
+      const oldReceipt = emit.mock.calls.map(call => call[0] as any).findLast(event =>
+        event.type === "message_end" && event.message.id === "task-slow-storage");
+      expect(oldReceipt.message.toolResult.details).toMatchObject({ execution: 1, status: "completed",
+        persistenceState: "durable-ready", canResume: false, statusRevision: savedRevision + 1 });
     } finally {
       subagentRuns.deferred = false;
       await runtime.dispose();
       commit.mockRestore();
       memory.mockRestore();
+      emit.mockRestore();
     }
   });
 

@@ -1,5 +1,5 @@
 import { expandMcpInvocation } from "../composer-mcp";
-import { IPC, ErrorCodes, compactionRecordId, findSkillMentions, isRpcTimeoutError, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type VoiceOrigin } from "@pi-desktop/shared";
+import { IPC, ErrorCodes, compactionRecordId, findSkillMentions, isRpcTimeoutError, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AgentStopSubagentsRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type VoiceOrigin } from "@pi-desktop/shared";
 import type { SessionConfigurationQueue } from "../runtime/session-configuration";
 import type { FinishTurn } from "../runtime/plans";
 import { expandSlashInvocation, visionFromModelConfig, type ComposerTemplate } from "@pi-desktop/agent-runtime";
@@ -841,6 +841,23 @@ export function registerAgentIpc({
     } finally {
       releaseSessionOperation?.();
     }
+  });
+
+  handle(IPC.invoke.agentStopSubagents, async (req: AgentStopSubagentsRequest) => {
+    if (!req || typeof req.sessionId !== "string" || !req.sessionId.trim() ||
+      (req.delegationIds !== undefined && (!Array.isArray(req.delegationIds) ||
+        req.delegationIds.length === 0 || req.delegationIds.length > 100 ||
+        req.delegationIds.some(id => typeof id !== "string" || !id.trim())))) {
+      throw new Error("Invalid subagent stop request");
+    }
+    if (req.expectedExecutions !== undefined && (
+      !req.expectedExecutions || typeof req.expectedExecutions !== "object" || Array.isArray(req.expectedExecutions) ||
+      Object.entries(req.expectedExecutions).some(([id, execution]) =>
+        !req.delegationIds?.includes(id) || !Number.isSafeInteger(execution) || execution < 1)
+    )) throw new Error("Invalid subagent execution selection");
+    rejectNativeAgentOperation(req.sessionId);
+    if (!sidecar) throw new Error("sidecar unavailable");
+    return sidecar.call("agent.stopSubagents", req);
   });
 
   handle(IPC.invoke.agentStop, async (req: AgentStopRequest) => {

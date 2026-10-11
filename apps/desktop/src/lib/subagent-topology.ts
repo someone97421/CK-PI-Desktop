@@ -202,9 +202,8 @@ export function delegationTimingBounds(
  * `details.stopped[]`. Those rows — which are deliberately not topology nodes —
  * are what tells a delegation card how its subagent actually finished.
  *
- * When `turnLive` is false the parent turn has ended, so any leftover
- * `running` node is reconstructed as `aborted` (the runtime aborts them at
- * run end). A `TaskStop` snapshot that still says `running` is `stopped`.
+ * 新版任务用自身执行回执确认终态；主轮结束不代表子任务已收尾。
+ * 只有缺少状态修订信息的旧历史才沿用 turnLive 的中断兜底。
  */
 export function collectDelegationStatuses(
   items: readonly AssistantActivityItem[],
@@ -221,6 +220,8 @@ export function collectDelegationStatuses(
     if (!payload) continue;
     ingestLifecycleStatuses(statuses, payload.delegations, false);
     ingestLifecycleStatuses(statuses, payload.stopped, true);
+    ingestLifecycleStatuses(statuses, payload.stopPending, false);
+    ingestLifecycleStatuses(statuses, payload.settled, false);
   }
   for (const snapshot of executionSnapshots(items)) {
     const status = asDelegationStatus(snapshot.status);
@@ -245,6 +246,8 @@ export function collectDelegationStatuses(
       const payload = asRecord(toolResultPayload(item.message));
       const id = delegationExecutionKey(payload);
       if (typeof id !== "string" || !id) continue;
+      if (payload?.status === "running" && typeof payload.statusRevision === "number" &&
+          Number.isSafeInteger(payload.statusRevision) && payload.statusRevision >= 0) continue;
       const current = statuses.get(id);
       if (!current || current === "running") statuses.set(id, "aborted");
     }

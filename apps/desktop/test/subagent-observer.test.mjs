@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import observerPlugin from "../resources/plugins/local.subagent-observer/main.js";
-import { canRevokeRecall, canStopSubagent, handleSupervisionAction, renderSupervision, translate } from "../resources/plugins/local.subagent-observer/supervision.js";
+import { canRevokeRecall, handleSupervisionAction, renderSupervision, translate } from "../resources/plugins/local.subagent-observer/supervision.js";
 
 test("无 delegationId 时 renderSupervision 返回 null", async () => {
   const node = await renderSupervision({ sessionId: "s1" });
@@ -23,7 +23,7 @@ test("尚未查到快照不显示磁盘或零版本，刷新后显示已保存",
   assert.match(after, /快照 v1/);
 });
 
-test("运行中子代理正确生成进度文本和停止按钮，不查询 recall", async () => {
+test("运行中子代理展示进度，停止操作统一由宿主提供，不查询 recall", async () => {
   let recallQueried = false;
   const desktopInvoke = async (operation) => {
     if (operation === "subagent/recallStatus") {
@@ -66,10 +66,7 @@ test("运行中子代理正确生成进度文本和停止按钮，不查询 reca
 
   const statusBar = node.children.find((c) => c.key === "status-bar");
   assert.ok(statusBar);
-  const stopAction = statusBar.children.find((c) => c.key === "action-stop");
-  assert.ok(stopAction);
-  assert.equal(stopAction.action, "stop");
-  assert.equal(stopAction.disabled, false);
+  assert.equal(statusBar.children.find((c) => c.key === "action-stop"), undefined);
 
   const statusCopy = statusBar.children.find((c) => c.key === "status-copy");
   const reportSummary = statusCopy.children.find((c) => c.key === "report-summary");
@@ -146,88 +143,11 @@ test("非运行态且具 disk 快照时呈现撤销召回按钮与版本徽标",
   assert.ok(persistenceStatus.text.includes("快照 v3"));
 });
 
-test("动作保护：stop 动作在非运行或已结束时拒绝执行", async () => {
-  let invoked = false;
-  const desktopInvoke = async () => {
-    invoked = true;
-  };
-
-  await assert.rejects(
-    handleSupervisionAction(
-      { sessionId: "s1", delegationId: "del-1", running: false },
-      "stop",
-      { desktopInvoke },
-    ),
-    /Cannot stop a non-running or historical subagent/,
-  );
-
-  await assert.rejects(
-    handleSupervisionAction(
-      { sessionId: "s1", delegationId: "del-1", running: true, live: true, collaboration: { phase: "finished" } },
-      "stop",
-      { desktopInvoke },
-    ),
-    /Subagent execution has already finished/,
-  );
-
-  assert.equal(invoked, false);
-});
-
-test("动作保护：stop 动作跨轮次历史任务或会话非 running 被拦截", async () => {
-  let invoked = false;
-  const desktopInvoke = async () => {
-    invoked = true;
-  };
-
-  const getSessionSnapshotTurnMismatch = async () => ({
-    session: { status: "running", activeTurnId: "turn-new" },
-  });
-
-  await assert.rejects(
-    handleSupervisionAction(
-      { sessionId: "s1", delegationId: "del-1", running: true, live: true, parentTurnId: "turn-old" },
-      "stop",
-      { desktopInvoke, getSessionSnapshot: getSessionSnapshotTurnMismatch },
-    ),
-    /Turn mismatch: subagent is historical/,
-  );
-
-  const getSessionSnapshotSessionIdle = async () => ({
-    session: { status: "idle", activeTurnId: "turn-1" },
-  });
-
-  await assert.rejects(
-    handleSupervisionAction(
-      { sessionId: "s1", delegationId: "del-1", running: true, live: true, parentTurnId: "turn-1" },
-      "stop",
-      { desktopInvoke, getSessionSnapshot: getSessionSnapshotSessionIdle },
-    ),
-    /Session is no longer running/,
-  );
-
-  assert.equal(invoked, false);
-});
-
-test("动作执行：活跃运行态子代理成功调用 subagent/stop 并携带 expectedExecution", async () => {
-  const calls = [];
-  const desktopInvoke = async (operation, args) => {
-    calls.push({ operation, args });
-    return { ok: true };
-  };
-  const getSessionSnapshot = async () => ({
-    session: { status: "running", activeTurnId: "turn-1" },
-  });
-
-  const res = await handleSupervisionAction(
-    { sessionId: "s1", delegationId: "del-1", execution: 2, running: true, live: true, parentTurnId: "turn-1" },
-    "stop",
-    { desktopInvoke, getSessionSnapshot },
-  );
-
-  assert.deepEqual(res, { ok: true });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].operation, "subagent/stop");
-  assert.deepEqual(calls[0].args, [{ sessionId: "s1", delegationId: "del-1", expectedExecution: 2 }]);
+test("观察插件不再执行运行停止动作", async () => {
+  await assert.rejects(() => handleSupervisionAction(
+    { sessionId: "s1", delegationId: "del-1", execution: 2, running: true, live: true },
+    "stop", { desktopInvoke: async () => { throw new Error("不应发出停止请求"); } },
+  ), /Unsupported action: stop/);
 });
 
 test("动作保护：revoke 动作重新校验 recall 状态与执行版本，防止越权和历史错撤", async () => {
@@ -304,35 +224,4 @@ test("main.js onPanelInvoke 契约与生命周期分发", async () => {
     observerPlugin.onPanelInvoke("unsupported.channel", { viewId: "supervision", context: {} }),
     /Unsupported inline view channel: unsupported.channel/,
   );
-});
-
-test("停止回执返回节点并保持禁用，同一次执行重复点击只发送一次", async () => {
-  const previous = globalThis.pi;
-  let calls = 0;
-  globalThis.pi = { desktop: {
-    getSessionSnapshot: async () => ({ session: { status: "waiting_permission", activeTurnId: "turn" } }),
-    invoke: async ({ operation, args }) => {
-      assert.equal(operation, "subagent/stop");
-      assert.equal(args[0].expectedExecution, 2);
-      calls += 1;
-      return { ok: true };
-    },
-  } };
-  const context = { sessionId: "stop-session", delegationId: "child", execution: 2,
-    parentTurnId: "turn", running: true, live: true, locale: "zh-CN", compact: true };
-  const findStop = (node) => node?.action === "stop" ? node : node?.children?.map(findStop).find(Boolean);
-  try {
-    const payload = { viewId: "supervision", context, action: "stop" };
-    const result = await observerPlugin.onPanelInvoke("inline.action", payload);
-    assert.equal(result.kind, "column");
-    assert.equal(findStop(result).disabled, true);
-    await observerPlugin.onPanelInvoke("inline.action", payload);
-    assert.equal(calls, 1);
-    const rendered = await observerPlugin.onPanelInvoke("inline.render", { viewId: "supervision", context });
-    assert.equal(findStop(rendered).disabled, true);
-  } finally {
-    observerPlugin.onUnload();
-    if (previous === undefined) delete globalThis.pi;
-    else globalThis.pi = previous;
-  }
 });

@@ -18,6 +18,8 @@ import { useAppStore } from "../stores/app-store";
 import { headPermission } from "../lib/pending-permissions";
 import { headAsk } from "../lib/pending-asks";
 
+import { isRemoteSession } from "../lib/remote-session-safety";
+import { RemoteConversation } from "./remote/RemoteConversation";
 const StableComposer = memo(Composer);
 
 function i18nHasError(t: (key: string) => string, code: string) {
@@ -58,7 +60,8 @@ export const ChatSurface = memo(function ChatSurface({
     (state) => state.draftTemporaryWorkspacePath,
   );
   const selectingSessionId = useAppStore((state) => state.selectingSessionId);
-  const retainedSessionIds = useAppStore((state) => state.retainedSessionIds);
+  const retainedIds = useAppStore((state) => state.retainedSessionIds);
+  const retainedSessionIds = useMemo(() => retainedIds.filter((id) => !id.startsWith("remote:")), [retainedIds]);
   const messages = useAppStore((state) => state.messages);
   // Only the error layer's retry affordance needs the run state here; each pane
   // reads its own session's flag.
@@ -153,6 +156,10 @@ export const ChatSurface = memo(function ChatSurface({
     : showVendorModelError
       ? "MODEL_NOT_CONFIGURED"
       : null;
+  if (activeSession && isRemoteSession(activeSession)) {
+    return <RemoteConversation key={activeSession.id} session={activeSession} />;
+  }
+  if (activeSessionId?.startsWith("remote:")) return <div role="status">{t("remote:loading")}</div>;
   return (
     <div
       className={`chat-surface route-surface${sessionSwitching ? " session-switching" : ""}`}

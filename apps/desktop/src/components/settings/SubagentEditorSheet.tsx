@@ -16,6 +16,7 @@ import {
   type SubagentDefinition,
   type SubagentPreset,
   type SubagentThinkingLevel,
+  type ProviderPublic,
   type UserSubagentRecord,
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
@@ -408,12 +409,14 @@ function ModelField({
   draft,
   setDraft,
   modelChoices,
+  providers,
   modelGroups,
   orphanModel,
 }: {
   draft: SubagentDraft;
   setDraft: (next: SubagentDraft) => void;
   modelChoices: ReturnType<typeof subagentModelChoices>;
+  providers: readonly ProviderPublic[];
   modelGroups: ReturnType<typeof groupSubagentModelChoices>;
   orphanModel: string | null;
 }) {
@@ -481,6 +484,7 @@ function ModelField({
         primary={draft.model}
         values={draft.fallbackModels}
         choices={modelChoices}
+        providers={providers}
         thinkingLevels={draft.fallbackThinkingLevels}
         onThinkingChange={(pin, level) => {
           const fallbackThinkingLevels = { ...draft.fallbackThinkingLevels };
@@ -507,6 +511,7 @@ function AdvancedFields({
   draft,
   setDraft,
   modelChoices,
+  providers,
   modelGroups,
   orphanModel,
 }: {
@@ -515,6 +520,7 @@ function AdvancedFields({
   draft: SubagentDraft;
   setDraft: (next: SubagentDraft) => void;
   modelChoices: ReturnType<typeof subagentModelChoices>;
+  providers: readonly ProviderPublic[];
   modelGroups: ReturnType<typeof groupSubagentModelChoices>;
   orphanModel: string | null;
 }) {
@@ -536,6 +542,7 @@ function AdvancedFields({
           draft={draft}
           setDraft={setDraft}
           modelChoices={modelChoices}
+          providers={providers}
           modelGroups={modelGroups}
           orphanModel={orphanModel}
         />
@@ -818,6 +825,7 @@ export function SubagentEditorSheet({
             draft={draft}
             setDraft={setDraft}
             modelChoices={modelChoices}
+            providers={providers}
             modelGroups={modelGroups}
             orphanModel={orphanModel}
           />

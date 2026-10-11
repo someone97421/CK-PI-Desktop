@@ -65,9 +65,6 @@ function SubagentPanelSurface({ selection }: { selection: SubagentPanelSelection
   const transcript = useSubagentTranscriptView(selection.sessionId);
   const { messages } = transcript;
   const searchTarget = selection.searchRequestId === transcript.focus?.requestId ? transcript.focus : null;
-  const isRunning = useAppStore(
-    (state) => state.runningSessions[selection.sessionId] ?? false,
-  );
   const selected = useMemo(
     () => findSelectedSubagent(messages, selection.delegationId),
     [messages, selection.delegationId],
@@ -75,11 +72,9 @@ function SubagentPanelSurface({ selection }: { selection: SubagentPanelSelection
   const delegationStatuses = useMemo<ReadonlyMap<string, SubagentOutcome>>(
     () =>
       selected
-        ? collectDelegationStatuses(selected.turnActivityItems, {
-            turnLive: isRunning,
-          })
+        ? collectDelegationStatuses(selected.turnActivityItems)
         : new Map(),
-    [isRunning, selected],
+    [selected],
   );
   const delegationFailures = useMemo<ReadonlyMap<string, DelegationFailure>>(
     () =>

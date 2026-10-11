@@ -498,6 +498,8 @@ export type DelegationStatus =
  */
 export type DelegationRecord = {
   execution?: number;
+  /** 同一执行内的状态发布序号，允许完成后保存回执更新并拒绝迟到重放。 */
+  statusRevision?: number;
   parentToolCallIds?: string[];
   resumeCommands?: Map<string, Record<string, unknown>>;
   resumeCommandIds?: Set<string>;
@@ -559,6 +561,7 @@ export function delegationExecutionId(delegationId: string, execution = 1): stri
 function delegationSummary(record: DelegationRecord): Record<string, unknown> {
   return {
     execution: record.execution ?? 1,
+    statusRevision: record.statusRevision ?? 0,
     executionId: delegationExecutionId(record.delegationId, record.execution ?? 1),
     canResume: (!record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested) &&
       (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? (record.durableGeneration ?? 0) > 0 && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "") : false)),
@@ -4414,7 +4417,7 @@ Delegation rules:
           if (receipt.isDuplicate || record.stopRequested || abortSignal.aborted || this.disposed ||
               this.runCancelled || this.turnHadError || record.startedEpoch !== this.turnEpoch) {
             if (record.interruptionReceipt) await record.interruptionReceipt;
-            else await this.stopSubagentAsync(delegationId, "parent");
+            else this.requestDelegationStop(record, "parent");
             record.status = "stopped";
             resolveCompletion();
             return this.subagentToolError(toolCallId, "Delegation was cancelled before execution began.");
@@ -4609,7 +4612,7 @@ Delegation rules:
       }
       if (record.stopRequested || record.status === "stopped" || record.status === "aborted") {
         record.status = "stopped";
-        void this.stopSubagentAsync(record.delegationId, "parent", execution).catch(() => undefined);
+        this.requestDelegationStop(record, "parent");
       }
 
       record.settling = false;
@@ -4635,6 +4638,11 @@ Delegation rules:
   private async saveDelegationSnapshot(record: DelegationRecord, execution: number): Promise<void> {
     let phase = "导出上下文快照";
     record.snapshotPending = true;
+    const completedMessage = record.taskMessage;
+    const completedSummary = delegationSummary(record);
+    const completedTurnId = record.taskTurnId;
+    let savedState: SubagentPersistenceState = "persistence-error";
+    let savedReason: string | undefined;
     try {
       if (!record.run) throw new Error("子任务上下文已释放");
       const checkpoint = record.run.exportSnapshot({ projectRealPath: this.projectPath ?? "",
@@ -4646,18 +4654,21 @@ Delegation rules:
         executionId: delegationExecutionId(record.delegationId, execution),
         instanceGeneration: this.persistenceClient.instanceGeneration, targetGeneration: execution, checkpoint,
       });
+      savedState = receipt.durableReady ? "durable-ready" : "memory-only";
       if (!this.disposed && !record.stopRequested && record.execution === execution && record.status === "completed") {
         record.durableGeneration = receipt.durableReady ? receipt.snapshotGeneration : 0;
-        record.persistenceState = receipt.durableReady ? "durable-ready" : "memory-only";
+        record.persistenceState = savedState;
         record.persistenceReason = undefined;
       }
     } catch (error) {
+      savedState = this.persistenceClient.isMemoryOnly(record.delegationId) ? "memory-only" : "persistence-error";
+      const code = (error as { code?: unknown } | null)?.code;
+      const label = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "UNKNOWN";
+      const detail = error instanceof Error ? `：${error.message.replace(/^\[[A-Z_]+\]\s*/, "").replace(/\s+/g, " ").slice(0, 500)}` : "";
+      savedReason = savedState === "memory-only" ? undefined : `${phase}失败（${label}）${detail}`;
       if (!this.disposed && !record.stopRequested && record.execution === execution && record.status === "completed") {
-        record.persistenceState = this.persistenceClient.isMemoryOnly(record.delegationId) ? "memory-only" : "persistence-error";
-        const code = (error as { code?: unknown } | null)?.code;
-        const label = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "UNKNOWN";
-        const detail = error instanceof Error ? `：${error.message.replace(/^\[[A-Z_]+\]\s*/, "").replace(/\s+/g, " ").slice(0, 500)}` : "";
-        record.persistenceReason = record.persistenceState === "memory-only" ? undefined : `${phase}失败（${label}）${detail}`;
+        record.persistenceState = savedState;
+        record.persistenceReason = savedReason;
       }
     } finally {
       if (record.execution === execution) {
@@ -4667,6 +4678,14 @@ Delegation rules:
           catch { /* 状态展示失败不改变任务结果。 */ }
           this.pruneFinishedDelegations();
         }
+      } else if (!this.disposed && completedMessage) {
+        // 内存已开始下一轮时，回执仍更新原执行的历史，不触碰新执行状态。
+        try {
+          this.emit({ type: "message_end", message: settledDelegationMessage(completedMessage, {
+            ...completedSummary, canResume: false, persistenceState: savedState, reason: savedReason,
+            statusRevision: Number(completedSummary.statusRevision ?? 0) + 1,
+          }) }, completedTurnId);
+        } catch { /* 历史展示失败不改变当前执行。 */ }
       }
     }
   }
@@ -4677,6 +4696,8 @@ Delegation rules:
     const details = isRecord(original) && isRecord(original.details) ? original.details : undefined;
     if (record.status === "running" && details?.modelId === record.modelId && details?.thinkingLevel === record.thinkingLevel &&
       JSON.stringify(details?.collaboration) === JSON.stringify(record.run?.observation.snapshot())) return;
+    record.statusRevision = Math.max(record.statusRevision ?? 0,
+      typeof details?.statusRevision === "number" ? details.statusRevision : 0) + 1;
     record.taskMessage = settledDelegationMessage(record.taskMessage, delegationSummary(record));
     this.emit(
       {
@@ -4713,10 +4734,7 @@ Delegation rules:
   /** Abort every running delegation (user Stop, dispose, parent fatal error). */
   private abortRunningDelegations(): void {
     for (const record of [...this.delegations.values()].filter((item) => item.status === "running" || item.settling)) {
-      void this.stopSubagentAsync(record.delegationId, "parent").catch(() => {
-        record.persistenceState = "persistence-error";
-        this.publishDelegationSettlement(record);
-      });
+      this.requestDelegationStop(record, "parent");
     }
     this.supervisionInbox.clear();
     this.supervisionMessages.clear();
@@ -5165,6 +5183,70 @@ Delegation rules:
     };
   }
 
+  /** Shared cancellation path for TaskStop and explicit desktop controls. */
+  async stopSubagents(ids: string[] = [], options: {
+    source?: "user" | "parent";
+    expectedExecutions?: Record<string, number>;
+    waitMs?: number;
+  } = {}) {
+    const targets = ids.length
+      ? [...new Set(ids)]
+          .map((id) => this.delegations.get(id))
+          .filter(
+            (record): record is DelegationRecord =>
+              record !== undefined && record.status === "running",
+          )
+      : this.runningDelegations();
+    // 在发出任何取消前校验整批，旧卡片不能终止同一任务的新执行。
+    for (const record of targets) {
+      const expected = options.expectedExecutions?.[record.delegationId];
+      if (expected !== undefined && expected !== (record.execution ?? 1)) {
+        throw new Error("Subagent execution changed; refresh before stopping.");
+      }
+    }
+    for (const record of targets) this.requestDelegationStop(record, options.source ?? "user");
+    // Cancellation is cooperative: bound the wait so a worker that ignores
+    // abort cannot wedge the caller. Still-running workers are
+    // explicitly returned as pending, never mislabeled as stopped.
+    const waitMs = options.waitMs ?? 5_000;
+    if (targets.length && waitMs > 0) {
+      let stopTimeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.all(targets.map((record) => record.completion)),
+          new Promise<void>((resolve) => { stopTimeout = setTimeout(resolve, waitMs); }),
+        ]);
+      } finally {
+        if (stopTimeout !== undefined) clearTimeout(stopTimeout);
+      }
+    }
+    const pending = targets.filter((record) => record.status === "running");
+    const stopped = targets.filter((record) => record.status === "stopped");
+    const settled = targets.filter(
+      (record) => record.status !== "running" && record.status !== "stopped",
+    );
+    const text =
+      targets.length === 0
+        ? "No matching running subagents to stop."
+        : pending.length > 0
+          ? `Cancellation requested for ${targets.length} subagent${targets.length === 1 ? "" : "s"}; ${pending.length} have not confirmed termination and remain running.`
+          : settled.length > 0
+            ? `Cancellation settled for ${targets.length} subagent${targets.length === 1 ? "" : "s"}: ${stopped.length} stopped and ${settled.length} had already finished.`
+            : `Stopped ${stopped.length} subagent${stopped.length === 1 ? "" : "s"}.`;
+    return {
+      content: [{ type: "text" as const, text }],
+      details: {
+        stopped: stopped.map(delegationSummary),
+        ...(pending.length > 0
+          ? { stopPending: pending.map(delegationSummary) }
+          : {}),
+        ...(settled.length > 0
+          ? { settled: settled.map(delegationSummary) }
+          : {}),
+      },
+    };
+  }
+
   /** `TaskStop`: stop running delegations (ADR 0089). */
   private buildSubagentStopTool(): AgentTool {
     return {
@@ -5186,27 +5268,12 @@ Delegation rules:
           isRecord(params) && Array.isArray(params.delegationIds)
             ? params.delegationIds.map(String)
             : [];
-        const targets = ids.length
-          ? ids
-              .map((id) => this.delegations.get(id))
-              .filter((record): record is DelegationRecord => record !== undefined)
-          : this.runningDelegations();
-        const receipts = await Promise.allSettled(targets.map((record) => this.stopSubagentAsync(record.delegationId, "parent")));
-        const failures = receipts.filter((receipt) => receipt.status === "rejected");
-        if (failures.length) return this.subagentToolError(_toolCallId, `${failures.length} cancellation receipt(s) failed; local cancellation was requested but durable revocation is unconfirmed.`);
-        const text =
-          targets.length === 0
-            ? "No matching running subagents to stop."
-            : `Cancellation requested for ${targets.length} subagent(s). Check collaboration.phase: stopping does not confirm an in-flight operation was cancelled.`;
-        return {
-          content: [{ type: "text", text }],
-          details: { delegations: targets.map(delegationSummary), stopped: targets.filter((record) => record.status !== "running").map(delegationSummary) },
-        };
+        return this.stopSubagents(ids, { source: "parent", waitMs: 0 });
       },
     };
   }
 
-  /** 单独终止一个子任务；不等待可能不支持取消的第三方工具。支持持久撤销。 */
+  /** 兼容单任务入口；运行取消与已完成任务的召回撤销共用取消标记。 */
   async stopSubagentAsync(delegationId: string, source: "user" | "parent" = "user", expectedExecution?: number): Promise<Record<string, unknown>> {
     const record = this.delegations.get(delegationId);
     if (!record) {
@@ -5219,21 +5286,32 @@ Delegation rules:
     if (expectedExecution !== undefined && expectedExecution !== (record.execution ?? 1)) {
       throw new Error("Subagent execution changed; refresh before stopping.");
     }
+    if (record.status === "running") {
+      const result = await this.stopSubagents([delegationId], {
+        source, expectedExecutions: expectedExecution === undefined ? undefined : { [delegationId]: expectedExecution },
+      });
+      return { ok: true, ...delegationSummary(record), pending: result.details.stopPending?.map(item => item.delegationId) ?? [] };
+    }
+    this.requestDelegationStop(record, source);
+    record.status = "stopped";
+    record.completedAt ??= Date.now();
+    this.publishDelegationSettlement(record);
+    this.markSubagentCoordination(record);
+    return { ok: true, ...delegationSummary(record) };
+  }
+
+  /** 取消即刻生效；执行终态只由实际收尾确认，磁盘撤销不阻塞运行时。 */
+  private requestDelegationStop(record: DelegationRecord, source: "user" | "parent"): void {
     record.stopRequested = true;
     record.run?.stop(source);
     record.abort();
-    if (record.status === "running") record.activeDurationMs = (record.activeDurationMs ?? 0) + Math.max(0, Date.now() - record.startedAt);
-    record.status = "stopped";
-    record.persistenceState = "revoked";
-    record.completedAt ??= Date.now();
-    record.resolveCompletion();
-    this.markSubagentCoordination(record);
-    this.refreshDelegationWait();
     if (!record.stopPersistence) {
+      const execution = record.execution ?? 1;
+      record.persistenceState = "revoked";
       record.stopPersistence = (async () => {
         await record.pendingBegin;
         await this.persistenceClient.revokeExecution({
-          sessionId: this.sessionId, delegationId, expectedExecution: record.execution ?? 1,
+          sessionId: this.sessionId, delegationId: record.delegationId, expectedExecution: execution,
           reason: `Subagent stopped by ${source}`, source,
         });
       })().catch(() => {
@@ -5242,9 +5320,8 @@ Delegation rules:
         if (!this.disposed) this.publishDelegationSettlement(record);
       });
     }
+    this.markSubagentCoordination(record);
     this.publishDelegationSettlement(record);
-    this.publishSubagentExecution(record, "finished", { ...delegationSummary(record), report: record.result?.report ?? "" });
-    return { ok: true, ...delegationSummary(record) };
   }
 
   stopSubagent(delegationId: string, source: "user" | "parent" = "user", expectedExecution?: number): Promise<Record<string, unknown>> {

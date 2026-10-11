@@ -70,6 +70,13 @@ export async function onLoad() {
     },
     execute: async (args) => {
       const action = String(args?.action ?? "").trim();
+      if (!ACTIONS.includes(action)) {
+        return {
+          ok: false,
+          error: `unknown action "${action}"; use ${ACTIONS.join(", ")}`,
+        };
+      }
+      await pi.browser.reveal();
       switch (action) {
         case "navigate": {
           const state = await pi.browser.navigate({
