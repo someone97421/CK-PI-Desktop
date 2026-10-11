@@ -59,6 +59,21 @@ const detailSource = await readFile(
 const workPanelCss = await readFile(
   new URL("../src/styles/work-panel.css", import.meta.url), "utf8",
 );
+const stopSource = await readFile(
+  new URL("../src/features/chat/transcript/SubagentStopButton.tsx", import.meta.url), "utf8",
+);
+const messagesCss = await readFile(
+  new URL("../src/styles/messages.css", import.meta.url), "utf8",
+);
+
+test("子代理停止入口沿用轻量圆形控件", () => {
+  assert.match(stopSource, /className=\{`stop-btn subagent-stop-button/);
+  assert.match(stopSource, /tooltip=\{label\}/);
+  assert.match(stopSource, /ariaLabel=\{label\}/);
+  assert.doesNotMatch(stopSource, /<Button/);
+  assert.match(messagesCss, /\.subagent-topology-node-actions > \.subagent-stop-button[\s\S]*?top:\s*8px/);
+  assert.match(messagesCss, /padding-right:\s*42px/);
+});
 
 test("宿主子代理窗口展示实时过程、任务卡片和失败原因", () => {
   assert.match(panelSource, /<SubagentDetail/);

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useTranslation } from "react-i18next";
-import { Button, TooltipButton } from "../../../components/ui";
+import { TooltipButton } from "../../../components/ui";
 import { IconStop } from "../../../components/icons";
 import { api } from "../../../lib/api";
 import { useAppStore } from "../../../stores/app-store";
@@ -87,34 +87,16 @@ export function SubagentStopButton({
     : delegationId
       ? t("chat.stopSubagentNamed", { name: name ?? t("chat.subagentUnnamed") })
       : t("chat.stopAllSubagents");
-  if (compact) {
-    return (
-      <TooltipButton
-        type="button"
-        className="stop-btn"
-        tooltip={label}
-        ariaLabel={label}
-        disabled={!!busy || stopping}
-        onClick={() => void stop()}
-      >
-        {stoppingRequest || stopping ? <span className="tool-spinner" aria-hidden /> : <IconStop size={13} />}
-      </TooltipButton>
-    );
-  }
   return (
-    <Button
-      className="subagent-stop-button"
-      variant="secondary"
-      size="sm"
-      title={label}
-      aria-label={label}
+    <TooltipButton
+      type="button"
+      className={`stop-btn subagent-stop-button${stoppingRequest || stopping ? " is-stopping" : ""}`}
+      tooltip={label}
+      ariaLabel={label}
       disabled={!!busy || stopping}
       onClick={() => void stop()}
     >
-      {stoppingRequest || stopping ? <span className="tool-spinner" aria-hidden /> : <IconStop size={9} />}
-      <span>{stoppingRequest || stopping
-        ? t("chat.stoppingSubagents")
-        : t(delegationId ? "chat.stopSubagent" : "chat.stopAllSubagentsShort")}</span>
-    </Button>
+      {stoppingRequest || stopping ? <span className="tool-spinner" aria-hidden /> : <IconStop size={compact ? 13 : 11} />}
+    </TooltipButton>
   );
 }

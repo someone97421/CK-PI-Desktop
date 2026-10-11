@@ -2581,11 +2581,30 @@
 }
 
 .subagent-stop-button {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0;
+  background: color-mix(in oklab, var(--ds-text-primary) 10%, transparent);
+  color: var(--ds-text-secondary);
+}
+
+.subagent-stop-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ds-error) 16%, transparent);
+  color: var(--ds-error);
+}
+
+.subagent-stop-button:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--ds-error) 58%, transparent);
+  outline-offset: 2px;
+}
+
+.subagent-stop-button:disabled {
+  opacity: 0.76;
+}
+
+.subagent-stop-button .tool-spinner {
+  margin-left: 0;
 }
 
 .subagent-activity-header {
@@ -2608,16 +2627,14 @@
 
 .subagent-topology-node-actions > .subagent-stop-button {
   position: absolute;
-  right: 10px;
-  bottom: 10px;
+  z-index: 1;
+  top: 8px;
+  right: 8px;
 }
 
 .subagent-topology-node-actions:has(> .subagent-stop-button) .subagent-topology-node-header {
-  min-height: 88px;
-}
-
-.subagent-topology-node-actions:has(> .subagent-stop-button) :is(.subagent-topology-node-summary, .subagent-topology-node-steps) {
-  padding-right: 100px;
+  min-height: 70px;
+  padding-right: 42px;
 }
 
 .subagent-topology-node-header {
