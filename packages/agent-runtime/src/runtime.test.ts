@@ -8678,7 +8678,7 @@ describe("DesktopAgentRuntime subagents", () => {
       expect(record.status).toBe("running");
       expect(record.durableGeneration).toBe(0);
       expect(record.persistenceState).toBe("saving");
-      const oldReceipt = emit.mock.calls.map(call => call[0] as any).findLast(event =>
+      const oldReceipt = emit.mock.calls.map(call => call[0] as any).reverse().find(event =>
         event.type === "message_end" && event.message.id === "task-slow-storage");
       expect(oldReceipt.message.toolResult.details).toMatchObject({ execution: 1, status: "completed",
         persistenceState: "durable-ready", canResume: false, statusRevision: savedRevision + 1 });
