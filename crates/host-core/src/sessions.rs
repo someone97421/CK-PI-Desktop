@@ -2447,6 +2447,9 @@ pub fn append_message(
         {
             let stamped = "UPDATE messages SET text = ?3, is_error = ?4, streaming = 0
                  WHERE session_id = ?1 AND id = ?2";
+            // 结算会重写流式占位消息，后续消息的字节偏移也会改变。
+            // 必须先清除布局，避免读取旧偏移时落入 UTF-8 字符中间。
+            invalidate_transcript_layout(session_id);
             if transcripts::update_message(db.data_dir(), session_id, &record)? {
                 db.conn().execute(
                     stamped,
@@ -8188,6 +8191,46 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn settling_streaming_assistant_refreshes_cached_message_offsets() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let streaming = streaming_assistant("streaming", "占位");
+        append_message(&db, &session.id, &streaming, None).unwrap();
+        let following = user_msg("following", "继续构建", "2025-05-01T00:00:02Z");
+        append_message(&db, &session.id, &following, None).unwrap();
+        // 模拟界面或子代理状态回写在流式结算之前读取并缓存布局。
+        assert_eq!(session_layout(&db, &session.id).unwrap().message_count(), 2);
+
+        let mut settled = streaming;
+        settled.status = Some("complete".into());
+        settled.content = "中文构建结果🦖".repeat(256);
+        append_message(&db, &session.id, &settled, None).unwrap();
+
+        let layout = session_layout(&db, &session.id).unwrap();
+        let window = transcripts::read_transcript_window_with_layout(
+            db.data_dir(),
+            &session.id,
+            &layout,
+            0,
+            None,
+        )
+        .unwrap();
+        let records = transcripts::read_transcript(db.data_dir(), &session.id).unwrap();
+        assert_eq!(window.messages.len(), 2);
+        assert_eq!(
+            serde_json::to_value(&window.messages).unwrap(),
+            serde_json::to_value(&records).unwrap(),
+        );
+        assert_eq!(
+            indexed_message_record(&db, &session.id, "following")
+                .unwrap()
+                .unwrap()
+                .id,
+            "following",
+        );
     }
 
     /// Randomized differential check of the one fact this change caches. A
