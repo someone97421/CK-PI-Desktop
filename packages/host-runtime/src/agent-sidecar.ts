@@ -403,16 +403,19 @@ export class AgentSidecar {
     this.unsubscribeHost?.();
     this.unsubscribeHostExit?.();
     this.unsubscribeHost = host.onNotification((method, params) => {
-      // Forward host notifications to sidecar. permissions.request stays out:
-      // the embedding host already delivers it to its own UI, and bouncing it
-      // through the sidecar delivered the dialog twice with the full args
-      // payload re-serialized across two extra stdio hops.
-      if (method === "permissions.request") return;
+      // 审批 UI 由宿主投递；sidecar 只接收不含参数正文的计时通知。
+      const notification = method === "permissions.request" && params && typeof params === "object"
+        ? { method: "permissions.wait", params: {
+            sessionId: (params as Record<string, unknown>).sessionId,
+            toolCallId: (params as Record<string, unknown>).toolCallId,
+            waiting: true,
+          } }
+        : { method, params };
       const payload =
         JSON.stringify({
           jsonrpc: "2.0",
           method: "host.notification",
-          params: { method, params },
+          params: notification,
         }) + "\n";
       this.writeToChild(payload);
     });

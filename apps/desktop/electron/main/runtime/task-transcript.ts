@@ -101,7 +101,7 @@ export class TaskTranscript {
     const messageEvent = "message" in event ? event : undefined;
     const message = messageEvent?.message;
     if (message && this.echoes.has(message)) return;
-    const turnId = envelope.turnId ?? message?.taskId;
+    const turnId = envelope.turnId ?? (event.type === "status" ? event.status.currentTurnId : undefined) ?? message?.taskId;
     if (!turnId) return;
     const key = this.key(envelope.sessionId, turnId);
     let record = this.records.get(key);
@@ -126,6 +126,17 @@ export class TaskTranscript {
     }
     const child = Boolean(envelope.parentToolCallId || message?.parentToolCallId);
     let changed = false;
+    const timing = event.type === "status" && !child && record.summary.status === "running"
+      && (!event.status.currentTurnId || event.status.currentTurnId === turnId)
+      ? event.status.runTiming : undefined;
+    const previousTiming = record.summary.runTiming;
+    const timingChanged = Boolean(timing && (!previousTiming
+      || timing.startedAt !== previousTiming.startedAt || timing.pausedMs !== previousTiming.pausedMs
+      || timing.pausedAt !== previousTiming.pausedAt || timing.endedAt !== previousTiming.endedAt));
+    if (timingChanged) {
+      record.summary = { ...record.summary, runTiming: { ...timing! } };
+      changed = true;
+    }
     if (event.type === "agent_start" && !child && !record.summary.startedAt && record.summary.status === "running") {
       record.summary = { ...record.summary, startedAt: new Date(envelope.ts).toISOString() };
       changed = true;
@@ -169,7 +180,7 @@ export class TaskTranscript {
         event.precedingAssistant = { ...event.precedingAssistant, taskId: turnId };
       }
     }
-    if (changed && (record.summary.status !== "running" || event.type === "agent_start")) {
+    if (changed && (record.summary.status !== "running" || event.type === "agent_start" || timingChanged)) {
       void this.publish(record).catch(() => undefined);
     }
   }
@@ -179,8 +190,10 @@ export class TaskTranscript {
     const record = this.records.get(this.key(sessionId, turnId));
     if (!record) return Promise.resolve();
     if (record.summary.status !== "running") return this.dirty.has(record) ? this.publish(record) : Promise.resolve();
+    const endedAt = record.summary.runTiming?.endedAt ?? Date.now();
     record.summary = {
-      ...record.summary, status, endedAt: new Date().toISOString(),
+      ...record.summary, status, endedAt: new Date(endedAt).toISOString(),
+      runTiming: record.summary.runTiming ? { ...record.summary.runTiming, endedAt } : undefined,
       revision: (record.summary.revision ?? 0) + 1,
       finalMessageId: status === "completed" ? record.finalCandidate : undefined,
     };

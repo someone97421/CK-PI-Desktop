@@ -3987,6 +3987,14 @@ async fn handle_request(
                 } else {
                     PermissionDecision::Deny
                 };
+                if prompted {
+                    // 人工等待在决定到达时结束，随后工具执行仍计入运行时间。
+                    emit_notification(&tx, "permissions.wait", json!({
+                        "sessionId": p.session_id,
+                        "toolCallId": p.tool_call_id,
+                        "waiting": false
+                    })).await;
+                }
                 cancelled = cancelled || bash_cancellation_requested(&permission_cancellation);
                 if cancelled {
                     let _ = cancel_pending_permission(&state, &p).await;

@@ -4,7 +4,7 @@ import type {
   MessageUsage,
   UiMessage,
 } from "@pi-desktop/shared";
-import { addUsage, hostedSearchRounds } from "@pi-desktop/shared";
+import { addUsage, hostedSearchRounds, runElapsedMs } from "@pi-desktop/shared";
 import { delegationExecutionKey, isDelegationStartTool } from "./tool-display";
 import { toolResultPayload } from "./tool-presentation";
 import { messageContentFacts } from "./transcript-summary";
@@ -538,6 +538,7 @@ export function assistantTurnResponseDuration(
   entry: AssistantTurnEntry,
 ): number | undefined {
   if (entry.task) {
+    if (entry.task.runTiming) return runElapsedMs(entry.task.runTiming);
     const start = Date.parse(entry.task.startedAt ?? "");
     const end = Date.parse(entry.task.endedAt ?? "");
     return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : undefined;

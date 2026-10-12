@@ -183,6 +183,18 @@ pub struct MessageAttachment {
     pub inline_path: Option<String>,
 }
 
+/// 与运行时的可选计时快照兼容；无需数据库迁移。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTiming {
+    pub started_at: i64,
+    pub paused_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageTask {
@@ -194,6 +206,8 @@ pub struct MessageTask {
     pub started_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_timing: Option<RunTiming>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<MessageUsage>,
     #[serde(default)]
@@ -1732,6 +1746,17 @@ fn load_task_projection(
         .and_then(|t| t.get("endedAt").and_then(Value::as_str))
         .map(str::to_string);
     let ended_at = summary_ended.or_else(|| ended_at_db.map(ms_to_ts));
+    let mut run_timing: Option<RunTiming> = task_summary
+        .and_then(|t| t.get("runTiming"))
+        .and_then(|value| serde_json::from_value(value.clone()).ok());
+    if effective_status != "running" {
+        if let Some(timing) = run_timing.as_mut() {
+            // 进程中断可能没有最后一条运行时快照，使用持久化回合终点封口。
+            if timing.ended_at.is_none() {
+                timing.ended_at = ended_at_db;
+            }
+        }
+    }
 
     let final_message_id = if effective_status == "completed" {
         task_summary
@@ -1747,6 +1772,7 @@ fn load_task_projection(
         status: effective_status,
         started_at,
         ended_at,
+        run_timing,
         usage: final_usage,
         usage_incomplete,
         estimated_duration,

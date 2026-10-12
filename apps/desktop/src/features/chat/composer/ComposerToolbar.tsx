@@ -3,6 +3,8 @@ import type { Dispatch, SetStateAction } from "react";
 import type { TFunction } from "i18next";
 import {
   keybindingDisplayParts,
+  runElapsedMs,
+  type RunTiming,
   type Mode,
   type PermissionMode,
   type ShortcutPlatform,
@@ -68,6 +70,7 @@ export type ComposerToolbarProps = {
   submit: () => Promise<void>;
   /** 当前运行轮的开始时间（epoch 毫秒）；未知时胶囊自行以挂载时刻兜底。 */
   runStartedAt?: number;
+  runTiming?: RunTiming;
 };
 
 function formatRunElapsed(ms: number): string {
@@ -85,10 +88,12 @@ function StopRunPill({
   t,
   abort,
   startedAt,
+  timing,
 }: {
   t: TFunction;
   abort: () => void;
   startedAt?: number;
+  timing?: RunTiming;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const fallbackRef = useRef(startedAt ?? Date.now());
@@ -110,7 +115,7 @@ function StopRunPill({
     >
       <IconStop size={14} />
       <span className="stop-btn-elapsed" aria-hidden="true">
-        {formatRunElapsed(now - anchor)}
+        {formatRunElapsed(timing ? runElapsedMs(timing, now) : now - anchor)}
       </span>
     </TooltipButton>
   );
@@ -152,6 +157,7 @@ export function ComposerToolbar({
   abort,
   submit,
   runStartedAt,
+  runTiming,
 }: ComposerToolbarProps) {
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
   const steeringShortcut = keybindingDisplayParts("Alt+Enter", platform).join("+");
@@ -280,7 +286,7 @@ export function ComposerToolbar({
           </TooltipButton>
         ) : null}
         {runActive && !hasDraftContent ? (
-          <StopRunPill t={t} abort={() => { if (stopAllowed) void abort(); }} startedAt={runStartedAt} />
+          <StopRunPill t={t} abort={() => { if (stopAllowed) void abort(); }} startedAt={runStartedAt} timing={runTiming} />
         ) : (
           <TooltipButton
             type="button"

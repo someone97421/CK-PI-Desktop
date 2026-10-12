@@ -98,6 +98,8 @@ export interface MessageTask {
   status: TaskStatus;
   startedAt?: string;
   endedAt?: string;
+  /** 新记录保存实际运行计时，旧记录继续使用起止时间。 */
+  runTiming?: import("../run-timing.js").RunTiming;
   usage?: MessageUsage;
   usageIncomplete: boolean;
   estimatedDuration?: boolean;

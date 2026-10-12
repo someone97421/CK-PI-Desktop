@@ -1,6 +1,6 @@
 import { useContext, useId, useLayoutEffect, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { formatCompactTokenCount } from "@pi-desktop/shared";
+import { formatCompactTokenCount, runElapsedMs } from "@pi-desktop/shared";
 import type { AssistantTurnEntry, AssistantTurnPart } from "../../../lib/assistant-turns";
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
@@ -25,8 +25,9 @@ export function TaskProcessDrawer({ task, processParts, children }: {
   }, [revealRequest]);
   const start = task.startedAt ? Date.parse(task.startedAt) : NaN;
   const end = task.endedAt ? Date.parse(task.endedAt) : NaN;
-  const seconds = Number.isFinite(start) && Number.isFinite(end) && end >= start
-    ? Math.round((end - start) / 1000) : undefined;
+  const elapsed = task.runTiming ? runElapsedMs(task.runTiming)
+    : Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : undefined;
+  const seconds = elapsed === undefined ? undefined : Math.round(elapsed / 1000);
   const duration = seconds === undefined
     ? t("chat.taskDelivery.durationUnknown")
     : t("chat.taskDelivery.duration", {

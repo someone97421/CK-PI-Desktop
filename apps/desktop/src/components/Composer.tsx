@@ -125,6 +125,7 @@ export function Composer({
   const providers = useAppStore((s) => s.providers);
   const providerModels = useAppStore((s) => s.providerModels);
   const liveMessages = useAppStore((s) => s.messages);
+  const agentStatus = useAppStore((s) => s.activeSessionId ? s.agentStatuses[s.activeSessionId] : undefined);
   const sessionCompactions = useAppStore((s) =>
     s.activeSessionId ? s.sessionCompactions[s.activeSessionId] : undefined,
   );
@@ -139,17 +140,20 @@ export function Composer({
       ),
     [liveMessages, providerModels, providers, sessionCompactions],
   );
-  // 运行中轮次的开始时间：任务摘要 agent_start 落的时间戳，胶囊用它显示本轮运行时长。
-  const activeRunStartedAt = useMemo(() => {
+  const latestTask = useMemo(() => {
     for (let index = liveMessages.length - 1; index >= 0; index--) {
       const task = liveMessages[index]?.task;
-      if (task && task.status === "running" && task.startedAt) {
-        const started = Date.parse(task.startedAt);
-        if (Number.isFinite(started)) return started;
-      }
+      if (task) return task;
     }
     return undefined;
   }, [liveMessages]);
+  const currentTask = latestTask?.status === "running"
+    && (!agentStatus?.currentTurnId || latestTask.id === agentStatus.currentTurnId) ? latestTask : undefined;
+  const activeRunTiming = (agentStatus?.currentTurnId
+    && (!latestTask || latestTask.id === agentStatus.currentTurnId) ? agentStatus.runTiming : undefined)
+    ?? currentTask?.runTiming;
+  const taskStartedAt = currentTask?.startedAt ? Date.parse(currentTask.startedAt) : NaN;
+  const activeRunStartedAt = Number.isFinite(taskStartedAt) ? taskStartedAt : undefined;
   const configureActiveSession = useAppStore((s) => s.configureActiveSession);
   const showToast = useAppStore((s) => s.showToast);
   const composerPrefill = useAppStore((s) => s.composerPrefill);
@@ -642,6 +646,7 @@ export function Composer({
             hasDraftContent={hasDraftContent}
             abort={abort}
             runStartedAt={activeRunStartedAt}
+            runTiming={activeRunTiming}
             submit={submitFromComposer}
           />
         </div>

@@ -170,6 +170,7 @@ export type AgentStatus = {
   planningState?: PlanningState;
   pendingPlanId?: string;
   activity?: AgentActivity;
+  runTiming?: import("../run-timing.js").RunTiming;
 };
 
 /** Bounded provider diagnostics shown while the runtime waits before retrying. */

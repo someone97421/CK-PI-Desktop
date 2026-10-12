@@ -8,6 +8,7 @@ import { TOOL_ACTIVATION_SECTION, toolDeclarationPolicy, toolActivationSection, 
 import { orderSystemRows, SystemTranscriptJournal } from "./system-transcript-journal.js";
 import { planWorkspaceRequiredResult } from "./plan-workspace-error.js";
 import { accountModelStream } from "./request-usage.js";
+import { RunClock } from "./run-clock.js";
 import { modeToolDenial, retainModeToolDeclaration, withModeExecutionGuard } from "./mode-tool-access.js";
 import { restoreHostedSearchReplay } from "./hosted-search-replay.js";
 import { requestExtensionUi } from "./extensions/ui-request.js";
@@ -1848,13 +1849,15 @@ export class DesktopAgentRuntime {
   private contextFallbackReminderClaimed = false;
   private activeToolProgressCleanups = new Set<(flush: boolean) => void>();
   private hostCloseUnsubscribe?: () => void;
+  private hostTimingUnsubscribe?: () => void;
+  private readonly runClock = new RunClock();
+  private readonly userWaitingToolCalls = new Set<string>();
   private turnSubagentUsage?: MessageUsage;
   /** 运行状态提醒开关（fork 定制）。 */
   private runStatusReminder: boolean;
 
-  /** 运行状态提醒（fork 定制）：本轮开始时间、上次提醒时间与主代理累计用量。 */
-  private runStatusTurnStartedAt = 0;
-  private runStatusRemindedAt = 0;
+  /** 上次提醒时累计的实际运行毫秒数，以及本轮主代理累计用量。 */
+  private runStatusRemindedElapsedMs = 0;
   private runStatusTurnUsage?: MessageUsage;
   /** 临时提醒按会话消息锚点保留，成功压缩后清理，不进入持久化记录。 */
   private transientStatusMessages: Array<{ entryCount: number; message: AgentMessage }> = [];
@@ -1876,6 +1879,13 @@ export class DesktopAgentRuntime {
     });
     this.streamSink = createStreamCoalescer(opts.onEvent);
     this.onEvent = (envelope) => this.streamSink.push(envelope);
+    this.hostTimingUnsubscribe = this.host.onNotification?.((method, params) => {
+      if (method !== "permissions.wait" || !isRecord(params) || params.sessionId !== this.sessionId
+        || typeof params.toolCallId !== "string" || typeof params.waiting !== "boolean") return;
+      // 同宿主的其他会话和子代理工具不暂停主代理；工具结束也会清理兜底。
+      if (!this.activeToolCalls.has(params.toolCallId)) return;
+      this.setUserToolWait(params.toolCallId, params.waiting);
+    });
     this.pluginTools = opts.pluginTools ?? [];
     this.pluginSkills = [...(opts.pluginSkills ?? [])].sort((left, right) => left.id.localeCompare(right.id));
     this.trustedExtensionSpecs = opts.trustedExtensions ?? [];
@@ -6259,10 +6269,12 @@ Delegation rules:
         settled = true;
         signal?.removeEventListener("abort", abort);
         this.pendingAskTools.delete(request.requestId);
+        this.setUserToolWait(request.toolCallId, false);
         resolve(answers);
       };
       const abort = () => finish(request.questions.map(() => null));
       this.pendingAskTools.set(request.requestId, { request, resolve: finish });
+      this.setUserToolWait(request.toolCallId, true);
       this.emit({ type: "asktool_request", request });
       if (signal?.aborted) abort();
       else signal?.addEventListener("abort", abort, { once: true });
@@ -6392,6 +6404,7 @@ Delegation rules:
   }
 
   private emit(event: AgentEventEnvelope["event"], turnId?: string, ts = Date.now()) {
+    if (event.type === "agent_end") this.finishRunClock(ts);
     this.onEvent({
       sessionId: this.sessionId,
       turnId: turnId ?? this.turnId,
@@ -7119,26 +7132,43 @@ Delegation rules:
     return contextBudgetReminder(remaining);
   }
 
-  /** 新一轮运行开始时重置运行状态提醒的计时与用量基准。 */
+  private setUserToolWait(toolCallId: string, waiting: boolean): void {
+    if (waiting) this.userWaitingToolCalls.add(toolCallId);
+    else this.userWaitingToolCalls.delete(toolCallId);
+    this.refreshRunClock();
+  }
+
+  private refreshRunClock(): void {
+    // 问答/审批重叠时只扣一次；并行工具仍在执行时继续计时。
+    const paused = this.userWaitingToolCalls.size > 0
+      && [...this.activeToolCalls.keys()].every((id) => this.userWaitingToolCalls.has(id));
+    if (this.runClock.setPaused(paused)) this.emit({ type: "status", status: this.getStatus() });
+  }
+
+  private finishRunClock(now = Date.now()): void {
+    if (this.runClock.finish(now)) this.emit({ type: "status", status: this.getStatus() });
+  }
+
+  /** 新一轮运行开始时重置计时与用量基准，不受提醒开关影响。 */
   private resetRunStatusReminder(): void {
-    this.runStatusTurnStartedAt = Date.now();
-    this.runStatusRemindedAt = 0;
+    this.userWaitingToolCalls.clear();
+    this.runClock.reset();
+    this.runStatusRemindedElapsedMs = 0;
     this.runStatusTurnUsage = undefined;
   }
 
   /**
    * 运行状态提醒（fork 定制）：本轮运行每满五分钟，在模型请求前追加临时消息。
    * 重建上下文时按原会话消息锚点恢复，成功压缩后清理，不写入持久化对话。
-   * 耗时为墙钟时间，包含长工具调用与子代理等待。
+   * 扣除阻塞主代理的人工等待，工具执行与子代理等待仍计入。
    */
   private withRunStatusReminder(context: AgentContext): AgentContext {
     context = { ...context, messages: this.restoreTransientStatusMessages(context.messages) };
-    if (!this.runStatusReminder || !this.runStatusTurnStartedAt) return context;
+    if (!this.runStatusReminder || !this.runClock.snapshot()) return context;
     const now = Date.now();
-    const anchor = this.runStatusRemindedAt || this.runStatusTurnStartedAt;
-    if (now - anchor < RUN_STATUS_REMINDER_INTERVAL_MS) return context;
-    this.runStatusRemindedAt = now;
-    const elapsedMs = now - this.runStatusTurnStartedAt;
+    const elapsedMs = this.runClock.elapsedMs(now);
+    if (elapsedMs - this.runStatusRemindedElapsedMs < RUN_STATUS_REMINDER_INTERVAL_MS) return context;
+    this.runStatusRemindedElapsedMs = elapsedMs;
     const minutes = Math.floor(elapsedMs / 60_000);
     const seconds = Math.floor((elapsedMs % 60_000) / 1000);
     const usage = this.runStatusTurnUsage;
@@ -8551,6 +8581,7 @@ Delegation rules:
           args: event.args,
           startedAt,
         });
+        this.refreshRunClock();
         this.emit({
           type: "tool_start",
           toolCallId: event.toolCallId,
@@ -8573,6 +8604,7 @@ Delegation rules:
           const endedAt = Date.now();
           const activeTool = this.activeToolCalls.get(event.toolCallId);
           this.activeToolCalls.delete(event.toolCallId);
+          this.setUserToolWait(event.toolCallId, false);
           if (
             this.activeToolCalls.size === 0 &&
             !this.disposed &&
@@ -9172,6 +9204,7 @@ Delegation rules:
   }
 
   async abort(): Promise<void> {
+    this.finishRunClock();
     this.acceptingSteering = false;
     this.gracefulStopRequested = false;
     this.runCancelled = true;
@@ -9210,11 +9243,13 @@ Delegation rules:
       planningState: this.planningState,
       ...(this.pendingPlanId ? { pendingPlanId: this.pendingPlanId } : {}),
       ...(this.agentActivity ? { activity: this.agentActivity } : {}),
+      ...(this.runClock.snapshot() ? { runTiming: this.runClock.snapshot() } : {}),
     };
   }
 
   async dispose(): Promise<void> {
     if (this.disposed) return;
+    this.finishRunClock();
     const runner = this.extensionRunner;
     this.extensionRunner = undefined;
     const closingExtensions = runner?.dispose();
@@ -9258,6 +9293,8 @@ Delegation rules:
     this.gracefulStopRequested = false;
     this.hostCloseUnsubscribe?.();
     this.hostCloseUnsubscribe = undefined;
+    this.hostTimingUnsubscribe?.();
+    this.hostTimingUnsubscribe = undefined;
     this.agent.abort();
     this.providerRetryAbort?.abort();
     this.cleanupActiveToolProgress();

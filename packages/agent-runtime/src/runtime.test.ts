@@ -2440,6 +2440,76 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
     await runtime.dispose();
   });
 
+  it("问答等待不推进运行计时或五分钟提醒，回答后继续累计", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const runtime = createRuntime();
+    const internal = runtime as any;
+    try {
+      internal.resetRunStatusReminder();
+      now += 299_000;
+      await internal.handleAgentEvent({ type: "tool_execution_start", toolCallId: "ask-time", toolName: "asktool", args: {} });
+      const pending = internal.waitForAskTool({
+        requestId: "ask-time-request", sessionId: "session-1", toolCallId: "ask-time",
+        questions: [{ question: "继续？", options: ["继续"] }],
+      });
+      now += 600_000;
+      expect(internal.runClock.elapsedMs()).toBe(299_000);
+      expect(internal.withRunStatusReminder({ messages: [] }).messages).toHaveLength(0);
+      runtime.resolveAskTool({ requestId: "ask-time-request", sessionId: "session-1", answers: [["继续"]] });
+      await pending;
+      now += 1_000;
+      const reminder = internal.withRunStatusReminder({ messages: [] });
+      expect(reminder.messages.at(-1).content).toContain("5 分 0 秒");
+      expect(runtime.getStatus().runTiming?.pausedMs).toBe(600_000);
+    } finally {
+      await runtime.dispose();
+      clock.mockRestore();
+    }
+  });
+
+  it("只在并行工具全部等待人工审批时暂停，等待中停止后计时定格", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    let notify!: (method: string, params: unknown) => void;
+    const runtime = createRuntime({ host: {
+      call: vi.fn(),
+      onNotification: vi.fn((handler) => { notify = handler; return () => {}; }),
+    } });
+    const internal = runtime as any;
+    const permission = (id: string, waiting: boolean, sessionId = "session-1") =>
+      notify("permissions.wait", { sessionId, toolCallId: id, waiting });
+    try {
+      internal.resetRunStatusReminder();
+      for (const id of ["a", "b"]) {
+        await internal.handleAgentEvent({ type: "tool_execution_start", toolCallId: id, toolName: "Read", args: { path: "a.txt" } });
+      }
+      permission("a", true);
+      permission("b", true, "other-session");
+      permission("child-tool", true);
+      expect(runtime.getStatus().runTiming?.pausedAt).toBeUndefined();
+      now += 10_000;
+      permission("b", true);
+      now += 20_000;
+      permission("a", false);
+      expect(runtime.getStatus().runTiming?.pausedMs).toBe(20_000);
+      now += 5_000;
+      await internal.handleAgentEvent({ type: "tool_execution_end", toolCallId: "a", toolName: "Read", result: { content: [] }, isError: false });
+      now += 10_000;
+      await runtime.abort();
+      now += 60_000;
+      permission("b", false);
+      expect(internal.runClock.elapsedMs()).toBe(15_000);
+      expect(runtime.getStatus().runTiming?.endedAt).toBe(46_000);
+      internal.resetRunStatusReminder();
+      expect(internal.runClock.elapsedMs()).toBe(0);
+      expect(runtime.getStatus().runTiming?.pausedAt).toBeUndefined();
+    } finally {
+      await runtime.dispose();
+      clock.mockRestore();
+    }
+  });
+
   it("normalizes legacy chat onto the Plan core", async () => {
     const runtime = createRuntime({
       mode: "chat",
