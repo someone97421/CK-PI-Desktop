@@ -754,6 +754,7 @@ export function Checkbox({
         ref={(node) => {
           if (node) node.indeterminate = indeterminate;
         }}
+        className="ds-checkbox"
         {...props}
       />
       <span>{label}</span>

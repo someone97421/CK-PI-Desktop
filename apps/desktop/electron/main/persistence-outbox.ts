@@ -13,8 +13,13 @@ type MessageAppend = {
 };
 
 type OutboxLogger = (level: "warn" | "error", message: string, data?: unknown) => void;
+type OutboxOptions = { now?: () => number };
+type AppendRetry = { attempts: number; nextAttemptAt: number; host: HostProcess };
 
 const MAX_ENTRIES = 1024;
+const MAX_TRANSIENT_ATTEMPTS = 5;
+const RETRY_BACKOFF_MS = 5_000;
+const MAX_RETRY_BACKOFF_MS = 60_000;
 
 /**
  * Keeps transcript appends away from a dead host pipe. The file is an
@@ -26,6 +31,8 @@ export class PersistenceOutbox {
   private readonly tempPath: string;
   private readonly logger: OutboxLogger;
   private readonly mediaStore: MediaStore;
+  private readonly now: () => number;
+  private readonly retries = new WeakMap<MessageAppend, AppendRetry>();
   private entries: MessageAppend[] = [];
   private flushing: Promise<void> | null = null;
   private persistChain = Promise.resolve();
@@ -33,11 +40,12 @@ export class PersistenceOutbox {
   private readonly loaded: Promise<void>;
   private onMessagePersisted?: (sessionId: string) => Promise<void> | void;
 
-  constructor(dataDir: string, logger: OutboxLogger) {
+  constructor(dataDir: string, logger: OutboxLogger, options: OutboxOptions = {}) {
     this.path = join(dataDir, "session-message-outbox.json");
     this.tempPath = `${this.path}.tmp`;
     this.logger = logger;
     this.mediaStore = new MediaStore(join(dataDir, "attachments"));
+    this.now = options.now ?? Date.now;
     this.loaded = this.load();
   }
 
@@ -108,16 +116,21 @@ export class PersistenceOutbox {
   }
 
   private async flushLoop(getHost: () => HostProcess | null): Promise<void> {
-    // host 负责跨会话 ID 隔离；只有成功回执才能确认快照覆盖。
-    // duplicate / poison 不得视为成功，也不得伪造成功回执：仅把该条延后
-    // （保留消息、不调 onMessagePersisted），让后排先行，下一轮再试，
-    // 避免单条坏头饿死整个队列，但不丢消息。
+    // 失败消息继续保存在原队列；只有 host 成功回执才能触发持久化通知。
+    // 已知坏消息和反复失败的消息延后重试，让其他消息继续落盘。
     let deferred = 0;
     while (this.entries.length > 0) {
       if (deferred >= this.entries.length) return;
       const current = this.entries[0];
       const currentHost = getHost();
       if (!currentHost || !currentHost.isAvailable()) return;
+      const retry = this.retries.get(current);
+      if (retry?.host === currentHost && retry.nextAttemptAt > this.now()) {
+        if (retry.attempts < MAX_TRANSIENT_ATTEMPTS) return;
+        if (this.deferHead(current)) deferred += 1;
+        await this.persist();
+        continue;
+      }
       try {
         await currentHost.call(current.usage ? "session.recordUsage" : "session.appendMessage", {
           sessionId: current.sessionId,
@@ -125,6 +138,8 @@ export class PersistenceOutbox {
           turnId: current.turnId,
         });
       } catch (error) {
+        // 旧请求的失败不暂停并发替换或删除后留下的消息。
+        if (this.entries[0] !== current) continue;
         if (isDuplicateMessageIdError(error)) {
           this.logger("warn", "session persistence flush deferred duplicate message id", {
             key: current.key,
@@ -152,13 +167,22 @@ export class PersistenceOutbox {
           await this.persist();
           continue;
         }
-        this.logger("warn", "session persistence flush paused", {
+        const retry = this.noteTransientFailure(current, currentHost);
+        this.logger("warn", "session persistence flush retry scheduled", {
           key: current.key,
+          sessionId: current.sessionId,
+          attempts: retry.attempts,
+          deferred: retry.attempts >= MAX_TRANSIENT_ATTEMPTS,
+          retryInMs: retry.nextAttemptAt - this.now(),
           data: String(error),
         });
-        return;
+        if (retry.attempts < MAX_TRANSIENT_ATTEMPTS) return;
+        if (this.deferHead(current)) deferred += 1;
+        await this.persist();
+        continue;
       }
       deferred = 0;
+      this.retries.delete(current);
       try {
         await this.onMessagePersisted?.(current.sessionId);
       } catch (callbackError) {
@@ -172,6 +196,22 @@ export class PersistenceOutbox {
       if (this.entries[0] === current) this.entries.shift();
       await this.persist();
     }
+  }
+
+  /** 重试状态只属于本次消息快照，新快照或新宿主立即重试。 */
+  private noteTransientFailure(entry: MessageAppend, host: HostProcess): AppendRetry {
+    const previous = this.retries.get(entry);
+    const attempts = Math.min(
+      (previous?.host === host ? previous.attempts : 0) + 1,
+      MAX_TRANSIENT_ATTEMPTS,
+    );
+    const retry = {
+      attempts,
+      nextAttemptAt: this.now() + Math.min(RETRY_BACKOFF_MS * 2 ** (attempts - 1), MAX_RETRY_BACKOFF_MS),
+      host,
+    };
+    this.retries.set(entry, retry);
+    return retry;
   }
 
   /** 仅延后收到失败回执的原快照，已删除或替换的消息不影响当前队头。 */

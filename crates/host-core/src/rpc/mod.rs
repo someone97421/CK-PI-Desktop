@@ -598,26 +598,21 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
         .unwrap_or(Ok(()))
 }
 
-/// Wall-clock budget for a single non-tool RPC request. The JS client gives
-/// its calls ~130s before it rejects locally without ever telling the host
-/// (issue #1071), so a request stuck waiting on the global state lock keeps
-/// its in-flight slot after the caller has moved on. 135s sits just past that
-/// client budget: the slot is guaranteed to come back within seconds of the
-/// client giving up, instead of never.
+/// Wall-clock budget for ordinary non-tool RPC requests. The long-running
+/// `configSync.syncNow` is explicitly exempt below; other handlers stuck on the
+/// global state lock must release their in-flight slot rather than accumulate.
+/// Keep this slightly beyond the shared 130s client deadline (issue #1071).
 const RPC_REQUEST_BUDGET_MS: u64 = 135_000;
 
 // Match the longer client deadlines in packages/shared/src/rpc-timeouts.ts,
 // with the same 5s host grace used by ordinary requests.
 const RPC_COMPACT_BUDGET_MS: u64 = 749_000;
-const RPC_CONFIG_SYNC_BUDGET_MS: u64 = 1_805_000;
 
-/// Approval has no deadline. Tool queueing and execution remain bounded by
-/// their existing inner budgets, and cancellation/shutdown settles the wait.
+/// 工具审批和宿主同步不设整体等待上限，各自执行和网络请求仍使用内部预算。
 fn request_budget_ms(method: &str, _params: &Value) -> Option<u64> {
     match method {
-        "tools.execute" => None,
+        "tools.execute" | "configSync.syncNow" => None,
         "agent.compact" => Some(RPC_COMPACT_BUDGET_MS),
-        "configSync.syncNow" => Some(RPC_CONFIG_SYNC_BUDGET_MS),
         _ => Some(RPC_REQUEST_BUDGET_MS),
     }
 }
@@ -5179,7 +5174,6 @@ mod tests {
         resolve_plan_workspace, resolve_plan_workspace_if_available, resolve_tool_workspace,
         resolve_tool_workspace_for_call, response_for, rpc_err, scope_err, skill_err,
         with_request_budget, JsonRpcError, RPC_REQUEST_BUDGET_MS, RPC_COMPACT_BUDGET_MS,
-        RPC_CONFIG_SYNC_BUDGET_MS,
     };
     use crate::agent_capabilities::CapabilityLevel;
     use crate::plans::{PlanResolveParams, PlanSubmitParams};
@@ -5206,6 +5200,11 @@ mod tests {
     }
 
     #[test]
+    fn config_sync_request_has_no_wall_clock_budget() {
+        assert_eq!(request_budget_ms("configSync.syncNow", &json!({})), None);
+    }
+
+    #[test]
     fn tool_approval_wait_is_not_limited_by_the_rpc_budget() {
         for params in [
             json!({"toolName": "Bash", "timeoutMs": 60000}),
@@ -5221,8 +5220,6 @@ mod tests {
     fn long_methods_keep_their_client_deadlines_and_host_grace() {
         assert_eq!(request_budget_ms("agent.compact", &json!({})), Some(RPC_COMPACT_BUDGET_MS));
         assert_eq!(RPC_COMPACT_BUDGET_MS, 4 * 180_000 + 14_000 + 10_000 + 5_000);
-        assert_eq!(request_budget_ms("configSync.syncNow", &json!({})), Some(RPC_CONFIG_SYNC_BUDGET_MS));
-        assert_eq!(RPC_CONFIG_SYNC_BUDGET_MS, 1_800_000 + 5_000);
     }
 
     #[tokio::test]

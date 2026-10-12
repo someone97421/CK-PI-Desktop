@@ -1381,6 +1381,58 @@ function appendToolProgress(current: string, chunk: string): string {
 
 }
 
+/**
+ * Model-visible text for one host tool content block. Besides plain `text`
+ * blocks, MCP servers return file bodies as embedded text resources and large
+ * payloads as resource links (github-mcp-server `get_file_contents` sends a
+ * status line plus one of these), so dropping them next to a sibling text
+ * block hides the actual result from the model. Binary resources and other
+ * block kinds have no text to show and stay out of the text channel.
+ */
+function hostContentBlockText(block: unknown): string | undefined {
+  if (!isRecord(block)) return undefined;
+  if (block.type === "text" && typeof block.text === "string") return block.text;
+  if (
+    block.type === "resource" &&
+    isRecord(block.resource) &&
+    typeof block.resource.text === "string"
+  ) {
+    return block.resource.text;
+  }
+  if (block.type === "resource_link" && typeof block.uri === "string") {
+    const name = typeof block.name === "string" && block.name.trim()
+      ? `${block.name.trim()}: `
+      : "";
+    return `[resource link] ${name}${block.uri}`;
+  }
+  return undefined;
+}
+
+/**
+ * JSON text fallback for a host result that produced no text blocks. Image
+ * `data` and resource `blob` bytes stay off the text channel; type, mimeType,
+ * and uri remain so the model still sees what was attached.
+ */
+function withoutInlineBinary(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => withoutInlineBinary(entry));
+  if (!isRecord(value)) return value;
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "data" && value.type === "image") continue;
+    if (key === "resource" && value.type === "resource" && isRecord(entry)) {
+      const resource: Record<string, unknown> = {};
+      for (const [resourceKey, resourceValue] of Object.entries(entry)) {
+        if (resourceKey === "blob") continue;
+        resource[resourceKey] = withoutInlineBinary(resourceValue);
+      }
+      next.resource = resource;
+      continue;
+    }
+    next[key] = withoutInlineBinary(entry);
+  }
+  return next;
+}
+
 /** Rebuild a pi-ai tool result from a persisted tool row. Rows that never
  * finished (app quit / abort mid-tool) restore as errored results so the
  * model knows the call produced nothing. Exported for tests. */
@@ -3532,24 +3584,26 @@ Delegation rules:
           // and hand images to the model instead of stringifying (#1360).
           const textParts: string[] = [];
           for (const block of rawContent) {
-            if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
-              textParts.push(block.text);
-            }
+            const blockText = hostContentBlockText(block);
+            if (blockText !== undefined) textParts.push(blockText);
           }
           collectImageBlocks(rawContent);
-          text = textParts.join("\n") || JSON.stringify(rawContent, null, 2);
+          text =
+            textParts.join("\n") ||
+            JSON.stringify(withoutInlineBinary(rawContent), null, 2);
           details = { blocks: rawContent, imageCount: imageBlocks.length };
         } else if (isRecord(rawContent) && Array.isArray(rawContent.content)) {
           // MCP tools return `content: [{ type: "image" | "text", ... }]`.
           const contentBlocks = rawContent.content;
           const textParts: string[] = [];
           for (const block of contentBlocks) {
-            if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
-              textParts.push(block.text);
-            }
+            const blockText = hostContentBlockText(block);
+            if (blockText !== undefined) textParts.push(blockText);
           }
           collectImageBlocks(contentBlocks);
-          text = textParts.join("\n") || JSON.stringify(rawContent, null, 2);
+          text =
+            textParts.join("\n") ||
+            JSON.stringify(withoutInlineBinary(rawContent), null, 2);
           details = { ...rawContent, imageCount: imageBlocks.length };
         } else if (isRecord(rawContent) && Array.isArray(rawContent.images)) {
           text =

@@ -89,6 +89,24 @@ test("project title toggles its conversation group without forcing it open", () 
   assert.doesNotMatch(sidebarSource, /className="project-collapse-toggle"/);
 });
 
+test("collapsing a project resets its expanded session history", () => {
+  const collapseBlock = sidebarSource.match(
+    /const setCollapsed = \(path: string, value: boolean\) => \{[\s\S]*?\n  \};/,
+  )?.[0] ?? "";
+
+  assert.match(
+    collapseBlock,
+    /if \(value\) \{[\s\S]*?setExpandedProjectSessions\([\s\S]*?updateProjectSessionExpansion\(previous, normalized, false\)/,
+  );
+  const loadMoreBlock = sidebarSource.match(
+    /const expandProjectSessions = \(projectKey: string\) => \{[\s\S]*?\n  \};/,
+  )?.[0] ?? "";
+  assert.match(
+    loadMoreBlock,
+    /updateProjectSessionExpansion\(previous, projectKey, true\)/,
+  );
+});
+
 test("global search stays on the conversation topbar, not the sidebar header", () => {
   assert.doesNotMatch(sidebarSource, /onOpenSearch|IconSearch|nav\.search/);
   assert.doesNotMatch(sidebarSource, /sidebar-session-search|toggleSearch/);

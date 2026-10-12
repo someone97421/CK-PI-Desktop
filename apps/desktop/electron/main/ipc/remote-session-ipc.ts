@@ -31,6 +31,13 @@ export function registerRemoteSessionIpc(registrar: IpcRegistrar, getBoot: () =>
   registrar.handle(IPC.invoke.remoteHostProjects, async (request: unknown) => {
     return { projects: await getBoot().projects(hostKey(object(request))) };
   });
+  registrar.handle(IPC.invoke.remoteHostBrowseProjects, async (request: unknown) => {
+    const input = object(request);
+    const key = hostKey(input);
+    const path = input.path === undefined ? undefined : text(input.path, "path", 4096);
+    if (path !== undefined && !path.startsWith("/")) invalid("path");
+    return getBoot().browseProjects(key, path);
+  });
   registrar.handle(IPC.invoke.remoteHostSessions, async (request: unknown) => {
     return { sessions: await getBoot().sessions(hostKey(object(request))) };
   });

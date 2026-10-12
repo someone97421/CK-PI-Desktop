@@ -1312,10 +1312,8 @@ impl UserSkillRegistry {
         Ok(result)
     }
 
-    /// Apply approved, bounded package resources inside the Host-owned skill
-    /// directory. Existing files with different bytes are treated as an
-    /// external edit instead of being overwritten blindly; omitted files are
-    /// retained for the same reason.
+    /// Seed fixtures without overwriting existing resource contents.
+    #[cfg(test)]
     pub fn write_package_files(
         &mut self,
         id: &str,
@@ -1323,69 +1321,24 @@ impl UserSkillRegistry {
         project_path: Option<&str>,
         files: &[(String, Vec<u8>)],
     ) -> Result<()> {
-        if files.len() > MAX_SKILL_PACKAGE_FILES {
-            bail!("SKILL_LIMIT_EXCEEDED: skill package contains too many files");
-        }
-        let total = files.iter().try_fold(0usize, |total, (_, bytes)| {
-            total
-                .checked_add(bytes.len())
-                .ok_or_else(|| anyhow::anyhow!("SKILL_LIMIT_EXCEEDED: skill package is too large"))
-        })?;
-        if total > MAX_SKILL_PACKAGE_BYTES {
-            bail!("SKILL_LIMIT_EXCEEDED: skill package is too large");
-        }
-        if files.is_empty() {
-            return Ok(());
-        }
-        let Some(record) = self.find(id, Some(level), project_path)? else {
-            bail!("SKILL_INVALID: skill package target was not found");
-        };
-        if record.source == LINKED_SOURCE || record.source == LINKED_IMPORT_SOURCE {
-            bail!("SKILL_READONLY: a linked skill cannot be modified here");
-        }
-        let Some(root) = package_root(&record, level, project_path)? else {
-            bail!("SKILL_INVALID: package resources require a directory-shaped skill");
-        };
-        let root_metadata = fs::symlink_metadata(&root)?;
-        if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
-            bail!("SKILL_INVALID: skill package root is unsafe");
-        }
-        let mut seen = HashSet::new();
-        for (relative, bytes) in files {
-            let target = package_destination(&root, relative)?;
-            if !seen.insert(relative.clone()) {
-                bail!("SKILL_INVALID: skill package contains duplicate paths");
-            }
-            if bytes.len() > MAX_SKILL_RESOURCE_BYTES {
-                bail!("SKILL_LIMIT_EXCEEDED: skill package resource is too large");
-            }
-            ensure_no_symlink_path(&root, &target)?;
-            if target.exists() {
-                let metadata = fs::symlink_metadata(&target)?;
-                if metadata.file_type().is_symlink() || !metadata.is_file() {
-                    bail!("SKILL_INVALID: skill package destination is unsafe");
-                }
-                if fs::read(&target)? == *bytes {
-                    continue;
-                }
+        let existing = self.package_files(id, level, project_path)?;
+        let mut desired = existing
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        for (path, bytes) in files {
+            if desired.get(path).is_some_and(|old| old != bytes) {
                 bail!("CONFIG_SYNC_CONFLICT: skill package resource was edited locally");
             }
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)?;
-                ensure_no_symlink_path(&root, parent)?;
-            }
-            let temporary = target.with_file_name(format!(
-                ".{}.{}.tmp",
-                target
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("resource"),
-                Uuid::new_v4()
-            ));
-            fs::write(&temporary, bytes)?;
-            fs::rename(&temporary, &target)?;
+            desired.insert(path.clone(), bytes.clone());
         }
-        Ok(())
+        self.replace_package_files(
+            id,
+            level,
+            project_path,
+            &existing,
+            &desired.into_iter().collect::<Vec<_>>(),
+        )
     }
 
     pub fn remove(
@@ -1470,6 +1423,7 @@ fn scope_for(level: CapabilityLevel, project_path: Option<&str>) -> ActivationSc
     }
 }
 
+mod package_sync;
 /// Package bounds are asserted in their own module: `tests.rs` is close to the
 /// rust file-size limit, and these tests share one fixture.
 #[cfg(test)]

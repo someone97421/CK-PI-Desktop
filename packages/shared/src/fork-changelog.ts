@@ -5,6 +5,11 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "云同步改用 S3，支持双向同步与单向备份；项目列表留在本机，旧 WebDAV 备份需通过旧版恢复。",
+  "实验性远程项目接入首页、侧栏和统一聊天界面，保留临时工作目录及本地与远程操作隔离。",
+  "落盘失败采用退避重试，反复失败消息继续保留，避免阻塞后续记录；保护远程主机配对配置。",
+  "保留 MCP 资源正文和链接，避免二进制内容占用文本上下文；MCP 超时发送取消通知。",
+  "修复思考 token 重复计数，预热斜杠命令，改善长问题滚动、侧栏折叠和工作面板拖动。",
   "统一子代理停止入口，等待真实执行结束后显示终态，保留跨重启召回、汇报与快照保存反馈。",
   "改善问答历史展示，增加会话时长和主模型响应耗时统计，修复空压缩摘要及禁用提供商名称显示。",
   "浏览器操作自动展开所属会话面板，截图期间调整窗口和面板位置保持正确裁剪。",
@@ -40,9 +45,9 @@ const zh = entry([
   "定时任务可独立保存项目、模型、思考档位及权限模式。",
   "Codex OAuth 支持按模型启用原生联网搜索，账号模型列表从对应厂商加载，并改进模型目录匹配。",
   "保护连续输入的新草稿与排队附件，恢复失效轮次引用的历史消息，并在界面进程异常退出后重新加载。",
-  "改进 WebDAV 配置、请求头输入和插件包内主题资源；云同步与远程主机仅在开发构建且开启开发者模式时显示。",
+  "改善请求头输入和插件包内主题资源；云同步与远程主机仅在开发构建且开启开发者模式时显示。",
   "修复子代理派发与会话保存并发时的登记失败，登记成功后连续派发不再重复校验转录。",
-  "新增加密 WebDAV 配置云同步，支持同步进度、冲突处理和历史恢复，包含本 fork 的外观与独立压缩模型设置。",
+  "加密配置云同步保留进度、冲突处理和历史恢复，包含本 fork 的外观与独立压缩模型设置。",
   "支持多个生图候选模型和默认模型选择，默认开启宽松网络以连接局域网及自建服务。",
   "改进压缩失败后的最近上下文保留、超长摘要分块及原生搜索历史续跑，增加启动超时恢复。",
   "修复定时任务调度、附件预览、公式复制和输入交互，Windows 便携版继续使用单文件 EXE。",
@@ -55,6 +60,11 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Move cloud sync to S3 with two-way sync and backup-only modes; keep project lists local and use an older build to recover WebDAV backups.",
+  "Bring experimental remote projects into home, sidebar and shared chat while preserving temporary workspaces and local/remote operation boundaries.",
+  "Back off failed transcript writes and retain repeatedly failing messages without blocking later records; protect paired remote-host settings.",
+  "Preserve MCP resource text and links, keep binary bytes out of text context, and notify servers when requests time out.",
+  "Fix double-counted reasoning tokens, prewarm slash commands, and improve long-question scrolling, sidebar collapse and panel dragging.",
   "Unify subagent stop controls and confirm actual completion before showing a terminal state, retaining cross-restart recall, reports and snapshot feedback.",
   "Improve question history, add session and model-response timing, reject empty compaction summaries and retain disabled-provider labels.",
   "Automatically reveal the calling session's browser panel and keep capture clipping aligned while resizing or moving panels.",
@@ -90,9 +100,9 @@ const en = entry([
   "Give scheduled tasks their own project, model, reasoning level and permission settings.",
   "Enable opt-in native web search for Codex OAuth and load account models from vendor endpoints with improved catalog matching.",
   "Preserve newer drafts and queued attachments, recover stale transcript references and reload the window after renderer crashes.",
-  "Improve WebDAV setup, request-header input and package-local themes; show cloud sync and remote hosts only in developer-enabled development builds.",
+  "Improve request-header input and package-local themes; show cloud sync and remote hosts only in developer-enabled development builds.",
   "Fix subagent registration during concurrent session saves and avoid repeated transcript validation after successful registration.",
-  "Add encrypted WebDAV configuration sync with progress, conflict handling and history restore, including fork appearance and dedicated compaction-model settings.",
+  "Retain encrypted configuration sync progress, conflict handling and history restore, including fork appearance and dedicated compaction-model settings.",
   "Support multiple image-generation candidates and a default selection; enable relaxed networking by default for LAN and self-hosted services.",
   "Improve recent-context retention after failed compaction, chunked summaries and hosted-search continuation; add startup timeout recovery.",
   "Fix scheduled dispatch, attachment previews, formula copying and input interactions; retain the single-file EXE for Windows portable builds.",

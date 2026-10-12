@@ -16,10 +16,11 @@ import { fileURLToPath } from "node:url";
  * mount, before any measuring, timer or listener. Behavior that needs those
  * is covered at the logic layer or in the Electron E2E.
  */
-export async function slotSsr(t, { translationOverrides = {} } = {}) {
+export async function slotSsr(t, { translationOverrides = {}, plugins = [] } = {}) {
   const server = await createServer({
     root: fileURLToPath(new URL("../..", import.meta.url)),
     configFile: false,
+    plugins,
     logLevel: "silent",
     server: { middlewareMode: true, hmr: false, ws: false },
     esbuild: { jsx: "automatic" },

@@ -19,12 +19,18 @@ try {
     entryPoints: [join(root, "scripts/e2e/remote-mvp-ui.jsx")], outfile: join(temp, "renderer.js"),
     bundle: true, platform: "browser", format: "iife", jsx: "automatic",
     define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false" },
-    loader: { ".css": "empty" },
+    loader: { ".css": "empty", ".gif": "dataurl", ".png": "dataurl" },
+    plugins: [{ name: "fixture-vite-url", setup(builder) {
+      builder.onResolve({ filter: /\?url$/ }, ({ path }) => ({ path, namespace: "fixture-url" }));
+      builder.onLoad({ filter: /.*/, namespace: "fixture-url" }, ({ path }) => ({ contents: `export default ${JSON.stringify(path)};`, loader: "js" }));
+    } }],
     alias: {
       "@pi-desktop/shared": join(root, "packages/shared/src/index.ts"),
       "@pi-desktop/i18n": join(root, "packages/i18n/src/index.ts"),
       react: join(root, "apps/desktop/node_modules/react"),
       "react-dom": join(root, "apps/desktop/node_modules/react-dom"),
+      "react-i18next": join(root, "apps/desktop/node_modules/react-i18next"),
+      i18next: join(root, "apps/desktop/node_modules/i18next"),
     },
     nodePaths: [join(root, "apps/desktop/node_modules")],
   });

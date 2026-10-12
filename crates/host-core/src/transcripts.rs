@@ -214,15 +214,21 @@ fn load_layout_cache(data_dir: &Path, session_id: &str) -> Result<Option<Transcr
     if meta.len() < LAYOUT_CACHE_MIN_LEN {
         return Ok(None);
     }
+    let identity = file_identity(&meta);
+    // Zero means this platform cannot distinguish append from replacement.
+    // Matching two zeroes would resurrect offsets from a rewritten transcript.
+    if identity == 0 {
+        return Ok(None);
+    }
     let raw = match fs::read_to_string(layout_cache_path(data_dir, session_id)?) {
         Ok(raw) => raw,
         Err(_) => return Ok(None),
     };
     let mut tokens = raw.split_ascii_whitespace();
-    let (Some(identity), Some(file_len)) = (tokens.next(), tokens.next()) else {
+    let (Some(cached_identity), Some(file_len)) = (tokens.next(), tokens.next()) else {
         return Ok(None);
     };
-    if identity.parse::<u64>().ok() != Some(file_identity(&meta)) {
+    if cached_identity.parse::<u64>().ok() != Some(identity) {
         return Ok(None);
     }
     let Some(file_len) = file_len.parse::<u64>().ok() else {
@@ -322,6 +328,10 @@ fn store_layout_cache(data_dir: &Path, session_id: &str, layout: &TranscriptLayo
     let Ok(meta) = fs::metadata(&path) else {
         return Ok(());
     };
+    let identity = file_identity(&meta);
+    if identity == 0 {
+        return Ok(());
+    }
     if meta.len() != layout.file_len {
         return Ok(());
     }
@@ -329,7 +339,7 @@ fn store_layout_cache(data_dir: &Path, session_id: &str, layout: &TranscriptLayo
     let tmp = cache.with_extension("layout.tmp");
     {
         let mut writer = BufWriter::new(File::create(&tmp)?);
-        writeln!(writer, "{} {}", file_identity(&meta), layout.file_len)?;
+        writeln!(writer, "{} {}", identity, layout.file_len)?;
         writeln!(
             writer,
             "{} {}",
@@ -1811,6 +1821,10 @@ pub fn remove_session_files(data_dir: &Path, session_id: &str) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "transcripts_layout_tests.rs"]
+mod layout_tests;
 
 #[cfg(test)]
 mod tests {

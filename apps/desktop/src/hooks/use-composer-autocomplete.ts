@@ -15,6 +15,11 @@ import {
   type FuzzyMatch,
 } from "@pi-desktop/shared";
 import { api } from "../lib/api";
+import {
+  fetchComposerCommands,
+  prewarmComposerCommands,
+  readComposerCommandsCache,
+} from "../lib/composer-command-source";
 import { useAppStore } from "../stores/app-store";
 import type { AppState } from "../stores/app-state";
 
@@ -44,9 +49,11 @@ export type AutocompleteItem =
   | { kind: "command"; command: ComposerCommand; match: FuzzyMatch }
   | { kind: "path"; entry: FsIndexEntry; match: FuzzyMatch };
 
-/** Module-level TTL caches so re-triggering stays IPC-free. */
-let commandsCache: { key: string; at: number; commands: ComposerCommand[] } | null =
-  null;
+/**
+ * Module-level TTL cache so re-triggering stays IPC-free. The `/` command
+ * source itself lives in `lib/composer-command-source`, because the launch
+ * pre-warm (#1543) must seed it before this hook mounts.
+ */
 let filesCache: {
   key: string;
   at: number;
@@ -145,14 +152,10 @@ export async function resolveComposerCommand(
   const state = useAppStore.getState();
   const scope = composerCommandScope(state);
   const key = composerCommandScopeKey(state);
-  if (
-    !commandsCache ||
-    commandsCache.key !== key ||
-    Date.now() - commandsCache.at > SOURCE_TTL_MS
-  ) {
+  let commands = readComposerCommandsCache(key);
+  if (!commands) {
     try {
-      const res = await api.composerCommands(scope);
-      commandsCache = { key, at: Date.now(), commands: res.commands };
+      commands = await fetchComposerCommands(key, scope);
     } catch (error) {
       // Deliberately leaves the cache cold: the next attempt re-reads the
       // source, which is what makes the refusal retriable.
@@ -162,7 +165,7 @@ export async function resolveComposerCommand(
       };
     }
   }
-  const command = commandsCache.commands.find((c) => c.name === name);
+  const command = commands.find((c) => c.name === name);
   return command ? { status: "resolved", command } : { status: "unknown" };
 }
 
@@ -181,6 +184,7 @@ export function useComposerAutocomplete({
   const hasWorkspace = workspaceKey !== "";
   const commandKey = useAppStore(composerCommandScopeKey);
   const scope = useMemo(() => JSON.parse(commandKey)[0] as Parameters<typeof api.composerCommands>[0], [commandKey]);
+  const ready = useAppStore((s) => s.ready);
   const [commands, setCommands] = useState<ComposerCommand[] | null>(null);
   const [files, setFiles] = useState<{
     entries: FsIndexEntry[];
@@ -215,22 +219,15 @@ export function useComposerAutocomplete({
     const now = Date.now();
     if (trigger.mode === "slash") {
       setCommands(null);
-      if (
-        commandsCache &&
-        commandsCache.key === commandKey &&
-        now - commandsCache.at < SOURCE_TTL_MS
-      ) {
-        setCommands(commandsCache.commands);
+      const cached = readComposerCommandsCache(commandKey);
+      if (cached) {
+        setCommands(cached);
         return;
       }
       let cancelled = false;
-      void api
-        .composerCommands(scope)
-        .then((res) => {
-          if (!cancelled) {
-            commandsCache = { key: commandKey, at: Date.now(), commands: res.commands };
-            setCommands(res.commands);
-          }
+      void fetchComposerCommands(commandKey, scope)
+        .then((commands) => {
+          if (!cancelled) setCommands(commands);
         })
         .catch(() => {
           if (!cancelled) setCommands([]);
@@ -270,6 +267,15 @@ export function useComposerAutocomplete({
       cancelled = true;
     };
   }, [trigger?.mode, dismissed, workspaceKey, hasWorkspace, commandKey, scope]);
+
+  // Warm the `/` source once bootstrap settles, so the first slash of a session
+  // does not wait for a cold host round trip (#1543). Waiting for `ready` keeps
+  // the pre-warm off the pre-hydration empty workspace key, which would spend a
+  // full host assembly and then be discarded.
+  useEffect(() => {
+    if (!enabled || !ready) return;
+    return prewarmComposerCommands(commandKey, scope);
+  }, [enabled, ready, commandKey, scope]);
 
   const items = useMemo<AutocompleteItem[]>(() => {
     if (!trigger || dismissed) return [];

@@ -17,6 +17,7 @@ import { catalogs } from "@pi-desktop/i18n";
 import { formatSessionLink, isRenderableAttachment } from "@pi-desktop/shared";
 import { splitChatText } from "../src/lib/chat-links.ts";
 import { getExtraMessageAttachments } from "../src/features/chat/transcript/extra-attachments.ts";
+import { isRemoteSession, safeSessionSummary, sessionAllows } from "../src/lib/remote-session-safety.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 register(pathToFileURL(join(here, "helpers/ts-import-hooks.mjs")));
@@ -116,6 +117,12 @@ const { MessageRow } = load(new URL("../src/features/chat/transcript/MessageRow.
       React.createElement("button", { ...props, "aria-label": ariaLabel ?? tooltip }),
   },
   "../../../stores/app-store": { useAppStore },
+  "../../../lib/remote-session-safety": {
+    isRemoteSession,
+    safeSessionSummary,
+    sessionAllows,
+  },
+  "../../../plugins/renderer-slots/use-slots": { useSlotSessionId: () => "local-session" },
   "../../../plugins/renderer-slots/slot-message": { slotMessage: () => undefined },
   "./menu-items": { userMessageMenuItems: () => [] },
   "./ActionBarSlots": { ActionSlotSide: () => null },

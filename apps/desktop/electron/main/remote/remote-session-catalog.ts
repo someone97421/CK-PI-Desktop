@@ -1,5 +1,5 @@
 import type {
-  RacpProjectSummary, RacpSession, RemoteHostCreateSessionRequest, SessionSummary,
+  RacpProjectSummary, RacpSession, RemoteHostCreateSessionRequest, SessionSummary, RemoteHostBrowseProjectsResult,
 } from "@pi-desktop/shared";
 import { makeRemoteSessionId } from "./backend-router.js";
 import type { RemoteHostConnection } from "./remote-host-connection.js";
@@ -69,6 +69,12 @@ export function createRemoteSessionCatalog(options: {
       stillCurrent(host);
       return result.projects;
     },
+    async browseProjects(hostKey: string, path?: string): Promise<RemoteHostBrowseProjectsResult> {
+      const host = requireHost(hostKey);
+      const result = await host.client.request<unknown>("project/browse", path === undefined ? {} : { path });
+      stillCurrent(host);
+      return validateProjectBrowse(result);
+    },
     async registerProject(hostKey: string, path: string) {
       const host = requireHost(hostKey);
       const result = await host.client.request<{ project: RacpProjectSummary & { path?: string } }>("project/register", { path });
@@ -91,4 +97,28 @@ export function createRemoteSessionCatalog(options: {
       return row;
     },
   };
+}
+
+/** Validate untrusted Host picker data before it crosses the renderer boundary. */
+function validateProjectBrowse(value: unknown): RemoteHostBrowseProjectsResult {
+  const invalid = (): never => {
+    throw Object.assign(new Error("invalid remote project browse response"), { errorCode: "INVALID_ARGUMENT" });
+  };
+  const absolutePath = (path: unknown): path is string =>
+    typeof path === "string" && path.startsWith("/") && path.length <= 4096 && !/[\u0000-\u001f]/.test(path);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
+  const result = value as Record<string, unknown>;
+  if (!absolutePath(result.path) || (result.parent !== undefined && !absolutePath(result.parent))
+    || !Array.isArray(result.entries) || result.entries.length > 500) return invalid();
+  const entries = result.entries.map((value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return invalid();
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.name !== "string" || !entry.name || entry.name.length > 4096
+      || /[\/\u0000-\u001f]/.test(entry.name) || entry.name === "." || entry.name === ".."
+      || !absolutePath(entry.path)) return invalid();
+    const prefix = result.path === "/" ? "/" : `${String(result.path).replace(/\/+$/, "")}/`;
+    if (entry.path !== `${prefix}${entry.name}`) return invalid();
+    return { name: entry.name, path: entry.path };
+  });
+  return { path: result.path, ...(typeof result.parent === "string" ? { parent: result.parent } : {}), entries };
 }

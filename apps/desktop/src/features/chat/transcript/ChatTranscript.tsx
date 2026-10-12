@@ -1,3 +1,4 @@
+import { useChatSessionCapability } from "../../../hooks/use-chat-session-capability";
 import { memo, useContext, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlanningState, UiMessage } from "@pi-desktop/shared";
@@ -93,6 +94,7 @@ function TranscriptBody({
   navigationLoading = false,
 }: ChatTranscriptProps) {
   const { t } = useTranslation();
+  const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
   const openTranscriptMenu = useTranscriptMenu();
   const { copyText, selectText } = useChatTextActions();
   const showToast = useAppStore((state) => state.showToast);
@@ -253,10 +255,10 @@ function TranscriptBody({
       ) : null}
       {/* Quoting follows the selection: the row action at the end of a long
         * answer is the wrong end of the message to reach for (ADR message-quotes-and-side-chats / D-LOCAL-selection-overlay). */}
-      {transcriptReadOnly || !paneVisible ? null : (
+      {transcriptReadOnly || !paneVisible || !localToolsAllowed ? null : (
         <SelectionQuoteButton scrollRef={scrollRef} title={sessionTitle} />
       )}
-      {!transcriptReadOnly && paneVisible && !veilCovering && sessionId ? (
+      {!transcriptReadOnly && localToolsAllowed && paneVisible && !veilCovering && sessionId ? (
         <ResponseAnnotationOverlay sessionId={sessionId} scrollRef={scrollRef} onNavigate={navigateAnnotation} />
       ) : null}
       <div

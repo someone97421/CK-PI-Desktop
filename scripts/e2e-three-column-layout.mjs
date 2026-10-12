@@ -58,7 +58,7 @@ function resolveHostBinary() {
 }
 
 /**
- * Seed four retained project groups into the same throwaway data directory the
+ * Seed five retained project groups into the same throwaway data directory the
  * app will open, using only the host protocol:
  *
  *   alpha   five sessions across four date buckets, so the group draws date
@@ -67,6 +67,7 @@ function resolveHostBinary() {
  *   gamma   no sessions, the empty group
  *   delta   ten sessions that the renderer pins, so the Pinned section has more
  *           rows than its eight-row budget
+ *   history twelve unpinned sessions for the project load-more reset flow
  *
  * `session.import` is the only protocol entry point that accepts a session's own
  * timestamps, which is what puts rows in the yesterday / this-week / older
@@ -84,7 +85,8 @@ async function seedSidebarProjects(hostBinary, dataDir, tempDirs) {
   const beta = join(projectRoot, "beta");
   const gamma = join(projectRoot, "gamma");
   const delta = join(projectRoot, "delta");
-  for (const dir of [alpha, beta, gamma, delta]) mkdirSync(dir, { recursive: true });
+  const history = join(projectRoot, "history");
+  for (const dir of [alpha, beta, gamma, delta, history]) mkdirSync(dir, { recursive: true });
 
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
@@ -145,6 +147,12 @@ async function seedSidebarProjects(hostBinary, dataDir, tempDirs) {
       await importRow(id, title, delta, updatedMs);
       pinnedSessionIds.push(id);
     }
+    const historySessionIds = [];
+    for (let index = 0; index < 12; index += 1) {
+      const id = `e2e-history-project-${index}`;
+      await importRow(id, `history session ${index}`, history, Date.now() - index * 1_000);
+      historySessionIds.push(id);
+    }
 
     // The host canonicalizes every project path; read the stored values back so
     // the renderer's retained-tab list matches exactly.
@@ -157,15 +165,17 @@ async function seedSidebarProjects(hostBinary, dataDir, tempDirs) {
       beta: canonical("e2e-fold-beta-0"),
       gamma,
       delta: canonical("e2e-fold-delta-0"),
+      history: canonical("e2e-history-project-0"),
     };
-    if (!paths.alpha || !paths.beta || !paths.delta) {
+    if (!paths.alpha || !paths.beta || !paths.delta || !paths.history) {
       throw new Error(`seeded sessions carry no project path: ${JSON.stringify(paths)}`);
     }
     return {
       paths,
       alphaSessionIds,
       pinnedSessionIds,
-      keys: [paths.alpha, paths.beta, paths.gamma, paths.delta],
+      historySessionIds,
+      keys: [paths.alpha, paths.beta, paths.gamma, paths.delta, paths.history],
     };
   } finally {
     await host.stop();
@@ -1456,6 +1466,7 @@ async function main() {
         [sidebarSeed.paths.beta]: { order: 1 },
         [sidebarSeed.paths.gamma]: { order: 2 },
         [sidebarSeed.paths.delta]: { order: 3 },
+        [sidebarSeed.paths.history]: { order: 4 },
       },
       projectSort: "manual",
       sessionView: { sort: "recent", archived: false },

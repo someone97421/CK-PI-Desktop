@@ -36,6 +36,20 @@ test("closing a subagent panel restores focus to its transcript trigger", () => 
   assert.match(panelSource, /onClick=\{closeSubagentPanelAndFocus\}/);
 });
 
+test("only the visible tab viewport excludes native window dragging", () => {
+  assert.match(panelSource, /className="work-panel-tab-strip-wrap"/);
+  assert.match(panelSource, /className="work-panel-tab-strip no-drag"/);
+  assert.doesNotMatch(panelSource, /work-panel-tab no-drag/);
+  assert.doesNotMatch(panelSource, /work-panel-tab-strip-wrap no-drag/);
+  assert.match(globalStyles, /\.work-panel-tab-strip \{[^}]*width:\s*max-content;[^}]*flex:\s*0 1 auto;/s);
+});
+
+test("closing a tab restores focus to its neighbor or the new-tab action", () => {
+  assert.match(panelSource, /const closeTabAndFocus = useCallback/);
+  assert.match(panelSource, /tabButtonRefs\.current\[nextTab\.id\]\?\.focus/);
+  assert.match(panelSource, /else newTabButtonRef\.current\?\.focus\(\)/);
+});
+
 test("work panel replaces the context panel overlay", async () => {
   await assert.rejects(
     access(new URL("../src/components/ContextPanel.tsx", import.meta.url)),
@@ -221,7 +235,7 @@ test("work panel uses the fixed-window internal dock", () => {
 
 test("work panel header exposes a scrollable tab strip and direct new-page action", () => {
   const headerIndex = panelSource.indexOf('className="work-panel-header"');
-  const stripIndex = panelSource.indexOf('className="work-panel-tab-strip"');
+  const stripIndex = panelSource.indexOf('className="work-panel-tab-strip no-drag"');
   const actionsIndex = panelSource.indexOf('className="work-panel-actions no-drag"');
   const bodyIndex = panelSource.indexOf('<div className="work-panel-body">');
 

@@ -16,7 +16,8 @@ await build({
     export { api } from './apps/desktop/src/lib/api';
     export { createRemoteHostWorkflow } from './apps/desktop/src/lib/remote-host-workflow';
     export { subscribeRemoteInteractions } from './apps/desktop/src/lib/remote-interactions';
-    export { useAppStore } from './apps/desktop/src/stores/app-store';
+    import { useAppStore } from './apps/desktop/src/stores/app-store';
+    export { useAppStore };
     export { selectRemoteSession as selectRemote } from './apps/desktop/src/components/settings/RemoteHostSessions';
     export { sessionAllows, safeSessionSummary } from './apps/desktop/src/lib/remote-session-safety';
     export { sessionMatchesProject, projectPathsForNewSessions } from './apps/desktop/src/lib/sidebar-session-groups';
@@ -28,15 +29,21 @@ await build({
     import { initReactI18next } from 'react-i18next';
     import { remoteEn } from './apps/desktop/src/locales/remote';
     import { RemoteHostSessions } from './apps/desktop/src/components/settings/RemoteHostSessions';
-    import { RemoteConversation } from './apps/desktop/src/components/remote/RemoteConversation';
+    import { ChatSurface } from './apps/desktop/src/components/ChatSurface';
+    import { catalogs } from '@pi-desktop/i18n';
     export async function render(kind, props) {
-      await i18n.use(initReactI18next).init({lng:'en', fallbackLng:'en', resources:{en:{remote:remoteEn}}, interpolation:{escapeValue:false}});
-      return renderToStaticMarkup(React.createElement(kind === 'host' ? RemoteHostSessions : RemoteConversation, props));
+      await i18n.use(initReactI18next).init({lng:'en', fallbackLng:'en', resources:{en:{remote:remoteEn, translation:catalogs.en}}, interpolation:{escapeValue:false}});
+      Object.assign(useAppStore.getInitialState(), useAppStore.getState(), kind === 'host' ? {} : {sessions:[props.session], activeSessionId:props.session.id, retainedSessionIds:[props.session.id], messages:[]});
+      return renderToStaticMarkup(React.createElement(kind === 'host' ? RemoteHostSessions : ChatSurface, kind === 'host' ? props : {}));
     }
   `, resolveDir: root, loader: "tsx" },
   outfile: output, bundle: true, platform: "node", format: "esm", jsx: "automatic",
-  alias: { "@pi-desktop/shared": join(root, "packages/shared/src/index.ts") },
-  loader: { ".css": "empty" },
+  alias: { "@pi-desktop/shared": join(root, "packages/shared/src/index.ts"), "@pi-desktop/i18n": join(root, "packages/i18n/src/index.ts"), react: join(root, "apps/desktop/node_modules/react"), "react-dom": join(root, "apps/desktop/node_modules/react-dom"), "react-i18next": join(root, "apps/desktop/node_modules/react-i18next"), i18next: join(root, "apps/desktop/node_modules/i18next") },
+  loader: { ".css": "empty", ".gif": "dataurl", ".png": "dataurl" },
+    plugins: [{ name: "fixture-vite-url", setup(builder) {
+      builder.onResolve({ filter: /\?url$/ }, ({ path }) => ({ path, namespace: "fixture-url" }));
+      builder.onLoad({ filter: /.*/, namespace: "fixture-url" }, ({ path }) => ({ contents: `export default ${JSON.stringify(path)};`, loader: "js" }));
+    } }],
   banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" },
 });
 const fixture = await import(pathToFileURL(output).href);
@@ -49,7 +56,7 @@ const provider = { id: "api-provider", name: "Network provider", enabled: true, 
 function deferred() { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; }
 function bridge(handler) {
   const calls = [];
-  globalThis.window = { piDesktop: { platform: "linux", on: () => () => {}, invoke: async (channel, ...args) => {
+  globalThis.window = { matchMedia: () => ({ matches: false }), piDesktop: { platform: "linux", on: () => () => {}, invoke: async (channel, ...args) => {
     calls.push({ channel, input: args[0] }); return { ok: true, data: await handler(channel, args[0]) };
   } } };
   return calls;
@@ -183,8 +190,9 @@ test("remote capabilities and workspace identity fail closed, local defaults sta
   await assert.rejects(api.prompt({ sessionId: session.id, content: "attached", attachments: [{ path: "/local/private" }] }), { code: "CAPABILITY_UNAVAILABLE" });
   assert.equal(calls.length, 0);
   const html = await fixture.render("chat", { session });
-  assert.match(html, /Remote · Build machine · Remote project/);
-  assert.doesNotMatch(html, /Local only|local\/private|composer-model|attachment-picker|plugin-slot|message-revision/);
+  assert.match(html, /Remote project/);
+  assert.match(html, /data-composer-dock="home"/);
+  assert.doesNotMatch(html, /Local only|local\/private|attachment-picker|plugin-slot|message-revision/);
 });
 
 test("session refresh retains the active remote identity when offline, and replaces it on recovery", async () => {
@@ -265,7 +273,7 @@ test("remote interaction IPC reconciles real queues and detaches without touchin
   const local = { ...permission, sessionId: "local", requestId: "local-permission" };
   useAppStore.setState({ pendingPermissions: { local: [local] } });
   const listeners = new Map();
-  globalThis.window = { piDesktop: { on(channel, handler) { listeners.set(channel, handler); return () => listeners.delete(channel); } } };
+  globalThis.window = { matchMedia: () => ({ matches: false }), piDesktop: { on(channel, handler) { listeners.set(channel, handler); return () => listeners.delete(channel); } } };
   const unsubscribe = fixture.subscribeRemoteInteractions();
   const send = (event) => listeners.get(IPC.event.remoteInteractions)(event);
   const pending = { kind: "snapshot", sessionId: session.id, permissions: [permission], asks: [ask] };

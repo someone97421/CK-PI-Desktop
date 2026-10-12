@@ -1,4 +1,6 @@
 import { IconClock } from "./icons";
+import { RemoteProjectGroups } from "./remote/RemoteProjectGroups";
+import { groupRemoteProjectSessions } from "../lib/remote-project-catalog";
 import { isRemoteSession, sessionAllows } from "../lib/remote-session-safety";
 import {
   useCallback,
@@ -29,9 +31,7 @@ import {
   getGlobalPinnedSessions,
   groupSidebarSessionsByTime,
   normalizeProjectPath,
-  sessionArchived,
-  sessionPinned,
-} from "../lib/sidebar-session-groups";
+} from "../lib/sidebar-project-sessions";
 import { listableSessions } from "../lib/session-origin";
 import {
   composerDropItems,
@@ -89,7 +89,7 @@ import {
   IconTrash,
   IconX,
 } from "./icons";
-const MAX_VISIBLE_SESSIONS = 3;
+const MAX_VISIBLE_SESSIONS = 10;
 const SESSION_LOAD_MORE_COUNT = 5;
 
 type ProjectEntry = {
@@ -936,14 +936,16 @@ export function Sidebar({
       session: { ...session, title: taskTitle(session.title) },
       target,
       temporary,
-      space: temporary ? t("nav.hoverCardTemporarySpace") : entry?.name ?? projectName(projectPath),
+      space: isRemoteSession(session)
+        ? `${session.remoteWorkspaceLabel ?? t("remote:workspace")} · ${session.remoteHostLabel ?? t("remote:remote")}`
+        : temporary ? t("nav.hoverCardTemporarySpace") : entry?.name ?? projectName(projectPath),
       branch: entry?.branch,
     });
   }, [projectEntriesByPath, revealSessionHoverCard, t, taskTitle]);
 
   const temporarySessions = useMemo(
     () => filtered
-      .filter((session) => !normalizeProjectPath(session.projectPath))
+      .filter((session) => !normalizeProjectPath(session.projectPath) && !(isRemoteSession(session) && session.remoteProjectId))
       .sort(compareSessions),
     [filtered, compareSessions],
   );
@@ -951,6 +953,10 @@ export function Sidebar({
     () => temporarySessions.filter((session) => !pinnedSessionIds.has(session.id)),
     [temporarySessions, pinnedSessionIds],
   );
+  const remoteProjectsVisible = import.meta.env.DEV && settings?.developerMode === true;
+  const remoteProjectGroups = useMemo(() => groupRemoteProjectSessions(
+    remoteProjectsVisible ? filtered.filter((session) => isRemoteSession(session) && !pinnedSessionIds.has(session.id)) : [], compareSessions,
+  ), [remoteProjectsVisible, filtered, pinnedSessionIds, compareSessions]);
 
   /** Handle multi-select click on a session row. Returns true if the click was consumed by multi-select. */
   const handleMultiSelectClick = (event: React.MouseEvent, sessionId: string): boolean => {
@@ -1801,7 +1807,7 @@ export function Sidebar({
     const projectId = projectDomId(entry.key);
     const isMenuOpen = projectMenu === entry.key;
 
-    // 初始显示三条未置顶会话，每次加载再追加五条。
+    // 折叠后恢复首屏十条，加载更多按现有增量追加。
     const sessionLimit = projectSessionLimits[entry.key] ?? MAX_VISIBLE_SESSIONS;
     const history = entry.sessions.filter((session) => !pinnedSessionIds.has(session.id));
     const visibleSessions = history.slice(0, sessionLimit);
@@ -2528,6 +2534,8 @@ export function Sidebar({
               </div>
             </section>
           )}
+          <RemoteProjectGroups groups={remoteProjectGroups}
+            renderSessions={(sessions) => renderSessionRows(sessions, { temporary: false })} />
         </div>
 
         <div className="sidebar-footer no-drag">

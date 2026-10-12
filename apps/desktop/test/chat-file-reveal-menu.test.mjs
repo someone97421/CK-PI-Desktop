@@ -57,6 +57,7 @@ const calls = {
 };
 
 const state = {
+  sessions: [],
   workspace: { path: "C:/project" },
   activeSessionId: "session-1",
   sessions: [],
@@ -107,6 +108,9 @@ const previewTarget = loadModule("../src/hooks/use-preview-target.ts", {
   "@pi-desktop/shared": sharedPackage,
   "../stores/app-store": { useAppStore },
   "../lib/session-workspace": loadModule("../src/lib/session-workspace.ts", {}),
+  "./use-chat-session-capability": { useChatSessionCapability: () => true },
+  "../lib/remote-session-safety": loadModule("../src/lib/remote-session-safety.ts", {}),
+  "../plugins/renderer-slots/use-slots": { useSlotSessionId: () => "" },
   "../lib/api": {
     api: {
       listPluginViews: async () => state.pluginViews,
@@ -388,8 +392,11 @@ test("every transcript surface that names a file opens that item", () => {
   assert.match(markdown, /openFileMenu\(event, \{ path: localRef, baseDir \}\)/);
   assert.match(markdown, /onContextMenu=\{onLocalContextMenu\}/);
   // A local image that cannot be shown inline keeps a chip, and both carry the
-  // menu only when the reference actually resolved to a file.
-  assert.match(markdown, /const onLocalContextMenu =\s*localRef && openFileMenu/);
+  // menu only when local tools are allowed and the reference resolved to a file.
+  assert.match(
+    markdown,
+    /const onLocalContextMenu =\s*localToolsAllowed && localRef && openFileMenu/,
+  );
 });
 
 test("a URL never reaches the reveal", () => {

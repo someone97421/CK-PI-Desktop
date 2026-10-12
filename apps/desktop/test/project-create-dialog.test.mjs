@@ -6,7 +6,7 @@ import { readStoreSource } from "./helpers/store-source.mjs";
 
 const read = (relativePath) => readFile(new URL(relativePath, import.meta.url), "utf8");
 
-const [dialog, editDialog, store, api, protocol, main, styles] = await Promise.all([
+const [dialogSource, editDialog, store, api, protocol, main, styles] = await Promise.all([
   read("../src/components/ProjectCreateDialog.tsx"),
   read("../src/components/ProjectEditDialog.tsx"),
   readStoreSource(),
@@ -15,6 +15,8 @@ const [dialog, editDialog, store, api, protocol, main, styles] = await Promise.a
   readMainSource(),
   read("../src/styles/project-create-dialog.css"),
 ]);
+
+const dialog = dialogSource + await read("../src/components/ProjectFolderPicker.tsx");
 
 test("create project dialog supports named multi-folder setup", () => {
   assert.match(dialog, /role="dialog"/);
@@ -42,7 +44,7 @@ test("create project dialog supports named multi-folder setup", () => {
 test("create project dialog can create the project from a git checkout", () => {
   // Same dialog, same name field: the source toggle turns the folder list into
   // one repository URL plus its clone destination.
-  assert.match(dialog, /type ProjectSource = "local" \| "git"/);
+  assert.match(dialog, /type ProjectSource = "local" \| "git" \| "remote"/);
   assert.match(dialog, /data-project-source="git"/);
   assert.match(dialog, /parseGitCloneUrl/);
   assert.match(dialog, /project\.createSourceLabel/);

@@ -261,7 +261,7 @@ test("PLUGIN_PERMISSION_DENIED is not poison and still pauses the outbox (D597)"
 });
 
 for (const mutation of ["delete", "replace"]) {
-  for (const failure of ["UNIQUE constraint failed: messages.id", "PERMISSION_DENIED: invalid provenance"]) {
+  for (const failure of ["UNIQUE constraint failed: messages.id", "PERMISSION_DENIED: invalid provenance", "host is busy"]) {
     test(`旧失败回执不延后并发${mutation}后的消息：${failure}`, async () => {
       const dir = await mkdtemp(join(tmpdir(), "pi-outbox-receipt-"));
       const outbox = new PersistenceOutbox(dir, silent);
@@ -327,4 +327,144 @@ test("foreign key orphan is dropped without a receipt and later entries still dr
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+
+/** Let every pending microtask settle before counting host calls. */
+function settle() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Drain with the retry backoff clock advanced past every window, returning the
+ * number of appends still queued.
+ */
+async function drain(outbox, host, now, steps = 12) {
+  for (let step = 0; step < steps && outbox.size() > 0; step += 1) {
+    now.value += 60_000;
+    await outbox.flush(() => host);
+  }
+  return outbox.size();
+}
+
+test("连续失败消息留在原队列，后续消息仍可落盘且回执真实", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const now = { value: 0 };
+  const acknowledged = [];
+  const outbox = new PersistenceOutbox(dir, silent, { now: () => now.value });
+  outbox.setOnMessagePersisted((sessionId) => acknowledged.push(sessionId));
+  let failing = true;
+  const host = mockHost(async (_method, params) => {
+    if (failing && params.message.id === "torn") throw new Error("invalid UTF-8");
+  });
+  try {
+    await outbox.enqueue({ key: "message:s1:torn", sessionId: "s1", message: { id: "torn" } }, () => host);
+    await outbox.enqueue({ key: "message:s2:healthy", sessionId: "s2", message: { id: "healthy" } }, () => host);
+    assert.equal(await drain(outbox, host, now), 1);
+    assert.deepEqual(acknowledged, ["s2"]);
+    const stored = JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8"));
+    assert.deepEqual(stored.map((entry) => entry.key), ["message:s1:torn"]);
+    assert.equal(stored[0].message.id, "torn");
+    failing = false;
+    now.value += 60_000;
+    await outbox.flush(() => host);
+    assert.equal(outbox.size(), 0);
+    assert.deepEqual(acknowledged, ["s2", "s1"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failing head waits out its backoff before the host is called again (#1560)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const now = { value: 0 };
+  const outbox = new PersistenceOutbox(dir, silent, { now: () => now.value });
+  const calls = [];
+  const host = mockHost(async (_method, params) => {
+    calls.push(params);
+    throw new Error("host is busy");
+  });
+  const getHost = () => host;
+  await outbox.enqueue({ key: "message:s1:a", sessionId: "s1", message: { id: "a" } }, getHost);
+  await outbox.flush(getHost);
+  await settle();
+  const afterFirstFailure = calls.length;
+  assert.ok(afterFirstFailure >= 1);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await outbox.flush(getHost);
+  }
+  await settle();
+  assert.equal(calls.length, afterFirstFailure, "no retry inside the backoff window");
+
+  now.value += 120_000;
+  await outbox.flush(getHost);
+  await settle();
+  assert.equal(calls.length, afterFirstFailure + 1, "the head is retried once its backoff elapses");
+  assert.equal(outbox.size(), 1, "an unclassified failure still pauses instead of dropping");
+});
+
+test("反复失败消息重启后仍可重试，删除会话才移除其消息", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const now = { value: 0 };
+  const outbox = new PersistenceOutbox(dir, silent, { now: () => now.value });
+  const failing = mockHost(async () => { throw new Error("invalid UTF-8"); });
+  try {
+    await outbox.enqueue({ key: "message:s1:torn", sessionId: "s1", message: { id: "torn" } }, () => failing);
+    assert.equal(await drain(outbox, failing, now), 1);
+    const reopened = new PersistenceOutbox(dir, silent, { now: () => now.value });
+    const recovered = [];
+    await reopened.flush(() => mockHost(async (_method, params) => recovered.push(params.message.id)));
+    assert.equal(reopened.size(), 0);
+    assert.deepEqual(recovered, ["torn"]);
+    await reopened.enqueue({ key: "message:gone:torn", sessionId: "gone", message: { id: "torn" } }, () => failing);
+    assert.equal(await drain(reopened, failing, now), 1);
+    await reopened.dropSession("gone");
+    assert.deepEqual(JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8")), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("替换同一消息快照不继承旧快照的退避等待", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const outbox = new PersistenceOutbox(dir, silent, { now: () => 0 });
+  const host = mockHost(async (_method, params) => {
+    if (!params.message.fixed) throw new Error("invalid UTF-8");
+  });
+  try {
+    await outbox.enqueue({ key: "message:s1:a", sessionId: "s1", message: { id: "a" } }, () => host);
+    await outbox.flush(() => host);
+    await outbox.enqueue({ key: "message:s1:a", sessionId: "s1", message: { id: "a", fixed: true } }, () => host);
+    await outbox.flush(() => host);
+    assert.equal(outbox.size(), 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a restarted host retries the paused head without waiting out the backoff (#1560)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-"));
+  const now = { value: 0 };
+  const outbox = new PersistenceOutbox(dir, silent, { now: () => now.value });
+  const calls = [];
+  const failing = mockHost(async (_method, params) => {
+    calls.push(params.message.id);
+    throw new Error("host is busy");
+  });
+  await outbox.enqueue({ key: "message:s1:a", sessionId: "s1", message: { id: "a" } }, () => failing);
+  await outbox.flush(() => failing);
+  await settle();
+  const paused = calls.length;
+  assert.ok(paused >= 1, "the head was attempted against the failing generation");
+
+  await outbox.flush(() => failing);
+  assert.equal(calls.length, paused, "the same generation waits out the backoff");
+
+  const restarted = mockHost(async (_method, params) => {
+    calls.push(params.message.id);
+  });
+  await outbox.flush(() => restarted);
+  assert.equal(outbox.size(), 0, "a fresh host generation drains the paused head at once");
+  assert.equal(calls.length, paused + 1);
 });

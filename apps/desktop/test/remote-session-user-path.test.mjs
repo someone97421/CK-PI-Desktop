@@ -27,6 +27,7 @@ function fixture() {
       calls.push({ method, params });
       switch (method) {
         case "project/list": return { projects: [{ id: "p1", label: "app", archived: false }] };
+        case "project/browse": return { path: "/home/pi", entries: [{ name: "app", path: "/home/pi/app" }] };
         case "project/register": return { project: { id: "p1", label: "app", archived: false, path: params.path } };
         case "session/create": case "session/get": return { session: session() };
         case "session/list": return { sessions: [session()] };
@@ -131,4 +132,109 @@ test("remote entry IPC validates fields and strips unrelated model settings", as
   for (const providerIds of [[], ["x", "x"], [null]]) {
     await assert.rejects(handlers.get(IPC.invoke.remoteHostSyncProviders)({ hostKey: "h", providerIds, setDefault: true }), { errorCode: "INVALID_ARGUMENT" });
   }
+});
+
+
+test("remote folder selection crosses IPC, registers on the Host, and creates a remote session", async () => {
+  const f = fixture();
+  const handlers = new Map();
+  registerRemoteSessionIpc({ handle: (channel, fn) => handlers.set(channel, fn) }, () => f.catalog);
+  const browse = handlers.get(IPC.invoke.remoteHostBrowseProjects);
+  const home = await browse({ hostKey: "h1" });
+  assert.deepEqual(home, { path: "/home/pi", entries: [{ name: "app", path: "/home/pi/app" }] });
+  assert.deepEqual(f.calls[0], { method: "project/browse", params: {} });
+  await browse({ hostKey: "h1", path: "/home/pi/app" });
+  assert.deepEqual(f.calls[1], { method: "project/browse", params: { path: "/home/pi/app" } });
+  const { project } = await handlers.get(IPC.invoke.remoteHostRegisterProject)({ hostKey: "h1", path: home.entries[0].path });
+  const { session: created } = await handlers.get(IPC.invoke.remoteHostCreateSession)({ hostKey: "h1", projectId: project.id });
+  assert.equal(created.id, "remote:h1:s1");
+  assert.equal(created.projectPath, undefined);
+  assert.equal(created.remoteProjectId, project.id);
+  const count = f.calls.length;
+  for (const request of [null, { hostKey: "bad:key" }, { hostKey: "h1", path: "relative" }, { hostKey: "h1", path: "" }, { hostKey: "h1", path: "/bad\0path" }, { hostKey: "h1", path: "/" + "x".repeat(4096) }]) {
+    await assert.rejects(browse(request), { errorCode: "INVALID_ARGUMENT" });
+  }
+  assert.equal(f.calls.length, count);
+  f.disconnect();
+  await assert.rejects(browse({ hostKey: "h1" }), { errorCode: "AGENT_UNAVAILABLE" });
+  assert.equal(f.calls.length, count);
+});
+
+test("remote folder browse rejects malformed Host data and stale connection results", async () => {
+  let result;
+  let finish;
+  let host = { hostKey: "h", label: "H", client: { request: async () => result }, connection: { ensureSession: async () => {} } };
+  const catalog = createRemoteSessionCatalog({ getHost: () => host });
+  for (result of [null, { path: "local", entries: [] }, { path: "/home", parent: "relative", entries: [] }, { path: "/home", entries: Array(501).fill({ name: "app", path: "/home/app" }) }, { path: "/home", entries: [{ name: "../secret", path: "/secret" }] }, { path: "/home", entries: [{ name: "secret", path: "/elsewhere/secret" }] }, { path: "/home", entries: [{ name: "bad\0name", path: "/home/bad" }] }]) {
+    await assert.rejects(catalog.browseProjects("h"), { errorCode: "INVALID_ARGUMENT" });
+  }
+  result = { path: "/home/pi", parent: "/home", entries: [] };
+  assert.deepEqual(await catalog.browseProjects("h"), result);
+  host.client.request = () => new Promise((resolve) => { finish = resolve; });
+  const pending = catalog.browseProjects("h");
+  host = { ...host, client: { request: async () => result } };
+  finish(result);
+  await assert.rejects(pending, { errorCode: "AGENT_UNAVAILABLE" });
+});
+
+const { createTranscriptReadingRuntime } = await import("../src/stores/runtime/transcript-reading-runtime.ts");
+const { transcriptViewMessages } = await import("../src/lib/transcript-reading.ts");
+
+function transcriptReader(initial, read) {
+  const id = initial.id;
+  let state = {
+    activeSessionId: id, messages: initial.messages,
+    sessionHistory: { [id]: { messageStart: initial.messageStart, hasMoreBefore: initial.hasMoreBefore } },
+    transcriptViews: {}, retainedSessionIds: [id], retainedTranscripts: {}, runningSessions: {},
+    showToast: (error) => assert.fail(error),
+  };
+  const access = { get: () => state, set: (patch) => {
+    state = { ...state, ...(typeof patch === "function" ? patch(state) : patch) };
+  } };
+  const runtime = createTranscriptReadingRuntime(access, read);
+  return { ...runtime.actions, get: () => state,
+    visible: () => transcriptViewMessages(state.messages, state.transcriptViews[id]) };
+}
+
+test("shared transcript reader pages real remote history and returns to the live latest window", async () => {
+  const f = fixture();
+  const original = f.client.request.bind(f.client);
+  f.client.request = async (method, params) => {
+    if (method !== "session/history") return original(method, params);
+    f.calls.push({ method, params });
+    if (params.beforeItemId === "m2") return { items: [item("m1", "Earlier")], hasMore: true };
+    assert.equal(params.beforeItemId, "m1");
+    return { items: [item("m0", "Oldest")], hasMore: false };
+  };
+  const id = "remote:h1:s1";
+  const read = (sessionId, options) => f.backend.invoke(IPC.invoke.sessionGet, [{ id: sessionId, ...options }]);
+  const initial = (await read(id, { messageLimit: 1 })).session;
+  const r = transcriptReader(initial, read);
+  const live = r.get().messages;
+  await r.loadTranscriptPage(id, "before");
+  assert.deepEqual(r.visible().map((message) => message.id), ["m1", "m2"]);
+  await r.loadTranscriptPage(id, "before");
+  assert.deepEqual(r.visible().map((message) => message.id), ["m0", "m1", "m2"]);
+  assert.equal(r.get().transcriptViews[id].hasMoreBefore, false);
+  assert.equal(r.get().messages, live, "history reads do not replace live/model input");
+  assert.deepEqual(f.calls.filter((call) => call.method === "session/history").map((call) => call.params.beforeItemId), ["m2", "m1"]);
+  r.returnToLatestTranscript(id);
+  assert.equal(r.get().transcriptViews[id], undefined);
+  assert.equal(r.visible(), live);
+  await r.loadTranscriptPage(id, "before");
+  assert.equal(f.calls.filter((call) => call.method === "session/history").at(-1).params.beforeItemId, "m2");
+});
+
+test("remote reading preserves opaque cursor identity without sorting or forward arithmetic", async () => {
+  const id = "remote:h1:s1";
+  const cursors = [];
+  const r = transcriptReader({ id, messages: [{ id: "tail", role: "assistant", content: "latest" }], messageStart: 100, hasMoreBefore: true }, async (_id, options) => {
+    cursors.push(options.messageBefore);
+    return { session: { id, source: "remote", messages: [{ id: `old-${cursors.length}`, role: "assistant", content: "old" }], messageStart: 800, hasMoreBefore: true, hasMoreAfter: true } };
+  });
+  await r.loadTranscriptPage(id, "before");
+  await r.loadTranscriptPage(id, "after");
+  await r.loadTranscriptPage(id, "before");
+  assert.deepEqual(cursors, [100, 800]);
+  assert.equal(r.get().transcriptViews[id].hasMoreAfter, false);
 });

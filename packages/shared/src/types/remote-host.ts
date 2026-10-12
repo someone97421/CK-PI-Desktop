@@ -141,6 +141,13 @@ export type RemoteHostBootstrapResult = {
 /** Remote filesystem paths are interpreted by the Host, never by Desktop. */
 export type RemoteHostProjectsRequest = { hostKey: string };
 export type RemoteHostProjectsResult = { projects: RacpProjectSummary[] };
+/** Remote Host paths are display/selection data, never local workspace targets. */
+export type RemoteHostBrowseProjectsRequest = { hostKey: string; path?: string };
+export type RemoteHostBrowseProjectsResult = {
+  path: string;
+  parent?: string;
+  entries: { name: string; path: string }[];
+};
 export type RemoteHostRegisterProjectRequest = { hostKey: string; path: string };
 export type RemoteHostRegisterProjectResult = { project: RacpProjectSummary & { path?: string } };
 export type RemoteHostSessionsRequest = { hostKey: string };

@@ -195,7 +195,7 @@ export function createProjectCatalog(deps: HostOperationsDeps): RacpProjectCatal
       return { ...projectSummary(result.project), path: result.project.path };
     },
     async browse(path) {
-      const target = path ? await canonicalDirectory(path) : browseRoot;
+      const target = await canonicalDirectory(path ?? browseRoot);
       const rootReal = await realpath(browseRoot).catch(() => browseRoot);
       if (target !== rootReal && !target.startsWith(rootReal.endsWith("/") ? rootReal : `${rootReal}/`)) {
         throw new RacpError("REMOTE_PATH_FORBIDDEN", "path is outside the browsable root");

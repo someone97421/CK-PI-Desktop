@@ -22,6 +22,8 @@ type UseComposerSubmitOptions = {
   activeSessionId: string | null | undefined;
   modelReady: boolean;
   sendBlocked: boolean;
+  localCommandsAllowed?: boolean;
+  steeringAllowed?: boolean;
   invalidateComposerTransforms: () => void;
   pasting: boolean;
   activeFileReferences: ComposerFileReference[];
@@ -54,6 +56,8 @@ export function useComposerSubmit({
   activeSessionId,
   modelReady,
   sendBlocked,
+  localCommandsAllowed = true,
+  steeringAllowed = true,
   invalidateComposerTransforms,
   pasting,
   activeFileReferences,
@@ -69,13 +73,13 @@ export function useComposerSubmit({
     // 图片 chip 序列化为原位置的 @path，由宿主记录到附件的 inlinePath。
     const inlineContent = serializeInlineComposerFileReferences(rawText, activeFileReferences);
     const serializedContent = serializeComposerFileReferences(rawText, activeFileReferences);
-    // Steering is text-only; saved annotations belong to the next send/queue.
+    // 当前轮引导仅发送正文，批注随下一次发送或排队提交。
     const state = useAppStore.getState();
-    const annotationsPending = !steering && Boolean(
+    const annotationsPending = localCommandsAllowed && !steering && Boolean(
       state.activeSessionId && state.responseAnnotations[state.activeSessionId]?.length,
     );
     if (!serializedContent && !annotationsPending) return;
-    if (sendBlocked) {
+    if (sendBlocked || (steering && !steeringAllowed)) {
       if (pasting) showToast(t("chat.pasteInProgress"), { variant: "info" });
       return;
     }
@@ -100,7 +104,7 @@ export function useComposerSubmit({
     // command source that cannot be read is a third case: the composer cannot
     // prove `/compact` is not a builtin, so it refuses the submission and keeps
     // the text out of the model's input (issue #795).
-    if (!steering) {
+    if (!steering && localCommandsAllowed) {
       const slashSubmission = parseSlashSubmission(serializedContent);
       const resolution = slashSubmission
         ? await resolveComposerCommand(slashSubmission.name)

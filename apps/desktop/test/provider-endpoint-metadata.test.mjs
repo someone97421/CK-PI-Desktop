@@ -164,3 +164,15 @@ test("named providers retain published metadata in discovery and typed lookup", 
   assert.equal(typed.info.catalogSource, "models.dev");
   assert.equal(typed.info.contextWindow, model.contextWindow);
 });
+
+test("自定义服务实报容量可供发现使用，但不猜测模型目录能力", async (t) => {
+  const row = rowOf({ id: "reported", baseUrl: "https://relay.example/v1" });
+  const { result } = await handlersFor(t, row, {
+    data: [{ id: "claude-sonnet-4-5", context_length: 321_000, max_tokens: 12_345 }],
+  });
+  const [model] = result.models;
+  assert.equal(model.contextWindow, 321_000);
+  assert.equal(model.maxTokens, 12_345);
+  assert.equal(model.catalogSource, undefined);
+  assert.deepEqual(model.capabilities, ["text"]);
+});

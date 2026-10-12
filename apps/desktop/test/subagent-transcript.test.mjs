@@ -235,7 +235,7 @@ test("every Task row renders as one accessible delegation topology", () => {
   assert.match(transcriptSource, /variant="topology"/);
   assert.match(transcriptSource, /className="subagent-topology-node-header"/);
   assert.match(transcriptSource, /data-subagent-trigger=\{panelSelectionId\}/);
-  assert.match(transcriptSource, /aria-controls=\{panelOpen \? "subagent-panel" : undefined\}/);
+  assert.match(transcriptSource, /aria-controls=\{panelOpen \? `work-panel-surface-subagent:\$\{panelSelectionId\}` : undefined\}/);
   assert.match(transcriptSource, /aria-expanded=\{panelOpen\}/);
   const topologyNode = transcriptSource.slice(
     transcriptSource.indexOf('className="subagent-topology-node-header"'),
@@ -247,17 +247,10 @@ test("every Task row renders as one accessible delegation topology", () => {
   assert.doesNotMatch(topologyNode, /tool-row-caret/);
   assert.match(
     topologyNode,
-    /onClick=\{\(\) => \{\s*if \(!hasDetails\) return;\s*onUserInteraction\?\.\(\);\s*toggleSubagentPanel\(panelSelectionId\);\s*\}\}/,
+    /onClick=\{\(\) => \{\s*if \(!hasDetails\) return;\s*onUserInteraction\?\.\(\);\s*localToolsAllowed && openSubagentTab\(panelSelectionId, agentName \|\| undefined\);\s*\}\}/,
   );
-  assert.match(
-    transcriptSource,
-    /const toggleSubagentPanel = useAppStore\(\(s\) => s\.toggleSubagentPanel\)/,
-  );
-  assert.match(storeSource, /toggleSubagentPanel:\s*\(delegationId\) => \{/);
-  assert.match(
-    storeSource,
-    /state\.subagentPanel\?\.sessionId === sessionId[\s\S]*?state\.subagentPanel\.delegationId === id[\s\S]*?set\(\{ subagentPanel: null \}\)/,
-  );
+  assert.match(transcriptSource, /const openSubagentTab = useAppStore\(\(s\) => s\.openSubagentTab\)/);
+  assert.match(storeSource, /openSubagentTab:/);
   assert.match(transcriptSource, /const inlineOpen = variant !== "topology" && open;/);
 });
 

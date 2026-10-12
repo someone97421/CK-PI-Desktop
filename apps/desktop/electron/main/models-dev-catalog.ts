@@ -17,6 +17,7 @@ import {
   stripReleaseSuffix,
   stripVariantSuffix,
 } from "@pi-desktop/shared";
+import { RELAY_FAMILY_PUBLISHERS } from "./pi-model-metadata.ts";
 import type {
   ModelCost,
   ModelCostTier,
@@ -108,6 +109,13 @@ export type ModelsDevModel = {
   cost?: ModelCost;
   interleaved?: ModelInterleaved;
   status?: string;
+  /**
+   * The catalog's internal name for this model's current generation
+   * (models.dev `canonical_model_id`, e.g. `deepseek/deepseek-v4.1-flash`).
+   * A relay may serve this canonical name directly; only the owner's own
+   * records answer it.
+   */
+  canonicalModelId?: string;
   experimental?: ModelExperimentalMetadata;
   provider?: ModelProviderMetadata;
 };
@@ -501,6 +509,9 @@ function modelFromRaw(
       ? { interleaved: parseInterleaved(raw.interleaved) }
       : {}),
     ...(nonEmptyString(raw.status) ? { status: nonEmptyString(raw.status) } : {}),
+    ...(nonEmptyString(raw.canonical_model_id)
+      ? { canonicalModelId: nonEmptyString(raw.canonical_model_id) }
+      : {}),
     ...(experimental !== undefined ? { experimental } : {}),
     ...(providerMetadata !== undefined ? { provider: providerMetadata } : {}),
     ...(modelApi !== undefined ? { modelApi } : {}),
@@ -1087,27 +1098,6 @@ function sameModelSpelling(catalogId: string, requested: string): boolean {
 }
 
 /**
- * Record to use when nothing identifies the row's provider.
- *
- * A relay or a gateway the catalog cannot place still serves models the catalog
- * knows, and asking for one of them by id used to answer nothing at all. What
- * every publisher of that model agrees on can be claimed instead: the same
- * intersection and median `borrowedModel` computes for an anchored row.
- *
- * One thing is deliberately not claimed. Which *wire shape* a deployment accepts
- * for reasoning is a property of that deployment — the same model behind an
- * OpenAI-compatible gateway and behind Anthropic's own API takes different
- * reasoning fields — so a record borrowed this way drops its `reasoningOptions`
- * rather than speaking for an endpoint no publisher describes. `catalogModelConfigFor`
- * still applies Anthropic's own shape to an Anthropic Messages row that is left
- * without one.
- */
-function unanchoredConsensus(entries: readonly ModelsDevModel[]): ModelsDevModel | undefined {
-  const consensus = borrowedModel(entries);
-  return consensus ? { ...consensus, reasoningOptions: undefined } : undefined;
-}
-
-/**
  * Which publisher's records answer for an id the row's own publisher lacks.
  *
  * Two preferences, in order. The app's supported publishers are read first:
@@ -1193,6 +1183,80 @@ function dropDeploymentMarker(value: string): string {
   const match = /^(.*)[-_:]([a-z0-9]+)$/i.exec(value);
   if (!match) return value;
   return DEPLOYMENT_MARKER_SUFFIXES.has(match[2].toLowerCase()) ? match[1] : value;
+}
+
+/** The last `/`-segment of a normalized id; the whole id when it has none. */
+function leafOf(normalized: string): string {
+  return normalized.slice(normalized.lastIndexOf("/") + 1);
+}
+
+/**
+ * The narrow deployment labels the legacy relay lookup was allowed to strip to
+ * reach a published base ID. Model variants such as `thinking`, `preview`,
+ * dated releases, `asr` or `pro` name distinct models and are deliberately
+ * absent: they must keep their own records or stay unmatched.
+ */
+const RELAY_DEPLOYMENT_SUFFIXES: ReadonlySet<string> = new Set([
+  "test",
+  "staging",
+  "canary",
+  "dev",
+  "1m",
+  "2m",
+  "4m",
+  "32k",
+  "64k",
+  "128k",
+  "200k",
+  "256k",
+  "512k",
+]);
+
+/** The id without one whitelisted trailing label, or undefined when it has none. */
+function relayDeploymentSuffixStrip(value: string): string | undefined {
+  const match = /^(.*)[-_:]([a-z0-9]+)$/i.exec(value);
+  if (!match || !RELAY_DEPLOYMENT_SUFFIXES.has(match[2].toLowerCase())) return undefined;
+  return match[1];
+}
+
+/**
+ * Notation aliases of a versioned leaf: `4.5` reads as `4-5` and back. A relay
+ * may name a generation in either spelling; each alias is checked as a whole
+ * published id, so an alias that the catalog does not publish simply stays
+ * unmatched.
+ */
+function dotsToDashes(value: string): string {
+  return value.includes(".") ? value.replace(/\./g, "-") : value;
+}
+
+function dashesToDots(value: string): string {
+  // Only the dashes between two digits form a version (`3-1` reads as `3.1`);
+  // the dashes that join semantic parts stay in place.
+  return value.replace(/(?<=\d)-(?=\d)/g, ".");
+}
+
+/**
+ * The relay id's leaves to check against the owner's published records: the
+ * leaf itself, its dotted/dashed notation aliases, and — after one whitelisted
+ * deployment label is stripped — those aliases again. No alias chain is
+ * followed and the wire id is never rewritten.
+ */
+function relayNotationCandidates(requested: string): string[] {
+  const out: string[] = [];
+  const push = (value?: string) => {
+    if (value && !out.includes(value)) out.push(value);
+  };
+  const leaf = leafOf(requested);
+  push(leaf);
+  push(dotsToDashes(leaf));
+  push(dashesToDots(leaf));
+  const base = relayDeploymentSuffixStrip(leaf);
+  if (base) {
+    push(base);
+    push(dotsToDashes(base));
+    push(dashesToDots(base));
+  }
+  return out;
 }
 
 /**
@@ -1563,20 +1627,19 @@ export class ModelsDevCatalog {
     const deploymentFallback = result
       ? undefined
       : this.modelForDeploymentMarker(input.modelId, preferredProvider);
-    /* The row's own catalog provider did not publish this id. Borrowing needs a
-       known provider identity to anchor on: the row resolved to a catalog
-       provider whose own records are authoritative, so anything missing from it
-       can be checked against the other publishers of the exact id instead of
-       dropping the model to the generic shape.
-
-       This only fills a miss the lookup already had — a record the preferred
-       provider does publish stays authoritative. Without that anchor the scores
-       prove nothing about identity, and an unknown endpoint keeps the existing
-       behaviour: a unique unambiguous match, official disambiguation, shared
-       capabilities, or nothing. Deployment-marker / variant-suffix fallbacks
-       are intentionally not applied here (approved #1047 matching rules). */
-    const borrowed = result ?? deploymentFallback ??
-      (preferredProvider ? this.borrowedAcrossProviders(input) : undefined);
+    /* The row's own catalog provider stays authoritative. When an unanchored
+       relay serves a known model family and the weight owner publishes a
+       matching record, prefer that record over reseller consensus. An
+       ambiguous owner answer stays generic; without an owner match, existing
+       shared-record matching continues to apply. */
+    const relayOwnerKey = preferredProvider
+      ? undefined
+      : RELAY_FAMILY_PUBLISHERS[leafOf(requested).split(/[-.]/)[0] ?? ""];
+    const ownerRecord = relayOwnerKey ? this.unanchoredOwnerRecord(requested) : undefined;
+    const borrowed = ownerRecord === null
+      ? undefined
+      : ownerRecord ?? result ?? deploymentFallback ??
+        (preferredProvider ? this.borrowedAcrossProviders(input) : undefined);
     // Cache the result (a miss included) so a repeated miss is also O(1) and
     // cannot grow the candidate index with query-dependent keys.
     this.lookupMemo.set(memoKey, borrowed);
@@ -1685,6 +1748,105 @@ export class ModelsDevCatalog {
       matches.push({ model, provider });
     }
     return borrowedModel(borrowPool(matches, requested));
+  }
+
+  /**
+   * Unanchored relay fallback: the endpoint's own publisher is unknown, so
+   * nothing owns a negative answer for this id. Resolve it the way the
+   * pre-catalog relay lookup did — the model's own family names the
+   * publisher that owns its weights, and that owner's published record is
+   * what describes the model a relay serves, not a reseller's flags about
+   * its own deployment. A relay-only `deepseek-v4-flash` reads DeepSeek's
+   * record and keeps its window and output visible instead of dropping to
+   * the generic 128k text-only seed.
+   *
+   * The rules that keep the result honest:
+   *
+   * - Only the owner's own records answer. Reseller copies and route
+   *   prefixes never participate, and a split owner answer still states
+   *   nothing.
+   * - The wire ID is never rewritten: at most one whitelisted deployment
+   *   label (`-1m`, `-test`, …) is stripped, and a dotted/dashed notation
+   *   alias (`4.5` reads as `4-5`) is tried, to reach the owner's
+   *   published ID; model variants such as `-thinking` or dated releases
+   *   are distinct models and stay unmatched.
+   * - When the relay names the owner's canonical generation id (the
+   *   catalog's internal name, e.g. `deepseek-v4.1-flash`), the owner's
+   *   own live record for that canonical id answers.
+   */
+  private unanchoredOwnerRecord(requested: string): ModelsDevModel | null | undefined {
+    const ownerKey = RELAY_FAMILY_PUBLISHERS[leafOf(requested).split(/[-.]/)[0] ?? ""];
+    if (!ownerKey) return undefined;
+    const ownerKeys = new Set(providerKeyCandidates(ownerKey));
+    const ownerHits = (id: string): ModelsDevModel[] =>
+      (this.lookupIndex?.candidates(id) ?? [])
+        .filter(({ model, provider }) =>
+          normalizedModelId(model.modelId) === id &&
+          ownerKeys.has(normalizedProviderKey(provider.providerKey)),
+        )
+        .map((entry) => entry.model);
+    const pick = (hits: ModelsDevModel[]): ModelsDevModel | null | undefined => {
+      if (hits.length === 0) return undefined;
+      if (hits.length === 1) return hits[0];
+      if (hits.length > 1) {
+        const signature = capabilitySignature(hits[0]);
+        const limit = JSON.stringify(hits[0].limit);
+        if (
+          hits.every(
+            (model) =>
+              capabilitySignature(model) === signature &&
+              JSON.stringify(model.limit) === limit,
+          )
+        ) {
+          return hits[0];
+        }
+      }
+      return null;
+    };
+    // Notation aliases and one whitelisted deployment label, each checked as
+    // a whole published id; the wire id is never rewritten.
+    const candidates = relayNotationCandidates(requested);
+    for (const candidate of candidates) {
+      const hit = pick(ownerHits(candidate));
+      if (hit !== undefined) return hit;
+    }
+    // The relay named the owner's canonical generation id; the owner's own
+    // live record for it answers.
+    return this.canonicalOwnerRecord(ownerKeys, candidates);
+  }
+
+  /**
+   * The owner's record whose canonical id (models.dev `canonical_model_id`,
+   * owner-prefixed) is one of the requested leaves. A non-deprecated record
+   * wins; when the owner's aliases for one canonical model disagree on shape
+   * nothing is claimed. Reseller copies never enter this set: only the
+   * weight owner's records may answer a canonical name.
+   */
+  private canonicalOwnerRecord(ownerKeys: Set<string>, targets: string[]): ModelsDevModel | null | undefined {
+    if (targets.length === 0) return undefined;
+    const wanted = new Set(targets.map((id) => normalizedModelId(leafOf(id))));
+    const records = new Map<string, ModelsDevModel>();
+    for (const provider of this.providers.values()) {
+      if (!ownerKeys.has(normalizedProviderKey(provider.providerKey))) continue;
+      for (const model of provider.models) {
+        const canonical = model.canonicalModelId;
+        if (!canonical) continue;
+        if (!wanted.has(normalizedModelId(leafOf(canonical)))) continue;
+        records.set(`${provider.providerKey}\u0000${model.modelId}`, model);
+      }
+    }
+    const candidates = [...records.values()];
+    if (candidates.length === 0) return undefined;
+    const active = candidates.filter((model) => model.status?.toLowerCase() !== "deprecated");
+    const pool = active.length > 0 ? active : candidates;
+    if (pool.length === 1) return pool[0];
+    const first = pool[0];
+    const agreed = pool.every(
+      (model) =>
+        capabilitySignature(model) === capabilitySignature(first) &&
+        JSON.stringify(model.limit) === JSON.stringify(first.limit),
+    );
+    return agreed ? pool[0] : null;
   }
 
   /**

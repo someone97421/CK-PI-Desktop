@@ -24,6 +24,8 @@ import {
   resolveThinkingDisplayMode,
   shouldGroupTurnProcess,
 } from "../../../lib/turn-process";
+import { sessionAllows } from "../../../lib/remote-session-safety";
+import { useSlotSessionId } from "../../../plugins/renderer-slots/use-slots";
 import { useAppStore } from "../../../stores/app-store";
 import { TranscriptReadOnlyContext } from "./context";
 import { selectionMarkdownWithinRow } from "../../../lib/selection-quote";
@@ -255,9 +257,11 @@ export const AssistantTurn = memo(function AssistantTurn({
   const transcriptReadOnly = useContext(TranscriptReadOnlyContext);
   // The host refuses a fork while the source turn is still running, so the
   // affordance is disabled rather than silently doing nothing.
-  const sessionRunning = useAppStore((s) =>
-    s.activeSessionId ? s.runningSessions[s.activeSessionId] === true : false,
-  );
+  const paneSessionId = useSlotSessionId();
+  const session = useAppStore((s) => s.sessions.find((item) => item.id === paneSessionId));
+  const canEditMessages = sessionAllows(session ?? (paneSessionId.startsWith("remote:") ? { id: paneSessionId } : undefined), "canEditMessages");
+  const localToolsAllowed = sessionAllows(session ?? (paneSessionId.startsWith("remote:") ? { id: paneSessionId } : undefined), "canUseLocalTools");
+  const sessionRunning = useAppStore((s) => s.runningSessions[paneSessionId] === true);
   const task = entry.task;
   const settledTask = task && task.status !== "running" ? task : undefined;
   const summary = getAssistantTurnSummary(entry);
@@ -295,7 +299,7 @@ export const AssistantTurn = memo(function AssistantTurn({
               ".message-bubble",
             ),
           ].at(-1) ?? null,
-        complete: complete && Boolean(actionMessage) && !transcriptReadOnly && !sessionRunning,
+        complete: complete && Boolean(actionMessage) && canEditMessages && !transcriptReadOnly && !sessionRunning,
         actions: { copyText, selectText },
         onRegenerate: () => {
           if (actionMessage) void retryAssistantMessage(actionMessage.id);
@@ -399,7 +403,7 @@ export const AssistantTurn = memo(function AssistantTurn({
             {complete ? (
               <CopyButton text={content} label={t("chat.copy")} />
             ) : null}
-            {complete ? (
+            {complete && canEditMessages ? (
               <TooltipButton
                 className="copy-btn icon"
                 tooltip={t("chat.forkResponse")}
@@ -410,7 +414,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 <IconBranch size={13} />
               </TooltipButton>
             ) : null}
-            {complete ? (
+            {complete && canEditMessages ? (
               <TooltipButton
                 className="copy-btn icon"
                 tooltip={t("chat.retry")}
@@ -420,7 +424,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 <IconReview size={13} />
               </TooltipButton>
             ) : null}
-            {complete ? (
+            {complete && localToolsAllowed ? (
               <TooltipButton
                 className="copy-btn icon"
                 tooltip={annotateLabel}
@@ -443,7 +447,7 @@ export const AssistantTurn = memo(function AssistantTurn({
                 <IconQuote size={13} />
               </TooltipButton>
             ) : null}
-            {complete ? (
+            {complete && localToolsAllowed ? (
               <TooltipButton
                 className="copy-btn icon"
                 tooltip={sideChatLabel}

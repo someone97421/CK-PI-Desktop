@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { EventEmitter, once } from "node:events";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,7 +138,14 @@ try {
     emit: (channel, payload) => { const event = { channel, payload }; observed.push(event); events.emit("event", event); },
   });
   assert.equal((await boot.addHost({ hostKey: "fixture", label: "Packaged Host", url, deviceToken })).connected, true);
-  const registered = await boot.registerProject("fixture", project);
+  const directory = await boot.browseProjects("fixture");
+  const chosen = directory.entries.find((entry) => entry.name === "project");
+  assert.equal(chosen?.path, await realpath(project), "folder picker lists canonical Host directories");
+  const nested = await boot.browseProjects("fixture", chosen.path);
+  assert.equal(nested.path, chosen.path);
+  assert.equal(nested.parent, directory.path);
+  await assert.rejects(boot.browseProjects("fixture", "/"), "folder picker must retain its configured browse root");
+  const registered = await boot.registerProject("fixture", chosen.path);
   const session = await boot.createSession({ hostKey: "fixture", projectId: registered.id, permissionMode: "ask" });
   assert.equal(session.projectPath, undefined, "remote path never becomes local workspace");
   const route = async (channel, input) => (await router.route(channel, [input])).value;
@@ -160,7 +167,7 @@ try {
   await route(IPC.invoke.workspaceDiff, { sessionId: session.id });
   await boot.removeHost("fixture");
   await assert.rejects(route(IPC.invoke.agentPrompt, { sessionId: session.id, content: "must not run locally" }), { errorCode: "AGENT_UNAVAILABLE" });
-  console.log("PASS packaged Host: import/reimport, pair, project, session, prompt, approval across reconnect, file read, diff, removal");
+  console.log("PASS packaged Host: import/reimport, pair, browse/select/register project, session, prompt, approval across reconnect, file read, diff, removal");
 } catch (error) {
   console.error(error);
   console.error(hostLog);

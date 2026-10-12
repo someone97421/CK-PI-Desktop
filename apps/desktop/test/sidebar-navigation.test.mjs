@@ -271,13 +271,14 @@ test("sidebar row menus omit project reassignment and switching actions", () => 
   );
 });
 
-test("session rows use the hover card instead of a native title tooltip", () => {
-  const sessionMain = sidebarSource.match(
-    /className="thread-item-main"[\s\S]*?<\/button>/,
-  )?.[0] ?? "";
+test("session title buttons use hover cards without native title tooltips", () => {
+  const sessionMainStart = sidebarSource.indexOf('className="thread-item-main"');
+  const sessionMainEnd = sidebarSource.indexOf(">\n          {sessionPinned", sessionMainStart);
+  const sessionMain = sessionMainStart >= 0 && sessionMainEnd >= 0
+    ? sidebarSource.slice(sessionMainStart, sessionMainEnd)
+    : "";
 
   assert.match(sessionMain, /showSessionHoverCard\(/);
-  assert.doesNotMatch(sessionMain, /title=\{taskTitle\(session\.title\)\}/);
   assert.doesNotMatch(sessionMain, /\btitle=\{/);
   assert.match(hoverSource, /className="sidebar-session-hover-card"/);
   assert.match(hoverSource, /className="sidebar-session-hover-card-title"/);

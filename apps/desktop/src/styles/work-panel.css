@@ -185,8 +185,12 @@
   display: flex;
   min-width: 0;
   max-width: 100%;
+  width: max-content;
   height: 32px;
-  flex: 1 1 auto;
+  /* Only the visible viewport excludes native dragging. Per-tab exclusions
+     escape the overflow clip when scrolled, blocking neighboring titlebars.
+     Keep unused header space outside this content-sized viewport draggable. */
+  flex: 0 1 auto;
   align-items: center;
   gap: 6px;
   overflow-x: auto;

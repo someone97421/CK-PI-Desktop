@@ -306,6 +306,7 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
     developmentOnly: true,
     experimentalBadgeKey: "settings.configSync.experimental",
     keywordKeys: [
+      "settings.configSync.experimental",
       "settings.configSync.connectionTitle",
       "settings.configSync.endpoint",
       "settings.configSync.statusTitle",

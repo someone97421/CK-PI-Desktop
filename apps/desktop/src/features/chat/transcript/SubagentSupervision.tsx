@@ -1,3 +1,5 @@
+import { useChatSessionCapability } from "../../../hooks/use-chat-session-capability";
+import { useSlotSessionId } from "../../../plugins/renderer-slots/use-slots";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { PluginInlineViewContext, SubagentCollaborationSnapshot, UiMessage } from "@pi-desktop/shared";
@@ -31,7 +33,8 @@ export function subagentExecutionIdentity(message?: UiMessage) {
 /** 子代理可在主轮结束后继续运行；旧执行只控制自身版本。 */
 export function useSubagentExecution(message?: UiMessage) {
   const identity = subagentExecutionIdentity(message);
-  const activeSessionId = useAppStore((state) => state.activeSessionId);
+  const paneSessionId = useSlotSessionId();
+  const activeSessionId = useAppStore((state) => paneSessionId || state.activeSessionId);
   const sessionId = identity.sessionId ?? activeSessionId;
   const status = useAppStore((state) => sessionId ? state.agentStatuses?.[sessionId] : undefined);
   const historical = useAppStore((state) => {
@@ -54,6 +57,7 @@ export function useSubagentExecution(message?: UiMessage) {
 /** 原位置的宿主适配器：只提供执行上下文，内容和召回操作由插件贡献。 */
 export function SubagentSupervision({ message, running, compact = false }: { message: UiMessage; running: boolean; compact?: boolean }) {
   const { i18n } = useTranslation();
+  const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
   const { sessionId, delegationId, execution, live, parentTurnId, collaboration } = useSubagentExecution(message);
   const locale = i18n.resolvedLanguage ?? i18n.language;
   // 保存回执只更新任务消息时，也要重新查询插件状态。
@@ -63,5 +67,5 @@ export function SubagentSupervision({ message, running, compact = false }: { mes
     ...(parentTurnId ? { parentTurnId } : {}),
     ...(collaboration ? { collaboration } : {}),
   } : null, [message, sessionId, delegationId, running, live, compact, locale, execution, parentTurnId, collaboration]);
-  return context ? <PluginInlineSlot slot="subagent.supervision" context={context} /> : null;
+  return localToolsAllowed && context ? <PluginInlineSlot slot="subagent.supervision" context={context} /> : null;
 }

@@ -1,4 +1,8 @@
 export const remoteEn = {
+  projectHost: "Host", noConnectedHosts: "Connect a remote host in Settings first.",
+  projectFolder: "Remote folder", chooseFolder: "Choose a folder or enter its path",
+  browseFolders: "Browse folders", useFolder: "Use this folder",
+  projectNameHint: "The remote project uses its folder name.",
   older: "Load older messages", thinking: "Thinking",
   newer: "Load newer messages", latest: "Return to latest",
   sessions: "Conversations / New conversation",
@@ -46,6 +50,10 @@ export const remoteEn = {
 };
 
 export const remoteZh: typeof remoteEn = {
+  projectHost: "主机", noConnectedHosts: "请先在设置中连接远程主机。",
+  projectFolder: "远程文件夹", chooseFolder: "选择文件夹或输入路径",
+  browseFolders: "浏览文件夹", useFolder: "使用此文件夹",
+  projectNameHint: "远程项目使用文件夹名称。",
   older: "加载更早消息", thinking: "思考",
   newer: "加载较新消息", latest: "返回最新消息",
   sessions: "会话 / 新建会话", reconnect: "重新连接", refresh: "刷新", close: "关闭", loading: "处理中…",

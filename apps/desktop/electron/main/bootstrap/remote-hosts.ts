@@ -4,7 +4,7 @@ import {
   IPC,
   type RacpEventEnvelope, type RacpItemSummary, type RacpProjectSummary, type RacpSession,
   type RemoteHostBootstrapRequest, type RemoteHostBootstrapResult,
-  type RemoteHostCreateSessionRequest, type RemoteHostSummary,
+  type RemoteHostCreateSessionRequest, type RemoteHostSummary, type RemoteHostBrowseProjectsResult,
   type RemoteHostSyncProvidersRequest, type RemoteHostSyncProvidersResult, type SessionSummary,
 } from "@pi-desktop/shared";
 import { wsClientTransport } from "@pi-desktop/racp";
@@ -52,6 +52,7 @@ export interface RemoteHostsBoot {
   sessionSummaries(): SessionSummary[];
   sessions(hostKey: string): Promise<SessionSummary[]>;
   projects(hostKey: string): Promise<RacpProjectSummary[]>;
+  browseProjects(hostKey: string, path?: string): Promise<RemoteHostBrowseProjectsResult>;
   registerProject(hostKey: string, path: string): Promise<RacpProjectSummary & { path?: string }>;
   createSession(request: RemoteHostCreateSessionRequest): Promise<SessionSummary>;
   syncProviders(request: RemoteHostSyncProvidersRequest): Promise<RemoteHostSyncProvidersResult>;
@@ -255,6 +256,7 @@ export function createRemoteHostsBoot(options: BootRemoteHostsOptions): RemoteHo
     sessionSummaries: () => catalog.summaries(),
     sessions: catalog.sessions,
     projects: catalog.projects,
+    browseProjects: catalog.browseProjects,
     registerProject: catalog.registerProject,
     async createSession(input) {
       const session = await catalog.createSession(input);

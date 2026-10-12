@@ -1,6 +1,7 @@
 import { SubagentSupervision, useSubagentExecution } from "./SubagentSupervision";
 import { subagentGuidance } from "../../../lib/subagent-guidance";
 import { SubagentGuidanceMessage } from "./SubagentGuidanceMessage";
+import { useChatSessionCapability } from "../../../hooks/use-chat-session-capability";
 import { SubagentStopButton } from "./SubagentStopButton";
 import { PlanHistoryCard } from "./PlanHistoryCard";
 import { planSubmission } from "../../../lib/plan-history";
@@ -187,7 +188,8 @@ function HostToolRow({
 }: ToolRowProps) {
   const { t } = useTranslation();
   const detailsId = useId();
-  const root = useAppStore((s) => s.workspace?.path);
+  const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
+  const root = useAppStore((s) => localToolsAllowed ? s.workspace?.path : undefined);
   const openTarget = useOpenPreviewTarget();
   const { fileMenu, openFileMenu, closeFileMenu } = useChatFileMenu();
   const openSubagentTab = useAppStore((s) => s.openSubagentTab);
@@ -417,7 +419,7 @@ function HostToolRow({
           onClick={() => {
             if (!hasDetails) return;
             onUserInteraction?.();
-            openSubagentTab(panelSelectionId, agentName || undefined);
+            localToolsAllowed && openSubagentTab(panelSelectionId, agentName || undefined);
           }}
         >
           <span className="subagent-topology-avatar" aria-hidden>
@@ -512,16 +514,16 @@ function HostToolRow({
             ) : null}
             {summary ? (
               <span
-                className={`tool-row-summary${previewTarget ? " linked" : ""}`}
+                className={`tool-row-summary${previewTarget && localToolsAllowed ? " linked" : ""}`}
                 title={
-                  previewTarget
+                  previewTarget && localToolsAllowed
                     ? previewTarget.kind === "file"
                       ? t("chat.previewFile")
                       : t("chat.previewUrl")
                     : undefined
                 }
                 onClick={
-                  previewTarget
+                  previewTarget && localToolsAllowed
                     ? (e) => {
                         // Open the preview target instead of toggling details.
                         e.stopPropagation();
@@ -530,7 +532,7 @@ function HostToolRow({
                     : undefined
                 }
                 onContextMenu={
-                  previewTarget?.kind === "file"
+                  localToolsAllowed && previewTarget?.kind === "file"
                     ? (event) =>
                         openFileMenu(event, { path: previewTarget.path })
                     : undefined

@@ -56,16 +56,12 @@ export const AGENT_COMPACT_RPC_TIMEOUT_MS =
   COMMAND_RPC_BUFFER_MS;
 
 /**
- * `configSync.syncNow` runs a whole sync in one request: a sequence of network
- * round trips whose steps the host reports through `configSync.progress`. The
- * host cannot cancel a run that is already under way and keeps going after a
- * transport deadline expires, so the progress events are the liveness signal
- * and the deadline only exists to stop a promise hanging forever when the
- * response is genuinely lost. No part of the run has a wall clock the
- * transport could read, so this is a ceiling for the whole run, not a measured
- * budget.
+ * `configSync.syncNow` is a Host-owned multi-step operation. It has no
+ * whole-request deadline: individual S3 requests retain their own bounds, and
+ * navigating away from Settings only detaches the renderer from the request.
+ * Host/process shutdown remains the lifecycle boundary.
  */
-export const CONFIG_SYNC_RPC_TIMEOUT_MS = 1_800_000;
+
 
 /**
  * Whether an error came from a transport deadline rather than from the peer.
@@ -78,18 +74,18 @@ export function isRpcTimeoutError(error: unknown): boolean {
 }
 
 /**
- * Return the transport deadline for an RPC call. `tools.execute` can wait for
- * an explicit user decision for an unbounded period, so its transport call has
- * no deadline. Host-core still enforces each tool's execution budget after the
- * permission gate, and cancellation or process shutdown still settles the
- * request. Other long-running methods retain their explicit finite ceilings.
+ * Return the transport deadline for an RPC call. `configSync.syncNow` is
+ * Host-owned and has no aggregate deadline; individual S3 requests keep their
+ * own bounds. Renderer navigation does not cancel the Main/Host request, while
+ * process shutdown remains the lifecycle boundary. Other methods keep their
+ * explicit ceilings.
  */
 export function rpcTimeoutMs(
   method: string,
   _params: unknown,
 ): number | undefined {
   if (method === "agent.compact") return AGENT_COMPACT_RPC_TIMEOUT_MS;
-  if (method === "configSync.syncNow") return CONFIG_SYNC_RPC_TIMEOUT_MS;
+  if (method === "configSync.syncNow") return undefined;
   if (method === "tools.execute") return undefined;
   return DEFAULT_RPC_TIMEOUT_MS;
 }

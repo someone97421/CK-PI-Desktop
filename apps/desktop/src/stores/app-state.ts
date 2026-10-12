@@ -1,4 +1,5 @@
 import type { RecentModel } from "../lib/recent-models";
+import type { RemoteProjectTarget } from "../lib/remote-project-session";
 import type {
   AgentEventEnvelope,
   BrowserState,
@@ -224,6 +225,7 @@ export type AppState = {
     projectPath?: string | null;
     temporaryWorkspacePath?: string | null;
     draftId?: string;
+    remoteProject?: RemoteProjectTarget;
     record?: boolean;
   }) => Promise<void>;
   forkSession: (id: string) => Promise<void>;

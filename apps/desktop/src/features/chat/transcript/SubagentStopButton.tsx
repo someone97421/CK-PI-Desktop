@@ -1,3 +1,4 @@
+import { useChatSessionCapability } from "../../../hooks/use-chat-session-capability";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useTranslation } from "react-i18next";
@@ -34,6 +35,7 @@ export function SubagentStopButton({
   compact?: boolean;
 }) {
   const { t } = useTranslation();
+  const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
   const source = useAppStore(state => state.sessions.find(session => session.id === sessionId)?.source);
   const executions: Record<string, number> = delegationId && execution !== undefined
     ? { [delegationId]: execution }
@@ -53,7 +55,7 @@ export function SubagentStopButton({
       return { pending };
     });
   }, [running, stopping, keysIdentity]);
-  if (!running || !sessionId || ids.length === 0 || source === "remote" || source === "pi-native") return null;
+  if (!running || !localToolsAllowed || !sessionId || ids.length === 0 || source === "remote" || source === "pi-native") return null;
 
   const stop = async () => {
     const state = useStops.getState();

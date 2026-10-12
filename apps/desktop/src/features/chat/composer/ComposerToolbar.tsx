@@ -43,6 +43,9 @@ export type ComposerToolbarProps = {
   permissionOpen: boolean;
   setPermissionOpen: Dispatch<SetStateAction<boolean>>;
   controlsBlocked: boolean;
+  localToolsAllowed?: boolean;
+  attachmentsAllowed?: boolean;
+  stopAllowed?: boolean;
   pasting: boolean;
   pickAndAttach: () => Promise<void>;
   configureActiveSession: AppState["configureActiveSession"];
@@ -125,6 +128,9 @@ export function ComposerToolbar({
   permissionOpen,
   setPermissionOpen,
   controlsBlocked,
+  localToolsAllowed = true,
+  attachmentsAllowed = true,
+  stopAllowed = true,
   pasting,
   pickAndAttach,
   configureActiveSession,
@@ -158,7 +164,7 @@ export function ComposerToolbar({
             className="icon-btn icon-btn-square"
             tooltip={t("chat.addFiles")}
             ariaLabel={t("chat.addFiles")}
-            disabled={controlsBlocked || pasting}
+            disabled={controlsBlocked || pasting || !attachmentsAllowed}
             onClick={() => {
               setPermissionOpen(false);
               void pickAndAttach();
@@ -219,11 +225,11 @@ export function ComposerToolbar({
                   });
                 }
           }} />
-        <ComposerControlSlots side="left" />
+        {localToolsAllowed ? <ComposerControlSlots side="left" /> : null}
       </div>
 
       <div className="composer-right">
-        <ComposerControlSlots side="right" />
+        {localToolsAllowed ? <ComposerControlSlots side="right" /> : null}
         {contextUsage ? <ContextUsageInspector {...contextUsage} /> : null}
         <ComposerModelPicker
           t={t}
@@ -274,7 +280,7 @@ export function ComposerToolbar({
           </TooltipButton>
         ) : null}
         {runActive && !hasDraftContent ? (
-          <StopRunPill t={t} abort={() => void abort()} startedAt={runStartedAt} />
+          <StopRunPill t={t} abort={() => { if (stopAllowed) void abort(); }} startedAt={runStartedAt} />
         ) : (
           <TooltipButton
             type="button"

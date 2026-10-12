@@ -449,8 +449,10 @@ export function registerProviderIpc({
           modelId: model.modelId,
           displayName: info.displayName || modelConfig.name,
           providerId: provider?.id ?? "",
-          contextWindow: operationMetadata?.contextWindow ?? modelConfig.contextWindow,
-          maxTokens: operationMetadata?.maxTokens ?? modelConfig.maxTokens,
+          // 发现列表优先展示服务实报容量，缺失时才使用目录默认值。
+          // 会话展示与运行时仍单独应用用户绑定，保留手填容量优先。
+          contextWindow: model.contextWindow ?? operationMetadata?.contextWindow ?? modelConfig.contextWindow,
+          maxTokens: model.maxTokens ?? operationMetadata?.maxTokens ?? modelConfig.maxTokens,
           // Published modalities, taken before the binding is applied. This
           // record is what the settings panel compares its checkboxes against,
           // so letting a stored override shape it would make the override its

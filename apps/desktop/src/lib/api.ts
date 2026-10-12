@@ -9,6 +9,8 @@ import type {
   AppearanceMediaKind,
   AppearanceMediaSelectionResult,
   AppearanceMediaState,
+  ConfigSyncTestInput,
+  ConfigSyncTestResult,
   ScheduledTaskRun,
   ActivationScope,
   AgentCapabilityMove,
@@ -121,6 +123,7 @@ import type {
   PlanningStateEvent,
   PlansPendingResult,
   RemoteHostProjectsResult,
+  RemoteHostBrowseProjectsResult,
   RemoteHostRegisterProjectResult,
   RemoteHostSessionsResult,
   RemoteHostCreateSessionRequest,
@@ -755,16 +758,8 @@ export const api = {
   configSyncGetState: () => invoke<ConfigSyncState>(IPC.invoke.configSyncGetState),
   configSyncConfigure: (input: ConfigSyncConfigureInput) =>
     invoke<ConfigSyncState>(IPC.invoke.configSyncConfigure, input),
-  configSyncTest: (input: Omit<ConfigSyncConfigureInput, "backupPassword"> & { backupPassword?: string }) =>
-    invoke<{
-      ok: boolean;
-      conditionalWrites: boolean;
-      appendOnly: boolean;
-      message?: string;
-    }>(
-      IPC.invoke.configSyncTest,
-      input,
-    ),
+  configSyncTest: (input: ConfigSyncTestInput) =>
+    invoke<ConfigSyncTestResult>(IPC.invoke.configSyncTest, input),
   configSyncSyncNow: () => invoke<ConfigSyncState>(IPC.invoke.configSyncSyncNow),
   configSyncPause: (paused: boolean) =>
     invoke<ConfigSyncState>(IPC.invoke.configSyncPause, { paused }),
@@ -1775,6 +1770,8 @@ export const api = {
     invoke<{ ok: true }>(IPC.invoke.remoteHostRemove, { hostKey }),
   reconnectRemoteHost: (hostKey: string) =>
     invoke<{ host: RemoteHostSummary }>(IPC.invoke.remoteHostReconnect, { hostKey }),
+  remoteHostBrowseProjects: (hostKey: string, path?: string) =>
+    invoke<RemoteHostBrowseProjectsResult>(IPC.invoke.remoteHostBrowseProjects, { hostKey, ...(path === undefined ? {} : { path }) }),
   remoteHostProjects: (hostKey: string) =>
     invoke<RemoteHostProjectsResult>(IPC.invoke.remoteHostProjects, { hostKey }),
   registerRemoteProject: (hostKey: string, path: string) =>

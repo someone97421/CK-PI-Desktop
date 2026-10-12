@@ -78,6 +78,23 @@ const MULTI_BLOCK_QUESTION: FixtureQuestion = {
   options: [{ label: "delta", description: "Fourth choice" }],
 };
 
+const LONG_QUESTIONS: FixtureQuestion[] = [
+  {
+    question: `First long question\n\n${Array.from(
+      { length: 24 },
+      (_, index) => `First prompt paragraph ${index + 1} keeps enough text in the card to require its own scroll area.`,
+    ).join("\n\n")}`,
+    options: [{ label: "Continue", description: "Move to the next question" }],
+  },
+  {
+    question: `Second long question\n\n${Array.from(
+      { length: 24 },
+      (_, index) => `Second prompt paragraph ${index + 1} keeps enough text in the card to require its own scroll area.`,
+    ).join("\n\n")}`,
+    options: [{ label: "Submit", description: "Finish the request" }],
+  },
+];
+
 export async function asktoolCardProbe() {
   await i18n.init({ lng: "en", resources: { en: { translation: en } } });
   const initial = useAppStore.getState();
@@ -299,6 +316,57 @@ export async function asktoolCardProbe() {
       numberBox.top >= boxes[0]!.top - 1 &&
         numberBox.bottom <= boxes[0]!.top + 26,
       `the question number shares the first line with the question text (${numberBox.top}, ${boxes[0]!.top})`,
+    );
+
+    // Flow F: a long prompt scrolls inside the card, keeps header actions in
+    // view, and resets to the top when Next replaces the current question.
+    mount("ask-overflow", LONG_QUESTIONS);
+    await until(() => {
+      const body = host.querySelector<HTMLElement>(".asktool-question-body");
+      return Boolean(body && body.clientHeight > 0 && body.scrollHeight > body.clientHeight);
+    }, "long question has an internal scroll range");
+    const firstBody = element<HTMLElement>(".asktool-question-body");
+    assert(firstBody.tabIndex === 0, "the question scroller is keyboard reachable");
+    const tabOrder = [
+      ...host.querySelectorAll<HTMLElement>("button, input, [tabindex='0']"),
+    ];
+    const bodyTabIndex = tabOrder.indexOf(firstBody);
+    assert(
+      tabOrder.indexOf(headerButtons().primary) < bodyTabIndex &&
+        bodyTabIndex < tabOrder.indexOf(options()[0]!),
+      "Tab reaches the question scroller between header actions and answers",
+    );
+    assert(
+      getComputedStyle(firstBody).overflowY === "auto",
+      "the long question scrolls inside its own body",
+    );
+    const actionRects = Object.values(headerButtons()).map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    });
+    assert(
+      actionRects.every(({ top, bottom }) => top >= 0 && bottom <= window.innerHeight),
+      "header actions stay inside the visible window",
+    );
+    firstBody.scrollTop = firstBody.scrollHeight;
+    await frame();
+    assert(firstBody.scrollTop > 0, "the question body accepts scrolling");
+    assert(
+      Object.values(headerButtons()).every((button, index) => {
+        const rect = button.getBoundingClientRect();
+        return Math.abs(rect.top - actionRects[index]!.top) < 1 &&
+          Math.abs(rect.bottom - actionRects[index]!.bottom) < 1;
+      }),
+      "scrolling the prompt does not move its header actions",
+    );
+    flushSync(() => headerButtons().primary.click());
+    await until(
+      () => questionText().includes("Second long question"),
+      "Next advances from the scrolled prompt",
+    );
+    assert(
+      element<HTMLElement>(".asktool-question-body").scrollTop === 0,
+      "the next long question starts at the top",
     );
 
     assert(errors.length === 0, `render errors: ${errors.map(String)}`);

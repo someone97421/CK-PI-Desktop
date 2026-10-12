@@ -841,7 +841,7 @@ function LocalWorkPanel({
             ) : (
               <div
                 ref={tabStripRef}
-                className="work-panel-tab-strip"
+                className="work-panel-tab-strip no-drag"
                 role="tablist"
                 aria-label={t("panel.tabsLabel")}
                 onWheel={onTabStripWheel}
@@ -858,7 +858,7 @@ function LocalWorkPanel({
                   return (
                     <div
                       className={cx(
-                        "work-panel-tab no-drag",
+                        "work-panel-tab",
                         selected && "active",
                         draggingTabId === tab.id && "is-dragging",
                         dropIndicator?.tabId === tab.id &&

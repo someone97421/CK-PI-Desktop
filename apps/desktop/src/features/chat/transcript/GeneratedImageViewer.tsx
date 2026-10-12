@@ -1,3 +1,4 @@
+import { useChatSessionCapability } from "../../../hooks/use-chat-session-capability";
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { IconChevronLeft, IconChevronRight, IconClose, IconDownload, IconExternal, IconFolder, IconMinus, IconPlus } from "../../../components/icons";
@@ -19,6 +20,7 @@ export function GeneratedImageViewer({ images, selectedIndex, onSelect, onClose,
   focusReturnRef: RefObject<HTMLElement | null>;
 }) {
   const { t } = useTranslation();
+  const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
   const dialogRef = useRef<HTMLDialogElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const knownNaturalSizesRef = useRef(new Map<string, { width: number; height: number }>());
@@ -103,7 +105,7 @@ export function GeneratedImageViewer({ images, selectedIndex, onSelect, onClose,
     if (src) setManualZoom({ src, value: Math.min(4, Math.max(Math.min(0.1, fit), value)) });
   };
   const reveal = async () => {
-    if (!selected) return;
+    if (!localToolsAllowed || !selected) return;
     try {
       await api.fsReveal(selected.path);
     } catch {

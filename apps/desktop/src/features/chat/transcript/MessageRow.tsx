@@ -11,6 +11,9 @@ import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
 import { splitInlineContent } from "@pi-desktop/shared";
 import { useOpenChatFileRef } from "../../../hooks/use-preview-target";
+import { sessionWorkspacePath } from "../../../lib/session-workspace";
+import { sessionAllows } from "../../../lib/remote-session-safety";
+import { useSlotSessionId } from "../../../plugins/renderer-slots/use-slots";
 import { useAppStore } from "../../../stores/app-store";
 import { Markdown } from "../../../components/Markdown";
 import {
@@ -91,10 +94,14 @@ export const MessageRow = memo(function MessageRow({
   const editUserMessage = useAppStore((s) => s.editUserMessage);
   const activateMessageRevision = useAppStore((s) => s.activateMessageRevision);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
+  const paneSessionId = useSlotSessionId();
+  const session = useAppStore((s) => s.sessions.find((item) => item.id === paneSessionId));
+  const canEditMessages = sessionAllows(session ?? (paneSessionId.startsWith("remote:") ? { id: paneSessionId } : undefined), "canEditMessages");
   const isUser = message.role === "user";
   const isSessionMessage = Boolean(message.sessionMessage);
-  const editableUserMessage = isUser && !isSessionMessage;
-  const workspaceRoot = useAppStore((s) => s.workspace?.path);
+  const editableUserMessage = isUser && !isSessionMessage && canEditMessages;
+  const localToolsAllowed = sessionAllows(session ?? (paneSessionId.startsWith("remote:") ? { id: paneSessionId } : undefined), "canUseLocalTools");
+  const workspaceRoot = useAppStore((s) => localToolsAllowed ? sessionWorkspacePath(session, s.workspace?.path) ?? undefined : undefined);
   const openFileRef = useOpenChatFileRef();
   // userAction belongs to user cards; other rows keep a plugin-free bar.
   const slotUser = isUser ? slotMessage("user", message) : undefined;
@@ -450,7 +457,7 @@ export const MessageRow = memo(function MessageRow({
                 <IconTrash size={13} />
               </TooltipButton>
             ) : null}
-            <TooltipButton
+            {localToolsAllowed ? <TooltipButton
               className="copy-btn icon"
               tooltip={quoteLabel}
               ariaLabel={quoteLabel}
@@ -467,8 +474,8 @@ export const MessageRow = memo(function MessageRow({
               }
             >
               <IconQuote size={13} />
-            </TooltipButton>
-            <TooltipButton
+            </TooltipButton> : null}
+            {localToolsAllowed ? <TooltipButton
               className="copy-btn icon"
               tooltip={sideChatLabel}
               ariaLabel={sideChatLabel}
@@ -476,7 +483,7 @@ export const MessageRow = memo(function MessageRow({
               onClick={() => void openSideChat(message.id)}
             >
               <IconChat size={13} />
-            </TooltipButton>
+            </TooltipButton> : null}
             <ActionSlotSide slot="userAction" side="right" message={slotUser} />
           </div>
         ) : null}

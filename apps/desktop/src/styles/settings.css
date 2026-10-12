@@ -481,6 +481,82 @@
   padding: 12px 14px 14px;
 }
 
+.settings-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 12px 16px;
+  list-style: none;
+  border-radius: var(--radius-sm);
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm-plus);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.settings-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-disclosure > summary:hover {
+  background: var(--ds-tile-hover);
+}
+
+.settings-disclosure > summary:focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: -4px;
+}
+
+.settings-disclosure > summary svg {
+  flex: 0 0 auto;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.settings-disclosure[open] > summary {
+  color: var(--ds-text-primary);
+}
+
+.settings-disclosure[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.settings-disclosure-body > .settings-disclosure {
+  margin: 0 16px;
+}
+
+.settings-disclosure-body > .settings-disclosure > summary {
+  padding-inline: 0;
+}
+
+.settings-config-sync {
+  container-type: inline-size;
+  container-name: config-sync;
+  gap: 16px;
+}
+
+.settings-config-sync > .settings-card-block {
+  margin-bottom: 0;
+}
+
+.settings-config-sync-intro,
+.settings-config-sync-note {
+  margin: 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+
+.settings-config-sync-note {
+  padding: 0 16px 8px;
+}
+
+.settings-config-sync .settings-disclosure-body > .settings-row {
+  background: transparent;
+}
+
 .settings-config-sync-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -493,18 +569,12 @@
   width: 100%;
 }
 
-.settings-config-sync-http-option {
-  display: grid;
-  grid-column: 1 / -1;
+.settings-config-sync-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--ds-warning) 32%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--ds-warning) 7%, transparent);
-}
-
-.settings-config-sync-http-option .settings-config-sync-warning {
-  margin: 0;
+  padding: 12px 16px 16px;
 }
 
 .settings-config-sync-actions {
@@ -514,10 +584,6 @@
   gap: 8px;
 }
 
-.settings-config-sync > .settings-card-block:first-child .settings-config-sync-actions,
-.settings-config-sync > .settings-card-block:first-of-type .settings-config-sync-actions {
-  padding: 0 16px 14px;
-}
 
 /* A failed sync is a state, not a stray paragraph: the notice wears the error
    ink on its frame and glyph, keeps the copy legible on both themes, and hides
@@ -659,14 +725,7 @@
   font-size: var(--text-sm);
 }
 
-/*
- * A manual sync reports itself while its request is still open: the phase it
- * is in, a bar once it announced a total, and the figures it has moved so far.
- * It sits between the cards rather than inside one, because the first enable —
- * the slowest sync of all — runs before the status card exists. The page stack
- * spaces the cards around it, so only the inset that lines it up with their
- * content is left here.
- */
+/* Manual progress stays above setup and never hides behind a disclosure. */
 .settings-config-sync-progress {
   display: grid;
   gap: 8px;
@@ -731,13 +790,6 @@
   font-size: var(--text-sm);
 }
 
-.settings-config-sync-category input {
-  accent-color: var(--ds-accent);
-}
-
-.settings-config-sync-sensitive {
-  color: var(--ds-warning);
-}
 
 .settings-config-sync-warning {
   margin: 0 16px 14px;
@@ -847,7 +899,7 @@
   font-size: var(--text-sm);
 }
 
-@media (max-width: 700px) {
+@container config-sync (max-width: 560px) {
   .settings-config-sync-form,
   .settings-config-sync-categories {
     grid-template-columns: minmax(0, 1fr);

@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../stores/app-store";
+import { useChatSessionCapability } from "../hooks/use-chat-session-capability";
 import type { ResponseAnnotationEditor } from "../lib/response-annotations";
 import { Button, TooltipButton } from "./ui";
 import { IconChat, IconClose } from "./icons";
@@ -19,13 +20,14 @@ import { IconChat, IconClose } from "./icons";
 export function ResponseAnnotationDialog() {
   const editor = useAppStore((s) => s.responseAnnotationEditor);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
   const saveResponseAnnotationEditor = useAppStore(
     (s) => s.saveResponseAnnotationEditor,
   );
   const closeResponseAnnotationEditor = useAppStore(
     (s) => s.closeResponseAnnotationEditor,
   );
-  const owned = editor && editor.sessionId === activeSessionId ? editor : null;
+  const owned = localToolsAllowed && editor && editor.sessionId === activeSessionId ? editor : null;
 
   // The editor belongs to the session it was opened in: switching sessions
   // must not carry a half-written comment into another conversation, and the

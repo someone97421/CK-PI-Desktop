@@ -339,3 +339,100 @@
   margin: 5px 6px;
   background: var(--ds-border-subtle);
 }
+
+/* Shared labeled selections keep native input semantics, not platform paint. */
+.ui-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  max-width: 100%;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+  cursor: pointer;
+}
+
+.ui-checkbox > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ui-checkbox:has(> input:disabled) {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ds-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+  border-radius: var(--radius-3xs);
+  border: 1.5px solid var(--ds-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-out),
+    border-color var(--motion-duration-fast) var(--motion-ease-out);
+}
+
+.ds-checkbox:hover:not(:disabled) {
+  border-color: var(--ds-accent);
+}
+
+.ds-checkbox:checked,
+.ds-checkbox:indeterminate {
+  background: var(--ds-accent);
+  border-color: var(--ds-accent);
+}
+
+.ds-checkbox:checked::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 5px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--ds-bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.ds-checkbox:indeterminate::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 3px;
+  width: 9px;
+  height: 2px;
+  background: var(--ds-bg);
+  border: 0;
+  transform: none;
+}
+
+.ds-checkbox:focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: 3px;
+}
+
+.ds-checkbox:disabled {
+  cursor: not-allowed;
+}
+
+.ds-checkbox:disabled:not(.ui-checkbox > input) {
+  opacity: 0.45;
+}
+
+@media (forced-colors: active) {
+  .ds-checkbox {
+    appearance: auto;
+  }
+
+  .ds-checkbox::after {
+    display: none;
+  }
+}

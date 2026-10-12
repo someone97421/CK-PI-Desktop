@@ -229,6 +229,7 @@ export const IPC = {
     remoteHostBootstrap: "pi-desktop/remoteHost/bootstrap",
     remoteHostReconnect: "pi-desktop/remoteHost/reconnect",
     remoteHostProjects: "pi-desktop/remoteHost/projects",
+    remoteHostBrowseProjects: "pi-desktop/remoteHost/browseProjects",
     remoteHostRegisterProject: "pi-desktop/remoteHost/registerProject",
     remoteHostSessions: "pi-desktop/remoteHost/sessions",
     remoteHostCreateSession: "pi-desktop/remoteHost/createSession",

@@ -219,6 +219,19 @@
 .asktool-question-body {
   display: block;
   min-width: 0;
+  /* Long prompts scroll here so header actions stay on screen (#1531).
+     Do not reserve a scrollbar gutter. */
+  max-height: min(208px, 24vh);
+  max-height: min(208px, 24dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior-y: contain;
+}
+
+.asktool-question-body:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 2px;
 }
 
 .asktool-options {

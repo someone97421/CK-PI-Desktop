@@ -1,3 +1,5 @@
+import { useSlotSessionId } from "../plugins/renderer-slots/use-slots";
+import { useChatSessionCapability } from "./use-chat-session-capability";
 import type { MessageAttachment } from "@pi-desktop/shared";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
@@ -11,16 +13,18 @@ const EMPTY: ReadonlySet<string> = new Set();
 
 /** Confirmation belongs to this text and workspace path/session, never the next one. */
 export function useVerifiedChatText(text: string, attachments?: readonly MessageAttachment[]) {
+  const paneSessionId = useSlotSessionId();
+  const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
   const activeSession = useAppStore((s) =>
-    s.activeSessionId ? s.sessions.find((session) => session.id === s.activeSessionId) : undefined,
+    s.sessions.find((session) => session.id === (paneSessionId || s.activeSessionId)),
   );
   const workspacePath = useAppStore((s) => sessionWorkspacePath(activeSession, s.workspace?.path));
-  const sessionId = useAppStore((s) => s.activeSessionId);
+  const sessionId = useAppStore((s) => paneSessionId || s.activeSessionId);
   const request = useMemo(() => {
-    const segments = splitChatText(text, workspacePath);
-    const trusted = new Set(attachments?.map((attachment) => attachment.ref));
-    return { segments, trusted, sessionId, paths: chatFileCandidates(segments, trusted) };
-  }, [text, workspacePath, sessionId, attachments]);
+    const segments = splitChatText(text, localToolsAllowed ? workspacePath : null);
+    const trusted = new Set(localToolsAllowed ? attachments?.map((attachment) => attachment.ref) : []);
+    return { segments, trusted, sessionId, paths: localToolsAllowed ? chatFileCandidates(segments, trusted) : [] };
+  }, [text, workspacePath, sessionId, attachments, localToolsAllowed]);
   const [result, setResult] = useState<{
     request: typeof request;
     verified: ReadonlySet<string>;
