@@ -5,6 +5,7 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "插件市场新增最近更新与最新发布排序，支持搜索、分类和返回页面保留选择；修复侧栏会话分组引用。",
   "云同步改用 S3，支持双向同步与单向备份；项目列表留在本机，旧 WebDAV 备份需通过旧版恢复。",
   "实验性远程项目接入首页、侧栏和统一聊天界面，保留临时工作目录及本地与远程操作隔离。",
   "落盘失败采用退避重试，反复失败消息继续保留，避免阻塞后续记录；保护远程主机配对配置。",
@@ -60,6 +61,7 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Sort the plugin marketplace by recent updates or first publication, retain the choice across navigation, and combine it with search and categories; fix sidebar session-group imports.",
   "Move cloud sync to S3 with two-way sync and backup-only modes; keep project lists local and use an older build to recover WebDAV backups.",
   "Bring experimental remote projects into home, sidebar and shared chat while preserving temporary workspaces and local/remote operation boundaries.",
   "Back off failed transcript writes and retain repeatedly failing messages without blocking later records; protect paired remote-host settings.",

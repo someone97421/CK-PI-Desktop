@@ -265,6 +265,9 @@ pub struct MarketPluginSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub downloads: Option<u64>,
     pub updated_at: String,
+    /// Earliest valid publication date retained in the catalog's version history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_published_at: Option<String>,
     #[serde(default)]
     pub categories: Vec<String>,
     pub permission_summary: Vec<String>,

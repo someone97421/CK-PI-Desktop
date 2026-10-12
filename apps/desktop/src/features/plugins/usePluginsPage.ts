@@ -20,6 +20,7 @@ import {
   isClientVisibleMarketPlugin,
   matchesQuery,
   orderPermissions,
+  sortMarketPlugins,
   versionInstallable,
   versionWithdrawn,
 } from "./model";
@@ -48,7 +49,10 @@ export function usePluginsPage() {
    */
   const currentProjectPath = useAppStore((s) => s.workspace?.path ?? null);
 
-  const { tab, setTab, installedQuery, setInstalledQuery, query, setQuery, category, setCategory } = usePluginBrowseState();
+  const {
+    tab, setTab, installedQuery, setInstalledQuery, query, setQuery,
+    category, setCategory, marketSort, setMarketSort,
+  } = usePluginBrowseState();
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [market, setMarket] = useState<MarketPluginSummary[]>([]);
   const [marketLoading, setMarketLoading] = useState(false);
@@ -341,11 +345,13 @@ export function usePluginsPage() {
   }, [market]);
 
   const visibleMarket = useMemo(
-    () =>
+    () => sortMarketPlugins(
       category
         ? market.filter((item) => (item.categories ?? []).includes(category))
         : market,
-    [market, category],
+      marketSort,
+    ),
+    [market, category, marketSort],
   );
 
   const activeVersion = useMemo(() => {
@@ -676,6 +682,8 @@ export function usePluginsPage() {
     setQuery,
     category,
     setCategory,
+    marketSort,
+    setMarketSort,
     market,
     marketLoading,
     busyId,

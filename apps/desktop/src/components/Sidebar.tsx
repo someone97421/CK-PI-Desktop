@@ -31,7 +31,9 @@ import {
   getGlobalPinnedSessions,
   groupSidebarSessionsByTime,
   normalizeProjectPath,
-} from "../lib/sidebar-project-sessions";
+  sessionArchived,
+  sessionPinned,
+} from "../lib/sidebar-session-groups";
 import { listableSessions } from "../lib/session-origin";
 import {
   composerDropItems,

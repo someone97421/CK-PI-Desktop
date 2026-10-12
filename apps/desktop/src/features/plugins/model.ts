@@ -5,6 +5,24 @@ import type {
 } from "@pi-desktop/shared";
 
 export type TabId = "installed" | "market";
+export type MarketSort = "default" | "updated" | "published";
+
+export function sortMarketPlugins(
+  plugins: MarketPluginSummary[],
+  sort: MarketSort,
+): MarketPluginSummary[] {
+  if (sort === "default") return plugins;
+  const field = sort === "updated" ? "updatedAt" : "firstPublishedAt";
+  const timestamp = (plugin: MarketPluginSummary): number => {
+    const value = Date.parse(plugin[field] ?? "");
+    return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+  };
+  return [...plugins].sort((a, b) => {
+    const left = timestamp(a);
+    const right = timestamp(b);
+    return left === right ? 0 : left > right ? -1 : 1;
+  });
+}
 
 /**
  * Always-visible sections of the installed index. Broken plugins come first and

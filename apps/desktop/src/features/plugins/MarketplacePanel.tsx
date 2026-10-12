@@ -20,6 +20,8 @@ export function MarketplacePanel({
   categories,
   category,
   setCategory,
+  marketSort,
+  setMarketSort,
   marketLoading,
   market,
   visibleMarket,
@@ -45,6 +47,29 @@ export function MarketplacePanel({
                 }}
               />
             ) : null}
+
+            <div
+              className="plugins-filters"
+              role="group"
+              aria-label={t("plugins.sortLabel")}
+            >
+              {([
+                ["default", "plugins.sortDefault"],
+                ["updated", "plugins.sortUpdated"],
+                ["published", "plugins.sortPublished"],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={cx("plugins-filter", marketSort === value && "active")}
+                  aria-pressed={marketSort === value}
+                  title={value === "published" ? t("plugins.sortPublishedHint") : undefined}
+                  onClick={() => setMarketSort(value)}
+                >
+                  {t(label)}
+                </button>
+              ))}
+            </div>
 
             {categories.length > 1 ? (
               <div
@@ -173,9 +198,13 @@ export function MarketplacePanel({
                         <span className="plugins-card-state">
                           {installed
                             ? t("plugins.installedVersion", { version: installed.version })
-                            : t("plugins.updatedOn", {
-                                date: formatDate(item.updatedAt, locale),
-                              })}
+                            : marketSort === "published"
+                              ? t("plugins.firstPublishedOn", {
+                                  date: formatDate(item.firstPublishedAt, locale),
+                                })
+                              : t("plugins.updatedOn", {
+                                  date: formatDate(item.updatedAt, locale),
+                                })}
                         </span>
                         {installed && !upgradable ? (
                           <span className="plugins-installed-mark">

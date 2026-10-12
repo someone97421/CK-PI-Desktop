@@ -15,6 +15,8 @@ export type MarketPluginSummary = {
   latestVersion: string;
   downloads?: number;
   updatedAt: string;
+  /** Earliest valid publication date retained in the catalog's version history. */
+  firstPublishedAt?: string;
   categories?: string[];
   permissionSummary: string[];
   verified?: boolean;

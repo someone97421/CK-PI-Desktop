@@ -614,7 +614,15 @@ impl PluginManager {
             downloads: entry.downloads,
             updated_at: latest_version
                 .map(|v| v.published_at.clone())
-                .unwrap_or_else(|| Utc::now().to_rfc3339()),
+                .unwrap_or_default(),
+            first_published_at: entry
+                .versions
+                .iter()
+                .filter_map(|version| {
+                    chrono::DateTime::parse_from_rfc3339(&version.published_at).ok()
+                })
+                .min()
+                .map(|date| date.to_rfc3339()),
             categories: entry.categories.clone(),
             permission_summary: latest_version
                 .map(|v| v.permissions.clone())
