@@ -91,7 +91,7 @@ import {
   IconTrash,
   IconX,
 } from "./icons";
-const MAX_VISIBLE_SESSIONS = 10;
+const MAX_VISIBLE_SESSIONS = 3;
 const SESSION_LOAD_MORE_COUNT = 5;
 
 type ProjectEntry = {
@@ -1809,7 +1809,7 @@ export function Sidebar({
     const projectId = projectDomId(entry.key);
     const isMenuOpen = projectMenu === entry.key;
 
-    // 折叠后恢复首屏十条，加载更多按现有增量追加。
+    // 初始显示三条未置顶会话，每次追加五条；折叠后重置。
     const sessionLimit = projectSessionLimits[entry.key] ?? MAX_VISIBLE_SESSIONS;
     const history = entry.sessions.filter((session) => !pinnedSessionIds.has(session.id));
     const visibleSessions = history.slice(0, sessionLimit);
