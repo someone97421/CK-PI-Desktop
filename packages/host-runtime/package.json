@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/host-runtime",
-  "version": "2610.1220.3701",
+  "version": "2610.1314.5218",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
