@@ -42,7 +42,7 @@ import { createRemoteHistory, type RemoteHistoryReadOptions } from "./remote-his
 
 /** The subset of `RacpClient` this backend needs; kept minimal for testing. */
 export type RemoteRacpClient = {
-  request<T>(method: string, params?: unknown): Promise<T>;
+  request<T>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
 };
 
 export type RemoteBackendOptions = {
@@ -51,6 +51,12 @@ export type RemoteBackendOptions = {
   client: RemoteRacpClient;
   hostLabel?: string;
   onSnapshot?: (snapshot: RacpSessionSnapshot) => void;
+  /**
+   * Called after the Host confirms a `session/delete`. RACP publishes no delete
+   * event, so this is the only signal that the row left the host and must be
+   * dropped from this desktop's cached lists.
+   */
+  onSessionDeleted?: (hostSessionId: string) => void;
   /** Injectable id source for RACP request contexts; defaults to a UUID. */
   newRequestId?: () => string;
 };
@@ -318,7 +324,9 @@ export function createRemoteBackend(options: RemoteBackendOptions): RemoteBacken
         return { updated: result.updated === true };
       }
       case IPC.invoke.sessionDelete: {
-        await client.request("session/delete", { sessionId: hostIdFor(args) });
+        const hostSessionId = hostIdFor(args);
+        await client.request("session/delete", { sessionId: hostSessionId });
+        options.onSessionDeleted?.(hostSessionId);
         return { ok: true };
       }
       case IPC.invoke.toolResolvePermission: {

@@ -758,10 +758,18 @@ index 4e36f35..c817c2e 100644
  }
  export function resolveSamplingParams(model, thinkingLevel, requestParams) {
 diff --git a/dist/auth/oauth/anthropic.js b/dist/auth/oauth/anthropic.js
-index 0823512..3af4225 100644
+index 0823512..713d38a 100644
 --- a/dist/auth/oauth/anthropic.js
 +++ b/dist/auth/oauth/anthropic.js
-@@ -66,21 +66,90 @@ function formatErrorDetails(error) {
+@@ -4,6 +4,7 @@
+  * NOTE: This module uses Node.js http.createServer for the OAuth callback server.
+  * It is only intended for CLI use, not browser environments.
+  */
++import { getPiUserAgent } from "../../utils/pi-user-agent.js";
+ import { getProviderEnvValue } from "../../utils/provider-env.js";
+ import { startOAuthCallbackServer, waitForCallbackOrManualInput } from "./callback-server.js";
+ import { generatePKCE } from "./pkce.js";
+@@ -66,21 +67,95 @@ function formatErrorDetails(error) {
      }
      return String(error);
  }
@@ -835,6 +843,11 @@ index 0823512..3af4225 100644
 +            headers: {
 +                "Content-Type": "application/json",
 +                Accept: "application/json",
++                // Always identify the client. Electron's main-process fetch
++                // (net.fetch) otherwise sends Chromium's browser User-Agent,
++                // and the token endpoint answers browser or claude-code/ UAs
++                // with a permanent 429 rate_limit_error (issue #1337).
++                "User-Agent": getPiUserAgent(),
 +            },
 +            body: serialized,
 +            signal: requestSignal,
@@ -865,7 +878,7 @@ index 0823512..3af4225 100644
  }
  async function exchangeAuthorizationCode(code, state, verifier, redirectUri, signal) {
      let responseBody;
-@@ -95,6 +164,8 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
+@@ -95,6 +170,8 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
          }, signal);
      }
      catch (error) {
@@ -874,7 +887,7 @@ index 0823512..3af4225 100644
          throw new Error(`Token exchange request failed. url=${TOKEN_URL}; redirect_uri=${redirectUri}; response_type=authorization_code; details=${formatErrorDetails(error)}`);
      }
      let tokenData;
-@@ -102,7 +173,7 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
+@@ -102,7 +179,7 @@ async function exchangeAuthorizationCode(code, state, verifier, redirectUri, sig
          tokenData = JSON.parse(responseBody);
      }
      catch (error) {
@@ -883,7 +896,7 @@ index 0823512..3af4225 100644
      }
      return {
          type: "oauth",
-@@ -213,6 +284,8 @@ async function refreshAnthropicToken(refreshToken, signal) {
+@@ -213,6 +290,8 @@ async function refreshAnthropicToken(refreshToken, signal) {
          }, signal);
      }
      catch (error) {
@@ -892,7 +905,7 @@ index 0823512..3af4225 100644
          throw new Error(`Anthropic token refresh request failed. url=${TOKEN_URL}; details=${formatErrorDetails(error)}`);
      }
      let data;
-@@ -220,7 +293,7 @@ async function refreshAnthropicToken(refreshToken, signal) {
+@@ -220,7 +299,7 @@ async function refreshAnthropicToken(refreshToken, signal) {
          data = JSON.parse(responseBody);
      }
      catch (error) {

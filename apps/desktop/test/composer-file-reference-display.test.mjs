@@ -100,7 +100,7 @@ test("text file chips expand into editable draft text", () => {
   );
   assert.match(composer, /\? \(\) => onExpandText\(token\)/);
   assert.match(composer, /event\.key !== "Enter" && event\.key !== " "/);
-  assert.match(composer, /const result = await api\.fsRead\(reference\.path, reference\.mimeType\)/);
+  assert.match(composer, /const result = await api\.fsRead\(reference\.path, reference\.mimeType, sourceSessionId\)/);
   assert.match(composer, /result\.kind !== "text" \|\| result\.content === undefined/);
   assert.match(
     composer,

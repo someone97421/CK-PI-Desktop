@@ -40,7 +40,7 @@ test("the first prompt becomes an immediate title, collapsed and capped", () => 
   assert.equal(promptFallbackSessionTitle("界".repeat(60), "New task"), "界".repeat(48));
 });
 
-test("the fallback only fires for a still-untitled local session", () => {
+test("the fallback only fires for a still-untitled session the owning host can title", () => {
   assert.equal(isDefaultSessionTitle(promptFallbackSessionTitle("Fix login", "New task")), false);
   assert.equal(untitledTaskTitle(), "New task");
   assert.equal(isDefaultSessionTitle(untitledTaskTitle()), true);
@@ -56,10 +56,13 @@ test("the fallback only fires for a still-untitled local session", () => {
   }
   assert.match(queueSlice, /isDefaultSessionTitle\(current\?\.title\)/);
   assert.match(queueSlice, /current\?\.source !== "pi-native"/);
-  // A remote session derives on its own host, so the gate does not exclude it.
+  // A remote session derives on its own host through this same call — the
+  // backend router forwards it to the owning `pi-host` — so the gate must not
+  // exclude remote ids: doing so left every remote task unnamed.
+  assert.doesNotMatch(queueSlice, /!isRemoteSession\(/);
   assert.doesNotMatch(
     queueSlice,
-    /isDefaultSessionTitle\(current\?\.title\)[\s\S]{0,140}source !== "remote"/,
+    /isDefaultSessionTitle\(current\?\.title\)[\s\S]{0,200}source !== "remote"/,
   );
   assert.match(queueSlice, /api\s+\.deriveSessionTitle\(sessionId, nextTitle\)/);
   assert.match(queueSlice, /if \(!isDefaultSessionTitle\(nextTitle\)\)/);

@@ -4,6 +4,7 @@ import type {
   FsReadResult,
   RacpProjectSummary,
   WorkspaceDiff,
+  WorkspaceToolExecute, WorkspaceToolAbort, WorkspaceToolResult, CommandShellOption, WorkspaceFilesRequest,
 } from "@pi-desktop/shared";
 
 /**
@@ -86,6 +87,13 @@ export type RacpHostOperations = {
   projects: RacpProjectCatalog;
   workspace: RacpWorkspaceAccess;
   terminal?: RacpTerminalAccess;
+  workspaceFiles?: { read(input: WorkspaceFilesRequest): Promise<unknown> };
+  workspaceTools?: {
+    execute(input: WorkspaceToolExecute, owner: { deviceId: string; connectionId: string }): Promise<WorkspaceToolResult>;
+    abort(input: WorkspaceToolAbort, owner: { deviceId: string; connectionId: string }): Promise<void>;
+    shell(): Promise<CommandShellOption>;
+    disconnect(connectionId: string): Promise<void>;
+  };
   /** Owner-only: revoke a paired device (spec `session/revoke`). */
   revokeDevice?: (deviceId: string) => Promise<boolean>;
 };

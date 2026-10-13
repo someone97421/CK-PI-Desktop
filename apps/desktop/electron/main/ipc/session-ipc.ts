@@ -465,9 +465,12 @@ export function registerSessionIpc({
           .call("agent.disposeSession", { sessionId })
           .catch(() => undefined);
       }
-      return host.call("session.replaceMessages", {
-        sessionId,
-        messages: input.messages ?? [],
+      return persistenceOutbox.prepareSessionReplacement(sessionId, () => host, () => {
+        if (!host) throw new Error("host unavailable");
+        return host.call("session.replaceMessages", {
+          sessionId,
+          messages: input.messages ?? [],
+        });
       });
     },
   );

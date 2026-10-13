@@ -80,7 +80,6 @@ export function ProjectsPage() {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [visibleSessionCounts, setVisibleSessionCounts] = useState<Record<string, number>>({});
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  // Which row menu item is armed for its second, confirming click.
   const { armed: armedDelete, setArmed: setArmedDelete } = useArmedDelete();
   const [renameFor, setRenameFor] = useState<SessionIndexRecord | null>(null);
   const [editProjectFor, setEditProjectFor] = useState<{
@@ -232,15 +231,9 @@ export function ProjectsPage() {
     }
   };
 
-  /** Menu items of different surfaces never share an armed key. */
+  /** 首次点击标记删除，二次点击删除空闲项目或确认停止运行中的会话。 */
   const projectDeleteKey = (path: string) => `project:${normalizeProjectPath(path)}`;
 
-  /**
-   * Two-step delete for an index row. The first click arms the menu item and
-   * relabels it; the second deletes an idle project straight away. A project
-   * with a live turn keeps the dialog that names those sessions and stops them
-   * before the delete.
-   */
   const requestDeleteProject = async (project: ProjectIndexItem, totalSessions: number) => {
     const key = projectDeleteKey(project.path);
     if (armedDelete !== key) {
@@ -267,7 +260,6 @@ export function ProjectsPage() {
       setRecents(loadRecentProjects());
       showToast(t("project.deleted", { name: project.name }), { variant: "success" });
     } catch (error) {
-      // The host refuses a project whose task started after this render.
       showToast(
         (error as { errorCode?: unknown } | null)?.errorCode === ErrorCodes.CONFLICT
           ? t("project.deleteRunningBlocked")
@@ -724,6 +716,14 @@ export function ProjectsPage() {
           onClose={() => setEditProjectFor(null)}
           onSaved={(group) => {
             renameProject(group.primaryPath, group.name);
+            // Promoting another folder to primary moves the group's identity,
+            // while the row that is still open keeps the same display name.
+            if (
+              normalizeProjectPath(editProjectFor.path) !==
+              normalizeProjectPath(group.primaryPath)
+            ) {
+              renameProject(editProjectFor.path, group.name);
+            }
             setDurableProjects((current) =>
               current.map((item) =>
                 item.id === group.id || item.id === editProjectFor.groupId ? group : item,

@@ -500,9 +500,11 @@ export function createQueueSlice({
         // Keeps the session readable without any plugin: the owning host derives
         // a short title from this prompt but leaves it replaceable, so an
         // installed title plugin can still upgrade it after the first turn. A
-        // remote session derives on its own host, and the host refuses the write
-        // once the session was renamed. A native Pi session owns its title
-        // outside this host, so it keeps whatever that surface shows.
+        // remote session derives on its own host: the backend router forwards
+        // this same call to the owning `pi-host`, whose `session/deriveTitle`
+        // refuses the write once the session was renamed, so a remote session
+        // must not be excluded here. A native Pi session owns its title outside
+        // this host, so it keeps whatever that surface shows.
         if (
           isDefaultSessionTitle(current?.title) &&
           current?.source !== "pi-native"

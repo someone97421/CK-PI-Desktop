@@ -52,6 +52,7 @@ pub struct AppState {
     pub session_grants: HashMap<String, Vec<String>>,
     /// executionId -> responder for plugin tool dispatches awaiting the
     /// desktop runner (Electron main executes the plugin JS and resolves).
+    pub remote_execs: HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>,
     pub plugin_execs: HashMap<String, tokio::sync::oneshot::Sender<serde_json::Value>>,
     /// Rolling plugin session API brakes. These are intentionally process-local;
     /// a restart is already a natural rate-window boundary.
@@ -142,6 +143,7 @@ impl AppState {
             shutting_down: false,
             session_grants: HashMap::new(),
             plugin_execs: HashMap::new(),
+            remote_execs: HashMap::new(),
             plugin_import_rates: HashMap::new(),
             plugin_batch_import_rates: HashMap::new(),
             plugin_delete_rates: HashMap::new(),
@@ -304,6 +306,7 @@ impl AppState {
 
         self.pending_bash_aborts.clear();
         self.plugin_execs.clear();
+        self.remote_execs.clear();
     }
 
     pub fn uptime_ms(&self) -> u64 {

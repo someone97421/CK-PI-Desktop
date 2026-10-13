@@ -201,7 +201,7 @@ export function SettingsPage() {
     const tryFind = (attempt: number) => {
       if (cancelled) return;
       const titles = document.querySelectorAll<HTMLElement>(
-        ".settings-content .settings-row-title, .settings-content .settings-card-heading",
+        ".settings-content .settings-row-title, .settings-content .settings-card-heading, .settings-content .about-update-title",
       );
       const match = [...titles].find(
         (node) => node.textContent?.trim() === target,
@@ -622,17 +622,23 @@ export function SettingsPage() {
 
           {tab === "about" && (
             <div className="settings-stack">
+              <div className="settings-about-hero">
+                <div className="settings-about-hero-name">
+                  {version?.name || "这是一个助手"}
+                </div>
+                <div className="settings-about-hero-version">
+                  {t("settings.aboutVersion", { version: displayAppVersion(version?.version) })}
+                </div>
+                <div className="settings-about-hero-meta">
+                  protocol {version?.protocolVersion} · host {displayAppVersion(version?.hostVersion)}
+                </div>
+              </div>
+              <UpdatesRow
+                currentVersion={version?.version}
+                settings={settings ?? null}
+                saveSettings={saveSettings}
+              />
               <SettingsCard>
-                <SettingsRow title={t("settings.application")}>
-                  <div className="settings-about-meta">
-                    <div className="font-medium">
-                      {version?.name || "这是一个助手"} {displayAppVersion(version?.version)}
-                    </div>
-                    <div className="font-mono text-xs-plus text-text-muted">
-                      protocol {version?.protocolVersion} · host {displayAppVersion(version?.hostVersion)}
-                    </div>
-                  </div>
-                </SettingsRow>
                 <SettingsRow title={t("settings.logs")}>
                   <Button variant="secondary" onClick={() => void api.openLogs()}>
                     {t("settings.openLogs")}
@@ -649,11 +655,6 @@ export function SettingsPage() {
                     {t("settings.openFeedback")}
                   </Button>
                 </SettingsRow>
-                <UpdatesRow
-                  currentVersion={version?.version}
-                  settings={settings ?? null}
-                  saveSettings={saveSettings}
-                />
               </SettingsCard>
 
               {settings && (

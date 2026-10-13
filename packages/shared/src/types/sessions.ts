@@ -1,4 +1,5 @@
 /** Shared public types grouped by the owning application domain. */
+import type { RemoteWorkspace } from "./workspace.js";
 import type { Mode } from "./common.js";
 import type { SessionThinkingLevel, ThinkingLevel } from "./models.js";
 import type { PermissionMode } from "./permissions.js";
@@ -32,6 +33,7 @@ export type SessionCapabilities = {
 };
 
 export type SessionSummary = {
+  remoteWorkspace?: RemoteWorkspace;
   id: string;
   /** Transcript authority. Omitted by older hosts and normalized to `desktop`. */
   source?: SessionSource;

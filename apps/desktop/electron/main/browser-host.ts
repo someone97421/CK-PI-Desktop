@@ -1,4 +1,4 @@
-import type { BrowserWindow } from "electron";
+import type { BrowserWindow, WebContents } from "electron";
 import type { BrowserState } from "@pi-desktop/shared";
 import type { BrowserPane } from "./browser-view";
 import { BrowserCdp } from "./browser-cdp";
@@ -8,6 +8,7 @@ import { join } from "node:path";
 export const BROWSER_PLUGIN_ID = "pi.browser";
 export const BROWSER_VIEW_ID = "browser";
 const BROWSER_REVEAL_TIMEOUT_MS = 5_000;
+const BROWSER_CDP_TIMEOUT_MS = 30_000;
 
 export type BrowserRect = {
   x: number;
@@ -90,6 +91,49 @@ type BrowserPage = {
   navigationVersion: number;
   navigating: boolean;
 };
+
+/**
+ * Bound any CDP round trip on the guest. A page that opens a native dialog
+ * or runs a busy loop never answers `debugger.sendCommand`, and neither the
+ * CDP layer nor the RPC timeout table bounds it (#1611) — without this the
+ * agent's browser tool call hangs forever. On timeout the whole debugger
+ * session is detached as recovery, which also drops previously created
+ * snapshot uids; the tool result explains the timeout so the agent can
+ * re-snapshot.
+ */
+function withCdpDeadline<T>(
+  page: BrowserPage,
+  wc: WebContents,
+  run: () => Promise<T>,
+  label: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      const error = Object.assign(
+        new Error(`browser ${label} timed out after ${BROWSER_CDP_TIMEOUT_MS}ms`),
+        { code: "TIMEOUT" },
+      );
+      reject(error);
+      try {
+        page.cdp.detach(wc);
+      } catch {
+        // Preserve the timeout result if the guest is already shutting down.
+      }
+    }, BROWSER_CDP_TIMEOUT_MS);
+  });
+  return Promise.race([Promise.resolve().then(run), timedOut])
+    .finally(() => { if (timeout) clearTimeout(timeout); });
+}
+
+function captureScreenshotWithDeadline<T>(
+  page: BrowserPage,
+  capture: (wc: WebContents) => Promise<T>,
+): Promise<T> {
+  return page.pane.captureScreenshot((wc) =>
+    withCdpDeadline(page, wc, () => capture(wc), "screenshot"),
+  );
+}
 
 /** Host-owned pages, keyed by conversation and resource tab. */
 export class BrowserHost {
@@ -380,12 +424,14 @@ export class BrowserHost {
   }
 
   async snapshot(): Promise<{ tree: string; url: string; title: string }> {
-    return this.currentPage().cdp.snapshot(this.requireWebContents());
+    const page = this.currentPage();
+    const wc = this.requireWebContents();
+    return withCdpDeadline(page, wc, () => page.cdp.snapshot(wc), "snapshot");
   }
 
   async screenshot(input: { fullPage?: boolean } = {}, sessionId?: string): Promise<{ mimeType: string; data: string; path?: string }> {
     const page = this.currentPage();
-    const shot = await page.pane.captureScreenshot((wc) => page.cdp.screenshot(wc, input));
+    const shot = await captureScreenshotWithDeadline(page, (wc) => page.cdp.screenshot(wc, input));
     const scratch = this.deps.getScratchDir?.(sessionId ?? page.sessionId);
     if (!scratch) return shot;
     try {
@@ -396,9 +442,21 @@ export class BrowserHost {
     } catch { return shot; }
   }
 
-  async click(uid: string): Promise<void> { await this.currentPage().cdp.click(this.requireWebContents(), uid); }
-  async fill(uid: string, text: string): Promise<void> { await this.currentPage().cdp.fill(this.requireWebContents(), uid, text); }
-  async evaluate(expression: string): Promise<unknown> { return this.currentPage().cdp.evaluate(this.requireWebContents(), expression); }
+  async click(uid: string): Promise<void> {
+    const page = this.currentPage();
+    const wc = this.requireWebContents();
+    return withCdpDeadline(page, wc, () => page.cdp.click(wc, uid), "click");
+  }
+  async fill(uid: string, text: string): Promise<void> {
+    const page = this.currentPage();
+    const wc = this.requireWebContents();
+    return withCdpDeadline(page, wc, () => page.cdp.fill(wc, uid, text), "fill");
+  }
+  async evaluate(expression: string): Promise<unknown> {
+    const page = this.currentPage();
+    const wc = this.requireWebContents();
+    return withCdpDeadline(page, wc, () => page.cdp.evaluate(wc, expression), "evaluate");
+  }
   console(limit?: number): { messages: ReturnType<BrowserCdp["console"]> } {
     if (!this.active?.started) return { messages: [] };
     const wc = this.requireWebContents();
@@ -407,10 +465,11 @@ export class BrowserHost {
   }
   async cdpCommand(method: string, params?: unknown): Promise<unknown> {
     const page = this.currentPage();
+    const wc = this.requireWebContents();
     if (method === "Page.captureScreenshot") {
-      return page.pane.captureScreenshot((wc) => page.cdp.send(wc, method, params));
+      return captureScreenshotWithDeadline(page, (view) => page.cdp.send(view, method, params));
     }
-    return page.cdp.send(this.requireWebContents(), method, params);
+    return withCdpDeadline(page, wc, () => page.cdp.send(wc, method, params), `cdp ${method}`);
   }
 
   /** The renderer-created resource tab is the preview's only navigation owner. */

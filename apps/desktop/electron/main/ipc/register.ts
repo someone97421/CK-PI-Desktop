@@ -63,6 +63,7 @@ export type RegisterIpcDependencies = {
   setNotificationViewingSessionId: (sessionId: string | null) => void;
   activeUserSubagentDocuments: (...args: any[]) => Promise<any>;
   disabledBuiltinSubagents: () => Promise<string[]>;
+  disabledBuiltinSkills: () => Promise<string[]>;
   liveCallService?: LiveCallService;
   mcpOAuth?: McpOAuthManager;
   [name: string]: any;
@@ -130,6 +131,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     activeUserSkills,
     activeUserSubagentDocuments,
     disabledBuiltinSubagents,
+    disabledBuiltinSkills,
     pluginActiveInProject,
     getWorkPanelReservationWidth,
     setWorkPanelReservationWidth,
@@ -326,6 +328,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     agentExtensions,
     optionalWorkspaceRoot,
     activeUserSkills,
+    disabledBuiltinSkills,
     pluginActiveInProject,
     loadComposerTemplatesCached,
     sessionWorkspaceRoot: async (sessionId) => {
@@ -474,6 +477,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     optionalWorkspaceRoot,
     activeUserSubagentDocuments,
     disabledBuiltinSubagents,
+    disabledBuiltinSkills,
     stripWinLongPrefix,
     sendToRenderer,
     logger,

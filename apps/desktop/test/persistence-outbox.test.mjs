@@ -73,6 +73,57 @@ test("deleting a session drops its queued outbox entries (D318)", async () => {
   );
 });
 
+test("替换历史等待在途消息的成功回执", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-replace-"));
+  const outbox = new PersistenceOutbox(dir, silent);
+  let releaseAppend;
+  let appendStarted;
+  const started = new Promise((resolve) => { appendStarted = resolve; });
+  const blockedAppend = new Promise((resolve) => { releaseAppend = resolve; });
+  const host = mockHost(async () => {
+    appendStarted();
+    await blockedAppend;
+  });
+
+  await outbox.enqueue(
+    {
+      key: "message:replace-session:assistant-1",
+      sessionId: "replace-session",
+      message: { id: "assistant-1", role: "assistant", content: "obsolete" },
+    },
+    () => host,
+  );
+  await started;
+
+  let replacementReady = false;
+  const preparing = outbox
+    .prepareSessionReplacement("replace-session", () => host, async () => { replacementReady = true; });
+  await Promise.resolve();
+  assert.equal(replacementReady, false, "replacement must wait for the active append");
+
+  releaseAppend();
+  await preparing;
+  assert.equal(replacementReady, true);
+  assert.equal(outbox.size(), 0);
+});
+
+test("替换历史遇到落盘失败时保留消息并拒绝覆盖", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-replace-failed-"));
+  try {
+    const outbox = new PersistenceOutbox(dir, silent);
+    await outbox.enqueue({ key: "message:s:a", sessionId: "s", message: { id: "a" } }, () => null);
+    const host = mockHost(async () => { throw new Error("disk full"); });
+    let replaced = false;
+    await assert.rejects(outbox.prepareSessionReplacement("s", () => host, async () => { replaced = true; }), /未成功保存/);
+    assert.equal(replaced, false);
+    assert.equal(outbox.size(), 1);
+    const stored = JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8"));
+    assert.equal(stored[0].message.id, "a");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 function mockHost(handler) {
   return {
     isAvailable: () => true,

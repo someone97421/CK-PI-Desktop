@@ -18,6 +18,7 @@ import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
 import { createJevClassifierTool } from "./jev-classifier-tool.js";
 import { scheduledToolParameters, scheduledToolDescriptions } from "./scheduled-tools.js";
 import { createHash, randomUUID } from "node:crypto";
+import { remoteMutationIdentity } from "./remote-workspace.js";
 import { mkdirSync } from "node:fs";
 import { withPiFileOpToolNames } from "./pi-file-ops.js";
 import {
@@ -941,6 +942,8 @@ export type AgentRuntimeOptions = {
   customSystemPrompt?: CustomSystemPrompt;
   /** Session-bound workspace root used for path-scoped instruction requests. */
   projectPath?: string;
+  /** Remote tool root. Model requests and runtime state remain on this machine. */
+  remoteWorkspace?: { hostKey: string; path: string };
   /** Instructions resolved from the session's workspace. */
   projectInstructions?: ProjectInstructions;
   /** Durable project context loaded from host-owned project memory. */
@@ -1005,6 +1008,8 @@ export type RuntimeMatchConfig = {
   projectInstructions?: ProjectInstructions;
   projectMemory?: string;
   projectPath?: string;
+  /** Remote tool root. Model requests and runtime state remain on this machine. */
+  remoteWorkspace?: { hostKey: string; path: string };
   commandShell: CommandShellOption;
   subagents?: SubagentDefinition[];
   subagentProviders?: Record<string, RuntimeProviderConfig>;
@@ -1687,6 +1692,7 @@ export class DesktopAgentRuntime {
   private activationHydrated = false;
   private scratchDir?: string;
   private projectPath?: string;
+  private remoteWorkspace?: { hostKey: string; path: string };
   private commandShell: CommandShellOption;
   private baseProjectInstructions?: ProjectInstructions;
   private projectInstructions?: ProjectInstructions;
@@ -1899,8 +1905,9 @@ export class DesktopAgentRuntime {
       });
     }
     this.commandShell = opts.commandShell;
-    this.scratchDir = opts.scratchDir;
-    this.projectPath = opts.projectPath?.trim() || undefined;
+    this.remoteWorkspace = opts.remoteWorkspace;
+    this.scratchDir = opts.remoteWorkspace ? undefined : opts.scratchDir;
+    this.projectPath = opts.remoteWorkspace?.path ?? (opts.projectPath?.trim() || undefined);
     this.customSystemPrompt = opts.customSystemPrompt;
     this.baseProjectInstructions = opts.projectInstructions;
     this.projectInstructions = opts.projectInstructions;
@@ -2629,7 +2636,8 @@ Delegation rules:
       safeJson(this.customSystemPrompt ?? null) ===
         safeJson(config.customSystemPrompt ?? null) &&
       (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "") &&
-      (this.projectPath ?? "") === (config.projectPath?.trim() ?? "") &&
+      (this.projectPath ?? "") === (config.remoteWorkspace?.path ?? config.projectPath?.trim() ?? "") &&
+      safeJson(this.remoteWorkspace ?? null) === safeJson(config.remoteWorkspace ?? null) &&
       // Editing `~/.agents/subagents/*.md` must reach the next prompt. Definition
       // bodies are part of the `Task` tool's behavior, so unlike skills they
       // are compared in full.
@@ -2790,6 +2798,7 @@ Delegation rules:
     return {
       sessionId: this.sessionId,
       cwd: this.extensionCwd(),
+      remoteWorkspace: Boolean(this.remoteWorkspace),
       getModel: () => runtime.model,
       setModel: (model, signal) => runtime.setExtensionModel(model, signal),
       modelRegistry: runtime.extensionModelRegistry(),
@@ -3294,7 +3303,9 @@ Delegation rules:
         onUpdate,
       ) => {
         const mutationPath = PATH_MUTATING_TOOLS.has(toolName) && isRecord(params) && typeof params.path === "string"
-          ? await mutationFailureKey(params.path, this.projectPath ?? this.scratchDir)
+          ? this.remoteWorkspace
+            ? remoteMutationIdentity(this.remoteWorkspace, params.path)
+            : await mutationFailureKey(params.path, this.projectPath ?? this.scratchDir)
           : undefined;
         await this.loadPathInstructions(toolName, params);
         const isBash = toolName === "Bash";
@@ -6236,6 +6247,7 @@ Delegation rules:
     for (const raw of params.questions) {
       if (!isRecord(raw)) return undefined;
       const question = typeof raw.question === "string" ? raw.question.trim() : "";
+      if (!question) return undefined;
       const options: AskToolQuestion["options"] = [];
       const seenLabels = new Set<string>();
       if (Array.isArray(raw.options)) {
@@ -6248,7 +6260,7 @@ Delegation rules:
           options.push(option);
         }
       }
-      if (!question || options.length === 0) return undefined;
+      if (options.length === 0) return undefined;
       questions.push({
         question,
         options,
@@ -6332,7 +6344,7 @@ Delegation rules:
     toolName: string,
     params: unknown,
   ): Promise<void> {
-    if (!PATH_SCOPED_INSTRUCTION_TOOLS.has(toolName)) {
+    if (this.remoteWorkspace || !PATH_SCOPED_INSTRUCTION_TOOLS.has(toolName)) {
       return undefined;
     }
     const path = isRecord(params) && typeof params.path === "string"
@@ -9114,7 +9126,7 @@ Delegation rules:
   }
 
   /** Resolve attachments against the configuration of the running turn. */
-  steeringContext(expectedTurnId: string): { projectPath?: string; supportsVision: boolean } & MediaInputCapabilities {
+  steeringContext(expectedTurnId: string): { projectPath?: string; remoteWorkspace?: { hostKey: string; path: string }; supportsVision: boolean } & MediaInputCapabilities {
     if (
       this.disposed || !this.acceptingSteering || this.runCancelled ||
       this.turnHadError || !this.getStatus().isRunning ||
@@ -9125,7 +9137,7 @@ Delegation rules:
         errorCode: "TURN_NOT_FOUND",
       });
     }
-    return { projectPath: this.projectPath, supportsVision: this.model.input.includes("image"), ...mediaCapabilitiesForProvider(this.provider) };
+    return { projectPath: this.projectPath, ...(this.remoteWorkspace ? { remoteWorkspace: this.remoteWorkspace } : {}), supportsVision: this.model.input.includes("image"), ...mediaCapabilitiesForProvider(this.provider) };
   }
 
   steer(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): { accepted: boolean; turnId: string } {

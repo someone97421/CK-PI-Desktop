@@ -1398,6 +1398,7 @@ fn project_group_update_detaches_roots_with_chats_without_orphaning_them() {
                 primary.to_string_lossy().into(),
                 second.to_string_lossy().into(),
             ],
+            None,
         )
         .unwrap();
     assert_eq!(updated.name, "Adjusted");
@@ -1424,6 +1425,7 @@ fn project_group_update_detaches_roots_with_chats_without_orphaning_them() {
             &updated.id,
             "Adjusted again",
             &[second.to_string_lossy().into()],
+            None,
         )
         .unwrap_err()
         .to_string()
@@ -1439,6 +1441,7 @@ fn project_group_update_detaches_roots_with_chats_without_orphaning_them() {
             &updated.id,
             "Adjusted again",
             &[primary.to_string_lossy().into()],
+            None,
         )
         .expect("a root with chats can be detached from the group");
     assert_eq!(detached.roots.len(), 1);
@@ -1456,6 +1459,114 @@ fn project_group_update_detaches_roots_with_chats_without_orphaning_them() {
         db.project_session_ids(&canonical_second).unwrap(),
         [session.id]
     );
+}
+
+#[test]
+fn project_group_update_switches_the_primary_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let primary = dir.path().join("primary");
+    let member = dir.path().join("member");
+    let other = dir.path().join("other");
+    std::fs::create_dir_all(&primary).unwrap();
+    std::fs::create_dir_all(&member).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let db = Database::open(&dir.path().join("pi.sqlite")).unwrap();
+    let group = db
+        .create_project_group(
+            "Switchable",
+            &[
+                primary.to_string_lossy().into(),
+                member.to_string_lossy().into(),
+                other.to_string_lossy().into(),
+            ],
+        )
+        .unwrap();
+    let canonical_primary = crate::db::canonical_project_path(&primary.to_string_lossy()).unwrap();
+    let canonical_member = crate::db::canonical_project_path(&member.to_string_lossy()).unwrap();
+    let canonical_other = crate::db::canonical_project_path(&other.to_string_lossy()).unwrap();
+    let all_folders = || {
+        vec![
+            primary.to_string_lossy().into_owned(),
+            member.to_string_lossy().into_owned(),
+            other.to_string_lossy().into_owned(),
+        ]
+    };
+
+    // Naming another selected folder promotes it and keeps it first.
+    let switched = db
+        .update_project_group(
+            &group.id,
+            "Switchable",
+            &all_folders(),
+            Some(&canonical_member),
+        )
+        .unwrap();
+    assert_eq!(switched.primary_path, canonical_member);
+    assert_eq!(
+        switched
+            .roots
+            .iter()
+            .map(|root| root.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            canonical_member.as_str(),
+            canonical_primary.as_str(),
+            canonical_other.as_str()
+        ]
+    );
+    assert_eq!(
+        switched
+            .roots
+            .iter()
+            .map(|root| root.position)
+            .collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    // The former primary becomes an ordinary member root.
+    assert!(switched
+        .roots
+        .iter()
+        .skip(1)
+        .any(|root| root.path == canonical_primary));
+    // The switch survives reloading the stored record.
+    let reloaded = db
+        .list_project_groups()
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.id == group.id)
+        .unwrap();
+    assert_eq!(reloaded.primary_path, canonical_member);
+
+    // A primary outside the selected folders is refused.
+    assert!(db
+        .update_project_group(
+            &group.id,
+            "Switchable",
+            std::slice::from_ref(&canonical_primary),
+            Some(&canonical_member),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("must be one of the group folders"));
+    // Omitting the primary still refuses dropping the stored one.
+    assert!(db
+        .update_project_group(
+            &group.id,
+            "Switchable",
+            std::slice::from_ref(&canonical_primary),
+            None
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("primary folder"));
+    // The refused calls leave the stored switch in place.
+    let unchanged = db
+        .list_project_groups()
+        .unwrap()
+        .into_iter()
+        .find(|candidate| candidate.id == group.id)
+        .unwrap();
+    assert_eq!(unchanged.primary_path, canonical_member);
 }
 
 #[test]
@@ -1557,6 +1668,7 @@ fn editing_a_legacy_project_with_an_extra_folder_upgrades_it_to_a_group() {
                 primary.to_string_lossy().into(),
                 extra.to_string_lossy().into(),
             ],
+            None,
         )
         .unwrap();
     assert!(!upgraded.legacy);

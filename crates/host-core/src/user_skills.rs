@@ -56,6 +56,10 @@ fn remove_imported_skill_link(path: &Path) -> Result<()> {
     fs::remove_file(path)?;
     Ok(())
 }
+/// Built-in skills have no scanned document, so their activation lives in a
+/// separate state file from user skills. The user-skill scan prunes missing
+/// documents and must not erase a built-in preference.
+const BUILTIN_SKILL_KIND: &str = "skill-builtins";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -143,6 +147,7 @@ pub struct UserSkillRegistry {
     /// Test seam: replaces the resolved global skills directory so the suite
     /// never reads the developer's real `~/.agents/skills`.
     global_skills_dir: Option<PathBuf>,
+    builtins: CapabilityState,
 }
 
 /// Place a single skill file at `target`, either as a copy or a symlink.
@@ -230,6 +235,25 @@ fn clip(value: &str, max_chars: usize) -> String {
 
 fn valid_id(id: &str) -> bool {
     valid_capability_id(id, 64)
+}
+
+fn normalize_builtin_skill_id(id: &str) -> Result<String> {
+    let id = id.trim();
+    let valid_segment = |segment: &str| {
+        !segment.is_empty()
+            && segment.len() <= 64
+            && segment.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    let Some((namespace, name)) = id.split_once('/') else {
+        bail!("SKILL_INVALID: invalid builtin skill id");
+    };
+    if id.len() > 129 || !valid_segment(namespace) || !valid_segment(name) {
+        bail!("SKILL_INVALID: invalid builtin skill id");
+    }
+    Ok(id.to_string())
 }
 
 fn render_document(name: &str, description: Option<&str>, body: &str) -> String {
@@ -794,6 +818,7 @@ impl UserSkillRegistry {
             state: CapabilityState::new(data_dir, SKILL_KIND),
             roots: SkillRoots::new(data_dir),
             global_skills_dir: None,
+            builtins: CapabilityState::new(data_dir, BUILTIN_SKILL_KIND),
         }
     }
 
@@ -827,6 +852,26 @@ impl UserSkillRegistry {
 
     pub fn remove_root(&mut self, path: &str) -> Result<Vec<String>> {
         self.roots.remove(path)
+    }
+
+    /// Built-in skill ids switched off by the user. They are global and default
+    /// to enabled; ids remain stored if a later release temporarily omits one.
+    pub fn disabled_builtins(&self) -> Vec<String> {
+        self.builtins
+            .disabled_ids(BUILTIN_SKILL_KIND, CapabilityLevel::Global)
+    }
+
+    /// Set one built-in skill's global activation state.
+    pub fn set_builtin_enabled(&mut self, id: &str, enabled: bool) -> Result<String> {
+        let id = normalize_builtin_skill_id(id)?;
+        self.builtins.set_enabled(
+            BUILTIN_SKILL_KIND,
+            CapabilityLevel::Global,
+            &id,
+            None,
+            enabled,
+        )?;
+        Ok(id)
     }
 
     fn scan_level(
@@ -1424,8 +1469,7 @@ fn scope_for(level: CapabilityLevel, project_path: Option<&str>) -> ActivationSc
 }
 
 mod package_sync;
-/// Package bounds are asserted in their own module: `tests.rs` is close to the
-/// rust file-size limit, and these tests share one fixture.
+/// 技能包边界用例独立组织，并共用一个测试夹具。
 #[cfg(test)]
 mod package_tests;
 
@@ -1649,6 +1693,60 @@ mod tests {
             .join("agent-capabilities/skills.json")
             .to_string_lossy()
             .contains(".agents"));
+    }
+
+    #[test]
+    fn builtin_activation_defaults_on_persists_and_is_separate_from_scanned_skills() {
+        let app = tempdir().unwrap();
+        let agents = tempdir().unwrap();
+        let mut registry = UserSkillRegistry::new(app.path())
+            .with_global_skills_dir(agents.path().join("skills"));
+        assert!(registry.disabled_builtins().is_empty());
+
+        registry
+            .set_builtin_enabled("pi-desktop/imagegen", false)
+            .unwrap();
+        assert_eq!(
+            registry.disabled_builtins(),
+            vec!["pi-desktop/imagegen".to_string()]
+        );
+
+        registry.list(CapabilityLevel::Global, None).unwrap();
+        let mut reopened = UserSkillRegistry::new(app.path())
+            .with_global_skills_dir(agents.path().join("skills"));
+        reopened.list(CapabilityLevel::Global, None).unwrap();
+        assert_eq!(
+            reopened.disabled_builtins(),
+            vec!["pi-desktop/imagegen".to_string()]
+        );
+        assert!(app
+            .path()
+            .join("agent-capabilities/skill-builtins.json")
+            .is_file());
+
+        reopened
+            .set_builtin_enabled("pi-desktop/imagegen", true)
+            .unwrap();
+        assert!(reopened.disabled_builtins().is_empty());
+    }
+
+    #[test]
+    fn builtin_activation_rejects_invalid_ids() {
+        let app = tempdir().unwrap();
+        let mut registry = UserSkillRegistry::new(app.path());
+        for id in [
+            "",
+            "imagegen",
+            "PI-Desktop/imagegen",
+            "pi-desktop/",
+            "pi-desktop/imagegen/extra",
+        ] {
+            assert!(
+                registry.set_builtin_enabled(id, false).is_err(),
+                "accepted {id:?}"
+            );
+        }
+        assert!(registry.disabled_builtins().is_empty());
     }
 
     #[test]

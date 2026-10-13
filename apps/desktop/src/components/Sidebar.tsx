@@ -55,11 +55,6 @@ import type {
   ProjectMeta,
   SessionSort,
 } from "../lib/sidebar-preferences";
-import {
-  clampSidebarWidth,
-  SIDEBAR_WIDTH_MAX,
-  SIDEBAR_WIDTH_MIN,
-} from "../lib/sidebar-preferences";
 import { BrandLogo } from "./BrandLogo";
 import { NotificationCenter } from "./NotificationCenter";
 import { ProjectEditDialog } from "./ProjectEditDialog";
@@ -96,6 +91,7 @@ const SESSION_LOAD_MORE_COUNT = 5;
 
 type ProjectEntry = {
   path: string;
+  displayPath?: string;
   key: string;
   name: string;
   sessions: SessionSummary[];
@@ -106,18 +102,8 @@ type ProjectEntry = {
   branch?: string;
 };
 
-const SIDEBAR_RESIZE_STEP = 16;
 /** Private MIME so a sidebar session drag is never mistaken for an OS file drop. */
 const SESSION_DRAG_MIME = "application/x-pi-desktop-session";
-
-type SidebarResizeState = {
-  pointerId: number;
-  startX: number;
-  startWidth: number;
-  currentWidth: number;
-  frame: number;
-  handle: HTMLDivElement;
-};
 
 type ProjectReorderPointerState = {
   pointerId: number;
@@ -135,10 +121,6 @@ type ProjectReorderPointerState = {
   onUp: (event: PointerEvent) => void;
   onCancel: (event: PointerEvent) => void;
 };
-
-function clearSidebarResizeStyles(): void {
-  document.documentElement.removeAttribute("data-sidebar-resizing");
-}
 
 function projectName(path: string, fallback?: string) {
   if (fallback?.trim()) return fallback.trim();
@@ -194,9 +176,6 @@ function compareOptionalDate(
 export function Sidebar({
   onToggleSidebar,
   sidebarToggleShortcut,
-  sidebarWidth,
-  onWidthChange,
-  onWidthCommit,
   className,
   onAnimationEnd,
 }: {
@@ -289,7 +268,6 @@ export function Sidebar({
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
   const [dropProjectKey, setDropProjectKey] = useState<string | null>(null);
   const [projectsDropActive, setProjectsDropActive] = useState(false);
-  const [sidebarResizing, setSidebarResizing] = useState(false);
   const [draggingProjectKey, setDraggingProjectKey] = useState<string | null>(null);
   const [dropIndicator, setDropIndicator] = useState<{ key: string; insertAfter: boolean } | null>(null);
   const [windowFocused, setWindowFocused] = useState(true);
@@ -297,7 +275,6 @@ export function Sidebar({
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const menuFirstItemRef = useRef<HTMLButtonElement | null>(null);
   const sessionPrefetchTimerRef = useRef<number | undefined>(undefined);
-  const sidebarResizeRef = useRef<SidebarResizeState | null>(null);
   const projectReorderRef = useRef<ProjectReorderPointerState | null>(null);
   const suppressProjectTitleClickRef = useRef(false);
   const projectEntriesRef = useRef<ProjectEntry[]>([]);
@@ -306,104 +283,6 @@ export function Sidebar({
     targetKey: string,
     insertAfter: boolean,
   ) => void>(() => {});
-
-  const finishSidebarResize = useCallback((cancelled: boolean) => {
-    const state = sidebarResizeRef.current;
-    if (!state) return;
-    if (cancelled) {
-      onWidthChange(state.startWidth);
-    } else {
-      onWidthChange(state.currentWidth);
-      onWidthCommit(state.currentWidth);
-    }
-    sidebarResizeRef.current = null;
-    if (state.frame) cancelAnimationFrame(state.frame);
-    clearSidebarResizeStyles();
-    if (state.handle.hasPointerCapture(state.pointerId)) {
-      state.handle.releasePointerCapture(state.pointerId);
-    }
-    setSidebarResizing(false);
-  }, [onWidthChange, onWidthCommit]);
-
-  const startSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 || sidebarResizeRef.current) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.focus({ preventScroll: true });
-    const startWidth = clampSidebarWidth(sidebarWidth);
-    sidebarResizeRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startWidth,
-      currentWidth: startWidth,
-      frame: 0,
-      handle: event.currentTarget,
-    };
-    setSidebarResizing(true);
-    document.documentElement.setAttribute("data-sidebar-resizing", "true");
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }, [sidebarWidth]);
-
-  const moveSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const state = sidebarResizeRef.current;
-    if (!state || state.pointerId !== event.pointerId) return;
-    const nextWidth = clampSidebarWidth(state.startWidth + event.clientX - state.startX);
-    state.currentWidth = nextWidth;
-    if (state.frame) return;
-    state.frame = requestAnimationFrame(() => {
-      if (sidebarResizeRef.current !== state) return;
-      state.frame = 0;
-      onWidthChange(state.currentWidth);
-    });
-  }, [onWidthChange]);
-
-  const endSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (sidebarResizeRef.current?.pointerId !== event.pointerId) return;
-    finishSidebarResize(false);
-  }, [finishSidebarResize]);
-
-  const cancelSidebarResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (sidebarResizeRef.current?.pointerId !== event.pointerId) return;
-    finishSidebarResize(true);
-  }, [finishSidebarResize]);
-
-  const handleSidebarResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const currentWidth = clampSidebarWidth(sidebarWidth);
-    const nextWidth = event.key === "Home"
-      ? SIDEBAR_WIDTH_MIN
-      : event.key === "End"
-        ? SIDEBAR_WIDTH_MAX
-        : clampSidebarWidth(
-            currentWidth + (event.key === "ArrowRight" ? SIDEBAR_RESIZE_STEP : -SIDEBAR_RESIZE_STEP),
-          );
-    if (nextWidth === currentWidth) return;
-    onWidthCommit(nextWidth);
-  }, [onWidthCommit, sidebarWidth]);
-
-  useEffect(() => {
-    if (!sidebarResizing) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      finishSidebarResize(true);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [finishSidebarResize, sidebarResizing]);
-
-  useEffect(() => {
-    return () => {
-      const state = sidebarResizeRef.current;
-      if (!state) return;
-      if (state.frame) cancelAnimationFrame(state.frame);
-      onWidthChange(state.startWidth);
-      clearSidebarResizeStyles();
-      sidebarResizeRef.current = null;
-    };
-  }, [onWidthChange]);
 
   // Mirror window focus onto the sidebar; a blurred window can keep CSS :hover
   // latched on the row under the cursor.
@@ -682,6 +561,8 @@ export function Sidebar({
       const meta = projectMetaFor(rawPath, projectMeta);
       byPath.set(normalized, {
         path: rawPath,
+        displayPath: openProjects.find((project) => normalizeProjectPath(project.path) === normalized)?.remote?.path
+          ?? (normalizeProjectPath(workspace?.path) === normalized ? workspace?.remote?.path : undefined),
         key: normalized,
         name: projectName(rawPath, meta.name ?? name),
         sessions: [],
@@ -1356,14 +1237,9 @@ export function Sidebar({
     setSelectedIds(new Set());
   };
 
-  /** Menu items of different surfaces never share an armed key. */
+  /** 菜单独立记录项目删除的二次点击状态。 */
   const projectDeleteKey = (entry: ProjectEntry) => `project:${entry.key}`;
 
-  /**
-   * Two-step delete for a project row that keeps the running-task safety. The
-   * second click deletes an idle project straight away; a project whose turn is
-   * still live opens the dialog that names those sessions and stops them.
-   */
   const requestDeleteProject = async (entry: ProjectEntry) => {
     const key = projectDeleteKey(entry);
     if (armedDelete !== key) {
@@ -1380,7 +1256,6 @@ export function Sidebar({
       await deleteProjectAction(entry.path);
       showToast(t("project.deleted", { name: entry.name }), { variant: "success" });
     } catch (error) {
-      // The host refuses a project whose task started after this render.
       reportError(
         (error as { errorCode?: unknown } | null)?.errorCode === ErrorCodes.CONFLICT
           ? new Error(t("project.deleteRunningBlocked"))
@@ -1904,7 +1779,7 @@ export function Sidebar({
             type="button"
             id={projectId}
             className="sidebar-session-group-title project-toggle"
-            tooltip={entry.path}
+            tooltip={entry.displayPath ?? entry.path}
             tooltipDelayMs={500}
             tooltipClassName="ui-tooltip-path"
             ariaLabel={entry.name}
@@ -1946,7 +1821,7 @@ export function Sidebar({
             {entry.active ? <span className="sidebar-project-active-dot" aria-label={t("project.active", { defaultValue: "Active" })} /> : null}
           </TooltipButton>
           <span id={`${projectId}-path-description`} className="sr-only">
-            {entry.path}
+            {entry.displayPath ?? entry.path}
             {". "}
             {t("project.reorder", { name: entry.name, defaultValue: "Reorder {{name}}" })}
           </span>
@@ -2634,7 +2509,17 @@ export function Sidebar({
         <ProjectEditDialog
           project={editProjectFor}
           onClose={() => setEditProjectFor(null)}
-          onSaved={(group) => editProjectEntry(editProjectFor, group.name)}
+          onSaved={(group) => {
+            editProjectEntry(editProjectFor, group.name);
+            // A promoted primary owns the group name from now on, so the entry
+            // that opens there later already carries it.
+            if (
+              normalizeProjectPath(editProjectFor.path) !==
+              normalizeProjectPath(group.primaryPath)
+            ) {
+              renameProject(group.primaryPath, group.name);
+            }
+          }}
           onError={reportError}
         />
       ) : null}
@@ -2658,23 +2543,6 @@ export function Sidebar({
           onError={reportError}
         />
       ) : null}
-      <div
-        className={cx("sidebar-resize-handle no-drag", sidebarResizing && "is-resizing")}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label={t("nav.resizeSidebar")}
-        aria-valuemin={SIDEBAR_WIDTH_MIN}
-        aria-valuemax={SIDEBAR_WIDTH_MAX}
-        aria-valuenow={clampSidebarWidth(sidebarWidth)}
-        aria-valuetext={t("nav.sidebarWidth", { width: clampSidebarWidth(sidebarWidth) })}
-        tabIndex={0}
-        onPointerDown={startSidebarResize}
-        onPointerMove={moveSidebarResize}
-        onPointerUp={endSidebarResize}
-        onPointerCancel={cancelSidebarResize}
-        onLostPointerCapture={cancelSidebarResize}
-        onKeyDown={handleSidebarResizeKeyDown}
-      />
     </aside>
   );
 }

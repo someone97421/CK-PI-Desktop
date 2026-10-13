@@ -56,31 +56,32 @@ try {
     await pnpm(["run", "build:deps"], desktop);
     await pnpm(["-C", "../../packages/agent-runtime", "bundle"], desktop);
   } else if (mode === "pi-host") {
-    // pi-host 远控主机包：JS 与 sidecar 在本机构建。linux-x64 目标在本机
-    // （Linux x64）构建时随本入口同步 cargo 编译当前 stamp 版本的
-    // host-core；其他主机必须经 THIS_IS_A_AGENT_PI_HOST_CORE 提供交叉
-    // 构建产物，bundle.mjs 会再校验 ELF x64，防止装错平台二进制。
+    // 主机包随当前 Linux/macOS 原生平台与架构构建，并自带当前 Node 22+。
+    const platform = process.platform;
+    const arch = process.arch;
+    if (!["linux", "darwin"].includes(platform) || !["x64", "arm64"].includes(arch) || Number(process.versions.node.split(".")[0]) < 22) {
+      throw new Error("pi-host 需在 Linux/macOS x64/arm64 上使用 Node 22+ 原生构建");
+    }
     await pnpm(["--filter", "@pi-desktop/pi-host^...", "build"]);
     await pnpm(["--filter", "@pi-desktop/agent-runtime", "bundle"]);
     await pnpm(["--filter", "@pi-desktop/pi-host", "build"]);
-    const nativeLinuxX64 = process.platform === "linux" && process.arch === "x64";
-    if (nativeLinuxX64 && !process.env.THIS_IS_A_AGENT_PI_HOST_CORE?.trim()) {
+    if (!process.env.THIS_IS_A_AGENT_PI_HOST_CORE?.trim()) {
       await run("cargo", ["build", "--release", "-p", "host-core"]);
     }
     const hostCoreRaw = process.env.THIS_IS_A_AGENT_PI_HOST_CORE?.trim()
-      || (nativeLinuxX64 ? join(root, "target/release/pi-desktop-host-core") : "");
+      || join(root, "target/release/pi-desktop-host-core");
     const hostCore = hostCoreRaw ? resolve(hostCoreRaw) : "";
     if (!hostCore || !existsSync(hostCore)) {
-      throw new Error(`缺少 linux-x64 host-core 二进制：${hostCore || "未指定"}；请通过 THIS_IS_A_AGENT_PI_HOST_CORE 提供交叉构建产物`);
+      throw new Error(`缺少 ${platform}-${arch} host-core 二进制：${hostCore}；THIS_IS_A_AGENT_PI_HOST_CORE 必须指向匹配本机平台与架构的产物`);
     }
-    const bundleName = `pi-host-${stamp.version}-linux-x64`;
+    const bundleName = `pi-host-${stamp.version}-${platform}-${arch}`;
     const outputDirectory = resolve(root, process.env.THIS_IS_A_AGENT_OUTPUT_DIR?.trim() || join(root, "release"));
     await mkdir(outputDirectory, { recursive: true });
     const staging = await mkdtemp(join(outputDirectory, `.building-pi-host-${stamp.displayVersion}-`));
     const completed = join(outputDirectory, basename(staging).replace(/^\.building-/, ""));
     try {
       await run(process.execPath, [join(root, "apps/pi-host/scripts/bundle.mjs"),
-        "--host-core", hostCore, "--platform", "linux", "--arch", "x64", "--out", join(staging, bundleName)], root);
+        "--host-core", hostCore, "--platform", platform, "--arch", arch, "--out", join(staging, bundleName)], root);
       await run("tar", ["-czf", join(staging, `${bundleName}.tar.gz`), "-C", staging, bundleName], root);
       const digest = createHash("sha256").update(await readFile(join(staging, `${bundleName}.tar.gz`))).digest("hex");
       await writeFile(join(staging, `${bundleName}.tar.gz.sha256`), `${digest}  ${bundleName}.tar.gz\n`);

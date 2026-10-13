@@ -180,7 +180,7 @@ function useResolveChatFileRef() {
       const anchored = relative ? toWorkspaceRel(raw, workspacePath, baseDir) : null;
       let result;
       try {
-        result = await api.fsResolveRef(anchored ?? raw, sessionId);
+        result = await api.fsResolveRef(anchored ?? raw, ownerId);
       } catch {
         if (!matchesFileContext(workspacePath, sessionId)) return null;
         showToast(t("chat.fileRefLookupFailed"), { variant: "error" });
@@ -258,8 +258,12 @@ export function useOpenChatFileRef() {
         const resolved = await resolveRef(path, baseDir);
         if (!resolved) return;
         if (!matchesFileContext(workspacePath, sessionId)) return;
+        const current = useAppStore.getState();
+        const remote = current.sessions.find((session) => session.id === sessionId)?.remoteWorkspace
+          ?? (!sessionId ? current.workspace?.remote : undefined);
         const hasPosition = line !== undefined || column !== undefined;
         if (
+          !remote &&
           !hasPosition &&
           resolved.inProject &&
           resolved.primary &&
@@ -269,7 +273,7 @@ export function useOpenChatFileRef() {
           openUrl(resolved.relativePath);
           return;
         }
-        if (resolved.inProject && !hasPosition) {
+        if (!remote && resolved.inProject && !hasPosition) {
           const available = await ensureFileManagerView(workspacePath, sessionId);
           if (!matchesFileContext(workspacePath, sessionId)) return;
           if (available) {
@@ -305,6 +309,8 @@ export function useOpenChatFileRef() {
 export function useRevealChatFileRef() {
   const { t } = useTranslation();
   const resolveRef = useResolveChatFileRef();
+  const paneSessionId = useSlotSessionId();
+  const sessionId = useAppStore((s) => paneSessionId || s.activeSessionId);
   const showToast = useAppStore((s) => s.showToast);
 
   return useCallback(
@@ -313,13 +319,13 @@ export function useRevealChatFileRef() {
         const resolved = await resolveRef(path, baseDir);
         if (!resolved) return;
         try {
-          await api.fsReveal(resolved.absolutePath);
+          await api.fsReveal(resolved.absolutePath, sessionId);
         } catch {
           showToast(t("chat.fileRevealFailed"), { variant: "error" });
         }
       })();
     },
-    [resolveRef, showToast, t],
+    [resolveRef, sessionId, showToast, t],
   );
 }
 

@@ -26,6 +26,7 @@
     "test:e2e:asktool-card": "node scripts/e2e-asktool-card.mjs",
     "test:e2e:scheduled": "node scripts/e2e-scheduled.mjs",
     "test:e2e:rpc-unicode": "node scripts/e2e-rpc-unicode.mjs",
+    "test:e2e:transcript-cache": "node scripts/e2e-transcript-cache.mjs",
     "test:e2e:plan": "node scripts/e2e-plan.mjs",
     "test:e2e:plan-history": "node scripts/e2e-plan-history.mjs",
     "test:e2e:plan-ui": "node scripts/e2e-plan-ui.mjs",

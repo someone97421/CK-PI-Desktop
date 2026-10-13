@@ -86,6 +86,6 @@ export function rpcTimeoutMs(
 ): number | undefined {
   if (method === "agent.compact") return AGENT_COMPACT_RPC_TIMEOUT_MS;
   if (method === "configSync.syncNow") return undefined;
-  if (method === "tools.execute") return undefined;
+  if (method === "tools.execute" || method === "tools.workspaceExecute") return undefined;
   return DEFAULT_RPC_TIMEOUT_MS;
 }

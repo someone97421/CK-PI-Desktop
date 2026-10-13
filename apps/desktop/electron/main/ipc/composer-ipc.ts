@@ -22,6 +22,7 @@ export type ComposerIpcDependencies = {
     name: string;
     description?: string;
   }>>;
+  disabledBuiltinSkills?: () => Promise<string[]>;
   pluginActiveInProject: (pluginId: string, projectPath: string | null | undefined) => boolean;
   loadComposerTemplatesCached: (root: string | null) => Promise<Array<{
     name: string;
@@ -41,6 +42,7 @@ export function createComposerCommandService({
   refreshUserMcp,
   agentExtensions,
   activeUserSkills,
+  disabledBuiltinSkills = async () => [],
   pluginActiveInProject,
   loadComposerTemplatesCached,
 }: Omit<ComposerIpcDependencies, "registrar" | "optionalWorkspaceRoot">): ComposerCommandService {
@@ -50,6 +52,7 @@ export function createComposerCommandService({
     const builtins = builtinSkills({
       workspacePath: root,
       pluginPaths: plugins.listLoaded().map((loaded) => loaded.path),
+      disabledIds: await disabledBuiltinSkills(),
     });
     const pluginSkills = plugins
       .getSkills()

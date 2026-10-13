@@ -250,7 +250,7 @@ export function useComposerAutocomplete({
     }
     let cancelled = false;
     void api
-      .fsIndex()
+      .fsIndex(scope)
       .then((res) => {
         filesCache = {
           key: workspaceKey,

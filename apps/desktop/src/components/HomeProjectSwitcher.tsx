@@ -76,12 +76,14 @@ export function HomeProjectSwitcher({
   const visible = useMemo(
     (): ProjectMenuEntry[] => [
       ...filterSwitcherProjects(projects, query).map((project) => ({ key: project.key, name: project.name,
-        title: project.path, localPath: project.path })),
+        title: openProjects.find((item) => item.path === project.path)?.remote?.path
+          ?? (workspace?.path === project.path ? workspace.remote?.path : undefined)
+          ?? project.path, localPath: project.path })),
       ...(remoteProjectsVisible ? remoteCatalog.projects : []).filter((project) => `${project.label} ${project.hostLabel}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
         .map((project) => ({ key: `remote:${project.key}`, name: `${project.label} · ${project.hostLabel}`,
           title: `${project.label} · ${project.hostLabel}`, remoteProject: project })),
     ],
-    [projects, query, remoteCatalog.projects, remoteProjectsVisible],
+    [projects, query, remoteCatalog.projects, openProjects, workspace, remoteProjectsVisible],
   );
   const activeKey = isRemoteSession(activeSession) && activeSession?.remoteHostKey && activeSession.remoteProjectId
     ? `remote:${remoteProjectKey(activeSession.remoteHostKey, activeSession.remoteProjectId)}`
@@ -238,7 +240,7 @@ export function HomeProjectSwitcher({
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={`${t("project.switchProject")}: ${name}`}
-          title={path || t("project.switchProject")}
+          title={(workspace?.path === path ? workspace?.remote?.path : undefined) || path || t("project.switchProject")}
           disabled={busy}
           onClick={() => {
             if (open) {

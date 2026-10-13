@@ -135,6 +135,12 @@ const previewTarget = loadModule("../src/hooks/use-preview-target.ts", {
   "../lib/work-panel-tabs": loadModule("../src/lib/work-panel-tabs.ts", {}),
 });
 
+const nativeCapability = loadModule("../src/hooks/use-chat-session-capability.ts", {
+  "../lib/remote-session-safety": loadModule("../src/lib/remote-session-safety.ts", {}),
+  "../plugins/renderer-slots/use-slots": { useSlotSessionId: () => "" },
+  "../stores/app-store": { useAppStore },
+});
+
 const { useChatFileMenu, useChatFileMenuItems } = loadModule(
   "../src/hooks/use-chat-file-menu.tsx",
   {
@@ -150,6 +156,7 @@ const { useChatFileMenu, useChatFileMenuItems } = loadModule(
       }),
     },
     "./use-preview-target": previewTarget,
+    "./use-chat-session-capability": nativeCapability,
   },
 );
 
@@ -421,4 +428,14 @@ test("the reference labels ship in the catalogs the menu reads", () => {
   assert.match(zhCN, /fileRevealFailed: "无法在文件夹中打开该文件。"/);
   assert.match(zhCN, /copyFullPath: "复制完整地址"/);
   assert.match(zhCN, /copyRelativePath: "复制相对地址"/);
+});
+
+test("remote workspace references retain copy actions but never offer local OS reveal", () => {
+  const before = state.sessions;
+  state.sessions = [{ id: state.activeSessionId, remoteWorkspace: { hostKey: "ssh", path: "/work/app" } }];
+  let items;
+  function Harness() { items = useChatFileMenuItems()({ path: "README.md" }); return null; }
+  renderToStaticMarkup(React.createElement(Harness));
+  assert.deepEqual(items.map(item => item.id), ["copy-full-path", "copy-relative-path"]);
+  state.sessions = before;
 });

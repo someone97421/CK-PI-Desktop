@@ -46,6 +46,8 @@ import type { RuntimeProvider } from "./provider-catalog";
 import { getSessionCompactionModel } from "./session-compaction-models";
 import { resolveSessionWorkspace } from "./session-workspace";
 import type { LoadedSkillDocument } from "../skill-document";
+import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts";
+import { loadRemoteWorkspaceInstructions } from "../remote/remote-workspace-instructions.js";
 
 const ErrorCodes = {
   ...SharedErrorCodes,
@@ -214,6 +216,26 @@ export function createSessionLaunchRuntime({
     }
   }
 
+  /** Built-in skill activation is host-owned and defaults on. */
+  async function disabledBuiltinSkills(): Promise<string[]> {
+    if (!runtimeState.host?.isAvailable()) {
+      throw new Error("host unavailable while reading built-in skill activation");
+    }
+    try {
+      const result = await runtimeState.host!.call<{ disabled: string[] }>(
+        "skills.disabledBuiltins",
+      );
+      return result.disabled ?? [];
+    } catch (error) {
+      if (!isHostUnavailable(error)) {
+        logger.app("plugin", "warn", "builtin skill state failed", {
+          data: String(error),
+        });
+      }
+      throw error;
+    }
+  }
+
   /**
    * Load one of the user's own skill documents by id, or `null` if there is no
    * such skill — so the caller can fall through to the plugin catalog.
@@ -329,7 +351,12 @@ export function createSessionLaunchRuntime({
   ) {
     if (!runtimeState.host) throw new Error("host unavailable");
     await modelsDevCatalog.ensureLoaded();
-    const commandShell = (await resolveEffectiveCommandShell()).effective!;
+    const remoteWorkspace = session.remoteWorkspace as { hostKey: string; path: string } | undefined;
+    const remoteBoot = remoteWorkspace ? getActiveRemoteHostsBoot() : null;
+    if (remoteWorkspace && !remoteBoot) throw new Error("remote host unavailable");
+    const commandShell = remoteWorkspace
+      ? await remoteBoot!.workspaceCommandShell(remoteWorkspace.hostKey)
+      : (await resolveEffectiveCommandShell()).effective!;
     const providers = await runtimeState.host!.call<{ providers: RuntimeProvider[] }>(
       "providers.list",
       { includeDisabled: false },
@@ -444,10 +471,16 @@ export function createSessionLaunchRuntime({
       : await resolveCompactionProvider(providers.providers, settings);
     const projectPath =
       session.projectPath?.trim() || session.temporaryWorkspacePath?.trim() || undefined;
-    let projectInstructions = await loadInstructionChain(projectPath);
+    const localInstructionRoot = remoteWorkspace ? undefined : projectPath;
+    let projectInstructions = await loadInstructionChain(localInstructionRoot);
+    if (remoteWorkspace) {
+      projectInstructions = await loadRemoteWorkspaceInstructions(
+        remoteBoot!.workspaceFiles, remoteWorkspace, projectInstructions,
+      );
+    }
     // pi-compatible SYSTEM.md / APPEND_SYSTEM.md (issue #542): resolved once
     // per launch; a change retires the runtime through the reuse match.
-    const customSystemPrompt = await loadCustomSystemPrompt(projectPath);
+    const customSystemPrompt = await loadCustomSystemPrompt(localInstructionRoot);
     let projectMemory: string | undefined;
     if (session.projectPath && projectPath) {
       try {
@@ -520,6 +553,7 @@ export function createSessionLaunchRuntime({
       ...builtinSkills({
         workspacePath: projectPath,
         pluginPaths: plugins.listLoaded().map((loaded) => loaded.path),
+        disabledIds: await disabledBuiltinSkills(),
       }),
       ...plugins
         .getSkills()
@@ -540,7 +574,7 @@ export function createSessionLaunchRuntime({
     // pinned model is resolved here because credentials and the models.dev catalog
     // live on this side. The user's own definitions (D202) are scope-filtered like the
     // skills above; a delegate the model can see is one it will try to call.
-    const subagentCatalog = await loadSubagentDefinitions(projectPath, {
+    const subagentCatalog = await loadSubagentDefinitions(localInstructionRoot, {
       userDocuments: await activeUserSubagentDocuments(projectPath),
       // A switched-off builtin is dropped from what this prompt may delegate to.
       disabledBuiltins: await disabledBuiltinSubagents(),
@@ -723,6 +757,7 @@ export function createSessionLaunchRuntime({
         scratchDir: join(dataDir, "scratch", sessionId),
         attachmentsDir: join(dataDir, "attachments"),
         projectPath,
+        ...(remoteWorkspace ? { remoteWorkspace } : {}),
         customSystemPrompt,
         projectInstructions,
         projectMemory,
@@ -794,6 +829,7 @@ export function createSessionLaunchRuntime({
     activeUserSkills,
     activeUserSubagentDocuments,
     disabledBuiltinSubagents,
+    disabledBuiltinSkills,
     loadUserSkillBody,
     resolveEffectiveCommandShell,
     resolveAgentRuntimeLaunch,

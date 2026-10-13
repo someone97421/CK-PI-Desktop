@@ -608,7 +608,7 @@ export function useComposerDraft({
     try {
       const state = useAppStore.getState();
       if (!sessionAllows(state.sessions.find((item) => item.id === sourceSessionId), "canAttach")) return;
-      const result = await api.fsRead(reference.path, reference.mimeType);
+      const result = await api.fsRead(reference.path, reference.mimeType, sourceSessionId);
       if (result.kind !== "text" || result.content === undefined) {
         const message =
           result.kind === "tooLarge"

@@ -169,6 +169,7 @@ export function FilesTab() {
     }).catch(() => undefined);
     return () => { canceled = true; };
   }, [sessionId, activeSession]);
+  const remote = activeSession ? activeSession.remoteWorkspace : draftKind === "temporary" ? undefined : workspace?.remote;
 
   const [dirs, setDirs] = useState<Record<string, DirState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -255,13 +256,13 @@ export function FilesTab() {
   }, [file, selectedLine]);
 
   const openMp4 = useCallback(async () => {
-    if (!selected) return;
+    if (!selected || remote) return;
     try {
       await api.fsOpen(selected, selectedMimeType, scope);
     } catch {
       showToast(t("panel.files.openFailed"), { variant: "error" });
     }
-  }, [selected, selectedMimeType, scope, showToast, t]);
+  }, [selected, selectedMimeType, scope, showToast, t, remote]);
 
   // Chat-initiated previews: open the file and expand its ancestor folders
   // so "back" lands on a tree that reveals it. Attachment blobs and absolute
@@ -377,7 +378,7 @@ export function FilesTab() {
             {selected}
           </span>
           {file && <span className="file-viewer-size">{formatSize(file.size)}</span>}
-          <TooltipButton
+          {!remote ? <TooltipButton
             type="button"
             className="icon-btn icon-btn-square"
             tooltip={t("panel.files.reveal")}
@@ -385,7 +386,7 @@ export function FilesTab() {
             onClick={() => void api.fsReveal(selected, scope)}
           >
             <IconExternal size={14} />
-          </TooltipButton>
+          </TooltipButton> : null}
         </div>
         <div className="file-viewer-body" ref={viewerBodyRef}>
           {fileError ? (
@@ -414,7 +415,7 @@ export function FilesTab() {
                   : t("panel.files.binary")
               }
             >
-              {isMp4(selected, selectedMimeType) && (
+              {!remote && isMp4(selected, selectedMimeType) && (
                 <Button type="button" onClick={() => void openMp4()}>
                   {t("chat.openFile")}
                 </Button>

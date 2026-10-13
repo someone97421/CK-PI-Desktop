@@ -88,7 +88,10 @@ test("a file chip is routed by where the reference resolved, never optimisticall
   // The OS handoff is no longer what a chat click does; the channel itself
   // stays part of the public IPC surface.
   assert.doesNotMatch(hook, /api\.fsOpen\(/);
-  assert.match(api, /fsOpen: \(path: string, mimeType\?: string\) =>\s*invoke\(IPC\.invoke\.fsOpen, \{ path, mimeType \}\)/);
+  assert.match(
+    api,
+    /fsOpen: \(path: string, mimeType\?: string, sessionId\?: string\) =>\s*invoke\(IPC\.invoke\.fsOpen, \{ path, mimeType, \.\.\.\(sessionId \? \{ sessionId \} : \{\}\) \}\)/,
+  );
 });
 
 test("Markdown file anchors use the same project-file opener as inline references", () => {

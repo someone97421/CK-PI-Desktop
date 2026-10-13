@@ -361,12 +361,14 @@ export function createTranscriptSlice({
       if (!canEdit()) return;
       const sessionId = get().activeSessionId;
       if (!sessionId || get().isRunning) return;
+      const liveMessages = get().messages;
       const fullMessages = await runtime.loadFullSessionMessages(sessionId);
       if (!fullMessages || get().activeSessionId !== sessionId) return;
+      const merged = mergeLiveSessionMessages(fullMessages, liveMessages);
       set((current) =>
         current.activeSessionId === sessionId
           ? {
-              messages: fullMessages,
+              messages: merged,
               sessionHistory: {
                 ...current.sessionHistory,
                 [sessionId]: { messageStart: 0, hasMoreBefore: false },

@@ -18,6 +18,7 @@ import { useCallback, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useContextMenu, type ContextMenuItem } from "../components/ContextMenu";
 import { IconCopy, IconFolderOpen } from "../components/icons";
+import { useChatNativeFilesAllowed } from "./use-chat-session-capability";
 import { useCopyChatFileRef, useRevealChatFileRef } from "./use-preview-target";
 
 export type ChatFileMenuTarget = {
@@ -29,21 +30,22 @@ export type ChatFileMenuTarget = {
 
 export function useChatFileMenuItems() {
   const { t } = useTranslation();
+  const nativeFilesAllowed = useChatNativeFilesAllowed();
   const revealFileRef = useRevealChatFileRef();
   const copyFileRef = useCopyChatFileRef();
   return useCallback(
     ({ path, baseDir }: ChatFileMenuTarget): ContextMenuItem[] => [
-      {
+      ...(nativeFilesAllowed ? [{
         id: "reveal-in-folder",
         label: t("chat.revealFileInFolder"),
         icon: <IconFolderOpen size={14} />,
         onSelect: () => revealFileRef(path, baseDir),
-      },
+      }] : []),
       {
         id: "copy-full-path",
         label: t("chat.copyFullPath"),
         icon: <IconCopy size={14} />,
-        separatorBefore: true,
+        separatorBefore: nativeFilesAllowed,
         onSelect: () => copyFileRef(path, baseDir, "absolute"),
       },
       {
@@ -53,7 +55,7 @@ export function useChatFileMenuItems() {
         onSelect: () => copyFileRef(path, baseDir, "relative"),
       },
     ],
-    [copyFileRef, revealFileRef, t],
+    [copyFileRef, nativeFilesAllowed, revealFileRef, t],
   );
 }
 

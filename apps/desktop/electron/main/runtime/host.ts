@@ -8,6 +8,8 @@ import type { UserMcpRuntime } from "../user-mcp";
 import type { RuntimeState } from "./context";
 import type { FinishTurn } from "./plans";
 import { resolveSessionWorkspace } from "./session-workspace";
+import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts";
+import { createRemoteWorkspaceToolRelay, type RemoteWorkspaceToolRequest } from "../remote/remote-workspace-tools";
 
 export type HostRuntimeDependencies = {
   runtimeState: RuntimeState;
@@ -74,11 +76,25 @@ export function createHostRuntime({
   startHost: () => Promise<void>;
 } {
   const wireHost = (h: HostProcess) => {
+  const remoteTools = createRemoteWorkspaceToolRelay(h, {
+    getBoot: getActiveRemoteHostsBoot,
+    isCurrent: () => runtimeState.host === h,
+    isTurnDispatchable: (sessionId, turnId) => isTurnDispatchable(sessionId, turnId),
+    log: (message, error) => logger.app("diagnostics", "warn", message, { data: String(error) }),
+  });
 
   h.onNotification((method, params) => {
     // Notifications from a previous host generation must never reach the
     // current plugin/renderer bridge after a restart.
     if (runtimeState.host !== h) return;
+    if (method === "tools.remoteExecute") {
+      void remoteTools.execute(params as RemoteWorkspaceToolRequest);
+      return;
+    }
+    if (method === "tools.remoteAbort") {
+      remoteTools.cancel(params as { sessionId: string; toolCallId: string });
+      return;
+    }
     // An install reports itself, so the dialog that shows it can follow the
     // phases, the mirror being tried and the bytes that have arrived. Nothing
     // here decides anything: the request's own answer is still the outcome.
@@ -328,6 +344,7 @@ export function createHostRuntime({
     }
   });
   h.onExit(({ code, signal, intentional }) => {
+    remoteTools.dispose();
     if (runtimeState.host !== h) return;
     logger.flushChild("host");
     runtimeState.host = null;

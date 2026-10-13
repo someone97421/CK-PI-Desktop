@@ -172,6 +172,42 @@ test("a failed capture releases resizing and does not poison the next capture", 
   assert.equal((await next).data, "fixture-image");
 });
 
+for (const raw of [false, true]) {
+  test(`${raw ? "raw CDP" : "browser screenshot"} timeout releases the queue for the next capture`, async (t) => {
+    const { host, wc } = await harness(t);
+    const capture = () => raw
+      ? host.cdpCommand("Page.captureScreenshot", { format: "png" })
+      : host.screenshot();
+    const setTimeout = globalThis.setTimeout;
+    let expire;
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      assert.equal(delay, 30_000);
+      expire = () => callback(...args);
+      return 1;
+    };
+    t.after(() => { globalThis.setTimeout = setTimeout; });
+    const failed = assert.rejects(
+      capture(),
+      (error) => {
+        assert.match(error.message, /browser screenshot timed out after 30000ms/);
+        assert.equal(error.code, "TIMEOUT");
+        return true;
+      },
+    );
+    await once(wc, "capture-start");
+    expire();
+
+    await failed;
+    assert.equal(wc.debugger.isAttached(), false, "detach the stalled CDP session");
+    wc.captures[0].reject(new Error("debugger detached"));
+    const nextStarted = once(wc, "capture-start");
+    const next = capture();
+    await nextStarted;
+    wc.captures[1].resolve();
+    assert.equal((await next).data, "fixture-image");
+  });
+}
+
 test("overlapping capture APIs serialize per page, not across sibling tabs", async (t) => {
   const { host, resize, wc } = await harness(t);
   const started = once(wc, "capture-start");

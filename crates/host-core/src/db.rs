@@ -32,7 +32,10 @@ pub(crate) use migrations::{
 };
 pub(crate) use model::PlanWorkRow;
 pub use model::{Database, ProjectMemoryEntryRecord, ProjectMemoryRecord, ProjectRecord};
-pub use project_groups::{ProjectGroupContextRecord, ProjectGroupRecord, ProjectGroupRoot};
+pub use project_groups::{
+    ProjectGroupContextRecord, ProjectGroupRecord, ProjectGroupRoot, RemoteWorkspace,
+    REMOTE_PROJECT_PREFIX,
+};
 pub(crate) use repositories::{
     canonical_project_path, normalize_project_path, project_display_name,
     strip_obsolete_plan_approval_permission_mode, upsert_project_row, MAX_PROJECT_MEMORY_BYTES,

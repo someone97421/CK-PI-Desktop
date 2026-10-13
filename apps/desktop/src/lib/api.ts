@@ -106,6 +106,7 @@ import type {
   SessionCollaborationSummary,
   TraySessionPreferences,
   ToolPermissionResolution,
+  BuiltinSkillRecord,
   UserSkillInput,
   UserSkillRecord,
   UserSubagentInput,
@@ -609,6 +610,10 @@ function normalizePlansChangedEvent(value: unknown): PlanningStateEvent {
   };
 }
 
+type FileWorkspaceScope = { sessionId?: string; temporaryWorkspacePath?: string | null };
+const fileWorkspaceScope = (scope?: string | FileWorkspaceScope): FileWorkspaceScope =>
+  typeof scope === "string" ? { sessionId: scope } : scope ?? {};
+
 export const api = {
   getVersion: () => invoke<AppVersionInfo>(IPC.invoke.appGetVersion),
   health: () => invoke<HostHealth>(IPC.invoke.appHealth),
@@ -912,15 +917,25 @@ export const api = {
     invoke<{ projects: ProjectRecord[] }>(IPC.invoke.projectList),
   listProjectGroups: () =>
     invoke<{ groups: ProjectGroupRecord[] }>(IPC.invoke.projectGroupList),
+  createRemoteProjectGroup: (name: string, hostKey: string, path: string) =>
+    invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupCreateRemote, { name, hostKey, path }),
   createProjectGroup: (name: string, folders: string[]) =>
     invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupCreate, { name, folders }),
   renameProjectGroup: (groupId: string, name: string) =>
     invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupRename, { groupId, name }),
-  updateProjectGroup: (groupId: string, name: string, folders: string[]) =>
+  // `primary` names the folder that becomes the group's primary root; the host
+  // keeps the stored one when it is omitted.
+  updateProjectGroup: (
+    groupId: string,
+    name: string,
+    folders: string[],
+    primary?: string,
+  ) =>
     invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupUpdate, {
       groupId,
       name,
       folders,
+      ...(primary ? { primary } : {}),
     }),
   getProjectGroupMemory: (groupId: string) =>
     invoke<{ memory: ProjectMemory }>(IPC.invoke.projectGroupMemoryGet, { groupId }),
@@ -1270,6 +1285,10 @@ export const api = {
     ),
 
   // --- Skills the user owns -------------------------------------------------
+  listBuiltinSkills: () =>
+    invoke<{ builtins: BuiltinSkillRecord[] }>(IPC.invoke.skillBuiltinList),
+  setBuiltinSkillEnabled: (id: string, enabled: boolean) =>
+    invoke<{ id: string; enabled: boolean }>(IPC.invoke.skillBuiltinSetEnabled, { id, enabled }),
   listUserSkills: (query?: AgentCapabilityQuery) =>
     invoke<{ skills: UserSkillRecord[] }>(IPC.invoke.skillList, query),
   createUserSkill: (skill: UserSkillInput) =>
@@ -1503,7 +1522,7 @@ export const api = {
   /** Toggles the devtools console; rejects unless developer mode is on. */
   toggleDevTools: (open?: boolean) =>
     invoke<{ open: boolean }>(IPC.invoke.devtoolsToggle, { open }),
-  workspaceDiff: () => invoke<WorkspaceDiff>(IPC.invoke.workspaceDiff),
+  workspaceDiff: (sessionId?: string) => invoke<WorkspaceDiff>(IPC.invoke.workspaceDiff, { ...(sessionId ? { sessionId } : {}) }),
   workspaceReviewRollback: (input: {
     sessionId: string;
     snapshotId: string;
@@ -1524,26 +1543,18 @@ export const api = {
     invoke(IPC.invoke.browserOpenExternal, url ? { url } : {}),
   browserGetState: () =>
     invoke<BrowserState | null>(IPC.invoke.browserGetState),
-  fsList: (path?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
-    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, { ...scope, path: path ?? "" }),
-  fsRead: (path: string, mimeType?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
-    invoke<FsReadResult>(IPC.invoke.fsRead, {
-      ...scope,
-      path,
-      ...(mimeType ? { mimeType } : {}),
-    }),
-  fsReadImageDataUrl: (ref: string, mimeType?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
-    invoke<FsImageDataUrlResult>(IPC.invoke.fsReadImageDataUrl, {
-      ...scope,
-      ref,
-      ...(mimeType ? { mimeType } : {}),
-    }),
-  fsReveal: (path: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
-    invoke(IPC.invoke.fsReveal, { ...scope, path }),
-  fsOpen: (path: string, mimeType?: string, scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
-    invoke(IPC.invoke.fsOpen, { ...scope, path, mimeType }),
-  fsIndex: (scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
-    invoke<FsIndexResult>(IPC.invoke.fsIndex, scope ?? {}),
+  fsList: (path?: string, scope?: string | FileWorkspaceScope) =>
+    invoke<{ entries: FsEntry[] }>(IPC.invoke.fsList, { ...fileWorkspaceScope(scope), path: path ?? "" }),
+  fsRead: (path: string, mimeType?: string, scope?: string | FileWorkspaceScope) =>
+    invoke<FsReadResult>(IPC.invoke.fsRead, { ...fileWorkspaceScope(scope), path, ...(mimeType ? { mimeType } : {}) }),
+  fsReadImageDataUrl: (ref: string, mimeType?: string, scope?: string | FileWorkspaceScope) =>
+    invoke<FsImageDataUrlResult>(IPC.invoke.fsReadImageDataUrl, { ...fileWorkspaceScope(scope), ref, ...(mimeType ? { mimeType } : {}) }),
+  fsReveal: (path: string, scope?: string | FileWorkspaceScope) =>
+    invoke(IPC.invoke.fsReveal, { ...fileWorkspaceScope(scope), path }),
+  fsOpen: (path: string, mimeType?: string, scope?: string | FileWorkspaceScope) =>
+    invoke(IPC.invoke.fsOpen, { ...fileWorkspaceScope(scope), path, mimeType }),
+  fsIndex: (scope?: string | FileWorkspaceScope) =>
+    invoke<FsIndexResult>(IPC.invoke.fsIndex, fileWorkspaceScope(scope)),
   /**
    * Complete a file reference from chat text to a real file (D320 follow-up).
    * The main process owns the root order — project, session scratch,

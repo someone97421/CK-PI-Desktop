@@ -431,6 +431,7 @@ const {
   activeUserSkills,
   activeUserSubagentDocuments,
   disabledBuiltinSubagents,
+  disabledBuiltinSkills,
   loadUserSkillBody,
   resolveEffectiveCommandShell,
   resolveAgentRuntimeLaunch,
@@ -835,6 +836,7 @@ const sidecarRuntime = createSidecarRuntime({
   sessionProjects,
   loadUserSkillBody,
   activeUserSkills,
+  disabledBuiltinSkills,
   pluginActiveInProject,
   currentNetworkProxy,
 });
@@ -987,6 +989,7 @@ function registerIpc() {
     describeError,
     activeUserSubagentDocuments,
     disabledBuiltinSubagents,
+    disabledBuiltinSkills,
     pluginViews,
     pluginScopes,
     rememberPluginScopes,

@@ -111,6 +111,22 @@ export class PersistenceOutbox {
     });
   }
 
+  /** 替换历史与入队串行；旧写入必须取得回执，失败时保留原队列。 */
+  prepareSessionReplacement<T>(
+    sessionId: string,
+    getHost: () => HostProcess | null,
+    replace: () => Promise<T>,
+  ): Promise<T> {
+    let result: T;
+    return this.queueMutation(async () => {
+      await this.flush(getHost);
+      if (this.entries.some((entry) => entry.sessionId === sessionId)) {
+        throw new Error("会话仍有未成功保存的消息，暂时无法替换历史，请稍后重试");
+      }
+      result = await replace();
+    }).then(() => result!);
+  }
+
   size(): number {
     return this.entries.length;
   }

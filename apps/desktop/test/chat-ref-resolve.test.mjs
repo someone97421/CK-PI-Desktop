@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 register(pathToFileURL(join(here, "helpers/ts-import-hooks.mjs")));
 const { isChatRefOutsideRoots, parseChatRef, resolveChatFileRef } = await import(
-  "../electron/main/chat-ref-resolve.ts"
+  "../../../packages/host-runtime/src/chat-ref-resolve.ts"
 );
 
 /**
