@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { Host } from "./e2e/host.mjs";
-import { checkSidebarRowStates } from "./e2e/sidebar-row-states.mjs";
+import { checkSidebarProjectMenuPlacement, checkSidebarRowStates } from "./e2e/sidebar-row-states.mjs";
 import { checkSidebarSettings } from "./e2e/sidebar-settings.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -469,6 +469,47 @@ async function main() {
         ),
       "work-panel toggle enabled",
     );
+
+    if (process.argv.includes("--sidebar-only")) {
+      await cdp.send("Page.enable");
+      const sidebarPreferences = {
+        sessionMeta: Object.fromEntries(
+          sidebarSeed.pinnedSessionIds.map((id) => [id, { pinned: true }]),
+        ),
+        projectMeta: {
+          [sidebarSeed.paths.alpha]: { order: 0 },
+          [sidebarSeed.paths.beta]: { order: 1 },
+          [sidebarSeed.paths.gamma]: { order: 2 },
+          [sidebarSeed.paths.delta]: { order: 3 },
+          [sidebarSeed.paths.history]: { order: 4 },
+        },
+        projectSort: "manual",
+        sessionView: { sort: "recent", archived: false },
+        openProjectPaths: sidebarSeed.keys,
+      };
+      await cdp.evaluate(
+        `window.localStorage.setItem("pi.desktop.sidebarPreferences", ${JSON.stringify(JSON.stringify(sidebarPreferences))})`,
+      );
+      await cdp.send("Page.reload", {});
+      const projectKeys = JSON.stringify(sidebarSeed.keys);
+      await waitFor(
+        () => cdp.evaluate(`(() => {
+          const keys = [...document.querySelectorAll("[data-sidebar-project-group]")]
+            .map((element) => element.getAttribute("data-sidebar-project-group"));
+          return !document.querySelector(".startup-splash") &&
+            ${projectKeys}.every((key) => keys.includes(key));
+        })()`),
+        "all seeded project groups load for menu placement",
+      );
+      await checkSidebarProjectMenuPlacement({ cdp, check, waitFor });
+      const failed = results.filter((entry) => !entry.ok);
+      console.log(
+        `E2E-SIDEBAR-menu-placement: ${results.length - failed.length}/${results.length} checks passed`,
+      );
+      cleanup();
+      clearTimeout(timeout);
+      process.exit(failed.length ? 1 : 0);
+    }
 
     const baseline = await measure();
     check(

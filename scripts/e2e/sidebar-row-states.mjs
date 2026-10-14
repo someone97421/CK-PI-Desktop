@@ -1,5 +1,123 @@
 import { setTimeout as delay } from "node:timers/promises";
 
+export async function checkSidebarProjectMenuPlacement({ cdp, check, waitFor }) {
+  const group = (key) => `[data-sidebar-project-group=${JSON.stringify(key)}]`;
+  const menuSelector = ".sidebar-row-menu.sidebar-floating-menu:not(.sidebar-section-menu)";
+  const measureMenu = () => cdp.evaluate(`(() => {
+    const menu = document.querySelector(${JSON.stringify(menuSelector)});
+    if (!menu) return null;
+    const rect = menu.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, viewportHeight: window.innerHeight };
+  })()`);
+  const point = async (selector) => {
+    let target;
+    await waitFor(async () => {
+      target = await cdp.evaluate(`(() => {
+        const element = document.querySelector(${JSON.stringify(selector)});
+        if (!element) return null;
+        element.scrollIntoView({ block: "nearest" });
+        const rect = element.getBoundingClientRect();
+        const x = Math.round(rect.left + rect.width / 2);
+        const y = Math.round(rect.top + rect.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return { x, y, hit: hit === element || element.contains(hit) };
+      })()`);
+      return target?.hit;
+    }, `bottom project menu target is hittable: ${selector}`);
+    return target;
+  };
+  const move = async (selector) => {
+    const target = await point(selector);
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved", x: target.x, y: target.y,
+    });
+    return target;
+  };
+  const click = async (selector) => {
+    const target = await point(selector);
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mousePressed", x: target.x, y: target.y,
+      button: "left", buttons: 1, clickCount: 1,
+    });
+    await cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased", x: target.x, y: target.y,
+      button: "left", buttons: 0, clickCount: 1,
+    });
+  };
+  const assertAboveAnchor = (bounds, anchorY, label) => {
+    const gap = anchorY - bounds.bottom;
+    check(
+      bounds.top >= 8 && bounds.bottom <= bounds.viewportHeight - 8 && gap >= 3 && gap <= 5,
+      label,
+      JSON.stringify({ bounds, anchorY, gap }),
+    );
+  };
+  const pressEscape = async (label) => {
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27,
+    });
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27,
+    });
+    await waitFor(async () => !(await measureMenu()), label);
+  };
+
+  await cdp.evaluate("window.dispatchEvent(new Event('focus'))");
+  const projectKey = await cdp.evaluate(`(() => {
+    const scroller = document.querySelector(".sidebar-session-groups");
+    if (!scroller) return null;
+    scroller.scrollTop = scroller.scrollHeight;
+    const bounds = scroller.getBoundingClientRect();
+    const headers = [...scroller.querySelectorAll(".project-group > .sidebar-session-group-header")]
+      .filter((header) => {
+        const rect = header.getBoundingClientRect();
+        return rect.bottom > bounds.top && rect.top < bounds.bottom;
+      });
+    if (!headers.length) return null;
+    const header = headers.reduce((lowest, candidate) =>
+      candidate.getBoundingClientRect().bottom > lowest.getBoundingClientRect().bottom
+        ? candidate
+        : lowest,
+    );
+    if (!header) return null;
+    header.scrollIntoView({ block: "end" });
+    return header.closest(".project-group")?.getAttribute("data-sidebar-project-group") ?? null;
+  })()`);
+  if (!projectKey) throw new Error("Missing bottom project row");
+  const projectGroup = group(projectKey);
+  const projectHeader = `${projectGroup} .sidebar-session-group-header`;
+
+  const rightClickTarget = await point(projectHeader);
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved", x: rightClickTarget.x, y: rightClickTarget.y,
+  });
+  await cdp.evaluate(`(() => {
+    const target = document.elementFromPoint(${rightClickTarget.x}, ${rightClickTarget.y});
+    if (!target) throw new Error("Missing bottom project context target");
+    target.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, buttons: 2,
+      clientX: ${rightClickTarget.x}, clientY: ${rightClickTarget.y},
+    }));
+  })()`);
+  const contextMenu = await waitFor(() => measureMenu(), "bottom project context menu opens");
+  assertAboveAnchor(contextMenu, rightClickTarget.y, "right-click menu stays beside the bottom project row");
+  await pressEscape("project context menu closes");
+
+  const trigger = `${projectGroup} .project-more`;
+  await move(projectHeader);
+  await waitFor(
+    () => cdp.evaluate(`getComputedStyle(document.querySelector(${JSON.stringify(trigger)})).pointerEvents === "auto"`),
+    "bottom project overflow button is revealed",
+  );
+  await click(trigger);
+  const overflowMenu = await waitFor(() => measureMenu(), "bottom project overflow menu opens");
+  const triggerTop = await cdp.evaluate(
+    `document.querySelector(${JSON.stringify(trigger)}).getBoundingClientRect().top`,
+  );
+  assertAboveAnchor(overflowMenu, triggerTop, "overflow menu stays beside the bottom project row");
+  await pressEscape("project overflow menu closes");
+}
+
 export async function checkSidebarRowStates({ cdp, check, waitFor, seed }) {
   const group = (key) => `[data-sidebar-project-group=${JSON.stringify(key)}]`;
   const row = (id) => `[data-sidebar-session-row=${JSON.stringify(id)}]`;
@@ -214,6 +332,7 @@ export async function checkSidebarRowStates({ cdp, check, waitFor, seed }) {
         `${theme} returning from settings restores conversation selection and independent workspace context`,
       );
     }
+    await checkSidebarProjectMenuPlacement({ cdp, check, waitFor });
     await cdp.send("Emulation.setEmulatedMedia", {
       features: [{ name: "prefers-reduced-motion", value: "reduce" }],
     });

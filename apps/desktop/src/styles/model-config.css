@@ -271,6 +271,12 @@
   min-width: 0;
 }
 
+.provider-setup-no-api-key-option {
+  display: grid;
+  gap: 4px;
+  margin-top: 2px;
+}
+
 .provider-service-anchor {
   width: 100%;
   min-width: 0;

@@ -137,8 +137,8 @@ test("abort waits for prompt admission before dispatching to the sidecar", async
     getHost: () => host,
     getSidecar: () => ({
       setProjectInstructionRoot() {},
-      async call(method) {
-        sidecarCalls.push(method);
+      async call(method, params) {
+        sidecarCalls.push({ method, params });
         if (method === "agent.prompt") {
           await promptGate;
           return { accepted: true, turnId: "turn-1" };
@@ -180,7 +180,11 @@ test("abort waits for prompt admission before dispatching to the sidecar", async
   releasePrompt();
   await prompt;
   await abort;
-  assert.deepEqual(sidecarCalls, ["agent.prompt", "agent.abort"]);
+  assert.deepEqual(sidecarCalls.map((call) => call.method), ["agent.prompt", "agent.abort"]);
+  assert.deepEqual(sidecarCalls[1], {
+    method: "agent.abort",
+    params: { sessionId: "target", turnId: "turn-1" },
+  });
   assert.equal(activeTurns.get("target"), "turn-1");
   assert.deepEqual(finishedTurns, [["target", "aborted", "TURN_ABORTED", { turnId: "turn-1" }]]);
   assert.deepEqual(calls.slice(0, 2), ["settings.get", "session.get"]);

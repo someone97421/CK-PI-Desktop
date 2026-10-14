@@ -1844,6 +1844,8 @@ export class DesktopAgentRuntime {
   private turnEpoch = 0;
   private compactionAbort?: AbortController;
   private compactionInProgress = false;
+  /** Runtime operations that own a durable turn until their async cleanup ends. */
+  private readonly activeTurnSettlements = new Map<string, Promise<void>>();
   /** The in-flight checkpoint was cut short by Stop/dispose, not by a failure. */
   private compactionAborted = false;
   /** Set by the `new_context` tool, consumed at the next turn boundary. */
@@ -2032,6 +2034,7 @@ Delegation rules:
                       : undefined;
                   },
                 ),
+                this.provider.authKind,
               ),
               onResponse: async (response, responseModel) => {
                 this.providerResponseStatus = response.status;
@@ -8161,6 +8164,15 @@ Delegation rules:
             this.progressTurnRerunInProgress
               ? this.currentAssistant
               : undefined;
+          const requestWaitMs =
+            this.requestStartedAt !== undefined
+              ? Math.max(0, Date.now() - this.requestStartedAt)
+              : undefined;
+          const cumulativeProviderWaitMs =
+            requestWaitMs !== undefined ||
+            retryingAssistant?.providerWaitMs !== undefined
+              ? (retryingAssistant?.providerWaitMs ?? 0) + (requestWaitMs ?? 0)
+              : undefined;
           const initialText =
             content.hasText && content.text.length > 0
               ? content.text
@@ -8178,6 +8190,12 @@ Delegation rules:
             status: "streaming",
             modelId: this.provider.modelId,
             providerId: this.provider.id,
+            ...(retryingAssistant?.modelStreamDurationMs !== undefined
+              ? { modelStreamDurationMs: retryingAssistant.modelStreamDurationMs }
+              : {}),
+            ...(cumulativeProviderWaitMs !== undefined
+              ? { providerWaitMs: cumulativeProviderWaitMs }
+              : {}),
           };
           if (retryingAssistant) {
             // Keep one visible assistant bubble across the bounded retry. The
@@ -8357,6 +8375,9 @@ Delegation rules:
             this.streamStartedAt !== undefined
               ? Math.max(0, endedAt - this.streamStartedAt)
               : undefined;
+          const modelStreamDurationMs =
+            (this.currentAssistant.modelStreamDurationMs ?? 0) +
+            (streamMs ?? 0);
           if (classifiedError) {
             classifiedError = this.providerErrorWithDiagnostics(
               classifiedError,
@@ -8404,6 +8425,7 @@ Delegation rules:
               status: "streaming",
               modelId: this.provider.modelId,
               providerId: this.provider.id,
+              ...(streamMs !== undefined ? { modelStreamDurationMs } : {}),
               ...(usage ? { usage } : {}),
             };
             this.emit({ type: "message_update", message: this.currentAssistant });
@@ -8451,6 +8473,7 @@ Delegation rules:
               status: "streaming",
               modelId: this.provider.modelId,
               providerId: this.provider.id,
+              ...(streamMs !== undefined ? { modelStreamDurationMs } : {}),
               ...(usage ? { usage } : {}),
             };
             this.emit({ type: "message_update", message: this.currentAssistant });
@@ -8476,6 +8499,7 @@ Delegation rules:
               status: "streaming",
               modelId: this.provider.modelId,
               providerId: this.provider.id,
+              ...(streamMs !== undefined ? { modelStreamDurationMs } : {}),
               ...(usage ? { usage } : {}),
             };
             this.emit({ type: "message_update", message: this.currentAssistant });
@@ -8509,6 +8533,7 @@ Delegation rules:
               status: "streaming",
               modelId: this.provider.modelId,
               providerId: this.provider.id,
+              ...(streamMs !== undefined ? { modelStreamDurationMs } : {}),
               ...(usage ? { usage } : {}),
             };
             this.emit({ type: "message_update", message: this.currentAssistant });
@@ -8550,6 +8575,7 @@ Delegation rules:
             providerId: this.provider.id,
             ...(usage ? { usage } : {}),
             ...(responseDurationMs !== undefined ? { responseDurationMs } : {}),
+            ...(streamMs !== undefined ? { modelStreamDurationMs } : {}),
             ...(responseOutputTokens !== undefined
               ? { responseOutputTokens }
               : {}),
@@ -8768,6 +8794,9 @@ Delegation rules:
         this.streamStartedAt !== undefined
           ? Math.max(0, Date.now() - this.streamStartedAt)
           : undefined;
+      const modelStreamDurationMs =
+        (this.currentAssistant.modelStreamDurationMs ?? 0) +
+        (responseDurationMs ?? 0);
       const responseOutputTokens =
         status === "aborted"
           ? estimateVisibleResponseOutputTokens(this.currentAssistant)
@@ -8776,6 +8805,9 @@ Delegation rules:
         ...this.currentAssistant,
         status,
         ...(responseDurationMs !== undefined ? { responseDurationMs } : {}),
+        ...(responseDurationMs !== undefined
+          ? { modelStreamDurationMs }
+          : {}),
         ...(responseOutputTokens !== undefined
           ? { responseOutputTokens }
           : {}),
@@ -8836,7 +8868,15 @@ Delegation rules:
         errorCode: "TURN_NOT_FOUND",
       });
     }
+    return this.trackTurnOperation(durableTurnId, () =>
+      this.executeApprovedPlanTurn(execution, durableTurnId),
+    );
+  }
 
+  private async executeApprovedPlanTurn(
+    execution: PlanExecution,
+    durableTurnId: string,
+  ): Promise<{ turnId: string }> {
     // Keep every new user turn small. A capability loaded for the preceding
     // turn can be searched again when the new task actually needs it.
     this.subagentOverrideProviders = {};
@@ -8933,12 +8973,23 @@ Delegation rules:
   ): Promise<{ turnId: string }> {
     if (this.disposed) throw new Error("runtime disposed");
     this.assertNotRunning();
+    const turnId = durableTurnId?.trim() || randomUUID();
+    return this.trackTurnOperation(turnId, () =>
+      this.promptTurn(input, userMessageId, turnId),
+    );
+  }
+
+  private async promptTurn(
+    input: string | RuntimePrompt,
+    userMessageId: string | undefined,
+    durableTurnId: string,
+  ): Promise<{ turnId: string }> {
     const selectedTools = this.selectedMcpTools(input);
     const modelInput = typeof input !== "string" && input.sessionMessage
       ? { ...input, text: formatSessionMessage(input.text, input.sessionMessage), sessionMessage: undefined }
       : input;
     this.retainPendingSteering();
-    const nextTurnId = durableTurnId?.trim() || randomUUID();
+    const nextTurnId = durableTurnId;
     this.turnId = nextTurnId;
     this.acceptingSteering = true;
     this.gracefulStopRequested = false;
@@ -9217,6 +9268,10 @@ Delegation rules:
 
   async abort(): Promise<void> {
     this.finishRunClock();
+    const turnId = this.turnId;
+    const settlement = turnId
+      ? this.activeTurnSettlements.get(turnId)
+      : undefined;
     this.acceptingSteering = false;
     this.gracefulStopRequested = false;
     this.runCancelled = true;
@@ -9229,6 +9284,34 @@ Delegation rules:
     this.providerRetryAbort?.abort();
     if (this.compactionInProgress) this.compactionAborted = true;
     this.compactionAbort?.abort();
+    await settlement;
+  }
+
+  private trackTurnOperation<T>(
+    turnId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    let settle!: () => void;
+    const settlement = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    this.activeTurnSettlements.set(turnId, settlement);
+    let result: Promise<T>;
+    try {
+      result = operation();
+    } catch (error) {
+      if (this.activeTurnSettlements.get(turnId) === settlement) {
+        this.activeTurnSettlements.delete(turnId);
+      }
+      settle();
+      throw error;
+    }
+    return result.finally(() => {
+      if (this.activeTurnSettlements.get(turnId) === settlement) {
+        this.activeTurnSettlements.delete(turnId);
+      }
+      settle();
+    });
   }
 
   /** Ask pi-agent-core to stop after the current assistant/tool turn. */

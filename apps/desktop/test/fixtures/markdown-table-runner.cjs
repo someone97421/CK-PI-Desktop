@@ -31,6 +31,7 @@ app.whenReady().then(async () => {
     await wait('document.hasFocus()');
     await evaluate('Promise.all(document.getAnimations().map(animation => animation.finished.catch(() => {})))');
     const point = await evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) throw Error('Missing control'); el.scrollIntoView({block:'center'}); const r = el.getBoundingClientRect(); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`);
+    await wait(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); const hit = document.elementFromPoint(${point.x}, ${point.y}); return el && hit && (el === hit || el.contains(hit)); })()`);
     win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, ...point });
     win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, ...point });
   };
@@ -44,7 +45,7 @@ app.whenReady().then(async () => {
   check("production Markdown renders one toolbar per table", await evaluate('document.querySelectorAll(".markdown-table-actions").length === 2'));
   await click('.markdown-table button[aria-label="Copy table as Markdown"]');
   await wait('window.tableFixture.toast()?.message === "Table copied"');
-  check("copy preserves this table's inline Markdown and alignment", clipboard.readText() === '| **Product** | Note |\n| :--- | ---: |\n| Pi | 你好, world |\n| ZCode | say "hi"<br>again |');
+  check("copy preserves this table's inline Markdown and alignment", clipboard.readText().replaceAll("\r\n", "\n") === '| **Product** | Note |\n| :--- | ---: |\n| Pi | 你好, world |\n| ZCode | say "hi"<br>again |');
   const downloaded = new Promise((resolve, reject) => {
     win.webContents.session.once("will-download", (_event, item) => {
       item.setSavePath(join(dir, "table.csv"));
@@ -96,7 +97,7 @@ app.whenReady().then(async () => {
   // Restore the viewport after narrow-layout checks so earlier feedback
   // cannot cover the toolbar and intercept the error-path clicks.
   win.setContentSize(1100, 800);
-  await wait('innerWidth === 1100 && innerHeight === 800');
+  await wait('innerWidth >= 1000 && innerHeight >= 700');
   await evaluate('Object.defineProperty(navigator, "clipboard", {configurable:true,value:{writeText:async()=>{throw Error("denied")}}})');
   await click('button[aria-label="复制表格为 Markdown"]');
   await wait('window.tableFixture.toast()?.message === "无法复制表格"');

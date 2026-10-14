@@ -12,7 +12,7 @@ import {
   resolveProjectName,
 } from "../lib/project-name";
 import { useAppStore } from "../stores/app-store";
-import { Button, Input, TooltipButton } from "./ui";
+import { OverlayBackdrop, Button, Input, TooltipButton } from "./ui";
 import { ProjectFolderPicker } from "./ProjectFolderPicker";
 import { RemoteProjectPicker, type RemoteProjectSelection } from "./remote/RemoteProjectPicker";
 import {
@@ -221,7 +221,7 @@ function ProjectCreateDialogContent({ initialRemoteHostKey }: { initialRemoteHos
   };
 
   const dialog = (
-    <div
+    <OverlayBackdrop
       className="overlay project-create-dialog-overlay"
       role="presentation"
       onClick={(event) => {
@@ -443,7 +443,7 @@ function ProjectCreateDialogContent({ initialRemoteHostKey }: { initialRemoteHos
           </div>
         </form>
       </div>
-    </div>
+    </OverlayBackdrop>
   );
 
   return typeof document === "undefined" ? dialog : createPortal(dialog, document.body);

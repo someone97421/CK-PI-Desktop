@@ -5,6 +5,7 @@ import { isRemoteSession, sessionAllows } from "../lib/remote-session-safety";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -19,7 +20,8 @@ import { RemoteAccessButton } from "./RemoteAccessButton";
 
 import { portalToBody } from "../lib/portal-visibility";
 import {
-  clampSidebarFloatingMenuTop,
+  placeSidebarFloatingMenuTop,
+  SIDEBAR_FLOATING_MENU_MAX_HEIGHT,
   SIDEBAR_MENU_VIEWPORT_PADDING,
 } from "../lib/sidebar-floating-menu";
 import { useTranslation } from "react-i18next";
@@ -256,6 +258,8 @@ export function Sidebar({
   const [menuPosition, setMenuPosition] = useState<{
     top: number;
     left: number;
+    anchorTop: number;
+    anchorBottom: number;
   } | null>(null);
   const {
     card: sessionHoverCard,
@@ -263,6 +267,7 @@ export function Sidebar({
     hide: hideSessionHoverCard,
     scheduleHide: scheduleSessionHoverCardHide,
     keepVisible: keepSessionHoverCardVisible,
+    registerDismissGuard: registerSessionHoverCardDismissGuard,
   } = useSessionHoverCard();
   const [projectSessionLimits, setProjectSessionLimits] = useState<Record<string, number>>({});
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
@@ -274,6 +279,7 @@ export function Sidebar({
 
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const menuFirstItemRef = useRef<HTMLButtonElement | null>(null);
+  const floatingMenuRef = useRef<HTMLDivElement | null>(null);
   const sessionPrefetchTimerRef = useRef<number | undefined>(undefined);
   const projectReorderRef = useRef<ProjectReorderPointerState | null>(null);
   const suppressProjectTitleClickRef = useRef(false);
@@ -355,18 +361,32 @@ export function Sidebar({
 
   const placeMenu = useCallback((event: ReactMouseEvent<HTMLButtonElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
+    const anchor = { top: rect.top, bottom: rect.bottom };
     setMenuPosition({
-      top: clampSidebarFloatingMenuTop(rect.bottom + 4, window.innerHeight),
+      top: placeSidebarFloatingMenuTop(
+        anchor,
+        SIDEBAR_FLOATING_MENU_MAX_HEIGHT,
+        window.innerHeight,
+      ),
       left: Math.max(SIDEBAR_MENU_VIEWPORT_PADDING, rect.right + 4),
+      anchorTop: anchor.top,
+      anchorBottom: anchor.bottom,
     });
   }, []);
 
   // Body-level sidebar menus always anchor their left edge to the right side
   // of the trigger or pointer; they never flip to the left at the viewport edge.
   const placeMenuAtPoint = useCallback((x: number, y: number) => {
+    const anchor = { top: y, bottom: y };
     setMenuPosition({
-      top: clampSidebarFloatingMenuTop(y + 4, window.innerHeight),
+      top: placeSidebarFloatingMenuTop(
+        anchor,
+        SIDEBAR_FLOATING_MENU_MAX_HEIGHT,
+        window.innerHeight,
+      ),
       left: Math.max(SIDEBAR_MENU_VIEWPORT_PADDING, x + 4),
+      anchorTop: anchor.top,
+      anchorBottom: anchor.bottom,
     });
   }, []);
 
@@ -435,6 +455,39 @@ export function Sidebar({
     if (!sessionMenu && !projectMenu && !sectionMenu && !sortOpen) return;
     requestAnimationFrame(() => menuFirstItemRef.current?.focus());
   }, [sessionMenu, projectMenu, sectionMenu, sortOpen]);
+
+  const menuAnchorTop = menuPosition?.anchorTop;
+  const menuAnchorBottom = menuPosition?.anchorBottom;
+
+  useLayoutEffect(() => {
+    if (menuAnchorTop === undefined || menuAnchorBottom === undefined) return;
+    const menu = floatingMenuRef.current;
+    if (!menu) return;
+
+    const reposition = () => {
+      const top = placeSidebarFloatingMenuTop(
+        { top: menuAnchorTop, bottom: menuAnchorBottom },
+        menu.getBoundingClientRect().height,
+        window.innerHeight,
+      );
+      setMenuPosition((current) =>
+        current && current.top !== top ? { ...current, top } : current,
+      );
+    };
+
+    reposition();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(reposition);
+    observer.observe(menu);
+    return () => observer.disconnect();
+  }, [
+    menuAnchorTop,
+    menuAnchorBottom,
+    sessionMenu,
+    projectMenu,
+    sectionMenu,
+    sortOpen,
+  ]);
 
   // Footer utility bar: settings / plugins / notifications + build chip.
 
@@ -1892,6 +1945,7 @@ export function Sidebar({
       const Icon = isSessions ? IconNewSession : IconNewProject;
       return portalToBody(
         <div
+          ref={floatingMenuRef}
           className="sidebar-row-menu sidebar-floating-menu sidebar-section-menu"
           role="menu"
           data-sidebar-section-menu={sectionMenu}
@@ -1920,7 +1974,7 @@ export function Sidebar({
     }
     if (sortOpen === "projects") {
       return portalToBody(
-        <div className="sidebar-popover sidebar-sort-menu sidebar-floating-menu" role="menu"
+        <div ref={floatingMenuRef} className="sidebar-popover sidebar-sort-menu sidebar-floating-menu" role="menu"
           aria-label={t("nav.sortProjects")}
           onKeyDown={onMenuKeyDown}
           style={{ top: menuPosition.top, left: menuPosition.left }}
@@ -1941,6 +1995,7 @@ export function Sidebar({
     if (sortOpen === "sessions") {
       return portalToBody(
         <div
+          ref={floatingMenuRef}
           className="sidebar-popover sidebar-sort-menu sidebar-floating-menu"
           role="menu"
           onKeyDown={onMenuKeyDown}
@@ -1975,6 +2030,7 @@ export function Sidebar({
     if (!session && !entry) return null;
     return portalToBody(
       <div
+        ref={floatingMenuRef}
         className="sidebar-row-menu sidebar-floating-menu"
         role="menu"
         onKeyDown={onMenuKeyDown}
@@ -2495,6 +2551,7 @@ export function Sidebar({
           onOpenSession={openSessionFromHover}
           keepVisible={keepSessionHoverCardVisible}
           scheduleHide={scheduleSessionHoverCardHide}
+          registerDismissGuard={registerSessionHoverCardDismissGuard}
         />
       ) : null}
       {renameFor ? (

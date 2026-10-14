@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { ProjectGroupRecord, ProjectGroupRoot } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { MAX_PROJECT_NAME_CHARS } from "../lib/sidebar-preferences";
-import { Button, Input, TooltipButton } from "./ui";
+import { OverlayBackdrop, Button, Input, TooltipButton } from "./ui";
 import {
   IconClose,
   IconFolder,
@@ -199,7 +199,7 @@ export function ProjectEditDialog({
     ...folders.filter((path) => !samePath(path, primaryPath)),
   ];
   const dialog = (
-    <div
+    <OverlayBackdrop
       className="overlay project-create-dialog-overlay"
       role="presentation"
       onClick={(event) => {
@@ -393,7 +393,7 @@ export function ProjectEditDialog({
           </div>
         </form>
       </div>
-    </div>
+    </OverlayBackdrop>
   );
 
   return typeof document === "undefined" ? dialog : portalToBody(dialog);

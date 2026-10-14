@@ -86,6 +86,7 @@ export function subagentModelBinding(opts: {
                   ? response?.headers
                   : undefined;
               }),
+              opts.provider.authKind,
             ),
           },
           {

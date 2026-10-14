@@ -1,5 +1,5 @@
 import { useChatSessionCapability } from "../../../hooks/use-chat-session-capability";
-import { memo, useContext, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useContext, useMemo, useRef, type MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { PlanningState, UiMessage } from "@pi-desktop/shared";
 import { proposalKindForMode } from "@pi-desktop/shared";
@@ -20,6 +20,8 @@ import { TranscriptHistory, TranscriptTail } from "./AssistantTurn";
 import { TranscriptReadOnlyContext, useActiveSessionTitle } from "./context";
 import { SelectionQuoteButton } from "../../../components/SelectionQuoteButton";
 import { ResponseAnnotationOverlay } from "../../../components/ResponseAnnotationOverlay";
+import { collectLiveDelegationEntries } from "../../../lib/live-delegation-entries";
+import { reuseReadonlyMap } from "../../../lib/assistant-turns";
 import { useTranscriptScroll } from "./hooks/useTranscriptScroll";
 import type { TranscriptSearchTarget } from "../../../lib/transcript-reading";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
@@ -161,6 +163,13 @@ function TranscriptBody({
   });
 
   const specializedActivity = agentActivity;
+  const rawLiveDelegations = useMemo(
+    () => collectLiveDelegationEntries(historyEntries, tailEntry, transcriptRunning),
+    [historyEntries, tailEntry, transcriptRunning],
+  );
+  const liveDelegationsRef = useRef(rawLiveDelegations);
+  const liveDelegations = reuseReadonlyMap(liveDelegationsRef.current, rawLiveDelegations);
+  liveDelegationsRef.current = liveDelegations;
   const hasSpecializedActivity = specializedActivity !== undefined;
   // Existing output does not mean the turn has finished: a text stream can
   // pause, and completed tool rows can outlive their activity. Keep one tail
@@ -287,7 +296,7 @@ function TranscriptBody({
             // view, which is exactly the jitter this avoids.
             <div className="transcript-hydration-spacer" aria-hidden />
           ) : null}
-          <TranscriptHistory entries={historyEntries} isRunning={isRunning} />
+          <TranscriptHistory entries={historyEntries} isRunning={isRunning} liveDelegations={liveDelegations} />
           {tailEntry ? (
             <TranscriptTail
               entry={tailEntry}

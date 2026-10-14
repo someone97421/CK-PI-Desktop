@@ -221,6 +221,93 @@ describe("Anthropic runtime endpoint", () => {
     expect(request?.headers.get("Authorization")).toBeNull();
   });
 
+  it("sends no API-key or Authorization header for a no-auth provider", async () => {
+    const provider: RuntimeProviderConfig = {
+      ...keyedProvider,
+      id: "local-no-auth",
+      name: "Local gateway",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      apiKey: "stale-fixture-key",
+      authKind: "none",
+    };
+    const model = buildProviderModel(provider);
+    let request: Request | undefined;
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return new Response(
+        JSON.stringify({ error: { message: "fixture response" } }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      );
+    });
+    const requestFetch = providerRequestFetch(model.api, fetch, provider.authKind);
+    expect(requestFetch).toBeDefined();
+    if (!requestFetch) throw new Error("OpenAI-compatible requests must accept custom fetch");
+
+    const result = await createProviderModels(provider, model)
+      .streamSimple(
+        model,
+        {
+          systemPrompt: "system",
+          messages: [{ role: "user", content: "hello", timestamp: 1 }],
+          tools: [],
+        },
+        { fetch: requestFetch, maxRetries: 0 },
+      )
+      .result();
+
+    expect(result.stopReason).toBe("error");
+    expect(request).toBeDefined();
+    if (!request) throw new Error("Expected the no-auth request to reach fetch");
+    expect(request.url).not.toContain("pi-desktop-no-auth");
+    expect(request.headers.get("x-api-key")).toBeNull();
+    expect(request.headers.get("Authorization")).toBeNull();
+  });
+
+  it("does not send an API-key value for a no-auth Google protocol provider", async () => {
+    const provider: RuntimeProviderConfig = {
+      ...keyedProvider,
+      id: "local-google-no-auth",
+      name: "Local Google gateway",
+      baseUrl: "http://127.0.0.1:9000/v1beta",
+      modelId: "gemini-local",
+      apiKey: "stale-fixture-key",
+      authKind: "none",
+      apiStyle: "google_generative_ai",
+    };
+    const model = buildProviderModel(provider);
+    let request: Request | undefined;
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      request = new Request(input, init);
+      return new Response("{}", {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    try {
+      const result = await createProviderModels(provider, model)
+        .streamSimple(
+          model,
+          {
+            systemPrompt: "system",
+            messages: [{ role: "user", content: "hello", timestamp: 1 }],
+            tools: [],
+          },
+          { maxRetries: 0 },
+        )
+        .result();
+      expect(result.stopReason).toBe("error");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(request).toBeDefined();
+    if (!request) throw new Error("Expected the no-auth Google request to reach fetch");
+    expect(request.url).not.toContain("pi-desktop-no-auth");
+    expect(request.headers.get("x-goog-api-key")).toBe("");
+    expect(request.headers.get("Authorization")).toBeNull();
+  });
+
   it("does not send the mid-conversation tool-change beta for a models.dev Claude gateway", async () => {
     const provider: RuntimeProviderConfig = {
       ...keyedProvider,

@@ -56,10 +56,12 @@
     "test:e2e:settings-inline-import": "node --test apps/desktop/test/settings-inline-import-user-path.test.mjs",
     "test:e2e:config-sync": "node scripts/e2e-config-sync-multidevice.mjs",
     "test:e2e:layout": "node scripts/e2e-three-column-layout.mjs",
+    "test:e2e:sidebar-menu": "node scripts/e2e-three-column-layout.mjs --sidebar-only",
     "test:e2e:window-controls": "node scripts/e2e-window-controls.mjs",
     "test:e2e:window-resize-native": "node scripts/e2e-window-controls.mjs --native-edge-drag",
     "test:e2e:window-surface": "node scripts/e2e-window-surface.mjs",
     "test:e2e:work-panel-reorder": "node scripts/e2e-work-panel-reorder.mjs",
+    "test:e2e:browser-local-files": "node scripts/e2e-browser-local-file-access.mjs",
     "test:e2e:work-panel-drag": "node scripts/e2e-work-panel-drag.mjs",
     "test:e2e:supervision": "node scripts/e2e-supervision.mjs",
     "test:e2e:subagents": "node scripts/e2e-subagents.mjs",
@@ -86,6 +88,7 @@
     "test:e2e:remote-mvp-ui": "node scripts/e2e-remote-mvp-ui.mjs",
     "test:e2e:shortcut-settings": "node scripts/test-shortcut-settings.mjs",
     "test:e2e:dialog-overflow": "node scripts/test-dialog-overflow.mjs",
+    "test:e2e:overlay-selection": "node scripts/test-overlay-selection.mjs",
     "test:e2e:live-voice-interaction": "node scripts/test-live-voice-interaction.mjs"
   },
   "devDependencies": {

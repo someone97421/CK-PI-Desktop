@@ -821,7 +821,10 @@ export function registerAgentIpc({
       // An open extension prompt resolves with its abort value (spec 16 §9).
       agentExtensions.cancelPrompts(req.sessionId);
       cancelSessionTools(req.sessionId, "Session turn was aborted");
-      result = await sidecar.call("agent.abort", req);
+      result = await sidecar.call("agent.abort", {
+        ...req,
+        ...(abortedTurnId ? { turnId: abortedTurnId } : {}),
+      });
     } finally {
       // A turn that already stopped owning the session is refused inside the
       // finalizer, so the identity captured above is the only one used here.

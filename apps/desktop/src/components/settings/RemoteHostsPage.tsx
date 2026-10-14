@@ -15,7 +15,7 @@ import type { RemoteHostSshAuth, RemoteHostSummary } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { remoteHostErrorKey } from "../../lib/remote-host-errors";
 import { useAppStore } from "../../stores/app-store";
-import {
+import { OverlayBackdrop,
   Badge,
   Button,
   Field,
@@ -369,7 +369,7 @@ export function RemoteHostsPage() {
 
       {addMode !== null &&
         portalOverlay(
-          <div
+          <OverlayBackdrop
             className="overlay settings-remote-host-add-overlay"
             role="presentation"
             onClick={(event) => {
@@ -613,7 +613,7 @@ export function RemoteHostsPage() {
                 </div>
               </form>
             </div>
-          </div>,
+          </OverlayBackdrop>,
         )}
     </div>
   );

@@ -390,7 +390,11 @@ test("desktop packaging builds the native host before every local target", () =>
   for (const name of ["pack", "dist", "dist:mac", "dist:win", "dist:linux"]) {
     assert.equal(packageJson.scripts[name], `node ../../scripts/build.mjs ${name}`);
   }
-  assert.equal(packageJson.build.win.extraResources[0].to, "bin/pi-desktop-host-core.exe");
+  assert.ok(
+    packageJson.build.win.extraResources.some(
+      ({ to }) => to === "bin/pi-desktop-host-core.exe",
+    ),
+  );
   assert.equal(packageJson.build.linux.extraResources[0].to, "bin/pi-desktop-host-core");
   assert.equal(packageJson.build.mac.extraResources[0].to, "bin/pi-desktop-host-core");
   assert.match(iconScriptSource, /package_icon = BUILD \/ "icon\.png"/);

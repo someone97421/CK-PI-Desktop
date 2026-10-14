@@ -477,8 +477,11 @@ test("assistant context inspector keeps a compact summary and retry action wired
   assert.match(inspectorSource, /context-inspector-kpis/);
   assert.match(inspectorSource, /useSessionTiming/);
   assert.match(inspectorSource, /chat\.usageSessionTime/);
+  assert.match(inspectorSource, /chat\.usageNetworkRequest/);
   assert.match(inspectorSource, /chat\.usageModelResponse/);
-  assert.match(inspectorSource, /modelResponsePercent/);
+  assert.match(inspectorSource, /chat\.usageToolCalls/);
+  assert.match(inspectorSource, /networkRequestPercent/);
+  assert.match(inspectorSource, /toolCallPercent/);
   assert.match(inspectorSource, /context-inspector-window-percent/);
   assert.match(inspectorSource, /chat\.usageContextLeft/);
   assert.match(inspectorSource, /chat\.usageThroughput/);

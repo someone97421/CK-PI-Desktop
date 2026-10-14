@@ -5,6 +5,10 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "修复停止后立即继续时与旧轮清理冲突的问题；当前轮引导后子代理卡片继续显示真实运行状态。",
+  "会话耗时分别展示网络等待、模型流式输出和工具调用，并行工具区间不重复计时。",
+  "自定义模型服务支持无需 API key，保存无认证设置时清除旧密钥，并避免发送占位认证值。",
+  "浏览器支持显式打开工作区外已存在的本地文件；修复弹窗拖选误关闭、悬停卡片选中消失和侧栏底部菜单定位。",
   "插件市场新增最近更新与最新发布排序，支持搜索、分类和返回页面保留选择；修复侧栏会话分组引用。",
   "云同步改用 S3，支持双向同步与单向备份；项目列表留在本机，旧 WebDAV 备份需通过旧版恢复。",
   "实验性远程项目接入首页、侧栏和统一聊天界面，保留临时工作目录及本地与远程操作隔离。",
@@ -61,6 +65,10 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Fix immediate follow-ups racing with stopped-turn cleanup, and keep subagent cards live after guidance within the current turn.",
+  "Show network wait, model streaming and tool-call time separately, without double-counting overlapping tool intervals.",
+  "Allow custom model services without an API key, remove the old key when saving no-auth settings and avoid sending placeholder credentials.",
+  "Open explicitly selected local files outside the workspace; fix popups closing during selection, hover cards disappearing while selected and bottom-edge sidebar menus.",
   "Sort the plugin marketplace by recent updates or first publication, retain the choice across navigation, and combine it with search and categories; fix sidebar session-group imports.",
   "Move cloud sync to S3 with two-way sync and backup-only modes; keep project lists local and use an older build to recover WebDAV backups.",
   "Bring experimental remote projects into home, sidebar and shared chat while preserving temporary workspaces and local/remote operation boundaries.",
