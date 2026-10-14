@@ -1,5 +1,6 @@
 import { app, dialog, shell } from "electron";
 import { importSkillFolders, readLastSkillImportDirectory, writeLastSkillImportDirectory } from "../skill-folder-import";
+import { importSkillFile } from "../skill-file-import";
 import { ErrorCodes, IPC, type ActivationScope, type AgentCapabilityMove, type AgentCapabilityQuery, type BuiltinSkillRecord, type UserSkillRecord, type UserSubagentRecord } from "@pi-desktop/shared";
 import { loadSubagentDefinitions, type UserSubagentDocument } from "@pi-desktop/agent-runtime";
 import { builtinSkillCatalog } from "../builtin-skills";
@@ -239,14 +240,14 @@ export function registerSkillsIpc({
       const picked = await dialog.showOpenDialog({
         title: "Import skill",
         properties: ["openFile"],
-        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+        filters: [{ name: "Skill files", extensions: ["md", "markdown", "zip", "skill"] }],
       });
       if (picked.canceled || !picked.filePaths[0]) return { canceled: true };
-      const res = await currentHost.call("skills.import", {
-        path: picked.filePaths[0],
-        ...(mode ? { mode } : {}),
-        ...rest,
-      });
+      const res = await importSkillFile<UserSkillRecord>(
+        picked.filePaths[0],
+        { ...(mode ? { mode } : {}), ...rest },
+        (params) => currentHost.call<{ skill: UserSkillRecord }>("skills.import", params),
+      );
       sendToRenderer(IPC.event.pluginChanged, { reason: "skill" });
       return res;
     },

@@ -494,7 +494,7 @@ export const zhCN = {
     usageNetworkRequestHelp: "从发出模型请求到收到首个响应事件的耗时，包含网络传输和服务端首响应等待；旧消息没有单独计时数据时不会计入。",
     usageModelResponse: "模型响应耗时",
     usageModelResponseHelp: "模型输出思考内容与回复内容的流式耗时；旧消息的计时可能包含请求等待。",
-    usageToolCalls: "工具调用耗时",
+    usageToolCallTime: "工具调用耗时",
     usageToolCallsHelp: "统计顶层工具调用时长；并行调用的重叠部分只计算一次。",
     usageTimingUnavailable: "暂不可用",
     usageProviderUsage: "模型用量",

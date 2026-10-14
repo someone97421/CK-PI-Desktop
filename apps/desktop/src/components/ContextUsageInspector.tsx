@@ -447,7 +447,7 @@ export function ContextUsageInspector({
           </div>
           <div className="context-inspector-summary-row">
             <strong title={t("chat.usageToolCallsHelp")}>
-              {t("chat.usageToolCalls")}
+              {t("chat.usageToolCallTime")}
             </strong>
             <span className="context-inspector-summary-values">
               {toolCallValue}

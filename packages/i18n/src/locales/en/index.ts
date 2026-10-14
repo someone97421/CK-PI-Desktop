@@ -504,7 +504,7 @@ export const en = {
     usageNetworkRequestHelp: "Time from sending a model request to its first response event; includes network and provider-side waiting. Older messages without separate timing are not included.",
     usageModelResponse: "Model response time",
     usageModelResponseHelp: "Time spent streaming both thinking and reply content. Older messages may include request wait.",
-    usageToolCalls: "Tool call time",
+    usageToolCallTime: "Tool call time",
     usageToolCallsHelp: "Top-level tool execution time; overlapping calls count once.",
     usageTimingUnavailable: "Unavailable",
     usageProviderUsage: "Provider usage",
