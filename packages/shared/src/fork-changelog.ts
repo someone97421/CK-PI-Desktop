@@ -5,6 +5,8 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "恢复 Windows 11 原生窗口边框能力，保留贴边吸附与双击边缘拉伸所需的系统样式、自定义标题栏和原生圆角。",
+  "技能支持压缩包导入，修复耗时统计的翻译键显示。",
   "修复停止后立即继续时与旧轮清理冲突的问题；当前轮引导后子代理卡片继续显示真实运行状态。",
   "会话耗时分别展示网络等待、模型流式输出和工具调用，并行工具区间不重复计时。",
   "自定义模型服务支持无需 API key，保存无认证设置时清除旧密钥，并避免发送占位认证值。",
@@ -65,6 +67,8 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Restore the native Windows 11 frame styles needed for snapping and edge double-click stretching while keeping the custom title bar and native corners.",
+  "Import skills from archives and fix untranslated timing labels.",
   "Fix immediate follow-ups racing with stopped-turn cleanup, and keep subagent cards live after guidance within the current turn.",
   "Show network wait, model streaming and tool-call time separately, without double-counting overlapping tool intervals.",
   "Allow custom model services without an API key, remove the old key when saving no-auth settings and avoid sending placeholder credentials.",
