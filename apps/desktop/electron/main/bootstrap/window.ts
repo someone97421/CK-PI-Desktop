@@ -202,7 +202,9 @@ export async function createWindow({
         }
       : {
           frame: false,
-          ...(process.platform === "win32" ? { thickFrame: false } : {}),
+          // 保留 Windows 原生边框能力，支持贴边吸附与双击边缘拉伸；
+          // frame: false 继续隐藏标题栏，Windows 11 圆角仍交给 DWM。
+          ...(process.platform === "win32" ? { thickFrame: true } : {}),
           ...mainWindowBackgroundOptions(
             process.platform,
             initialWindowBackground,

@@ -2636,6 +2636,7 @@
 
 .subagent-topology-node-actions {
   position: relative;
+  border-radius: inherit;
 }
 
 .subagent-topology-node-actions > .subagent-stop-button {
