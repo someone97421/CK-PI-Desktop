@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -17,7 +17,9 @@ const resizeWorkerBanner = [
 ].join(" ");
 
 async function bundleImageResizeAssets(directory) {
-  const codingAgentEntry = require.resolve("@earendil-works/pi-coding-agent");
+  // 固定版本仅导出 ESM；从所属工作区的真实包目录定位附带资源。
+  const codingAgentRoot = await realpath(join(packageRoot, "node_modules/@earendil-works/pi-coding-agent"));
+  const codingAgentEntry = join(codingAgentRoot, "dist/index.js");
   const codingAgentRequire = createRequire(codingAgentEntry);
   const photonEntry = codingAgentRequire.resolve("@silvia-odwyer/photon-node");
   const chunksDirectory = join(directory, "chunks");

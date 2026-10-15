@@ -1031,3 +1031,15 @@ fork 更新源、共用 `.pi-desktop`、数据库 schema 18 和 protocol 11、�
 本轮只进行源码适配、实际差异阅读、冲突标记与空白检查，以及正式提交后的双父/祖先关系核对。相关测试源码已同步或适配但未执行；未运行测试、typecheck、语法解析、编译、构建、依赖安装、服务、浏览器预览或实机/API 验证；未操作真实业务数据库、云端或远程主机。未推送或发布，安装包没有更新。合并前已有的四份桌宠插件文件改动原样保留，不纳入本轮同步提交。
 
 本轮正式合并提交为 `fac289187b4856186a794b7ee96ba4f798493ac6`，第一父 `44d67c97b25fa43963cef98e31da7d94636fd34f`，第二父 `2eb333723bfdb92c3adf6c68cdf86d0ec995ce88`；双父及目标祖先关系核对通过。
+
+## macOS DMG 构建与交付（2026-10-15）
+
+- 用户要求构建新版 DMG。使用本机 macOS arm64、Node 24.21.0 和 Corepack pnpm 12.8.1，先执行 `pnpm install --frozen-lockfile` 完成新增依赖与 Electron 原生依赖同步，再通过 `pnpm --filter @pi-desktop/desktop dist:mac` 统一入口构建；未改变依赖版本或锁文件解析结果。
+- 首次进入构建时，环境缺少直接可调用的 pnpm 命令，用 scratch 中的临时 Corepack 转发脚本补齐子进程 PATH。后续遇到图片资源脚本通过 CommonJS `require.resolve` 解析仅导出 ESM 的 pi-coding-agent 失败；改为定位工作区中固定依赖的真实目录，继续由该包解析 Photon 资源。修复后完整构建成功，退出码 0。
+- 版本为 `20261015-140343`，内部版本 `2610.1514.343`。完成依赖包 TypeScript 编译、Rust release、运行时及图片缩放 worker/WASM 打包、Electron 主进程/预加载/前端编译和 macOS arm64 DMG、ZIP、更新描述及 blockmap 生成。构建日志含两条 Rust 未使用代码警告及 Vite 分包大小提示；沿现有配置使用 ad-hoc 签名，未执行 Apple 公证。
+- 产物位于 `apps/desktop/release/20261015-140343-YTqYG8/`：DMG 132749722 字节、ZIP 131598150 字节，并保留 `mac-arm64/this-is-a-agent.app`、`latest-mac.yml` 和对应 blockmap。新版成功后自动清理上一批 `20261014-161131-8Ykq6w`。
+- `hdiutil verify` 验证 DMG 校验和通过；`codesign --verify --deep --strict` 验证应用签名完整性通过；确认打包 host 为 arm64、包内缩放 worker 与 Photon WASM 存在。差异空白检查通过。未运行专项测试或独立 typecheck，未启动安装包或触发真实业务库迁移，未提交、推送或发布。构建生成的版本文件和构建修复保留在工作区，原四份桌宠文件改动不变。
+
+### 后续交付：桌宠 0.1.8 与构建改动提交
+
+用户追加授权构建、提交并推送新版宠物插件，并按仓库约定一并提交现有有效源码与构建版本文件。`local.codex-pet` 升至 0.1.8，采用已有自动镜像源码，左半屏镜像、右半屏原样，透明像素命中、注视与拖动动作同步方向。执行 `npm --prefix plugins/codex-pet run pack` 成功，包含插件编译和 devkit 静态检查；保留原权限，输出既有权限提示，未运行自动化测试或多屏原生窗口实测。新包 SHA-256 为 `5b6ba2cc1f377d2a75ad336d068547345d0845f314360ee47f7dd57d1b3c1d9b`，`dist/` 仅保留当前 0.1.8 包，已跟踪的旧 0.1.7 包随新版删除。DMG、依赖、缓存和临时文件不纳入 Git。

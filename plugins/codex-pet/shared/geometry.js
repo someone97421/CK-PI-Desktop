@@ -17,6 +17,21 @@
       return distance(display) < distance(nearest) ? display : nearest;
     });
   }
+  function shouldMirror(bounds, displays) {
+    const x = bounds.x + bounds.width / 2, y = bounds.y + bounds.height / 2;
+    let nearest = null, distance = Infinity;
+    for (const display of displays || []) {
+      // 按宠物中心所在屏幕判断；完整屏幕边界不受 Dock/任务栏位置影响。
+      const area = display.bounds || display.workArea;
+      if (x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height) return x < area.x + area.width / 2;
+      const dx = x - Math.max(area.x, Math.min(area.x + area.width, x));
+      const dy = y - Math.max(area.y, Math.min(area.y + area.height, y));
+      const candidate = dx * dx + dy * dy;
+      if (candidate < distance) { nearest = area; distance = candidate; }
+    }
+    // 跨屏间隙或拔掉显示器时，沿用最近屏幕的左右区域。
+    return nearest ? x < nearest.x + nearest.width / 2 : false;
+  }
   function clampBounds(bounds, displays) {
     const display = displayFor(bounds, displays);
     if (!display) return { ...bounds };
@@ -56,5 +71,5 @@
       top: Math.min(controls.bottom, pop.bottom), bottom: Math.max(controls.top, pop.top),
     });
   }
-  return { displayFor, clampBounds, dragBounds, initialBounds, inHoverRegion };
+  return { displayFor, shouldMirror, clampBounds, dragBounds, initialBounds, inHoverRegion };
 });

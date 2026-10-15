@@ -21,6 +21,8 @@ export class SpritePlayer {
     this.started = performance.now();
     this.look = null;
     this.dragging = false;
+    this.mirrored = false;
+    this.dragDirection = 0;
     this.reduced = false;
     this.disposed = false;
     this.generation = 0;
@@ -88,17 +90,26 @@ export class SpritePlayer {
     this.look = null;
     this.lastFrame = null;
   }
+  setMirrored(mirrored) {
+    if (this.mirrored === mirrored) return;
+    this.mirrored = mirrored;
+    this.look = null;
+    this.lastFrame = null;
+    if (this.dragging) this.drag(this.dragDirection);
+  }
   perform(name) { this.play(name, true, true); }
   drag(direction) {
     this.dragging = true;
-    this.play(direction < 0 ? 'running-left' : 'running-right', false, false, true);
+    this.dragDirection = direction;
+    const localDirection = this.mirrored ? -direction : direction;
+    this.play(localDirection < 0 ? 'running-left' : 'running-right', false, false, true);
   }
   endDrag() {
     this.dragging = false;
     this.play(format.STATE_ACTION[this.state] || 'idle', true);
   }
   pointAt(dx, dy, inside) {
-    this.look = this.spec?.hasLook && this.settings?.gaze !== false && !this.state && !this.dragging && !this.transient && inside ? format.lookIndex(dx, dy) : null;
+    this.look = this.spec?.hasLook && this.settings?.gaze !== false && !this.state && !this.dragging && !this.transient && inside ? format.lookIndex(this.mirrored ? -dx : dx, dy) : null;
   }
   tick(time) {
     if (this.disposed) return;
@@ -118,7 +129,12 @@ export class SpritePlayer {
         if (index !== this.lastFrame) {
           const cell = format.cellFor(index, this.spec.geometry);
           this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-          this.context.drawImage(this.image, cell.x, cell.y, cell.width, cell.height, 0, 0, this.canvas.width, this.canvas.height);
+          // 将镜像画进像素，透明区域命中继续读取实际显示的图像。
+          this.context.save();
+          try {
+            if (this.mirrored) { this.context.translate(this.canvas.width, 0); this.context.scale(-1, 1); }
+            this.context.drawImage(this.image, cell.x, cell.y, cell.width, cell.height, 0, 0, this.canvas.width, this.canvas.height);
+          } finally { this.context.restore(); }
           this.lastFrame = index;
         }
       } catch (error) { this.onError?.(error.message); this.clear(); }

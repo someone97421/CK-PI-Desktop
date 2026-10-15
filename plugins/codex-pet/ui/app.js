@@ -109,6 +109,16 @@ function scheduleLayout() {
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => resizeWindow().catch(showError));
 }
+function updateMirror() {
+  if (!sprite || !nativeState?.bounds || settingsSurface) return;
+  const rect = sprite.canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  // CSS 宠物坐标与宿主窗口坐标都使用 DIP，不额外乘屏幕缩放倍率。
+  sprite.setMirrored(geometry.shouldMirror({
+    x: nativeState.bounds.x + rect.left, y: nativeState.bounds.y + rect.top,
+    width: rect.width, height: rect.height,
+  }, nativeState.displays));
+}
 function setBounds(bounds) {
   // 最多一个请求在途、一个最新目标待发送，不回放已过期的鼠标轨迹。
   pendingBounds = bounds;
@@ -119,7 +129,7 @@ function setBounds(bounds) {
           const target = pendingBounds;
           pendingBounds = null;
           const result = await widget('setBounds', target);
-          if (result?.bounds && nativeState) nativeState.bounds = result.bounds;
+          if (result?.bounds && nativeState) { nativeState.bounds = result.bounds; updateMirror(); }
         }
       } finally {
         pendingBounds = null;
@@ -141,6 +151,7 @@ async function resizeWindow() {
   anchor = { x: target.x, y: target.y };
   const current = nativeState.bounds;
   if (Object.keys(target).some((key) => Math.abs(target[key] - current[key]) > 1)) await setBounds(target);
+  updateMirror();
 }
 async function openSettings() {
   if (preview) { location.search = '?surface=settings'; return; }
@@ -173,6 +184,7 @@ async function cursorUpdate() {
   // 查询期间可能已经按下宠物，旧悬停结果不能再打开鼠标穿透。
   if (!state || closed || dragging) return;
   nativeState = state;
+  updateMirror();
   const x = nativeState.cursor.x - nativeState.bounds.x;
   const y = nativeState.cursor.y - nativeState.bounds.y;
   const element = document.elementFromPoint(x, y);
@@ -286,6 +298,7 @@ function attachPetInteraction() {
     if (event.key === 'Escape') return onAction('reset-position');
     const state = await widget('getState'), step = event.shiftKey ? 1 : 10;
     if (!state) return;
+    nativeState = state;
     const target = geometry.clampBounds({ ...state.bounds, x: state.bounds.x + (event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0), y: state.bounds.y + (event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0) }, state.displays);
     anchor = { x: target.x, y: target.y }; await setBounds(target); await request('pet.position', { position: anchor });
   });
