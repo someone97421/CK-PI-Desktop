@@ -40,7 +40,7 @@ test("sidecar routes main-local tools before the host-core proxy", () => {
   );
 });
 
-test("main serves BrowserPreview from its originating session workspace", () => {
+test("main serves BrowserPreview from its originating session workspace", async () => {
   assert.match(mainSource, /s\.setLocalTool\("BrowserPreview"/);
   // The local tool receives session identity from the sidecar and resolves the
   // workspace from that durable session, never from the visible shell project.
@@ -49,10 +49,15 @@ test("main serves BrowserPreview from its originating session workspace", () => 
     mainSource.indexOf("sidecar = s;"),
   );
   assert.match(handler, /async \(\{ args, sessionId \}\)/);
-  assert.match(handler, /host\?\.call\("session\.get", \{ id: sessionId \}\)/);
-  assert.match(handler, /res\?\.session\?\.projectPath/);
+  assert.match(handler, /browserHost\.getFileRoots\(sessionId\)/);
   assert.doesNotMatch(handler, /workspace\.get/);
-  assert.match(handler, /browserHost\.previewWorkspaceFile\(sessionId, raw, root\)/);
+  assert.match(handler, /browserHost\.previewFile\(\)/);
+  const services = await readFile(new URL("../electron/main/services/plugin-services.ts", import.meta.url), "utf8");
+  const roots = services.slice(services.indexOf("getFileRoots: async"), services.indexOf("getScratchDir:"));
+  assert.match(roots, /"session\.get", \{ id: sessionId \}/);
+  assert.match(roots, /res\.session\.worktree/);
+  assert.match(roots, /"worktree\.location", \{ sessionId \}/);
+  assert.match(roots, /return \[path, join\(dataDir, "scratch", sessionId\)\]/);
   assert.ok(
     handler.indexOf("resolveLocalFile(raw, root)") <
       handler.indexOf("sendToRenderer(IPC.event.browserPreview"),
@@ -60,7 +65,7 @@ test("main serves BrowserPreview from its originating session workspace", () => 
   assert.doesNotMatch(handler, /browserPane\.navigate/);
   assert.match(
     handler,
-    /sendToRenderer\(IPC\.event\.browserPreview, \{\s*sessionId,\s*path: raw,\s*\}\)/,
+    /sendToRenderer\(IPC\.event\.browserPreview, \{\s*sessionId,\s*path: file,\s*\}\)/,
   );
   assert.match(protocolSource, /browserPreview: "pi-desktop\/browser\/event\/preview"/);
 });

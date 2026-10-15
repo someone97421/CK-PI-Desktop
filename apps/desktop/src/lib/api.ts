@@ -103,6 +103,14 @@ import type {
   SessionSearchContext,
   SessionSearchContextRequest,
   SessionSummary,
+  CreatedSessionWorktree,
+  WorktreeMergeOutcome,
+  WorktreeMergePreview,
+  WorktreePendingWork,
+  WorktreeSyncOutcome,
+  WorktreeBehindCounts,
+  WorktreeProbeResult,
+  WorktreeSetupLog,
   SessionCollaborationSummary,
   TraySessionPreferences,
   ToolPermissionResolution,
@@ -371,6 +379,13 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   }
   return result.data;
 }
+
+/** `session.create` input: summary fields plus the isolation switch. */
+export type CreateSessionInput = Partial<SessionSummary> & {
+  draftId?: string;
+  /** Run the session in its own git worktree (ADR 0329). */
+  isolated?: boolean;
+};
 
 function normalizeSession(session: SessionSummary): SessionSummary {
   return {
@@ -652,10 +667,34 @@ export const api = {
       ...result,
       sessions: result.sessions.map(normalizeSession),
     })),
-  createSession: (input?: Partial<SessionSummary> & { draftId?: string }) =>
-    invoke<{ session: SessionSummary }>(IPC.invoke.sessionCreate, input ?? {}).then(
-      (result) => ({ ...result, session: normalizeSession(result.session) }),
-    ),
+  createSession: (input?: CreateSessionInput) =>
+    invoke<{ session: SessionSummary; worktree?: CreatedSessionWorktree }>(
+      IPC.invoke.sessionCreate,
+      input ?? {},
+    ).then((result) => ({ ...result, session: normalizeSession(result.session) })),
+  /** Isolated sessions in git worktrees (ADR 0329). No call returns a path. */
+  probeWorktree: (projectPath: string) =>
+    invoke<WorktreeProbeResult>(IPC.invoke.worktreeProbe, { projectPath }),
+  previewWorktreeMerge: (sessionId: string) =>
+    invoke<WorktreeMergePreview>(IPC.invoke.worktreePreview, { sessionId }),
+  mergeWorktree: (sessionId: string, previewToken: string) =>
+    invoke<WorktreeMergeOutcome>(IPC.invoke.worktreeMerge, { sessionId, previewToken }),
+  getWorktreeBehind: (sessionId: string) =>
+    invoke<number>(IPC.invoke.worktreeBehind, { sessionId }),
+  /** Project commits each isolated session lacks, keyed by session id. */
+  getWorktreeBehindAll: () => invoke<WorktreeBehindCounts>(IPC.invoke.worktreeBehindAll),
+  syncWorktree: (sessionId: string) =>
+    invoke<WorktreeSyncOutcome>(IPC.invoke.worktreeSync, { sessionId }),
+  getWorktreePendingWork: (sessionId: string) =>
+    invoke<WorktreePendingWork>(IPC.invoke.worktreePendingWork, { sessionId }),
+  getWorktreeSetupLog: (sessionId: string) =>
+    invoke<WorktreeSetupLog>(IPC.invoke.worktreeSetupLog, { sessionId }),
+  revealWorktree: (sessionId: string) =>
+    invoke<{ ok: boolean }>(IPC.invoke.worktreeReveal, { sessionId }),
+  getWorktreeSetupCommand: (projectPath: string) =>
+    invoke<{ command: string | null }>(IPC.invoke.worktreeSetupCommandGet, { projectPath }),
+  setWorktreeSetupCommand: (projectPath: string, command: string | null) =>
+    invoke<{ ok: boolean }>(IPC.invoke.worktreeSetupCommandSet, { projectPath, command }),
   forkSession: (sessionId: string, title?: string, throughMessageId?: string) =>
     invoke<{ session: SessionDetail }>(IPC.invoke.sessionFork, {
       sessionId,

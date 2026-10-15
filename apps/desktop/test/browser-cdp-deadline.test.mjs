@@ -69,7 +69,7 @@ function harness() {
   };
   const host = new BrowserHost({
     createPane, isPluginLoaded: () => true,
-    getFileRoot(sessionId) {
+    getFileRoots(sessionId) {
       const done = deferred(); roots.push({ sessionId, ...done }); return done.promise;
     },
     onState: () => {},
@@ -85,7 +85,7 @@ function harness() {
 
 async function open(h, sessionId, tabId, url) {
   h.host.setChromeSession(sessionId, tabId, url);
-  h.roots.at(-1).resolve(`/projects/${sessionId}`);
+  h.roots.at(-1).resolve([`/projects/${sessionId}`]);
   await settled(); h.loads.at(-1).finish(); await settled();
 }
 

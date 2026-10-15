@@ -48,7 +48,7 @@
     "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.6.0",
-    "dompurify": "^3.4.13",
+    "dompurify": "^3.4.17",
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^4.0.0",

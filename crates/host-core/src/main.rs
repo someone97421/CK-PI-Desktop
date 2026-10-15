@@ -22,6 +22,7 @@ mod scratch;
 mod secrets;
 mod session_collaboration;
 mod session_search;
+mod session_worktrees;
 mod sessions;
 mod skill_roots;
 mod state;
@@ -81,6 +82,9 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(data_dir.join("scratch"))?;
 
     let state = Arc::new(Mutex::new(AppState::open(&data_dir)?));
+    session_worktrees::lifecycle::relocate_copied_worktrees(
+        &state, &session_worktrees::git::GitRunner::default(),
+    ).await?;
     tracing::info!(path = %data_dir.display(), "host-core starting");
     {
         // Sweep orphaned/stale session scratch dirs left behind by crashes or
@@ -94,5 +98,11 @@ async fn main() -> anyhow::Result<()> {
             review::sweep(&data_dir, &live);
         }
     }
+    // Drop half-created worktrees, mark vanished ones, repair links after a
+    // moved data directory, and remove orphans (ADR 0329).
+    tokio::spawn(session_worktrees::lifecycle::reconcile(
+        state.clone(),
+        session_worktrees::git::GitRunner::default(),
+    ));
     rpc::serve(state).await
 }

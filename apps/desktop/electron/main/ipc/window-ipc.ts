@@ -182,13 +182,13 @@ export function registerWindowIpc({
       case "minimize":
         mainWindow.minimize();
         break;
+      // `toggleMaximize` and the rest run through the shared native-menu
+      // action so the maximize/fullscreen interlock (issue #1655) has one
+      // implementation: calling `mainWindow.maximize()` directly would skip
+      // the fullscreen-first rule and leave both flags set.
       case "toggleMaximize":
-        if (mainWindow.isMaximized()) mainWindow.unmaximize();
-        else mainWindow.maximize();
-        break;
       case "close":
-        mainWindow.close();
-        break;
+        return executeNativeMenuAction(input.action as NativeMenuAction);
     }
     return {
       maximized: !mainWindow.isDestroyed() && mainWindow.isMaximized(),

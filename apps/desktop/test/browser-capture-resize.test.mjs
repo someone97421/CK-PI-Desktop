@@ -28,6 +28,7 @@ const electron = `data:text/javascript,${encodeURIComponent(`
         id: WebContentsView.instances.length + 1,
         url: "", destroyed: false, viewport: { width: 0, height: 0 },
         captures: [],
+        layoutSize: { width: 800, height: 6000 },
         async loadURL(url) {
           this.emit("did-start-navigation", {}, url, false, true);
           this.url = url;
@@ -52,7 +53,7 @@ const electron = `data:text/javascript,${encodeURIComponent(`
         detach() { this.attached = false; },
         async sendCommand(method, params) {
           if (method === "Page.getLayoutMetrics") {
-            return { cssContentSize: { width: wc.viewport.width, height: 6000 } };
+            return { cssContentSize: { ...wc.layoutSize } };
           }
           if (method !== "Page.captureScreenshot") return {};
           const savedViewport = { ...wc.viewport };
@@ -87,7 +88,7 @@ const { WebContentsView } = await import("electron");
 async function harness(t) {
   const host = new BrowserHost({
     createPane: (onState, onOpenUrl) => new BrowserPane(onState, onOpenUrl),
-    isPluginLoaded: () => true, getFileRoot: async () => null, onState: () => {},
+    isPluginLoaded: () => true, getFileRoots: async () => [], onState: () => {},
   });
   const children = [];
   host.setWindow({ isDestroyed: () => false, contentView: {
@@ -115,6 +116,28 @@ function paintedBounds(view) {
     height: Math.min(own.height, parent.height - own.y),
   };
 }
+
+test("full-page screenshot scales both dimensions to provider-safe limits", async (t) => {
+  const { host, wc } = await harness(t);
+  for (const [layoutSize, expectedScale] of [
+    [{ width: 800, height: 6000 }, 2048 / 6000],
+    [{ width: 4000, height: 6000 }, 1280 / 4000],
+  ]) {
+    wc.layoutSize = layoutSize;
+    const started = once(wc, "capture-start");
+    const capture = host.screenshot({ fullPage: true });
+    await started;
+    assert.deepEqual(wc.captures.at(-1).params.clip, {
+      x: 0,
+      y: 0,
+      width: layoutSize.width,
+      height: layoutSize.height,
+      scale: expectedScale,
+    });
+    wc.captures.at(-1).resolve();
+    await capture;
+  }
+});
 
 for (const raw of [false, true]) {
   test(`${raw ? "raw CDP" : "browser screenshot"} stays inside the relocated panel before capture finishes`, async (t) => {

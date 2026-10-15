@@ -341,3 +341,46 @@ async fn approved_remote_write_is_dispatched_only_after_local_permission_resolut
         "CAPABILITY_UNAVAILABLE"
     );
 }
+
+/// ADR 0329: a remote-host project cannot host an isolated session; the
+/// probe says why and creation is refused before a session exists.
+#[tokio::test]
+async fn remote_projects_cannot_create_isolated_sessions() {
+    let (_dir, state, tx, _rx) = fixture();
+    let (path, _id) = create(&state, &tx).await;
+    let probe = handle_request(
+        state.clone(),
+        "worktree.probe",
+        json!({"projectPath": path}),
+        tx.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(probe["available"], false);
+    assert_eq!(probe["errorCode"], "WORKTREE_REMOTE_UNSUPPORTED");
+    let before = handle_request(state.clone(), "session.list", json!({}), tx.clone())
+        .await
+        .unwrap()["sessions"]
+        .as_array()
+        .unwrap()
+        .len();
+    let refused = handle_request(
+        state.clone(),
+        "session.create",
+        json!({"projectPath": path, "isolated": true}),
+        tx.clone(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        refused.data.unwrap()["errorCode"],
+        "WORKTREE_REMOTE_UNSUPPORTED"
+    );
+    let after = handle_request(state.clone(), "session.list", json!({}), tx.clone())
+        .await
+        .unwrap()["sessions"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(before, after);
+}

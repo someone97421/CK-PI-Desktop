@@ -267,6 +267,7 @@ import {
   compactionProvidersEqual,
   resolveCompactionProvider,
 } from "./compaction-model.js";
+import { withSessionAffinityOptions } from "./session-affinity.js";
 import {
   addSummaryUsage,
   compactionSummaryInputLimit,
@@ -512,6 +513,11 @@ export type DelegationRecord = {
   parentToolCallId?: string;
   run?: SubagentRun;
   delegationId: string;
+  /**
+   * Chain id under which host-core keeps this Write/Edit subagent's own git
+   * worktree in an isolated session (ADR 0329); absent otherwise.
+   */
+  worktreeKey?: string;
   /** Original Task transcript snapshot, available after its immediate result. */
   taskMessage?: UiMessage;
   taskTurnId?: string;
@@ -944,6 +950,11 @@ export type AgentRuntimeOptions = {
   projectPath?: string;
   /** Remote tool root. Model requests and runtime state remain on this machine. */
   remoteWorkspace?: { hostKey: string; path: string };
+  /**
+   * An isolated session's git worktree (ADR 0329). Files, the extension cwd,
+   * and edit bookkeeping use it; `projectPath` stays the project identity.
+   */
+  workspaceRoot?: string;
   /** Instructions resolved from the session's workspace. */
   projectInstructions?: ProjectInstructions;
   /** Durable project context loaded from host-owned project memory. */
@@ -1010,6 +1021,7 @@ export type RuntimeMatchConfig = {
   projectPath?: string;
   /** Remote tool root. Model requests and runtime state remain on this machine. */
   remoteWorkspace?: { hostKey: string; path: string };
+  workspaceRoot?: string;
   commandShell: CommandShellOption;
   subagents?: SubagentDefinition[];
   subagentProviders?: Record<string, RuntimeProviderConfig>;
@@ -1602,6 +1614,45 @@ function estimateVisibleResponseOutputTokens(
   return Math.max(1, Math.ceil(Array.from(visible).length / 4));
 }
 
+/** host-core's `worktree.delegate.settle` result (ADR 0329). */
+export type DelegateWorktreeSettlement =
+  | { result: "none" }
+  | { result: "noChanges" }
+  | { result: "merged"; commits: number }
+  | { result: "conflict"; files: string[] }
+  | { result: "notMerged"; reason: string }
+  | { result: "kept" };
+
+/** The line appended to a delegate's report about its worktree. */
+export function delegateWorktreeNote(settlement: DelegateWorktreeSettlement, resume: string): string {
+  switch (settlement.result) {
+    case "merged":
+      return `Isolated worktree: merged ${settlement.commits} commit(s) into the session workspace.`;
+    case "noChanges":
+      return "Isolated worktree: no file changes; the worktree was removed.";
+    case "conflict":
+      return `Isolated worktree: NOT merged. These files conflict with the session workspace: ${settlement.files.join(", ")}. Continue with ${resume} to resolve them in the subagent's worktree; the merge is retried when it ends.`;
+    case "notMerged":
+      return `Isolated worktree: not merged yet (${settlement.reason}). Continue with ${resume} to retry.`;
+    case "kept":
+      return "Isolated worktree: the run did not complete, so its changes were kept unmerged.";
+    default:
+      return "";
+  }
+}
+
+/**
+ * System-prompt rules for an isolated session (ADR 0329): the workspace is a
+ * separate git worktree that the user merges from the app.
+ */
+export function isolatedWorkspaceGuidance(): string {
+  return [
+    "Isolated session: work in the advertised git worktree on its existing branch; use the app to merge it into the project.",
+    "Dependencies may need installation, and development servers use the ten ports starting at PI_PORT.",
+    "File tools and writable subagents use isolated worktrees; MCP tools retain the main project's scope, and subagent reports state whether changes merged back.",
+  ].join(" ");
+}
+
 export class DesktopAgentRuntime {
   private agent: Agent;
   private models: Models;
@@ -1679,6 +1730,8 @@ export class DesktopAgentRuntime {
    */
   private delegatePermissionScopes = new Map<string, SubagentPermission>();
   private delegateInputCapabilities = new Map<string, ToolInputCapabilities>();
+  private delegateWorktrees = new Map<string, string>();
+  private delegateWorkspaceRoots = new Map<string, string>();
   /** Serializes same-path mutations across the parent and its delegates. */
   private writeLocks = new PathMutex();
   /** Complete tool registry; only the active subset is sent to the provider. */
@@ -1693,6 +1746,8 @@ export class DesktopAgentRuntime {
   private scratchDir?: string;
   private projectPath?: string;
   private remoteWorkspace?: { hostKey: string; path: string };
+  /** Set only for an isolated session; see `RuntimeConfig.workspaceRoot`. */
+  private workspaceRoot?: string;
   private commandShell: CommandShellOption;
   private baseProjectInstructions?: ProjectInstructions;
   private projectInstructions?: ProjectInstructions;
@@ -1910,6 +1965,8 @@ export class DesktopAgentRuntime {
     this.remoteWorkspace = opts.remoteWorkspace;
     this.scratchDir = opts.remoteWorkspace ? undefined : opts.scratchDir;
     this.projectPath = opts.remoteWorkspace?.path ?? (opts.projectPath?.trim() || undefined);
+    // Remote workspaces are never isolated (ADR 0329).
+    this.workspaceRoot = opts.remoteWorkspace ? undefined : opts.workspaceRoot?.trim() || undefined;
     this.customSystemPrompt = opts.customSystemPrompt;
     this.baseProjectInstructions = opts.projectInstructions;
     this.projectInstructions = opts.projectInstructions;
@@ -1972,6 +2029,8 @@ Delegation rules:
             `Your scratch directory for this session is \`${formatScratchDirForShell(this.commandShell, this.scratchDir)}\` (in Bash: ${shellScratchVariable(this.commandShell)}). Write ALL temporary and intermediate files there using absolute paths — one-off scripts, downloaded data, drafts, experiment output — never into the workspace. Only write into the workspace when the file is a deliverable the user asked for. Scratch files persist across turns of this session and are cleaned up automatically when the session is deleted.`,
           ]
         : []),
+      // Isolated session (ADR 0329).
+      ...(this.workspaceRoot ? [isolatedWorkspaceGuidance()] : []),
     ];
     // SYSTEM.md replaces only the product persona. Operational desktop rules
     // remain active; APPEND_SYSTEM.md is composed before project instructions.
@@ -2052,7 +2111,15 @@ Delegation rules:
           ),
           m.api,
         );
-        const hookedOptions = this.withExtensionProviderHooks(requestOptions, m);
+        const hookedOptions = withSessionAffinityOptions(
+          this.withExtensionProviderHooks(requestOptions, m),
+          {
+            provider: this.provider,
+            api: m.api,
+            baseUrl: m.baseUrl,
+            sessionId: this.sessionId,
+          },
+        );
         // The watchdog must be able to *stop* what it abandons. It wraps the
         // retry adapter, so draining alone would let the adapter wake from its
         // backoff and open a second request for this turn while the runtime is
@@ -2641,6 +2708,7 @@ Delegation rules:
       (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "") &&
       (this.projectPath ?? "") === (config.remoteWorkspace?.path ?? config.projectPath?.trim() ?? "") &&
       safeJson(this.remoteWorkspace ?? null) === safeJson(config.remoteWorkspace ?? null) &&
+      (this.workspaceRoot ?? "") === (config.workspaceRoot?.trim() ?? "") &&
       // Editing `~/.agents/subagents/*.md` must reach the next prompt. Definition
       // bodies are part of the `Task` tool's behavior, so unlike skills they
       // are compared in full.
@@ -2786,7 +2854,8 @@ Delegation rules:
    * path in place, because loading extensions must not fail the session.
    */
   private extensionCwd(): string {
-    if (this.projectPath) return this.projectPath;
+    const root = this.workspaceRoot ?? this.projectPath;
+    if (root) return root;
     if (!this.scratchDir) return process.cwd();
     try {
       mkdirSync(this.scratchDir, { recursive: true });
@@ -2962,7 +3031,9 @@ Delegation rules:
       if (m.parentToolCallId) continue;
       const timestamp = Date.parse(m.createdAt) || Date.now();
       if (m.role === "system" && m.modelSystem) {
-        toolCarrier = undefined;
+        // An update recorded while a tool ran sits between the call and its
+        // result. It keeps the carrier: Pi holds the update until the results
+        // are written, which is the shape the live request had.
         append(m.id, this.systemJournal.restore(m));
       } else if (m.role === "user") {
         toolCarrier = undefined;
@@ -3153,7 +3224,7 @@ Delegation rules:
       if (scheduledToolDescriptions[toolName]) return scheduledToolDescriptions[toolName];
       switch (toolName) {
         case "BrowserPreview":
-          return "Open a workspace HTML file in PI-Desktop's built-in browser panel. `path` is workspace-relative (e.g. \"demo/index.html\"). The preview live-reloads on later edits to the file or its sibling assets, so call once per page.";
+          return "Open an HTML file from this session's workspace or scratch directory in PI-Desktop's built-in browser panel. `path` may be relative to either root or absolute inside them; no project is required for scratch previews. The preview live-reloads on later edits to the file or its sibling assets, so call once per page.";
         case "Read":
           return (
             "Read an existing regular text, image, audio or video file, never a directory. Media is delivered according to the current model's capabilities; offset and limit apply only to text. " +
@@ -3219,7 +3290,7 @@ Delegation rules:
         ),
       },
       BrowserPreview: {
-        path: pathParam("File to preview; workspace-relative."),
+        path: pathParam("HTML file inside this session's workspace or scratch directory."),
         file_path: aliasParam("path"),
       },
       Glob: {
@@ -3305,12 +3376,17 @@ Delegation rules:
         signal,
         onUpdate,
       ) => {
+        const worktreeKey = this.delegateWorktrees.get(toolCallId);
+        const workspaceRoot = (worktreeKey ? this.delegateWorkspaceRoots.get(worktreeKey) : undefined) ?? this.workspaceRoot;
         const mutationPath = PATH_MUTATING_TOOLS.has(toolName) && isRecord(params) && typeof params.path === "string"
           ? this.remoteWorkspace
             ? remoteMutationIdentity(this.remoteWorkspace, params.path)
-            : await mutationFailureKey(params.path, this.projectPath ?? this.scratchDir)
+            : await mutationFailureKey(
+                params.path,
+                workspaceRoot ?? this.projectPath ?? this.scratchDir,
+              )
           : undefined;
-        await this.loadPathInstructions(toolName, params);
+        await this.loadPathInstructions(toolName, params, worktreeKey);
         const isBash = toolName === "Bash";
         const timeoutMs = isBash ? commandTimeoutMs(params) : undefined;
         let progress = "";
@@ -3445,6 +3521,11 @@ Delegation rules:
               // instead of the session mode. Parent calls never carry it.
               ...(this.delegatePermissionScopes.has(toolCallId)
                 ? { permissionScope: this.delegatePermissionScopes.get(toolCallId) }
+                : {}),
+              // A Write/Edit delegate of an isolated session runs in its own
+              // worktree; host-core resolves the key against its registry.
+              ...(this.delegateWorktrees.has(toolCallId)
+                ? { delegationId: this.delegateWorktrees.get(toolCallId) }
                 : {}),
             });
         } catch (error) {
@@ -4228,7 +4309,7 @@ Delegation rules:
    * collaboration rules are deliberately left out — a delegate has no user to
    * talk to, and its report format is set by `composeSubagentSystemPrompt`.
    */
-  private subagentGuidance(definition: SubagentDefinition): string[] {
+  private subagentGuidance(definition: SubagentDefinition, worktreeKey?: string): string[] {
     const tools = new Set(
       resolveSubagentToolNames(definition, [...this.toolCatalog.keys()]),
     );
@@ -4256,6 +4337,9 @@ Delegation rules:
       if (skillsPrompt) blocks.push(skillsPrompt);
     }
     const projectPrompt = projectInstructionsPrompt(this.projectInstructions);
+    if (this.workspaceRoot) blocks.push(isolatedWorkspaceGuidance());
+    const workspace = (worktreeKey ? this.delegateWorkspaceRoots.get(worktreeKey) : undefined) ?? this.workspaceRoot;
+    if (workspace) blocks.push(`Workspace: ${workspace}`);
     if (projectPrompt) blocks.push(projectPrompt);
     return blocks;
   }
@@ -4429,6 +4513,9 @@ Delegation rules:
           );
         }
         const delegationId = randomUUID();
+        // ADR 0329: in an isolated session a delegate that can write files gets
+        // its own worktree, keyed by its chain so a resume reuses it.
+        const worktreeKey = this.delegateNeedsWorktree(declaredToolNames) ? delegationId : undefined;
         const controller = new AbortController();
         if (this.disposed || this.runCancelled || this.turnHadError || this.turnEpoch !== dispatchEpoch) {
           return this.subagentToolError(toolCallId, "Parent turn changed while preparing delegation.");
@@ -4476,11 +4563,22 @@ Delegation rules:
           durableGeneration: 0,
           source: "memory",
           taskInstruction: task,
+          ...(worktreeKey ? { worktreeKey } : {}),
         };
         this.delegations.set(delegationId, record);
         this.markSubagentCoordination(record);
         // 先登记名额与取消句柄；下面的执行回执只涉及内存状态。
         try {
+          if (worktreeKey) {
+            try {
+              await this.prepareDelegateWorktree(worktreeKey);
+            } catch (error) {
+              throw new Error(`Could not prepare an isolated worktree for the ${definition.name} subagent: ${error instanceof Error ? error.message : String(error)}. No work was started.`);
+            }
+            if (record.stopRequested || this.disposed || this.runCancelled || this.turnHadError || dispatchEpoch !== this.turnEpoch) {
+              throw new Error("Delegation was cancelled while preparing its isolated worktree.");
+            }
+          }
           record.pendingBegin = this.persistenceClient.beginExecution({
             sessionId: this.sessionId, delegationId, expectedRevision: 0, expectedExecution: 0,
             nextExecution: 1, executionId: delegationId,
@@ -4496,11 +4594,13 @@ Delegation rules:
               this.runCancelled || this.turnHadError || record.startedEpoch !== this.turnEpoch) {
             if (record.interruptionReceipt) await record.interruptionReceipt;
             else this.requestDelegationStop(record, "parent");
+            if (worktreeKey) await this.settleDelegateWorktree(worktreeKey, false, delegationId);
             record.status = "stopped";
             resolveCompletion();
             return this.subagentToolError(toolCallId, "Delegation was cancelled before execution began.");
           }
         } catch (error) {
+          if (worktreeKey) await this.settleDelegateWorktree(worktreeKey, false, delegationId);
           record.status = record.stopRequested ? "stopped" : "failed";
           record.persistenceState = "persistence-error";
           // 注册失败已由本次 Task 结果同步返回，不再作为后台完成报告补发。
@@ -4514,7 +4614,7 @@ Delegation rules:
           const scopedTools = this.scopeDelegateTools(tools, definition, delegationId, () => record.run?.inputCapabilities ?? {
             supportsVision: visionFromModelConfig(provider.modelConfig),
             ...mediaCapabilitiesForProvider(provider),
-          });
+          }, worktreeKey);
           record.run = new SubagentRun({
           delegationId,
           reportIntervalSteps,
@@ -4549,7 +4649,7 @@ Delegation rules:
           systemPrompt: composeSubagentSystemPrompt({
             definition,
             reportIntervalSteps,
-            guidance: this.subagentGuidance(definition),
+            guidance: this.subagentGuidance(definition, worktreeKey),
             toolNames: declaredToolNames,
           }),
           tools: scopedTools,
@@ -4624,6 +4724,7 @@ Delegation rules:
     definition: SubagentDefinition,
     mutationOwner: string,
     getInputCapabilities: () => ToolInputCapabilities,
+    worktreeKey?: string,
   ): AgentTool[] {
     const scope = definition.permission ?? DEFAULT_SUBAGENT_PERMISSION;
     return tools.map((tool) => ({
@@ -4632,15 +4733,62 @@ Delegation rules:
         if (scope !== DEFAULT_SUBAGENT_PERMISSION) this.delegatePermissionScopes.set(toolCallId, scope);
         this.delegateInputCapabilities.set(toolCallId, getInputCapabilities());
         this.mutationOwners.set(toolCallId, mutationOwner);
+        if (worktreeKey) this.delegateWorktrees.set(toolCallId, worktreeKey);
         try {
           return await tool.execute(toolCallId, args, signal, onUpdate);
         } finally {
           this.delegatePermissionScopes.delete(toolCallId);
           this.delegateInputCapabilities.delete(toolCallId);
+          this.delegateWorktrees.delete(toolCallId);
           this.mutationOwners.delete(toolCallId);
         }
       },
     }));
+  }
+
+  /**
+   * Only inside an isolated session, and only for delegates that can edit
+   * files (Write/Edit); Bash-only and read-only delegates share the session
+   * worktree (ADR 0329, Q11).
+   */
+  private delegateNeedsWorktree(toolNames: readonly string[]): boolean {
+    return (
+      this.workspaceRoot !== undefined &&
+      toolNames.some((name) => name === "Write" || name === "Edit")
+    );
+  }
+
+  private async prepareDelegateWorktree(worktreeKey: string): Promise<void> {
+    await this.host.call("worktree.delegate.create", { sessionId: this.sessionId, delegationId: worktreeKey });
+    const { path } = await this.host.call<{ path: string }>("worktree.location", {
+      sessionId: this.sessionId, delegationId: worktreeKey,
+    });
+    if (!path?.trim()) throw new Error("Isolated subagent workspace unavailable");
+    this.delegateWorkspaceRoots.set(worktreeKey, path);
+  }
+
+
+  /** Ask host-core to settle a delegate worktree; returns a report note. */
+  private async settleDelegateWorktree(
+    worktreeKey: string,
+    merge: boolean,
+    delegationId: string,
+  ): Promise<string> {
+    const resume = `TaskResume(delegationId: "${delegationId}", expectedExecution: ${this.delegations.get(delegationId)?.execution ?? 1})`;
+    try {
+      const { settlement } = await this.host.call<{ settlement: DelegateWorktreeSettlement }>(
+        "worktree.delegate.settle",
+        { sessionId: this.sessionId, delegationId: worktreeKey, merge },
+      );
+      if (settlement.result === "merged" || settlement.result === "noChanges" || settlement.result === "none") {
+        this.delegateWorkspaceRoots.delete(worktreeKey);
+      }
+      return delegateWorktreeNote(settlement, resume);
+    } catch (error) {
+      return `Isolated worktree: merge-back failed (${
+        error instanceof Error ? error.message : String(error)
+      }); the subagent's changes are kept.${merge ? ` Continue with ${resume} to retry.` : ""}`;
+    }
   }
 
   /** Records a settled run and wakes every TaskWait waiting on it. */
@@ -4666,6 +4814,15 @@ Delegation rules:
     record.settling = true;
     const resolveExecution = record.resolveCompletion;
     try {
+      if (record.worktreeKey) {
+        const note = await this.settleDelegateWorktree(
+          record.worktreeKey,
+          result.status === "completed" && !record.stopRequested && !record.interruptionReceipt,
+          record.delegationId,
+        );
+        if (execution !== (record.execution ?? 1)) return;
+        if (note) result = { ...result, report: result.report ? `${result.report}\n\n${note}` : note };
+      }
       record.status = record.interruptionReceipt ? "failed" : record.stopRequested ? "stopped" : result.status;
       record.result = result;
       record.completedAt = Date.now();
@@ -5563,6 +5720,11 @@ Delegation rules:
         const resumeEpoch = this.turnEpoch;
 
         try {
+          const definition = this.subagents.find((candidate) => candidate.name === record.agentName);
+          if (definition && this.delegateNeedsWorktree(resolveSubagentToolNames(definition, [...this.toolCatalog.keys()]))) {
+            record.worktreeKey = record.delegationId;
+            await this.prepareDelegateWorktree(record.worktreeKey);
+          }
           // Cold restore from persistent disk snapshot if memory instance is absent
           if (record.isColdDisk && !record.run) {
             const loadRes = await this.persistenceClient.loadSnapshot({
@@ -5594,7 +5756,7 @@ Delegation rules:
             const scopedTools = this.scopeDelegateTools(tools, definition, record.delegationId, () => record.run?.inputCapabilities ?? {
               supportsVision: visionFromModelConfig(provider!.modelConfig),
               ...mediaCapabilitiesForProvider(provider!),
-            });
+            }, record.worktreeKey);
 
             const thinkingLevel: SubagentThinkingLevel =
               definition.thinkingLevel === "omit"
@@ -5627,7 +5789,7 @@ Delegation rules:
               systemPrompt: composeSubagentSystemPrompt({
                 definition,
                 reportIntervalSteps: cp.observer.interval,
-                guidance: this.subagentGuidance(definition),
+                guidance: this.subagentGuidance(definition, record.worktreeKey),
                 toolNames: declaredToolNames,
               }),
               tools: scopedTools,
@@ -6346,6 +6508,7 @@ Delegation rules:
   private async loadPathInstructions(
     toolName: string,
     params: unknown,
+    delegationId?: string,
   ): Promise<void> {
     if (this.remoteWorkspace || !PATH_SCOPED_INSTRUCTION_TOOLS.has(toolName)) {
       return undefined;
@@ -6355,7 +6518,7 @@ Delegation rules:
       : "";
     if (!path) return undefined;
 
-    const key = `${this.projectPath ?? ""}\u0000${pathInstructionScope(path)}`;
+    const key = `${delegationId ?? this.workspaceRoot ?? this.projectPath ?? ""}\u0000${pathInstructionScope(path)}`;
     let resolution = this.pathInstructionClaims.get(key);
     if (!resolution) {
       resolution = this.host
@@ -6364,6 +6527,7 @@ Delegation rules:
           {
             sessionId: this.sessionId,
             path,
+            ...(delegationId ? { delegationId } : {}),
             ...(this.projectPath ? { projectPath: this.projectPath } : {}),
           },
           PATH_INSTRUCTION_RESOLUTION_TIMEOUT_MS,

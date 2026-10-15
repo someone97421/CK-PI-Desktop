@@ -189,13 +189,17 @@ pub fn find_message_position(
         id: String,
     }
     let mut reader = BufReader::new(File::open(transcript_path(data_dir, session_id)?)?);
+    let mut raw = Vec::new();
     let mut line = String::new();
     for (position, offset) in layout.message_offsets.iter().enumerate().rev() {
-        read_layout_line(&mut reader, *offset, "message", &mut line)?;
-        let identity: Identity =
-            serde_json::from_str(&line).context("decode indexed transcript message identity")?;
-        if identity.id == message_id {
-            return Ok(Some(position));
+        let invalid_utf8 = read_layout_line(&mut reader, *offset, "message", &mut raw, &mut line)?;
+        match serde_json::from_str::<Identity>(&line) {
+            Ok(identity) if identity.id == message_id => return Ok(Some(position)),
+            Ok(_) => {}
+            Err(error) if invalid_utf8 => {
+                tracing::warn!(%error, "skipping invalid indexed transcript identity");
+            }
+            Err(error) => return Err(error).context("decode indexed transcript message identity"),
         }
     }
     Ok(None)
@@ -210,6 +214,7 @@ pub fn read_tool_call(
     call_id: &str,
 ) -> Result<Option<MessageRecord>> {
     let mut reader = BufReader::new(File::open(transcript_path(data_dir, session_id)?)?);
+    let mut raw = Vec::new();
     let mut line = String::new();
     // A provider tool-call id is an opaque token, so it appears verbatim in the
     // line that stores it. A byte scan rejects a line before serde walks its
@@ -217,12 +222,20 @@ pub fn read_tool_call(
     // that JSON would escape keeps the unfiltered path.
     let verbatim = is_json_verbatim(call_id);
     for offset in layout.message_offsets.iter().rev() {
-        read_layout_line(&mut reader, *offset, "message", &mut line)?;
+        let invalid_utf8 = read_layout_line(&mut reader, *offset, "message", &mut raw, &mut line)?;
         if verbatim && !line.contains(call_id) {
             continue;
         }
-        let identity: Value =
-            serde_json::from_str(&line).context("decode indexed transcript tool-call identity")?;
+        let identity: Value = match serde_json::from_str(&line) {
+            Ok(value) => value,
+            Err(error) if invalid_utf8 => {
+                tracing::warn!(%error, "skipping invalid indexed transcript tool-call identity");
+                continue;
+            }
+            Err(error) => {
+                return Err(error).context("decode indexed transcript tool-call identity");
+            }
+        };
         let matches_call = identity.get("role").and_then(Value::as_str) == Some("tool")
             && identity
                 .get("blocks")
@@ -233,32 +246,66 @@ pub fn read_tool_call(
                         .any(|block| block.get("callId").and_then(Value::as_str) == Some(call_id))
                 });
         if matches_call {
-            return Ok(Some(serde_json::from_str(&line)?));
+            match serde_json::from_str(&line) {
+                Ok(record) => return Ok(Some(record)),
+                Err(error) if invalid_utf8 => {
+                    tracing::warn!(%error, "skipping invalid indexed tool-call message");
+                }
+                Err(error) => {
+                    return Err(error).context("decode indexed transcript tool-call message")
+                }
+            }
         }
     }
     Ok(None)
 }
 
+/// Read one line from the reader into `line_buf`, tolerating mid-append torn UTF-8 bytes.
+/// If `raw_buf` contains valid UTF-8, it is preserved verbatim. If torn/corrupt
+/// bytes are encountered, they are decoded lossily via `String::from_utf8_lossy`
+/// so that the downstream JSON / sniffing parser can safely discard the corrupted record
+/// rather than aborting whole transcript reads with `InvalidData`.
+pub(crate) fn read_line_tolerant(
+    reader: &mut BufReader<File>,
+    raw_buf: &mut Vec<u8>,
+    line_buf: &mut String,
+) -> std::io::Result<(usize, bool)> {
+    raw_buf.clear();
+    let n = reader.read_until(b'\n', raw_buf)?;
+    if n == 0 {
+        line_buf.clear();
+        return Ok((0, false));
+    }
+    line_buf.clear();
+    match String::from_utf8(std::mem::take(raw_buf)) {
+        Ok(decoded) => {
+            *raw_buf = std::mem::replace(line_buf, decoded).into_bytes();
+            Ok((n, false))
+        }
+        Err(error) => {
+            let bytes = error.into_bytes();
+            line_buf.push_str(&String::from_utf8_lossy(&bytes));
+            *raw_buf = bytes;
+            Ok((n, true))
+        }
+    }
+}
 fn read_layout_line(
     reader: &mut BufReader<File>,
     offset: u64,
     expected_kind: &str,
+    raw: &mut Vec<u8>,
     line: &mut String,
-) -> Result<()> {
+) -> Result<bool> {
     reader.seek(SeekFrom::Start(offset))?;
-    line.clear();
-    match reader.read_line(line) {
-        Ok(0) => return Err(layout::invalid_boundary()),
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-            return Err(layout::invalid_boundary())
-        }
-        Err(error) => return Err(error.into()),
+    let (read, invalid_utf8) = read_line_tolerant(reader, raw, line)?;
+    if read == 0 {
+        return Err(layout::invalid_boundary());
     }
     if !line.ends_with('\n') || sniff_line_kind(line.trim_end()) != Some(expected_kind) {
         return Err(layout::invalid_boundary());
     }
-    Ok(())
+    Ok(invalid_utf8)
 }
 
 /// Whether a JSON string for this value is the value itself.
@@ -293,10 +340,11 @@ pub fn transcript_contains_id(data_dir: &Path, session_id: &str, message_id: &st
     };
     let verbatim = is_json_verbatim(message_id);
     let mut reader = BufReader::new(file);
+    let mut raw = Vec::new();
     let mut line = String::new();
     loop {
         line.clear();
-        if reader.read_line(&mut line)? == 0 {
+        if read_line_tolerant(&mut reader, &mut raw, &mut line)?.0 == 0 {
             return Ok(false);
         }
         let trimmed = line.trim();
@@ -811,7 +859,7 @@ fn append_line(path: &Path, header: Option<String>, line: String) -> Result<()> 
             buf.push('\n');
         }
     } else if !ends_with_newline(path)? {
-        // A crash mid-append left a torn tail. `scan_layout` tolerates it on
+        // A crash mid-append left a torn tail. `read_transcript_window` tolerates it on
         // read, but appending straight after it would fuse the torn bytes and
         // this record into one invalid line and lose both. Terminate the torn
         // line first so this record starts on its own line.
@@ -970,22 +1018,34 @@ pub fn read_transcript_window_with_layout(
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
     let mut reader = BufReader::new(file);
+    let mut raw = Vec::new();
     let mut line = String::new();
     for (offset, is_message) in wanted {
         let kind = if is_message { "message" } else { "compaction" };
-        read_layout_line(&mut reader, offset, kind, &mut line)
+        let invalid_utf8 = read_layout_line(&mut reader, offset, kind, &mut raw, &mut line)
             .with_context(|| format!("read indexed transcript line in {}", path.display()))?;
         let trimmed = line.trim();
         if is_message {
-            out.messages.push(
-                serde_json::from_str::<MessageRecord>(trimmed)
-                    .context("decode indexed transcript message")?,
-            );
+            match serde_json::from_str::<MessageRecord>(trimmed) {
+                Ok(record) => out.messages.push(record),
+                Err(error) if invalid_utf8 => {
+                    tracing::warn!(path = %path.display(), %error, "skipping invalid indexed message line");
+                }
+                Err(error) => return Err(error).context("decode indexed transcript message"),
+            }
         } else {
-            out.compactions.push(
-                serde_json::from_str::<CompactionRecord>(trimmed)
-                    .context("decode indexed transcript compaction")?,
-            );
+            match serde_json::from_str::<CompactionRecord>(trimmed) {
+                Ok(record) => out.compactions.push(record),
+                Err(error) if invalid_utf8 => {
+                    tracing::warn!(path = %path.display(), %error, "skipping invalid indexed compaction line");
+                }
+                Err(error) => {
+                    return Err(error).context("decode indexed transcript compaction");
+                }
+            }
+        }
+        if raw.capacity() > 1024 * 1024 {
+            raw = Vec::new();
         }
         if line.capacity() > 1024 * 1024 {
             line = String::new();
@@ -1011,13 +1071,14 @@ pub fn read_transcript_window(
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
     let mut reader = BufReader::new(file);
+    let mut raw = Vec::new();
     let mut line = String::new();
     let end = message_limit.map(|limit| message_start.saturating_add(limit));
     let mut message_index = 0usize;
     let mut out = TranscriptRead::default();
     loop {
         line.clear();
-        if reader.read_line(&mut line)? == 0 {
+        if read_line_tolerant(&mut reader, &mut raw, &mut line)?.0 == 0 {
             break;
         }
         // Classify by a bounded prefix scan: a full parse here walks every byte
@@ -1434,6 +1495,7 @@ pub fn read_revision(
     // (byte offset, line kind) of every matching line, oldest first.
     let mut matches: Vec<(u64, &'static str)> = Vec::new();
     let mut reader = BufReader::new(file);
+    let mut raw = Vec::new();
     let mut line = String::new();
     let mut offset = 0u64;
     loop {
@@ -1443,7 +1505,7 @@ pub fn read_revision(
             line = String::new();
         }
         line.clear();
-        let read = reader.read_line(&mut line)?;
+        let (read, _) = read_line_tolerant(&mut reader, &mut raw, &mut line)?;
         if read == 0 {
             break;
         }
@@ -1467,7 +1529,7 @@ pub fn read_revision(
         }
         line.clear();
         reader.seek(SeekFrom::Start(*offset))?;
-        if reader.read_line(&mut line)? == 0 {
+        if read_line_tolerant(&mut reader, &mut raw, &mut line)?.0 == 0 {
             continue;
         }
         let body = line.trim();
@@ -1855,14 +1917,67 @@ mod tests {
         )
         .unwrap();
         let path = transcript_path(dir.path(), "s1").unwrap();
-        let mut raw = fs::read_to_string(&path).unwrap();
-        raw.push_str("{\"type\":\"future-kind\",\"x\":1}\n");
-        raw.push_str("{\"type\":\"message\",\"id\":\"torn"); // crash mid-append
-        fs::write(&path, raw).unwrap();
+        let mut raw = fs::read(&path).unwrap();
+        raw.extend_from_slice(b"{\"type\":\"future-kind\",\"x\":1}\n");
+        // Torn incomplete UTF-8 bytes at the end of the file (e.g. truncated 3-byte Chinese char)
+        raw.extend_from_slice(&[0xE6, 0x92]);
+        fs::write(&path, &raw).unwrap();
 
         let loaded = read_transcript(dir.path(), "s1").unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].id, "m1");
+
+        // transcript_contains_id also tolerates torn invalid UTF-8 trailing bytes
+        assert!(transcript_contains_id(dir.path(), "s1", "m1").unwrap());
+        assert!(!transcript_contains_id(dir.path(), "s1", "nonexistent").unwrap());
+
+        // Subsequent append terminates the torn line and remains readable
+        append_message(
+            dir.path(),
+            "s1",
+            "2026-07-26T00:00:00Z",
+            &record("m2", "after-torn"),
+        )
+        .unwrap();
+        let loaded_after = read_transcript(dir.path(), "s1").unwrap();
+        assert_eq!(loaded_after.len(), 2);
+        assert_eq!(loaded_after[0].id, "m1");
+        assert_eq!(loaded_after[1].id, "m2");
+
+        // A torn invalid UTF-8 line with a newline in the middle is also skipped without error
+        raw = fs::read(&path).unwrap();
+        raw.extend_from_slice(&[0xE6, 0x92, 0x0A]);
+        fs::write(&path, &raw).unwrap();
+        append_message(
+            dir.path(),
+            "s1",
+            "2026-07-26T00:00:00Z",
+            &record("m3", "after-torn-line"),
+        )
+        .unwrap();
+        let loaded_final = read_transcript(dir.path(), "s1").unwrap();
+        assert_eq!(loaded_final.len(), 3);
+        assert_eq!(loaded_final[0].id, "m1");
+        assert_eq!(loaded_final[1].id, "m2");
+        assert_eq!(loaded_final[2].id, "m3");
+
+        assert!(transcript_contains_id(dir.path(), "s1", "m3").unwrap());
+
+        // A line with mid-string invalid UTF-8 bytes is lossily decoded with U+FFFD
+        // so corrupt records do not abort reading the surrounding intact history.
+        raw = fs::read(&path).unwrap();
+        raw.extend_from_slice(b"{\"type\":\"message\",\"id\":\"m4\",\"role\":\"user\",\"blocks\":[{\"type\":\"text\",\"text\":\"hello");
+        raw.extend_from_slice(&[0xE6, 0x92]);
+        raw.extend_from_slice(b"world\"}],\"createdAt\":\"2026-07-26T00:00:00Z\"}\n");
+        fs::write(&path, &raw).unwrap();
+
+        let loaded_lossy = read_transcript(dir.path(), "s1").unwrap();
+        assert_eq!(loaded_lossy.len(), 4);
+        assert_eq!(loaded_lossy[3].id, "m4");
+        assert!(loaded_lossy[3].blocks[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains('\u{FFFD}'));
     }
 
     #[test]
@@ -2256,6 +2371,11 @@ mod tests {
             let mut file = OpenOptions::new().append(true).open(&path).unwrap();
             file.write_all(&torn.as_bytes()[..torn.len() - 1]).unwrap();
             file.write_all(b"\n").unwrap();
+        }
+        // Also append torn non-UTF-8 bytes to ensure revision reader tolerates them
+        {
+            let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&[0xE6, 0x92, 0x0A]).unwrap();
         }
         append_revision(
             dir.path(),

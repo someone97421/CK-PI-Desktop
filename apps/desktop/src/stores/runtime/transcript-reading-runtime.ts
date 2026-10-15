@@ -22,7 +22,7 @@ type ReadSession = (
 ) => Promise<{ session: SessionDetail | null }>;
 type ReadingActions = Pick<
   AppState,
-  "navigateTranscript" | "loadTranscriptPage" | "returnToLatestTranscript"
+  "navigateTranscript" | "loadTranscriptPage" | "returnToLatestTranscript" | "restoreTranscriptReading"
 >;
 
 /** Read workflows publish renderer views and never write the runtime/model cache. */
@@ -72,6 +72,51 @@ export function createTranscriptReadingRuntime({ get, set }: StoreAccess, read: 
 
   const actions: ReadingActions = {
     returnToLatestTranscript,
+    restoreTranscriptReading: async (sessionId, position, signal) => {
+      if (signal.aborted || get().activeSessionId !== sessionId || !position.messageId) return false;
+      const previous = get().transcriptViews[sessionId];
+      const range = currentView(sessionId);
+      if (get().selectingSessionId !== sessionId &&
+        range.messages.some((message) => message.id === position.messageId)) return true;
+      // A user navigation already in flight always wins over automatic restore.
+      if (range.focus || range.loading) return false;
+      const pending: TranscriptView = { ...range, restored: true, loading: "target" };
+      const rollback = () => {
+        if (get().transcriptViews[sessionId] !== pending) return;
+        if (previous) publish(sessionId, previous);
+        else returnToLatestTranscript(sessionId);
+      };
+      publish(sessionId, pending);
+      signal.addEventListener("abort", rollback, { once: true });
+      try {
+        const { session } = await read(sessionId, {
+          messageAround: position.messageId,
+          messageLimit: TRANSCRIPT_SEARCH_PAGE_SIZE,
+          contentLimit: TRANSCRIPT_CONTENT_LIMIT,
+        });
+        if (signal.aborted || get().transcriptViews[sessionId] !== pending) return false;
+        if (get().activeSessionId !== sessionId) {
+          rollback();
+          return false;
+        }
+        const message = session?.messages.find((row) => row.id === position.messageId);
+        if (!session || !message || (message.parentToolCallId && !session.navigationParent)) {
+          rollback();
+          return false;
+        }
+        publish(sessionId, { ...transcriptViewFromSession(session), restored: true });
+        return true;
+      } catch (error) {
+        if (!signal.aborted && get().transcriptViews[sessionId] === pending) {
+          rollback();
+          if (get().activeSessionId === sessionId)
+            get().showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+        }
+        return false;
+      } finally {
+        signal.removeEventListener("abort", rollback);
+      }
+    },
     navigateTranscript: async (input) => {
       const { sessionId } = input;
       if (get().activeSessionId !== sessionId) return;
@@ -162,7 +207,7 @@ export function createTranscriptReadingRuntime({ get, set }: StoreAccess, read: 
     for (const [id, view] of Object.entries(state.transcriptViews)) {
       const evicted = !state.retainedSessionIds.includes(id);
       const started =
-        (view.focus || view.loading === "target") &&
+        (view.focus || view.restored || view.loading === "target") &&
         state.runningSessions[id] &&
         !previous.runningSessions[id];
       const rewritten =
@@ -170,6 +215,7 @@ export function createTranscriptReadingRuntime({ get, set }: StoreAccess, read: 
         previous.activeSessionId === id &&
         !state.runningSessions[id] &&
         !previous.runningSessions[id] &&
+        !(view.restored && previous.selectingSessionId === id) &&
         state.messages !== previous.messages &&
         transcriptWasRewritten(previous.messages, state.messages);
       if (evicted || started || rewritten) returnToLatestTranscript(id);

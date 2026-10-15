@@ -37,7 +37,7 @@ import {
   type RuntimeProviderConfig,
 } from "@pi-desktop/agent-runtime";
 import { createFsConsentService } from "../plugin-fs-consent";
-import { pluginWorkspaceInfo } from "../workspace-roots";
+import { pluginWorkspaceInfo, projectFolderPaths } from "../workspace-roots";
 import { createDesktopConsentService } from "../plugin-desktop-consent";
 import { PluginRuntime, resolveInsidePlugin } from "../plugin-runtime";
 import { createSpeechService } from "./speech-service";
@@ -59,6 +59,7 @@ import { BrowserHost, BROWSER_PLUGIN_ID } from "../browser-host";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
 import type { ClipboardHistory } from "../clipboard-history";
 import type { TurnEndedPayload } from "../runtime/session-coordination";
+import { resolveSessionWorkspace } from "../runtime/session-workspace";
 import type { HostProcess } from "../host-process";
 import type { Logger } from "../logger";
 import type { PluginAppearance } from "../../shared/plugin-panel-chrome";
@@ -690,18 +691,20 @@ export function createPluginServices({
       })().catch((error) => logger.app("plugin", "warn", "browser.link.open.failed", { data: String(error) }));
     },
     isPluginLoaded: (pluginId) => Boolean(plugins.getLoaded(pluginId)),
-    getFileRoot: async (sessionId) => {
-      if (!sessionId) return getWorkspacePath();
-      try {
-        const res = (await getHost()?.call("session.get", { id: sessionId })) as
-          | { session: { projectPath?: string; temporaryWorkspacePath?: string } | null }
-          | undefined;
-        if (!res?.session) return null;
-        return res.session.projectPath?.trim() ||
-          res.session.temporaryWorkspacePath?.trim() || join(dataDir, "scratch", sessionId);
-      } catch {
-        return null;
-      }
+    getFileRoots: async (sessionId) => {
+      const visibleWorkspace = getWorkspacePath();
+      if (!sessionId) return [...new Set([
+        ...(visibleWorkspace ? [visibleWorkspace] : []),
+        ...projectFolderPaths(visibleWorkspace),
+      ])];
+      const host = getHost();
+      if (!host) throw new Error("Browser preview host is unavailable.");
+      const workspace = await resolveSessionWorkspace(host, sessionId);
+      return [...new Set([
+        workspace.path,
+        ...(workspace.project && !workspace.isolated ? projectFolderPaths(workspace.path) : []),
+        join(dataDir, "scratch", sessionId),
+      ])];
     },
     getScratchDir: (sessionId) => {
       if (!sessionId) return null;
@@ -721,13 +724,12 @@ export function createPluginServices({
      * (ADR 0252) instead of the bare primary path.
      */
     getWorkspaceInfo: () => pluginWorkspaceInfo(getWorkspacePath()),
-    /**
-     * The project each live session belongs to, so an fs call made by one
-     * session's tool follows that session instead of whichever project the
-     * window happens to be showing (ADR 0016, D093). Cold for a session whose
-     * runtime has not launched yet, which falls back to the visible workspace.
-     */
-    getWorkspacePathForSession: (sessionId) => sessionProjects.get(sessionId) ?? null,
+    // 工具按所属会话解析有效目录；isolated 目录不可用时直接报告失败。
+    getWorkspacePathForSession: async (sessionId) => {
+      const host = getHost();
+      if (!host) throw new Error("Plugin workspace host is unavailable.");
+      return (await resolveSessionWorkspace(host, sessionId)).path;
+    },
     agentExtensionsChanged: () =>
       sendToRenderer(IPC.event.pluginChanged, { reason: "agentExtensions" }),
     browser: {

@@ -30,6 +30,7 @@ export type ProjectInstructionResolver = (input: {
   path: string;
   /** Project root registered by the embedding host for this session. */
   projectPath?: string;
+  delegationId?: string;
 }) => Promise<unknown>;
 
 /**
@@ -53,6 +54,9 @@ const HOST_PROXY_ALLOWED = new Set([
   "tools.execute",
   "tools.abort",
   "tools.list",
+  "worktree.location",
+  "worktree.delegate.create",
+  "worktree.delegate.settle",
   "session.get",
   "session.appendMessage",
   "session.appendCompaction",
@@ -547,6 +551,7 @@ export class AgentSidecar {
             sessionId,
             path: String(params.path ?? ""),
             projectPath: this.projectInstructionRoots.get(sessionId),
+            ...(typeof params.delegationId === "string" ? { delegationId: params.delegationId } : {}),
           });
           this.writeToChild(
             JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }) + "\n",

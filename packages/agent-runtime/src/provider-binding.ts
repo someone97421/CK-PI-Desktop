@@ -43,6 +43,7 @@ import {
   type MediaInputCapabilities,
 } from "@pi-desktop/shared";
 import { genericModelConfig } from "./model-capabilities.js";
+import { sessionAffinityCompat } from "./session-affinity.js";
 import type { ModelConfig } from "./thinking-level.js";
 import { withMediaInput } from "./media-provider.js";
 
@@ -452,7 +453,13 @@ export function buildProviderModel(
       }) === "on"
         ? true
         : undefined,
-    compat: { ...compat, ...transcriptCompat(catalog, provider.modelId, binding.api, baseUrl) },
+    // The session-affinity default sits under the row's own compat, so a
+    // catalog entry that already answers the question keeps its answer.
+    compat: {
+      ...(sessionAffinityCompat(provider, binding.api, baseUrl) ?? {}),
+      ...compat,
+      ...transcriptCompat(catalog, provider.modelId, binding.api, baseUrl),
+    },
     ...(Object.keys(modelHeaders).length > 0 ? { headers: modelHeaders } : {}),
   } as Model<Api>;
 }

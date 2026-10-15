@@ -1,3 +1,4 @@
+import { resolveSessionWorkspace } from "./session-workspace";
 import { IPC, type AgentEventEnvelope, type UiMessage } from "@pi-desktop/shared";
 import {
   findSubagentProviderSource,
@@ -373,21 +374,30 @@ export function createSidecarRuntime({
     }
     return dispatchSubagentPersistence(subagentSnapshots, params);
   });
-  s.setProjectInstructionResolver(async ({ projectPath, path }) => {
-    // The root is registered by Electron main from the host-owned session
-    // record. The sidecar can provide a target path, never an arbitrary root.
-    const instructions = projectPath?.startsWith("remote-project:")
-      ? await loadInstructionChain(undefined) : await loadInstructionChain(projectPath, path);
+  const sessionFileRoot = async (sessionId: string): Promise<string | null> => {
+    const host = runtimeState.host;
+    return host ? (await resolveSessionWorkspace(host, sessionId)).path : null;
+  };
+  s.setProjectInstructionResolver(async ({ sessionId, projectPath, path, delegationId }) => {
+    let instructionRoot = projectPath;
+    if (delegationId && runtimeState.host) {
+      const location = await runtimeState.host.call<{ path: string }>("worktree.location", { sessionId, delegationId });
+      instructionRoot = location.path;
+    }
+    const instructions = instructionRoot?.startsWith("remote-project:")
+      ? await loadInstructionChain(undefined) : await loadInstructionChain(instructionRoot, path);
     if (!projectPath || !runtimeState.host) return instructions;
+    const project = sessionProjects.get(sessionId) ?? projectPath;
+    const isolated = project !== instructionRoot;
     try {
       const result = await runtimeState.host.call<{
         context?: {
           roots?: Array<{ path?: string }>;
           instructions?: string;
         } | null;
-      }>("project.group.context", { path: projectPath });
+      }>("project.group.context", { path: project });
       const roots = result.context?.roots ?? [];
-      const rootGuide = roots.length > 1
+      const rootGuide = !isolated && roots.length > 1
         ? [
             `Primary root: ${roots[0]?.path ?? projectPath}`,
             ...roots.slice(1).map((root) => `Additional root: ${root.path ?? ""}`),
@@ -573,30 +583,25 @@ export function createSidecarRuntime({
         content: "BrowserPreview: `path` is required.",
       };
     }
-    let root: string | null = null;
+    let roots: readonly string[];
     try {
-      const res = (await runtimeState.host?.call("session.get", { id: sessionId })) as
-        | { session: { projectPath?: string } | null }
-        | undefined;
-      root = res?.session?.projectPath?.trim() || null;
-    } catch {
-      root = null;
-    }
-    if (!root) {
+      roots = await browserHost.getFileRoots(sessionId);
+    } catch (error) {
       return {
         ok: false,
         isError: true,
-        content: "BrowserPreview: no workspace is open.",
+        content: `BrowserPreview: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
-    if (!resolveLocalFile(raw, root)) {
+    const file = roots.map((root) => resolveLocalFile(raw, root)).find((path) => path !== null);
+    if (!file) {
       return {
         ok: false,
         isError: true,
-        content: `BrowserPreview: "${raw}" does not resolve to an existing file inside the workspace.`,
+        content: `BrowserPreview: "${raw}" does not resolve to an existing file inside this session's project or scratch directory.`,
       };
     }
-    const preview = await browserHost.previewWorkspaceFile(sessionId, raw, root);
+    const preview = await browserHost.previewFile();
     if (!preview.ok) {
       return {
         ok: false,
@@ -606,7 +611,7 @@ export function createSidecarRuntime({
     }
     sendToRenderer(IPC.event.browserPreview, {
       sessionId,
-      path: raw,
+      path: file,
     });
     return {
       ok: true,
@@ -662,10 +667,7 @@ export function createSidecarRuntime({
   registerPluginDevTools(s, {
     resolveWorkspace: async (sessionId) => {
       try {
-        const res = (await runtimeState.host?.call("session.get", { id: sessionId })) as
-          | { session: { projectPath?: string } | null }
-          | undefined;
-        return res?.session?.projectPath?.trim() || null;
+        return await sessionFileRoot(sessionId);
       } catch {
         return null;
       }

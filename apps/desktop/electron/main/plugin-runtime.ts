@@ -308,12 +308,8 @@ export type PluginHostServices = {
    * it. Additive: `workspace.get` falls back to `getWorkspacePath` alone.
    */
   getWorkspaceInfo?: () => PluginWorkspaceInfo | null;
-  /**
-   * The project the tool session behind this call belongs to, when the host
-   * tracks one. Additive: an fs call falls back to `getWorkspacePath` -- the
-   * visible workspace -- for a panel call or an unknown session.
-   */
-  getWorkspacePathForSession?: (sessionId: string) => string | null;
+  /** 工具所属会话的有效工作目录；支持宿主异步解析 isolated 和临时目录。 */
+  getWorkspacePathForSession?: (sessionId: string) => string | null | Promise<string | null>;
   /** The set of `contributes.agentExtensions` modules changed (load/unload). */
   agentExtensionsChanged?: () => void;
   getLocale?: () => string;
@@ -4958,20 +4954,12 @@ export class PluginRuntime {
     return { grantId };
   }
 
-  /**
-   * The directory one fs call resolves against.
-   *
-   * A `userSelected` mode keeps the directory the user picked. Every other mode
-   * resolves the project of the session that invoked the tool: two sessions can
-   * sit on two projects at once, so the visible workspace is a fallback only --
-   * for a panel call, which has no tool session, and for a session the host has
-   * not launched yet.
-   */
-  private fsRoot(loaded: LoadedPlugin, rule: PluginFsRule): string | null {
+  /** 工具使用所属会话目录；没有会话的面板沿用当前可见工作区。 */
+  private async fsRoot(loaded: LoadedPlugin, rule: PluginFsRule): Promise<string | null> {
     if (rule.root === "userSelected") return loaded.userRoot ?? null;
     const sessionId = this.inFlightTool(loaded.manifest.id)?.sessionId.trim() || undefined;
     const scoped = sessionId
-      ? (this.services.getWorkspacePathForSession?.(sessionId) ?? null)
+      ? await this.services.getWorkspacePathForSession?.(sessionId)
       : null;
     return scoped ?? this.services.getWorkspacePath();
   }
@@ -5030,7 +5018,7 @@ export class PluginRuntime {
       return { full, rel: `<dropped>/${basename(full)}`, root: dirname(full) };
     }
     const rule: PluginFsRule = loaded.fsPolicy[mode] ?? { root: "workspace", scope: [] };
-    const root = this.fsRoot(loaded, rule);
+    const root = await this.fsRoot(loaded, rule);
     if (!root) {
       throw apiError(
         "NOT_FOUND",
@@ -5945,7 +5933,7 @@ export class PluginRuntime {
         list: async (pathFromRoot: string) => {
           this.assertPermission(loaded, "fs.read");
           const rule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
-          const root = this.fsRoot(loaded, rule);
+          const root = await this.fsRoot(loaded, rule);
           if (!root) throw apiError("NOT_FOUND", "No workspace is open");
           const rel = normalizeFsPath(String(pathFromRoot ?? ""));
           if (rel.split("/").includes("..")) {
@@ -6032,7 +6020,7 @@ export class PluginRuntime {
         glob: async (pattern: string) => {
           this.assertPermission(loaded, "fs.read");
           const rule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
-          const root = this.fsRoot(loaded, rule);
+          const root = await this.fsRoot(loaded, rule);
           if (!root) throw apiError("NOT_FOUND", "No workspace is open");
           const matches: string[] = [];
           const visit = (dir: string, rel = "") => {

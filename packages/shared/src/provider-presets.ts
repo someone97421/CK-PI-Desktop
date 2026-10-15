@@ -374,6 +374,31 @@ function normalizedVendorKey(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/_/g, "-");
 }
 
+function endpointHost(value: string | undefined): string | undefined {
+  const normalized = normalizeEndpointUrl(value);
+  if (!normalized) return undefined;
+  try {
+    return new URL(normalized).host.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether a configured base URL addresses a vendor's own published endpoint.
+ *
+ * Matching is by host, not by the full canonical URL: an OpenAI-compatible
+ * vendor is routinely configured with a path the preset record does not spell
+ * out (`/v1`, a Coding-Plan suffix, a regional host) and that is still the
+ * vendor's host. A row pointed anywhere else belongs to the user — a
+ * self-hosted gateway or a relay — and the runtime decides its request shape.
+ */
+export function addressesPublishedVendorHost(baseUrl: string | undefined): boolean {
+  const host = endpointHost(baseUrl);
+  if (!host) return false;
+  return NAMED_ENDPOINT_PRESETS.some((preset) => endpointHost(preset.baseUrl) === host);
+}
+
 function presetByUrl(url: string): NamedEndpointPreset | undefined {
   const exact = NAMED_ENDPOINT_PRESETS.find(
     (preset) => normalizeEndpointUrl(preset.baseUrl) === url,

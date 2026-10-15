@@ -293,7 +293,7 @@ fn layout_recovery_rebuilds_once_and_recomputes_the_window() {
 }
 
 #[test]
-fn real_invalid_utf8_is_reported_without_changing_transcript_bytes() {
+fn invalid_utf8_message_lines_are_skipped_without_changing_transcript_bytes() {
     let dir = tempdir().unwrap();
     let path = transcript_path(dir.path(), "layout-regression").unwrap();
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -301,10 +301,74 @@ fn real_invalid_utf8_is_reported_without_changing_transcript_bytes() {
         b"{\"type\":\"session\"}\n{\"type\":\"message\",\"id\":\"broken\",\"content\":\"\xff\"}\n";
     fs::write(&path, bytes).unwrap();
 
-    let error =
-        refresh_layout(dir.path(), "layout-regression", TranscriptLayout::default()).unwrap_err();
-    assert!(format!("{error:#}").contains("valid UTF-8"));
+    let layout =
+        refresh_layout(dir.path(), "layout-regression", TranscriptLayout::default()).unwrap();
+    assert_eq!(layout.message_count(), 1);
+    let read =
+        read_transcript_window_with_layout(dir.path(), "layout-regression", &layout, 0, None)
+            .unwrap();
+    assert!(read.messages.is_empty());
     assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
+fn bounded_layout_read_tolerates_invalid_utf8_in_a_complete_message_line() {
+    let dir = tempdir().unwrap();
+    let path = transcript_path(dir.path(), "layout-regression").unwrap();
+    let messages = [
+        message("m1", "before"),
+        message("m2", "hello world"),
+        message("m3", "after"),
+    ];
+    write_transcript(dir.path(), "layout-regression", CREATED_AT, &messages).unwrap();
+
+    let mut original = fs::read(&path).unwrap();
+    let text = b"hello world";
+    let text_start = original
+        .windows(text.len())
+        .position(|window| window == text)
+        .unwrap();
+    original.splice(text_start + 5..text_start + 5, [0xE6, 0x92]);
+    fs::write(&path, &original).unwrap();
+
+    let layout =
+        refresh_layout(dir.path(), "layout-regression", TranscriptLayout::default()).unwrap();
+    assert_eq!(layout.message_count(), 3);
+    let read =
+        read_transcript_window_with_layout(dir.path(), "layout-regression", &layout, 0, None)
+            .unwrap();
+
+    assert_eq!(
+        read.messages
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>(),
+        ["m1", "m2", "m3"]
+    );
+    assert_eq!(read.messages[1].blocks[0]["text"], "hello\u{FFFD} world");
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
+#[test]
+fn torn_invalid_utf8_tail_is_excluded_from_layout_without_error() {
+    let dir = tempdir().unwrap();
+    let path = transcript_path(dir.path(), "layout-regression").unwrap();
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut bytes =
+        b"{\"type\":\"session\"}\n{\"type\":\"message\",\"id\":\"m1\",\"role\":\"user\",\"blocks\":[],\"createdAt\":\"2026-07-26T00:00:00Z\"}\n"
+            .to_vec();
+    // Torn incomplete UTF-8 bytes at EOF (without trailing newline)
+    bytes.extend_from_slice(&[0xE6, 0x92]);
+    fs::write(&path, &bytes).unwrap();
+
+    let layout =
+        refresh_layout(dir.path(), "layout-regression", TranscriptLayout::default()).unwrap();
+    assert_eq!(layout.message_count(), 1);
+    let read =
+        read_transcript_window_with_layout(dir.path(), "layout-regression", &layout, 0, None)
+            .unwrap();
+    assert_eq!(read.messages.len(), 1);
+    assert_eq!(read.messages[0].id, "m1");
 }
 
 #[test]

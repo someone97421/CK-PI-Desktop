@@ -294,17 +294,20 @@ fn scan_layout(path: &Path, mut layout: TranscriptLayout) -> Result<TranscriptLa
             .with_context(|| format!("seek {}", path.display()))?;
     }
     let mut reader = BufReader::new(file);
-    let mut line = String::new();
+    let mut raw = Vec::new();
     loop {
-        line.clear();
-        let read = reader.read_line(&mut line)?;
+        raw.clear();
+        let read = reader.read_until(b'\n', &mut raw)?;
         if read == 0 {
             break;
         }
         // A torn append is excluded until its newline arrives.
-        if !line.ends_with('\n') {
+        if !raw.ends_with(b"\n") {
             break;
         }
+        // Preserve the readable prefix and suffix when a completed append
+        // contains bytes from a character that was torn during a crash.
+        let line = String::from_utf8_lossy(&raw);
         match sniff_line_kind(line.trim_end()) {
             Some("message") => {
                 layout.message_offsets.push(offset);
@@ -314,8 +317,8 @@ fn scan_layout(path: &Path, mut layout: TranscriptLayout) -> Result<TranscriptLa
             _ => {}
         }
         offset += read as u64;
-        if line.capacity() > 1024 * 1024 {
-            line = String::new();
+        if raw.capacity() > 1024 * 1024 {
+            raw = Vec::new();
         }
     }
     layout.file_len = offset;

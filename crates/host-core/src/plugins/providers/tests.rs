@@ -97,8 +97,8 @@ fn declaration_manifest(providers: Value, permissions: Value) -> Value {
 #[test]
 fn a_new_database_carries_the_owner_column_at_the_current_schema_version() {
     let (_dir, db, _secrets) = test_context();
-    // 新数据库包含插件归属、队列优先级、待办与标题来源字段。
-    assert_eq!(SCHEMA_VERSION, 23);
+    // 新数据库包含插件归属、队列优先级、待办、标题来源及 worktree 登记。
+    assert_eq!(SCHEMA_VERSION, 24);
     let version: i64 = db
         .conn()
         .query_row("PRAGMA user_version", [], |row| row.get(0))

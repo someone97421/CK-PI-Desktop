@@ -769,7 +769,7 @@ export function registerWorkspaceIpc({
     const owner = getHost();
     if (!owner) throw new Error("host unavailable");
     const root = sessionId
-      ? (await owner.call<{ session?: { projectPath?: string } }>("session.get", { id: sessionId, messageLimit: 1 })).session?.projectPath
+      ? (await resolveSessionWorkspace(owner, sessionId)).path
       : (await owner.call<{ workspace?: { path: string } }>("workspace.get")).workspace?.path;
     if (getHost() !== owner) throw Object.assign(new Error("host replaced"), { errorCode: ErrorCodes.HOST_UNAVAILABLE });
     if (!root) throw Object.assign(new Error("workspace required"), { errorCode: ErrorCodes.INVALID_ARGUMENT });

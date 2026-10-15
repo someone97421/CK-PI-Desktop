@@ -340,6 +340,8 @@ pub(super) async fn handle(
                 timeout_ms: tools::effective_timeout_ms(&p.tool_name, p.timeout_ms),
                 cancellation: cancellation.clone(),
                 output_tx: Some(tx),
+                // Remote workspaces are never isolated (ADR 0329).
+                extra_env: Vec::new(),
             })
         } else {
             None

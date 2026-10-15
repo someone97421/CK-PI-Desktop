@@ -5,6 +5,11 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "新增手动创建的隔离会话：在独立 Git worktree 中并行开发，支持初始化、同步、合并预览与冲突处理，保留 TaskResume。",
+  "修复超大工具图片阻断会话的问题，补齐图片缩放资源；历史含不完整 UTF-8 字节时仍可读取周围记录。",
+  "自建模型网关请求携带稳定会话标识，聊天、子代理和压缩保持一致；修复系统状态插入后的工具调用恢复。",
+  "HTML 产物按所属会话的工作目录或 scratch 预览，恢复被回收面板的阅读位置，改善表格滚动和全屏窗口恢复。",
+  "修复启动恢复插件后界面未加载，支持插件 JSX 运行时；重新打开项目自动取消归档，更新相关依赖补丁。",
   "修复停止后立即继续时与旧轮清理冲突的问题；当前轮引导后子代理卡片继续显示真实运行状态。",
   "会话耗时分别展示网络等待、模型流式输出和工具调用，并行工具区间不重复计时。",
   "自定义模型服务支持无需 API key，保存无认证设置时清除旧密钥，并避免发送占位认证值。",
@@ -65,6 +70,11 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Add explicit isolated sessions in Git worktrees with setup, sync, merge previews and conflict handling, retaining TaskResume.",
+  "Normalize oversized tool images and include resize assets; keep surrounding history readable after torn UTF-8 writes.",
+  "Preserve session identity across custom gateway chat, delegate and compaction requests; restore tool calls across system-state updates.",
+  "Preview HTML in its owning workspace or scratch, restore reading positions after pane eviction, and improve table scrolling and fullscreen restoration.",
+  "Restore plugin views at startup, support JSX runtimes, unarchive reopened projects and update dependency patches.",
   "Fix immediate follow-ups racing with stopped-turn cleanup, and keep subagent cards live after guidance within the current turn.",
   "Show network wait, model streaming and tool-call time separately, without double-counting overlapping tool intervals.",
   "Allow custom model services without an API key, remove the old key when saving no-auth settings and avoid sending placeholder credentials.",

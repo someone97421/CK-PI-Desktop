@@ -101,7 +101,23 @@ function encodeWindowsPathForHref(path: string): string {
     : path;
 }
 
-function normalizeMarkdownWindowsPath(url: string): string {
+function normalizeMarkdownFilePath(url: string): string {
+  // Convert file URLs to references before sanitization, never native links.
+  // Main still verifies the resulting path against its allowed roots.
+  if (/^file:/i.test(url)) {
+    try {
+      const file = new URL(url);
+      if (file.hostname && file.hostname !== "localhost") return url;
+      if (file.search || file.hash) return url;
+      const pathname = decodeURIComponent(file.pathname);
+      const path = /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
+      const filePath = parseFileRefPosition(path) ? stripLineRef(path) : path;
+      if (!isAbsoluteFilePath(filePath) || !isLikelyFilePath(filePath)) return url;
+      return encodeURIComponent(path);
+    } catch {
+      return url;
+    }
+  }
   // Keep a drive letter from being interpreted as a URI scheme by the
   // renderer and sanitizer; the anchor decodes this back before file lookup.
   const decoded = safeDecodeUri(url).replace(/^\/(?=[A-Za-z]:[/\\])/, "");
@@ -460,7 +476,7 @@ function previewTargetHref(target: ChatPreviewTarget): string {
 
 function normalizeMarkdownLinkDestination(node: MdastNode): void {
   if ((node.type === "link" || node.type === "definition") && typeof node.url === "string") {
-    node.url = normalizeMarkdownWindowsPath(node.url);
+    node.url = normalizeMarkdownFilePath(node.url);
   }
 }
 

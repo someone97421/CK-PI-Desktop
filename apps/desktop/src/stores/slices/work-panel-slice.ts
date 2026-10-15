@@ -412,8 +412,10 @@ export function createWorkPanelSlice({
         workPanelContexts: { ...state.workPanelContexts, [sessionId]: { ...context, tabs } } };
     });
   },
-  openUrlInWorkPanel: (url) => {
-    if (isRemoteSession(get().sessions.find((session) => session.id === get().activeSessionId))) return;
+  openUrlInWorkPanel: (url, ownerSessionId) => {
+    const state = get();
+    const sessionId = ownerSessionId ?? state.activeSessionId;
+    if (isRemoteSession(state.sessions.find((session) => session.id === sessionId)) || sessionId?.startsWith("remote:")) return;
     const hasBrowser = get().pluginViews.some(
       (view) => view.pluginId === "pi.browser" && view.viewId === "browser",
     );
@@ -423,7 +425,8 @@ export function createWorkPanelSlice({
       }
       return;
     }
-    get().openWorkPanelTab(browserPluginTab(url));
+    if (sessionId) state.openWorkPanelTabForSession(sessionId, browserPluginTab(url));
+    else state.openWorkPanelTab(browserPluginTab(url));
   },
   };
 }

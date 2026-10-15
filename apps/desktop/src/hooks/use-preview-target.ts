@@ -10,6 +10,7 @@ import { api } from "../lib/api";
 import { isHtmlFilePath, toWorkspaceRel, type ChatPreviewTarget } from "../lib/chat-links";
 import { openHttpUrl } from "../lib/open-http-url";
 import {
+  BROWSER_PLUGIN_TAB,
   FILE_MANAGER_PLUGIN_TAB,
   fileManagerPluginTab,
   hasPluginView,
@@ -80,6 +81,8 @@ export type ResolvedChatFileRef = {
   inProject: boolean;
   /** True when that folder is the project's primary one. */
   primary: boolean;
+  /** Session-owned generated artifacts, rather than imported attachments. */
+  scratch: boolean;
 };
 
 /**
@@ -177,7 +180,8 @@ function useResolveChatFileRef() {
       if (!raw) return null;
       // 相对引用优先以当前文档为基准，其他情况仍由宿主解析文件根目录。
       const relative = /^\.{1,2}[/\\]/.test(raw);
-      const anchored = relative ? toWorkspaceRel(raw, workspacePath, baseDir) : null;
+      const ownerWorkspacePath = sessionWorkspacePath(session, state.workspace?.path);
+      const anchored = relative ? toWorkspaceRel(raw, ownerWorkspacePath, baseDir) : null;
       let result;
       try {
         result = await api.fsResolveRef(anchored ?? raw, ownerId);
@@ -202,6 +206,7 @@ function useResolveChatFileRef() {
           relativePath: null,
           inProject: false,
           primary: false,
+          scratch: match.sessionScratch === true,
         };
       }
       // A project group can hold several folders, and a relative path always
@@ -209,11 +214,12 @@ function useResolveChatFileRef() {
       // absolute path and the file view switches to that folder (ADR 0263).
       const primary = match.projectRoot ? match.projectRoot.primary : true;
       return {
-        path: primary ? match.relativePath : match.absolutePath,
+        path: primary && ownerId === state.activeSessionId ? match.relativePath : match.absolutePath,
         absolutePath: match.absolutePath,
         relativePath: match.relativePath,
         inProject: true,
         primary,
+        scratch: false,
       };
     },
     [paneSessionId, sessionId, showToast, t, workspacePath],
@@ -223,23 +229,25 @@ function useResolveChatFileRef() {
 /**
  * Open a file reference the conversation mentioned.
  *
- * A workspace `.html` page in the primary folder stays with the side browser
+ * A project or session-scratch `.html` page stays with the side browser
  * (ADR 0163): it is a page to run, not a file to read. A direct click on a
  * plain project file starts or retries the bundled file view; a positioned
  * `path:line` reference uses the host file tab, which can scroll to the line.
  * The plugin view accepts opaque path locations and has no line-navigation
  * contract, so positioned references keep their path unchanged and use the
- * host viewer's existing scroll support. Scratch and attachment files also use
- * the host file tab.
+ * host viewer's existing scroll support. Other scratch and attachment files
+ * also use the host file tab.
  */
 export function useOpenChatFileRef() {
   const { t } = useTranslation();
   const resolveRef = useResolveChatFileRef();
+  const paneSessionId = useSlotSessionId();
   const workspacePath = useAppStore((s) => sessionWorkspacePath(
     s.sessions.find((session) => session.id === s.activeSessionId),
     s.workspace?.path,
   ));
   const sessionId = useAppStore((s) => s.activeSessionId);
+  const ownerSessionId = paneSessionId || sessionId;
   const openFile = useAppStore((s) => s.openFileInWorkPanel);
   const openUrl = useAppStore((s) => s.openUrlInWorkPanel);
   const openTab = useAppStore((s) => s.openWorkPanelTab);
@@ -259,18 +267,20 @@ export function useOpenChatFileRef() {
         if (!resolved) return;
         if (!matchesFileContext(workspacePath, sessionId)) return;
         const current = useAppStore.getState();
-        const remote = current.sessions.find((session) => session.id === sessionId)?.remoteWorkspace
-          ?? (!sessionId ? current.workspace?.remote : undefined);
+        const remote = current.sessions.find((session) => session.id === ownerSessionId)?.remoteWorkspace
+          ?? (!ownerSessionId ? current.workspace?.remote : undefined);
         const hasPosition = line !== undefined || column !== undefined;
         if (
           !remote &&
           !hasPosition &&
-          resolved.inProject &&
-          resolved.primary &&
-          resolved.relativePath &&
-          isHtmlFilePath(resolved.relativePath)
+          (resolved.inProject || resolved.scratch) &&
+          isHtmlFilePath(resolved.absolutePath)
         ) {
-          openUrl(resolved.relativePath);
+          if (!hasPluginView(current.pluginViews, BROWSER_PLUGIN_TAB)) {
+            showToast(t("panel.pluginView.failed"), { variant: "error" });
+            return;
+          }
+          openUrl(resolved.absolutePath, ownerSessionId);
           return;
         }
         if (!remote && resolved.inProject && !hasPosition) {
@@ -289,6 +299,7 @@ export function useOpenChatFileRef() {
       openFile,
       openTab,
       openUrl,
+      ownerSessionId,
       resolveRef,
       sessionId,
       showToast,

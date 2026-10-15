@@ -547,9 +547,10 @@ export function createSessionSlice({
       const requestedTemporaryWorkspacePath = explicitWorkspace
         ? options?.temporaryWorkspacePath?.trim() || null
         : savedDraft?.workspacePath ?? null;
-      const scopeKey = runtime.newSessionScopeKey(
+      const isolated = options?.isolated === true;
+      const scopeKey = `${runtime.newSessionScopeKey(
         requestedProjectPath === null ? `draft:${draftId}` : requestedProjectPath,
-      );
+      )}${isolated ? "\u0000isolated" : ""}`;
       const pending = runtime.pendingNewSessionRequests.get(scopeKey);
       if (pending) {
         await pending;
@@ -619,6 +620,7 @@ export function createSessionSlice({
         if (
           latest &&
           sessionIsReusableEmpty(latest, {
+            isolated,
             running: get().runningSessions[latest.id] === true,
             liveMessageCount: runtime.liveMessageCountForSession(latest.id, get()),
             submitted: runtime.submittedComposerDrafts.has(latest.id),
@@ -633,6 +635,7 @@ export function createSessionSlice({
           intent,
           projectPath: requestedProjectPath,
           draftConfiguration: null,
+          ...(isolated ? { isolated: true } : {}),
         });
       })();
       runtime.pendingNewSessionRequests.set(scopeKey, request);

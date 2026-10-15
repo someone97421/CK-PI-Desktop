@@ -475,15 +475,34 @@ export function createApplicationLifecycle({
       case "resetZoom":
         contents.setZoomFactor(1);
         break;
-      case "toggleFullScreen":
-        target.setFullScreen(!target.isFullScreen());
+      case "toggleFullScreen": {
+        // 先退出最大化，避免两个状态同时保留；离开全屏后恢复原来的最大化状态。
+        if (!target.isFullScreen()) {
+          const wasMaximized = target.isMaximized();
+          if (wasMaximized) target.unmaximize();
+          if (wasMaximized) {
+            target.once("leave-full-screen", () => {
+              if (target.isDestroyed() || target.isFullScreen()) return;
+              target.maximize();
+            });
+          }
+          target.setFullScreen(true);
+          break;
+        }
+        target.setFullScreen(false);
         break;
+      }
       case "minimize":
         target.minimize();
         break;
       case "toggleMaximize":
-        if (target.isMaximized()) target.unmaximize();
-        else target.maximize();
+        // 最大化前先离开全屏，保持两种窗口状态互斥。
+        if (target.isMaximized()) {
+          target.unmaximize();
+        } else {
+          if (target.isFullScreen()) target.setFullScreen(false);
+          target.maximize();
+        }
         break;
       case "close":
         target.close();

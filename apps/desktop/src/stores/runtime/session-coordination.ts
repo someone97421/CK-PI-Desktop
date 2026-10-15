@@ -38,6 +38,8 @@ export type PersistSessionOptions = {
   projectPath?: string | null;
   draftConfiguration?: DraftSessionConfiguration | null;
   temporaryWorkspacePath?: string | null;
+  /** 显式选择后，在独立 git worktree 中创建会话。 */
+  isolated?: boolean;
 };
 
 export type SessionCoordination = {
@@ -355,6 +357,7 @@ export function createSessionCoordination({
         providerId: inherited.providerId,
         modelId: inherited.modelId,
         projectPath: projectPath ?? undefined,
+        ...(options.isolated ? { isolated: true } : {}),
       });
     } catch (error) {
       if (previousSessionId && runtime.navigationIntentIsCurrent(active)) {

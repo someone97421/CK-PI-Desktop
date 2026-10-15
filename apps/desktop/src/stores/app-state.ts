@@ -32,6 +32,7 @@ import type {
 } from "@pi-desktop/shared";
 import type { SettingsTabId } from "../lib/settings-search";
 import type { TranscriptSearchTarget, TranscriptView } from "../lib/transcript-reading";
+import type { TranscriptReadingPosition } from "../lib/transcript-reading-position";
 import type {
   ProjectMeta,
   ProjectSort,
@@ -216,6 +217,7 @@ export type AppState = {
   refreshSessions: (options?: RefreshSessionsOptions) => Promise<void>;
   prefetchSession: (id: string) => Promise<void>;
   navigateTranscript: (target: Omit<TranscriptSearchTarget, "requestId">) => Promise<void>;
+  restoreTranscriptReading: (sessionId: string, position: TranscriptReadingPosition, signal: AbortSignal) => Promise<boolean>;
   loadTranscriptPage: (sessionId: string, direction: "before" | "after") => Promise<void>;
   returnToLatestTranscript: (sessionId: string) => void;
   selectSession: (
@@ -228,6 +230,8 @@ export type AppState = {
     draftId?: string;
     remoteProject?: RemoteProjectTarget;
     record?: boolean;
+    /** 显式选择后，在独立 git worktree 中创建会话。 */
+    isolated?: boolean;
   }) => Promise<void>;
   forkSession: (id: string) => Promise<void>;
   forkAssistantMessage: (messageId: string) => Promise<void>;
@@ -487,7 +491,7 @@ export type AppState = {
     mimeType?: string,
     position?: { line?: number; column?: number },
   ) => void;
-  openUrlInWorkPanel: (url: string) => void;
+  openUrlInWorkPanel: (url: string, ownerSessionId?: string) => void;
   updateBrowserWorkPanelTab: (state: BrowserState) => void;
 };
 

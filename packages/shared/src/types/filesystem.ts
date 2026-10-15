@@ -113,6 +113,8 @@ export type FsChatRefMatchKind =
 
 export type FsChatRefMatch = {
   root: FsChatRefRoot;
+  /** 匹配项属于此会话的 scratch，而非更广泛的只读存储。 */
+  sessionScratch?: boolean;
   /** POSIX path relative to the matched root; basename for an external file. */
   relativePath: string;
   /** Native absolute path of the matched regular file. */

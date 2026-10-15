@@ -28,6 +28,7 @@ import {
   openCodeEndpointFromProvider,
   withOpenCodeSessionHeaders,
 } from "./opencode-session-headers.js";
+import { withSessionAffinityOptions } from "./session-affinity.js";
 import { mergeProviderHeaders, withProviderHeaders } from "./provider-headers.js";
 import {
   withProviderFetchFailure,
@@ -124,10 +125,19 @@ export async function completeOneShot(
     ),
     model.api,
   );
+  // A one-shot call spends the session's credential like any turn does, so it
+  // carries the session id too; a caller that supplies none keeps an unkeyed
+  // request, and an endpoint that is not stamped is returned unchanged.
+  const sessionOptions = withSessionAffinityOptions(requestOptions, {
+    provider,
+    api: model.api,
+    baseUrl: model.baseUrl,
+    sessionId: options.sessionId,
+  });
   const stream = createProviderRetryStream(
     model,
     context,
-    requestOptions,
+    sessionOptions,
     (retryOptions) => accountModelStream(model, () => streamSimple(model, context, retryOptions), {
       providerId: provider.id, nativeCost: provider.modelConfig?.nativeCost,
       onUsage: attemptUsage => { usage = addUsage(usage, attemptUsage); },

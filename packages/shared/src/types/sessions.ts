@@ -5,6 +5,7 @@ import type { SessionThinkingLevel, ThinkingLevel } from "./models.js";
 import type { PermissionMode } from "./permissions.js";
 import type { UiMessage } from "./messages.js";
 import type { PlanHistoryEntry, PlanningState } from "./plans.js";
+import type { SessionWorktreeSummary } from "./worktree.js";
 
 /**
  * Which authority owns a session's transcript.
@@ -69,6 +70,11 @@ export type SessionSummary = {
    * Older hosts omit it, so undefined means an ordinary conversation.
    */
   scheduledRun?: boolean;
+  /**
+   * Present only for an isolated session (ADR 0329): its tools run in its own
+   * git worktree. Older hosts and ordinary sessions omit it.
+   */
+  worktree?: SessionWorktreeSummary;
   updatedAt: string;
   /** 用户最后发送时间（含等待中的队列消息）；空会话或旧宿主可省略。 */
   lastUserMessageAt?: string;

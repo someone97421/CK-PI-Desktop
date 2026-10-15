@@ -139,6 +139,10 @@ pub struct SessionSummary {
     /// its last run reference releases the session into ordinary lists again.
     #[serde(default)]
     pub scheduled_run: bool,
+    /// The session's isolated worktree (ADR 0329); absent for every other
+    /// session. Filled in by the list and single-summary reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<crate::session_worktrees::lifecycle::WorktreeSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1375,7 +1379,20 @@ pub(crate) fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Sess
         last_user_message_at: row.get::<_, Option<i64>>(11)?.map(ms_to_ts),
         // Search and listing build different column lists; use the shared alias.
         scheduled_run: row.get("scheduled_run")?,
+        worktree: None,
     })
+}
+
+/// Attach isolated-worktree badges. Sessions without a worktree are untouched.
+fn attach_worktrees(db: &Database, summaries: &mut [SessionSummary]) -> Result<()> {
+    let mut worktrees = crate::session_worktrees::lifecycle::summaries(db)?;
+    if worktrees.is_empty() {
+        return Ok(());
+    }
+    for summary in summaries {
+        summary.worktree = worktrees.remove(&summary.id);
+    }
+    Ok(())
 }
 
 // ---- sessions ---------------------------------------------------------------
@@ -1388,6 +1405,7 @@ pub fn list_sessions(db: &Database) -> Result<Vec<SessionSummary>> {
     for row in rows {
         out.push(row?);
     }
+    attach_worktrees(db, &mut out)?;
     Ok(out)
 }
 
@@ -1560,6 +1578,8 @@ pub fn create_session_with_options(
         created_at: ms_to_ts(now),
         // The run row that references this transcript is written after creation.
         scheduled_run: false,
+        // A new or forked session starts without a worktree (ADR 0329).
+        worktree: None,
     })
 }
 
@@ -1749,13 +1769,7 @@ fn load_task_projection(
 }
 
 pub fn get_session_summary(db: &Database, id: &str) -> Result<Option<SessionSummary>> {
-    let sql = format!("{SUMMARY_SELECT} AND s.id = ?1");
-    let summary = db
-        .conn()
-        .prepare_cached(&sql)?
-        .query_row(params![id], summary_from_row)
-        .optional()?;
-    Ok(summary)
+    session_summary(db, id)
 }
 
 pub fn get_session(db: &Database, id: &str) -> Result<Option<SessionDetail>> {
@@ -1772,11 +1786,15 @@ pub fn get_session(db: &Database, id: &str) -> Result<Option<SessionDetail>> {
 /// `SUMMARY_SELECT`, so this is one indexed row.
 pub fn session_summary(db: &Database, id: &str) -> Result<Option<SessionSummary>> {
     let sql = format!("{SUMMARY_SELECT} AND s.id = ?1");
-    Ok(db
+    let mut summary = db
         .conn()
         .prepare_cached(&sql)?
         .query_row(params![id], summary_from_row)
-        .optional()?)
+        .optional()?;
+    if let Some(summary) = summary.as_mut() {
+        attach_worktrees(db, std::slice::from_mut(summary))?;
+    }
+    Ok(summary)
 }
 
 /// Load a session detail with an optional renderer-facing message window.
@@ -2124,6 +2142,8 @@ pub fn fork_session_through(
         created_at,
         // A user-created fork has no scheduled-task run reference of its own.
         scheduled_run: false,
+        // A new or forked session starts without a worktree (ADR 0329).
+        worktree: None,
     };
     let messages = records.into_iter().map(record_to_ui).collect();
     Ok(ForkSessionResult::Created(Box::new(SessionDetail {
@@ -5410,6 +5430,7 @@ mod tests {
             mode: "agent".into(),
             thinking_level: "off".into(),
             permission_mode: "inherit".into(),
+            worktree: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-02T00:00:00Z".into(),
             last_user_message_at: None,
@@ -5463,6 +5484,7 @@ mod tests {
             mode: "agent".into(),
             thinking_level: "off".into(),
             permission_mode: "inherit".into(),
+            worktree: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),
             last_user_message_at: None,
@@ -6452,6 +6474,7 @@ mod tests {
             mode: "agent".into(),
             thinking_level: "medium".into(),
             permission_mode: "inherit".into(),
+            worktree: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),
             last_user_message_at: None,

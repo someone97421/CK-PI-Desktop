@@ -19,6 +19,8 @@ import {
   COMPACTION_SUMMARY_MAX_RETRIES,
   COMPACTION_SUMMARY_RETRY_BUDGET_MS,
   STREAM_IDLE_TIMEOUT_MS,
+  TOOL_QUEUE_WAIT_MS,
+  WORKTREE_DELEGATE_RPC_TIMEOUT_MS,
   rpcTimeoutMs,
   type PlanExecution,
   type PlanArtifact,
@@ -29,9 +31,9 @@ import {
 } from "./index.js";
 
 describe("Plan protocol contracts", () => {
-  it("uses protocol v11/schema v23 and exposes the plan, schedule, and shell channels", () => {
+  it("uses protocol v11/schema v24 and exposes the plan, schedule, and shell channels", () => {
     expect(PROTOCOL_VERSION).toBe(11);
-    expect(SCHEMA_VERSION).toBe(23);
+    expect(SCHEMA_VERSION).toBe(24);
     expect(IPC_WHITELIST.has(IPC.invoke.plansPending)).toBe(true);
     expect(IPC_WHITELIST.has(IPC.invoke.plansResolve)).toBe(true);
     expect(IPC_WHITELIST.has(IPC.event.plansChanged)).toBe(true);
@@ -255,6 +257,14 @@ describe("Plan protocol contracts", () => {
     expect(rpcTimeoutMs("tools.abort", { sessionId: "s", toolCallId: "t" })).toBe(
       130_000,
     );
+  });
+
+  it("lets a subagent worktree merge outlast its permit waits (ADR 0329)", () => {
+    for (const method of ["worktree.delegate.create", "worktree.delegate.settle"]) {
+      expect(rpcTimeoutMs(method, {})).toBe(WORKTREE_DELEGATE_RPC_TIMEOUT_MS);
+    }
+    expect(WORKTREE_DELEGATE_RPC_TIMEOUT_MS).toBeGreaterThan(5_000 + TOOL_QUEUE_WAIT_MS + 3 * 120_000);
+    expect(rpcTimeoutMs("worktree.merge", {})).toBe(130_000);
   });
 
   it("outlasts the whole model request a manual compaction spends (#795)", () => {

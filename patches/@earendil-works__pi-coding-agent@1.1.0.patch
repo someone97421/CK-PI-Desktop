@@ -1,5 +1,5 @@
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
-index c5ad719..63f78d1 100644
+index c5ad71905832cac59341cff04729260936dfba77..63f78d1464e21638ba569b0c24fd1723c56d3b54 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
 @@ -69,10 +69,10 @@ function withoutDeletedHeaders(headers) {
@@ -93,7 +93,7 @@ index c5ad719..63f78d1 100644
          return {
              tokens: estimate.tokens,
 diff --git a/dist/core/bug-report.js b/dist/core/bug-report.js
-index bc4af31..24a4f8e 100644
+index bc4af31b57f4a8696a68d4f2a529a26669955382..24a4f8e28624523112cac6c73464e93fb650f03a 100644
 --- a/dist/core/bug-report.js
 +++ b/dist/core/bug-report.js
 @@ -232,12 +232,12 @@ Numbered list, as specific as the transcript allows.
@@ -121,7 +121,7 @@ index bc4af31..24a4f8e 100644
      const prompt = [
          messages.length < options.messages.length
 diff --git a/dist/core/compaction/branch-summarization.d.ts b/dist/core/compaction/branch-summarization.d.ts
-index 12cb88e..6ff7356 100644
+index 12cb88ef5398b2365d5823597b7ccf063af567d6..6ff73567bbd5289b8b3f2fb82f923a5b5dc7860e 100644
 --- a/dist/core/compaction/branch-summarization.d.ts
 +++ b/dist/core/compaction/branch-summarization.d.ts
 @@ -6,7 +6,7 @@
@@ -143,7 +143,7 @@ index 12cb88e..6ff7356 100644
   * Generate a summary of abandoned branch entries.
   *
 diff --git a/dist/core/compaction/branch-summarization.js b/dist/core/compaction/branch-summarization.js
-index 3f98859..b68f7ad 100644
+index 3f98859ddbc6de3b6075c08557fe396a61d1814e..b68f7adb1fd2145a6a0d1e74af05065d25c7925b 100644
 --- a/dist/core/compaction/branch-summarization.js
 +++ b/dist/core/compaction/branch-summarization.js
 @@ -95,7 +95,7 @@ function getMessageFromEntry(entry) {
@@ -174,7 +174,7 @@ index 3f98859..b68f7ad 100644
          return { summary: "No content to summarize" };
      }
 diff --git a/dist/core/compaction/compaction.d.ts b/dist/core/compaction/compaction.d.ts
-index 04416da..fdf79d9 100644
+index 04416da43184fce4dc2fc33afeb920e2edddedc9..fdf79d9f200e78178aa46020341c7295024734a5 100644
 --- a/dist/core/compaction/compaction.d.ts
 +++ b/dist/core/compaction/compaction.d.ts
 @@ -6,7 +6,7 @@
@@ -229,7 +229,7 @@ index 04416da..fdf79d9 100644
   * Generate summaries for compaction using prepared data.
   * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
 diff --git a/dist/core/compaction/compaction.js b/dist/core/compaction/compaction.js
-index e4992e8..0797ad5 100644
+index e4992e8d2bff8aa6d2a4b044c9cf571d9e7f2fa2..0797ad50e267863a32adf27cbc2d7037e07dcb21 100644
 --- a/dist/core/compaction/compaction.js
 +++ b/dist/core/compaction/compaction.js
 @@ -4,8 +4,10 @@
@@ -424,7 +424,7 @@ index e4992e8..0797ad5 100644
      if (!firstKeptEntry?.id)
          return undefined;
 diff --git a/dist/core/compaction/utils.js b/dist/core/compaction/utils.js
-index 92ee18e..ef4df76 100644
+index 92ee18e6a99c46dd5fc6b249a6cf670938f5f963..ef4df7671fc2a2b778ede9e485eb03fc49ebc3a8 100644
 --- a/dist/core/compaction/utils.js
 +++ b/dist/core/compaction/utils.js
 @@ -2,6 +2,7 @@
@@ -467,3 +467,21 @@ index 92ee18e..ef4df76 100644
          }
          else if (msg.role === "toolResult") {
              const content = contentText(msg.content, "");
+diff --git a/dist/utils/tool-result-images.js b/dist/utils/tool-result-images.js
+index 37d8a2474d425e6ac8648745c02d1a247244cbd3..b194f69e3d5073a4c5177a0dfb2b67104eec5814 100644
+--- a/dist/utils/tool-result-images.js
++++ b/dist/utils/tool-result-images.js
+@@ -27,10 +27,9 @@ export async function normalizeToolResultImages(content, options) {
+             resizeOptions: options?.resizeOptions,
+         });
+         if (!processed.ok) {
+-            // Unlike `read`, keep the original block. The tool already produced this image and the
+-            // failure may just be an unavailable image backend, so passing it through preserves the
+-            // behavior tools have today instead of silently deleting their output.
+-            normalized.push(block);
++            // A failed resize must not leave an unprocessable image in persistent history.
++            normalized.push({ type: "text", text: processed.message });
++            changed = true;
+             continue;
+         }
+         if (processed.data === block.data && processed.mimeType === block.mimeType && processed.hints.length === 0) {

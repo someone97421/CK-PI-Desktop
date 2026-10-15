@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   NAMED_ENDPOINT_PRESETS,
+  addressesPublishedVendorHost,
   deepseekRequestCompat,
   DEEPSEEK_REASONING_REPLAY_PLACEHOLDER,
   isDeepSeekReasoningReplay,
@@ -281,6 +282,63 @@ describe("pi-ai built-in API-key services", () => {
       "xiaomi-token-plan-sgp",
     ]) {
       expect(matchNamedPreset({ vendorKey: id })?.apiStyle).toBe("chat_completions");
+    }
+  });
+});
+
+describe("addressesPublishedVendorHost", () => {
+  it("matches the hosts the preset table publishes", () => {
+    for (const baseUrl of [
+      "https://api.openai.com/v1",
+      "https://api.anthropic.com",
+      "https://generativelanguage.googleapis.com/v1beta",
+      "https://api.deepseek.com",
+      "https://api.moonshot.cn/v1",
+      "https://openrouter.ai/api/v1",
+      "https://opencode.ai/zen/go/v1",
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    ]) {
+      expect(addressesPublishedVendorHost(baseUrl)).toBe(true);
+    }
+  });
+
+  it("matches by host, not by the full canonical URL", () => {
+    // The preset records spell `https://api.deepseek.com` and
+    // `https://api.groq.com/openai/v1`; both paths below are still that host.
+    expect(addressesPublishedVendorHost("https://api.deepseek.com/v1")).toBe(true);
+    expect(addressesPublishedVendorHost("https://api.deepseek.com/beta")).toBe(true);
+    expect(addressesPublishedVendorHost("https://api.groq.com/v1")).toBe(true);
+    expect(addressesPublishedVendorHost("https://api.openai.com/v1/")).toBe(true);
+    expect(addressesPublishedVendorHost("https://API.OPENAI.COM/v1")).toBe(true);
+  });
+
+  it("leaves a self-hosted gateway, relay, or loopback to the user", () => {
+    for (const baseUrl of [
+      "https://gateway.example.com/v1",
+      "https://relay.example.com",
+      "http://127.0.0.1:11434/v1",
+      "https://llm.internal:8443/v1",
+    ]) {
+      expect(addressesPublishedVendorHost(baseUrl)).toBe(false);
+    }
+  });
+
+  it("does not accept a host that merely contains a vendor host", () => {
+    expect(addressesPublishedVendorHost("https://api.openai.com.evil.test/v1")).toBe(false);
+    expect(addressesPublishedVendorHost("https://openai.com/v1")).toBe(false);
+    expect(addressesPublishedVendorHost("https://api.anthropic.com.evil.test")).toBe(false);
+  });
+
+  it("is false for missing or malformed input", () => {
+    for (const baseUrl of [
+      undefined,
+      "",
+      "   ",
+      "not a url",
+      "://broken",
+      "http://",
+    ]) {
+      expect(addressesPublishedVendorHost(baseUrl)).toBe(false);
     }
   });
 });

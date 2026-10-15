@@ -242,7 +242,45 @@ try {
     assert.ok(rebuiltCache?.startsWith("PI-DESKTOP-TRANSCRIPT-LAYOUT 2\n"));
   }
 
-  console.log("PASS transcript cache: append, middle Task rewrite, legacy cache recovery, paging, message navigation, tool result and Host restart");
+  const damagedSession = await host.call("session.create", {
+    title: "Invalid UTF-8 bounded transcript recovery",
+    mode: "agent",
+    projectPath: workspace,
+  });
+  const damagedRows = [
+    { id: "utf8-before", role: "user", content: "before", createdAt, status: "complete" },
+    { id: "utf8-middle", role: "user", content: "hello world", createdAt, status: "complete" },
+    { id: "utf8-after", role: "user", content: "after", createdAt, status: "complete" },
+  ];
+  for (const message of damagedRows) {
+    await host.call("session.appendMessage", { sessionId: damagedSession.session.id, message });
+  }
+  const damagedPath = join(dataDir, "sessions", `${damagedSession.session.id}.jsonl`);
+  const intactWindow = await host.call("session.get", {
+    id: damagedSession.session.id,
+    messageLimit: 10,
+  });
+  assert.equal(intactWindow.session.messages.length, 3);
+  const damagedBytes = await readFile(damagedPath);
+  const textOffset = damagedBytes.indexOf(Buffer.from("hello world"));
+  assert.notEqual(textOffset, -1);
+  damagedBytes[textOffset + 6] = 0xE6;
+  damagedBytes[textOffset + 7] = 0x92;
+  await writeFile(damagedPath, damagedBytes);
+
+  await host.restart();
+  const recoveredWindow = await host.call("session.get", {
+    id: damagedSession.session.id,
+    messageLimit: 10,
+  });
+  assert.deepEqual(
+    recoveredWindow.session.messages.map((message) => message.id),
+    damagedRows.map((message) => message.id),
+  );
+  assert.equal(recoveredWindow.session.messages[1].content, "hello \uFFFDrld");
+  assert.deepEqual(await readFile(damagedPath), damagedBytes);
+
+  console.log("PASS transcript cache: paging, legacy cache recovery, navigation, Task rewrite, restart, and invalid UTF-8 bounded reads");
 } finally {
   await host.stop();
   await rm(temp, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });

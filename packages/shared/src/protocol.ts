@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 11 as const;
-export const SCHEMA_VERSION = 23 as const;
+export const SCHEMA_VERSION = 24 as const;
 export { APP_ID, APP_NAME, APP_SLUG, APP_REPOSITORY, APP_VERSION, APP_DISPLAY_VERSION,
   APP_BUILD_TIME, APP_BUILD_TIMEZONE, APP_LEGACY_LOCK_NAME } from "./app-build.js";
 
@@ -125,6 +125,21 @@ export const IPC = {
     /** Validate and select a durable session from a reviewed host operation. */
     sessionOpen: "pi-desktop/session/open",
     sessionDelete: "pi-desktop/session/delete",
+    /** Isolated sessions in git worktrees (ADR 0329). */
+    worktreeProbe: "pi-desktop/worktree/probe",
+    worktreePreview: "pi-desktop/worktree/preview",
+    worktreeMerge: "pi-desktop/worktree/merge",
+    worktreePendingWork: "pi-desktop/worktree/pendingWork",
+    /** "Sync from project": project commits the session lacks, and the sync. */
+    worktreeBehind: "pi-desktop/worktree/behind",
+    worktreeSync: "pi-desktop/worktree/sync",
+    /** Behind counts of every isolated session, for the sidebar marker. */
+    worktreeBehindAll: "pi-desktop/worktree/behindAll",
+    worktreeSetupLog: "pi-desktop/worktree/setupLog",
+    /** Opens the worktree folder in the OS file manager; no path is returned. */
+    worktreeReveal: "pi-desktop/worktree/reveal",
+    worktreeSetupCommandGet: "pi-desktop/worktree/setupCommand/get",
+    worktreeSetupCommandSet: "pi-desktop/worktree/setupCommand/set",
     sessionRename: "pi-desktop/session/rename",
     /** Deterministic first-prompt title for a session that is still untitled. */
     sessionDeriveTitle: "pi-desktop/session/deriveTitle",

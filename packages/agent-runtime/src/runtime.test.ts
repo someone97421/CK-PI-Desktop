@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { type Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream,
@@ -18,6 +18,8 @@ import {
   COMPACTION_FALLBACK_MARKER,
   DesktopAgentRuntime,
   PATH_INSTRUCTION_RESOLUTION_TIMEOUT_MS,
+  isolatedWorkspaceGuidance,
+  delegateWorktreeNote,
   looksLikePseudoToolCall,
   toolResultFromUi,
   type CompactionStrategy,
@@ -170,6 +172,7 @@ function createRuntime(
     compactionStrategy: CompactionStrategy;
     projectPath: string;
     remoteWorkspace: { hostKey: string; path: string };
+    workspaceRoot: string;
     scratchDir: string;
     customSystemPrompt: import("./custom-system-prompt.js").CustomSystemPrompt;
     projectInstructions: import("./project-instructions.js").ProjectInstructions;
@@ -201,6 +204,7 @@ function createRuntime(
     compactionStrategy: overrides.compactionStrategy,
     projectPath: overrides.projectPath,
     remoteWorkspace: overrides.remoteWorkspace,
+    workspaceRoot: overrides.workspaceRoot,
     scratchDir: overrides.scratchDir,
     customSystemPrompt: overrides.customSystemPrompt,
     pluginTools: overrides.pluginTools,
@@ -321,6 +325,7 @@ function runtimeMatches(
     customSystemPrompt: (runtime as any).customSystemPrompt,
     projectMemory: (runtime as any).projectMemory,
     projectPath: (runtime as any).projectPath,
+    workspaceRoot: (runtime as any).workspaceRoot,
     commandShell: (runtime as any).commandShell,
     subagents: (runtime as any).subagents,
     subagentProviders: (runtime as any).subagentProviders,
@@ -11320,5 +11325,184 @@ describe("local runtime with a remote tool workspace", () => {
     expect(internals.provider.id).toBe(provider.id);
     expect(internals.agent.state.systemPrompt).not.toContain("/local/scratch");
     await runtime.dispose();
+  });
+});
+
+describe("isolated session workspace (ADR 0329)", () => {
+  const systemPrompt = (runtime: DesktopAgentRuntime): string =>
+    (runtime as unknown as { agent: { state: { systemPrompt: string } } }).agent.state
+      .systemPrompt;
+
+  it("tells the model about the worktree only in an isolated session", () => {
+    const isolated = createRuntime({ projectPath: "/work/app", workspaceRoot: "/data/wt/app/s1" });
+    const ordinary = createRuntime({ projectPath: "/work/app" });
+    expect(systemPrompt(isolated)).toContain(isolatedWorkspaceGuidance());
+    expect(systemPrompt(isolated)).toContain("PI_PORT");
+    expect(systemPrompt(ordinary)).not.toContain("Isolated session:");
+  });
+
+  it("works in the worktree while the project stays its identity", () => {
+    const runtime = createRuntime({ projectPath: "/work/app", workspaceRoot: "/data/wt/app/s1" });
+    const internals = runtime as unknown as { extensionCwd(): string; projectPath?: string };
+    expect(internals.extensionCwd()).toBe("/data/wt/app/s1");
+    expect(internals.projectPath).toBe("/work/app");
+    expect(
+      (createRuntime({ projectPath: "/work/app" }) as unknown as { extensionCwd(): string })
+        .extensionCwd(),
+    ).toBe("/work/app");
+  });
+
+  it("is not reused for another worktree or for a non-isolated launch", () => {
+    const runtime = createRuntime({ projectPath: "/work/app", workspaceRoot: "/data/wt/app/s1" });
+    expect(runtimeMatches(runtime)).toBe(true);
+    expect(runtimeMatches(runtime, { workspaceRoot: "/data/wt/app/s2" })).toBe(false);
+    expect(runtimeMatches(runtime, { workspaceRoot: undefined })).toBe(false);
+  });
+});
+
+describe("isolated-session subagent worktrees (ADR 0329)", () => {
+  const writer: SubagentDefinition = {
+    name: "fixer",
+    description: "Implement a change.",
+    tools: ["Read", "Edit", "Write"],
+    prompt: "Implement it.",
+    source: "builtin",
+  };
+  const shellOnly: SubagentDefinition = {
+    name: "test-runner",
+    description: "Run tests.",
+    tools: ["Read", "Grep", "Bash"],
+    prompt: "Run them.",
+    source: "builtin",
+  };
+  const tool = (runtime: DesktopAgentRuntime, name: string) =>
+    (runtime as any).agent.state.tools.find((entry: any) => entry.name === name);
+
+  function worktreeHost(settlement: unknown, createError?: Error) {
+    return {
+      call: vi.fn(async (method: string, _params?: unknown) => {
+        if (method === "worktree.delegate.create") {
+          if (createError) throw createError;
+          return { worktree: { branch: "pi-desktop/s-d", status: "active" } };
+        }
+        if (method === "worktree.delegate.settle") return { settlement };
+        if (method === "worktree.location") return { path: "/data/wt/app/delegate" };
+        if (method === "tools.execute") return { ok: true, content: {} };
+        return undefined;
+      }),
+      onNotification: vi.fn(() => () => {}),
+    };
+  }
+  const calls = (host: ReturnType<typeof worktreeHost>, method: string) =>
+    host.call.mock.calls.filter(([name]) => name === method).map(([, params]) => params as any);
+
+  async function runToEnd(runtime: DesktopAgentRuntime, agent: string, id: string) {
+    const started = await tool(runtime, "Task").execute(id, { agent, task: "Do it." });
+    const delegationId = (started.details as any).delegationId as string;
+    const waited = await tool(runtime, "TaskWait").execute(`${id}-wait`, { delegationIds: [delegationId] });
+    return { started, delegationId, text: waited.content[0].text as string };
+  }
+
+  beforeEach(() => {
+    subagentRuns.calls.length = 0;
+    subagentRuns.deferred = false;
+    subagentRuns.constructorError = undefined;
+    subagentRuns.result = undefined;
+  });
+
+  it("gives a writing delegate its own worktree, routes its tools there, and reports the merge", async () => {
+    const host = worktreeHost({ result: "merged", commits: 2 });
+    const runtime = createRuntime({
+      subagents: [writer, shellOnly],
+      host: host as never,
+      projectPath: "/work/app",
+      workspaceRoot: "/data/wt/app/s1",
+    });
+    const { delegationId, text } = await runToEnd(runtime, "fixer", "task-w");
+    const [create] = calls(host, "worktree.delegate.create");
+    expect(create).toEqual({ sessionId: "session-1", delegationId });
+
+    const write = subagentRuns.calls[0].tools.find((entry: any) => entry.name === "Write");
+    await write.execute("write-1", { path: "a.txt", content: "x" }, undefined, undefined);
+    expect(calls(host, "tools.execute").at(-1)).toEqual(
+      expect.objectContaining({ delegationId }),
+    );
+    expect((runtime as any).delegateWorktrees.size).toBe(0);
+
+    expect(calls(host, "worktree.delegate.settle")).toEqual([
+      { sessionId: "session-1", delegationId, merge: true },
+    ]);
+    expect(text).toContain("Isolated worktree: merged 2 commit(s) into the session workspace.");
+    await runtime.dispose();
+  });
+
+  it("leaves Bash-only delegates and non-isolated sessions on the shared workspace", async () => {
+    const host = worktreeHost({ result: "merged", commits: 1 });
+    const isolated = createRuntime({
+      subagents: [writer, shellOnly],
+      host: host as never,
+      projectPath: "/work/app",
+      workspaceRoot: "/data/wt/app/s1",
+    });
+    await runToEnd(isolated, "test-runner", "task-b");
+    const ordinary = createRuntime({ subagents: [writer], host: host as never, projectPath: "/work/app" });
+    await runToEnd(ordinary, "fixer", "task-o");
+    expect(calls(host, "worktree.delegate.create")).toEqual([]);
+    expect(calls(host, "worktree.delegate.settle")).toEqual([]);
+    const write = subagentRuns.calls[1].tools.find((entry: any) => entry.name === "Write");
+    await write.execute("write-o", { path: "a.txt", content: "x" }, undefined, undefined);
+    expect(calls(host, "tools.execute").at(-1)).not.toHaveProperty("delegationId");
+    await isolated.dispose();
+    await ordinary.dispose();
+  });
+
+  it("keeps an unfinished run's work and tells the parent how to resolve a conflict", async () => {
+    const conflictHost = worktreeHost({ result: "conflict", files: ["src/a.ts"] });
+    const runtime = createRuntime({
+      subagents: [writer],
+      host: conflictHost as never,
+      projectPath: "/work/app",
+      workspaceRoot: "/data/wt/app/s1",
+    });
+    const { delegationId, text } = await runToEnd(runtime, "fixer", "task-c");
+    expect(text).toContain("NOT merged");
+    expect(text).toContain("src/a.ts");
+    expect(text).toContain(`TaskResume(delegationId: "${delegationId}", expectedExecution: 1)`);
+
+    const keptHost = worktreeHost({ result: "kept" });
+    const failing = createRuntime({
+      subagents: [writer],
+      host: keptHost as never,
+      projectPath: "/work/app",
+      workspaceRoot: "/data/wt/app/s1",
+    });
+    subagentRuns.result = { agentName: "fixer", status: "failed", report: "boom", turns: 1, toolCalls: 1 };
+    const failed = await runToEnd(failing, "fixer", "task-f");
+    expect(calls(keptHost, "worktree.delegate.settle")[0].merge).toBe(false);
+    expect(failed.text).toContain("changes were kept unmerged");
+    await runtime.dispose();
+    await failing.dispose();
+  });
+
+  it("does not start a writing delegate whose worktree cannot be created", async () => {
+    const host = worktreeHost({ result: "none" }, new Error("the session has an unfinished merge conflict"));
+    const runtime = createRuntime({
+      subagents: [writer],
+      host: host as never,
+      projectPath: "/work/app",
+      workspaceRoot: "/data/wt/app/s1",
+    });
+    const result = await tool(runtime, "Task").execute("task-x", { agent: "fixer", task: "Do it." });
+    expect(result.details.error).toContain("Could not prepare an isolated worktree");
+    expect(result.details.error).toContain("unfinished merge conflict");
+    expect(subagentRuns.calls).toHaveLength(0);
+    await runtime.dispose();
+  });
+
+  it("describes every settlement in the report", () => {
+    const resume = 'TaskResume(delegationId: "d1", expectedExecution: 1)';
+    expect(delegateWorktreeNote({ result: "noChanges" }, resume)).toContain("no file changes");
+    expect(delegateWorktreeNote({ result: "notMerged", reason: "busy" }, resume)).toContain("busy");
+    expect(delegateWorktreeNote({ result: "none" }, resume)).toBe("");
   });
 });
