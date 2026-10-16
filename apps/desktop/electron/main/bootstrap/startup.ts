@@ -15,11 +15,9 @@ import {
 import { installApplicationMenu } from "../application-menu";
 import { installPluginAssetProtocol } from "../plugin-asset-protocol";
 import { installPluginRendererProtocol } from "../plugin-renderer-protocol";
-import { registerPluginSchemes } from "../plugin-schemes";
 import { applyNetworkProxyFromAppSettings } from "../network-proxy";
 import {
   installAppearanceMediaProtocol,
-  registerAppearanceMediaScheme,
 } from "../appearance-media-protocol";
 import { readCloseBehavior } from "../window-preferences";
 import { createAgentHostBridge, type AgentHostBridge } from "../agent-host-bridge";
@@ -130,14 +128,10 @@ export type StartupDependencies = {
 export function registerApplicationStartup(deps: StartupDependencies): void {
   if (!deps.hasSingleInstanceLock) return;
 
-  // Electron only accepts scheme privileges before the app is ready, and this
-  // runs from the composition root, before the `whenReady` promise can settle.
-  registerPluginSchemes();
-  registerAppearanceMediaScheme();
   // Crashpad ships with Electron, so the reporter needs no native dependency.
   // Dumps stay local (`uploadToServer: false`) under the fork's independent
   // userData diagnostics directory, not in the shared business dataDir.
-  // Started before `ready`, so no crash can happen ahead of the handler.
+  // 业务入口按需加载；存储冷维护可能已经等待过 ready。
   // A failure here is a warning: it never blocks boot.
   const diagnosticsDir = join(app.getPath("userData"), "diagnostics");
   try {

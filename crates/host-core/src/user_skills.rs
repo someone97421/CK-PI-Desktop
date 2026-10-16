@@ -416,11 +416,8 @@ fn with_fresh_frontmatter(bom: &str, text: &str, value: &str) -> String {
 /// The directory a `<skill>/SKILL.md` document owns, when the document really is
 /// the directory shape.
 ///
-/// A skill may ship sibling resources next to its `SKILL.md`, so moving one
-/// document is not enough — the directory is the unit. The guard matters: a
-/// loose `SKILL.md` sitting directly in the skills directory has the skills
-/// directory itself as its parent, and treating that as the unit would move
-/// every skill at once.
+/// 技能文档与同目录资源作为整体移动或删除；直接放在技能根目录下的
+/// `SKILL.md` 属于单文件技能，不能把整个技能根目录当作它的目录。
 fn directory_skill_root(path: &Path, skills_dir: &Path) -> Option<PathBuf> {
     if !path
         .file_name()
@@ -1404,11 +1401,13 @@ impl UserSkillRegistry {
             .map(|value| CapabilityLevel::parse(Some(value)))
             .transpose()?
             .unwrap_or(CapabilityLevel::Global);
+        let directory = self.skills_directory(level, record.project_path.as_deref())?;
         if record.source == LINKED_IMPORT_SOURCE {
-            let directory = self.skills_directory(level, record.project_path.as_deref())?;
             let link = imported_skill_link(Path::new(&record.path), &directory)
                 .ok_or_else(|| anyhow::anyhow!("SKILL_READONLY: imported link is no longer available"))?;
             remove_imported_skill_link(&link)?;
+        } else if let Some(root) = directory_skill_root(Path::new(&record.path), &directory) {
+            fs::remove_dir_all(root)?;
         } else {
             fs::remove_file(&record.path)?;
         }
@@ -1490,12 +1489,14 @@ mod tests {
         }
     }
     #[test]
-    fn imports_a_directory_with_skill_md_in_copy_mode() {
+    fn imports_and_removes_a_directory_skill_with_its_resources() {
         let app = tempdir().unwrap();
         let source_dir = app.path().join("incoming/example-skill");
         fs::create_dir_all(&source_dir).unwrap();
         fs::write(source_dir.join("SKILL.md"), "---\nname: Example\ndescription: Anthropic-style skill\n---\n\nBody.\n").unwrap();
         fs::write(source_dir.join("resource.txt"), "extra\n").unwrap();
+        fs::create_dir_all(source_dir.join("scripts")).unwrap();
+        fs::write(source_dir.join("scripts/run.py"), "print('example')\n").unwrap();
         let mut registry = UserSkillRegistry::new(app.path());
         let record = registry.import(source_dir.to_str().unwrap(), input("Ignored", "project", Some(app.path().to_str().unwrap()))).unwrap();
         let normalized_project = crate::agent_capabilities::normalize_project_path(app.path().to_str().unwrap());
@@ -1506,6 +1507,26 @@ mod tests {
         assert_eq!(record.name, "Example");
         assert_eq!(record.path, expected_root.join("SKILL.md").to_string_lossy());
         assert!(source_dir.join("SKILL.md").is_file());
+        let skills_dir = expected_root.parent().unwrap();
+        let sibling = skills_dir.join("other.md");
+        fs::write(&sibling, "---\nname: Other\n---\n\nKeep.\n").unwrap();
+        assert!(registry.remove(&record.id, Some(CapabilityLevel::Project), Some(app.path().to_str().unwrap())).unwrap());
+        assert!(!expected_root.exists());
+        assert!(sibling.is_file());
+        assert_eq!(fs::read_to_string(source_dir.join("scripts/run.py")).unwrap(), "print('example')\n");
+    }
+
+    #[test]
+    fn removes_a_loose_skill_md_without_removing_the_skills_directory() {
+        let app = tempdir().unwrap();
+        let skills_dir = app.path().join("skills");
+        fs::create_dir_all(skills_dir.join("other")).unwrap();
+        fs::write(skills_dir.join("SKILL.md"), "---\nname: Loose\n---\n\nBody.\n").unwrap();
+        fs::write(skills_dir.join("other/SKILL.md"), "---\nname: Other\n---\n\nKeep.\n").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path()).with_global_skills_dir(skills_dir.clone());
+        assert!(registry.remove("loose", Some(CapabilityLevel::Global), None).unwrap());
+        assert!(!skills_dir.join("SKILL.md").exists());
+        assert!(skills_dir.join("other/SKILL.md").is_file());
     }
 
     #[test]

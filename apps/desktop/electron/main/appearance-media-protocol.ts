@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { net, protocol } from "electron";
+import { net, protocol, type CustomScheme } from "electron";
 import { APPEARANCE_MEDIA_SCHEME } from "@pi-desktop/shared";
 import { resolveAppearanceMediaProtocolPath } from "./appearance-media";
 
@@ -18,18 +18,16 @@ function notFound(): Response {
   });
 }
 
-export function registerAppearanceMediaScheme(): void {
-  protocol.registerSchemesAsPrivileged([{
-    scheme: APPEARANCE_MEDIA_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-      stream: true,
-    },
-  }]);
-}
+export const APPEARANCE_MEDIA_SCHEME_PRIVILEGES: CustomScheme = {
+  scheme: APPEARANCE_MEDIA_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: true,
+    stream: true,
+  },
+};
 
 export function installAppearanceMediaProtocol(dataDir: string): void {
   protocol.handle(APPEARANCE_MEDIA_SCHEME, async (request) => {

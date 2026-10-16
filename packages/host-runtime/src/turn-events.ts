@@ -51,15 +51,15 @@ export type TurnEventPipelineOptions = {
   log: TurnEventLogger;
   now?: () => number;
   checkpointIntervalMs?: number;
+  /** File-backed transcript queue, used by the long-lived pi-host process. */
+  persistencePath?: string;
 };
-
 /**
  * The per-event pass of a headless Host: track tool calls, checkpoint the
  * streaming reply (D299), close the turn on its terminal event, and persist
  * every completed row through host-core. The desktop runs the same pass in
- * Electron Main against its file-backed outbox; here the outbox is process
- * memory with a bounded retry, because a `pi-host` ends only with its
- * supervisor.
+ * Electron Main against its file-backed outbox; pi-host gives this pipeline a
+ * queue inside its data directory so failed writes survive process restart.
  */
 export class TurnEventPipeline {
   private readonly activeToolCalls = new Map<string, ActiveToolCall>();
@@ -75,6 +75,7 @@ export class TurnEventPipeline {
     this.persistence = new TurnPersistence({
       getHost: () => options.getHost(),
       log: (level, message, data) => options.log(level, message, data),
+      persistencePath: options.persistencePath,
     });
     this.checkpointer = new InflightCheckpointer(
       async (checkpoint) => {
@@ -146,8 +147,10 @@ export class TurnEventPipeline {
   async dispose(): Promise<void> {
     await this.checkpointer.flushAll();
     this.checkpointer.dispose();
-    await this.persistence.flush();
+    // Stop retry waits before flushing: an unwritable database must not hold
+    // shutdown open. Persisted rows remain queued for the next pi-host start.
     this.persistence.dispose();
+    await this.persistence.flush();
   }
 
   /** One event from the sidecar: fan it out, then apply its persistence effects. */

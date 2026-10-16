@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 import { AgentHost, type ApprovalPort } from "@pi-desktop/agent-host";
 import {
@@ -57,7 +58,7 @@ export async function startPiHost(config: PiHostConfig, options: { log?: HostLog
   const getSidecar = () => state.sidecar;
 
   const launch = createHeadlessLaunchResolver({ getHost, dataDir: config.dataDir, log: (level, message, data) => log(level, message, data) });
-  const runtime = new RuntimeService({ getHost, getSidecar, launch, log });
+  const runtime = new RuntimeService({ getHost, getSidecar, launch, log, persistencePath: join(config.dataDir, "turn-persistence.json") });
 
   const approvals: ApprovalPort = {
     async resolveTool(requestId, decision) {

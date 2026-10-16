@@ -210,7 +210,7 @@ test("declared theme assets are served over a host-owned scheme", () => {
 
   // The scheme is reserved before the app is ready, then handled by a resolver
   // that only answers for paths the loaded plugin actually declared.
-  assert.match(startupSrc, /registerPluginSchemes\(\);/);
+  assert.match(readFileSync(join(desktopRoot, "electron/main/entry.ts"), "utf8"), /registerPluginSchemes\(\);/);
   assert.match(startupSrc, /installPluginAssetProtocol\(/);
   assert.match(protocolSrc, /scheme: THEME_ASSET_SCHEME/);
   assert.match(schemesSrc, /registerSchemesAsPrivileged\(\[[^\]]*PLUGIN_ASSET_SCHEME_PRIVILEGES/);

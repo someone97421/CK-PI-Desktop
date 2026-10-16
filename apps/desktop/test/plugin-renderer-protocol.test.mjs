@@ -11,11 +11,12 @@ test("plugin schemes are reserved together, in the only privileged registration"
   const schemes = await readMainModule("plugin-schemes.ts");
   assert.match(
     schemes,
-    /registerSchemesAsPrivileged\(\[\s*PLUGIN_ASSET_SCHEME_PRIVILEGES,\s*PLUGIN_RENDERER_SCHEME_PRIVILEGES,\s*\]\)/,
+    /registerSchemesAsPrivileged\(\[\s*PLUGIN_ASSET_SCHEME_PRIVILEGES,\s*PLUGIN_RENDERER_SCHEME_PRIVILEGES,\s*APPEARANCE_MEDIA_SCHEME_PRIVILEGES,\s*\]\)/,
   );
-  const startup = await readMainModule("bootstrap/startup.ts");
+  const entry = await readMainModule("entry.ts");
   assert.ok(
-    startup.indexOf("registerPluginSchemes();") < startup.indexOf("app.whenReady()"),
+    entry.indexOf("registerPluginSchemes();") >= 0 &&
+    entry.indexOf("registerPluginSchemes();") < entry.indexOf("void prepareStorage("),
     "schemes are reserved before the app is ready",
   );
 });

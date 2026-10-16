@@ -218,6 +218,28 @@ describe("parent supervision connectivity", () => {
     });
   }
 
+  it("accepts a maximum-length user recall instruction together with the runtime context note", async () => {
+    interceptChildren([]);
+    const fixture = parent(1);
+    const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "inspect" });
+    const record = fixture.internal.delegations.get(start.details.delegationId);
+    await record.completion;
+    const contexts = setStream((record.run as any).agent, () => reply());
+    const instruction = "请复核边界".repeat(2_000); // 12,000 UTF-16 code units, the tool's user-input limit.
+    const accepted = await fixture.internal.buildSubagentResumeTool().execute("resume-long", {
+      delegationId: record.delegationId,
+      expectedExecution: 1,
+      instruction,
+    });
+    expect(accepted.isError).toBeUndefined();
+    await record.completion;
+    expect(record).toMatchObject({ execution: 2, status: "completed" });
+    expect(record.run.canResume).toBe(true);
+    expect(JSON.stringify(contexts)).toContain("[Resumed Context Note");
+    expect(JSON.stringify(contexts)).toContain(instruction);
+    await fixture.runtime.dispose();
+  });
+
   it("recalls across parent turns, rejects stale commands and settles only the new execution", async () => {
     interceptChildren([]);
     const fixture = parent(3);

@@ -1180,7 +1180,7 @@ export class PluginPanelHost {
         fullscreenable: false,
         webPreferences: {
           session: ses,
-          preload: join(__dirname, "../preload/plugin-panel.js"),
+          preload: join(getModuleDirectory(import.meta.url), "../preload/plugin-panel.js"),
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,

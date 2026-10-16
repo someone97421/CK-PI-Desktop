@@ -72,6 +72,8 @@ export type RuntimeServiceOptions = {
     projectPath?: string;
   }) => Promise<{ content: string; command?: string } | null>;
   checkpointIntervalMs?: number;
+  /** Durable transcript append queue for a headless Host with a data directory. */
+  persistencePath?: string;
 };
 
 type FinishTurnOptions = { turnId: string; recoverInflight?: boolean };
@@ -140,6 +142,7 @@ export class RuntimeService implements RuntimePort {
       log: options.log,
       now: this.now,
       checkpointIntervalMs: options.checkpointIntervalMs,
+      persistencePath: options.persistencePath,
     });
   }
 

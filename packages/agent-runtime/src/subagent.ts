@@ -490,7 +490,10 @@ export class SubagentRun {
 
   resume(instruction: string, turnId: string | undefined, parentToolCallId: string): Promise<SubagentRunResult> {
     if (!this.canResume) throw new Error("Subagent is busy, stopped, failed, or its context was released.");
-    if (!instruction.trim() || instruction.length > 12_000) throw new Error("instruction must contain 1–12000 characters.");
+    // The TaskResume tool bounds user input. Runtime-owned recovery context is
+    // prepended after that validation and must not reject an otherwise legal
+    // maximum-length user instruction after the execution has been registered.
+    if (!instruction.trim()) throw new Error("instruction must not be empty.");
     this.executing = true;
     this.opts.turnId = turnId;
     this.opts.parentToolCallId = parentToolCallId;

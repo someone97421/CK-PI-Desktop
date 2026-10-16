@@ -37,7 +37,7 @@ import {
 import { PersistenceOutbox } from "./persistence-outbox";
 import { QueuedSteeringReceipts, createQueuedSteeringJournal } from "./queued-steering-receipts";
 import { Logger } from "./logger";
-import { describeError } from "./main-process-errors";
+import { describeError, installMainProcessErrorHandlers } from "./main-process-errors";
 import {
   ModelsDevCatalog,
   catalogModelConfigFor,
@@ -901,7 +901,7 @@ function registerIpc() {
     applyDeveloperMode,
     applyPreventScreenSleep,
     applyKeepAwakeWhileRunning,
-    applyTemporaryWorkspaceContextMenu: (settings) => temporaryWorkspaceRuntime.applyContextMenu(settings),
+    applyTemporaryWorkspaceContextMenu: temporaryWorkspaceRuntime.applyContextMenu,
     resolveEffectiveCommandShell,
     applyAppearanceIcon,
     modelsDevCatalog,

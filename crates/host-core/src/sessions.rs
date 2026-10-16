@@ -9087,7 +9087,7 @@ mod tests {
             .into_iter()
             .find(|row| row.id == session.id)
             .unwrap();
-        let page = crate::session_search::search(&db, "Scheduled workspace probe", 0).unwrap();
+        let page = crate::session_search::search(&db, "Scheduled workspace probe", 0, 20).unwrap();
         let hit = &page.hits[0];
         for summary in [&detail.summary, &listed, &hit.session] {
             assert!(summary.scheduled_run);

@@ -1,9 +1,10 @@
 import { protocol } from "electron";
 import { PLUGIN_ASSET_SCHEME_PRIVILEGES } from "./plugin-asset-protocol";
 import { PLUGIN_RENDERER_SCHEME_PRIVILEGES } from "./plugin-renderer-protocol";
+import { APPEARANCE_MEDIA_SCHEME_PRIVILEGES } from "./appearance-media-protocol";
 
 /**
- * Reserve every host-owned plugin scheme before the app is ready.
+ * 在应用就绪前，一次性注册插件和外观资源的全部协议权限。
  *
  * Electron accepts `registerSchemesAsPrivileged` once per process: a second
  * call replaces the secure/fetch/CORS scheme lists that child processes
@@ -15,5 +16,6 @@ export function registerPluginSchemes(): void {
   protocol.registerSchemesAsPrivileged([
     PLUGIN_ASSET_SCHEME_PRIVILEGES,
     PLUGIN_RENDERER_SCHEME_PRIVILEGES,
+    APPEARANCE_MEDIA_SCHEME_PRIVILEGES,
   ]);
 }
