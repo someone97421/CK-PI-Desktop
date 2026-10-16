@@ -26,6 +26,7 @@ import {
 import type { ComposerDraftSnapshot } from "../../lib/composer-smart-stop";
 import { formatToolValue } from "../../lib/tool-display";
 import { recordPaneTranscript } from "../../lib/session-panes";
+import { clearTranscriptReadingPosition } from "../../lib/transcript-reading-position";
 import type { AppState, SessionHistoryWindow } from "../app-state";
 import type { StoreAccess } from "../slices/types";
 
@@ -139,7 +140,19 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
   const sessionDetailLoads = new Map<string, ReturnType<typeof api.getSession>>();
   const toolStartsByCallId = new Map<string, ToolStart>();
   const planSyncGenerations = new Map<string, number>();
-
+  function forgetBackgroundReading(sessionId: string): void {
+    clearTranscriptReadingPosition(sessionId);
+    if (!get().transcriptViews?.[sessionId]) return;
+    set((state) => {
+      const { [sessionId]: _released, ...transcriptViews } = state.transcriptViews ?? {};
+      return {
+        transcriptViews,
+        ...(state.subagentPanel?.sessionId === sessionId && state.subagentPanel.searchRequestId
+          ? { subagentPanel: null }
+          : {}),
+      };
+    });
+  }
   function cacheSessionTranscript(
     id: string,
     messages: UiMessage[],
@@ -402,10 +415,22 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
     const state = get();
     const current =
       sessionTranscriptCache.get(sessionId) ?? state.retainedTranscripts[sessionId];
-    if (!current) return;
+    const transcriptEvent = [
+      "message_start",
+      "message_update",
+      "message_end",
+      "tool_start",
+      "tool_update",
+      "tool_end",
+    ].includes(envelope.event.type);
+    if (!current) {
+      if (transcriptEvent) forgetBackgroundReading(sessionId);
+      return;
+    }
 
     const next = projectTranscriptEvent(current, envelope);
     if (next === current) return;
+    forgetBackgroundReading(sessionId);
     liveSessionTranscripts.add(sessionId);
     cacheSessionTranscript(
       sessionId,

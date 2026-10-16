@@ -1,9 +1,12 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import type { UiMessage } from "@pi-desktop/shared";
 import {
   captureTranscriptReadingPosition,
+  clearTranscriptReadingPosition,
   getTranscriptReadingPosition,
   restoreTranscriptReadingPosition,
   sessionReadingState,
+  transcriptReadingPositionIsStale,
   type TranscriptReadingPosition,
 } from "../lib/transcript-reading-position";
 
@@ -12,10 +15,14 @@ export type RestoreTranscriptReading = (
   signal: AbortSignal,
 ) => Promise<boolean>;
 
+const NO_MESSAGES: readonly UiMessage[] = [];
+const transcriptMessages = (value: unknown): readonly UiMessage[] =>
+  Array.isArray(value) ? value as readonly UiMessage[] : NO_MESSAGES;
+
 /** A bounded initial alignment, cancelled by real input/navigation/new turns. */
 export function useTranscriptReadingPosition({
   sessionId, scrollRef, contentRef, pinnedRef, visible, windowSize,
-  contentVersion, onPosition, onRestore, onMissing,
+  contentVersion, onPosition, onRestore, onMissing, onStale,
 }: {
   sessionId: string | undefined;
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -27,8 +34,15 @@ export function useTranscriptReadingPosition({
   onPosition: (top: number) => void;
   onRestore?: RestoreTranscriptReading;
   onMissing: () => void;
+  /** A newer transcript tail was observed before the bookmark could be restored. */
+  onStale?: () => void;
 }) {
-  const [initialPosition] = useState(() => getTranscriptReadingPosition(sessionId));
+  const [initialPosition] = useState(() => {
+    const position = getTranscriptReadingPosition(sessionId);
+    return transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion))
+      ? undefined
+      : position;
+  });
   const pendingRef = useRef(initialPosition?.pinned === false ? initialPosition : undefined);
   const requestRef = useRef<AbortController | null>(null);
   const alignmentUntilRef = useRef(0);
@@ -48,11 +62,33 @@ export function useTranscriptReadingPosition({
     const scroller = scrollRef.current;
     const content = contentRef.current;
     if (!sessionId || !visible || !scroller || !content || pendingRef.current) return;
-    const position = captureTranscriptReadingPosition(scroller, content, pinnedRef.current, windowSize);
+    const position = captureTranscriptReadingPosition(
+      scroller,
+      content,
+      pinnedRef.current,
+      windowSize,
+      transcriptMessages(contentVersion),
+    );
     if (position) sessionReadingState(sessionId).position = position;
-  }, [contentRef, pinnedRef, scrollRef, sessionId, visible, windowSize]);
-  const callbacks = useRef({ remember, onMissing });
-  callbacks.current = { remember, onMissing };
+  }, [contentRef, contentVersion, pinnedRef, scrollRef, sessionId, visible, windowSize]);
+  const callbacks = useRef({ remember, onMissing, onStale });
+  callbacks.current = { remember, onMissing, onStale };
+
+  // A bookmark is a reading convenience, not a claim on newer output. Detail and
+  // tool rows are physical transcript records, so a long task can legitimately
+  // push the final answer outside an old around-window; when the tail advanced,
+  // reopening belongs at latest instead of behind "load newer messages".
+  useLayoutEffect(() => {
+    if (!visible || pinnedRef.current) return;
+    const position = pendingRef.current ?? getTranscriptReadingPosition(sessionId);
+    if (!transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion))) return;
+    clearTranscriptReadingPosition(sessionId);
+    cancel();
+    alignmentUntilRef.current = 0;
+    pinnedRef.current = true;
+    callbacks.current.onStale?.();
+    callbacks.current.onMissing();
+  }, [cancel, contentVersion, onMissing, pinnedRef, sessionId, visible]);
 
   // Fetch only if the row is outside the current range. Abort also invalidates
   // completion when a pane hides/unmounts, or the reader takes over during IO.

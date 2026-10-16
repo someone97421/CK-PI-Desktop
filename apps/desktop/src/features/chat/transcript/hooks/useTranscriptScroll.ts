@@ -62,6 +62,7 @@ type UseTranscriptScrollOptions = {
   searchTarget: TranscriptSearchTarget | null;
   readingWindow: boolean;
   onRestoreReading?: RestoreTranscriptReading;
+  onStaleReading?: () => void;
 };
 
 export function useTranscriptScroll({
@@ -79,6 +80,7 @@ export function useTranscriptScroll({
   searchTarget,
   readingWindow,
   onRestoreReading,
+  onStaleReading,
 }: UseTranscriptScrollOptions) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -151,7 +153,7 @@ export function useTranscriptScroll({
   } = useTranscriptReadingPosition({
     sessionId, scrollRef, contentRef, pinnedRef, visible: paneVisible,
     windowSize, contentVersion: messages, onPosition: recordScrollPosition,
-    onRestore: onRestoreReading, onMissing: readingPositionMissing,
+    onRestore: onRestoreReading, onMissing: readingPositionMissing, onStale: onStaleReading,
   });
 
   /*

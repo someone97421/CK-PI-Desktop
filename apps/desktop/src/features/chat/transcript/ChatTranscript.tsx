@@ -164,6 +164,7 @@ function TranscriptBody({
     searchTarget,
     readingWindow,
     onRestoreReading,
+    onStaleReading: onReturnToLatest,
   });
 
   const specializedActivity = agentActivity;

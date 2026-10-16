@@ -7,7 +7,7 @@ const { createSessionRuntime } = await import("../src/stores/runtime/session-run
 const { createEventsSlice } = await import("../src/stores/slices/events-slice.ts");
 const { getSessionMessageSnapshot } = await import("../src/lib/session-transcript-updates.ts");
 const { getTranscriptProjection } = await import("../src/lib/transcript-projection.ts");
-
+const { sessionReadingState, transcriptReadingRevision } = await import("../src/lib/transcript-reading-position.ts");
 const message = (id, overrides = {}) => ({
   id, role: "assistant", content: id, createdAt: "2026-09-30T00:00:00Z", ...overrides,
 });
@@ -25,6 +25,12 @@ function harness(messages, background = []) {
     retainedTranscripts: { active: messages, background },
     runningSessions: { active: true, background: true },
     sessionHistory: {},
+    sideChats: {},
+    sideChatTranscripts: {},
+    transcriptViews: {},
+    subagentPanel: null,
+    pendingPermissions: {},
+    pendingAsks: {},
   };
   const access = {
     get: () => state,
@@ -247,4 +253,45 @@ test("background tool completion preserves a durable row identity", () => withFr
   assert.equal(next[0].status, "complete");
   assert.equal(rows[0].toolStatus, "running");
   assert.equal(h.get().messages[0].id, "active");
+}));
+
+test("background transcript activity invalidates an old reading bookmark and historical view", () => withFrames((flush) => {
+  const h = harness([message("active")], [message("old")]);
+  const reading = sessionReadingState("background");
+  reading.position = {
+    pinned: false,
+    messageId: "old",
+    offset: 0,
+    scrollTop: 100,
+    windowSize: 60,
+    transcriptRevision: transcriptReadingRevision([message("old")]),
+  };
+  reading.disclosures.set("detail", { open: true });
+  h.set({
+    transcriptViews: {
+      background: {
+        messages: [message("old")],
+        messageStart: 0,
+        hasMoreBefore: false,
+        hasMoreAfter: true,
+        focus: null,
+        loading: null,
+      },
+    },
+    subagentPanel: { sessionId: "background", searchRequestId: 1 },
+  });
+  h.get().handleAgentEvent({
+    sessionId: "background",
+    ts: 2,
+    event: { type: "message_end", message: message("reply", { status: "complete" }) },
+  });
+  flush();
+  assert.equal(reading.position, undefined);
+  assert.deepEqual([...reading.disclosures.entries()], [["detail", { open: true }]]);
+  assert.deepEqual(h.get().transcriptViews, {});
+  assert.equal(h.get().subagentPanel, null);
+  assert.deepEqual(
+    h.runtime.sessionTranscriptCache.get("background").map((row) => row.id),
+    ["old", "reply"],
+  );
 }));

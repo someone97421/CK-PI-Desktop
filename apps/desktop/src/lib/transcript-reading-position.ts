@@ -1,3 +1,4 @@
+import type { UiMessage } from "@pi-desktop/shared";
 import { transcriptHasLayout } from "./transcript-scroll";
 
 export type TranscriptReadingPosition = {
@@ -6,6 +7,8 @@ export type TranscriptReadingPosition = {
   offset: number;
   scrollTop: number;
   windowSize: number;
+  /** Tail fingerprint captured with the bookmark; activity after it makes the bookmark stale. */
+  transcriptRevision?: string;
 };
 export type TranscriptDisclosureChoice = { open: boolean; revealRequest?: number };
 type ReadingState = {
@@ -27,8 +30,39 @@ export function sessionReadingState(sessionId: string): ReadingState {
 export function getTranscriptReadingPosition(sessionId: string | undefined) {
   return sessionId ? readingStates.get(sessionId)?.position : undefined;
 }
+export function clearTranscriptReadingPosition(sessionId: string | undefined) {
+  const state = sessionId ? readingStates.get(sessionId) : undefined;
+  if (state) state.position = undefined;
+}
 export function forgetTranscriptReadingState(sessionId: string) {
   readingStates.delete(sessionId);
+}
+
+/** A cheap tail marker: appends, completion and streaming growth all change it. */
+export function transcriptReadingRevision(messages: readonly UiMessage[]): string | undefined {
+  const tail = messages.at(-1);
+  if (!tail) return undefined;
+  return [
+    messages.length,
+    tail.id,
+    tail.createdAt,
+    tail.status ?? "",
+    tail.toolStatus ?? "",
+    tail.content.length,
+    tail.thinking?.length ?? 0,
+    tail.toolCompletedAt ?? "",
+  ].join(":");
+}
+
+/** Empty/loading transcripts cannot disprove a bookmark; a changed tail can. */
+export function transcriptReadingPositionIsStale(
+  position: TranscriptReadingPosition | undefined,
+  messages: readonly UiMessage[],
+): boolean {
+  const revision = transcriptReadingRevision(messages);
+  return Boolean(
+    position?.transcriptRevision && revision && position.transcriptRevision !== revision,
+  );
 }
 
 /** Sample only a visible layout; hidden panes must never replace a bookmark. */
@@ -37,9 +71,11 @@ export function captureTranscriptReadingPosition(
   content: HTMLElement,
   pinned: boolean,
   windowSize: number,
+  messages: readonly UiMessage[] = [],
 ): TranscriptReadingPosition | undefined {
   if (!transcriptHasLayout(scroller)) return;
-  if (pinned) return { pinned, offset: 0, scrollTop: scroller.scrollTop, windowSize };
+  const transcriptRevision = transcriptReadingRevision(messages);
+  if (pinned) return { pinned, offset: 0, scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
   const viewport = scroller.getBoundingClientRect();
   // Prefer the outer message/turn: its offset also describes reading inside an
   // expanded tool body, whose explicit disclosure choices survive eviction.
@@ -48,7 +84,7 @@ export function captureTranscriptReadingPosition(
     if (rect.bottom <= viewport.top || rect.top >= viewport.bottom || rect.height === 0) continue;
     const messageId = row.dataset.minimapId ?? row.dataset.messageId;
     if (messageId) return { pinned, messageId, offset: rect.top - viewport.top,
-      scrollTop: scroller.scrollTop, windowSize };
+      scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
   }
 }
 

@@ -11,7 +11,7 @@ const { getSessionMessageSnapshot } = await import("../src/lib/session-transcrip
 const { mergeLiveSessionMessages, upsertLiveSessionMessage, projectMessageEnd, removeLiveSessionMessage } = await import("../src/lib/session-transcript.ts");
 const { buildTranscriptEntries } = await import("../src/lib/assistant-turns.ts");
 const { prepareTranscriptAction } = await import("../src/stores/runtime/transcript-action.ts");
-
+const { transcriptReadingPositionIsStale, transcriptReadingRevision } = await import("../src/lib/transcript-reading-position.ts");
 const target = (messageId) => ({ sessionId: "s", messageId, query: "needle" });
 const message = (id, content = id, extra = {}) => ({
   id,
@@ -639,4 +639,20 @@ test("selection revalidation cannot remove a restored range, but an explicit rew
   assert.equal(r.view().restored, true);
   r.set({ messages: [message("tail", "edited")] });
   assert.equal(r.view(), undefined);
+});
+
+test("a reading bookmark is stale only after the transcript tail actually changes", () => {
+  const streaming = message("reply", "partial", { role: "assistant", status: "streaming" });
+  const position = {
+    pinned: false,
+    messageId: "old",
+    offset: 0,
+    scrollTop: 10,
+    windowSize: 60,
+    transcriptRevision: transcriptReadingRevision([streaming]),
+  };
+  assert.equal(transcriptReadingPositionIsStale(position, [streaming]), false);
+  assert.equal(transcriptReadingPositionIsStale(position, []), false, "an empty loading read cannot disprove the bookmark");
+  assert.equal(transcriptReadingPositionIsStale(position, [streaming, message("next")]), true);
+  assert.equal(transcriptReadingPositionIsStale(position, [{ ...streaming, content: "final", status: "complete" }]), true);
 });
