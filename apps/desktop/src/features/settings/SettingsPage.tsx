@@ -79,7 +79,7 @@ import { SessionImportPanel } from "./imports/SessionImportPanel";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginScenicThemesDestination } from "../../components/settings/PluginScenicThemesDestination";
 import { ConfigSyncPage } from "../../components/settings/ConfigSyncPage";
-import { DataDirectorySection } from "../../components/settings/DataDirectorySection";
+import { StorageSettingsSection } from "./StorageSettingsSection";
 
 type SettingsTab = ReturnType<typeof useAppStore.getState>["settingsTab"];
 
@@ -474,7 +474,7 @@ export function SettingsPage() {
               </SettingsCard>
               {platform !== "darwin" && <CloseBehaviorSection />}
               <ConfigTransferSection />
-              <DataDirectorySection />
+              <StorageSettingsSection />
             </div>
           )}
 

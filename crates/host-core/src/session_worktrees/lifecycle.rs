@@ -880,34 +880,6 @@ pub async fn cleanup_orphans(state: &SharedState, git: &GitRunner) -> usize {
     removed
 }
 
-/// fork 的数据目录迁移保留原目录；启动前将复制后的工作区登记指向新目录。
-pub async fn relocate_copied_worktrees(state: &SharedState, git: &GitRunner) -> Result<()> {
-    let (data_dir, rows) = {
-        let st = state.lock().await;
-        (st.data_dir.clone(), registry::all(&st.db)?)
-    };
-    for row in rows {
-        let old = Path::new(&row.path);
-        let Some(project_dir) = old.parent() else { continue };
-        let Some(old_root) = project_dir.parent() else { continue };
-        if old_root.file_name() != Some(std::ffi::OsStr::new("worktrees")) { continue; }
-        let (Some(project), Some(name)) = (project_dir.file_name(), old.file_name()) else { continue };
-        let target = worktrees_dir(&data_dir).join(project).join(name);
-        if target == old || !is_real_dir(&target) { continue; }
-        let common = Path::new(&row.common_dir);
-        let _guard = repo_lock::lock(common).await;
-        if target.join(".git").is_file() && common.is_dir() {
-            git.run_git_dir(common, &["worktree", "repair", &target.to_string_lossy()])
-                .await.map_err(|error| anyhow::anyhow!("迁移隔离工作区失败：{error}"))?;
-        }
-        let st = state.lock().await;
-        st.db.conn().execute(
-            "UPDATE worktrees SET path = ?2, updated_at = ?3 WHERE id = ?1 AND path = ?4",
-            params![row.id, target.to_string_lossy().as_ref(), crate::db::now_ms(), row.path],
-        )?;
-    }
-    Ok(())
-}
 
 /// Startup pass: drop half-created worktrees, mark vanished ones missing,
 /// repair git's links after a moved data directory, and clean orphans.

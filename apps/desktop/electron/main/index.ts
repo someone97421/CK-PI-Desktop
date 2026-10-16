@@ -5,8 +5,8 @@ import {
   dialog,
 } from "electron";
 import { join } from "node:path";
-import { configureApplicationIdentity } from "./application-identity";
-import { readConfiguredDataDirectory } from "./data-directory";
+import { hasSingleInstanceLock, initialTemporaryWorkspace, isDevelopmentBuild } from "./installation";
+import { getStorageBootstrap } from "./storage/bootstrap";
 import { SubagentSnapshotStore } from "./runtime/subagent-snapshot-store";
 import { createSubagentSessionAuthority } from "./runtime/subagent-session-authority";
 import {
@@ -18,7 +18,6 @@ import {
 } from "./network-proxy";
 import { installInsecureEndpointNotice } from "./network-notice";
 import {
-  APP_ID,
   APP_VERSION,
   IPC,
   IPC_WHITELIST,
@@ -37,8 +36,8 @@ import {
 } from "./workspace-roots";
 import { PersistenceOutbox } from "./persistence-outbox";
 import { QueuedSteeringReceipts, createQueuedSteeringJournal } from "./queued-steering-receipts";
-import { Logger, ignoreBrokenStdio } from "./logger";
-import { describeError, installMainProcessErrorHandlers } from "./main-process-errors";
+import { Logger } from "./logger";
+import { describeError } from "./main-process-errors";
 import {
   ModelsDevCatalog,
   catalogModelConfigFor,
@@ -58,7 +57,6 @@ import { MainProcessState } from "./bootstrap/main-state";
 import { registerApplicationActivation } from "./bootstrap/app-activation";
 import {
   createTemporaryWorkspaceRuntime,
-  initialTemporaryWorkspaceCommandLine,
 } from "./temporary-workspace";
 import { createHostRuntime } from "./runtime/host";
 import { createSidecarRuntime } from "./runtime/sidecar";
@@ -86,50 +84,9 @@ import { createCloseBehaviorRuntime } from "./bootstrap/close-behavior";
 import { registerShutdownHandlers } from "./bootstrap/shutdown";
 import { stripWinLongPrefix } from "./path-utils";
 
-// A closed stdout/stderr (Linux AppImage, GUI launch without a TTY) must not
-// surface as Electron's "Uncaught Exception: write EPIPE" dialog. The same
-// default dialog must not appear for a stray uncaughtException (non-ASCII
-// HTTP headers from a system proxy, destroyed webContents, etc.).
-ignoreBrokenStdio();
-installMainProcessErrorHandlers();
-
-const isDevelopmentBuild =
-  process.env.PI_DESKTOP_DEV === "1" || !app.isPackaged;
-const initialTemporaryWorkspace = initialTemporaryWorkspaceCommandLine();
-const startupDataDirectoryEnvironment = process.env.PI_DESKTOP_DATA_DIR;
-let configuredDataDirectory: string | undefined;
-try {
-  if (!startupDataDirectoryEnvironment?.trim()) {
-    configuredDataDirectory = readConfiguredDataDirectory(app.getPath("appData"));
-  }
-} catch (error) {
-  dialog.showErrorBox("无法读取数据存储位置", `请确认数据目录可用，并检查系统应用数据目录中的 this-is-a-agent/data-directory.json。\n\n${error instanceof Error ? error.message : String(error)}`);
-  app.exit(1);
-}
-const { dataDir, hasSingleInstanceLock } = configureApplicationIdentity(app, {
-  dataDir: configuredDataDirectory,
-  temporaryWorkspacePath: initialTemporaryWorkspace,
-});
-// Work around a Chromium accessibility-tree crash during streaming updates.
-// Chromium disables its renderer accessibility tree here; assess Computer Use separately.
-app.commandLine.appendSwitch("disable-renderer-accessibility");
-if (!hasSingleInstanceLock) {
-  // 立即终止，防止下面的日志、outbox 和插件初始化触碰另一个进程的业务目录。
-  app.exit(0);
-}
-// 所有旧的目录消费者和子进程共用同一个有效路径；退出时恢复用户启动环境。
+const dataDir = getStorageBootstrap().preferences.roots.data;
+// 所有消费者和子进程共用完成冷维护后的有效业务目录。
 process.env.PI_DESKTOP_DATA_DIR = dataDir;
-app.on("will-quit", () => {
-  if (startupDataDirectoryEnvironment === undefined) delete process.env.PI_DESKTOP_DATA_DIR;
-  else process.env.PI_DESKTOP_DATA_DIR = startupDataDirectoryEnvironment;
-});
-if (process.platform === "win32") {
-  // Development must not claim the packaged app's AUMID. Windows resolves the
-  // taskbar identity through it, so sharing the id with an installed build made
-  // the dev window group under that app and display its (older) icon. macOS
-  // already isolates development behind a `.dev` bundle id.
-  app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`);
-}
 
 // Native resize streams can pause briefly while the pointer crosses a display
 // scale boundary. Keep recovery out of that gesture and only run it after the
@@ -688,6 +645,7 @@ const {
   addActiveTurnUsage,
   activeToolCallKey,
   planSubmissionTurnKey,
+  recordTurnStart,
   lockAbortReason,
   isTurnDispatchable,
   isSessionBusy,
@@ -798,6 +756,7 @@ const eventPersistence = createEventPersistence({
   logger,
   finishTurn,
   isStaleTerminalEvent,
+  transcriptRewrite: sessionCoordination,
   finishApprovedExecution,
   emitAgentEvent: (envelope) => emitAgentEvent(envelope),
 });
@@ -929,6 +888,9 @@ function registerIpc() {
     enrichSession,
     acquireSessionOperation,
     sessionConfiguration,
+    beginTranscriptRewrite: eventPersistence.beginTranscriptRewrite,
+    forgetTranscriptRewriteHistory: sessionCoordination.forgetTranscriptRewriteHistory,
+    recordTurnStart,
     stripWinLongPrefix,
     normalizeSettings,
     validateSettingsWrite,

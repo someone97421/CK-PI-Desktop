@@ -1,6 +1,6 @@
 /** Shared identifiers and connection defaults for first-class provider presets. */
 
-import type { CatalogApiStyle } from "./model-catalog.js";
+import type { CatalogApiStyle, DiscoveryStyle } from "./model-catalog.js";
 
 export const OPENCODE_GO_API_STYLE = "opencode_go" as const;
 export const OPENCODE_GO_NAME = "OpenCode Go";
@@ -13,6 +13,12 @@ export type NamedEndpointPreset = {
   name: string;
   baseUrl: string;
   apiStyle: CatalogApiStyle;
+  /**
+   * Model-list style this preset's deployment documents, when it differs from
+   * the one `apiStyle` implies. Only a documented statement belongs here; a
+   * derivation from `apiStyle` must not override the probe style.
+   */
+  discoveryStyle?: DiscoveryStyle;
   /** i18n key under `settings`. */
   labelKey: string;
   aliases?: readonly string[];
@@ -209,6 +215,8 @@ export const NAMED_ENDPOINT_PRESETS: readonly NamedEndpointPreset[] = [
     name: "StepFun Plan",
     baseUrl: "https://api.stepfun.com/step_plan/v1",
     apiStyle: "anthropic_messages",
+    // Subscription plan: generation on /messages, model list with a Bearer token.
+    discoveryStyle: "openai_models",
     labelKey: "settings.presetStepfunPlan",
   },
   {

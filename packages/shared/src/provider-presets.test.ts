@@ -182,12 +182,15 @@ describe("named endpoint presets", () => {
     });
   });
 
-  it("keeps StepFun Plan on its subscription endpoint and catalog vendor", () => {
+  it("keeps StepFun Plan on its subscription endpoint, catalog vendor and model-list auth", () => {
     const expected = {
       id: "stepfun-plan",
       vendorKey: "stepfun-step-plan",
       baseUrl: "https://api.stepfun.com/step_plan/v1",
       apiStyle: "anthropic_messages",
+      /* Chat is Anthropic Messages; this deployment publishes its models the
+         OpenAI way, so the endpoint states that instead of it being derived. */
+      discoveryStyle: "openai_models",
     };
     expect(NAMED_ENDPOINT_PRESETS.find((preset) => preset.id === expected.id)).toMatchObject(expected);
     expect(matchNamedPreset({ vendorKey: expected.vendorKey })).toMatchObject(expected);

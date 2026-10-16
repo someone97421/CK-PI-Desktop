@@ -40,6 +40,8 @@ import type { LiveCallService } from "../live-voice/call-service";
 import type { IpcRegistrar } from "./types";
 import type { createTraySessions } from "../tray-sessions";
 import type { createTaskbarUnreadBadge } from "../taskbar-unread-badge";
+import { registerStorageIpc } from "../storage/ipc";
+import { requestStorageRestart } from "../storage/bootstrap";
 
 export type RegisterIpcDependencies = {
   isQuitting: () => boolean;
@@ -109,6 +111,9 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     enrichSession,
     acquireSessionOperation,
     sessionConfiguration,
+    beginTranscriptRewrite,
+    forgetTranscriptRewriteHistory,
+    recordTurnStart,
     stripWinLongPrefix,
     normalizeSettings,
     validateSettingsWrite,
@@ -238,6 +243,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     handleWithEvent,
     assertMainWindowSender,
   };
+  registerStorageIpc({ registrar, getMainWindow, restart: requestStorageRestart });
 
   if (dependencies.takeTemporaryWorkspaces) {
     registrar.handle(IPC.invoke.temporaryWorkspaceTake, async () =>
@@ -275,6 +281,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     enrichSession,
     acquireSessionOperation,
     sessionConfiguration,
+    beginTranscriptRewrite,
+    forgetTranscriptRewriteHistory,
     stripWinLongPrefix,
   });
   registerSettingsIpc({
@@ -431,6 +439,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     queuedSteeringJournal,
     dataDir,
     activeTurns,
+    recordTurnStart,
     isTurnDispatchable,
     activeTurnUsages,
     approvedExecutionIdsBySession,

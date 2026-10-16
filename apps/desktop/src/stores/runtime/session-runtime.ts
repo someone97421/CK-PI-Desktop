@@ -17,6 +17,7 @@ import {
 } from "../../lib/session-transcript";
 import { getSessionToolMessagePositions } from "../../lib/session-transcript-updates";
 import { sessionReadLooksEmpty } from "../../lib/session-transcript-read";
+import { isAutomationSession } from "../../lib/session-origin";
 import { sessionIsArchived, type SessionMeta } from "../../lib/sidebar-preferences";
 import {
   normalizeProjectPath,
@@ -445,9 +446,11 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
       normalizeProjectPath(projectPath) ?? "<temporary>",
     latestSessionInScope: (sessions, projectPath, sessionMeta) =>
       sessions
-        // Empty failed runs still belong to their task; New Task must never
-        // turn one into an ordinary conversation hidden by that ownership.
-        .filter((session) => session.scheduledRun !== true && sessionMatchesProject(session, projectPath))
+        .filter(
+          (session) =>
+            !isAutomationSession(session) &&
+            sessionMatchesProject(session, projectPath),
+        )
         .sort((a, b) => {
           const aUpdated = Date.parse(a.updatedAt);
           const bUpdated = Date.parse(b.updatedAt);

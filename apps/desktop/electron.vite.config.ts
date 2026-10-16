@@ -77,9 +77,9 @@ export default defineConfig({
         // jiti is loaded lazily by the sidecar's trusted-extension loader
         // (D387); Electron main never calls it, and its transpiled dist
         // breaks the main bundle's esbuild transform.
-        external: ["electron-updater", "jiti", "jiti/static"],
+        external: ["original-fs", "electron-updater", "jiti", "jiti/static"],
         input: {
-          index: resolve(__dirname, "electron/main/index.ts"),
+          index: resolve(__dirname, "electron/main/entry.ts"),
           // Forked per plugin by PluginRuntime (ADR 0008); must stay a
           // standalone entry so utilityProcess can point at a real file.
           "plugin-host-process": resolve(__dirname, "electron/main/plugin-host-process.mjs"),

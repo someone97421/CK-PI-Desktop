@@ -34,6 +34,7 @@ export type AgentIpcDependencies = {
   /** Durable transfer journal for "send now" while the session runs. */
   queuedSteeringJournal: QueuedSteeringJournal;
   activeTurns: Map<string, string>;
+  recordTurnStart: (sessionId: string, turnId: string) => void;
   /** Whether the named turn can still start or steer host work. */
   isTurnDispatchable: (sessionId: string, turnId: string | null | undefined) => boolean;
   activeTurnUsages: Map<string, MessageUsage>;
@@ -98,6 +99,7 @@ export function registerAgentIpc({
   subagentSnapshots,
   queuedSteeringJournal,
   activeTurns,
+  recordTurnStart,
   isTurnDispatchable,
   activeTurnUsages,
   approvedExecutionIdsBySession,
@@ -431,6 +433,7 @@ export function registerAgentIpc({
       throw new Error("session.beginTurn returned no turn");
     }
     activeTurns.set(req.sessionId, durableTurnId);
+    recordTurnStart(req.sessionId, durableTurnId);
     activeTurnUsages.delete(req.sessionId);
 
     // Slash expansion (D123, ADR 0024): templates expand before persistence

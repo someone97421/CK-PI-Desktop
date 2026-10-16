@@ -5,6 +5,10 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "数据存储采用上游迁移流程，提供复制校验、进度与失败重试，一起迁移浏览器数据；兼容旧目录配置并保留子代理快照和引导回执。",
+  "修复历史版本切换和删除消息时迟到输出丢失或串入其他分支，未保存消息继续保留并等待真实落盘回执。",
+  "修复 Windows PowerShell 对象输出和成功命令退出码；统一 Windows 长路径下的项目配置匹配。",
+  "提问通知可跳转来源会话并在失败后重试；修复模型服务连接探测、StepFun Plan 模型发现及定时任务空会话误复用。",
   "新增手动创建的隔离会话：在独立 Git worktree 中并行开发，支持初始化、同步、合并预览与冲突处理，保留 TaskResume。",
   "修复超大工具图片阻断会话的问题，补齐图片缩放资源；历史含不完整 UTF-8 字节时仍可读取周围记录。",
   "自建模型网关请求携带稳定会话标识，聊天、子代理和压缩保持一致；修复系统状态插入后的工具调用恢复。",
@@ -72,6 +76,10 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Adopt upstream storage migration with verified copying, progress, retry and browser data transfer, retaining legacy directory settings, subagent snapshots and steering receipts.",
+  "Keep late outputs in the correct branch during history changes and message deletion; retain unsaved messages until real persistence acknowledgments arrive.",
+  "Fix PowerShell object formatting and native exit codes, and align Windows extended-length project paths.",
+  "Open question reminders in their source chats with retry after navigation failure; fix provider probes, StepFun Plan discovery and automation-session reuse.",
   "Add explicit isolated sessions in Git worktrees with setup, sync, merge previews and conflict handling, retaining TaskResume.",
   "Normalize oversized tool images and include resize assets; keep surrounding history readable after torn UTF-8 writes.",
   "Preserve session identity across custom gateway chat, delegate and compaction requests; restore tool calls across system-state updates.",

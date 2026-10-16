@@ -102,6 +102,11 @@ test("新轮归档只原位更新分叉根，不把窗口外或其他分支的�
       logger: { app: (...args) => errors.push(args) },
       finishTurn: async () => {},
       isStaleTerminalEvent: () => false,
+      transcriptRewrite: {
+        beginTranscriptRewrite: () => ({ commit() {}, rollback: () => [] }),
+        deferTranscriptEvent: () => false,
+        isStaleTranscriptEvent: () => false,
+      },
       finishApprovedExecution: async () => {},
       emitAgentEvent: ({ event }) => {
         if (event.type === "message_end") messages = projectMessageEnd(messages, event);

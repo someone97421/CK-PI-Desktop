@@ -590,6 +590,27 @@
   overflow-wrap: anywhere;
 }
 
+.toast-action.btn {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+
+.toast-action.btn:hover:not(:disabled) {
+  background: transparent;
+}
+
+.toast-action:focus-visible {
+  outline: 2px solid var(--ds-accent);
+  outline-offset: 3px;
+}
+
 .toast-dismiss {
   display: inline-flex;
   flex: 0 0 auto;

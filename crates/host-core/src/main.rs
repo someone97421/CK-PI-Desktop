@@ -3,6 +3,7 @@ mod agent_capabilities;
 mod artifacts;
 mod audit;
 mod config_sync;
+mod data_relocation;
 mod db;
 mod keyboard;
 mod mcp_servers;
@@ -56,6 +57,9 @@ async fn main() -> anyhow::Result<()> {
         };
         std::process::exit(exit_code);
     }
+    if data_relocation::run_cli()? {
+        return Ok(());
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -82,9 +86,6 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(data_dir.join("scratch"))?;
 
     let state = Arc::new(Mutex::new(AppState::open(&data_dir)?));
-    session_worktrees::lifecycle::relocate_copied_worktrees(
-        &state, &session_worktrees::git::GitRunner::default(),
-    ).await?;
     tracing::info!(path = %data_dir.display(), "host-core starting");
     {
         // Sweep orphaned/stale session scratch dirs left behind by crashes or
@@ -100,9 +101,9 @@ async fn main() -> anyhow::Result<()> {
     }
     // Drop half-created worktrees, mark vanished ones, repair links after a
     // moved data directory, and remove orphans (ADR 0329).
-    tokio::spawn(session_worktrees::lifecycle::reconcile(
+    session_worktrees::lifecycle::reconcile(
         state.clone(),
         session_worktrees::git::GitRunner::default(),
-    ));
+    ).await;
     rpc::serve(state).await
 }
