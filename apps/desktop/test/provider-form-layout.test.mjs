@@ -5,7 +5,7 @@
  * chosen models and the custom-model row into one tall column, which read as an
  * undifferentiated list. These assertions pin the two-pane arrangement that
  * replaced it: credentials as one compact band, then picking on the left and
- * reviewing on the right, each scrolling inside a fixed-height dialog.
+ * reviewing on the right, each scrolling inside a viewport-bounded dialog.
  */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -32,9 +32,9 @@ function block(selector) {
   return styles.slice(at, styles.indexOf("}", at));
 }
 
-test("the dialog is a fixed-height shell so it cannot grow with the model count", () => {
+test("the dialog follows viewport height up to room for an expanded model card", () => {
   const dialog = block(".provider-setup-dialog");
-  assert.match(dialog, /height: min\(720px, calc\(100vh - 64px\)\)/);
+  assert.match(dialog, /height: min\(920px, calc\(100dvh - 48px\)\)/);
   assert.match(dialog, /width: min\(1040px, calc\(100vw - 48px\)\)/);
   // Overlay is flex: auto min-width would keep the 1040px preferred width and
   // clip the credential fields (and their 2px focus ring) on a narrower window.
@@ -365,7 +365,7 @@ test("the vendor account dialog hosts the same panes in the same shell", () => {
   assert.match(dialog, /width: min\(1040px, calc\(100vw - 48px\)\)/);
   assert.match(dialog, /max-width: 100%/);
   assert.match(dialog, /min-width: 0/);
-  assert.match(dialog, /height: min\(720px, calc\(100vh - 64px\)\)/);
+  assert.match(dialog, /height: min\(920px, calc\(100dvh - 48px\)\)/);
   assert.match(vendorDialogSource, /<ModelSelectionPanes/);
   // Neither dialog folds the picker behind a chosen-models summary.
   assert.doesNotMatch(vendorDialogSource, /<ChosenModelsSummary/);

@@ -38,13 +38,14 @@
   flex-direction: column;
   gap: 12px;
   /*
-    Wide enough for two model panes side by side, and a fixed height so the
-    dialog never grows with the number of models: the panes scroll, not the page.
+    Wide enough for two model panes side by side. Height follows the viewport
+    up to a larger cap so an expanded model card can show its useful controls;
+    beyond that the panes scroll, not the page.
   */
   width: min(1040px, calc(100vw - 48px));
   max-width: 100%;
   min-width: 0;
-  height: min(720px, calc(100vh - 64px));
+  height: min(920px, calc(100dvh - 48px));
   padding: 16px;
 }
 
@@ -1309,7 +1310,7 @@
   width: min(1040px, calc(100vw - 48px));
   max-width: 100%;
   min-width: 0;
-  height: min(720px, calc(100vh - 64px));
+  height: min(920px, calc(100dvh - 48px));
   padding: 16px;
 }
 
