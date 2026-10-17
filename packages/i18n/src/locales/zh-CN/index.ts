@@ -1329,6 +1329,8 @@ sklm: {
     skillRootsBadge: "外部",
     skillUnlinkImport: "解除导入链接",
     skillUnlinkImportConfirm: "再次点击解除链接",
+    skillDocumentMissing: "缺少 SKILL.md",
+    skillDocumentInvalid: "SKILL.md 无效或无法读取",
     skillUnlinkImportDone: "已解除导入链接，源文件已保留",
     skillRootAdded: "已添加扩展路径 {{path}}",
     skillRootRemoved: "已移除扩展路径 {{path}}",

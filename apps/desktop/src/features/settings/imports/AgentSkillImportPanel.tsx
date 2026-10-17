@@ -170,19 +170,30 @@ export function AgentSkillImportPanel({
                 >
                   {group.items.map((candidate) => {
                     const key = keyOf(candidate);
+                    const missingDocument = candidate.warnings.some((warning) =>
+                      /missing\s+SKILL\.md/i.test(warning),
+                    );
                     return (
                       <ImportRow
                         key={key}
                         title={candidate.name || candidate.id}
-                        meta={candidate.description || candidate.sourcePath}
+                        meta={[
+                          missingDocument ? t("settings.skillDocumentMissing") : undefined,
+                          candidate.description || candidate.sourcePath,
+                        ].filter(Boolean).join(" · ")}
                         checked={selected.has(key)}
                         onChange={(on) => setSelected((previous) => toggleKey(previous, key, on))}
                         badge={
-                          <Badge tone="neutral">
-                            {candidate.shape === "dir"
-                              ? t("settings.importAgentScanShapeDir")
-                              : t("settings.importAgentScanShapeFile")}
-                          </Badge>
+                          <>
+                            <Badge tone="neutral">
+                              {candidate.shape === "dir"
+                                ? t("settings.importAgentScanShapeDir")
+                                : t("settings.importAgentScanShapeFile")}
+                            </Badge>
+                            {missingDocument && (
+                              <Badge tone="warning">{t("settings.skillDocumentMissing")}</Badge>
+                            )}
+                          </>
                         }
                       />
                     );

@@ -1,10 +1,9 @@
 /**
  * Scan third-party AI-tool skill directories for Skill definitions.
  *
- * Two on-disk shapes are recognized: a bare `<id>.md` file, and the
- * Claude-style `<name>/SKILL.md` directory. Both carry a YAML frontmatter
- * block with at least `name` and `description`. Anything unreadable or empty
- * is dropped, but the source row still reports it via `count` and `error`.
+ * Recognizes bare `<id>.md` files and skill package directories. A directory
+ * remains a candidate when its SKILL.md is missing or invalid, so it can be
+ * imported and managed without losing sibling resources.
  */
 import { promises as fs, type Stats } from "node:fs";
 import os from "node:os";
@@ -143,11 +142,15 @@ function extractCandidate(
   fallbackId: string,
   text: string,
   bytes: number,
+  documentWarning?: string,
 ): SkillCandidate | null {
   const warnings: string[] = [];
   const parsed = readFrontmatter(text);
   if (!parsed.ok) warnings.push("missing frontmatter");
-  if (!parsed.body.trim()) return null;
+  if (!parsed.body.trim()) {
+    if (shape === "file") return null;
+    warnings.push(documentWarning ?? "invalid SKILL.md");
+  }
   const nameRaw = parsed.data.name?.trim() ?? "";
   const description = parsed.data.description?.trim() ?? "";
   if (!nameRaw) warnings.push("frontmatter missing name");
@@ -202,14 +205,15 @@ async function scanDirectory(
       continue;
     }
     if (stat.isDirectory()) {
-      const skillPath = path.join(abs, "SKILL.md");
+      const names = await fs.readdir(abs).catch(() => [] as string[]);
+      const documentName = names.includes("SKILL.md")
+        ? "SKILL.md"
+        : names.sort().find((name) => name.toLowerCase() === "skill.md") ?? "SKILL.md";
+      const skillPath = path.join(abs, documentName);
       const { text, bytes, error } = await readSkillFile(skillPath);
-      if (error) {
-        errors.push(`${entry}: ${error}`);
-        continue;
-      }
-      if (text == null) continue;
-      const cand = extractCandidate(source, skillPath, abs, "dir", entry, text, bytes);
+      if (error) errors.push(`${entry}: ${error}`);
+      const warning = text === null && !error ? "missing SKILL.md" : "invalid SKILL.md";
+      const cand = extractCandidate(source, skillPath, abs, "dir", entry, text ?? "", bytes, warning);
       if (cand) candidates.push(cand);
     }
   }
@@ -217,8 +221,9 @@ async function scanDirectory(
   const deduped: SkillCandidate[] = [];
   const seen = new Set<string>();
   for (const cand of candidates) {
-    if (seen.has(cand.id)) continue;
-    seen.add(cand.id);
+    const identity = cand.rootDir ?? cand.sourcePath;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
     deduped.push(cand);
   }
   report.count = deduped.length;

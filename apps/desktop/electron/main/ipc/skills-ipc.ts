@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { dirname } from "node:path";
 import { app, dialog, shell } from "electron";
 import { importSkillFolders, readLastSkillImportDirectory, writeLastSkillImportDirectory } from "../skill-folder-import";
 import { importSkillFile } from "../skill-file-import";
@@ -275,7 +277,7 @@ export function registerSkillsIpc({
 
   handle(
     IPC.invoke.skillRemove,
-    async (payload: string | ({ id: string } & Partial<AgentCapabilityQuery>)) => {
+    async (payload: string | ({ id: string; path?: string } & Partial<AgentCapabilityQuery>)) => {
       if (!host) throw new Error("host unavailable");
       const request = typeof payload === "string" ? { id: payload } : payload;
       const res = await host.call("skills.remove", request);
@@ -317,20 +319,24 @@ export function registerSkillsIpc({
     return res;
   });
 
-  /**
-   * Show a skill document in the OS file manager. The level and project travel
-   * with the id because `skills.read` falls back to the global directory when
-   * they are absent, which never resolves a project-only document.
-   */
+  /** 文档缺失时定位其目录，保留链接目录本身的路径。 */
   handle(
     IPC.invoke.skillReveal,
     async (payload: string | ({ id: string } & Partial<AgentCapabilityQuery>)) => {
       if (!host) throw new Error("host unavailable");
       const request = typeof payload === "string" ? { id: payload } : payload;
-      const res = await host.call<{ skill: UserSkillRecord | null }>("skills.read", request);
-      const path = res.skill?.path;
-      if (!path) throw new Error("skill not found");
-      shell.showItemInFolder(stripWinLongPrefix(path));
+      const { id, ...query } = request;
+      const res = await host.call<{ skills: UserSkillRecord[] }>("skills.list", query);
+      const documentPath = res.skills.find((skill) => skill.id === id)?.path;
+      if (!documentPath) throw new Error("skill not found");
+      const documentExists = await stat(documentPath).then(
+        (entry) => entry.isFile(),
+        (error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
+          throw error;
+        },
+      );
+      shell.showItemInFolder(stripWinLongPrefix(documentExists ? documentPath : dirname(documentPath)));
       return { ok: true };
     },
   );

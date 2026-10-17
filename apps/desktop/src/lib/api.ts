@@ -1377,7 +1377,7 @@ export const api = {
       id,
       ...query,
     }),
-  removeUserSkill: (id: string, query?: Partial<AgentCapabilityQuery>) =>
+  removeUserSkill: (id: string, query?: Partial<AgentCapabilityQuery> & { path?: string }) =>
     invoke(IPC.invoke.skillRemove, { id, ...query }),
   setUserSkillEnabled: (
     id: string,

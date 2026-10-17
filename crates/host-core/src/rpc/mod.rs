@@ -5126,10 +5126,10 @@ async fn handle_request(
                 .map_err(|error| rpc_err(1002, error.to_string(), "INVALID_PARAMS"))?;
             let project_path = params.get("projectPath").and_then(Value::as_str);
             let mut st = state.lock().await;
-            let ok = st
-                .user_skills
-                .remove(&id, level, project_path)
-                .map_err(skill_err)?;
+            let ok = match params.get("path").and_then(Value::as_str) {
+                Some(path) => st.user_skills.remove_by_path(path, level, project_path),
+                None => st.user_skills.remove(&id, level, project_path),
+            }.map_err(skill_err)?;
             Ok(json!({ "ok": ok }))
         }
         "skills.setEnabled" => {

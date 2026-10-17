@@ -49,9 +49,12 @@ fn imported_skill_link(path: &Path, directory: &Path) -> Option<PathBuf> {
 
 fn remove_imported_skill_link(path: &Path) -> Result<()> {
     #[cfg(windows)]
-    if path.is_dir() {
-        fs::remove_dir(path)?;
-        return Ok(());
+    {
+        use std::os::windows::fs::FileTypeExt;
+        if fs::symlink_metadata(path)?.file_type().is_symlink_dir() {
+            fs::remove_dir(path)?;
+            return Ok(());
+        }
     }
     fs::remove_file(path)?;
     Ok(())
@@ -60,6 +63,13 @@ fn remove_imported_skill_link(path: &Path) -> Result<()> {
 /// separate state file from user skills. The user-skill scan prunes missing
 /// documents and must not erase a built-in preference.
 const BUILTIN_SKILL_KIND: &str = "skill-builtins";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillDocumentStatus {
+    Missing,
+    Invalid,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +87,8 @@ pub struct UserSkillRecord {
     pub scope: ActivationScope,
     pub source: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_status: Option<SkillDocumentStatus>,
     #[serde(default)]
     pub size_bytes: u64,
     pub created_at: String,
@@ -297,8 +309,10 @@ fn merge_active_records(
     global: Vec<UserSkillRecord>,
     project: Vec<UserSkillRecord>,
 ) -> Vec<UserSkillRecord> {
-    let mut result = global;
-    for record in project {
+    let mut result = global.into_iter()
+        .filter(|record| record.document_status.is_none())
+        .collect::<Vec<_>>();
+    for record in project.into_iter().filter(|record| record.document_status.is_none()) {
         result.retain(|existing| {
             existing.id != record.id && !existing.name.eq_ignore_ascii_case(&record.name)
         });
@@ -311,21 +325,55 @@ fn merge_active_records(
     result
 }
 
-/// Direct `*.md` documents plus the conventional `<skill>/SKILL.md` shape. The
-/// same rule applies to the managed directories and to an extra read-only path,
-/// so pointing at another agent's skills root picks up both layouts.
+/// 技能包以目录为管理单元，文档缺失时仍保留条目供修复或删除。
+fn skill_document_in(directory: &Path) -> PathBuf {
+    let conventional = directory.join("SKILL.md");
+    if fs::symlink_metadata(&conventional).is_ok() {
+        return conventional;
+    }
+    sorted_files(directory, "md")
+        .into_iter()
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("SKILL.md"))
+        })
+        .unwrap_or(conventional)
+}
+
 fn collect_skill_paths(directory: &Path, out: &mut Vec<PathBuf>) {
     out.extend(sorted_files(directory, "md"));
     if let Ok(entries) = fs::read_dir(directory) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                let skill_file = path.join("SKILL.md");
-                if skill_file.is_file() {
-                    out.push(skill_file);
-                }
+            let dangling_directory_link = entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_symlink())
+                && !path.exists()
+                && !path.extension().and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+            if path.is_dir() || dangling_directory_link {
+                out.push(skill_document_in(&path));
             }
         }
+    }
+}
+
+fn read_skill_document(path: &Path) -> (Option<String>, Option<SkillDocumentStatus>) {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() && metadata.len() <= MAX_SKILL_BYTES as u64 => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return (None, Some(SkillDocumentStatus::Missing));
+        }
+        _ => return (None, Some(SkillDocumentStatus::Invalid)),
+    }
+    match fs::read_to_string(path) {
+        Ok(raw) if raw.len() <= MAX_SKILL_BYTES => {
+            let (_, body) = parse_front_matter(&raw);
+            let status = body.trim().is_empty().then_some(SkillDocumentStatus::Invalid);
+            (Some(raw), status)
+        }
+        _ => (None, Some(SkillDocumentStatus::Invalid)),
     }
 }
 
@@ -899,38 +947,58 @@ impl UserSkillRegistry {
         } else {
             None
         };
-        let mut records = Vec::new();
-        let mut seen = HashSet::new();
+        let mut candidates = Vec::new();
         for (path, linked) in paths {
-            let raw = match fs::read_to_string(&path) {
-                Ok(raw) if raw.len() <= MAX_SKILL_BYTES => raw,
-                _ => continue,
-            };
-            let (front, body) = parse_front_matter(&raw);
-            if body.trim().is_empty() {
+            let (raw, status) = read_skill_document(&path);
+            if status.is_some() && directory_skill_root(&path, &directory).is_none() {
                 continue;
             }
-            let fallback = path_stem_for_id(&path);
+            candidates.push((path, linked, raw.unwrap_or_default(), status));
+        }
+        // 有效文档优先占用原有 ID，残留目录不能遮蔽可用技能。
+        candidates.sort_by_key(|(_, _, _, status)| status.is_some());
+        let mut records = Vec::new();
+        let mut seen = HashSet::new();
+        for (path, linked, raw, document_status) in candidates {
+            let (front, _) = parse_front_matter(&raw);
+            let fallback = if document_status.is_some() {
+                path.parent()
+                    .and_then(Path::file_name)
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            } else {
+                path_stem_for_id(&path)
+            };
             let name = clip(
-                front.get("name").map(String::as_str).unwrap_or(&fallback),
+                front.get("name").filter(|name| !name.trim().is_empty())
+                    .map(String::as_str).unwrap_or(&fallback),
                 MAX_NAME_CHARS,
             );
             if name.is_empty() {
                 continue;
             }
-            let id = capability_id(&name, &path, 64);
+            let mut id = capability_id(&name, &path, 64);
+            if document_status.is_some() && seen.contains(&id) {
+                let Some((available, _)) = suffixed_capability_id(&id, &seen, 64) else {
+                    continue;
+                };
+                id = available;
+            }
             if !valid_id(&id) || !seen.insert(id.clone()) {
                 continue;
             }
             let scope = scope_for(level, owner_project_path.as_deref());
-            let enabled = self
-                .state
-                .enabled(SKILL_KIND, level, &id, effective_project);
+            let enabled = document_status.is_none()
+                && self.state.enabled(SKILL_KIND, level, &id, effective_project);
             let description = front
                 .get("description")
                 .map(|value| clip(value, MAX_DESCRIPTION_CHARS))
                 .filter(|value| !value.is_empty());
-            let updated_at = file_timestamp(&path);
+            let updated_at = file_timestamp(if document_status == Some(SkillDocumentStatus::Missing) {
+                path.parent().unwrap_or(&path)
+            } else {
+                &path
+            });
             records.push(UserSkillRecord {
                 id,
                 name,
@@ -947,7 +1015,8 @@ impl UserSkillRegistry {
                     "imported"
                 }.into(),
                 path: path.to_string_lossy().to_string(),
-                size_bytes: raw.len() as u64,
+                document_status,
+                size_bytes: fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0),
                 created_at: updated_at.clone(),
                 updated_at,
             });
@@ -1192,19 +1261,10 @@ impl UserSkillRegistry {
         if !source_dir.is_dir() {
             bail!("SKILL_INVALID: import directory source does not exist");
         }
-        let skill_file = source_dir.join("SKILL.md");
-        if !skill_file.is_file() {
-            bail!("SKILL_INVALID: directory import needs a SKILL.md at the root");
-        }
-        let raw = fs::read_to_string(&skill_file)
-            .with_context(|| format!("read {}", skill_file.display()))?;
-        if raw.len() > MAX_SKILL_BYTES {
-            bail!("SKILL_INVALID: SKILL.md exceeds {MAX_SKILL_BYTES} bytes");
-        }
-        let (front, body) = parse_front_matter(&raw);
-        if body.trim().is_empty() {
-            bail!("SKILL_INVALID: SKILL.md is empty");
-        }
+        let skill_file = skill_document_in(source_dir);
+        let (raw, _) = read_skill_document(&skill_file);
+        let raw = raw.unwrap_or_default();
+        let (front, _) = parse_front_matter(&raw);
         // Directory name is the natural fallback id; file stem "SKILL" is not.
         let dir_name = source_dir
             .file_name()
@@ -1276,7 +1336,12 @@ impl UserSkillRegistry {
         if record.source == LINKED_SOURCE || record.source == LINKED_IMPORT_SOURCE {
             bail!("SKILL_READONLY: a skill from an extra path cannot be edited here");
         }
-        let raw = fs::read_to_string(&record.path)?;
+        let raw = match fs::read_to_string(&record.path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                && record.document_status == Some(SkillDocumentStatus::Missing) => String::new(),
+            Err(error) => return Err(error.into()),
+        };
         let (front, old_body) = parse_front_matter(&raw);
         let name = input
             .name
@@ -1299,20 +1364,21 @@ impl UserSkillRegistry {
             bail!("SKILL_INVALID: document exceeds {MAX_SKILL_BYTES} bytes");
         }
         fs::write(&record.path, document)?;
+        let record_level = record.level.as_deref()
+            .map(|value| CapabilityLevel::parse(Some(value)))
+            .transpose()?.unwrap_or(CapabilityLevel::Global);
+        let updated_id = capability_id(&name, Path::new(&record.path), 64);
         if let Some(enabled) = input.enabled {
             self.state.set_enabled(
                 SKILL_KIND,
-                record
-                    .level
-                    .as_deref()
-                    .and_then(|value| CapabilityLevel::parse(Some(value)).ok())
-                    .unwrap_or(CapabilityLevel::Global),
-                id,
+                record_level,
+                &updated_id,
                 record.project_path.as_deref(),
                 enabled,
             )?;
         }
-        self.find(id, level, record.project_path.as_deref())
+        Ok(self.list(record_level, record.project_path.as_deref())?
+            .into_iter().find(|updated| same_document(&updated.path, Path::new(&record.path))))
     }
 
     pub fn read(
@@ -1324,6 +1390,9 @@ impl UserSkillRegistry {
         let Some(record) = self.find(id, level, project_path)? else {
             return Ok(None);
         };
+        if record.document_status == Some(SkillDocumentStatus::Missing) {
+            return Ok(Some((record, String::new())));
+        }
         let raw = fs::read_to_string(&record.path)?;
         if raw.len() > MAX_SKILL_BYTES {
             bail!("SKILL_INVALID: document exceeds {MAX_SKILL_BYTES} bytes");
@@ -1392,6 +1461,32 @@ impl UserSkillRegistry {
         let Some(record) = self.find(id, level, project_path)? else {
             return Ok(false);
         };
+        self.remove_record(record)
+    }
+
+    /// 以已扫描的路径匹配条目，文件缺失导致 ID 回退后仍能删除原目录。
+    pub fn remove_by_path(
+        &mut self,
+        path: &str,
+        level: Option<CapabilityLevel>,
+        project_path: Option<&str>,
+    ) -> Result<bool> {
+        let levels = match level {
+            Some(level) => vec![level],
+            None if project_path.is_some() => vec![CapabilityLevel::Project, CapabilityLevel::Global],
+            None => vec![CapabilityLevel::Global],
+        };
+        for level in levels {
+            if let Some(record) = self.list(level, project_path)?.into_iter()
+                .find(|record| same_document(&record.path, Path::new(path)))
+            {
+                return self.remove_record(record);
+            }
+        }
+        Ok(false)
+    }
+
+    fn remove_record(&mut self, record: UserSkillRecord) -> Result<bool> {
         if record.source == LINKED_SOURCE {
             bail!("SKILL_READONLY: a skill from an extra path cannot be removed here");
         }
@@ -1411,7 +1506,7 @@ impl UserSkillRegistry {
         } else {
             fs::remove_file(&record.path)?;
         }
-        let _ = self.find(id, Some(level), record.project_path.as_deref())?;
+        self.list(level, record.project_path.as_deref())?;
         Ok(true)
     }
 
@@ -1425,6 +1520,9 @@ impl UserSkillRegistry {
         let Some(record) = self.find(id, level, project_path)? else {
             return Ok(None);
         };
+        if enabled && record.document_status.is_some() {
+            bail!("SKILL_INVALID: restore a valid SKILL.md before enabling this skill");
+        }
         let record_level = record
             .level
             .as_deref()
@@ -1576,14 +1674,87 @@ mod tests {
     }
 
     #[test]
-    fn directory_import_without_skill_md_is_rejected() {
+    fn imports_repairs_and_removes_a_directory_without_skill_md() {
         let app = tempdir().unwrap();
         let source_dir = app.path().join("incoming/no-skill");
         fs::create_dir_all(&source_dir).unwrap();
-        fs::write(source_dir.join("readme.md"), "just docs\n").unwrap();
-        let mut registry = UserSkillRegistry::new(app.path());
-        let err = registry.import(source_dir.to_str().unwrap(), input("Ignored", "project", Some(app.path().to_str().unwrap()))).unwrap_err().to_string();
-        assert!(err.contains("SKILL_INVALID") && err.contains("SKILL.md"), "err = {err}");
+        fs::write(source_dir.join("readme.md"), "resources\n").unwrap();
+        let project = app.path().to_str().unwrap();
+        let mut registry = UserSkillRegistry::new(app.path())
+            .with_global_skills_dir(app.path().join("global"));
+        let record = registry.import(source_dir.to_str().unwrap(), input("Ignored", "project", Some(project))).unwrap();
+        let package = Path::new(&record.path).parent().unwrap();
+        assert_eq!(record.document_status, Some(SkillDocumentStatus::Missing));
+        assert!(!record.enabled);
+        assert!(package.join("readme.md").is_file());
+        assert!(!Path::new(&record.path).exists());
+        assert!(registry.active_for(Some(project)).unwrap().is_empty());
+        assert_eq!(registry.read(&record.id, Some(CapabilityLevel::Project), Some(project)).unwrap().unwrap().1, "");
+        let repaired = registry.update(&record.id, input("Recovered", "project", Some(project))).unwrap().unwrap();
+        assert_eq!(repaired.document_status, None);
+        assert_eq!(repaired.path, record.path);
+        assert!(Path::new(&repaired.path).is_file());
+        assert!(registry.remove(&repaired.id, Some(CapabilityLevel::Project), Some(project)).unwrap());
+        assert!(!package.exists());
+        assert!(source_dir.join("readme.md").is_file());
+    }
+
+    #[test]
+    fn scans_incomplete_directories_without_hiding_valid_skills() {
+        let app = tempdir().unwrap();
+        let skills = app.path().join("skills");
+        fs::create_dir_all(skills.join("review")).unwrap();
+        fs::create_dir_all(skills.join("empty")).unwrap();
+        fs::create_dir_all(skills.join("lower")).unwrap();
+        fs::write(skills.join("review.md"), "---\nname: Review\n---\nBody.").unwrap();
+        fs::write(skills.join("empty/SKILL.md"), "").unwrap();
+        fs::write(skills.join("lower/skill.md"), "---\nname: Lower\n---\nBody.").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path()).with_global_skills_dir(skills.clone());
+        let records = registry.list(CapabilityLevel::Global, None).unwrap();
+        assert_eq!(records.len(), 4);
+        assert_eq!(registry.active_for(None).unwrap().len(), 2);
+        assert!(records.iter().any(|record| record.id == "review" && record.document_status.is_none()));
+        let missing = records.iter().find(|record| record.document_status == Some(SkillDocumentStatus::Missing)).unwrap();
+        assert_ne!(missing.id, "review");
+        assert!(registry.remove(&missing.id, Some(CapabilityLevel::Global), None).unwrap());
+        assert!(!skills.join("review").exists());
+        assert!(skills.join("review.md").is_file());
+        let invalid = records.iter().find(|record| record.document_status == Some(SkillDocumentStatus::Invalid)).unwrap();
+        assert!(registry.remove(&invalid.id, Some(CapabilityLevel::Global), None).unwrap());
+        assert!(!skills.join("empty").exists());
+    }
+
+    #[test]
+    fn removes_the_original_directory_by_path_after_its_document_disappears() {
+        let app = tempdir().unwrap();
+        let skills = app.path().join("skills");
+        fs::create_dir_all(skills.join("folder-name")).unwrap();
+        let document = skills.join("folder-name/SKILL.md");
+        fs::write(&document, "---\nname: Display Name\n---\nBody.").unwrap();
+        fs::write(skills.join("keep.md"), "---\nname: Keep\n---\nKeep.").unwrap();
+        let mut registry = UserSkillRegistry::new(app.path()).with_global_skills_dir(skills.clone());
+        let original = registry.list(CapabilityLevel::Global, None).unwrap().into_iter()
+            .find(|record| record.id == "display-name").unwrap();
+        fs::remove_file(&document).unwrap();
+        assert!(registry.remove_by_path(&original.path, Some(CapabilityLevel::Global), None).unwrap());
+        assert!(!skills.join("folder-name").exists());
+        assert!(skills.join("keep.md").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removes_a_dangling_imported_directory_link() {
+        let app = tempdir().unwrap();
+        let skills = app.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        let link = skills.join("missing-source");
+        symlink_path(&app.path().join("removed"), &link).unwrap();
+        let mut registry = UserSkillRegistry::new(app.path()).with_global_skills_dir(skills);
+        let record = registry.list(CapabilityLevel::Global, None).unwrap().pop().unwrap();
+        assert_eq!(record.source, LINKED_IMPORT_SOURCE);
+        assert_eq!(record.document_status, Some(SkillDocumentStatus::Missing));
+        assert!(registry.remove(&record.id, Some(CapabilityLevel::Global), None).unwrap());
+        assert!(fs::symlink_metadata(link).is_err());
     }
 
     #[test]
@@ -1676,6 +1847,7 @@ mod tests {
             scope: ActivationScope::default(),
             source: "imported".into(),
             path: "/global/review.md".into(),
+            document_status: None,
             size_bytes: 1,
             created_at: String::new(),
             updated_at: String::new(),
@@ -1924,6 +2096,7 @@ mod tests {
             scope: ActivationScope::default(),
             source: "imported".into(),
             path: String::new(),
+            document_status: None,
             size_bytes: 0,
             created_at: String::new(),
             updated_at: String::new(),

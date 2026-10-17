@@ -146,7 +146,9 @@ export type UserSkillRecord = {
    * is read-only, and removing the record only unlinks the local entry.
    */
   source: "created" | "imported" | "linked" | "linked-import";
-  /** Absolute path of the document, for opening it in the editor. */
+  /** 文档缺失或无法解析时标记；有效文档省略此字段。 */
+  documentStatus?: "missing" | "invalid";
+  /** 文档的实际或预期绝对路径，用于编辑和定位。 */
   path: string;
   /** Bytes of the document, so the list can flag one that grew past the cap. */
   sizeBytes: number;

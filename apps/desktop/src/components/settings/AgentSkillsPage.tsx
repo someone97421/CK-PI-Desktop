@@ -210,7 +210,7 @@ export function AgentSkillsPage() {
    */
   const toggle = async (skill: UserSkillRecord, level: AgentCapabilityLevel) => {
     const key = rowKey(level, skill.id);
-    if (busyId === key) return;
+    if (busyId === key || skill.documentStatus) return;
     const next = !skill.enabled;
     setBusyId(key);
     patchRow(level, skill.id, { enabled: next });
@@ -332,7 +332,7 @@ export function AgentSkillsPage() {
     const key = rowKey(level, skill.id);
     setBusyId(key);
     try {
-      await api.removeUserSkill(skill.id, levelQuery(level));
+      await api.removeUserSkill(skill.id, { ...levelQuery(level), path: skill.path });
       await load();
       showToast(
         t(
@@ -439,7 +439,7 @@ export function AgentSkillsPage() {
   const move = async (skill: UserSkillRecord, level: AgentCapabilityLevel) => {
     // Both link flavours are documents the app does not own: an extra-path
     // reference and a symlink placed inside a managed skills directory.
-    if (skill.source === "linked" || isImportedLink(skill)) return;
+    if (skill.documentStatus || skill.source === "linked" || isImportedLink(skill)) return;
     const to: AgentCapabilityLevel = level === "global" ? "project" : "global";
     const target = moveTarget[to];
     if (!target) {
@@ -486,6 +486,11 @@ export function AgentSkillsPage() {
     const linked = skill.source === "linked";
     const linkedImport = isImportedLink(skill);
     const linkOnly = linked || linkedImport;
+    const documentWarning = skill.documentStatus === "missing"
+      ? t("settings.skillDocumentMissing")
+      : skill.documentStatus === "invalid"
+        ? t("settings.skillDocumentInvalid")
+        : undefined;
     const items: CapabilityMenuItem[] = [
       {
         key: "reveal",
@@ -500,7 +505,7 @@ export function AgentSkillsPage() {
        * A move needs a destination, so a global row offers it only while the
        * picker names a project; a project row always has Global to go back to.
        */
-      ...(!linkOnly && moveTarget[level === "global" ? "project" : "global"]
+      ...(!linkOnly && !skill.documentStatus && moveTarget[level === "global" ? "project" : "global"]
         ? [
             {
               key: "move",
@@ -549,7 +554,7 @@ export function AgentSkillsPage() {
         key={key}
         glyph={<IconBookOpen size={16} />}
         name={name}
-        off={!skill.enabled}
+        off={Boolean(skill.documentStatus) || !skill.enabled}
         menuOpen={menuFor === key}
         badges={
           <>
@@ -567,9 +572,14 @@ export function AgentSkillsPage() {
             ) : skill.source === "imported" ? (
               <span className="agent-capability-badge">{t("settings.imported")}</span>
             ) : null}
+            {documentWarning && (
+              <span className="agent-capability-badge">{documentWarning}</span>
+            )}
           </>
         }
-        description={skill.description || t("settings.noCapabilityDescription")}
+        description={documentWarning
+          ? `${documentWarning} · ${skill.path}`
+          : skill.description || t("settings.noCapabilityDescription")}
         actions={
           <>
             {linkOnly ? null : (
@@ -595,8 +605,9 @@ export function AgentSkillsPage() {
               }}
             />
             <CapabilityToggle
-              checked={skill.enabled}
+              checked={!skill.documentStatus && skill.enabled}
               busy={busy}
+              disabled={Boolean(skill.documentStatus)}
               label={t("settings.toggleCapability", { name })}
               onChange={() => void toggle(skill, level)}
             />

@@ -1190,6 +1190,8 @@ sklm: {
     skillRootsBadge: "External",
     skillUnlinkImport: "Unlink imported skill",
     skillUnlinkImportConfirm: "Click again to unlink",
+    skillDocumentMissing: "Missing SKILL.md",
+    skillDocumentInvalid: "Invalid or unreadable SKILL.md",
     skillUnlinkImportDone: "Import link removed; source files kept",
     skillRootAdded: "Added extra path {{path}}",
     skillRootRemoved: "Removed extra path {{path}}",

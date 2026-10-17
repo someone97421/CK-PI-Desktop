@@ -158,3 +158,30 @@ test("readFrontmatter strips quotes and inline comments", () => {
   assert.equal(data.name, "Boxed");
   assert.equal(data.description, "line");
 });
+
+test("技能目录在文档缺失、为空或使用小写文件名时仍可检测", async () => {
+  const { root, home } = await makeHome();
+  try {
+    const base = join(home, ".claude", "skills");
+    const missing = join(base, "review");
+    const empty = join(base, "empty");
+    const lowercase = join(base, "lowercase");
+    await Promise.all([missing, empty, lowercase].map((dir) => mkdir(dir, { recursive: true })));
+    await writeFile(join(base, "review.md"), skillFile("Review", "valid sibling"));
+    await writeFile(join(missing, "resource.txt"), "keep resources");
+    await writeFile(join(empty, "SKILL.md"), "");
+    await writeFile(join(lowercase, "skill.md"), skillFile("Lowercase", "valid package"));
+    const result = await scanExternalSkills({ homeDir: home, env: {} });
+    const candidates = result.candidates.filter((candidate) => candidate.source === "claude-user");
+    assert.equal(candidates.length, 4);
+    const missingCandidate = candidates.find((candidate) => candidate.rootDir === missing);
+    assert.equal(missingCandidate.shape, "dir");
+    assert.equal(missingCandidate.sourcePath, join(missing, "SKILL.md"));
+    assert.ok(missingCandidate.warnings.includes("missing SKILL.md"));
+    assert.ok(candidates.find((candidate) => candidate.rootDir === empty).warnings.includes("invalid SKILL.md"));
+    assert.equal(candidates.find((candidate) => candidate.rootDir === lowercase).sourcePath, join(lowercase, "skill.md"));
+    assert.equal(result.sources.find((source) => source.kind === "claude-user").count, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

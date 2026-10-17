@@ -162,8 +162,10 @@ fn capture_skills(
     );
     for (level, project_path) in targets {
         for record in st.user_skills.list(level, project_path.as_deref())? {
-            // 扩展路径及链接导入由本机管理，不作为可写技能同步到另一台设备。
-            if matches!(record.source.as_str(), "linked" | "linked-import") {
+            // 扩展路径、链接导入和待修复目录只在本机管理。
+            if matches!(record.source.as_str(), "linked" | "linked-import")
+                || record.document_status.is_some()
+            {
                 continue;
             }
             let bytes = st
