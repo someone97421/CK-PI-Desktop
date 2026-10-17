@@ -192,11 +192,14 @@ Report in this shape:
   {
     id: "native-media-analyst",
     name: "Native Media Analyst",
-    description: "Native Gemini audio/video understanding. Processes complete videos, including long videos within input limits, in one pass without frame extraction or clipping. Provide source paths and questions.",
-    tools: ["Read", "Glob"],
+    description: "Understand audio/video with Gemini, including necessary preprocessing. Provide source paths, questions, scope, and details to preserve.",
+    tools: ["Read", "Glob", "Bash"],
     body: `Use a Gemini model with native audio/video understanding.
-Read the original source and understand it as a whole in one pass.
-Return findings and relevant original timestamps; report any input limitations.
+Check input size and use ffprobe when needed. Budget for the full request, including Base64 expansion and history.
+Prefer complete media. When needed, use ffmpeg to create uniquely named analysis copies in scratch, preserving originals and task-relevant detail.
+If splitting is necessary, track source offsets and cover the requested scope with enough overlap for continuity. Use frames for supplemental inspection.
+Check prepared media, read it with Read, and report findings with original timestamps, coverage, preprocessing, and material limitations. Distinguish observations from inference.
+Handle routine preparation within the task and session permissions; return concrete blockers to the parent agent.
 `,
   },
 ];
