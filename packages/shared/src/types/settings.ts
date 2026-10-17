@@ -132,7 +132,9 @@ export type AppSettings = {
   fontScale?: number;
   /** Home media display size in pixels (64–500); absent means 256. */
   homeMediaSize?: number;
-  /** Transcript presentation only; absent means detailed. Reasoning is retained. */
+  /** 仅控制思考内容展示；缺省沿用旧 thinkingDisplayMode，不影响模型思考级别及过程折叠。 */
+  showThinking?: boolean;
+  /** 保留旧配置读取兼容；compact 隐藏思考，其他值显示。 */
   thinkingDisplayMode?: "detailed" | "compact";
   /**
    * @deprecated Unreleased D343 px field. Reads migrate into `fontScale`
@@ -191,6 +193,21 @@ export type AppSettings = {
   smoothStreaming?: boolean;
   /** Keep the display awake while the app is running; absent defaults to false. */
   preventScreenSleep?: boolean;
+  /**
+   * Sidebar project "running" affordances. The master switch gates both
+   * sub-switches; absent means disabled, so a fresh install shows a clean
+   * sidebar until the user opts in.
+   */
+  sidebarRunningIndicators?: boolean;
+  /** Count badge beside a project name. Only honored while the master is on. */
+  sidebarRunningBadge?: boolean;
+  /** Activity rail down the project group. Only honored while the master is on. */
+  sidebarRunningRail?: boolean;
+  /**
+   * Last-reply date shown at the right edge of session rows. Absent means
+   * disabled, so a fresh install shows a clean sidebar until the user opts in.
+   */
+  sidebarSessionTime?: boolean;
   onboardingDismissed: boolean;
 };
 

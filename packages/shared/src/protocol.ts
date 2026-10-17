@@ -47,6 +47,13 @@ export const WINDOW_CONTROL_ACTIONS = [
 
 export type WindowControlAction = (typeof WINDOW_CONTROL_ACTIONS)[number];
 
+export type LifecycleDialogKind = "quit-confirmation" | "close-behavior";
+export type LifecycleDialogChoice = "cancel" | "confirm" | "tray" | "quit";
+export type LifecycleDialogRequest = {
+  requestId: string;
+  kind: LifecycleDialogKind;
+};
+export type LifecycleDialogDismiss = { requestId: string };
 export const IPC = {
   invoke: {
     storageGet: "pi-desktop/storage/get",
@@ -391,6 +398,8 @@ export const IPC = {
     marketCheckUpdates: "pi-desktop/market/checkUpdates",
     marketApplyUpdates: "pi-desktop/market/applyUpdates",
     marketCancelInstall: "pi-desktop/market/cancelInstall",
+    marketReviewSummaries: "pi-desktop/market/reviewSummaries",
+    marketReviews: "pi-desktop/market/reviews",
     commandPaletteSearch: "pi-desktop/commandPalette/search",
     commandPaletteExecute: "pi-desktop/commandPalette/execute",
     logOpenFolder: "pi-desktop/log/openFolder",
@@ -425,6 +434,8 @@ export const IPC = {
     closeBehaviorGet: "pi-desktop/window/closeBehavior/get",
     closeBehaviorSet: "pi-desktop/window/closeBehavior/set",
     closePromptRespond: "pi-desktop/window/closePrompt/respond",
+    lifecycleDialogReady: "pi-desktop/window/lifecycleDialog/ready",
+    lifecycleDialogRespond: "pi-desktop/window/lifecycleDialog/respond",
     menuRendererReady: "pi-desktop/menu/rendererReady",
     traySetSessionPreferences: "pi-desktop/tray/setSessionPreferences",
     nativeMenuAction: "pi-desktop/menu/nativeAction",
@@ -457,10 +468,13 @@ export const IPC = {
     insecureEndpointNotice: "pi-desktop/network/event/insecureEndpointNotice",
     browserState: "pi-desktop/browser/event/state",
     browserPreview: "pi-desktop/browser/event/preview",
+    browserOpenFile: "pi-desktop/browser/event/openFile",
     windowMaximized: "pi-desktop/window/event/maximized",
     closePrompt: "pi-desktop/window/event/closePrompt",
     windowFullScreen: "pi-desktop/window/event/fullscreen",
     windowWorkPanelResize: "pi-desktop/window/event/workPanelResize",
+    lifecycleDialogRequest: "pi-desktop/window/event/lifecycleDialogRequest",
+    lifecycleDialogDismiss: "pi-desktop/window/event/lifecycleDialogDismiss",
     menuCommand: "pi-desktop/menu/event/command",
     traySessionActivated: "pi-desktop/tray/event/sessionActivated",
     notificationChanged: "pi-desktop/notification/event/changed",

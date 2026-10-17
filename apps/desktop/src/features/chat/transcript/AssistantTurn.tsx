@@ -363,6 +363,7 @@ export const AssistantTurn = memo(function AssistantTurn({
   const { process, responses, lastActivityPart } = summary;
   const turnProcessActive = !settledTask && isActive;
   const activePart = turnProcessActive ? entry.parts.at(-1) : undefined;
+  const processOwnsActiveTail = activePart !== undefined && process.includes(activePart);
   const partContext = {
     isActive: turnProcessActive, activePart, lastActivityPart, runtimeActivity,
     turnDelegationStatuses, turnDelegationTimings,
@@ -388,7 +389,7 @@ export const AssistantTurn = memo(function AssistantTurn({
           </>
         ) : isPlainHistory && groupProcess ? (
           <>
-            <TurnProcess turnId={entry.id} processParts={process} turnParts={entry.parts} isActive={turnProcessActive} delegationStatuses={turnDelegationStatuses}>
+            <TurnProcess turnId={entry.id} processParts={process} turnParts={entry.parts} isActive={turnProcessActive && processOwnsActiveTail} delegationStatuses={turnDelegationStatuses}>
               <AssistantTurnParts parts={process} {...partContext} />
             </TurnProcess>
             <AssistantTurnParts parts={responses} {...partContext} />

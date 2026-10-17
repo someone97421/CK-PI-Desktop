@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, symlink, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, symlink, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -63,11 +63,35 @@ test("自定义目录与其路径别名使用同一把锁，不同目录使用�
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 
+test("别名父目录下尚未创建的业务目录，在创建前后使用同一把锁", async () => {
+  const home = await mkdtemp(join(process.env.PI_SCRATCH_DIR || tmpdir(), "agent-identity-missing-"));
+  try {
+    const real = join(home, "real"); const alias = join(home, "alias");
+    await mkdir(real);
+    await symlink(real, alias, process.platform === "win32" ? "junction" : "dir");
+    const dataDir = join(real, "nested", "new-data");
+    const aliasDir = join(alias, "nested", "new-data");
+    const appData = join(home, "appdata");
+    const before = fakeApp(appData); const direct = fakeApp(appData); const after = fakeApp(appData);
+    configureApplicationIdentity(before, { home, dataDir: aliasDir });
+    await assert.rejects(stat(dataDir), { code: "ENOENT" });
+    configureApplicationIdentity(direct, { home, dataDir });
+    await mkdir(dataDir, { recursive: true });
+    configureApplicationIdentity(after, { home, dataDir: aliasDir });
+    assert.equal(before.calls[0].userData, direct.calls[0].userData);
+    assert.equal(before.calls[0].userData, after.calls[0].userData);
+    assert.equal(before.paths.userData, after.paths.userData);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
 test("未获得锁时，入口在持久化初始化前立即退出", async () => {
-  const main = await readFile(new URL("../electron/main/index.ts", import.meta.url), "utf8");
-  const guard = main.indexOf("configureApplicationIdentity(app)");
-  const exit = main.indexOf("app.exit(0)", guard);
-  assert.ok(guard > 0 && exit > guard);
-  assert.ok(exit < main.indexOf("new Logger("));
-  assert.ok(exit < main.indexOf("new PersistenceOutbox("));
+  const installation = await readFile(new URL("../electron/main/installation.ts", import.meta.url), "utf8");
+  const entry = await readFile(new URL("../electron/main/entry.ts", import.meta.url), "utf8");
+  const lock = installation.indexOf("configureApplicationIdentity(app");
+  assert.ok(lock > 0);
+  assert.ok(installation.indexOf("if (!hasSingleInstanceLock) app.exit(0)", lock) > lock);
+  const guard = entry.indexOf("if (!isBackupLockProcess && hasSingleInstanceLock)");
+  const maintenance = entry.indexOf("prepareStorage(defaultDataDir, storageOverridden)");
+  const business = entry.indexOf('import("./index")');
+  assert.ok(guard >= 0 && maintenance > guard && business > maintenance);
 });

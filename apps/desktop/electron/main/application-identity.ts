@@ -1,13 +1,26 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { APP_LEGACY_LOCK_NAME, APP_NAME, APP_SLUG } from "@pi-desktop/shared";
 import type { App } from "electron";
 
 export function canonicalDataDirectoryPath(path: string): string {
   let canonical = resolve(path);
-  try { canonical = realpathSync.native(canonical); } catch {}
+  let ancestor = canonical;
+  const missing: string[] = [];
+  // 未创建的业务目录也按已存在祖先的真实路径加锁，保持创建前后的锁键一致。
+  for (;;) {
+    try {
+      canonical = join(realpathSync.native(ancestor), ...missing.reverse());
+      break;
+    } catch {
+      const parent = dirname(ancestor);
+      if (parent === ancestor) break;
+      missing.push(basename(ancestor));
+      ancestor = parent;
+    }
+  }
   return process.platform === "win32" ? canonical.toLowerCase() : canonical;
 }
 
@@ -30,7 +43,6 @@ export function requestDataDirectoryLock(app: App, dataDir: string, options: { h
 export function configureApplicationIdentity(app: App, options: { home?: string; dataDir?: string; temporaryWorkspacePath?: string | null } = {}): { dataDir: string; hasSingleInstanceLock: boolean } {
   const defaultDataDir = join(options.home ?? homedir(), ".pi-desktop");
   const dataDir = resolve((options.dataDir ?? process.env.PI_DESKTOP_DATA_DIR)?.trim() || defaultDataDir);
-  mkdirSync(dataDir, { recursive: true });
   const key = canonicalDataDirectoryPath(dataDir);
   const isDefault = key === canonicalDataDirectoryPath(defaultDataDir);
   const profileKey = createHash("sha256").update(key).digest("hex").slice(0, 24);

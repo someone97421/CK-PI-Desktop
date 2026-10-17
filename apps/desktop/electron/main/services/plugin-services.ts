@@ -724,6 +724,13 @@ export function createPluginServices({
      * (ADR 0252) instead of the bare primary path.
      */
     getWorkspaceInfo: () => pluginWorkspaceInfo(getWorkspacePath()),
+    openInBrowser: async (fullPath) => {
+      const preview = await browserHost.previewFile();
+      if (!preview.ok) {
+        throw Object.assign(new Error(preview.content), { code: "UNAVAILABLE" });
+      }
+      sendToRenderer(IPC.event.browserOpenFile, { path: fullPath });
+    },
     // 工具按所属会话解析有效目录；isolated 目录不可用时直接报告失败。
     getWorkspacePathForSession: async (sessionId) => {
       const host = getHost();

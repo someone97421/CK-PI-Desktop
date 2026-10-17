@@ -1,10 +1,14 @@
 mod config_sync_rpc;
+mod plugin_reviews_rpc;
 mod remote_tools;
 mod scheduled_rpc;
 mod scheduled_tools;
 mod todos;
 mod window_corner_rpc;
 mod worktree_rpc;
+
+#[cfg(test)]
+mod plugin_reviews_rpc_tests;
 
 use std::io::{self, BufRead, BufReader as StdBufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -1713,6 +1717,8 @@ fn plugin_err(err: impl ToString) -> JsonRpcError {
         rpc_err(1023, msg, "PLUGIN_MARKET_RATE_LIMITED")
     } else if msg.contains("PLUGIN_MARKET_NO_SOURCE") {
         rpc_err(1024, msg, "PLUGIN_MARKET_NO_SOURCE")
+    } else if msg.contains("PLUGIN_MARKET_INVALID") {
+        rpc_err(1026, msg, "PLUGIN_MARKET_INVALID")
     } else if msg.contains("PLUGIN_NETWORK") {
         rpc_err(1014, msg, "PLUGIN_NETWORK")
     } else {
@@ -5274,6 +5280,9 @@ async fn handle_request(
             crate::network_proxy::set_system_proxy_relay(url)
                 .map_err(|message| rpc_err(1002, message, "INVALID_PARAMS"))?;
             Ok(json!({ "ok": true }))
+        }
+        "market.reviewSummaries" | "market.reviews" => {
+            plugin_reviews_rpc::handle(&state, method, params).await
         }
         "market.refresh" => {
             let force = params

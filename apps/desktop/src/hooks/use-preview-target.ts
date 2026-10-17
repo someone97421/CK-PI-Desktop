@@ -85,6 +85,17 @@ export type ResolvedChatFileRef = {
   scratch: boolean;
 };
 
+export type ChatFileOpenDestination =
+  | "file-manager"
+  | "built-in-browser"
+  | "default-browser";
+
+export type ChatFileOpenOptions = {
+  line?: number;
+  column?: number;
+  destination?: ChatFileOpenDestination;
+};
+
 /**
  * Load the bundled file view on demand when a user explicitly opens a project
  * file. Its enabled state can be off or its runtime can have failed even though
@@ -258,10 +269,11 @@ export function useOpenChatFileRef() {
       path: string,
       baseDir?: string,
       mimeType?: string,
-      position?: { line?: number; column?: number },
+      options?: ChatFileOpenOptions,
     ) => {
-      const line = position?.line;
-      const column = position?.column;
+      const line = options?.line;
+      const column = options?.column;
+      const destination = options?.destination;
       void (async () => {
         const resolved = await resolveRef(path, baseDir);
         if (!resolved) return;
@@ -269,6 +281,40 @@ export function useOpenChatFileRef() {
         const current = useAppStore.getState();
         const remote = current.sessions.find((session) => session.id === ownerSessionId)?.remoteWorkspace
           ?? (!ownerSessionId ? current.workspace?.remote : undefined);
+        if (destination === "file-manager") {
+          if (remote) {
+            showToast(t("chat.fileManagerOpenFailed"), { variant: "error" });
+            return;
+          }
+          const ready = await ensureFileManagerView(workspacePath, sessionId);
+          if (!matchesFileContext(workspacePath, sessionId)) return;
+          if (!ready) {
+            showToast(t("chat.fileManagerOpenFailed"), { variant: "error" });
+            return;
+          }
+          openTab(fileManagerPluginTab(resolved.absolutePath.replaceAll("\\", "/")));
+          return;
+        }
+        if (destination === "built-in-browser") {
+          if (remote || !hasPluginView(current.pluginViews, BROWSER_PLUGIN_TAB)) {
+            showToast(t("chat.builtInBrowserUnavailable"), { variant: "error" });
+            return;
+          }
+          openUrl(resolved.absolutePath, ownerSessionId);
+          return;
+        }
+        if (destination === "default-browser") {
+          if (remote) {
+            showToast(t("chat.defaultBrowserOpenFailed"), { variant: "error" });
+            return;
+          }
+          try {
+            await api.fsOpen(resolved.absolutePath, mimeType, ownerSessionId);
+          } catch {
+            showToast(t("chat.defaultBrowserOpenFailed"), { variant: "error" });
+          }
+          return;
+        }
         const hasPosition = line !== undefined || column !== undefined;
         if (
           !remote &&

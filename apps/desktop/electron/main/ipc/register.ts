@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { dialog, shell, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from "electron";
-import { err, ErrorCodes, IPC, ok, type Result } from "@pi-desktop/shared";
+import { err, ErrorCodes, IPC, ok, type LifecycleDialogChoice, type Result } from "@pi-desktop/shared";
 import type { AgentHostBridge } from "../agent-host-bridge";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
@@ -69,6 +69,8 @@ export type RegisterIpcDependencies = {
   disabledBuiltinSkills: () => Promise<string[]>;
   liveCallService?: LiveCallService;
   mcpOAuth?: McpOAuthManager;
+  markLifecycleDialogRendererReady: (window: BrowserWindow) => boolean;
+  respondLifecycleDialog: (senderWindowId: number, requestId: unknown, choice: LifecycleDialogChoice) => boolean;
   [name: string]: any;
 };
 
@@ -147,6 +149,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getCloseBehavior,
     respondClosePrompt,
     markMenuRendererReady,
+    markLifecycleDialogRendererReady,
+    respondLifecycleDialog,
     traySessions,
     taskbarUnreadBadge,
     executeNativeMenuAction,
@@ -367,6 +371,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getCloseBehavior,
     respondClosePrompt,
     markMenuRendererReady,
+    markLifecycleDialogRendererReady,
+    respondLifecycleDialog,
     executeNativeMenuAction,
   });
   registerPullsIpc({ registrar, getHost });

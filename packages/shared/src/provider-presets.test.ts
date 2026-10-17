@@ -91,7 +91,10 @@ describe("DeepSeek reasoning replay", () => {
     );
     expect(
       deepseekRequestCompat({ baseUrl: "https://api.deepseek.com" }),
-    ).toEqual({ requiresReasoningContentOnAssistantMessages: true });
+    ).toEqual({
+      requiresReasoningContentOnAssistantMessages: true,
+      supportsReasoningEffort: false,
+    });
   });
 
   it("matches aggregator and custom DeepSeek-family models without a deepseek.com URL", () => {
@@ -103,6 +106,7 @@ describe("DeepSeek reasoning replay", () => {
       }),
     ).toEqual({
       requiresReasoningContentOnAssistantMessages: true,
+      supportsReasoningEffort: false,
       requiresNonEmptyReasoningReplay: true,
     });
     expect(DEEPSEEK_REASONING_REPLAY_PLACEHOLDER.length).toBeGreaterThan(0);

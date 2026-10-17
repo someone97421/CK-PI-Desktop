@@ -424,6 +424,10 @@ export function buildProviderModel(
           ...(thinkingProtocolCompat ?? {}),
           ...(zhipuCompat ?? {}),
           ...(deepseekCompat ?? {}),
+          // 已保存的显式兼容参数优先于供应商默认值。
+          ...(catalogModel.compat?.supportsReasoningEffort !== undefined
+            ? { supportsReasoningEffort: catalogModel.compat.supportsReasoningEffort }
+            : {}),
           supportsDeveloperRole: catalogModel.compat?.supportsDeveloperRole === true,
         }
       : binding.api === "anthropic-messages" &&

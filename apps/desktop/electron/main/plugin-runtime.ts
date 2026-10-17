@@ -11,7 +11,7 @@ import {
 import type { Stats } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import { pluginNetFetch, parseFetchRedirect, type PluginFetchTransport } from "./plugin-net-fetch";
 import type { LoadedSkillDocument } from "./skill-document";
@@ -360,6 +360,8 @@ export type PluginHostServices = {
   ) => Promise<void>;
   /** Open one already-authorized file with the OS-associated application. */
   openPath: (fullPath: string) => Promise<void>;
+  /** Open one already-authorized HTML file in the bundled work-panel Browser. */
+  openInBrowser?: (fullPath: string) => Promise<void>;
   /** Reveal one already-authorized file in the OS file manager. */
   revealPath?: (fullPath: string) => Promise<void>;
   readClipboard: () => Promise<string>;
@@ -545,6 +547,7 @@ const HOST_API_ALLOWLIST = new Set([
   "fs.readRange",
   "fs.readPreview",
   "fs.openDefault",
+  "fs.openInBrowser",
   "fs.reveal",
   "fs.writeText",
   "fs.glob",
@@ -1467,6 +1470,9 @@ export class PluginRuntime {
       },
       openPath: async () => {
         throw apiError("UNSUPPORTED", "openPath service missing");
+      },
+      openInBrowser: async () => {
+        throw apiError("UNAVAILABLE", "Browser service missing");
       },
       readClipboard: async () => "",
       writeClipboard: async () => undefined,
@@ -2533,6 +2539,9 @@ export class PluginRuntime {
         return api.fs.readPreview(String(payload?.path ?? ""));
       case "fs.openDefault":
         await api.fs.openDefault(String(payload?.path ?? ""));
+        return { ok: true };
+      case "fs.openInBrowser":
+        await api.fs.openInBrowser(String(payload?.path ?? ""));
         return { ok: true };
       case "fs.reveal":
         await api.fs.reveal(String(payload?.path ?? ""));
@@ -5081,7 +5090,7 @@ export class PluginRuntime {
    * Resolve a request that names a file in another folder of the open project
    * (ADR 0249, ADR 0252, ADR 0253). A view browsing a sibling folder can only
    * address that folder's entries absolutely, and the two host-mediated actions
-   * it offers for them (fs.openDefault, fs.reveal) are the only requests that
+   * it offers for them (fs.openDefault, fs.openInBrowser, fs.reveal) are the only requests that
    * arrive that way. The widening is narrow: only for a plugin whose declared
    * root is the workspace, only for an absolute path already inside one of the
    * project's registered folder roots (resolved through links, so a symlink
@@ -5870,6 +5879,56 @@ export class PluginRuntime {
           this.services.audit?.({
             pluginId,
             api: "fs.openDefault",
+            ok: true,
+            ts: Date.now(),
+            path: rel,
+          });
+        },
+        openInBrowser: async (pathFromRoot: string) => {
+          const { full, rel } =
+            (await this.resolveRegisteredFolderRequest(loaded, pathFromRoot)) ??
+            (await this.resolveFsRequest(loaded, "read", pathFromRoot));
+          if (!statSync(full).isFile()) {
+            this.services.audit?.({
+              pluginId,
+              api: "fs.openInBrowser",
+              ok: false,
+              errorCode: "INVALID_ARGUMENT",
+              ts: Date.now(),
+              path: rel,
+            });
+            throw apiError("INVALID_ARGUMENT", "only files can be opened in the Browser");
+          }
+          if (![".html", ".htm", ".xhtml"].includes(extname(full).toLowerCase())) {
+            this.services.audit?.({
+              pluginId,
+              api: "fs.openInBrowser",
+              ok: false,
+              errorCode: "INVALID_ARGUMENT",
+              ts: Date.now(),
+              path: rel,
+            });
+            throw apiError("INVALID_ARGUMENT", "only HTML files can be opened in the Browser");
+          }
+          try {
+            await this.services.openInBrowser?.(full);
+          } catch (error) {
+            const code = typeof error === "object" && error !== null && "code" in error
+              ? String(error.code)
+              : "OPEN_FAILED";
+            this.services.audit?.({
+              pluginId,
+              api: "fs.openInBrowser",
+              ok: false,
+              errorCode: code,
+              ts: Date.now(),
+              path: rel,
+            });
+            throw apiError(code, error instanceof Error ? error.message : String(error));
+          }
+          this.services.audit?.({
+            pluginId,
+            api: "fs.openInBrowser",
             ok: true,
             ts: Date.now(),
             path: rel,

@@ -10,6 +10,7 @@ import {
   parseTraySessionPreferences,
   type NativeMenuAction,
   type WindowControlAction,
+  type LifecycleDialogChoice,
   type TraySessionPreferences,
 } from "@pi-desktop/shared";
 import {
@@ -35,6 +36,8 @@ export type WindowIpcDependencies = {
   applyCloseBehavior: (behavior: "tray" | "quit") => void;
   getCloseBehavior: () => "ask" | "tray" | "quit";
   respondClosePrompt: (id: string, choice: "tray" | "quit" | null) => boolean;
+  markLifecycleDialogRendererReady: (window: BrowserWindow) => boolean;
+  respondLifecycleDialog: (senderWindowId: number, requestId: unknown, choice: LifecycleDialogChoice) => boolean;
   markMenuRendererReady: (window: BrowserWindow) => boolean;
   executeNativeMenuAction: (action: NativeMenuAction) => unknown;
   setTraySessionPreferences: (preferences: TraySessionPreferences) => Promise<void>;
@@ -52,6 +55,8 @@ export function registerWindowIpc({
   getCloseBehavior,
   respondClosePrompt,
   markMenuRendererReady,
+  markLifecycleDialogRendererReady,
+  respondLifecycleDialog,
   executeNativeMenuAction,
   setTraySessionPreferences,
 }: WindowIpcDependencies): void {
@@ -216,6 +221,37 @@ export function registerWindowIpc({
     return { behavior };
   });
 
+  handleWithEvent(IPC.invoke.lifecycleDialogReady, async (event) => {
+    registrar.assertMainWindowSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || !markLifecycleDialogRendererReady(window)) {
+      throw Object.assign(new Error("lifecycle dialog renderer is not ready"), {
+        errorCode: ErrorCodes.INTERNAL,
+      });
+    }
+    return { ready: true };
+  });
+
+  handleWithEvent(IPC.invoke.lifecycleDialogRespond, async (event, input: unknown = {}) => {
+    registrar.assertMainWindowSender(event);
+    const value = input && typeof input === "object"
+      ? input as Record<string, unknown>
+      : null;
+    if (
+      !value ||
+      typeof value.requestId !== "string" ||
+      !value.requestId ||
+      value.requestId.length > 64 ||
+      (value.choice !== "cancel" && value.choice !== "confirm" && value.choice !== "tray" && value.choice !== "quit")
+    ) {
+      throw Object.assign(new Error("invalid lifecycle dialog response"), {
+        errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
+    return {
+      accepted: respondLifecycleDialog(event.sender.id, value.requestId, value.choice as LifecycleDialogChoice),
+    };
+  });
   handleWithEvent(IPC.invoke.menuRendererReady, async (event) => {
     const window = BrowserWindow.fromWebContents(event.sender);
     const mainWindow = getMainWindow();

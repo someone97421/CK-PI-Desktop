@@ -11,8 +11,10 @@ import { clearCaches, migrateFiles, removeBackups } from "./files";
 import { readStoragePreferences, STORAGE_PREFERENCE_FILE, writeStoragePreferences, type StoragePreferences } from "./preferences";
 import { relocateForkData } from "./fork-relocation";
 import { withBackupDirectoryLocks } from "./backup-lock";
+import { recoverMissingDefaultStorage, sameStorageRoots } from "./startup-recovery";
 
 export type StorageBootstrap = { file: string; anchor: string; managed: boolean; preferences: StoragePreferences };
+class StorageRecoveryCancelled extends Error {}
 let current: StorageBootstrap | null = null;
 export function getStorageBootstrap(): StorageBootstrap {
   if (!current) throw new Error("Storage bootstrap is not initialized.");
@@ -27,14 +29,33 @@ export async function prepareStorage(defaultData: string, overridden: boolean): 
   const file = join(anchor, STORAGE_PREFERENCE_FILE);
   const defaults = { data: defaultData, browser: app.getPath("sessionData") };
   let preferences: StoragePreferences;
+  let restartAfterRecovery = false;
   try {
+    const hasPersistedPreferences = existsSync(file);
     preferences = overridden ? { version: 1, roots: defaults, backups: [] }
       : readStoragePreferences(file, defaults);
-    if (!overridden && preferences.roots.data !== defaults.data
-      && (!existsSync(preferences.roots.data) || !existsSync(preferences.roots.browser))) {
-      throw new Error("The selected storage directory is unavailable. Reconnect its drive before starting PI-Desktop.");
+    const missingData = !overridden && !existsSync(preferences.roots.data);
+    const missingBrowser = !overridden && !existsSync(preferences.roots.browser);
+    if (missingData || missingBrowser) {
+      const isDefaultStorage = sameStorageRoots(preferences.roots, defaults);
+      const isFirstLaunch = !hasPersistedPreferences && !preferences.pending;
+      const canRecoverMissingDefault = missingData && hasPersistedPreferences && !preferences.pending;
+      const canResumeEmptyInstallMigration = missingData && !missingBrowser && preferences.pending?.kind === "migrate";
+      if (!isDefaultStorage || !(isFirstLaunch || canRecoverMissingDefault || canResumeEmptyInstallMigration)) {
+        throw new Error("The selected storage directory is unavailable. Reconnect its drive before starting PI-Desktop.");
+      }
+      if (canRecoverMissingDefault) {
+        const recovered = await recoverMissingDefaultStorage(file, defaults, preferences);
+        if (!recovered) throw new StorageRecoveryCancelled();
+        preferences = recovered;
+        restartAfterRecovery = !sameStorageRoots(recovered.roots, defaults);
+      }
     }
   } catch (error) {
+    if (error instanceof StorageRecoveryCancelled) {
+      app.exit(0);
+      return new Promise<StorageBootstrap>(() => {});
+    }
     await app.whenReady();
     const copy = catalogs[resolveLocale(app.getLocale())].settings.storage;
     await dialog.showMessageBox({ type: "error", title: copy.failedTitle,
@@ -43,6 +64,12 @@ export async function prepareStorage(defaultData: string, overridden: boolean): 
     return new Promise<StorageBootstrap>(() => {});
   }
   current = { file, anchor, managed: !overridden, preferences };
+  if (restartAfterRecovery) {
+    // 已选择其他目录；先重启重新取得目标目录的互操作锁，再初始化业务服务。
+    relaunchStorage();
+    app.exit(0);
+    return new Promise<StorageBootstrap>(() => {});
+  }
   // Chromium data follows the selected location while installation identity and its lock stay stable.
   if (!preferences.pending) {
     mkdirSync(preferences.roots.browser, { recursive: true });

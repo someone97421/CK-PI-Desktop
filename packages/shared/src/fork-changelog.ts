@@ -5,6 +5,12 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "插件中心新增公开评分与只读评论、已安装插件卡片网格，技能和 MCP 市场加载失败后可直接重试。",
+  "侧栏统一操作与复制菜单，可选显示项目运行标记和会话回复时间，继续保留关闭项目及分批加载。",
+  "新增独立的思考内容显示开关，保留任务过程抽屉；改善待办当前步骤、模型长名称和文件相对路径展示。",
+  "HTML 文件可选择内置浏览器、默认浏览器或文件管理器打开，插件也可预览其文件范围内的 HTML。",
+  "退出与关闭确认跟随应用主题；默认数据目录缺失时可选择恢复已有数据，切换目录后重新取得互斥锁。",
+  "修复 Windows Bash 进程终止隔离和 DeepSeek 请求兼容，继续尊重已保存的模型参数。",
   "数据存储采用上游迁移流程，提供复制校验、进度与失败重试，一起迁移浏览器数据；兼容旧目录配置并保留子代理快照和引导回执。",
   "修复历史版本切换和删除消息时迟到输出丢失或串入其他分支，未保存消息继续保留并等待真实落盘回执。",
   "修复 Windows PowerShell 对象输出和成功命令退出码；统一 Windows 长路径下的项目配置匹配。",
@@ -76,6 +82,12 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Add public plugin ratings and read-only reviews, an installed-plugin card grid, and retry actions for skill and MCP marketplace failures.",
+  "Unify sidebar action and copy menus, with optional project activity markers and reply dates while retaining project closing and incremental loading.",
+  "Add an independent reasoning display switch while retaining task process drawers; refine checklist steps, long model names and relative file paths.",
+  "Choose the built-in browser, default browser or file manager for HTML files, and let plugins preview HTML within their existing file scope.",
+  "Theme quit and close confirmations, recover existing data when the default profile is missing, and reacquire the directory lock after switching storage.",
+  "Fix Windows Bash process isolation and DeepSeek request compatibility while respecting saved model parameters.",
   "Adopt upstream storage migration with verified copying, progress, retry and browser data transfer, retaining legacy directory settings, subagent snapshots and steering receipts.",
   "Keep late outputs in the correct branch during history changes and message deletion; retain unsaved messages until real persistence acknowledgments arrive.",
   "Fix PowerShell object formatting and native exit codes, and align Windows extended-length project paths.",

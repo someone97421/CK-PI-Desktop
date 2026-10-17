@@ -92,17 +92,12 @@ test("the session and project rows share that arm", () => {
 });
 
 test("the session menu deletes on the second click, not the first", () => {
-  assert.match(sidebarSource, /data-action="delete-session"/);
-  assert.match(sidebarSource, /onClick=\{\(\) => requestDeleteSession\(session\)\}/);
+  assert.match(sidebarSource, /id: "delete-session"/);
+  assert.match(sidebarSource, /onSelect: \(\) => requestDeleteSession\(session\),/);
   // The item shows which click it is on, for the pointer and for the tests.
-  assert.match(sidebarSource, /data-armed=\{armedDelete === session\.id \? "true" : undefined\}/);
   assert.match(
     sidebarSource,
-    /className=\{cx\("danger", armedDelete === session\.id && "is-armed"\)\}/,
-  );
-  assert.match(
-    sidebarSource,
-    /\{armedDelete === session\.id\s*\?\s*t\("nav\.deleteTaskConfirm", \{ defaultValue: "Delete\?" \}\)\s*:\s*t\("nav\.deleteTask", \{ defaultValue: "Delete" \}\)\}/,
+    /label:[\s\S]*?armedDelete === session\.id[\s\S]*?t\("nav\.deleteTaskConfirm", \{ defaultValue: "Delete\?" \}\)[\s\S]*?t\("nav\.deleteTask", \{ defaultValue: "Delete" \}\)/,
   );
   // The session ids are the armed keys of the sidebar's session items, and the
   // project items namespace theirs so the two menus can never share an arm.

@@ -5,7 +5,7 @@ import { I18nextProvider } from "react-i18next";
 import { en } from "@pi-desktop/i18n";
 import type { AppSettings, UiMessage } from "@pi-desktop/shared";
 import { AssistantTurn } from "../../apps/desktop/src/features/chat/transcript/AssistantTurn";
-import { ThinkingDisplayModeRow } from "../../apps/desktop/src/components/settings/ThinkingDisplayModeRow";
+import { ShowThinkingRow } from "../../apps/desktop/src/components/settings/ShowThinkingRow";
 import { buildTranscriptEntries } from "../../apps/desktop/src/lib/assistant-turns";
 import { TranscriptSearchContext } from "../../apps/desktop/src/lib/transcript-search-context";
 import type { TranscriptSearchTarget } from "../../apps/desktop/src/lib/transcript-reading";
@@ -126,7 +126,7 @@ export async function turnProcessProbe() {
       !visible(container.querySelector('[data-message-id="progress"]')),
       "completed progress stays hidden until expanded",
     );
-    render(messages, true, null, "active-process");
+    render(messages.slice(0, -1), true, null, "active-process");
     check(
       header()?.getAttribute("aria-expanded") === "true" && visible(process()),
       "active detailed process starts open",
@@ -333,7 +333,7 @@ export async function turnProcessProbe() {
     flushSync(() =>
       root.render(
         <I18nextProvider i18n={i18n}>
-          <ThinkingDisplayModeRow
+          <ShowThinkingRow
             settings={settings}
             saveSettings={async (patch) => {
               saved = patch;
@@ -343,14 +343,14 @@ export async function turnProcessProbe() {
         </I18nextProvider>,
       ),
     );
-    click(container.querySelector<HTMLElement>('[role="radio"][aria-checked="false"]'));
+    click(container.querySelector<HTMLElement>('[role="switch"]'));
     check(
-      saved?.thinkingDisplayMode === "compact",
-      "settings control saves compact mode",
+      saved?.showThinking === false,
+      "settings control hides thinking independently of process folding",
     );
 
     render(
-      [intro, { ...read, toolStatus: "error", isError: true }, answer],
+      [intro, { ...read, toolStatus: "error", isError: true }],
       true,
       null,
       "compact-error",

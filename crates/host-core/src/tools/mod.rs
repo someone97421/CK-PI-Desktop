@@ -40,6 +40,49 @@ pub const MIN_BASH_TIMEOUT_MS: u64 = 1_000;
 pub const MAX_BASH_TIMEOUT_MS: u64 = 21_600_000;
 pub const DEFAULT_BASH_TIMEOUT_MS: u64 = 60_000;
 pub const INTERNAL_TOOL_RUNNER_FLAG: &str = "--internal-tool-runner";
+// 工具 runner 使用独立 Job；仅在宿主所在 Job 允许时脱离外层，避免创建被拒。
+#[cfg(any(windows, test))]
+const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(any(windows, test))]
+const WINDOWS_CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+
+#[cfg(any(windows, test))]
+const fn windows_tool_runner_creation_flags(breakaway_allowed: bool) -> u32 {
+    if breakaway_allowed {
+        WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_BREAKAWAY_FROM_JOB
+    } else {
+        WINDOWS_CREATE_NO_WINDOW
+    }
+}
+
+#[cfg(windows)]
+fn windows_breakaway_allowed() -> bool {
+    use windows_sys::Win32::System::JobObjects::{
+        IsProcessInJob, JobObjectBasicLimitInformation, QueryInformationJobObject,
+        JOBOBJECT_BASIC_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_BREAKAWAY_OK,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let mut in_job = 0;
+    if unsafe { IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) } == 0
+        || in_job == 0
+    {
+        return false;
+    }
+    let mut limits = JOBOBJECT_BASIC_LIMIT_INFORMATION::default();
+    let mut returned = 0u32;
+    let queried = unsafe {
+        QueryInformationJobObject(
+            std::ptr::null_mut(),
+            JobObjectBasicLimitInformation,
+            (&mut limits as *mut JOBOBJECT_BASIC_LIMIT_INFORMATION).cast(),
+            std::mem::size_of::<JOBOBJECT_BASIC_LIMIT_INFORMATION>() as u32,
+            &mut returned,
+        )
+    };
+    queried != 0 && limits.LimitFlags & JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0
+}
+
 const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
 const PROCESS_TERMINATION_TIMEOUT: Duration = Duration::from_millis(2_000);
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
@@ -2622,7 +2665,9 @@ async fn spawn_tool_runner(
     #[cfg(unix)]
     command.process_group(0);
     #[cfg(windows)]
-    command.creation_flags(0x0800_0000);
+    command.creation_flags(windows_tool_runner_creation_flags(
+        windows_breakaway_allowed(),
+    ));
 
     let mut child = spawn_with_retries(&mut command).await?;
     let pid = child.id().unwrap_or_default();
@@ -3292,6 +3337,64 @@ mod tests {
             extra_env: Vec::new(),
         };
         assert!(encode_runner_config(&nul_config).is_err());
+    }
+
+    #[test]
+    fn windows_tool_runner_flags_follow_the_host_job_capability() {
+        assert_eq!(
+            windows_tool_runner_creation_flags(true),
+            WINDOWS_CREATE_NO_WINDOW | WINDOWS_CREATE_BREAKAWAY_FROM_JOB,
+        );
+        assert_eq!(
+            windows_tool_runner_creation_flags(false),
+            WINDOWS_CREATE_NO_WINDOW,
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_bash_termination_does_not_reach_the_host_job() {
+        use std::os::windows::process::CommandExt;
+
+        let mut sibling = std::process::Command::new("cmd")
+            .args(["/c", "ping -n 60 127.0.0.1 >NUL"])
+            .creation_flags(WINDOWS_CREATE_NO_WINDOW)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("host-job sibling must start");
+        let dir = tempfile::tempdir().unwrap();
+        let dialect = shell::catalog(None)
+            .effective
+            .and_then(|shell| shell::dialect_for_id(&shell.id))
+            .unwrap_or("posix");
+        let command = match dialect {
+            "powershell" => "Start-Sleep -Seconds 30",
+            "cmd" => "ping -n 31 127.0.0.1 >NUL",
+            _ => "sleep 30",
+        };
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Bash",
+            &serde_json::json!({ "command": command }),
+            1_000,
+        )
+        .await;
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("TOOL_TIMEOUT"),
+            "a command in a job without breakaway must still run: {:?}",
+            result.content,
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            sibling.try_wait().unwrap().is_none(),
+            "stopping a Bash command must not terminate the host's job",
+        );
+        let _ = sibling.kill();
+        let _ = sibling.wait();
     }
 
     #[tokio::test]

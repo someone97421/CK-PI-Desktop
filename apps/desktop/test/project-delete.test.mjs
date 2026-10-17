@@ -59,17 +59,17 @@ function projectValue(block, key) {
   return match[1];
 }
 
-/**
- * The delete menu item from its action attribute to the end of its opening
- * tag, so a guard inside that handler is checked without matching sibling
- * menus of the same surface.
- */
+/** 定位 JSX 按钮或统一菜单 action 的删除处理范围。 */
 function deleteHandler(source) {
-  const start = source.indexOf('data-action="delete-project"');
+  const start = source.indexOf('data-action="delete-project"') >= 0
+    ? source.indexOf('data-action="delete-project"')
+    : source.indexOf('id: "delete-project"');
   assert.ok(start >= 0, "the delete action is present");
   const rest = source.slice(start);
-  const end = rest.search(/\n\s+>\n/);
-  assert.ok(end > 0, "the delete action button closes");
+  const end = rest.startsWith('id: "delete-project"')
+    ? rest.indexOf("\n              }),")
+    : rest.search(/\n\s+>\n/);
+  assert.ok(end > 0, "the delete action closes");
   return rest.slice(0, end);
 }
 
@@ -139,10 +139,12 @@ test("both project menus expose a destructive delete action", () => {
     ["ProjectsPage", projectsSource],
     ["Sidebar", sidebarSource],
   ]) {
-    // The item keeps its destructive styling and adds the armed state on top.
-    // The item keeps its destructive styling and adds the armed state on top.
-    assert.match(source, /className=\{cx\(\s*"danger",/, surface);
-    assert.match(source, /data-action="delete-project"/, surface);
+    assert.match(source, /className=\{cx\(\s*"danger",|danger: true/, surface);
+    assert.match(
+      source,
+      surface === "Sidebar" ? /id: "delete-project"/ : /data-action="delete-project"/,
+      surface,
+    );
     assert.match(source, /<ProjectDeleteDialog/, surface);
   }
 
@@ -152,6 +154,11 @@ test("both project menus expose a destructive delete action", () => {
       projectsSource.indexOf("toggleProjectArchive(project)"),
     "ProjectsPage orders delete after archive",
   );
+  assert.ok(
+    sidebarSource.indexOf('id: "delete-project"') >
+      sidebarSource.indexOf('id: "toggle-project-archive"'),
+    "Sidebar orders delete after archive",
+  );
   assert.match(projectsSource, /sessionCount: totalSessions/);
   assert.match(projectsSource, /setDeleteFor\(\{/);
   assert.match(
@@ -159,15 +166,7 @@ test("both project menus expose a destructive delete action", () => {
     /setRecents\(loadRecentProjects\(\)\);\s+showToast\(t\("project\.deleted", \{ name: deleteFor\.name \}\), \{ variant: "success" \}\)/,
   );
 
-  const sidebarDelete = sidebarSource.indexOf('data-action="delete-project"');
-  assert.ok(
-    sidebarDelete > sidebarSource.indexOf('data-action="toggle-project-archive"'),
-    "Sidebar orders delete after archive",
-  );
-  assert.ok(
-    sidebarDelete < sidebarSource.indexOf('t("project.close")'),
-    "Sidebar orders delete before close",
-  );
+  assert.match(sidebarSource, /id: "close-project"/);
   assert.match(sidebarSource, /sessionCount: deleteProjectFor\.sessions\.length/);
   assert.match(sidebarSource, /onError=\{reportError\}/);
 });
@@ -192,7 +191,7 @@ test("the menu item arms first and only a live task reaches the dialog", () => {
       /requestDeleteProject\(/,
       `${surface} routes the click through the two-step handler`,
     );
-    assert.match(handler, /data-armed=/, `${surface} exposes the armed state`);
+    assert.match(handler, surface === "Sidebar" ? /armed: armedDelete === projectDeleteKey\(entry\)/ : /data-armed=/, `${surface} exposes the armed state`);
     // The label has to name the second click while the item is armed.
     assert.match(source, /project\.deleteMenuConfirm/, `${surface} relabels the armed item`);
     assert.match(

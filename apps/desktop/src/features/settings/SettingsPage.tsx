@@ -50,7 +50,7 @@ import { KeyboardShortcutsSection } from "../../components/settings/KeyboardShor
 import { ConfigTransferSection } from "../../components/settings/ConfigTransferSection";
 import { AppearancePanels } from "../../components/settings/AppearancePanels";
 import { AppearanceMediaSection } from "../../components/settings/AppearanceMediaSection";
-import { ThinkingDisplayModeRow } from "../../components/settings/ThinkingDisplayModeRow";
+import { ShowThinkingRow } from "../../components/settings/ShowThinkingRow";
 import { FontSizeRow } from "../../components/settings/FontSizeRow";
 import { LanguageRow } from "../../components/settings/LanguageRow";
 import { SettingsMenuSelect } from "../../components/settings/SettingsMenuSelect";
@@ -430,6 +430,55 @@ export function SettingsPage() {
                 <LanguageRow settings={settings} saveSettings={saveSettings} />
               </SettingsCard>
 
+              <SettingsCard title={t("settings.sidebar")}>
+                <SettingsRow
+                  title={t("settings.sidebarRunningIndicators")}
+                  description={t("settings.sidebarRunningIndicatorsDesc")}
+                >
+                  <SettingsToggle
+                    checked={settings.sidebarRunningIndicators === true}
+                    label={t("settings.sidebarRunningIndicators")}
+                    onChange={() => void saveSettings({
+                      sidebarRunningIndicators: settings.sidebarRunningIndicators !== true,
+                    })}
+                  />
+                </SettingsRow>
+                {/*
+                  The two sub-switches are gated by the master switch. They keep
+                  their stored value while disabled, so turning the master back
+                  on restores the previous choice instead of resetting it.
+                */}
+                <SettingsRow title={t("settings.sidebarRunningBadge")}>
+                  <SettingsToggle
+                    checked={settings.sidebarRunningBadge === true}
+                    label={t("settings.sidebarRunningBadge")}
+                    disabled={settings.sidebarRunningIndicators !== true}
+                    onChange={() => void saveSettings({
+                      sidebarRunningBadge: settings.sidebarRunningBadge !== true,
+                    })}
+                  />
+                </SettingsRow>
+                <SettingsRow title={t("settings.sidebarRunningRail")}>
+                  <SettingsToggle
+                    checked={settings.sidebarRunningRail === true}
+                    label={t("settings.sidebarRunningRail")}
+                    disabled={settings.sidebarRunningIndicators !== true}
+                    onChange={() => void saveSettings({
+                      sidebarRunningRail: settings.sidebarRunningRail !== true,
+                    })}
+                  />
+                </SettingsRow>
+                <SettingsRow title={t("settings.sidebarSessionTime")}>
+                  <SettingsToggle
+                    checked={settings.sidebarSessionTime === true}
+                    label={t("settings.sidebarSessionTime")}
+                    onChange={() => void saveSettings({
+                      sidebarSessionTime: settings.sidebarSessionTime !== true,
+                    })}
+                  />
+                </SettingsRow>
+              </SettingsCard>
+
               <NetworkProxySection settings={settings} saveSettings={saveSettings} />
 
 
@@ -534,7 +583,7 @@ export function SettingsPage() {
                 </SettingsRow>
                 <CommandShellRow settings={settings} saveSettings={saveSettings} />
                 <LinkOpenTargetRow settings={settings} saveSettings={saveSettings} />
-                <ThinkingDisplayModeRow settings={settings} saveSettings={saveSettings} />
+                <ShowThinkingRow settings={settings} saveSettings={saveSettings} />
                 <ContextUsageDisplayRow
                   settings={settings}
                   saveSettings={saveSettings}

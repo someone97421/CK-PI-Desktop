@@ -22,7 +22,8 @@ import { useChatFileMenu } from "../../../hooks/use-chat-file-menu";
 import { ContextMenu } from "../../../components/ContextMenu";
 import { ImageHoverCard, type ImageHoverAnchor } from "../../../components/ImageHoverCard";
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
-import { isThinkingActive, resolveThinkingDisplayMode } from "../../../lib/turn-process";
+import { isThinkingActive } from "../../../lib/turn-process";
+import { resolveShowThinking } from "../../../lib/thinking-visibility";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
 import { disclosureKey, useAutomaticDisclosure } from "./disclosure";
 export { useAutomaticDisclosure } from "./disclosure";
@@ -698,7 +699,7 @@ export const ThinkingRow = memo(function ThinkingRow({
     collapseDisclosure();
   }, [collapseDisclosure, onUserInteraction]);
   const compact = useAppStore(
-    (state) => resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode) === "compact",
+    (state) => !resolveShowThinking(state.settings),
   );
   const text = thinkingText(message);
   const thinkingActive = isThinkingActive(message, streaming);

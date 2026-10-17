@@ -8,6 +8,7 @@ import {
   IconPanel,
   IconPanelOpen,
 } from "../../components/icons";
+import { LifecycleConfirmationDialog } from "../../components/LifecycleConfirmationDialog";
 import { ProjectCreateDialog } from "../../components/ProjectCreateDialog";
 import { SearchDialog } from "../../components/SearchDialog";
 import { Sidebar } from "../../components/Sidebar";
@@ -16,7 +17,6 @@ import { ToastHost } from "../../components/Toast";
 import { UpdateBanner } from "../../components/UpdateBanner";
 import { cx, TooltipButton } from "../../components/ui";
 import { WindowControls } from "../../components/WindowControls";
-import { ClosePromptDialog } from "../../components/ClosePromptDialog";
 import { WorkPanel } from "../../components/workpanel/WorkPanel";
 import { useCopyTex } from "../../hooks/use-copy-tex";
 import { api } from "../../lib/api";
@@ -337,7 +337,7 @@ export function AppShell() {
         <WindowControls />
       ) : null}
       <ProjectCreateDialog />
-      <ClosePromptDialog />
+      <LifecycleConfirmationDialog />
       {splash}
       {startupRecovery}
     </div>

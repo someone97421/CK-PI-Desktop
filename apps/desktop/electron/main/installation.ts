@@ -9,6 +9,7 @@ import { runBackupLockProcess } from "./storage/backup-lock";
 import { ignoreBrokenStdio } from "./logger";
 import { installMainProcessErrorHandlers } from "./main-process-errors";
 import { readStoragePreferences, STORAGE_PREFERENCE_FILE } from "./storage/preferences";
+import { sameStorageRoots } from "./storage/startup-recovery";
 import { initialTemporaryWorkspaceCommandLine } from "./temporary-workspace";
 
 export const isBackupLockProcess = runBackupLockProcess();
@@ -34,12 +35,16 @@ if (!isBackupLockProcess) {
     const legacyDirectory = !storageOverridden && !existsSync(preferenceFile)
       ? readConfiguredDataDirectory(app.getPath("appData")) : undefined;
     defaultDataDir = resolve(startupDataDirectoryEnvironment?.trim() || legacyDirectory || join(homedir(), ".pi-desktop"));
-    const preferences = storageOverridden ? null : readStoragePreferences(preferenceFile, {
-      data: defaultDataDir, browser: join(storageAnchor, "chromium"),
-    });
-    if (existsSync(preferenceFile) && preferences &&
-        (!existsSync(preferences.roots.data) || !existsSync(preferences.roots.browser))) {
-      throw new Error("所选存储目录不可用，请先重新连接其所在磁盘。");
+    const defaults = { data: defaultDataDir, browser: join(storageAnchor, "chromium") };
+    const preferences = storageOverridden ? null : readStoragePreferences(preferenceFile, defaults);
+    if (existsSync(preferenceFile) && preferences) {
+      const missingData = !existsSync(preferences.roots.data);
+      const missingBrowser = !existsSync(preferences.roots.browser);
+      const canRecoverDefault = sameStorageRoots(preferences.roots, defaults) && missingData
+        && (!preferences.pending || (preferences.pending.kind === "migrate" && !missingBrowser));
+      if ((missingData || missingBrowser) && !canRecoverDefault) {
+        throw new Error("所选存储目录不可用，请先重新连接其所在磁盘。");
+      }
     }
     effectiveDataDirectory = preferences?.roots.data ?? defaultDataDir;
   } catch (error) {

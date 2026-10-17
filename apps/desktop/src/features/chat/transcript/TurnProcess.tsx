@@ -13,6 +13,7 @@ import {
   turnProcessTiming,
 } from "../../../lib/turn-process";
 import { useAppStore } from "../../../stores/app-store";
+import { resolveShowThinking } from "../../../lib/thinking-visibility";
 import {
   IconChevronRight,
   IconCircleAlert,
@@ -38,6 +39,7 @@ export function TurnProcess({
 }) {
   const { t } = useTranslation();
   const mode = useAppStore((state) => resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode));
+  const showThinking = useAppStore((state) => resolveShowThinking(state.settings));
   const search = useContext(TranscriptSearchContext);
   const revealRequest = useMemo(() => search && processContainsMessage(processParts, search.messageId)
     ? search.requestId : undefined, [processParts, search]);
@@ -45,7 +47,7 @@ export function TurnProcess({
     processParts.flatMap((part) => part.kind === "activity" ? part.items : []), delegationStatuses,
   ), [processParts, delegationStatuses]);
   const thinkingNow = useMemo(() => isTurnThinking(turnParts, isActive), [turnParts, isActive]);
-  const visibleSteps = useMemo(() => cachedVisibleProcessSteps(processParts, mode === "compact", isActive), [processParts, mode, isActive]);
+  const visibleSteps = useMemo(() => cachedVisibleProcessSteps(processParts, !showThinking, isActive), [processParts, showThinking, isActive]);
   const disclosure = useAutomaticDisclosure(
     shouldAutoOpenTurnProcess(mode, isActive, summary.issues > 0),
     revealRequest,
