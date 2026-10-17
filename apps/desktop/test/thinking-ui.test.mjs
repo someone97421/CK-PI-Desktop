@@ -276,7 +276,7 @@ test("expanded assistant activity rails collapse their disclosures", () => {
   assert.match(stylesSource, /\.disclosure-collapse-rail:focus-visible\s*\{/);
 });
 
-test("detailed mode opens the last tool while compact keeps payloads collapsed", () => {
+test("末条工具的自动展开与思考可见性独立", () => {
   assert.match(transcriptDisclosureSource, /export function useAutomaticDisclosure\(/);
   assert.match(transcriptDisclosureSource, /revealRequest\?: number/);
   assert.match(transcriptDisclosureSource, /const currentOpen = useRef\(open\)/);
@@ -288,7 +288,7 @@ test("detailed mode opens the last tool while compact keeps payloads collapsed",
   );
   assert.match(
     transcriptSource,
-    /const autoOpenLatest =\s*!compact && isLast && item === lastItem/,
+    /const autoOpenLatest =\s*isLast && item === lastItem/,
   );
   assert.match(transcriptSource, /<ToolRow[\s\S]*?autoOpen=\{autoOpenLatest\}/);
   assert.match(transcriptToolRowSource, /const disclosure = useAutomaticDisclosure\(\s*autoOpen && !failed && status !== "denied",\s*revealRequest/);

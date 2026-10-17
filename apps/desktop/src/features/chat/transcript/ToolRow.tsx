@@ -201,9 +201,8 @@ function HostToolRow({
   // (D227). Property reads only, so a streaming row can afford it every tick.
   const run = action === "run" ? runOutcome(message) : null;
   const failed = status === "error" || run === "failed";
-  // Detailed mode opens the last tool of the last activity group. Compact keeps
-  // payloads collapsed so a live burst only updates the header. Failure and
-  // denial stay in the row head without expanding the payload automatically.
+  // 最后一个活动分组的末条工具默认展开，与思考内容的可见性无关。
+  // 失败和拒绝只显示在行标题中，不自动展开详情。
   const revealRequest = useMessageRevealRequest(message.id);
   const disclosure = useAutomaticDisclosure(
     autoOpen && !failed && status !== "denied",

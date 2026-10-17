@@ -350,7 +350,6 @@ export const ActivityGroup = memo(function ActivityGroup({
 
   const renderedItems = <ActivityItems
     items={items}
-    compact={compact}
     isLast={isLast}
     isActive={isActive}
     live={live}

@@ -16,7 +16,6 @@ function itemKey(item: AssistantActivityItem) {
 
 type ActivityItemsProps = {
   items: readonly AssistantActivityItem[];
-  compact: boolean;
   isLast: boolean;
   isActive: boolean;
   live: boolean;
@@ -36,7 +35,7 @@ type ActivityItemBlockProps = Omit<ActivityItemsProps, "items" | "delegateItems"
 };
 
 const ActivityItemBlock = memo(function ActivityItemBlock({
-  block, compact, isLast, isActive, live, lastItem, topologyItem,
+  block, isLast, isActive, live, lastItem, topologyItem,
   delegateItems, delegationStatuses, delegationTimings, onUserInteraction,
 }: ActivityItemBlockProps) {
   return <>{block.items.map((item) => {
@@ -55,7 +54,7 @@ const ActivityItemBlock = memo(function ActivityItemBlock({
     }
     // The literal last item of the last activity part owns this default,
     // never the last item of an internal render block.
-    const autoOpenLatest = !compact && isLast && item === lastItem;
+    const autoOpenLatest = isLast && item === lastItem;
     if (item.kind === "tool") return (
       <Fragment key={item.message.id}>
         <ToolRow imagesInTurn message={item.message} autoOpen={autoOpenLatest}
@@ -91,7 +90,6 @@ export const ActivityItems = memo(function ActivityItems({ items, ...context }: 
     return <ActivityItemBlock
       key={block.key}
       block={block}
-      compact={context.compact}
       isLast={ownsLast && context.isLast}
       isActive={context.isActive}
       live={context.live}
