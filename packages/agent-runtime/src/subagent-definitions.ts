@@ -53,12 +53,12 @@ export function subagentDefinitionDir(_workspaceRoot: string): string {
 }
 
 /**
- * 内置定义描述可用能力；范围明确且有协作收益的中等任务也适合委派。
+ * Builtin definitions describe capabilities; the main agent's delegation rules govern their use.
  */
 export const BUILTIN_SUBAGENT_DOCUMENTS: readonly string[] = [
   `---
 name: explorer
-description: Investigate a bounded codebase question, subsystem, call chain or fault hypothesis and return concise evidence. Useful when several searches or file reads can be handled independently or save the main agent context.
+description: Investigate a bounded codebase question, subsystem, call chain or fault hypothesis and return concise evidence.
 tools: [Read, Glob, Grep, Bash]
 reportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS.explorer}
 ---
@@ -88,7 +88,7 @@ than a guess.
 </answer>`,
   `---
 name: code-reviewer
-description: Focused read-only review of finished changes for defects, edge cases and missing coverage. Use when a fresh perspective can catch mistakes or resolve uncertainty, including on medium-sized changes.
+description: Focused read-only review of finished changes for defects, edge cases and missing coverage when an independent context is needed to avoid bias from prior reasoning.
 tools: [Read, Glob, Grep]
 reportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS["code-reviewer"]}
 ---

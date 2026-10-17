@@ -46,14 +46,14 @@ test("totalRunningProjects counts groups with live work, not sessions", () => {
   assert.equal(totalRunningProjects([running, waiting, idle]), 2);
 });
 
-test("affordances default off so a fresh install shows a clean sidebar", () => {
+test("运行标记缺省开启", () => {
   assert.deepEqual(resolveSidebarRunningAffordances(undefined), {
-    badge: false,
-    rail: false,
+    badge: true,
+    rail: true,
   });
-  assert.deepEqual(resolveSidebarRunningAffordances({}), { badge: false, rail: false });
-  assert.deepEqual(resolveSidebarRunningAffordances(null), { badge: false, rail: false });
-  assert.deepEqual(resolveSidebarRunningAffordances({ sidebarRunningIndicators: true }), { badge: false, rail: false });
+  assert.deepEqual(resolveSidebarRunningAffordances({}), { badge: true, rail: true });
+  assert.deepEqual(resolveSidebarRunningAffordances(null), { badge: true, rail: true });
+  assert.deepEqual(resolveSidebarRunningAffordances({ sidebarRunningIndicators: true }), { badge: true, rail: true });
 });
 
 test("the master switch gates both sub-switches", () => {
@@ -66,13 +66,13 @@ test("the master switch gates both sub-switches", () => {
     }),
     { badge: false, rail: false },
   );
-  // Master off by absence (default), sub-switches on: still off.
+  // 未保存总开关时缺省开启，保留子开关的显式值。
   assert.deepEqual(
     resolveSidebarRunningAffordances({
       sidebarRunningBadge: true,
       sidebarRunningRail: true,
     }),
-    { badge: false, rail: false },
+    { badge: true, rail: true },
   );
 });
 

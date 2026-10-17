@@ -206,10 +206,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     installPluginRendererProtocol((pluginId, generation, requestPath) =>
       plugins.resolveRendererSource(pluginId, generation, requestPath),
     );
-    // Load the close-behavior preference before the first window exists: the
-    // close handler reads `closeBehavior` synchronously, and a window created
-    // while it still held the "ask" default would prompt a user who already
-    // chose.
+    // 在创建窗口前恢复已保存的关闭行为。
     const storedBehavior = readCloseBehavior(dataDir);
     if (storedBehavior) state.closeBehavior = storedBehavior;
     createTray();

@@ -16,7 +16,7 @@ pub(super) fn effective_mode(db: &Database, session_id: &str) -> Result<String> 
                 .map(str::to_owned)
         })
         .filter(|mode| sessions::is_valid_permission_mode(mode) && mode != "inherit")
-        .unwrap_or_else(|| "ask".into()))
+        .unwrap_or_else(|| "auto".into()))
 }
 
 pub(super) fn check_target(db: &Database, session_id: &str, ceiling: &str) -> Result<()> {

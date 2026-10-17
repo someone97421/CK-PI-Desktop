@@ -79,7 +79,7 @@ export type AppSettings = {
   /** App-owned real-time voice bindings; separate from local dictation. */
   liveVoice?: LiveVoiceSettings;
   defaultMode: Mode;
-  /** Add a user-level Windows Explorer entry for temporary sessions. */
+  /** Windows 资源管理器临时会话入口；Windows 上缺省开启。 */
   temporaryWorkspaceContextMenu?: boolean;
   /**
    * Keep retryable provider/network failures retrying until the request succeeds.
@@ -98,7 +98,7 @@ export type AppSettings = {
   runStatusReminder?: boolean;
   /** Allow Agent mode to call TypeSafe Jev for explicit structured classifications. */
   jevEnabled?: boolean;
-  /** Prevent idle system sleep while this desktop app runs; off when absent. */
+  /** 应用运行期间阻止系统空闲休眠；缺省开启。 */
   keepAwakeWhileRunning?: boolean;
   defaultCommandShell?: CommandShellId;
   /** @deprecated Retained for one-time migration into pi.prompt-enhancement. */
@@ -111,6 +111,7 @@ export type AppSettings = {
   promptEnhancementModelId?: string;
   /** @deprecated Retained for one-time migration into pi.prompt-enhancement. */
   promptEnhancementThinkingLevel?: ThinkingLevel;
+  /** 全局默认权限模式；缺省为 auto。 */
   defaultPermissionMode?: GlobalPermissionMode;
   theme: ThemePreference;
   /** Custom label shown in the desktop sidebar; empty uses the localized app name. */
@@ -132,7 +133,7 @@ export type AppSettings = {
   fontScale?: number;
   /** Home media display size in pixels (64–500); absent means 256. */
   homeMediaSize?: number;
-  /** 仅控制思考内容展示；缺省沿用旧 thinkingDisplayMode，不影响模型思考级别及过程折叠。 */
+  /** 仅控制思考内容展示；缺省开启，兼容旧 thinkingDisplayMode，不影响模型思考级别及过程折叠。 */
   showThinking?: boolean;
   /** 保留旧配置读取兼容；compact 隐藏思考，其他值显示。 */
   thinkingDisplayMode?: "detailed" | "compact";
@@ -171,9 +172,9 @@ export type AppSettings = {
    */
   networkPolicy?: NetworkPolicySettings;
   /**
-   * Preferred destination when clicking HTTP/HTTPS links in chat messages.
-   * `workpanel`: Preview in the Work Panel browser tab (default).
-   * `external`: Open directly in the system's default web browser.
+   * 点击聊天消息中 HTTP/HTTPS 链接时的目标。
+   * `workpanel`：在工作面板的浏览器标签页中预览。
+   * `external`：直接用系统默认浏览器打开（缺省）。
    */
   linkOpenTarget?: LinkOpenTarget;
   /**
@@ -194,18 +195,16 @@ export type AppSettings = {
   /** Keep the display awake while the app is running; absent defaults to false. */
   preventScreenSleep?: boolean;
   /**
-   * Sidebar project "running" affordances. The master switch gates both
-   * sub-switches; absent means disabled, so a fresh install shows a clean
-   * sidebar until the user opts in.
+   * 侧栏项目运行标记；总开关与两个子开关均缺省开启，
+   * 总开关控制子开关是否生效。
    */
   sidebarRunningIndicators?: boolean;
-  /** Count badge beside a project name. Only honored while the master is on. */
+  /** 项目名旁的数量徽标；缺省开启，仅在总开关开启时生效。 */
   sidebarRunningBadge?: boolean;
-  /** Activity rail down the project group. Only honored while the master is on. */
+  /** 项目组旁的活动轨道；缺省开启，仅在总开关开启时生效。 */
   sidebarRunningRail?: boolean;
   /**
-   * Last-reply date shown at the right edge of session rows. Absent means
-   * disabled, so a fresh install shows a clean sidebar until the user opts in.
+   * 会话行右侧的最后回复日期；缺省开启。
    */
   sidebarSessionTime?: boolean;
   onboardingDismissed: boolean;

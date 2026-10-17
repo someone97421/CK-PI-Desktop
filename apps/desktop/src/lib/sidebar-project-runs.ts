@@ -30,10 +30,7 @@ export const EMPTY_PROJECT_RUN_SUMMARY: ProjectRunSummary = {
 /** Minimal session shape needed to classify one row. */
 export type ProjectRunSession = { id: string };
 
-/**
- * 两种运行标记由总开关控制；缺省关闭总开关。
- * 子开关缺省同样关闭，与设置界面的显示保持一致。
- */
+/** 两种运行标记由总开关控制；总开关与子开关均缺省开启。 */
 export type SidebarRunningAffordances = {
   badge: boolean;
   rail: boolean;
@@ -48,10 +45,10 @@ export function resolveSidebarRunningAffordances(
       }
     | null,
 ): SidebarRunningAffordances {
-  const master = settings?.sidebarRunningIndicators === true;
+  const master = settings?.sidebarRunningIndicators !== false;
   return {
-    badge: master && settings?.sidebarRunningBadge === true,
-    rail: master && settings?.sidebarRunningRail === true,
+    badge: master && settings?.sidebarRunningBadge !== false,
+    rail: master && settings?.sidebarRunningRail !== false,
   };
 }
 

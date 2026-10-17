@@ -553,7 +553,7 @@ export function createApplicationLifecycle({
   }
 
   function applyKeepAwakeWhileRunning(settings?: { keepAwakeWhileRunning?: unknown } | null) {
-    systemBlocker.setEnabled(settings?.keepAwakeWhileRunning === true);
+    systemBlocker.setEnabled(settings?.keepAwakeWhileRunning !== false);
   }
 
   function disposePowerSaveBlockers() {

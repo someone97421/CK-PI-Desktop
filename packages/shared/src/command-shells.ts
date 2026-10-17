@@ -107,7 +107,7 @@ export function isCommandShellCatalog(value: unknown): value is CommandShellCata
   );
 }
 
-/** Defaults preserve the host's native shell on Windows and POSIX Bash elsewhere. */
+/** Windows 缺省使用 PowerShell 7，其他平台使用 Bash。 */
 export function defaultCommandShellForPlatform(platform: string): CommandShellId {
-  return platform === "win32" ? "windows-powershell" : "bash";
+  return platform === "win32" ? "windows-pwsh" : "bash";
 }

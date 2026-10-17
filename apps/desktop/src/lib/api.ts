@@ -431,7 +431,7 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     infiniteProviderRetry:
       (settings as { infiniteProviderRetry?: unknown }).infiniteProviderRetry === true,
     temporaryWorkspaceContextMenu:
-      (settings as { temporaryWorkspaceContextMenu?: unknown }).temporaryWorkspaceContextMenu === true,
+      settings.temporaryWorkspaceContextMenu ?? (window.piDesktop?.platform === "win32"),
     jevEnabled: (settings as { jevEnabled?: unknown }).jevEnabled === true,
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
@@ -892,6 +892,8 @@ export const api = {
       IPC.invoke.providersSetSecret,
       input,
     ),
+  getProviderSecret: (id: string) =>
+    invoke<{ value?: string }>(IPC.invoke.providersGetSecret, id),
   testProvider: (id: string) => invoke(IPC.invoke.providersTest, id),
   /**
    * Discover models from the provider's own endpoint. Saved providers pass

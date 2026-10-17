@@ -2167,7 +2167,7 @@ export function Sidebar({
       const result: React.ReactNode[] = [
         ...renderSessionRows(sessions, {
           projectPath: entry.path,
-          showLastReplyDate: settings?.sidebarSessionTime === true,
+          showLastReplyDate: settings?.sidebarSessionTime !== false,
         }),
       ];
       // Add "load more" button if there are hidden sessions
@@ -2642,7 +2642,7 @@ export function Sidebar({
           <RemoteProjectGroups groups={remoteProjectGroups}
             renderSessions={(sessions) => renderSessionRows(sessions, {
               temporary: false,
-              showLastReplyDate: settings?.sidebarSessionTime === true,
+              showLastReplyDate: settings?.sidebarSessionTime !== false,
             })} />
         </div>
 

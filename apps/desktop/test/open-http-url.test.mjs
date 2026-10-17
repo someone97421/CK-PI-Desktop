@@ -58,11 +58,11 @@ const sessionState = (overrides = {}) => ({
   ...overrides,
 });
 
-test("resolveLinkOpenTarget treats only external as the OS browser", () => {
+test("仅显式 workpanel 使用工作面板，缺省使用外部浏览器", () => {
   assert.equal(resolveLinkOpenTarget("external"), "external");
   assert.equal(resolveLinkOpenTarget("workpanel"), "workpanel");
-  assert.equal(resolveLinkOpenTarget(undefined), "workpanel");
-  assert.equal(resolveLinkOpenTarget("unknown"), "workpanel");
+  assert.equal(resolveLinkOpenTarget(undefined), "external");
+  assert.equal(resolveLinkOpenTarget("unknown"), "external");
 });
 
 test("work-panel destination needs an active session", () => {

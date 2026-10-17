@@ -514,6 +514,7 @@ export function ProviderSetupDialog({
             apiKeyRef={apiKeyRef}
             nameRef={nameRef}
             apiKey={apiKey}
+            savedKeyProviderId={provider?.hasSecret ? provider.id : undefined}
             onApiKeyChange={setApiKey}
             noApiKeyRequired={noApiKeyRequired}
             onNoApiKeyRequiredChange={(required) => {

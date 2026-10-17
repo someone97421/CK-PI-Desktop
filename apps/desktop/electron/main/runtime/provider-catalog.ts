@@ -182,7 +182,7 @@ export function createProviderCatalogRuntime({
       runStatusReminder: (value as T & { runStatusReminder?: unknown })
         .runStatusReminder !== false,
       keepAwakeWhileRunning: (value as T & { keepAwakeWhileRunning?: unknown })
-        .keepAwakeWhileRunning === true,
+        .keepAwakeWhileRunning !== false,
       jevEnabled: (value as T & { jevEnabled?: unknown }).jevEnabled === true,
       defaultCommandShell: isCommandShellId(value.defaultCommandShell)
         ? value.defaultCommandShell

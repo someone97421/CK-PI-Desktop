@@ -436,10 +436,10 @@ export function SettingsPage() {
                   description={t("settings.sidebarRunningIndicatorsDesc")}
                 >
                   <SettingsToggle
-                    checked={settings.sidebarRunningIndicators === true}
+                    checked={settings.sidebarRunningIndicators !== false}
                     label={t("settings.sidebarRunningIndicators")}
                     onChange={() => void saveSettings({
-                      sidebarRunningIndicators: settings.sidebarRunningIndicators !== true,
+                      sidebarRunningIndicators: settings.sidebarRunningIndicators === false,
                     })}
                   />
                 </SettingsRow>
@@ -450,30 +450,30 @@ export function SettingsPage() {
                 */}
                 <SettingsRow title={t("settings.sidebarRunningBadge")}>
                   <SettingsToggle
-                    checked={settings.sidebarRunningBadge === true}
+                    checked={settings.sidebarRunningBadge !== false}
                     label={t("settings.sidebarRunningBadge")}
-                    disabled={settings.sidebarRunningIndicators !== true}
+                    disabled={settings.sidebarRunningIndicators === false}
                     onChange={() => void saveSettings({
-                      sidebarRunningBadge: settings.sidebarRunningBadge !== true,
+                      sidebarRunningBadge: settings.sidebarRunningBadge === false,
                     })}
                   />
                 </SettingsRow>
                 <SettingsRow title={t("settings.sidebarRunningRail")}>
                   <SettingsToggle
-                    checked={settings.sidebarRunningRail === true}
+                    checked={settings.sidebarRunningRail !== false}
                     label={t("settings.sidebarRunningRail")}
-                    disabled={settings.sidebarRunningIndicators !== true}
+                    disabled={settings.sidebarRunningIndicators === false}
                     onChange={() => void saveSettings({
-                      sidebarRunningRail: settings.sidebarRunningRail !== true,
+                      sidebarRunningRail: settings.sidebarRunningRail === false,
                     })}
                   />
                 </SettingsRow>
                 <SettingsRow title={t("settings.sidebarSessionTime")}>
                   <SettingsToggle
-                    checked={settings.sidebarSessionTime === true}
+                    checked={settings.sidebarSessionTime !== false}
                     label={t("settings.sidebarSessionTime")}
                     onChange={() => void saveSettings({
-                      sidebarSessionTime: settings.sidebarSessionTime !== true,
+                      sidebarSessionTime: settings.sidebarSessionTime === false,
                     })}
                   />
                 </SettingsRow>
@@ -488,10 +488,10 @@ export function SettingsPage() {
                   description={t("settings.keepAwakeWhileRunningDesc")}
                 >
                   <SettingsToggle
-                    checked={settings.keepAwakeWhileRunning === true}
+                    checked={settings.keepAwakeWhileRunning !== false}
                     label={t("settings.keepAwakeWhileRunning")}
                     onChange={() => void saveSettings({
-                      keepAwakeWhileRunning: settings.keepAwakeWhileRunning !== true,
+                      keepAwakeWhileRunning: settings.keepAwakeWhileRunning === false,
                     })}
                   />
                 </SettingsRow>
@@ -511,10 +511,10 @@ export function SettingsPage() {
                     description={t("settings.temporaryWorkspaceContextMenuDesc")}
                   >
                     <SettingsToggle
-                      checked={settings.temporaryWorkspaceContextMenu === true}
+                      checked={settings.temporaryWorkspaceContextMenu !== false}
                       label={t("settings.temporaryWorkspaceContextMenu")}
                       onChange={() => void saveSettings({
-                        temporaryWorkspaceContextMenu: settings.temporaryWorkspaceContextMenu !== true,
+                        temporaryWorkspaceContextMenu: settings.temporaryWorkspaceContextMenu === false,
                       })}
                     />
                   </SettingsRow>
@@ -549,7 +549,7 @@ export function SettingsPage() {
                   <SettingsMenuSelect
                     className="settings-permission-select"
                     label={t("settings.permissionMode")}
-                    value={settings.defaultPermissionMode ?? "ask"}
+                    value={settings.defaultPermissionMode ?? "auto"}
                     onChange={(mode) =>
                       void saveSettings({
                         defaultPermissionMode: mode as GlobalPermissionMode,

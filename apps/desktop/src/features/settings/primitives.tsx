@@ -272,7 +272,7 @@ export function LinkOpenTargetRow({
   saveSettings: (patch: Partial<AppSettings>) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const current = settings.linkOpenTarget ?? "workpanel";
+  const current = settings.linkOpenTarget ?? "external";
   return (
     <SettingsRow title={t("settings.linkOpenTarget")}>
       <SegmentedControl

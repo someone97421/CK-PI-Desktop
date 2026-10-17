@@ -37,7 +37,7 @@ test("invalid timestamps do not render a misleading date", () => {
 });
 
 test("project session rows show the date until hover or focus reveals actions", () => {
-  assert.match(sidebarSource, /sidebarSessionTime === true/);
+  assert.match(sidebarSource, /sidebarSessionTime !== false/);
   assert.match(sidebarSource, /className="thread-item-date-separator"/);
   assert.match(sidebarSource, /className="thread-item-last-reply"/);
   assert.match(

@@ -13,6 +13,7 @@ import type { CatalogApiStyle } from "@pi-desktop/shared";
 import { Field, Input, SettingsToggle } from "../ui";
 import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import { ServiceMonogram } from "./ServiceMonogram";
+import { ProviderApiKeyInput } from "./ProviderApiKeyInput";
 import { endpointLabel } from "./service-catalog";
 import { API_STYLE_LABEL_KEYS, CUSTOM_PROVIDER_API_STYLES } from "./provider-api-style";
 
@@ -32,6 +33,7 @@ export type ProviderConnectionFieldsProps = {
   apiKeyRef: RefObject<HTMLInputElement | null>;
   nameRef: RefObject<HTMLInputElement | null>;
   apiKey: string;
+  savedKeyProviderId?: string;
   onApiKeyChange: (value: string) => void;
   noApiKeyRequired: boolean;
   onNoApiKeyRequiredChange: (required: boolean) => void;
@@ -62,6 +64,7 @@ export function ProviderConnectionFields({
   apiKeyRef,
   nameRef,
   apiKey,
+  savedKeyProviderId,
   onApiKeyChange,
   noApiKeyRequired,
   onNoApiKeyRequiredChange,
@@ -116,15 +119,14 @@ export function ProviderConnectionFields({
         {named ? (
           <div className="provider-setup-key">
             <Field label={t("settings.apiKey")} hint={apiKeyHint ?? keyHint}>
-              <Input
-                ref={apiKeyRef}
-                type="password"
+              <ProviderApiKeyInput
+                key={savedKeyProviderId ?? "new"}
+                inputRef={apiKeyRef}
+                savedKeyProviderId={savedKeyProviderId}
                 value={apiKey}
-                placeholder="sk-…"
-                className="font-mono text-sm-plus"
-                autoComplete="off"
                 autoFocus
-                onChange={(event) => onApiKeyChange(event.target.value)}
+                disabled={saving}
+                onChange={onApiKeyChange}
               />
             </Field>
           </div>
@@ -171,15 +173,13 @@ export function ProviderConnectionFields({
           <div className="provider-setup-field-row provider-setup-custom-auth-row">
             <div className="provider-setup-key">
               <Field label={t("settings.apiKey")} hint={keyHint}>
-                <Input
-                  ref={apiKeyRef}
-                  type="password"
+                <ProviderApiKeyInput
+                  key={`${savedKeyProviderId ?? "new"}:${noApiKeyRequired}`}
+                  inputRef={apiKeyRef}
+                  savedKeyProviderId={savedKeyProviderId}
                   value={apiKey}
-                  placeholder="sk-…"
-                  className="font-mono text-sm-plus"
-                  autoComplete="off"
                   disabled={saving || noApiKeyRequired}
-                  onChange={(event) => onApiKeyChange(event.target.value)}
+                  onChange={onApiKeyChange}
                 />
               </Field>
               <div className="provider-setup-no-api-key-option">

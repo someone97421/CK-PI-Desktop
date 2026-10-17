@@ -1096,6 +1096,8 @@ sklm: {
     exportProvidersDone: "已导出 {{count}} 个提供商（其中 {{keys}} 个含 API 密钥）",
     importProvidersDone: "导入完成：新增 {{created}}，更新 {{updated}}，失败 {{failed}}",
     apiKey: "API 密钥",
+    showApiKey: "显示密钥",
+    hideApiKey: "隐藏密钥",
     baseUrl: "接口地址",
     baseUrlInvalid: "请输入有效的 http:// 或 https:// 地址。",
     modelId: "模型 ID",

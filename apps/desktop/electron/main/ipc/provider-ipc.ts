@@ -205,6 +205,10 @@ export function registerProviderIpc({
         : result;
     },
   );
+  handle(IPC.invoke.providersGetSecret, async (id: string) => {
+    if (!host) throw new Error("host unavailable");
+    return host.call<{ value?: string }>("providers.getSecret", { id });
+  });
   handle(IPC.invoke.providersDelete, async (id: string) => {
     if (!host) throw new Error("host unavailable");
     const result = await host.call("providers.delete", { id });

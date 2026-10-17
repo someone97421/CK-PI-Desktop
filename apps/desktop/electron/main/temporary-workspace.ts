@@ -153,7 +153,7 @@ export function createTemporaryWorkspaceRuntime({
     settings?: TemporaryWorkspaceSettings | null,
   ): Promise<void> => {
     if (process.platform !== "win32") return;
-    const enabled = settings?.temporaryWorkspaceContextMenu === true;
+    const enabled = settings?.temporaryWorkspaceContextMenu !== false;
     contextMenuOperation = contextMenuOperation.catch(() => undefined).then(async () => {
       if (enabled) await installContextMenu(log);
       else await removeContextMenu();

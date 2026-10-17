@@ -3,11 +3,11 @@ import { useAppStore } from "../stores/app-store";
 
 export type ResolvedLinkOpenTarget = "workpanel" | "external";
 
-/** Persistable setting → destination. Absent or unknown values keep the work panel. */
+/** 将持久化设置解析为链接目标；缺省或未知值使用外部浏览器。 */
 export function resolveLinkOpenTarget(
   linkOpenTarget: string | null | undefined,
 ): ResolvedLinkOpenTarget {
-  return linkOpenTarget === "external" ? "external" : "workpanel";
+  return linkOpenTarget === "workpanel" ? "workpanel" : "external";
 }
 
 /** Work-panel tabs are per-session; without one the dock cannot open. */

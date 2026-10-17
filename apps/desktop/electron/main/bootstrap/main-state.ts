@@ -75,7 +75,7 @@ export class MainProcessState {
   quitting = false;
   shutdownComplete = false;
   shutdownPromise: Promise<void> | null = null;
-  closeBehavior: CloseBehavior = "ask";
+  closeBehavior: CloseBehavior = "tray";
   closePromptOpen = false;
   quitConfirmed = false;
   developerMode = false;

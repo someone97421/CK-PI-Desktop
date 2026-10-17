@@ -1109,6 +1109,8 @@ sklm: {
     importProvidersDone:
       "Import finished: {{created}} created, {{updated}} updated, {{failed}} failed",
     apiKey: "API key",
+    showApiKey: "Show API key",
+    hideApiKey: "Hide API key",
     baseUrl: "Base URL",
     baseUrlInvalid: "Enter a valid http:// or https:// URL.",
     modelId: "Model ID",

@@ -868,6 +868,30 @@ fn normalize_settings_value(mut value: Value) -> Value {
         if object.get("defaultMode").and_then(Value::as_str) == Some("chat") {
             object.insert("defaultMode".into(), Value::String("plan".into()));
         }
+        let defaults = json!({
+            "defaultMode": "agent",
+            "defaultPermissionMode": "auto",
+            "language": "auto",
+            "sidebarRunningIndicators": true,
+            "sidebarRunningBadge": true,
+            "sidebarRunningRail": true,
+            "sidebarSessionTime": true,
+            "networkProxy": { "mode": "system" },
+            "networkPolicy": { "mode": "relaxed" },
+            "keepAwakeWhileRunning": true,
+            "preventScreenSleep": false,
+            "temporaryWorkspaceContextMenu": cfg!(windows),
+            "linkOpenTarget": "external",
+            "showThinking": object.get("thinkingDisplayMode").and_then(Value::as_str) != Some("compact"),
+            "contextUsageDisplay": "remaining",
+            "enterToSend": true,
+            "infiniteProviderRetry": false,
+            "runStatusReminder": true,
+            "smoothStreaming": true
+        });
+        for (key, default) in defaults.as_object().unwrap() {
+            object.entry(key.clone()).or_insert_with(|| default.clone());
+        }
         let valid_command_shell = object
             .get("defaultCommandShell")
             .and_then(Value::as_str)
@@ -3974,7 +3998,7 @@ async fn handle_request(
                     }
                     // Effective permission mode (D115): per-session override
                     // unless it is `inherit`, then the global settings default,
-                    // then `ask`. A subagent's tool call carries its own scope
+                    // then `auto`. A subagent's tool call carries its own scope
                     // (ADR 0089), which resolves the call under that mode
                     // instead; external-path gating and the contract modes'
                     // hard deny are untouched by the override.
@@ -3994,7 +4018,7 @@ async fn handle_request(
                                     .map(str::to_string)
                             })
                             .filter(|m| sessions::is_valid_permission_mode(m) && m != "inherit")
-                            .unwrap_or_else(|| "ask".to_string()),
+                            .unwrap_or_else(|| "auto".to_string()),
                     };
                     let effective_pm = match p.permission_scope.as_deref() {
                         Some(scope)
@@ -4630,7 +4654,7 @@ async fn handle_request(
                                 .map(str::to_string)
                         })
                 })
-                .unwrap_or_else(|| "ask".into());
+                .unwrap_or_else(|| "auto".into());
             let args = params.get("args").cloned().unwrap_or_else(|| json!({}));
             let workspace_path = resolve_tool_workspace_for_call(&st, session_id, &args)?;
             let scratch_path = scratch::session_dir(&st.data_dir, session_id);

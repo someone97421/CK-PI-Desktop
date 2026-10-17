@@ -273,6 +273,7 @@ export const IPC = {
      * needing the credential its declaration asks for.
      */
     providersSetSecret: "pi-desktop/providers/setSecret",
+    providersGetSecret: "pi-desktop/providers/getSecret",
     providersTest: "pi-desktop/providers/testConnection",
     /**
      * Check a TypeSafe key before the Jev settings row keeps it.
