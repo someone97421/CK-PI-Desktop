@@ -1,5 +1,5 @@
 import { dialog, globalShortcut, shell, type BrowserWindow } from "electron";
-import { basename, join, relative } from "node:path";
+import { basename, extname, join, relative } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import { resolveRealOpenablePath } from "@pi-desktop/host-runtime";
 import {
@@ -109,6 +109,13 @@ export function createPluginServices({
   const isHostUnavailable = (error: unknown): boolean =>
     (error as { errorCode?: string } | null | undefined)?.errorCode ===
     ErrorCodes.HOST_UNAVAILABLE;
+  const openFileInBrowser = async (fullPath: string): Promise<void> => {
+    const preview = await browserHost.previewFile();
+    if (!preview.ok) {
+      throw Object.assign(new Error(preview.content), { code: "UNAVAILABLE" });
+    }
+    sendToRenderer(IPC.event.browserOpenFile, { path: fullPath });
+  };
   const pluginPanels = new PluginPanelHost(
     async (pluginId, channel, payload, context) => {
       if (pluginId === "pi.file-manager" && context?.senderId !== undefined) {
@@ -116,7 +123,8 @@ export function createPluginServices({
         const workspace = workspacePath === undefined ? undefined : workspacePath
           ? { path: workspacePath, name: basename(workspacePath) || workspacePath } : null;
         if (channel === "workspace.get" && workspace !== undefined) return workspace;
-        if (workspacePath !== undefined && (channel === "fs.openDefault" || channel === "fs.reveal")) {
+        if (workspacePath !== undefined &&
+          (channel === "fs.openDefault" || channel === "fs.reveal" || channel === "fs.openInBrowser")) {
           const loaded = plugins.getLoaded(pluginId);
           if (!loaded?.permissions.has("fs.read")) throw new Error("PERMISSION_DENIED: fs.read");
           if (!workspacePath) throw new Error("workspace required");
@@ -127,7 +135,12 @@ export function createPluginServices({
             throw new Error("PERMISSION_DENIED: file outside declared scope");
           }
           if (channel === "fs.reveal") shell.showItemInFolder(target);
-          else {
+          else if (channel === "fs.openInBrowser") {
+            if (![".html", ".htm", ".xhtml"].includes(extname(target).toLowerCase())) {
+              throw new Error("only HTML files can be opened in the Browser");
+            }
+            await openFileInBrowser(target);
+          } else {
             const error = await shell.openPath(target);
             if (error) throw new Error(error);
           }
@@ -724,13 +737,7 @@ export function createPluginServices({
      * (ADR 0252) instead of the bare primary path.
      */
     getWorkspaceInfo: () => pluginWorkspaceInfo(getWorkspacePath()),
-    openInBrowser: async (fullPath) => {
-      const preview = await browserHost.previewFile();
-      if (!preview.ok) {
-        throw Object.assign(new Error(preview.content), { code: "UNAVAILABLE" });
-      }
-      sendToRenderer(IPC.event.browserOpenFile, { path: fullPath });
-    },
+    openInBrowser: openFileInBrowser,
     // 工具按所属会话解析有效目录；isolated 目录不可用时直接报告失败。
     getWorkspacePathForSession: async (sessionId) => {
       const host = getHost();

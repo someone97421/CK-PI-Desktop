@@ -46,14 +46,7 @@ export function useTranscriptReadingPosition({
   const pendingRef = useRef(initialPosition?.pinned === false ? initialPosition : undefined);
   const requestRef = useRef<AbortController | null>(null);
   const alignmentUntilRef = useRef(0);
-  const wasVisibleRef = useRef(visible);
-  useLayoutEffect(() => {
-    if (visible && !wasVisibleRef.current && !pinnedRef.current) {
-      pendingRef.current = getTranscriptReadingPosition(sessionId);
-      alignmentUntilRef.current = 0;
-    }
-    wasVisibleRef.current = visible;
-  }, [pinnedRef, sessionId, visible]);
+  const wasVisibleRef = useRef(false);
   const cancel = useCallback(() => {
     pendingRef.current = undefined;
     requestRef.current?.abort();
@@ -74,13 +67,16 @@ export function useTranscriptReadingPosition({
   const callbacks = useRef({ remember, onMissing, onStale });
   callbacks.current = { remember, onMissing, onStale };
 
-  // A bookmark is a reading convenience, not a claim on newer output. Detail and
-  // tool rows are physical transcript records, so a long task can legitimately
-  // push the final answer outside an old around-window; when the tail advanced,
-  // reopening belongs at latest instead of behind "load newer messages".
+  // 仅在打开会话或恢复旧阅读位置时检查新输出；当前阅读由用户控制。
   useLayoutEffect(() => {
+    const reopening = visible && !wasVisibleRef.current;
+    wasVisibleRef.current = visible;
     if (!visible || pinnedRef.current) return;
-    const position = pendingRef.current ?? getTranscriptReadingPosition(sessionId);
+    if (reopening) {
+      pendingRef.current = getTranscriptReadingPosition(sessionId);
+      alignmentUntilRef.current = 0;
+    }
+    const position = pendingRef.current;
     if (!transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion))) return;
     clearTranscriptReadingPosition(sessionId);
     cancel();

@@ -5,16 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
-/**
- * Bundled plugins (ADR 0104, ADR 0241).
- *
- * The point of shipping a panel surface as a plugin rather than host code is
- * that it proves the public contribution channel is sufficient. The file view
- * is now a vendored third-party plugin — the artifact the marketplace also
- * publishes — so these assertions guard both halves of that claim: it must be
- * an ordinary plugin any third party could have written, and the copy in this
- * repository must stay traceable to the release it came from.
- */
+/** 内置第三方插件通过公共扩展接口运行，来源与本地适配由 UPSTREAM.md 记录。 */
 
 const read = (path) => readFileSync(resolve(path), "utf8");
 const FILE_MANAGER = "resources/plugins/pi.file-manager";
@@ -63,9 +54,8 @@ test("the file view is a sandboxed page over the public bridge", () => {
 
 test("the vendored copy stays traceable to its upstream release", () => {
   assert.match(upstream, /github\.com\/Tioit-Wang\/pi-desktop-plugin-file-manager/);
-  assert.match(upstream, /d36ebe9f7fb82ee71e87670b0a65403660b18a00/);
-  // The version the manifest carries and the tag the record names are the same
-  // release: a bump that skips the other one is a sync mistake.
+  assert.match(upstream, /42fd918e7c23599fa61b0e58b7f7b2e4fa7b2680/);
+  // 上游主分支保持最近标签的版本号，实际来源另外固定到提交。
   const tag = upstream.match(/`v(\d+\.\d+\.\d+)`/);
   assert.ok(tag, "UPSTREAM.md must name the vendored tag");
   assert.equal(manifest.version, tag[1]);
@@ -74,8 +64,10 @@ test("the vendored copy stays traceable to its upstream release", () => {
   for (const file of [
     "main.js",
     "README.md",
+    "CHANGELOG.md",
     "views/index.html",
     "views/assets/index.js",
+    "views/assets/pdfjs-LICENSES.txt",
   ]) {
     const hash = createHash("sha256")
       .update(readFileSync(resolve(`${FILE_MANAGER}/${file}`)))
