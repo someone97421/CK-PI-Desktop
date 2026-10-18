@@ -12,22 +12,38 @@ const sidebarStyles = await Promise.all([
   readFile(new URL("../src/styles/sessions.css", import.meta.url), "utf8"),
 ]).then((styles) => styles.join("\n"));
 
-test("formats session activity through seven calendar days and uses a date after that", () => {
-  const now = new Date(2026, 9, 16, 12);
-  const atLocalDay = (daysAgo) =>
-    new Date(2026, 9, 16 - daysAgo, 8).toISOString();
+test("formats session activity with minute, half-hour, hour and day tiers", () => {
+  const now = new Date("2026-10-16T00:05:00+08:00");
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const cases = [
+    [-minute, "刚刚"],
+    [0, "刚刚"],
+    [minute - 1, "刚刚"],
+    [minute, "1分钟前"],
+    [30 * minute - 1, "29分钟前"],
+    [30 * minute, "半小时前"],
+    [hour - 1, "半小时前"],
+    [hour, "1小时前"],
+    [day - 1, "23小时前"],
+    [day, "1天前"],
+    [31 * day - 1, "30天前"],
+    [31 * day, "很久以前"],
+  ];
+  for (const [elapsed, expected] of cases) {
+    const timestamp = new Date(now.getTime() - elapsed).toISOString();
+    assert.equal(formatSessionLastReplyDate(timestamp, now, "zh-CN"), expected);
+  }
 
+  assert.equal(formatSessionLastReplyDate(now.toISOString(), now, "en"), "Just now");
   assert.equal(
-    formatSessionLastReplyDate(atLocalDay(0), now, "zh-CN"),
-    "0天前",
+    formatSessionLastReplyDate(new Date(now.getTime() - 30 * minute).toISOString(), now, "en"),
+    "Half an hour ago",
   );
   assert.equal(
-    formatSessionLastReplyDate(atLocalDay(7), now, "zh-CN"),
-    "7天前",
-  );
-  assert.equal(
-    formatSessionLastReplyDate(atLocalDay(8), now, "en"),
-    "Oct 8",
+    formatSessionLastReplyDate(new Date(now.getTime() - 31 * day).toISOString(), now, "en"),
+    "A long time ago",
   );
 });
 

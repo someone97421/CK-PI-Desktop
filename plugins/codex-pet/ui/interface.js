@@ -236,6 +236,7 @@ export function createUI(options) {
   markAllBtn.dataset.i18n = "activity.markAll";
   activityHead.append(activityTitle, markAllBtn);
   const activityList = el("ul", "pet-activity-list");
+  const activityRows = new Map();
   const activityNote = el("div", "pet-panel-note");
   activityNote.hidden = true;
   activityPanel.append(activityHead, activityList, activityNote);
@@ -1043,45 +1044,64 @@ export function createUI(options) {
   function renderActivity() {
     const activity = state?.activity;
     const rows = activity?.rows || [];
-    activityList.replaceChildren();
-    if (!rows.length) {
+    const sessionIds = new Set(rows.map((r) => r.sessionId));
+    for (const [sessionId, entry] of activityRows) {
+      if (!sessionIds.has(sessionId)) {
+        entry.element.remove();
+        activityRows.delete(sessionId);
+      }
+    }
+    if (!rows.length && !activityList.firstElementChild) {
       const empty = el("div", "pet-empty");
-      empty.append(el("strong", "", t("activity.empty")), el("span", "", t("activity.emptyHint")));
+      const title = el("strong", "", t("activity.empty"));
+      const hint = el("span", "", t("activity.emptyHint"));
+      title.dataset.i18n = "activity.empty";
+      hint.dataset.i18n = "activity.emptyHint";
+      empty.append(title, hint);
       activityList.append(empty);
     }
+    if (rows.length) activityList.querySelector(".pet-empty")?.remove();
     rows.forEach((r, i) => {
-      const li = el("li", "pet-activity-row");
+      const updatedAt = relTime(r.updatedAt);
+      const signature = JSON.stringify([i18n.locale, { ...r, updatedAt }]);
+      const entry = activityRows.get(r.sessionId);
+      const li = entry?.element || el("li", "pet-activity-row");
       li.style.setProperty("--i", i);
-      const main = el("button", "pet-activity-main");
-      main.type = "button";
-      main.title = t("activity.open");
-      const chip = el("span", "pet-chip", t(STATUS_KEYS[r.state] || "status.idle"));
-      chip.dataset.state = r.state || "";
-      const text = el("span", "pet-activity-text");
-      const detail = i18n.locale === "en" ? (r.tool && r.state === "running" ? t("activity.using", { name: r.tool }) : r.errorCode && r.state === "blocked" ? `${t("status.blocked")}: ${r.errorCode}` : t(STATUS_KEYS[r.state] || "status.idle")) : r.detail || "";
-      text.append(el("span", "pet-activity-title", r.title || r.sessionId), el("span", "pet-activity-detail", detail));
-      main.append(chip, text);
-      main.addEventListener("click", () => guard(async () => {
-        const res = await call("pet.openSession", { sessionId: r.sessionId });
-        applyState(res?.state || res);
-      }));
-      li.append(main);
-      const meta = el("div", "pet-activity-meta");
-      meta.append(el("span", "", relTime(r.updatedAt)));
-      if (r.pendingCount) meta.append(el("span", "", t("activity.pending", { n: r.pendingCount })));
-      if (r.queuedCount) meta.append(el("span", "", t("activity.queued", { n: r.queuedCount })));
-      if (r.unreadCount) {
-        const mark = el("button", "pet-link-btn");
-        mark.type = "button";
-        mark.textContent = t("activity.markRead");
-        mark.addEventListener("click", () => guard(async () => {
-          const res = await call("pet.markRead", { sessionId: r.sessionId });
+      if (entry?.signature !== signature) {
+        li.replaceChildren();
+        const main = el("button", "pet-activity-main");
+        main.type = "button";
+        main.title = t("activity.open");
+        const chip = el("span", "pet-chip", t(STATUS_KEYS[r.state] || "status.idle"));
+        chip.dataset.state = r.state || "";
+        const text = el("span", "pet-activity-text");
+        const detail = i18n.locale === "en" ? (r.tool && r.state === "running" ? t("activity.using", { name: r.tool }) : r.errorCode && r.state === "blocked" ? `${t("status.blocked")}: ${r.errorCode}` : t(STATUS_KEYS[r.state] || "status.idle")) : r.detail || "";
+        text.append(el("span", "pet-activity-title", r.title || r.sessionId), el("span", "pet-activity-detail", detail));
+        main.append(chip, text);
+        main.addEventListener("click", () => guard(async () => {
+          const res = await call("pet.openSession", { sessionId: r.sessionId });
           applyState(res?.state || res);
         }));
-        meta.append(mark);
+        li.append(main);
+        const meta = el("div", "pet-activity-meta");
+        meta.append(el("span", "", updatedAt));
+        if (r.pendingCount) meta.append(el("span", "", t("activity.pending", { n: r.pendingCount })));
+        if (r.queuedCount) meta.append(el("span", "", t("activity.queued", { n: r.queuedCount })));
+        if (r.unreadCount) {
+          const mark = el("button", "pet-link-btn");
+          mark.type = "button";
+          mark.textContent = t("activity.markRead");
+          mark.addEventListener("click", () => guard(async () => {
+            const res = await call("pet.markRead", { sessionId: r.sessionId });
+            applyState(res?.state || res);
+          }));
+          meta.append(mark);
+        }
+        li.append(meta);
+        activityRows.set(r.sessionId, { element: li, signature });
       }
-      li.append(meta);
-      activityList.append(li);
+      const current = activityList.children[i];
+      if (current !== li) activityList.insertBefore(li, current || null);
     });
     // 状态提示：过期 / 错误
     activityNote.replaceChildren();
@@ -1368,6 +1388,7 @@ export function createUI(options) {
       cancelAnimationFrame(layoutRaf);
       saveDraft.cancel();
       assetCache.clear();
+      activityRows.clear();
       rootEl.replaceChildren();
       if (window.__codexPetUI === api) delete window.__codexPetUI;
     },

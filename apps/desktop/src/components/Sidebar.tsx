@@ -304,6 +304,7 @@ export function Sidebar({
   const [draggingProjectKey, setDraggingProjectKey] = useState<string | null>(null);
   const [dropIndicator, setDropIndicator] = useState<{ key: string; insertAfter: boolean } | null>(null);
   const [windowFocused, setWindowFocused] = useState(true);
+  const [sessionTimeNow, setSessionTimeNow] = useState(() => new Date());
 
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
   const menuFirstItemRef = useRef<HTMLButtonElement | null>(null);
@@ -330,6 +331,18 @@ export function Sidebar({
       window.removeEventListener("blur", onWindowBlur);
     };
   }, []);
+
+  useEffect(() => {
+    if (settings?.sidebarSessionTime === false) return;
+    const refreshSessionTime = () => setSessionTimeNow(new Date());
+    refreshSessionTime();
+    const timer = window.setInterval(refreshSessionTime, 60_000);
+    window.addEventListener("focus", refreshSessionTime);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshSessionTime);
+    };
+  }, [settings?.sidebarSessionTime]);
 
   // Escape clears multi-select (only when no menu is open — menus consume
   // their own Escape first, so clearing happens on the next press).
@@ -2021,7 +2034,7 @@ export function Sidebar({
     const lastReplyDate = options?.showLastReplyDate
       ? formatSessionLastReplyDate(
           session.updatedAt,
-          new Date(),
+          sessionTimeNow,
           i18n.resolvedLanguage ?? i18n.language,
         )
       : "";
