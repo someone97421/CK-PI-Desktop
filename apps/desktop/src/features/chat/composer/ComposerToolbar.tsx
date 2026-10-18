@@ -12,6 +12,7 @@ import {
   type PluginComposerTransformMeta,
 } from "@pi-desktop/shared";
 import type { AppState } from "../../../stores/app-store";
+import { ComposerModePicker } from "./ComposerModePicker";
 import { ComposerPermissionPicker } from "./ComposerPermissionPicker";
 import { ContextUsageInspector } from "../../../components/ContextUsageInspector";
 import { ComposerControlSlots } from "./ComposerControlSlots";
@@ -23,12 +24,7 @@ import {
   IconStop,
   IconUndo2,
 } from "../../../components/icons";
-import { ModeIcon } from "./ComposerModeIcon";
 import { ComposerModelPicker } from "./ComposerModelPicker";
-import {
-  MODE_LABEL_KEYS,
-  nextMode,
-} from "./model";
 import type { useComposerModelMenu } from "./hooks/useComposerModelMenu";
 
 type ModelMenuController = ReturnType<typeof useComposerModelMenu>;
@@ -42,6 +38,8 @@ export type ComposerToolbarProps = {
   modelId?: string;
   thinkingLevel: SessionThinkingLevel;
   composerPermissionMode: Exclude<PermissionMode, "inherit">;
+  modeOpen: boolean;
+  setModeOpen: Dispatch<SetStateAction<boolean>>;
   permissionOpen: boolean;
   setPermissionOpen: Dispatch<SetStateAction<boolean>>;
   controlsBlocked: boolean;
@@ -130,6 +128,8 @@ export function ComposerToolbar({
   modelId,
   thinkingLevel,
   composerPermissionMode,
+  modeOpen,
+  setModeOpen,
   permissionOpen,
   setPermissionOpen,
   controlsBlocked,
@@ -173,24 +173,25 @@ export function ComposerToolbar({
             disabled={controlsBlocked || pasting || !attachmentsAllowed}
             onClick={() => {
               setPermissionOpen(false);
+              setModeOpen(false);
               void pickAndAttach();
             }}
           >
             <IconPlus size={15} aria-hidden="true" />
           </TooltipButton>
         </div>
-        <TooltipButton
-          type="button"
-          className="icon-btn mode-chip composer-mode-chip"
-          data-mode={mode}
-          data-planning={planningLive ? "true" : undefined}
-          tooltip={planningLive ? t(`${mode}.planning`) : t("settings.mode")}
-          ariaLabel={planningLive ? t(`${mode}.planning`) : t("settings.mode")}
-          disabled={controlsBlocked}
-          onClick={async () => {
+        <ComposerModePicker
+          t={t}
+          mode={mode}
+          planningLive={planningLive}
+          open={modeOpen}
+          setOpen={setModeOpen}
+          controlsBlocked={controlsBlocked}
+          onCloseOtherMenus={() => {
             modelMenu.setOpen(false);
             setPermissionOpen(false);
-            const next: Mode = nextMode(mode);
+          }}
+          onSelect={async (next) => {
             try {
               await configureActiveSession({
                 mode: next,
@@ -204,18 +205,15 @@ export function ComposerToolbar({
               });
             }
           }}
-        >
-          <span className="composer-mode-chip-face" key={mode}>
-            <ModeIcon mode={mode} />
-            <span className="composer-mode-chip-label text-sm">
-              {t(MODE_LABEL_KEYS[mode])}
-            </span>
-          </span>
-        </TooltipButton>
+        />
         <ComposerPermissionPicker t={t} mode={mode}
           composerPermissionMode={composerPermissionMode}
           permissionOpen={permissionOpen} setPermissionOpen={setPermissionOpen}
-          controlsBlocked={controlsBlocked} onCloseOtherMenus={() => modelMenu.setOpen(false)}
+          controlsBlocked={controlsBlocked}
+          onCloseOtherMenus={() => {
+            modelMenu.setOpen(false);
+            setModeOpen(false);
+          }}
           onSelect={async (candidate) => {
                 try {
                   await configureActiveSession({
@@ -246,7 +244,10 @@ export function ComposerToolbar({
           selectedProviderId={providerId}
           selectedModelId={modelId}
           controlsBlocked={controlsBlocked}
-          onCloseOtherMenus={() => setPermissionOpen(false)}
+          onCloseOtherMenus={() => {
+            setPermissionOpen(false);
+            setModeOpen(false);
+          }}
         />
         {composerTransforms.map((transform) => {
           const key = `${transform.pluginId}/${transform.id}`;

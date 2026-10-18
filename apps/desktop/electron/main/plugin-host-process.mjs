@@ -248,6 +248,10 @@ function buildApi() {
       closePanel: () => call("ui.closePanel"),
       showMainWindow: () => call("ui.showMainWindow"),
       showToast: (message, level) => call("ui.showToast", [message, level]),
+      // The work panel is the shell's own surface: the plugin names one of its
+      // declared views and the subject, and the main process refuses a session
+      // that stopped being the one the user is looking at.
+      revealView: (input) => call("ui.revealView", [input ?? {}]),
       notify: (input) => call("ui.notify", [input]),
       getNotificationPermission: () => call("ui.getNotificationPermission"),
       requestNotificationPermission: () => call("ui.requestNotificationPermission"),
@@ -326,6 +330,9 @@ function buildApi() {
       list: () => call("models.list"),
     },
     session: {
+      // The selected session, as the shell shows it. A snapshot is a value: a
+      // plugin compares `sessionId` rather than assuming the session still holds.
+      getActive: () => call("session.getActive"),
       getLlmContext: () => call("session.getLlmContext"),
       getAutoTitleContext: (input) => call("session.getAutoTitleContext", [input ?? {}]),
       setAutoTitle: (input) => call("session.setAutoTitle", [input ?? {}]),

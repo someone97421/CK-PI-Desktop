@@ -54,9 +54,10 @@ import type { SubagentPanelSelection } from "../../lib/subagent-panel";
 import {
   MAIN_PANE_MIN_WIDTH,
   WORK_PANEL_COMPACT_MIN_WIDTH,
-  WORK_PANEL_MIN_WIDTH,
   clampWorkPanelWidth,
+  workPanelGestureMinimum,
   workPanelLayout,
+  workPanelRequestedWidth,
   workPanelResetWidth,
   workPanelWidthBounds,
 } from "../../lib/work-panel-resize";
@@ -224,6 +225,7 @@ function LocalWorkPanel({
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const pluginViews = useAppStore((s) => s.pluginViews);
   const width = useAppStore((s) => s.workPanelWidth);
+  const yieldedWidth = useAppStore((s) => s.workPanelYieldedWidth);
   const activateTab = useAppStore((s) => s.activateWorkPanelTab);
   const reorderTabs = useAppStore((s) => s.reorderWorkPanelTabs);
   const closeTab = useAppStore((s) => s.closeWorkPanelTab);
@@ -256,11 +258,6 @@ function LocalWorkPanel({
   const [nativeSurfaceReadyForExit, setNativeSurfaceReadyForExit] =
     useState(false);
 
-  const requestedPanelWidth = panelDragWidth ?? width;
-  const panelMinimum =
-    requestedPanelWidth < WORK_PANEL_MIN_WIDTH
-      ? WORK_PANEL_COMPACT_MIN_WIDTH
-      : WORK_PANEL_MIN_WIDTH;
   // The first render can precede ResizeObserver's first notification. Use a
   // conservative shell estimate for that frame; the measured width takes over
   // before a user can interact with the divider.
@@ -268,9 +265,20 @@ function LocalWorkPanel({
   const budgetWidth =
     containerWidth > 0
       ? containerWidth
-      : requestedPanelWidth +
+      : (panelDragWidth ?? width) +
         (sidebarOccupiesBudget ? sidebarWidth : 0) +
         MAIN_PANE_MIN_WIDTH;
+  // A drag preview is an explicit width; otherwise the panel asks for its
+  // preferred width, or the width it lent to a manually reopened sidebar.
+  const requestedPanelWidth =
+    panelDragWidth ??
+    workPanelRequestedWidth({
+      containerWidth: budgetWidth,
+      sidebarWidth,
+      sidebarCollapsed: !sidebarOccupiesBudget,
+      preferredWidth: width,
+      yieldedWidth,
+    });
   const layout = workPanelLayout({
     containerWidth: budgetWidth,
     sidebarWidth,
@@ -279,6 +287,7 @@ function LocalWorkPanel({
     maximized,
   });
   const renderPanelWidth = layout.panelWidth;
+  const panelMinimum = workPanelGestureMinimum(renderPanelWidth);
   const isResizing = panelDragWidth !== null;
 
   useLayoutEffect(() => {
@@ -748,7 +757,11 @@ function LocalWorkPanel({
       else if (event.key === "End") nextWidth = maximum;
       if (nextWidth === null) return;
       event.preventDefault();
-      setWidth(clampWorkPanelWidth(nextWidth, minimum));
+      const committedWidth = clampWorkPanelWidth(nextWidth, minimum);
+      // A key that cannot move the separator commits nothing, so it neither
+      // rewrites the preferred width nor ends a width lent to the sidebar.
+      if (committedWidth === renderPanelWidth) return;
+      setWidth(committedWidth);
     },
     [finishPanelResize, layout.maxPanelWidth, maximized, panelMinimum, renderPanelWidth, setWidth],
   );

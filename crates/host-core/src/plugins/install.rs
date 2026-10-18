@@ -466,42 +466,94 @@ pub(crate) fn extract_zip_bytes(bytes: &[u8], dest: &Path) -> Result<()> {
     if bytes.len() < 22 {
         bail!("PLUGIN_INVALID: zip too small");
     }
-    let mut file_count = 0usize;
+    // 流式 ZIP 的本地头可能没有大小（bit 3）；中央目录才是完整的条目索引。
+    // 按索引定位正文，同时兼容带签名和不带签名的 data descriptor。
+    let eocd = (bytes.len().saturating_sub(22 + u16::MAX as usize)..=bytes.len() - 22)
+        .rev()
+        .find(|&at| {
+            read_u32(bytes, at).ok() == Some(0x06054b50)
+                && read_u16(bytes, at + 20)
+                    .is_ok_and(|len| at + 22 + len as usize == bytes.len())
+        })
+        .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip central directory missing"))?;
+    let file_count = read_u16(bytes, eocd + 10)? as usize;
+    if read_u16(bytes, eocd + 4)? != 0
+        || read_u16(bytes, eocd + 6)? != 0
+        || read_u16(bytes, eocd + 8)? as usize != file_count
+    {
+        bail!("PLUGIN_INVALID: multi-disk zip not supported");
+    }
+    if file_count > MAX_PACKAGE_FILES {
+        bail!("PLUGIN_INVALID: too many files in package");
+    }
+    let central_start = read_u32(bytes, eocd + 16)? as usize;
+    let central_size = read_u32(bytes, eocd + 12)? as usize;
+    let central_end = central_start.checked_add(central_size)
+        .filter(|&end| end <= eocd)
+        .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip central directory truncated"))?;
+    let central = bytes.get(central_start..central_end)
+        .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip central directory truncated"))?;
+    let local = &bytes[..central_start];
     let mut total_bytes = 0u64;
     let mut offset = 0usize;
-    while offset + 30 <= bytes.len() {
-        let sig = read_u32(bytes, offset)?;
-        if sig == 0x02014b50 || sig == 0x06054b50 {
-            break;
+    for _ in 0..file_count {
+        let header = central.get(offset..offset + 46)
+            .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip central header truncated"))?;
+        if read_u32(header, 0)? != 0x02014b50 {
+            bail!("PLUGIN_INVALID: bad zip central header");
         }
-        if sig != 0x04034b50 {
-            bail!("PLUGIN_INVALID: bad zip local header");
-        }
-        let method = read_u16(bytes, offset + 8)?;
-        let comp_size = read_u32(bytes, offset + 18)? as usize;
-        let uncomp_size = read_u32(bytes, offset + 22)? as u64;
-        let name_len = read_u16(bytes, offset + 26)? as usize;
-        let extra_len = read_u16(bytes, offset + 28)? as usize;
-        let name_start = offset + 30;
+        let flags = read_u16(header, 8)?;
+        let method = read_u16(header, 10)?;
+        let expected_crc = read_u32(header, 16)?;
+        let comp_size = read_u32(header, 20)? as usize;
+        let uncomp_size = read_u32(header, 24)? as u64;
+        let name_len = read_u16(header, 28)? as usize;
+        let extra_len = read_u16(header, 30)? as usize;
+        let comment_len = read_u16(header, 32)? as usize;
+        let local_offset = read_u32(header, 42)? as usize;
+        let name_start = offset + 46;
         let name_end = name_start + name_len;
-        if name_end + extra_len + comp_size > bytes.len() {
-            bail!("PLUGIN_INVALID: zip entry truncated");
+        offset = name_end + extra_len + comment_len;
+        if offset > central.len() {
+            bail!("PLUGIN_INVALID: zip central entry truncated");
         }
-        let name = std::str::from_utf8(&bytes[name_start..name_end])
+        let name_bytes = &central[name_start..name_end];
+        let name = std::str::from_utf8(name_bytes)
             .map_err(|_| anyhow!("PLUGIN_INVALID: zip name not utf8"))?;
         if method != 0 {
             bail!("PLUGIN_INVALID: only store-compressed piplug supported");
         }
-        let data_start = name_end + extra_len;
-        let data_end = data_start + comp_size;
-        let data = &bytes[data_start..data_end];
+        if flags & 1 != 0 || read_u16(header, 34)? != 0 {
+            bail!("PLUGIN_INVALID: encrypted or multi-disk zip not supported");
+        }
+        if comp_size as u64 != uncomp_size {
+            bail!("PLUGIN_INVALID: stored zip entry size mismatch");
+        }
         total_bytes += uncomp_size;
         if total_bytes > MAX_PACKAGE_BYTES {
             bail!("PLUGIN_INVALID: package exceeds 50MB limit");
         }
-        file_count += 1;
-        if file_count > MAX_PACKAGE_FILES {
-            bail!("PLUGIN_INVALID: too many files in package");
+        let local_header_end = local_offset.checked_add(30)
+            .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip local header truncated"))?;
+        let local_header = local.get(local_offset..local_header_end)
+            .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip local header truncated"))?;
+        if read_u32(local_header, 0)? != 0x04034b50 {
+            bail!("PLUGIN_INVALID: bad zip local header");
+        }
+        if read_u16(local_header, 6)? != flags || read_u16(local_header, 8)? != method {
+            bail!("PLUGIN_INVALID: zip local and central headers disagree");
+        }
+        let local_name_end = local_header_end + read_u16(local_header, 26)? as usize;
+        let data_start = local_name_end + read_u16(local_header, 28)? as usize;
+        let data_end = data_start.checked_add(comp_size)
+            .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip entry truncated"))?;
+        if local.get(local_header_end..local_name_end) != Some(name_bytes) {
+            bail!("PLUGIN_INVALID: zip entry name mismatch");
+        }
+        let data = local.get(data_start..data_end)
+            .ok_or_else(|| anyhow!("PLUGIN_INVALID: zip entry truncated"))?;
+        if crc32(data) != expected_crc {
+            bail!("PLUGIN_INVALID: zip entry CRC mismatch");
         }
         if name.ends_with('/') {
             let dir = safe_join(dest, name)?;
@@ -513,7 +565,9 @@ pub(crate) fn extract_zip_bytes(bytes: &[u8], dest: &Path) -> Result<()> {
             }
             fs::write(path, data)?;
         }
-        offset = data_end;
+    }
+    if offset != central.len() {
+        bail!("PLUGIN_INVALID: zip central directory size mismatch");
     }
     Ok(())
 }

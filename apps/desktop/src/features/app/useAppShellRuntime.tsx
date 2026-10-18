@@ -15,10 +15,11 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
+import { isRemoteSession } from "../../lib/remote-session-safety";
 import { accentInkTokens, applyAppearance, resolveAppearance } from "../../lib/appearance";
 import { installRendererApi } from "../../capture/renderer-api";
 import { commitWorkPanelPresentation } from "../../lib/work-panel-presentation";
-import { browserPluginTab, browserPluginTabForReveal } from "../../lib/work-panel-tabs";
+import { browserPluginTab, browserPluginTabForReveal, pluginWorkPanelTab } from "../../lib/work-panel-tabs";
 import { settleLocalRunLoss } from "../../stores/runtime/run-loss-settlement";
 import {
   MAIN_PANE_MIN_WIDTH,
@@ -74,6 +75,18 @@ export function useAppShellRuntime() {
   const plugins = useAppStore((s) => s.plugins);
   const projectPath = useAppStore((s) => s.workspace?.path ?? null);
   const workPanelVisible = workPanelOpen || subagentPanelOpen;
+  /** Monotonic counter for the plugin active-session push. */
+  const activeSessionSeq = useRef(0);
+  const activeSessionIsRemote = useAppStore((s) =>
+    isRemoteSession(s.sessions.find((session) => session.id === s.activeSessionId)
+      ?? (s.activeSessionId ? { id: s.activeSessionId } : null)),
+  );
+  /** The project of the session on screen, for the plugin session snapshot. */
+  const activeSessionProjectPath = useAppStore((s) =>
+    s.activeSessionId
+      ? (s.sessions.find((session) => session.id === s.activeSessionId)?.projectPath ?? null)
+      : null,
+  );
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -130,7 +143,11 @@ export function useAppShellRuntime() {
         sidebarWidth: sidebarWidthRef.current,
         currentPanelWidth,
       });
-      useAppStore.getState().setWorkPanelWidth(nextPanelWidth);
+      useAppStore
+        .getState()
+        .setWorkPanelYieldedWidth(
+          nextPanelWidth < currentPanelWidth ? nextPanelWidth : null,
+        );
     }
     autoCollapsedSidebarRef.current = false;
     setSidebarCollapsed(false);
@@ -154,6 +171,13 @@ export function useAppShellRuntime() {
     autoCollapsedSidebarRef.current = true;
     setSidebarCollapsed(true);
   }, []);
+  // Width the panel lent to a reopened sidebar returns once the sidebar has
+  // finished collapsing, whichever path collapsed it.
+  useEffect(() => {
+    if (sidebarCollapsed && !sidebarExiting) {
+      useAppStore.getState().setWorkPanelYieldedWidth(null);
+    }
+  }, [sidebarCollapsed, sidebarExiting]);
   const [presentedWorkPanelOpen, setPresentedWorkPanelOpen] = useState(false);
   const [workPanelMaximized, setWorkPanelMaximized] = useState(false);
   const [workPanelExiting, setWorkPanelExiting] = useState(false);
@@ -416,6 +440,28 @@ export function useAppShellRuntime() {
       .catch(() => undefined);
   }, [activeSessionId, page]);
 
+  /**
+   * The selected session is shell state, so the shell publishes it. Plugin
+   * `pi.session.getActive()` and `session:activated` read this instead of any
+   * plugin guessing from the transcript.
+   *
+   * Each push carries a counter because two switches can be in flight at once:
+   * a slower invoke must never land after a newer one and restore a session the
+   * user already left.
+   */
+  useEffect(() => {
+    // 页面重载后仍使用递增时间，避免新页面的低序号被主进程当成迟到消息。
+    activeSessionSeq.current = Math.max(activeSessionSeq.current + 1, performance.timeOrigin + performance.now());
+    const localSessionId = page === "chat" && !activeSessionIsRemote ? activeSessionId : null;
+    void api
+      .setPluginActiveSession({
+        sessionId: localSessionId,
+        projectPath: localSessionId ? activeSessionProjectPath : null,
+        seq: activeSessionSeq.current,
+      })
+      .catch(() => undefined);
+  }, [activeSessionId, activeSessionProjectPath, activeSessionIsRemote, page]);
+
   useEffect(() => {
     const acknowledgeFocusedSession = () => {
       if (!ready || page !== "chat" || !activeSessionId) return;
@@ -666,6 +712,16 @@ export function useAppShellRuntime() {
         state.openWorkPanelTabForSession(state.activeSessionId, browserPluginTab(path));
       }
     });
+    // IPC 在途期间也可能切换会话；只有仍在查看的本地会话才打开视图。
+    const offPluginViewReveal = api.onPluginViewReveal((event) => {
+      const state = useAppStore.getState();
+      if (state.page !== "chat" || state.activeSessionId !== event.sessionId) return;
+      if (isRemoteSession(state.sessions.find((session) => session.id === event.sessionId))) return;
+      state.openWorkPanelTabForSession(event.sessionId, {
+        ...pluginWorkPanelTab(event.pluginId, event.viewId),
+        ...(event.location ? { location: event.location } : {}),
+      });
+    });
     const offHostStatus = api.onHostStatus((status) => {
       if (status.archMismatch) setArchMismatch(status.archMismatch);
       if (status.ok) {
@@ -880,6 +936,7 @@ export function useAppShellRuntime() {
       offBrowserPreview();
       offBrowserOpenFile();
       offBrowserState();
+      offPluginViewReveal();
       offHostStatus();
       offNotificationChanged();
       offSessionsChanged();
@@ -1009,7 +1066,6 @@ export function useAppShellRuntime() {
     autoCollapseSidebar,
     appShellRef,
     shellWidth,
-    workPanelWidth,
     runMenuCommand,
     handleSidebarAnimationEnd,
     presentedWorkPanelOpen,

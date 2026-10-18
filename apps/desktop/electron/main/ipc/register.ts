@@ -64,6 +64,10 @@ export type RegisterIpcDependencies = {
   getBackendRouter?: () => BackendRouter | null;
   getNotificationViewingSessionId: () => string | null;
   setNotificationViewingSessionId: (sessionId: string | null) => void;
+  /** The session on screen, as the shell reported it (plugin `session:activated`). */
+  setActivePluginSession: (
+    next: { sessionId: string; projectPath: string | null } | null,
+  ) => void;
   activeUserSubagentDocuments: (...args: any[]) => Promise<any>;
   disabledBuiltinSubagents: () => Promise<string[]>;
   disabledBuiltinSkills: () => Promise<string[]>;
@@ -96,6 +100,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getBackendRouter,
     getNotificationViewingSessionId,
     setNotificationViewingSessionId,
+    setActivePluginSession,
     getPluginLauncherWindow,
     togglePluginLauncher,
     safeOpenExternal,
@@ -515,7 +520,6 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     currentWorkspacePath,
   });
 
-
   registerPluginUiIpc({
     registrar,
     plugins,
@@ -526,6 +530,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     currentWorkspacePath,
     getUpdaterLocale,
     getPluginPanelTheme,
+    setActivePluginSession,
   });
 
   registerSpeechIpc({ registrar, speech });

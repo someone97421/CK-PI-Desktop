@@ -5,6 +5,9 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "插件可跟随当前本地会话及运行状态，并主动打开自己的工作面板；切换会话后忽略迟到的视图请求。",
+  "工作模式改为菜单选择，改善模型与思考档位、侧栏日期和待办按钮；展开侧栏不再覆盖右侧面板宽度偏好。",
+  "修复 WTQ Pool 等流式 ZIP 插件包安装时的 bad zip local header 错误，兼容尾部数据描述符。",
   "插件中心新增公开评分与只读评论、已安装插件卡片网格，技能和 MCP 市场加载失败后可直接重试。",
   "侧栏统一操作与复制菜单，可选显示项目运行标记和会话回复时间，继续保留关闭项目及分批加载。",
   "新增独立的思考内容显示开关，保留任务过程抽屉；改善待办当前步骤、模型长名称和文件相对路径展示。",
@@ -82,6 +85,9 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Let plugins follow the selected local session and running turn and reveal their work-panel views; ignore stale view requests after switching sessions.",
+  "Select operating modes from a menu, refine model/reasoning controls, sidebar dates and checklist buttons, and preserve panel width preferences when reopening the sidebar.",
+  "Fix bad zip local header errors when installing streaming ZIP plugin packages such as WTQ Pool, including data-descriptor archives.",
   "Add public plugin ratings and read-only reviews, an installed-plugin card grid, and retry actions for skill and MCP marketplace failures.",
   "Unify sidebar action and copy menus, with optional project activity markers and reply dates while retaining project closing and incremental loading.",
   "Add an independent reasoning display switch while retaining task process drawers; refine checklist steps, long model names and relative file paths.",

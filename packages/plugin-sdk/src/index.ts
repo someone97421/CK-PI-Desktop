@@ -899,6 +899,48 @@ export type PluginLlmContext = {
   truncated: boolean;
 };
 
+/**
+ * The host turn one session is running right now (spec 07-plugins/03 §session).
+ *
+ * `turnId` is the durable identity the host opened for that turn, so a plugin
+ * can scope its own work by turn instead of guessing from the previous turn's
+ * end event or from draft changes. `startedAt` is the host's clock in epoch ms.
+ */
+export type PluginActiveTurn = {
+  readonly turnId: string;
+  readonly startedAt: number;
+};
+
+/**
+ * The session the user is looking at, as the host shows it.
+ *
+ * `projectPath` 表示会话所属主项目，无项目时为 null，不是 worktree 或临时工作目录。
+ * 文件操作继续使用宿主提供的会话工作区。`activeTurn` 为空表示没有已知运行轮。
+ * 快照是当前值，异步操作完成前会话可能切换，需要核对 sessionId。
+ */
+export type PluginActiveSession = {
+  readonly sessionId: string;
+  readonly projectPath: string | null;
+  readonly activeTurn: PluginActiveTurn | null;
+};
+
+/** What `pi.ui.revealView` accepts: which of the plugin's views, showing what. */
+export type PluginRevealViewInput = {
+  /**
+   * One of the plugin's own `contributes.views`. Omitting it names the view only
+   * when the plugin contributes exactly one.
+   */
+  readonly viewId?: string;
+  /** Opaque subject for the view, the same value `piViewOpen` carries. */
+  readonly location?: string;
+  /**
+   * The session whose work panel should show the view. Omitting it means the
+   * session the user is looking at right now; naming a session that is no
+   * longer active is refused instead of opening a view on a stale panel.
+   */
+  readonly sessionId?: string;
+};
+
 export type PluginCompleteInput = {
   modelKey: string;
   thinkingLevel?: string;
@@ -1378,6 +1420,17 @@ export type PluginHostApi = {
     showNativeNotification: (
       input: PluginNativeNotificationInput,
     ) => Promise<PluginNativeNotificationResult>;
+    /**
+     * Show one of this plugin's own `contributes.views` in the work panel of a
+     * session (`ui.view`). The view travels through the same `location` channel
+     * the tool launcher and chat file references use, and a live view receives
+     * it as a `view:open` push instead of a reload.
+     *
+     * Rejects with `INVALID_ARGUMENT` when no session is active, when the named
+     * `sessionId` is no longer the one the user is looking at, or when `viewId`
+     * does not name exactly one of the plugin's views.
+     */
+    revealView: (input?: PluginRevealViewInput) => Promise<void>;
   };
   project: {
     create: (input: { path: string }) => Promise<PluginProjectRecord>;
@@ -1500,6 +1553,12 @@ export type PluginHostApi = {
   };
   session: {
     getLlmContext: () => Promise<PluginLlmContext>;
+    /**
+     * 当前正在查看的本地聊天会话；非聊天页或远程会话返回 null。
+     * 与 `session:activated` 事件使用相同快照，订阅者无需轮询。
+     * 不接受会话 ID，当前选择由宿主报告。
+     */
+    getActive: () => Promise<PluginActiveSession | null>;
     getAutoTitleContext: (input: { sessionId: string }) => Promise<PluginAutoTitleContext | null>;
     setAutoTitle: (input: {
       sessionId: string;

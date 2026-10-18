@@ -51,6 +51,7 @@ export function createInitialState(): AppStateData {
     activeWorkPanelTabId: null,
     workPanelContexts: {},
     workPanelWidth: initialWorkPanelWidth,
+    workPanelYieldedWidth: null,
     workPanelFileRequest: null,
     sideChats: {},
     sideChatTranscripts: {},

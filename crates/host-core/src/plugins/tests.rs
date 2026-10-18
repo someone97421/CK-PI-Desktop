@@ -2,6 +2,68 @@ use super::*;
 use crate::activation::ActivationMode;
 use tempfile::tempdir;
 
+// 模拟流式打包器：本地头大小为零，真实大小在中央目录和尾部描述符中。
+fn descriptor_zip(signed: bool) -> Vec<u8> {
+    let data = b"const marker = 'PK\x03\x04 PK\x07\x08';";
+    let mut bytes = make_zip(&[("main.js", data)]);
+    let central = 30 + "main.js".len() + data.len();
+    bytes[6..8].copy_from_slice(&8u16.to_le_bytes());
+    bytes[14..26].fill(0);
+    bytes[central + 8..central + 10].copy_from_slice(&8u16.to_le_bytes());
+    let mut descriptor = Vec::new();
+    if signed {
+        descriptor.extend_from_slice(&0x08074b50u32.to_le_bytes());
+    }
+    descriptor.extend_from_slice(&crc32(data).to_le_bytes());
+    descriptor.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    descriptor.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    let central_offset = central + descriptor.len();
+    bytes.splice(central..central, descriptor);
+    let eocd = bytes.len() - 22;
+    bytes[eocd + 16..eocd + 20].copy_from_slice(&(central_offset as u32).to_le_bytes());
+    bytes
+}
+
+#[test]
+fn zip_extracts_stored_entries_with_or_without_descriptors() {
+    let content = b"const marker = 'PK\x03\x04 PK\x07\x08';";
+    for bytes in [make_zip(&[("main.js", content)]), descriptor_zip(true), descriptor_zip(false)] {
+        let dir = tempdir().unwrap();
+        install::extract_zip_bytes(&bytes, dir.path()).unwrap();
+        assert_eq!(fs::read(dir.path().join("main.js")).unwrap(), content);
+    }
+}
+
+#[test]
+fn zip_rejects_invalid_central_directory_and_entry_sizes() {
+    let original = descriptor_zip(true);
+    let eocd = original.len() - 22;
+    let central = read_u32(&original, eocd + 16).unwrap() as usize;
+    for (offset, value, expected) in [
+        (eocd + 16, u32::MAX, "central directory truncated"),
+        (eocd + 12, 1, "central header truncated"),
+        (central + 24, 1, "entry size mismatch"),
+        (central + 42, u32::MAX, "local header truncated"),
+    ] {
+        let mut bytes = original.clone();
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        let dir = tempdir().unwrap();
+        let error = install::extract_zip_bytes(&bytes, dir.path()).unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    let dir = tempdir().unwrap();
+    assert!(install::extract_zip_bytes(&original[..eocd], dir.path()).is_err());
+}
+
+#[test]
+fn zip_rejects_corrupt_payload_from_descriptor_archive() {
+    let mut bytes = descriptor_zip(false);
+    bytes[30 + "main.js".len()] ^= 1;
+    let dir = tempdir().unwrap();
+    let error = install::extract_zip_bytes(&bytes, dir.path()).unwrap_err().to_string();
+    assert!(error.contains("CRC mismatch"), "{error}");
+}
+
 /// Serializes tests that repoint `PI_DESKTOP_PLUGIN_MARKET_URL`.
 ///
 /// The marketplace source is process-global, so two tests pointing it at
