@@ -89,6 +89,7 @@ import type {
   PluginReviewPage,
   PluginReviewQuery,
   PluginReviewSummary,
+  PluginReviewTicker,
   ProjectRecord,
   ProjectGroupRecord,
   ProjectMemory,
@@ -1593,6 +1594,16 @@ export const api = {
   /** One page of public reviews, its summary, and the trusted review URL. */
   marketReviews: (query: PluginReviewQuery) =>
     invoke<PluginReviewPage>(IPC.invoke.marketReviews, query),
+  /**
+   * The center's selected review line for plugin ids, keyed by id. Anonymous
+   * read through the host, stable for a UTC day. An older center rejects; the
+   * card then simply has no review line.
+   */
+  marketReviewTickers: (pluginIds: string[]) =>
+    invoke<{ tickers: Record<string, PluginReviewTicker> }>(
+      IPC.invoke.marketReviewTickers,
+      { pluginIds },
+    ).then((result) => result.tickers),
   /** Import a pi CLI extension file or directory as a development plugin (spec 16 §3). */
   importPiExtension: () =>
     invoke<

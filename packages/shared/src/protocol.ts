@@ -406,6 +406,7 @@ export const IPC = {
     marketApplyUpdates: "pi-desktop/market/applyUpdates",
     marketCancelInstall: "pi-desktop/market/cancelInstall",
     marketReviewSummaries: "pi-desktop/market/reviewSummaries",
+    marketReviewTickers: "pi-desktop/market/reviewTickers",
     marketReviews: "pi-desktop/market/reviews",
     commandPaletteSearch: "pi-desktop/commandPalette/search",
     commandPaletteExecute: "pi-desktop/commandPalette/execute",
