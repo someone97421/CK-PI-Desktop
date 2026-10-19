@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/plugin-devkit",
-  "version": "2610.1911.5455",
+  "version": "2610.1913.109",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
