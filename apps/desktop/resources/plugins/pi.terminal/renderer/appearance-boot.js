@@ -24,6 +24,7 @@
       window.__APPEARANCE_CACHE_KEY) ||
     DEFAULT_KEY;
   var root = document.documentElement;
+  var ownedTokens = [];
 
   function readCache() {
     try {
@@ -82,6 +83,18 @@
     } else if (style) {
       style.remove();
     }
+
+    ownedTokens.forEach(function (name) { root.style.removeProperty(name); });
+    ownedTokens = [];
+    var tokens = resolved.tokens;
+    if (tokens && typeof tokens === "object") {
+      Object.keys(tokens).forEach(function (name) {
+        if (!name.startsWith("--") || typeof tokens[name] !== "string") return;
+        root.style.setProperty(name, tokens[name]);
+        ownedTokens.push(name);
+      });
+    }
+    root.toggleAttribute("data-host-appearance", Boolean(tokens || resolved.pluginThemeCss));
 
     return { base: base || currentTheme() || null, locale: locale, raw: resolved };
   }

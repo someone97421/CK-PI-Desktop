@@ -88,7 +88,7 @@ pub fn current_platform() -> ShellPlatform {
 
 pub fn default_shell_id() -> &'static str {
     match current_platform() {
-        ShellPlatform::Windows => PWSH_ID,
+        ShellPlatform::Windows => WINDOWS_POWERSHELL_ID,
         ShellPlatform::Unix => BASH_ID,
     }
 }
@@ -283,7 +283,7 @@ pub fn build_invocation_for_platform(
 
 fn default_for_platform(platform: ShellPlatform) -> &'static str {
     match platform {
-        ShellPlatform::Windows => PWSH_ID,
+        ShellPlatform::Windows => WINDOWS_POWERSHELL_ID,
         ShellPlatform::Unix => BASH_ID,
     }
 }
@@ -296,14 +296,14 @@ fn choices_for_platform(platform: ShellPlatform) -> Vec<ShellOption> {
                 label: "Windows PowerShell".into(),
                 dialect: "powershell".into(),
                 available: false,
-                is_default: false,
+                is_default: true,
             },
             ShellOption {
                 id: PWSH_ID.into(),
                 label: "PowerShell 7".into(),
                 dialect: "powershell".into(),
                 available: false,
-                is_default: true,
+                is_default: false,
             },
             ShellOption {
                 id: CMD_ID.into(),
@@ -666,14 +666,14 @@ mod tests {
         assert_eq!(unix.choices.len(), 1);
 
         let windows = catalog_for_platform(ShellPlatform::Windows, None, |_| true);
-        assert_eq!(windows.configured_id, PWSH_ID);
+        assert_eq!(windows.configured_id, WINDOWS_POWERSHELL_ID);
         assert_eq!(windows.choices.len(), 4);
         assert_eq!(windows.choices[0].label, "Windows PowerShell");
-        assert!(!windows.choices[0].is_default);
+        assert!(windows.choices[0].is_default);
         assert_eq!(windows.choices[1].id, PWSH_ID);
         assert_eq!(windows.choices[1].label, "PowerShell 7");
         assert_eq!(windows.choices[1].dialect, "powershell");
-        assert!(windows.choices[1].is_default);
+        assert!(!windows.choices[1].is_default);
 
         // The fallback follows catalog order, so PowerShell 7 — placed directly
         // after the in-box 5.1 entry — is the first available choice once 5.1 is

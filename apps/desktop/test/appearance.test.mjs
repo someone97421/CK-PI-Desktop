@@ -7,10 +7,11 @@ import { resolveFontScale } from "../../../packages/shared/src/font-size.ts";
 import { resetModeAppearance } from "../../../packages/shared/src/appearance.ts";
 
 const moduleUrl = new URL("../src/lib/appearance.ts", import.meta.url);
+const paletteUrl = new URL("../shared/appearance-palette.ts", import.meta.url);
 const resolution = registerHooks({
   resolve(specifier, context, nextResolve) {
-    if (context.parentURL === moduleUrl.href) {
-      if (specifier === "./fonts") return nextResolve("./fonts.ts", context);
+    if (context.parentURL === moduleUrl.href || context.parentURL === paletteUrl.href) {
+      if (specifier === "../../shared/appearance-palette") return nextResolve(paletteUrl.href, context);
       if (specifier === "@pi-desktop/shared") {
         return nextResolve(new URL("../../../packages/shared/src/appearance.ts", import.meta.url).href, context);
       }
@@ -21,11 +22,17 @@ const resolution = registerHooks({
 const { accentInkTokens, appearancePalette, resolveAppearance, applyAppearance, accentForeground } =
   await import(moduleUrl.href).finally(() => resolution.deregister());
 
-test("unconfigured themes do not introduce overrides; legacy UI fonts remain defaults", () => {
-  assert.deepEqual(resolveAppearance({ theme: "dark" }, "dark").tokens, {});
+test("未配置的内置主题使用缺省配色，并保留已配置的全局字体", () => {
+  const dark = resolveAppearance({ theme: "dark" }, "dark");
+  assert.equal(dark.tokens["--ds-accent"], "#A0DC41");
+  assert.equal(dark.background, "#262628");
+  assert.equal(dark.tokens["--ds-text-primary"], "#D2C8BE");
+  assert.equal(dark.tokens["--font-sans"], undefined);
   const legacy = resolveAppearance({ theme: "light", fontFamily: "Legacy, sans-serif" }, "light");
-  assert.deepEqual(legacy.tokens, { "--font-sans": "Legacy, sans-serif" });
-  assert.equal(legacy.background, undefined);
+  assert.equal(legacy.tokens["--font-sans"], "Legacy, sans-serif");
+  assert.equal(legacy.tokens["--ds-accent"], "#6651D2");
+  assert.equal(legacy.tokens["--ds-text-primary"], "#444546");
+  assert.equal(legacy.background, "#F1EEE5");
   assert.equal(legacy.typography, false);
 });
 

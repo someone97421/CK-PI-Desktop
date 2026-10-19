@@ -1351,6 +1351,8 @@ export type PluginAppearance = {
   locale: string;
   /** The active contributed theme, when the preference selects one. */
   pluginTheme: { id: string; base: "light" | "dark"; css: string } | null;
+  /** 当前外观的 CSS 变量；未提供的变量沿用主题样式。 */
+  tokens?: Record<string, string>;
 };
 
 /** Built-in theme preference, or a registered `plugin:<pluginId>:<themeId>` id. */

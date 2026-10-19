@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "pi.terminal",
   "name": "Terminal",
-  "version": "0.1.7-ck.1",
+  "version": "0.1.7-ck.2",
   "description": "Otty-inspired interactive terminal for PI-Desktop. Docks in the right work panel (no separate window), with tabs, cross-platform shell profiles, and copy/paste.",
   "i18n": {
     "en": {
@@ -21,7 +21,7 @@
     "developer-tools",
     "official"
   ],
-  "changelog": "CK 内置修订版：修复 Windows 终端输出通道，显示终端助手错误，随应用分发和维护。",
+  "changelog": "CK 内置修订版：终端跟随宿主配色、对比度、UI 与代码字体及字重，支持实时刷新和主题缓存；保留 Windows 输出通道修复。",
   "safetyNotes": "This plugin launches a real login shell as your user through a bundled PTY helper (forkpty on macOS/Linux, ConPTY on Windows). Anything you can run in a system terminal can run here, including destructive commands. It does not persist transcripts, passwords, or shell history beyond an in-memory scrollback that dies with the plugin process. Uninstalling or disabling the plugin kills every session. The AI is not given a tool that writes to the PTY; agent command execution continues to use the host Bash tool.",
   "main": "main.js",
   "contributes": {

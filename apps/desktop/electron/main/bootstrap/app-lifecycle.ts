@@ -12,6 +12,7 @@ import {
   traySessionTitle,
   migrateKeybindingOverrides,
   type AppMenuCommand,
+  type AppSettings,
   type CloseBehavior,
   type KeybindingOverrides,
   type NativeMenuAction,
@@ -31,6 +32,7 @@ import { syncPluginDisplayLocale } from "../plugin-display-locale";
 import { createPowerSaveBlockerController } from "../keep-awake";
 import type { PluginAppearance } from "../../shared/plugin-panel-chrome";
 import { readAppearanceIconPath } from "../appearance-media";
+import { resolveAppearance as resolveAppearanceTokens } from "../../../shared/appearance-palette";
 
 export type ApplicationLifecycleState = {
   windowCreationPromise: Promise<void> | null;
@@ -44,6 +46,7 @@ export type ApplicationAppearanceState = {
   pluginPanelTheme: "light" | "dark";
   appThemePreference: string;
   broadcastAppearanceSignature: string;
+  customAppearance?: Pick<AppSettings, "appearance" | "fontFamily">;
 };
 
 export type ApplicationLifecycleDependencies = {
@@ -623,6 +626,8 @@ export function createApplicationLifecycle({
     theme?: unknown;
     keybindings?: unknown;
     developerMode?: unknown;
+    appearance?: AppSettings["appearance"];
+    fontFamily?: AppSettings["fontFamily"];
   } | null) {
     const locale = resolveLocale(
       typeof settings?.language === "string" &&
@@ -644,6 +649,7 @@ export function createApplicationLifecycle({
         // a language change into an unhandled rejection.
         .catch(() => {});
     }
+    appearanceState.customAppearance = { appearance: settings?.appearance, fontFamily: settings?.fontFamily };
     applyAppThemePreference(settings?.theme);
     // Persisted keybindings can still carry the retired window ids (D438); the
     // main process is the only reader when the window never opens, so it folds
@@ -685,12 +691,16 @@ export function createApplicationLifecycle({
       const theme = plugins.getThemes().find((item) => item.id === appearanceState.appThemePreference);
       if (theme) {
         base = theme.base;
-        pluginTheme = { id: theme.id, base: theme.base, css: theme.css };
+        pluginTheme = { id: theme.id, base: theme.base, css: `${theme.css}\n${theme.variablesCss ?? ""}` };
       } else {
         base = "system";
       }
     }
-    return { theme: appearanceState.appThemePreference, base, locale: appearanceState.updaterLocale, pluginTheme };
+    const tokens = resolveAppearanceTokens({
+      ...appearanceState.customAppearance,
+      theme: appearanceState.appThemePreference as AppSettings["theme"],
+    }, base === "system" ? appearanceState.pluginPanelTheme : base).tokens;
+    return { theme: appearanceState.appThemePreference, base, locale: appearanceState.updaterLocale, pluginTheme, tokens };
   }
 
   /**

@@ -1,7 +1,6 @@
-import { Fragment, memo } from "react";
+import { memo } from "react";
 import type { AssistantActivityItem } from "../../../lib/assistant-turns";
 import { isDelegationActivityItem, type DelegationActivityItem, type SubagentOutcome, type SubagentTiming } from "../../../lib/subagent-topology";
-import { ReviewChangeCard } from "../../../components/ReviewChangeCard";
 import { ThinkingRow } from "./shared";
 import { HostedSearchRow } from "./HostedSearchRow";
 import { SubagentTopology } from "./SubagentTopology";
@@ -56,11 +55,8 @@ const ActivityItemBlock = memo(function ActivityItemBlock({
     // never the last item of an internal render block.
     const autoOpenLatest = isLast && item === lastItem;
     if (item.kind === "tool") return (
-      <Fragment key={item.message.id}>
-        <ToolRow imagesInTurn message={item.message} autoOpen={autoOpenLatest}
-          onUserInteraction={onUserInteraction} {...(item.delegate ? { delegate: item.delegate } : {})} />
-        <ReviewChangeCard message={item.message} />
-      </Fragment>
+      <ToolRow key={item.message.id} imagesInTurn message={item.message} autoOpen={autoOpenLatest}
+        onUserInteraction={onUserInteraction} {...(item.delegate ? { delegate: item.delegate } : {})} />
     );
     if (item.kind === "hostedSearch") return <HostedSearchRow
       key={`hosted-search-${item.message.id}-${item.round.id}`}

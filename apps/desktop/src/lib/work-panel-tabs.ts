@@ -1,6 +1,5 @@
 export type WorkPanelTabKind =
   | "new"
-  | "review"
   | "file"
   | "plugin"
   /** Side conversation backed by a child session. */
@@ -17,8 +16,6 @@ export type WorkPanelTab = {
   location?: string;
   /** Stored attachment mimeType for extension-less `attachments/<sha256>` images. */
   mimeType?: string;
-  /** 仅用于当前渲染会话的审阅筛选，不写入持久化设置。 */
-  reviewScope?: { messageIds: string[]; showAll?: boolean };
   /** Optional 1-based line/column for host file tabs (chat `path:line` refs). */
   line?: number;
   column?: number;
@@ -250,7 +247,7 @@ export function parsePluginViewRef(
 export function isKnownWorkPanelTab(tab: WorkPanelTab): boolean {
   return (
     Boolean(tab) &&
-    (tab.kind === "new" || tab.kind === "review" ||
+    (tab.kind === "new" ||
       tab.kind === "file" || tab.kind === "plugin" ||
       tab.kind === "sidechat" || tab.kind === "subagent")
   );
@@ -279,9 +276,8 @@ export function sanitizeWorkPanelTabsState(
 }
 
 /**
- * Only plugin-contributed views are launchable tools. Review and file tabs
- * are transcript resources even though their tab ids are singleton-shaped, so
- * they remain visible in the opened-resource section.
+ * Only plugin-contributed views are launchable tools; file tabs remain
+ * transcript resources in the opened-resource section.
  */
 export function isToolWorkPanelTab(tab: WorkPanelTab): boolean {
   return tab.kind === "plugin";

@@ -32,10 +32,12 @@ function EntryExtraBlock({
   entry,
   message,
   sessionId,
+  task,
 }: {
   entry: SlotEntry;
   message: SlotReply;
   sessionId: string;
+  task?: PluginEntryExtraSlotProps["task"];
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
@@ -70,7 +72,7 @@ function EntryExtraBlock({
       >
         <div ref={contentRef}>
           <SlotMount entry={entry}>
-            {slotElement(entry, entryExtraSlotProps(message, sessionId))}
+            {slotElement(entry, entryExtraSlotProps(message, sessionId, task))}
           </SlotMount>
         </div>
       </div>
@@ -92,7 +94,7 @@ function EntryExtraBlock({
  * The slot region of one finished assistant reply: a block per registration,
  * in registration order, or nothing when no plugin registered the slot.
  */
-export function EntryExtraStack({ message }: { message: SlotReply }) {
+export function EntryExtraStack({ message, task }: { message: SlotReply; task?: PluginEntryExtraSlotProps["task"] }) {
   const entries = useSlotEntries("entryExtra");
   const sessionId = useSlotSessionId();
   if (entries.length === 0) return null;
@@ -100,7 +102,7 @@ export function EntryExtraStack({ message }: { message: SlotReply }) {
     <div className="pi-entry-extra-stack">
       {entries.map((entry) => (
         <SlotErrorBoundary key={entry.id} entry={entry}>
-          <EntryExtraBlock entry={entry} message={message} sessionId={sessionId} />
+          <EntryExtraBlock entry={entry} message={message} sessionId={sessionId} task={task} />
         </SlotErrorBoundary>
       ))}
     </div>

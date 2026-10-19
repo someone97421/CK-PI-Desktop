@@ -107,7 +107,7 @@ export function isCommandShellCatalog(value: unknown): value is CommandShellCata
   );
 }
 
-/** Windows 缺省使用 PowerShell 7，其他平台使用 Bash。 */
+/** Windows 缺省使用系统自带的 Windows PowerShell，其他平台使用 Bash。 */
 export function defaultCommandShellForPlatform(platform: string): CommandShellId {
-  return platform === "win32" ? "windows-pwsh" : "bash";
+  return platform === "win32" ? "windows-powershell" : "bash";
 }

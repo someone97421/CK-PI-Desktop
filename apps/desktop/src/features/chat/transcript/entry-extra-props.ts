@@ -6,14 +6,14 @@
 import type { PluginEntryExtraSlotProps } from "@pi-desktop/plugin-sdk";
 
 /**
- * One block's props: the reply and its ids, nothing else. Rebuilt on every
- * render of the reply (props-push).
+ * One reply's props and optional task scope, rebuilt on each render.
  */
 export function entryExtraSlotProps(
   message: PluginEntryExtraSlotProps["message"],
   sessionId: string,
+  task?: PluginEntryExtraSlotProps["task"],
 ): PluginEntryExtraSlotProps {
-  return { message, messageId: message.id, sessionId };
+  return { message, messageId: message.id, sessionId, ...(task ? { task } : {}) };
 }
 
 /** Collapsed-state clamp: taller content fades and shows the host toggle. */

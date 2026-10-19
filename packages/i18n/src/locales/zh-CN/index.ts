@@ -2100,7 +2100,7 @@ sklm: {
     appearanceDark: "深色外观",
     appearanceAutoSave: "修改即时应用并自动保存。浅色、深色独立配置，仅影响内置主题；系统模式随系统外观切换。",
     appearanceContrast: "对比度",
-    appearanceContrastDesc: "分区、卡片与边框的区分度。50 为内置外观；数值越低越扁平，越高边界越清晰。",
+    appearanceContrastDesc: "分区、卡片与边框的区分度。浅色默认 50，深色默认 75；数值越低越扁平，越高边界越清晰。",
     appearanceContrastMode: "{{mode}}对比度",
     appearanceAccent: "强调色",
     appearanceBackground: "背景色",

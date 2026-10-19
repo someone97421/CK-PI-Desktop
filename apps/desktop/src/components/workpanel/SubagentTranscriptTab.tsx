@@ -18,9 +18,6 @@ import {
   AssistantErrorMessage,
   ThinkingRow,
 } from "../../features/chat/transcript/shared";
-import {
-  ReviewChangeCard,
-} from "../ReviewChangeCard";
 import { ToolRow } from "../../features/chat/transcript/ToolRow";
 import { Markdown } from "../Markdown";
 import { delegateModelId, delegateThinkingLevel } from "../../features/chat/transcript/model";
@@ -149,10 +146,7 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
                   </div>
                   {turn.rows.map((row) =>
                     row.kind === "tool" ? (
-                      <Fragment key={row.message.id}>
-                        <ToolRow message={row.message} />
-                        <ReviewChangeCard message={row.message} />
-                      </Fragment>
+                      <ToolRow key={row.message.id} message={row.message} />
                     ) : row.kind === "thinking" ? (
                       <ThinkingRow
                         key={`thinking-${row.message.id}`}

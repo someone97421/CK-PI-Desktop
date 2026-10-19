@@ -23,7 +23,6 @@ import {
   parsePluginViewRef,
   pluginWorkPanelTab,
   subagentTabDisplayLabels,
-  toolWorkPanelTab,
 } from "../../lib/work-panel-tabs";
 import { pluginViewIcon, pluginViewInitial } from "../../lib/plugin-view-icons";
 import { useAppStore } from "../../stores/app-store";
@@ -36,14 +35,12 @@ import {
   IconChevronLeft,
   IconClose,
   IconChat,
-  IconDiff,
   IconFileText,
   IconPanelMaximize,
   IconPanelRestore,
   IconPlug,
   IconPlus,
 } from "../icons";
-import { ReviewTab } from "./ReviewTab";
 import { FilesTab } from "./FilesTab";
 import { PluginViewTab } from "./PluginViewTab";
 import { SubagentTranscriptTab } from "./SubagentTranscriptTab";
@@ -64,7 +61,6 @@ import {
 
 const TAB_ICONS = {
   new: IconPlus,
-  review: IconDiff,
   file: IconFileText,
   plugin: IconPlug,
   sidechat: IconChat,
@@ -130,30 +126,19 @@ function tabLabel(
 }
 
 function workPanelTools(
-  t: (key: string) => string,
   pluginViews: PluginViewMeta[],
 ): WorkPanelTool[] {
-  // Review is the only host-owned launcher. Files, Browser, and every future
-  // tool are plugin-contributed views, so their list stays data-driven.
-  return [
-    {
-      id: "review",
-      tab: toolWorkPanelTab("review"),
-      label: t("panel.tabs.review"),
-      icon: IconDiff,
-    },
-    ...pluginViews.map((view) => {
-      const Icon = pluginViewIcon(view.icon);
-      return {
-        id: view.ref,
-        tab: pluginWorkPanelTab(view.pluginId, view.viewId),
-        label: view.title,
-        icon: Icon,
-        ...(Icon ? {} : { initial: pluginViewInitial(view.title) }),
-        description: view.pluginName,
-      };
-    }),
-  ];
+  return pluginViews.map((view) => {
+    const Icon = pluginViewIcon(view.icon);
+    return {
+      id: view.ref,
+      tab: pluginWorkPanelTab(view.pluginId, view.viewId),
+      label: view.title,
+      icon: Icon,
+      ...(Icon ? {} : { initial: pluginViewInitial(view.title) }),
+      description: view.pluginName,
+    };
+  });
 }
 
 function ToolIcon({ item, size = 15 }: { item: WorkPanelTool; size?: number }) {
@@ -234,7 +219,7 @@ function LocalWorkPanel({
   const replaceWorkPanelTab = useAppStore((s) => s.replaceWorkPanelTab);
   const setWidth = useAppStore((s) => s.setWorkPanelWidth);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
-  const tools = workPanelTools(t, pluginViews);
+  const tools = workPanelTools(pluginViews);
   const subagentTabs = tabs.filter((tab) => tab.kind === "subagent");
   const subagentLabels = subagentTabDisplayLabels(subagentTabs.map((tab) => tabLabel(tab, t, pluginViews)));
   const subagentLabelById = new Map(subagentTabs.map((tab, index) => [tab.id, subagentLabels[index]]));
@@ -973,16 +958,6 @@ function LocalWorkPanel({
             </div>
           )}
           {subagentPanel ? <SubagentPanel selection={subagentPanel} /> : null}
-          {!subagentPanel && activeTab?.kind === "review" && (
-            <div
-              id={`work-panel-surface-${activeTab.id}`}
-              className="work-panel-tabpane"
-              role="tabpanel"
-              aria-labelledby={`work-panel-tab-${activeTab.id}`}
-            >
-              <ReviewTab />
-            </div>
-          )}
           {!subagentPanel && activeTab?.kind === "file" && (
             <div
               key={activeTab.id}

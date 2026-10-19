@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "local.file-review",
+  "name": "文件改动审查",
+  "description": "按任务或会话查看文件修改证据、逐次差异和安全撤销结果。",
+  "version": "0.1.0",
+  "main": "main.cjs",
+  "renderer": "renderer/index.mjs",
+  "rendererActions": ["plugin.call"],
+  "rendererCallMethods": ["review.summary", "review.open"],
+  "engines": { "piDesktop": ">=2610.1819.3444" },
+  "permissions": ["ui.view", "renderer.extension", "desktop.control"],
+  "activationEvents": ["onStartup", "onCommand:file-review.open"],
+  "contributes": {
+    "views": [{
+      "id": "review",
+      "title": { "zh-CN": "文件改动审查", "en": "File review" },
+      "icon": "diff",
+      "entry": "view/index.html",
+      "order": 30
+    }],
+    "commands": [{
+      "id": "file-review.open",
+      "title": "文件改动审查 / File review",
+      "keywords": ["审查", "文件", "差异", "撤销", "review", "diff", "rollback"]
+    }]
+  }
+}

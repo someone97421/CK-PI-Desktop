@@ -67,7 +67,7 @@ test("a plugin view counts as a tool, not a transcript resource", () => {
   // transcript opened belongs under "open resources".
   assert.equal(isToolWorkPanelTab(pluginWorkPanelTab("pi.browser", "browser")), true);
   assert.equal(isToolWorkPanelTab(pluginWorkPanelTab("acme.git", "changes")), true);
-  assert.equal(isToolWorkPanelTab(toolWorkPanelTab("review")), false);
+  assert.equal(isToolWorkPanelTab(toolWorkPanelTab("sidechat")), false);
   assert.equal(
     isToolWorkPanelTab({ id: "file:src/a.ts", kind: "file", resource: "src/a.ts" }),
     false,

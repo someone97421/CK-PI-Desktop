@@ -1,9 +1,11 @@
 import type { AppearanceFont, AppearanceSettings, ModeAppearance } from "./types/settings.js";
 
 export const APPEARANCE_DEFAULT_COLORS = {
-  light: { accent: "#1A1C1F", background: "#FFFFFF", foreground: "#1A1C1F" },
-  dark: { accent: "#FFFFFF", background: "#181818", foreground: "#FFFFFF" },
+  light: { accent: "#6651D2", background: "#F1EEE5", foreground: "#444546" },
+  dark: { accent: "#A0DC41", background: "#262628", foreground: "#D2C8BE" },
 } as const;
+
+export const APPEARANCE_DEFAULT_CONTRAST = { light: 50, dark: 75 } as const;
 
 /** Slider bounds for a palette's surface-separation strength (see `contrast`). */
 export const APPEARANCE_CONTRAST_MIN = 0;

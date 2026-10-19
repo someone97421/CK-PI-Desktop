@@ -42,7 +42,6 @@ import { activityItemsEqual } from "./ActivityGroup";
 import { GeneratedImages } from "./GeneratedImages";
 import { MessageRow } from "./MessageRow";
 import { TaskProcessDrawer } from "./TaskProcessDrawer";
-import { TaskReviewCard } from "./TaskReviewCard";
 import { assistantTurnMenuItems } from "./menu-items";
 import {
   useChatTextActions,
@@ -471,8 +470,12 @@ export const AssistantTurn = memo(function AssistantTurn({
             <ActionSlotSide slot="assistantAction" side="right" message={slotReply} />
           </div>
         ) : null}
-        {settledTask ? <TaskReviewCard messages={entry.sourceMessages ?? messages} /> : null}
-        {slotReply ? <EntryExtraStack message={slotReply} /> : null}
+        {slotReply ? (
+          <EntryExtraStack message={slotReply} task={{
+            messageIds: (entry.sourceMessages ?? messages).map((message) => message.id),
+            settled: Boolean(settledTask),
+          }} />
+        ) : null}
       </div>
     </div>
   );

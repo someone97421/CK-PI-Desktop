@@ -162,16 +162,8 @@
     .nav-item,
     .copy-btn,
     .sidebar-toolbar-button,
-  .sidebar-session-group-add,
-  .review-change-card,
-  .review-change-card-header,
-  .review-change-card-caret,
-  .review-change-rollback {
+  .sidebar-session-group-add {
     transform: none !important;
     transition-duration: 0.01ms !important;
-  }
-
-  .review-change-card-body {
-    animation: none;
   }
 }

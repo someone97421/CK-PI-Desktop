@@ -98,6 +98,10 @@ export type PluginEntryExtraSlotProps = {
   readonly message: PluginSlotMessage & { readonly role: "assistant" };
   readonly messageId: string;
   readonly sessionId: string;
+  readonly task?: {
+    readonly messageIds: readonly string[];
+    readonly settled: boolean;
+  };
 };
 
 export type PluginToolCardStatus = "running" | "success" | "error";

@@ -6,7 +6,6 @@ import {
   isAskToolName,
   type ToolAction,
 } from "./tool-display";
-import { reviewChangeFromMessage } from "./workspace-review";
 import { isWithinHighlightLimits } from "./render-content-limits";
 
 /*
@@ -29,7 +28,7 @@ const MAX_LIST_ITEMS = 200;
 const DIFF_CONTEXT_LINES = 2;
 /** Longer single-line strings become their own block instead of a field row. */
 const MAX_FIELD_VALUE = 120;
-/** Internal review snapshots are rendered by ReviewChangeCard, not as fields. */
+/** Snapshot metadata is consumed by review plugins. */
 const HIDDEN_KEYS = new Set(["review"]);
 
 export type ToolPresentationMessage = {
@@ -593,11 +592,7 @@ function resultBlocks(
     }
     case "edit": {
       const ops = stringAt(args, "ops");
-      // Workspace edits already own a ReviewChangeCard with the real diff;
-      // only scratch edits and imported sessions need the model's stated ops.
-      const reviewed =
-        reviewChangeFromMessage(message as unknown as UiMessage) !== null;
-      if (ops !== null && !reviewed) {
+      if (ops !== null) {
         blocks.push(codeBlock("input", ops));
       }
       const warnings = stringArray(details?.warnings);

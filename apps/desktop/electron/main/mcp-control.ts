@@ -245,6 +245,7 @@ const CONTROL_OPERATION_SPECS: OperationSpec[] = [
   spec("projectSet", "project/set", "Open and bind a project path.", "write", ["path"]),
   spec("projectClear", "project/clear", "Clear the active project.", "write", []),
   spec("workspaceDiff", "workspace/diff", "Read the active workspace diff.", "read", []),
+  spec("workspaceReviewRollback", "workspace/review/rollback", "Roll back a recorded file change using its workspace snapshot.", "write", ["input"]),
   spec("statsGetTokenUsageHistory", "stats/getTokenUsageHistory", "Read completed-turn token usage history.", "read", ["input"]),
   spec("browserGetState", "browser/getState", "Read embedded Browser state.", "read", []),
   spec("fsList", "fs/list", "List files in the active workspace.", "read", ["input"]),

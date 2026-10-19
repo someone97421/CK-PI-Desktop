@@ -1,4 +1,6 @@
 import type { FontFaceMetadata, FontMetadata } from "@pi-desktop/shared";
+import { CJK_FALLBACK } from "../../shared/font-stacks.ts";
+export { DEFAULT_UI_FONT, DEFAULT_CODE_FONT, appearanceFontStack } from "../../shared/font-stacks.ts";
 
 /**
  * Global UI font model for the Settings picker.
@@ -8,20 +10,6 @@ import type { FontFaceMetadata, FontMetadata } from "@pi-desktop/shared";
  * app ships no fonts of its own — and every stack keeps system CJK fallbacks
  * so Chinese text stays readable when the selected family has no CJK glyphs.
  */
-/**
- * CJK fallback tier appended to every custom stack. All three families are
- * provided by the platform; the app bundles no CJK face of its own.
- */
-const CJK_FALLBACK = `"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif`;
-export const DEFAULT_UI_FONT = `-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, ${CJK_FALLBACK}`;
-export const DEFAULT_CODE_FONT = `ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", "Microsoft YaHei", monospace`;
-
-export function appearanceFontStack(family: string, code = false): string {
-  // Picker stacks include CJK sans fonts; keep the chosen face but put mono
-  // fallbacks before those fonts when the chosen code font is unavailable.
-  const selected = code ? family.match(/^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,]+)(?:\s*)/)?.[0] ?? family : family;
-  return `${selected}, ${code ? DEFAULT_CODE_FONT : DEFAULT_UI_FONT}`;
-}
 
 export type FontOption = {
   /** CSS stack persisted on selection; `""` selects the system default. */

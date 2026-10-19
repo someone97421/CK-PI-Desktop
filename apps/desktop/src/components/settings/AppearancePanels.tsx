@@ -4,6 +4,7 @@ import {
   APPEARANCE_CONTRAST_MAX,
   APPEARANCE_CONTRAST_MIN,
   APPEARANCE_DEFAULT_COLORS,
+  APPEARANCE_DEFAULT_CONTRAST,
   normalizeHexColor,
   resetModeAppearance,
   resolveAppearanceContrast,
@@ -76,7 +77,7 @@ export function AppearancePanels({ settings, saveSettings }: {
       {(["light", "dark"] as const).map((mode) => {
         const panel = settings.appearance?.[mode] ?? {};
         const title = t(mode === "light" ? "settings.appearanceLight" : "settings.appearanceDark");
-        const contrast = resolveAppearanceContrast(panel.contrast);
+        const contrast = resolveAppearanceContrast(panel.contrast ?? APPEARANCE_DEFAULT_CONTRAST[mode]);
         return (
           <section key={mode} className="appearance-panel" aria-label={title}>
             <div className="appearance-panel-header">

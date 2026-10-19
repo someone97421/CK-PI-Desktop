@@ -154,15 +154,37 @@ function cssVar(name, fallback) {
   }
 }
 
+function cssColor(name, fallback) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 1;
+  const context = canvas.getContext("2d");
+  if (!context) return fallback;
+  context.fillStyle = fallback;
+  context.fillStyle = cssVar(name, fallback);
+  context.fillRect(0, 0, 1, 1);
+  return "#" + Array.from(context.getImageData(0, 0, 1, 1).data)
+    .map((channel) => channel.toString(16).padStart(2, "0")).join("");
+}
+
+function terminalFontOptions() {
+  const weight = Number(cssVar("--appearance-code-weight", "400"));
+  const fontWeight = Number.isFinite(weight) ? Math.min(1000, Math.max(1, weight)) : 400;
+  return {
+    fontFamily: cssVar("--font-mono", "ui-monospace, Consolas, monospace"),
+    fontWeight,
+    fontWeightBold: Math.min(1000, fontWeight + 200),
+  };
+}
+
 function xtermTheme(base) {
   const preset = base === "light" ? LIGHT_THEME : DARK_THEME;
   return {
     ...preset,
-    background: cssVar("--term-bg", preset.background),
-    foreground: cssVar("--term-fg", preset.foreground),
-    cursor: cssVar("--term-cursor", preset.cursor),
-    cursorAccent: cssVar("--term-bg", preset.cursorAccent),
-    selectionBackground: cssVar("--term-selection", preset.selectionBackground),
+    background: cssColor("--term-bg", preset.background),
+    foreground: cssColor("--term-fg", preset.foreground),
+    cursor: cssColor("--term-cursor", preset.cursor),
+    cursorAccent: cssColor("--term-cursor-accent", cssColor("--term-bg", preset.cursorAccent)),
+    selectionBackground: cssColor("--term-selection", preset.selectionBackground),
   };
 }
 
@@ -210,7 +232,7 @@ function createTerminal() {
     cursorBlink: true,
     cursorStyle: "bar",
     cursorWidth: 1.5,
-    fontFamily: '"SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+    ...terminalFontOptions(),
     fontSize: state.fontSize,
     lineHeight: 1.35,
     letterSpacing: 0,
@@ -780,8 +802,14 @@ let appearanceFingerprint = "";
 function applyTheme(base) {
   const resolved = base === "light" || base === "dark" ? base : currentBase();
   const theme = xtermTheme(resolved);
+  const fonts = terminalFontOptions();
   for (const tab of state.tabs.values()) {
     tab.term.options.theme = theme;
+    const fontChanged = Object.entries(fonts).some(([key, value]) => tab.term.options[key] !== value);
+    if (fontChanged) {
+      Object.assign(tab.term.options, fonts);
+      if (tab.id === state.activeId) requestAnimationFrame(() => fitTab(tab));
+    }
     try {
       if (typeof tab.term.refresh === "function") tab.term.refresh(0, Math.max(0, tab.term.rows - 1));
     } catch {
@@ -809,7 +837,8 @@ function applyHostAppearance(appearance, force) {
     base,
     appearance.theme,
     appearance.locale,
-    appearance.pluginThemeCss ? String(appearance.pluginThemeCss).length : 0,
+    appearance.pluginThemeCss || appearance.pluginTheme?.css || "",
+    JSON.stringify(appearance.tokens || {}),
     appearance.pluginTheme && appearance.pluginTheme.id,
   ].join("|");
   if (!force && fingerprint === appearanceFingerprint) return;
@@ -836,7 +865,7 @@ function watchThemeDom() {
   if (typeof MutationObserver !== "function") return;
   new MutationObserver(() => applyTheme(currentBase())).observe(document.documentElement, {
     attributes: true,
-    attributeFilter: ["data-theme", "data-base"],
+    attributeFilter: ["data-theme", "data-base", "style", "data-host-appearance"],
   });
 }
 
@@ -896,6 +925,7 @@ async function init() {
     window.setInterval(() => {
       if (document.hidden) return;
       syncWorkspace().catch(() => {});
+      void pullHostAppearance(false);
     }, 1000);
   } catch (error) {
     showBanner(error.message || t("helperMissing"));

@@ -2128,7 +2128,7 @@ sklm: {
     appearanceDark: "Dark appearance",
     appearanceAutoSave: "Changes apply and save automatically. Light and dark settings are independent and only affect built-in themes. System mode follows your OS.",
     appearanceContrast: "Contrast",
-    appearanceContrastDesc: "How strongly panels, cards, and borders separate. 50 is the built-in look; lower flattens, higher sharpens.",
+    appearanceContrastDesc: "How strongly panels, cards, and borders separate. Defaults: 50 for light, 75 for dark; lower flattens, higher sharpens.",
     appearanceContrastMode: "{{mode}} contrast",
     appearanceAccent: "Accent color",
     appearanceBackground: "Background color",

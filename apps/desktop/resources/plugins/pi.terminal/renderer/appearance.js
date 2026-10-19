@@ -86,7 +86,8 @@
       explicitBase(entry) || entry.base,
       entry.theme,
       entry.locale,
-      css ? String(css).length : 0,
+      css || "",
+      JSON.stringify(entry.tokens || {}),
       entry.pluginTheme && entry.pluginTheme.id,
     ].join("|");
   }
@@ -113,7 +114,7 @@
     if (base !== "light" && base !== "dark") base = null;
     var locale = normalizeLocale(resolved.locale);
     var css = pluginThemeCss(resolved);
-    var themeChanged = base && base !== state.base;
+    var themeChanged = base && (base !== state.base || fingerprint(resolved) !== lastFingerprint);
     var localeChanged = locale !== state.locale;
 
     if (base) state.base = base;
@@ -126,6 +127,7 @@
         base: state.themeOverride || incoming || state.base,
         locale: resolved.locale,
         pluginThemeCss: state.themeOverride === null && css ? css : null,
+        tokens: state.themeOverride === null ? resolved.tokens : undefined,
       });
       if (applied.base === "light" || applied.base === "dark") state.base = applied.base;
       state.locale = applied.locale;
@@ -140,6 +142,7 @@
         base: state.base,
         locale: state.locale,
         pluginThemeCss: state.themeOverride === null && css ? css : undefined,
+        tokens: state.themeOverride === null ? resolved.tokens : undefined,
       });
     }
 

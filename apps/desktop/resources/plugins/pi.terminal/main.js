@@ -61,6 +61,7 @@ function flattenAppearance(appearance, locale) {
     base,
     locale: (appearance && appearance.locale) || locale || "en",
     pluginTheme,
+    tokens: appearance?.tokens,
     pluginThemeCss:
       (appearance && appearance.pluginThemeCss) || (pluginTheme && pluginTheme.css) || null,
   };
