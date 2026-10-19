@@ -97,3 +97,38 @@ test("automatic AI titles stay plugin-owned", () => {
   assert.doesNotMatch(store, /triggerAutoTitleSummarization/);
   assert.doesNotMatch(main, /IPC\.invoke\.sessionSummarizeTitle/);
 });
+
+test("历史德法西语占位标题在双语界面中仍被识别为默认标题 (#1755)", () => {
+  // 兼容原版留下的标题字符串，不依赖本 fork 已移除的语言包。
+  const locales = [
+    ["de", "Neue Aufgabe", "Neuer Chat"],
+    ["fr", "Nouvelle tâche", "Nouvelle discussion"],
+    ["es", "Nueva tarea", "Nuevo chat"],
+  ];
+  for (const [locale, untitled, newChat] of locales) {
+    assert.equal(isDefaultSessionTitle(untitled), true, `${locale} untitledTask`);
+    assert.equal(
+      isDefaultSessionTitle(untitled.toLowerCase()),
+      true,
+      `${locale} untitledTask lowercased`,
+    );
+    assert.equal(isDefaultSessionTitle(newChat), true, `${locale} newChat`);
+    assert.equal(
+      isDefaultSessionTitle(newChat.toLowerCase()),
+      true,
+      `${locale} newChat lowercased`,
+    );
+  }
+
+  // 宿主与界面保持一致，使用 Unicode 小写比较两类占位标题。
+  assert.match(
+    host,
+    /"neue aufgabe",\s*\n\s*"nouvelle tâche",\s*\n\s*"nueva tarea",\s*\n\s*"neuer chat",\s*\n\s*"nuevo chat",\s*\n\s*"nouvelle discussion",/,
+    "PLACEHOLDER_TITLES must carry the German, French and Spanish labels for both keys",
+  );
+  assert.match(
+    host,
+    /to_lowercase\(\)/,
+    "is_default_title compares through to_lowercase",
+  );
+});
