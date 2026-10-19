@@ -98,7 +98,7 @@ async function onLoad() {
   pi.events.on('session:activated', activated);
   pi.events.on('session:turnEnded', turnEnded);
   active = await pi.session.getActive();
-  await pi.commands.register({ id: 'file-review.open', title: '文件改动审查 / File review', run: async () => {
+  await pi.commands.register({ id: 'file-review.open', title: '任务文件审查增强 / Task review enhancements', run: async () => {
     const current = await pi.session.getActive();
     if (!current) fail('NO_LOCAL_SESSION', '请先打开本地会话 / Open a local session first');
     return open(current.sessionId);

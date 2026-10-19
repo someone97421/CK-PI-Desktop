@@ -1,6 +1,6 @@
 const messages = {
   'zh-CN': {
-    title: '文件改动审查', task: '本轮任务', session: '整个会话', scope: '审查范围',
+    title: '任务文件审查增强', task: '本轮任务', session: '整个会话', scope: '审查范围',
     files: '{n} 个文件', edits: '{n} 次修改', number: '第 {n} 次修改', review: '审查改动',
     empty: '没有文件修改记录', taskEmpty: '本轮没有文件修改记录', loading: '正在读取修改记录…',
     refresh: '刷新', retry: '重试', more: '另有 {n} 个文件，在面板中查看',
@@ -17,7 +17,7 @@ const messages = {
     bridgeMissing: '请在这是一个助手中打开此插件。',
   },
   en: {
-    title: 'File review', task: 'This task', session: 'Entire session', scope: 'Review scope',
+    title: 'Task review enhancements', task: 'This task', session: 'Entire session', scope: 'Review scope',
     files: '{n} files', edits: '{n} changes', number: 'Change {n}', review: 'Review changes',
     empty: 'No file change records', taskEmpty: 'No file changes in this task', loading: 'Loading change records…',
     refresh: 'Refresh', retry: 'Retry', more: '{n} more files available in the panel',

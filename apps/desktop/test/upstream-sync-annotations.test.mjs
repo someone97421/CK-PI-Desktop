@@ -119,7 +119,7 @@ test("ordinary queued text still waits for host acceptance without annotations",
 for (const withOtherTab of [false, true]) {
   test(`closing side chat ${withOtherTab ? "beside another tab" : "as final tab"} preserves upstream launcher and durable child`, () => {
     const child = sideChats.sideChatWorkPanelTab("child");
-    const other = tabs.toolWorkPanelTab("sidechat");
+    const other = tabs.toolWorkPanelTab("review");
     const state = {
       activeSessionId: "parent", workPanelOpen: true,
       workPanelTabs: withOtherTab ? [child, other] : [child], activeWorkPanelTabId: child.id,

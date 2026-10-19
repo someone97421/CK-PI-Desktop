@@ -98,7 +98,7 @@ test("Write shows the written content and a size chip", () => {
   ]);
 });
 
-test("Edit keeps stated ops readable with or without review metadata", () => {
+test("Edit shows the stated ops when no review card owns the diff", () => {
   const args = {
     path: "src/main.ts",
     tag: "A1B2",
@@ -113,6 +113,7 @@ test("Edit keeps stated ops readable with or without review metadata", () => {
   assert.ok(input, "scratch edits render the ops");
   assert.equal(input.text, args.ops);
 
+  // A workspace edit with a review snapshot: ReviewChangeCard owns the diff.
   const reviewed = buildToolPresentation({
     role: "tool",
     toolName: "Edit",
@@ -137,7 +138,6 @@ test("Edit keeps stated ops readable with or without review metadata", () => {
     }),
   });
   assert.equal(byRole(reviewed, "diff"), undefined);
-  assert.equal(byRole(reviewed, "input").text, args.ops);
 });
 
 test("Bash keeps its channels apart and leaves the command to the head", () => {

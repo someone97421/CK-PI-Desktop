@@ -29,12 +29,12 @@ const {
 
 test("work panel tabs open on demand and deduplicate by resource", () => {
   const empty = { tabs: [], activeTabId: null };
-  const sidechat = openWorkPanelTabState(empty, toolWorkPanelTab("sidechat"));
-  const file = openWorkPanelTabState(sidechat, fileWorkPanelTab("src/App.tsx"));
-  const reopened = openWorkPanelTabState(file, toolWorkPanelTab("sidechat"));
+  const review = openWorkPanelTabState(empty, toolWorkPanelTab("review"));
+  const file = openWorkPanelTabState(review, fileWorkPanelTab("src/App.tsx"));
+  const reopened = openWorkPanelTabState(file, toolWorkPanelTab("review"));
 
-  assert.deepEqual(reopened.tabs.map((tab) => tab.id), ["sidechat", "file:src/App.tsx"]);
-  assert.equal(reopened.activeTabId, "sidechat");
+  assert.deepEqual(reopened.tabs.map((tab) => tab.id), ["review", "file:src/App.tsx"]);
+  assert.equal(reopened.activeTabId, "review");
 });
 
 test("new tabs are unique launcher pages and replace themselves with a tool", () => {
@@ -77,9 +77,9 @@ test("selecting an already-open tool removes only the source launcher tab", () =
 test("Browser reveal reuses the originating session's browser tab", () => {
   const first = browserPluginTab("https://example.com/first");
   const latest = browserPluginTab("https://example.com/latest");
-  const tabs = [first, toolWorkPanelTab("sidechat"), latest];
+  const tabs = [first, toolWorkPanelTab("review"), latest];
 
-  assert.equal(browserPluginTabForReveal(tabs, "sidechat", first.id), first);
+  assert.equal(browserPluginTabForReveal(tabs, "review", first.id), first);
   assert.equal(browserPluginTabForReveal(tabs, latest.id), latest);
   assert.equal(browserPluginTabForReveal([], null).id, browserPluginTab().id);
 });
@@ -109,13 +109,13 @@ test("file-view requests preserve a positioned file tab", () => {
     line: 65,
     column: 4,
   });
-  assert.equal(createWorkPanelFileRequest(toolWorkPanelTab("sidechat"), 8), null);
+  assert.equal(createWorkPanelFileRequest(toolWorkPanelTab("review"), 8), null);
 });
 
 test("closing the active tab selects its right neighbor then its left", () => {
   const state = {
     tabs: [
-      toolWorkPanelTab("sidechat"),
+      toolWorkPanelTab("review"),
       fileWorkPanelTab("src/App.tsx"),
       browserPluginTab(),
     ],
@@ -125,28 +125,28 @@ test("closing the active tab selects its right neighbor then its left", () => {
   const endClosed = closeWorkPanelTabState(middleClosed, browserPluginTab().id);
 
   assert.equal(middleClosed.activeTabId, browserPluginTab().id);
-  assert.equal(endClosed.activeTabId, "sidechat");
+  assert.equal(endClosed.activeTabId, "review");
 });
 
 test("closing an inactive tab preserves selection and the last close empties state", () => {
   const state = {
-    tabs: [toolWorkPanelTab("sidechat"), browserPluginTab()],
-    activeTabId: "sidechat",
+    tabs: [toolWorkPanelTab("review"), browserPluginTab()],
+    activeTabId: "review",
   };
   const inactiveClosed = closeWorkPanelTabState(state, browserPluginTab().id);
-  const empty = closeWorkPanelTabState(inactiveClosed, "sidechat");
+  const empty = closeWorkPanelTabState(inactiveClosed, "review");
 
-  assert.equal(inactiveClosed.activeTabId, "sidechat");
+  assert.equal(inactiveClosed.activeTabId, "review");
   assert.deepEqual(empty, { tabs: [], activeTabId: null });
 });
 
 test("activation ignores stale tab ids", () => {
-  const state = { tabs: [toolWorkPanelTab("sidechat")], activeTabId: "sidechat" };
+  const state = { tabs: [toolWorkPanelTab("review")], activeTabId: "review" };
   assert.equal(activateWorkPanelTabState(state, "missing"), state);
 });
 
 test("reordering tabs inserts before or after a target and preserves selection", () => {
-  const review = toolWorkPanelTab("sidechat");
+  const review = toolWorkPanelTab("review");
   const file = fileWorkPanelTab("src/App.tsx");
   const browser = browserPluginTab();
   const state = {
@@ -165,43 +165,43 @@ test("reordering tabs inserts before or after a target and preserves selection",
 
 test("reordering an unknown or identical tab is a no-op", () => {
   const state = {
-    tabs: [toolWorkPanelTab("sidechat"), browserPluginTab()],
-    activeTabId: "sidechat",
+    tabs: [toolWorkPanelTab("review"), browserPluginTab()],
+    activeTabId: "review",
   };
 
   assert.equal(
-    reorderWorkPanelTabsState(state, "missing", "sidechat", false),
+    reorderWorkPanelTabsState(state, "missing", "review", false),
     state,
   );
   assert.equal(
-    reorderWorkPanelTabsState(state, "sidechat", "sidechat", false),
+    reorderWorkPanelTabsState(state, "review", "review", false),
     state,
   );
 });
 
 test("unknown retained tabs are discarded without losing a known selection", () => {
-  const stale = { id: "review", kind: "review" };
+  const stale = { id: "removed", kind: "removed" };
   const selected = sanitizeWorkPanelTabsState({
-    tabs: [stale, browserPluginTab(), toolWorkPanelTab("sidechat")],
+    tabs: [stale, browserPluginTab(), toolWorkPanelTab("review")],
     activeTabId: browserPluginTab().id,
   });
   const staleSelected = sanitizeWorkPanelTabsState({
-    tabs: [browserPluginTab(), stale, toolWorkPanelTab("sidechat")],
-    activeTabId: "review",
+    tabs: [browserPluginTab(), stale, toolWorkPanelTab("review")],
+    activeTabId: "removed",
   });
 
   assert.equal(isKnownWorkPanelTab(stale), false);
   assert.deepEqual(selected.tabs.map((tab) => tab.id), [
     browserPluginTab().id,
-    "sidechat",
+    "review",
   ]);
   assert.equal(selected.activeTabId, browserPluginTab().id);
-  assert.equal(staleSelected.activeTabId, "sidechat");
+  assert.equal(staleSelected.activeTabId, "review");
 });
 
 test("only plugin views are launchable tools", () => {
   assert.equal(isToolWorkPanelTab(browserPluginTab()), true);
-  assert.equal(isToolWorkPanelTab(toolWorkPanelTab("sidechat")), false);
+  assert.equal(isToolWorkPanelTab(toolWorkPanelTab("review")), false);
   assert.equal(isToolWorkPanelTab(fileWorkPanelTab("README.md")), false);
   assert.equal(isToolWorkPanelTab(pluginWorkPanelTab("pi.file-manager", "manager")), true);
   assert.equal(isKnownWorkPanelTab({ id: "browser", kind: "browser" }), false);
@@ -278,8 +278,8 @@ test("switching work panel contexts isolates session tabs and visible state", ()
 test("switching to a session without context returns an isolated empty state", () => {
   const sessionA = {
     open: true,
-    tabs: [toolWorkPanelTab("sidechat")],
-    activeTabId: "sidechat",
+    tabs: [toolWorkPanelTab("review")],
+    activeTabId: "review",
     fileRequest: null,
   };
   const switched = switchWorkPanelContextState(
@@ -299,8 +299,8 @@ test("a newer retained artifact is not overwritten by a stale visible projection
   const staleVisible = emptyWorkPanelContext();
   const retained = {
     open: true,
-    tabs: [toolWorkPanelTab("sidechat")],
-    activeTabId: "sidechat",
+    tabs: [toolWorkPanelTab("review")],
+    activeTabId: "review",
     fileRequest: null,
   };
   const switched = switchWorkPanelContextState(
@@ -347,7 +347,7 @@ test("subagent tabs reopen in place and close like any resource tab", () => {
 
 test("the sanitizer keeps subagent tabs across session switches", () => {
   const state = {
-    tabs: [subagentWorkPanelTab("del-1", "explorer"), toolWorkPanelTab("sidechat")],
+    tabs: [subagentWorkPanelTab("del-1", "explorer"), toolWorkPanelTab("review")],
     activeTabId: "subagent:del-1",
   };
   assert.equal(isKnownWorkPanelTab({ id: "x", kind: "subagent" }), true);

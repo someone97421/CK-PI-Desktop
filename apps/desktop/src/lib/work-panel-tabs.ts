@@ -1,5 +1,6 @@
 export type WorkPanelTabKind =
   | "new"
+  | "review"
   | "file"
   | "plugin"
   /** Side conversation backed by a child session. */
@@ -247,7 +248,7 @@ export function parsePluginViewRef(
 export function isKnownWorkPanelTab(tab: WorkPanelTab): boolean {
   return (
     Boolean(tab) &&
-    (tab.kind === "new" ||
+    (tab.kind === "new" || tab.kind === "review" ||
       tab.kind === "file" || tab.kind === "plugin" ||
       tab.kind === "sidechat" || tab.kind === "subagent")
   );
@@ -276,8 +277,9 @@ export function sanitizeWorkPanelTabsState(
 }
 
 /**
- * Only plugin-contributed views are launchable tools; file tabs remain
- * transcript resources in the opened-resource section.
+ * Only plugin-contributed views are launchable tools. Review and file tabs
+ * are transcript resources even though their tab ids are singleton-shaped, so
+ * they remain visible in the opened-resource section.
  */
 export function isToolWorkPanelTab(tab: WorkPanelTab): boolean {
   return tab.kind === "plugin";

@@ -57,6 +57,7 @@ import {
 } from "../../../lib/subagent-topology";
 import { useAppStore } from "../../../stores/app-store";
 import { Markdown } from "../../../components/Markdown";
+import { ReviewChangeCard } from "../../../components/ReviewChangeCard";
 import { ToolChips, ToolDetailBlocks } from "../../../components/ToolDetails";
 import {
   IconArrowDown,
@@ -677,7 +678,10 @@ export const SubagentRunRows = memo(function SubagentRunRows({
 
 function SubagentToolMessage({ message }: { message: UiMessage }) {
   const guide = subagentGuidance(message);
-  return guide ? <SubagentGuidanceMessage guide={guide} messageId={message.id} /> : <ToolRow message={message} />;
+  return guide ? <SubagentGuidanceMessage guide={guide} messageId={message.id} /> : <>
+    <ToolRow message={message} />
+    <ReviewChangeCard message={message} />
+  </>;
 }
 
 /**

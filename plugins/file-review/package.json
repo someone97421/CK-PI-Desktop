@@ -1,8 +1,8 @@
 {
   "name": "local-file-review",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "文件改动审查独立插件",
+  "description": "任务文件审查增强独立插件",
   "scripts": {
     "check:syntax": "node scripts/check-syntax.mjs",
     "check": "node scripts/build.mjs --check",

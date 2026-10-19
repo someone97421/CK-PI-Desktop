@@ -20,7 +20,7 @@ import type {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../stores/app-store";
 import { api } from "../lib/api";
-import { browserPluginTab, pluginWorkPanelTab } from "../lib/work-panel-tabs";
+import { browserPluginTab, toolWorkPanelTab } from "../lib/work-panel-tabs";
 
 export type CaptureRigMethods = {
   openWorkPanelArtifact: (
@@ -79,7 +79,7 @@ export function installCaptureRig(): CaptureRig {
         return;
       }
       if (kind === "review") {
-        useAppStore.getState().openWorkPanelTab(pluginWorkPanelTab("local.file-review", "review"));
+        useAppStore.getState().openWorkPanelTab(toolWorkPanelTab("review"));
       }
     },
     collapseWorkPanel: () => {

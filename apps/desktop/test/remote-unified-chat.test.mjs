@@ -79,7 +79,7 @@ test("remote submission sends slash text unchanged and rejects steering without 
   assert.equal(calls.length, before);
 });
 
-test("remote Read/Write tool rows stay readable and retained panes cannot open local files", async (t) => {
+test("remote Read/Write tool rows stay readable and retained panes cannot open local files or rollback", async (t) => {
   const ssr = await slotSsr(t);
   const calls = [];
   globalThis.window = {
@@ -92,6 +92,7 @@ test("remote Read/Write tool rows stay readable and retained panes cannot open l
   useAppStore.setState(state);
   Object.assign(useAppStore.getInitialState(), state);
   const { ToolRow } = await ssr.load("/src/features/chat/transcript/ToolRow.tsx");
+  const { ReviewChangeCard } = await ssr.load("/src/components/ReviewChangeCard.tsx");
   const { TranscriptDisclosureProvider } = await ssr.load("/src/features/chat/transcript/disclosure.tsx");
   const tool = (toolName) => ({ id: toolName, role: "tool", toolName, toolStatus: "success", toolArgs: { path: "/srv/remote-app/README.md", content: "remote file" }, content: "done", createdAt: 1 });
   for (const toolName of ["Read", "Write"]) {
@@ -99,6 +100,11 @@ test("remote Read/Write tool rows stay readable and retained panes cannot open l
     assert.match(html, /README.md/);
     assert.doesNotMatch(html, /local\/private|pi-plugin-slot/);
   }
+  const write = { ...tool("Write"), toolResult: { details: { root: "workspace", review: {
+    version: 1, snapshotId: "remote-snapshot", messageId: "Write", path: "README.md", operation: "write", status: "modified", state: "applied", additions: 1, deletions: 0, reversible: true, hunks: [],
+  } } } };
+  const review = ssr.render(createElement(ReviewChangeCard, { message: write }), { sessionId: remote.id });
+  assert.doesNotMatch(review, /review-change-rollback"/);
   const { useOpenPreviewTarget, useOpenChatFileRef } = await ssr.load("/src/hooks/use-preview-target.ts");
   let openTarget, openFile;
   function Probe() { openTarget = useOpenPreviewTarget(); openFile = useOpenChatFileRef(); return null; }
