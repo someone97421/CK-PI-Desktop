@@ -30,7 +30,8 @@ function InlineContent({ node, disabled, onAction }: {
       </details>
     );
     case "action": return (
-      <TooltipButton type="button" className="plugin-inline-action" tooltip={node.title ?? node.text ?? ""}
+      <TooltipButton type="button" className={`plugin-inline-action${node.icon === "stop" ? " is-destructive is-icon" : ""}`} tooltip={node.title ?? node.text ?? ""}
+        data-refreshing={disabled && !node.disabled ? "true" : undefined}
         aria-label={node.text} disabled={disabled || node.disabled}
         onClick={(event) => { event.stopPropagation(); if (node.action) onAction(node.action); }}>
         {node.icon === "stop" ? <IconStop size={12} aria-hidden /> : node.text}

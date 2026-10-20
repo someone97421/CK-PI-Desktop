@@ -187,6 +187,7 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
   const reportCount = data?.latestReport?.reportSeq ?? (data?.completedSteps === 0 ? 0 : undefined);
 
   const statusCopyChildren = [];
+  const reportChildren = [];
 
   if (data) {
     const hintKey = reportInProgress ? "chat.subagentReportProgressHint" : "chat.subagentReportSummaryHint";
@@ -202,7 +203,7 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
       total: data.completedSteps,
       reports: reportCount,
     });
-    statusCopyChildren.push({
+    reportChildren.push({
       kind: "text",
       key: "report-summary",
       title,
@@ -245,10 +246,9 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
       text: badges.join(" · "),
       ...(tooltip ? { title: tooltip } : {}),
     });
-    if (!recall || ["saving", "unavailable", "persistence-error", "pending-validation"].includes(recall.persistenceState)) {
-      statusCopyChildren.push({ kind: "action", key: "refresh-recall", action: "refresh",
-        text: translate(locale, "chat.subagentRefreshRecall") });
-    }
+    // 保存中和保存后保留同一操作位置，避免回执到达时改变卡片布局。
+    statusCopyChildren.push({ kind: "action", key: "refresh-recall", action: "refresh",
+      text: translate(locale, "chat.subagentRefreshRecall") });
   }
 
   if (!live && running) {
@@ -273,9 +273,12 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
 
   const statusRowChildren = [
     {
-      kind: "row",
+      kind: "column",
       key: "status-copy",
-      children: statusCopyChildren,
+      children: [
+        ...reportChildren,
+        { kind: "row", key: "execution-status", children: statusCopyChildren },
+      ],
     },
   ];
 

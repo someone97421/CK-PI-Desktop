@@ -276,8 +276,9 @@ export const ActivityGroup = memo(function ActivityGroup({
     ? searchTarget.requestId : undefined, [items, searchTarget]);
   const visibleItems = useMemo(() => cachedVisibleActivityItems(items, hideThinking, isActive), [items, hideThinking, isActive]);
   const first = items[0];
+  // 子任务完成及快照回执只更新内容，展开状态继续由用户控制。
   const disclosure = useAutomaticDisclosure(
-    hasSubagentTopology ? live : visibleItems.length <= 1 || live,
+    hasSubagentTopology || visibleItems.length <= 1 || live,
     revealRequest,
     disclosureKey("activity", first?.message.id ?? "", first?.kind ?? "", first?.kind === "hostedSearch" ? first.round.id : ""),
   );
