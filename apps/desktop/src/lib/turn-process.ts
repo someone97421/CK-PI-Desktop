@@ -1,6 +1,9 @@
-import type { AppSettings, UiMessage } from "@pi-desktop/shared";
-import type { AssistantTurnEntry, AssistantTurnPart } from "./assistant-turns";
+import type { AgentActivity, AppSettings, UiMessage } from "@pi-desktop/shared";
+import type { AssistantActivityItem, AssistantTurnEntry, AssistantTurnPart } from "./assistant-turns";
+import { isStandaloneRunActivity } from "./assistant-turns";
 import { activityItemHasIssue } from "./activity-summary";
+import type { TranscriptDisplayMode } from "./transcript-display-mode";
+import { isDelegationStartTool } from "./tool-display";
 
 type ThinkingDisplayMode = NonNullable<AppSettings["thinkingDisplayMode"]>;
 
@@ -12,54 +15,32 @@ export function isThinkingActive(message: UiMessage, active: boolean): boolean {
   return active && message.status === "streaming" && !message.content.trim();
 }
 
-export function isTurnThinking(
-  parts: readonly AssistantTurnPart[],
-  active: boolean,
-): boolean {
+export function isTurnThinking(parts: readonly AssistantTurnPart[], active: boolean): boolean {
   const latestPart = parts.at(-1);
-  const latestActivity =
-    latestPart?.kind === "activity" ? latestPart.items.at(-1) : undefined;
-  return (
-    latestActivity?.kind === "thinking" &&
-    isThinkingActive(latestActivity.message, active)
-  );
+  const latestActivity = latestPart?.kind === "activity" ? latestPart.items.at(-1) : undefined;
+  return latestActivity?.kind === "thinking" && isThinkingActive(latestActivity.message, active);
 }
 
-export function processContainsMessage(
-  parts: readonly AssistantTurnPart[],
-  messageId: string,
-): boolean {
+export function processContainsMessage(parts: readonly AssistantTurnPart[], messageId: string): boolean {
   return parts.some((part) => {
     if (part.kind === "compaction") return false;
     if (part.kind === "message") return part.message.id === messageId;
-    return part.items.some((item) => {
-      if (item.message.id === messageId) return true;
-      return (
-        item.kind === "tool" &&
-        Boolean(item.delegate?.items.some((row) => row.message.id === messageId))
-      );
-    });
+    return part.items.some((item) => item.message.id === messageId || (
+      item.kind === "tool" && Boolean(item.delegate?.items.some((row) => row.message.id === messageId))
+    ));
   });
 }
 
 export function hasFailedProcessTool(parts: readonly AssistantTurnPart[]): boolean {
-  return parts.some(
-    (part) =>
-      part.kind === "activity" &&
-      part.items.some(activityItemHasIssue),
-  );
+  return parts.some((part) => part.kind === "activity" && part.items.some(activityItemHasIssue));
 }
 
-/** Both presentation modes expose the same process hierarchy. */
+/** Both legacy presentation modes expose the same process hierarchy. */
 export function shouldGroupTurnProcess(mode: ThinkingDisplayMode): boolean {
   return mode === "detailed" || mode === "compact";
 }
 
-/** The last activity chunk of a turn owns detailed-mode's default-open tool. */
-export function isLastActivityPart(
-  parts: readonly AssistantTurnPart[],
-  part: AssistantTurnPart,
-): boolean {
+export function isLastActivityPart(parts: readonly AssistantTurnPart[], part: AssistantTurnPart): boolean {
   if (part.kind !== "activity") return false;
   for (let index = parts.length - 1; index >= 0; index -= 1) {
     if (parts[index].kind === "activity") return parts[index] === part;
@@ -67,20 +48,115 @@ export function isLastActivityPart(
   return false;
 }
 
-/** Active processes open in Detailed; settled processes default closed. */
-export function shouldAutoOpenTurnProcess(
-  mode: ThinkingDisplayMode,
-  isActive: boolean,
-  hasToolFailure: boolean,
-): boolean {
+export function shouldAutoOpenTurnProcess(mode: ThinkingDisplayMode, isActive: boolean, hasToolFailure: boolean): boolean {
   return isActive && (mode === "detailed" || hasToolFailure);
 }
 
-/**
- * 工具前的文字属于过程。任务完成后，保留以最终回复结尾的连续正文，
- * 避免子任务报告触发的补充回复把完整总结收进抽屉；思考不截断正文，
- * 工具执行和用户输入则构成边界。旧记录继续使用末尾回复与错误展示。
- */
+export type TurnProcessRunSegment = {
+  kind: "run";
+  key: string;
+  item: Extract<AssistantActivityItem, { kind: "tool" }>;
+};
+export type TurnProcessBodySegment = {
+  kind: "process";
+  key: string;
+  parts: AssistantTurnPart[];
+};
+export type TurnProcessSegment = TurnProcessRunSegment | TurnProcessBodySegment;
+
+function isDelegationGroupPart(part: Extract<AssistantTurnPart, { kind: "activity" }>): boolean {
+  return part.items.some((item) => item.kind === "tool" && isDelegationStartTool(item.message.toolName));
+}
+
+function processPartKey(part: AssistantTurnPart): string {
+  if (part.kind === "compaction") return part.mark.id;
+  return part.kind === "activity" ? part.items[0].message.id : part.message.id;
+}
+
+/** 连续普通过程可合并，正文、压缩记录和子代理拓扑保持边界。 */
+function coalesceProcessActivityParts(parts: readonly AssistantTurnPart[]): AssistantTurnPart[] {
+  const result: AssistantTurnPart[] = [];
+  for (const part of parts) {
+    const previous = result.at(-1);
+    if (part.kind === "activity" && previous?.kind === "activity"
+      && isDelegationGroupPart(part) === isDelegationGroupPart(previous)) {
+      result[result.length - 1] = { ...part, items: [...previous.items, ...part.items] };
+    } else {
+      result.push(part);
+    }
+  }
+  return result;
+}
+
+/** 只在普通轮次渲染时分段，不修改缓存投影或任务抽屉中的命令。 */
+export function segmentTurnProcess(parts: readonly AssistantTurnPart[], mode: TranscriptDisplayMode): TurnProcessSegment[] {
+  if (parts.length === 0) return [];
+  const key = processPartKey(parts[0]);
+  if (mode === "fully-folded") {
+    return [{ kind: "process", key, parts: coalesceProcessActivityParts(parts) }];
+  }
+  if (mode === "flat") return [{ kind: "process", key, parts: [...parts] }];
+  const segments: TurnProcessSegment[] = [];
+  let pending: AssistantTurnPart[] = [];
+  const flushProcess = () => {
+    if (pending.length === 0) return;
+    segments.push({ kind: "process", key: processPartKey(pending[0]), parts: pending });
+    pending = [];
+  };
+  for (const part of parts) {
+    if (part.kind !== "activity" || isDelegationGroupPart(part)) {
+      pending.push(part);
+      continue;
+    }
+    // fork 的投影允许命令与其他工具共用一个活动组，按实际行切分。
+    if (!part.items.some(isStandaloneRunActivity)) {
+      pending.push(part);
+      continue;
+    }
+    let items: AssistantActivityItem[] = [];
+    const flushItems = () => {
+      if (items.length === 0) return;
+      pending.push({ ...part, items });
+      items = [];
+    };
+    for (const item of part.items) {
+      if (isStandaloneRunActivity(item)) {
+        flushItems();
+        flushProcess();
+        segments.push({ kind: "run", key: item.message.id, item });
+      } else {
+        items.push(item);
+      }
+    }
+    flushItems();
+  }
+  flushProcess();
+  return segments;
+}
+
+export type TurnProcessPhase =
+  | { kind: "failed" }
+  | { kind: "stopped" }
+  | { kind: "running"; phase?: AgentActivity["phase"] }
+  | { kind: "completed" };
+
+/** 失败和主动停止优先于运行状态；子代理结果不等于主轮次结果。 */
+export function turnProcessPhase({ parts, isActive, failed, activity }: {
+  parts: readonly AssistantTurnPart[];
+  isActive: boolean;
+  failed: boolean;
+  activity?: AgentActivity;
+}): TurnProcessPhase {
+  if (failed) return { kind: "failed" };
+  const stopped = parts.some((part) => part.kind === "compaction" ? false
+    : part.kind === "message" ? part.message.status === "aborted"
+      : part.items.some((item) => item.message.status === "aborted"));
+  if (stopped) return { kind: "stopped" };
+  if (isActive) return { kind: "running", phase: activity?.phase };
+  return { kind: "completed" };
+}
+
+/** 工具前的文字属于过程；完成任务保留连续最终正文，思考不截断正文。 */
 export function projectTurnProcess(entry: AssistantTurnEntry) {
   if (entry.task) {
     const finalIndex = entry.task.status === "completed" && entry.finalMessageId
@@ -103,29 +179,18 @@ export function projectTurnProcess(entry: AssistantTurnEntry) {
     return { process: entry.parts.filter((part) => !responseParts.has(part)), responses };
   }
   const last = entry.parts.at(-1);
-  const answer =
-    last?.kind === "message" &&
-    last.message.role === "assistant" &&
-    last.message.content.trim()
-      ? last
-      : undefined;
+  const answer = last?.kind === "message" && last.message.role === "assistant" && last.message.content.trim()
+    ? last : undefined;
   const process: AssistantTurnPart[] = [];
   const responses: Extract<AssistantTurnPart, { kind: "message" }>[] = [];
   for (const part of entry.parts) {
-    if (part.kind === "message" && (part === answer || part.message.error)) {
-      responses.push(part);
-    } else {
-      process.push(part);
-    }
+    if (part.kind === "message" && (part === answer || part.message.error)) responses.push(part);
+    else process.push(part);
   }
   return { process, responses };
 }
 
-export function visibleProcessSteps(
-  parts: readonly AssistantTurnPart[],
-  mode: ThinkingDisplayMode,
-  active: boolean,
-): number {
+export function visibleProcessSteps(parts: readonly AssistantTurnPart[], mode: ThinkingDisplayMode, active: boolean): number {
   let count = 0;
   for (const part of parts) {
     if (part.kind === "compaction") continue;
@@ -134,15 +199,7 @@ export function visibleProcessSteps(
       continue;
     }
     for (const item of part.items) {
-      // Between provider streams the turn is still active but the last
-      // reasoning row is complete; keep its process shell through that wait.
-      if (
-        item.kind !== "thinking" ||
-        mode === "detailed" ||
-        (active && item.kind === "thinking" && !item.message.content.trim())
-      ) {
-        count += 1;
-      }
+      if (item.kind !== "thinking" || mode === "detailed" || (active && !item.message.content.trim())) count += 1;
     }
   }
   return count;
@@ -154,26 +211,17 @@ export function turnProcessTiming(parts: readonly AssistantTurnPart[]) {
     if (part.kind === "compaction") return [];
     return part.kind === "message" ? [part.message] : part.items.map((item) => item.message);
   });
-  const starts = messages
-    .map((message) => Date.parse(message.createdAt))
-    .filter(Number.isFinite);
+  const starts = messages.map((message) => Date.parse(message.createdAt)).filter(Number.isFinite);
   if (starts.length === 0) return { startedAt: undefined, endedAt: undefined };
   const startedAt = Math.min(...starts);
-  const endedAt = Math.max(
-    startedAt,
-    ...messages.map((message) => {
-      const createdAt = Date.parse(message.createdAt);
-      if (!Number.isFinite(createdAt)) return startedAt;
-      const duration =
-        message.role === "tool" ? message.toolDurationMs : message.responseDurationMs;
-      const recordedEnd = Date.parse(message.toolCompletedAt ?? "");
-      return Number.isFinite(recordedEnd)
-        ? recordedEnd
-        : createdAt +
-            (typeof duration === "number" && Number.isFinite(duration)
-              ? Math.max(0, duration)
-              : 0);
-    }),
-  );
+  const endedAt = Math.max(startedAt, ...messages.map((message) => {
+    const createdAt = Date.parse(message.createdAt);
+    if (!Number.isFinite(createdAt)) return startedAt;
+    const duration = message.role === "tool" ? message.toolDurationMs : message.responseDurationMs;
+    const recordedEnd = Date.parse(message.toolCompletedAt ?? "");
+    return Number.isFinite(recordedEnd) ? recordedEnd : createdAt + (
+      typeof duration === "number" && Number.isFinite(duration) ? Math.max(0, duration) : 0
+    );
+  }));
   return { startedAt, endedAt };
 }

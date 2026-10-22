@@ -10,6 +10,7 @@ import {
   parseCodexModelConfig,
   parseJsonDocument,
   parseOpenCodeModelConfig,
+  parsePiAuthModelConfig,
   parsePiModelConfig,
   type CcSwitchProviderRow,
   type ModelConfigImportDraft,
@@ -33,6 +34,14 @@ async function readJson(filePath: string): Promise<unknown | null> {
   const text = await readText(filePath);
   if (text == null) return null;
   return parseJsonDocument(text);
+}
+
+async function readFirstJson(...filePaths: string[]): Promise<unknown | null> {
+  for (const filePath of filePaths) {
+    const value = await readJson(filePath);
+    if (value != null) return value;
+  }
+  return null;
 }
 
 export async function scanModelConfigs(
@@ -87,12 +96,40 @@ async function scanPi(
   env: ModelConfigImportEnv,
 ): Promise<ModelConfigImportDraft[]> {
   const agentDir = path.join(home, ".pi", "agent");
-  const models =
-    (await readJson(path.join(agentDir, "models.json"))) ??
-    (await readJson(path.join(home, ".pi", "models.json")));
-  if (models == null) return [];
-  const auth = await readJson(path.join(agentDir, "auth.json"));
-  return parsePiModelConfig(applyPiAuthApiKeys(models, auth), env);
+  const fallbackDir = path.join(home, ".pi");
+  const [models, auth, modelsStore] = await Promise.all([
+    readFirstJson(
+      path.join(agentDir, "models.json"),
+      path.join(fallbackDir, "models.json"),
+    ),
+    readFirstJson(
+      path.join(agentDir, "auth.json"),
+      path.join(fallbackDir, "auth.json"),
+    ),
+    // Pi caches the resolved catalog (including built-in providers) beside
+    // models.json. It is the only place an auth-only provider's base URL and
+    // model limits are available.
+    readFirstJson(
+      path.join(agentDir, "models-store.json"),
+      path.join(fallbackDir, "models-store.json"),
+    ),
+  ]);
+  const drafts = parsePiModelConfig(applyPiAuthApiKeys(models, auth), env);
+  const authConfig = parsePiAuthModelConfig(auth, modelsStore, env);
+  const byProvider = new Map(drafts.map((draft) => [draft.externalId, draft]));
+  for (const draft of authConfig.drafts) {
+    // models.json stays authoritative when it already describes the provider.
+    if (byProvider.has(draft.externalId)) continue;
+    drafts.push(draft);
+    byProvider.set(draft.externalId, draft);
+  }
+  return drafts.map((draft) => {
+    if (draft.hasSecret) return draft;
+    const secret = authConfig.apiKeys[draft.externalId];
+    // A models.json `env:`/`$VAR` reference can resolve to nothing in the
+    // Desktop process; auth.json still holds the key Pi actually uses.
+    return secret ? { ...draft, secretValue: secret, hasSecret: true } : draft;
+  });
 }
 
 async function scanCcSwitch(

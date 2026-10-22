@@ -54,6 +54,7 @@ import {
 import { McpOAuthManager } from "../mcp-oauth";
 import { PluginPanelHost } from "../plugin-panel-host";
 import { PluginViewHost } from "../plugin-view-host";
+import { SESSION_SCOPED_EVENTS, sessionEventScopeFilter } from "../plugin-session-scope";
 import { BrowserPane } from "../browser-view";
 import { BrowserHost, BROWSER_PLUGIN_ID } from "../browser-host";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
@@ -62,6 +63,7 @@ import type { TurnEndedPayload } from "../runtime/session-coordination";
 import { resolveSessionWorkspace } from "../runtime/session-workspace";
 import type { HostProcess } from "../host-process";
 import { createPluginSessionContext } from "./plugin-session-context";
+import { createComposerSuggestionRelay } from "./composer-suggestion";
 import type { Logger } from "../logger";
 import type { PluginAppearance } from "../../shared/plugin-panel-chrome";
 
@@ -92,6 +94,12 @@ export type PluginServicesDependencies = {
    * Scope records live in Main, so this is the one lookup that decides.
    */
   isPluginActiveInProject: (pluginId: string) => boolean;
+  /**
+   * Scope check against an explicit project path, so the session-event
+   * fan-out can hold the same line `session.getActive` does for sessions
+   * that are not the window's own selection (#1754).
+   */
+  pluginActiveInProject: (pluginId: string, projectPath: string | null | undefined) => boolean;
 };
 
 /**
@@ -99,8 +107,6 @@ export type PluginServicesDependencies = {
  * detached `ui.panel` window is application-scoped — it does not belong to a
  * session — so it never receives them; plugin processes and docked views do.
  */
-const SESSION_SCOPED_EVENTS = new Set(["session:activated"]);
-
 export function createPluginServices({
   dataDir,
   logger,
@@ -121,6 +127,7 @@ export function createPluginServices({
   vendorOAuth,
   getActiveTurn,
   isPluginActiveInProject,
+  pluginActiveInProject,
 }: PluginServicesDependencies) {
   // A plugin request can lose its race with host shutdown or restart.
   const isHostUnavailable = (error: unknown): boolean =>
@@ -629,8 +636,19 @@ export function createPluginServices({
   const broadcastSessionEvent = (event: string, payload: unknown): void => {
     const sessionId =
       (payload as { sessionId?: string } | null | undefined)?.sessionId ?? undefined;
+    // Selection events carry another project's session identity, so the
+    // fan-out holds the scope line the pull side (session.getActive,
+    // ui.revealView) already enforces: a project-scoped plugin does not
+    // receive a session its scope excludes (#1754). Sessions without a
+    // project fall back to the workspace-relative check.
+    const scopeFilter = sessionEventScopeFilter(
+      event,
+      sessionId,
+      sessionProjects,
+      pluginActiveInProject,
+    );
     try {
-      plugins.broadcastEvent(event, [payload]);
+      plugins.broadcastEvent(event, [payload], scopeFilter);
     } catch (error) {
       logger.app("plugin", "warn", `${event} plugin broadcast failed`, {
         sessionId,
@@ -648,7 +666,7 @@ export function createPluginServices({
       }
     }
     try {
-      pluginViews.broadcast(event, payload);
+      pluginViews.broadcast(event, payload, scopeFilter);
     } catch (error) {
       logger.app("plugin", "warn", `${event} view broadcast failed`, {
         sessionId,
@@ -682,6 +700,17 @@ export function createPluginServices({
   const pluginSession = createPluginSessionContext({
     getActiveTurn,
     announce: broadcastSessionEvent,
+  });
+  /**
+   * `pi.composer.suggest` (ADR 0333): the main process refuses a suggestion
+   * that names another session or an overtaken turn, and the shell answers
+   * whether the composer can take it. The composer owns its own state, so this
+   * only ever relays — nothing here writes the draft.
+   */
+  const composerSuggestion = createComposerSuggestionRelay({
+    sendToRenderer,
+    getActiveSession: () => pluginSession.snapshot(),
+    log: (message, data) => logger.app("plugin", "warn", message, { data }),
   });
   const pluginViews = new PluginViewHost(({ pluginId, url }) => {
     logger.app("plugin", "warn", "plugin.api", {
@@ -799,6 +828,15 @@ export function createPluginServices({
         ...(location ? { location } : {}),
       });
     },
+    /**
+     * `pi.composer.suggest`: the runtime already checked the permission and
+     * shaped the text, and this only relays the offer to the shell that owns the
+     * composer.
+     */
+    suggestComposer: (offer) => composerSuggestion.offer(offer),
+    /** `pi.composer.clearSuggestion`: drop this plugin's own line. */
+    clearComposerSuggestion: (pluginId, sessionId) =>
+      composerSuggestion.clearSuggestion(pluginId, sessionId),
     browser: {
       reveal: (sessionId) => browserHost.reveal(sessionId),
       navigate: (input, sessionId, tabId) => browserHost.navigate(input, sessionId, tabId),
@@ -817,6 +855,8 @@ export function createPluginServices({
     },
     onPluginUnload: (pluginId) => {
       if (pluginId === BROWSER_PLUGIN_ID) browserHost.disposeGuest();
+      // A stopped plugin loses its line in the composer with it.
+      composerSuggestion.clearPlugin(pluginId);
     },
   });
   const speech = createSpeechService({
@@ -837,6 +877,7 @@ export function createPluginServices({
     pluginViews,
     browserHost,
     pluginSession,
+    composerSuggestion,
     speech,
   };
 }

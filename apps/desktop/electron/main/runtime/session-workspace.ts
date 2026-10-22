@@ -3,7 +3,7 @@ import type { HostProcess } from "../host-process";
 export async function resolveSessionWorkspace(
   host: HostProcess,
   sessionId: string,
-): Promise<{ path: string; project: boolean; isolated?: boolean }> {
+): Promise<{ path: string; project: boolean; isolated?: boolean; parent?: string }> {
   const { session } = await host.call<{
     session?: { projectPath?: string | null; temporaryWorkspacePath?: string | null; worktree?: unknown };
   }>("session.get", { id: sessionId, messageLimit: 1, contentLimit: 1 });
@@ -12,7 +12,9 @@ export async function resolveSessionWorkspace(
     const location = await host.call<{ path?: string }>("worktree.location", { sessionId });
     const path = location.path?.trim();
     if (!path) throw new Error("isolated worktree location unavailable");
-    return { path, project: true, isolated: true };
+    const projectPath = session.projectPath?.trim();
+    const parent = projectPath && !projectPath.startsWith("remote-project:") ? projectPath : undefined;
+    return { path, project: true, isolated: true, ...(parent ? { parent } : {}) };
   }
   const path = session.projectPath?.trim() || session.temporaryWorkspacePath?.trim();
   if (path) return { path, project: !!session.projectPath?.trim() };

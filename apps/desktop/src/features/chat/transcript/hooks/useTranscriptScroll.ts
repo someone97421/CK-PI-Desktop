@@ -40,7 +40,10 @@ import { readScrollInputContext } from "../../../../lib/scroll-input";
 import { useDisclosureAnchor } from "../../../../hooks/use-disclosure-anchor";
 import type { TranscriptSearchTarget } from "../../../../lib/transcript-reading";
 import { useTranscriptSearchFocus } from "../../../../hooks/use-transcript-search-focus";
-import { getTranscriptReadingPosition } from "../../../../lib/transcript-reading-position";
+import {
+  getTranscriptReadingPosition,
+  transcriptRevealOwnership,
+} from "../../../../lib/transcript-reading-position";
 import { useTranscriptReadingPosition, type RestoreTranscriptReading } from "../../../../hooks/use-transcript-reading-position";
 
 import { useAppStore } from "../../../../stores/app-store";
@@ -263,8 +266,23 @@ export function useTranscriptScroll({
       retainedScrollTopRef.current = lastLaidOutScrollTopRef.current;
       return;
     }
-    if (!becameVisible || readingPositionPendingRef.current) return;
-    if (pinnedRef.current) {
+    if (!becameVisible) return;
+    const bookmark = getTranscriptReadingPosition(sessionId);
+    const ownership = transcriptRevealOwnership(
+      bookmark,
+      Boolean(readingPositionPendingRef.current),
+      pinnedRef.current,
+    );
+    if (ownership === "reading-position") {
+      // The reading-position hook restores this bookmark (or reports it
+      // missing). Bottoming here would race it and land on the newest turn.
+      if (bookmark?.pinned === false) {
+        pinnedRef.current = false;
+        setShowJump(true);
+      }
+      return;
+    }
+    if (ownership === "pinned") {
       scrollToBottom();
       return;
     }
@@ -273,7 +291,13 @@ export function useTranscriptScroll({
     el.scrollTop = retained;
     lastScrollTopRef.current = retained;
     lastLaidOutScrollTopRef.current = retained;
-  }, [cancelFollowScroll, paneVisible, releaseDisclosureAnchor, scrollToBottom]);
+  }, [
+    cancelFollowScroll,
+    paneVisible,
+    releaseDisclosureAnchor,
+    scrollToBottom,
+    sessionId,
+  ]);
 
   // A hidden pane must not chase its stream: its scroller has no visible
   // viewport, and the measurements a follow scroll depends on are unreliable

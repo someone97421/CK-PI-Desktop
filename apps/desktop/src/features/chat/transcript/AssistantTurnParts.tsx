@@ -43,6 +43,26 @@ function partKey(part: AssistantTurnPart) {
   return `activity-${first.message.id}-${first.kind}${first.kind === "hostedSearch" ? `-${first.round.id}` : ""}`;
 }
 
+/**
+ * Whether a rendered part owns the active tail.
+ *
+ * A command-folding segment may coalesce contiguous activity parts into a new
+ * part object while keeping the source rows. The active tail is the last entry
+ * part, so the coalesced part's last row is the same row object; no id fallback
+ * or nested scan is needed.
+ */
+function partOwnsActivePart(
+  part: AssistantTurnPart,
+  activePart: AssistantTurnPart,
+): boolean {
+  if (part === activePart) return true;
+  if (part.kind !== "activity" || activePart.kind !== "activity") {
+    return false;
+  }
+  const activeRow = activePart.items.at(-1);
+  return activeRow !== undefined && part.items.at(-1) === activeRow;
+}
+
 type PartContext = {
   isActive: boolean;
   embedded: boolean;
@@ -91,9 +111,14 @@ export const AssistantTurnParts = memo(function AssistantTurnParts({ parts, ...c
   parts: readonly AssistantTurnPart[];
 }) {
   const blocks = useRenderBlocks(parts, partKey);
+  const activeSourcePart = context.activePart;
   return <>{blocks.map((block) => {
-    const activePart = context.activePart && block.items.includes(context.activePart) ? context.activePart : undefined;
-    const lastActivityPart = context.lastActivityPart && block.items.includes(context.lastActivityPart) ? context.lastActivityPart : undefined;
+    const activePart = activeSourcePart
+      ? block.items.find((part) => partOwnsActivePart(part, activeSourcePart))
+      : undefined;
+    const lastActivityPart = context.lastActivityPart
+      ? block.items.find((part) => partOwnsActivePart(part, context.lastActivityPart!))
+      : undefined;
     return <TurnPartBlock
       key={block.key}
       block={block}

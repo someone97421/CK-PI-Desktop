@@ -128,6 +128,66 @@ test("tool details do not add a second visual indent", () => {
   assert.match(stylesSource, /\.subagent-topology-node > \.tool-row-body,[\s\S]*?margin-left:\s*38px;/);
 });
 
+
+test("the turn process and the levels it reveals share one left edge", () => {
+  // A nested group header sits on the same vertical line as the turn header that
+  // reveals it. Indentation used to carry that hierarchy; it is now carried by
+  // type size and colour, so a stray padding here would silently bring the
+  // staircase back.
+  const turnBody = stylesSource.match(/\.turn-process-body \{([^}]*)\}/)?.[1];
+  assert.ok(turnBody);
+  assert.match(turnBody, /padding-left:\s*0;/);
+  const groupedBody = stylesSource.match(
+    /\.process-activity-group\.grouped > \.process-activity-body \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(groupedBody);
+  assert.match(groupedBody, /padding-inline-start:\s*0;/);
+  // Both disclosure headers use the tool-row inline geometry: content at the
+  // prose edge, fill four pixels into the gutter.
+  const activityHeader = stylesSource.match(/\n\.tool-activity-header \{([^}]*)\}/)?.[1];
+  assert.ok(activityHeader);
+  assert.match(activityHeader, /margin:\s*0 -4px;/);
+  assert.match(activityHeader, /padding:\s*2px 4px;/);
+});
+
+test("nested process levels keep a subtle type and colour hierarchy", () => {
+  // The turn title stays at the base size; the nested group is smaller and
+  // quieter, and a run row uses the leaf size while keeping readable colour.
+  const nested = stylesSource.match(
+    /\.process-activity-group > \.tool-activity-header \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(nested);
+  assert.match(nested, /font-size:\s*var\(--text-sm\);/);
+  assert.match(nested, /color:\s*var\(--ds-text-muted\);/);
+  const runName = stylesSource.match(
+    /\.tool-row-head\.is-run \.tool-row-name \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(runName);
+  assert.match(runName, /font-size:\s*var\(--text-sm\);/);
+});
+
+test("collapse rails keep separate zero-padding gutter lanes", () => {
+  const turnRail = stylesSource.match(
+    /\.turn-process-body > \.disclosure-collapse-rail \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(turnRail);
+  assert.match(turnRail, /left:\s*-32px;/);
+  assert.match(turnRail, /width:\s*14px;/);
+  const groupRail = stylesSource.match(
+    /\.process-activity-body > \.disclosure-collapse-rail \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(groupRail);
+  assert.match(groupRail, /left:\s*-18px;/);
+  assert.match(groupRail, /width:\s*14px;/);
+  const messageRow = stylesSource.match(/\.message-row \{([^}]*)\}/)?.[1];
+  assert.ok(messageRow);
+  assert.match(messageRow, /overflow-clip-margin:\s*34px;/);
+});
+
+test("活动尾部预览保留独立行和换行排版", () => {
+  assert.match(stylesSource, /\.tool-activity-preview \{[\s\S]*?white-space:\s*normal/);
+});
+
 /*
  * The width regression this guards: a content-sized `inline-flex` disclosure
  * header stopped at its own label, so a tool call never used the conversation

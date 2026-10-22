@@ -37,6 +37,7 @@ import { registerComposerIpc } from "./composer-ipc";
 import { registerSpeechIpc } from "./speech-ipc";
 import { registerLiveVoiceIpc } from "./live-voice-ipc";
 import type { LiveCallService } from "../live-voice/call-service";
+import type { ComposerSuggestionAnswer } from "../services/composer-suggestion";
 import type { IpcRegistrar } from "./types";
 import type { createTraySessions } from "../tray-sessions";
 import type { createTaskbarUnreadBadge } from "../taskbar-unread-badge";
@@ -68,6 +69,8 @@ export type RegisterIpcDependencies = {
   setActivePluginSession: (
     next: { sessionId: string; projectPath: string | null } | null,
   ) => void;
+  /** The shell's answer to a composer suggestion it was offered (ADR 0333). */
+  settleComposerSuggestion: (answer: ComposerSuggestionAnswer) => boolean;
   activeUserSubagentDocuments: (...args: any[]) => Promise<any>;
   disabledBuiltinSubagents: () => Promise<string[]>;
   disabledBuiltinSkills: () => Promise<string[]>;
@@ -101,6 +104,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getNotificationViewingSessionId,
     setNotificationViewingSessionId,
     setActivePluginSession,
+    settleComposerSuggestion,
     getPluginLauncherWindow,
     togglePluginLauncher,
     safeOpenExternal,
@@ -153,6 +157,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyCloseBehavior,
     getCloseBehavior,
     respondClosePrompt,
+    isMacosWindowTranslucent,
     markMenuRendererReady,
     markLifecycleDialogRendererReady,
     respondLifecycleDialog,
@@ -375,6 +380,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyCloseBehavior,
     getCloseBehavior,
     respondClosePrompt,
+    isMacosWindowTranslucent,
     markMenuRendererReady,
     markLifecycleDialogRendererReady,
     respondLifecycleDialog,
@@ -531,8 +537,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getUpdaterLocale,
     getPluginPanelTheme,
     setActivePluginSession,
+    settleComposerSuggestion,
   });
-
   registerSpeechIpc({ registrar, speech });
 
   if (liveCallService) {

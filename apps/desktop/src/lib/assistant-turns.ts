@@ -5,7 +5,7 @@ import type {
   UiMessage,
 } from "@pi-desktop/shared";
 import { addUsage, hostedSearchRounds, runElapsedMs } from "@pi-desktop/shared";
-import { delegationExecutionKey, isDelegationStartTool } from "./tool-display";
+import { delegationExecutionKey, getToolAction, isDelegationStartTool } from "./tool-display";
 import { toolResultPayload } from "./tool-presentation";
 import { messageContentFacts } from "./transcript-summary";
 
@@ -88,6 +88,15 @@ function isVisibleMessage(message: UiMessage): boolean {
  * tools, and lifecycle rows (TaskWait/TaskList/TaskStop) do not (D319). */
 function isDelegationStartActivity(item: AssistantActivityItem): boolean {
   return item.kind === "tool" && isDelegationStartTool(item.message.toolName);
+}
+
+/**
+ * 命令的展示分段由渲染时的显示模式决定，保留任务投影原有活动组。
+ */
+export function isStandaloneRunActivity(
+  item: AssistantActivityItem,
+): item is Extract<AssistantActivityItem, { kind: "tool" }> {
+  return item.kind === "tool" && getToolAction(item.message.toolName) === "run";
 }
 
 /** Delegate rows grouped by the call that produced them. */

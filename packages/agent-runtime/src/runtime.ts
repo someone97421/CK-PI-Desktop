@@ -6815,14 +6815,12 @@ Delegation rules:
     this.activeProviderRetryAttempt = retryAttempt;
     this.pendingProviderRetry = undefined;
 
-    const messages = [...this.agent.state.messages];
-    if (messages.at(-1)?.role !== "assistant") {
-      throw new Error("Cannot retry a provider stream without its failed assistant message");
-    }
     // A failed stream can be represented by more than one trailing assistant
-    // message after a tool round. Remove the whole failed suffix before
-    // continuing; pi-agent-core rejects any assistant-terminated transcript.
-    while (messages.at(-1)?.role === "assistant") messages.pop();
+    // message after a tool round. Compaction may already have replaced the
+    // failed assistant with a summary or retained user message, so an
+    // assistant tail is optional. Remove any failed suffix before continuing;
+    // pi-agent-core rejects an assistant-terminated transcript.
+    const messages = removeTrailingAssistantMessages(this.agent.state.messages);
     this.setAgentMessages(messages);
 
     this.providerRetryInProgress = true;

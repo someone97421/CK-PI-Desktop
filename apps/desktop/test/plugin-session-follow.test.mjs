@@ -322,3 +322,126 @@ test("turn start times stay bounded when a turn ends without a notice", () => {
   context.setActiveSession({ sessionId: "session-0", projectPath: null });
   assert.equal(context.snapshot().activeTurn, null);
 });
+
+test("broadcastEvent's filter keeps an out-of-scope plugin from receiving the session push", async (t) => {
+  const sent = [];
+  const spawnWithSpy = (options) => {
+    const proc = forkPluginProcess(options);
+    const ownerId = currentId;
+    const originalPostMessage = proc.postMessage;
+    proc.postMessage = (message) => {
+      sent.push({ plugin: ownerId, message });
+      originalPostMessage(message);
+    };
+    return proc;
+  };
+  let currentId = "demo.in-scope";
+  const runtime = new PluginRuntime({
+    hostEntry: hostProcessEntry,
+    spawnProcess: spawnWithSpy,
+    isPluginActiveInProject: (pluginId) => pluginId === "demo.in-scope",
+  });
+  t.after(async () => {
+    for (const loaded of runtime.listLoaded()) await runtime.unload(loaded.manifest.id);
+  });
+
+  await runtime.loadFromPath(
+    writeViewPlugin({
+      id: "demo.in-scope",
+      permissions: ["ui.view"],
+      views: [CHANGES_VIEW],
+      main: "module.exports = { async onLoad() {} };",
+    }),
+    ["ui.view"],
+  );
+  currentId = "demo.out-of-scope";
+  await runtime.loadFromPath(
+    writeViewPlugin({
+      id: "demo.out-of-scope",
+      permissions: ["ui.view"],
+      views: [CHANGES_VIEW],
+      main: "module.exports = { async onLoad() {} };",
+    }),
+    ["ui.view"],
+  );
+
+  const payload = { sessionId: "s-other", projectPath: "/work/other" };
+  runtime.broadcastEvent(
+    "session:activated",
+    [payload],
+    (pluginId) => pluginId === "demo.in-scope",
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const events = sent.filter((entry) => entry.message?.event === "session:activated");
+  assert.equal(events.length, 1, "exactly the in-scope plugin process received the push");
+  assert.equal(events[0].plugin, "demo.in-scope");
+  assert.deepEqual(events[0].message.args, [payload]);
+});
+
+test("the session-push gate restarts with the renderer's boot id and the payload carries it", async () => {
+  const { readMainSource, readStoreModule } = await import("./helpers/source-contracts.mjs");
+  const { readFile } = await import("node:fs/promises");
+  const gateSource = await readFile(
+    new URL("../electron/main/plugin-session-push-gate.ts", import.meta.url),
+    "utf8",
+  );
+
+  // The gate module owns the boot-id reset (#1753): a new renderer boot
+  // restarts the high-water mark, and within a boot the out-of-order guard
+  // still ignores older sequences.
+  assert.match(
+    gateSource,
+    /push\.bootId !== activeSessionBootId[\s\S]*?activeSessionSeq = push\.seq;[\s\S]*?return \{ ok: true, ignored: true \};/,
+    "the gate must reset the high-water mark on a new renderer boot and keep the out-of-order guard within a boot",
+  );
+
+  // The production handler gates every push through the shared gate.
+  const ipcSource = await readMainSource("ipc/plugin-ui-ipc.ts");
+  assert.match(
+    ipcSource,
+    /const sessionPushGate = createSessionPushGate\(\);[\s\S]*?sessionPushGate\(\{ seq, bootId \}\)\.ignored/,
+    "plugin-ui-ipc must route session pushes through the shared gate",
+  );
+
+  // Renderer: the push carries the boot id the gate compares.
+  const runtimeSource = await readStoreModule("../../src/features/app/useAppShellRuntime.tsx");
+  assert.match(
+    runtimeSource,
+    /sessionPushBootId\s*=\s*useRef\(crypto\.randomUUID\(\)\)/,
+    "the renderer must own a per-load boot id",
+  );
+  assert.match(
+    runtimeSource,
+    /bootId:\s*sessionPushBootId\.current/,
+    "the push must carry the boot id",
+  );
+});
+
+test("the session-push gate accepts a new renderer boot and still rejects an older sequence within it (#1753)", async (t) => {
+  const { createSessionPushGate } = await import(
+    "../electron/main/plugin-session-push-gate.ts"
+  );
+  const gate = createSessionPushGate();
+
+  // Within one boot: in-order accepted, out-of-order ignored.
+  assert.deepEqual(gate({ seq: 3, bootId: "boot-1" }), { ok: true });
+  assert.deepEqual(gate({ seq: 5, bootId: "boot-1" }), { ok: true });
+  assert.deepEqual(gate({ seq: 4, bootId: "boot-1" }), {
+    ok: true,
+    ignored: true,
+  });
+
+  // A reload restarts the renderer counter: the new boot resets the mark and
+  // the low sequences flow again.
+  assert.deepEqual(gate({ seq: 1, bootId: "boot-2" }), { ok: true });
+  assert.deepEqual(gate({ seq: 2, bootId: "boot-2" }), { ok: true });
+  assert.deepEqual(gate({ seq: 1, bootId: "boot-2" }), {
+    ok: true,
+    ignored: true,
+  });
+
+  // Zero-sequence pushes (no selection) never touch the mark.
+  assert.deepEqual(gate({ seq: 0, bootId: "boot-2" }), { ok: true });
+  assert.deepEqual(gate({ seq: 2, bootId: "boot-2" }), { ok: true });
+});

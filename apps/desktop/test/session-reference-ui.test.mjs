@@ -73,6 +73,9 @@ const shared = load(new URL("../src/features/chat/transcript/shared.tsx", import
   "react-i18next": { useTranslation: () => ({ t, i18n: { language: locale } }) },
   "@pi-desktop/shared": await import("@pi-desktop/shared"),
   "./disclosure": {},
+  "./TextShimmer": {
+    TextShimmer: ({ text }) => React.createElement("span", null, text),
+  },
   "../../../hooks/use-preview-target": {
     useOpenChatFileRef: () => () => {},
     useOpenPreviewTarget: () => undefined,

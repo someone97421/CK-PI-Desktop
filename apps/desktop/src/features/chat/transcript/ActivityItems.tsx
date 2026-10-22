@@ -23,6 +23,8 @@ type ActivityItemsProps = {
   delegationStatuses: ReadonlyMap<string, SubagentOutcome>;
   delegationTimings: ReadonlyMap<string, SubagentTiming>;
   onUserInteraction: () => void;
+  /** Flat and command-first expand every Thinking row by default. */
+  thinkingDefaultOpen?: boolean;
 };
 
 type ActivityItemBlockProps = Omit<ActivityItemsProps, "items" | "delegateItems" | "delegationStatuses" | "delegationTimings"> & {
@@ -37,6 +39,7 @@ type ActivityItemBlockProps = Omit<ActivityItemsProps, "items" | "delegateItems"
 const ActivityItemBlock = memo(function ActivityItemBlock({
   block, isLast, isActive, live, lastItem, topologyItem,
   delegateItems, delegationStatuses, delegationTimings, onUserInteraction,
+  thinkingDefaultOpen,
 }: ActivityItemBlockProps) {
   return <>{block.items.map((item) => {
     // The topology predicate narrows to all tools, but a false result can still
@@ -74,7 +77,7 @@ const ActivityItemBlock = memo(function ActivityItemBlock({
       key={`thinking-${item.message.id}`}
       message={item.message}
       streaming={isActive && item.message.status === "streaming"}
-      autoOpen={live && item === lastItem}
+      autoOpen={thinkingDefaultOpen || (live && item === lastItem)}
       onUserInteraction={onUserInteraction}
     />;
   })}</>;
@@ -99,6 +102,7 @@ export const ActivityItems = memo(function ActivityItems({ items, ...context }: 
       delegationStatuses={ownsTopology ? context.delegationStatuses : undefined}
       delegationTimings={ownsTopology ? context.delegationTimings : undefined}
       onUserInteraction={context.onUserInteraction}
+      thinkingDefaultOpen={context.thinkingDefaultOpen}
     />;
   })}</>;
 });

@@ -25,6 +25,7 @@ import {
   MAIN_PANE_MIN_WIDTH,
   workPanelWidthForSidebarReopen,
 } from "../../lib/work-panel-resize";
+import { composerSuggestion } from "../chat/composer/plugins/suggestion-bridge";
 import { subscribeRemoteInteractions } from "../../lib/remote-interactions";
 import { playNotificationChime } from "../../lib/notification-sound";
 import {
@@ -81,6 +82,9 @@ export function useAppShellRuntime() {
     isRemoteSession(s.sessions.find((session) => session.id === s.activeSessionId)
       ?? (s.activeSessionId ? { id: s.activeSessionId } : null)),
   );
+  /** Identifies this renderer load: a reload restarts the counter, and the
+   * main-side high-water mark must restart with it (#1753). */
+  const sessionPushBootId = useRef(crypto.randomUUID());
   /** The project of the session on screen, for the plugin session snapshot. */
   const activeSessionProjectPath = useAppStore((s) =>
     s.activeSessionId
@@ -458,6 +462,7 @@ export function useAppShellRuntime() {
         sessionId: localSessionId,
         projectPath: localSessionId ? activeSessionProjectPath : null,
         seq: activeSessionSeq.current,
+        bootId: sessionPushBootId.current,
       })
       .catch(() => undefined);
   }, [activeSessionId, activeSessionProjectPath, activeSessionIsRemote, page]);
@@ -722,6 +727,30 @@ export function useAppShellRuntime() {
         ...(event.location ? { location: event.location } : {}),
       });
     });
+    // A plugin offered one line for the composer (`pi.composer.suggest`). The
+    // shell owns the composer, so it decides here and answers the main process,
+    // which is waiting on the plugin's call with that answer.
+    const offComposerSuggestion = api.onPluginComposerSuggestion((event) => {
+      if (event.kind === "clear") {
+        composerSuggestion.clear({
+          ...(event.pluginId ? { pluginId: event.pluginId } : {}),
+          ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+        });
+        return;
+      }
+      const outcome = composerSuggestion.offer({
+        pluginId: event.pluginId,
+        sessionId: event.sessionId,
+        ...(event.turnId ? { turnId: event.turnId } : {}),
+        text: event.text,
+        expiresAt: event.expiresAt,
+      });
+      void api.pluginComposerSuggestionResult({
+        requestId: event.requestId,
+        shown: outcome.shown === true,
+        ...(outcome.shown ? {} : { reason: outcome.reason }),
+      });
+    });
     const offHostStatus = api.onHostStatus((status) => {
       if (status.archMismatch) setArchMismatch(status.archMismatch);
       if (status.ok) {
@@ -939,6 +968,7 @@ export function useAppShellRuntime() {
       offPluginViewReveal();
       offHostStatus();
       offNotificationChanged();
+      offComposerSuggestion();
       offSessionsChanged();
       offRemoteInteractions();
       offNotificationActivated();

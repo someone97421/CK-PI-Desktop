@@ -12,13 +12,12 @@
   content-visibility: auto;
   contain-intrinsic-size: auto 140px;
   /* Paint containment clips descendants to the padding box, which squared off
-     the deliberate bleed of the disclosure row chrome: the activity header
-     pulls its hover fill 3px past the column edge and a run row's head 4px, so
-     the icon can sit on the text's alignment line while the fill keeps its
-     padding, and the focus ring reaches 3.5px beyond its own box. 8px covers
-     the widest of them. .tool-activity-group clips the same chrome and carries
-     the same margin. */
-  overflow-clip-margin: 8px;
+     the deliberate bleed of the disclosure row chrome: both disclosure headers
+     pull their hover fill 4px past the column edge, and the two collapse-rail
+     controls occupy separate 14px lanes in the gutter. 34px covers the outer
+     lane. .tool-activity-group keeps its own clip for the subagent card
+     chrome. */
+  overflow-clip-margin: 34px;
 }
 
 .message-row.user {
@@ -674,8 +673,64 @@
   }
 }
 
-/* Running labels stay readable; the small marker carries the live feedback
-   so long tool names never flash between two text colours. */
+.text-shimmer {
+  display: inline-grid;
+  min-width: 0;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.text-shimmer > span {
+  grid-area: 1 / 1;
+  white-space: pre;
+}
+.text-shimmer-base {
+  color: inherit;
+  opacity: 1;
+  transition: opacity 220ms ease-out;
+}
+.text-shimmer-peak {
+  color: transparent;
+  background-image:
+    linear-gradient(
+      90deg,
+      transparent calc(50% - 5.2ch),
+      var(--ds-text-primary) 50%,
+      transparent calc(50% + 5.2ch)
+    ),
+    linear-gradient(var(--ds-text-secondary), var(--ds-text-secondary));
+  background-size: 360% 100%, 100% 100%;
+  background-position: 100% 0, 0 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer-sweep 1.2s linear infinite;
+  opacity: 1;
+  transition: opacity 220ms ease-out;
+  will-change: background-position;
+}
+.text-shimmer[data-active="true"] .text-shimmer-base {
+  opacity: 0;
+}
+.text-shimmer[data-active="false"] .text-shimmer-peak {
+  animation: none;
+  opacity: 0;
+}
+@keyframes text-shimmer-sweep {
+  from { background-position: 100% 0, 0 0; }
+  to { background-position: 0 0, 0 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .text-shimmer-peak {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+  .text-shimmer-base {
+    opacity: 1 !important;
+  }
+}
+
+/* 运行状态颜色不改变活动标签布局，闪光动画仅用于 TextShimmer。 */
 .tool-activity-label.running,
 .tool-row-name.running {
   color: var(--ds-text-secondary);
@@ -2343,8 +2398,10 @@
   align-items: center;
   gap: 5px;
   border-radius: var(--radius-sm);
-  margin: 0 -3px;
-  padding: 2px 5px;
+  /* Same inline geometry as a tool row's header: the icon and label sit on the
+     prose edge, while the hover fill bleeds 4px into the gutter. */
+  margin: 0 -4px;
+  padding: 2px 4px;
   color: var(--ds-text-secondary);
   font-size: var(--text-sm-plus);
   text-align: left;
@@ -2373,17 +2430,6 @@
 
 .tool-activity-count {
   min-width: 0;
-  overflow: hidden;
-  color: var(--ds-text-muted);
-  font-size: var(--text-xs-plus);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Live tail while running: last thought line / current tool, single line. */
-.tool-activity-preview {
-  max-width: min(100%, var(--chat-prose-max-width, 720px));
-  margin: 1px 0 0 26px;
   overflow: hidden;
   color: var(--ds-text-muted);
   font-size: var(--text-xs-plus);
@@ -2464,10 +2510,6 @@
   font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.tool-activity-group.has-subagents .tool-activity-preview {
-  margin: -3px 38px 8px;
 }
 
 .tool-activity-group.has-subagents .tool-activity-body {
@@ -2910,6 +2952,11 @@
   padding: 2px 0;
 }
 
+/* Leaf commands sit one step below the turn and group titles. */
+.tool-row-head.is-run .tool-row-name {
+  font-size: var(--text-sm);
+}
+
 .tool-row-head.is-run .tool-row-header:hover {
   background: transparent;
 }
@@ -3182,6 +3229,30 @@
 .disclosure-collapse-rail:focus-visible {
   outline: 2px solid color-mix(in oklab, var(--ds-accent) 58%, transparent);
   outline-offset: -2px;
+}
+
+/* These bodies carry no content indent, so each rail keeps its own gutter lane
+   and stops at the header fill. The turn's control is the outer lane and the
+   nested group's is the inner lane: expanding a group never puts two hit
+   targets on the same pixels. Tool-row detail rails keep their tighter inset. */
+.turn-process-body > .disclosure-collapse-rail {
+  left: -32px;
+  width: 14px;
+  min-width: 14px;
+}
+
+.process-activity-body > .disclosure-collapse-rail {
+  left: -18px;
+  width: 14px;
+  min-width: 14px;
+}
+
+/* Keep the visible bar next to the content while the hit target extends into
+   the gutter. */
+.turn-process-body > .disclosure-collapse-rail::before,
+.process-activity-body > .disclosure-collapse-rail::before {
+  right: 0;
+  left: auto;
 }
 
 /*
@@ -3702,7 +3773,11 @@
 
 .turn-process-body {
   position: relative;
-  padding-left: 18px;
+  /* The turn's process and the levels it reveals share one left edge: a nested
+     group header or a run row starts exactly where the turn header does, so the
+     transcript reads as one column instead of an indenting staircase. Levels
+     stay distinguishable by type size and colour, not by indentation. */
+  padding-left: 0;
 }
 
 .turn-process-body[hidden],
@@ -3721,6 +3796,18 @@
   margin-block: 6px;
 }
 
+/* The turn's own title is the strongest level; a nested group is smaller and
+   quieter, while leaf run rows keep tool-row secondary text. Indentation is
+   not carrying this hierarchy. */
+.process-activity-group > .tool-activity-header {
+  color: var(--ds-text-muted);
+  font-size: var(--text-sm);
+}
+
+.process-activity-group > .tool-activity-header:hover {
+  color: var(--ds-text-primary);
+}
+
 .process-activity-body {
   position: relative;
   min-width: 0;
@@ -3728,7 +3815,9 @@
 
 .process-activity-group.grouped > .process-activity-body {
   margin-block: 3px 6px;
-  padding-inline-start: 12px;
+  /* Same left edge as the turn header above it. The smaller type is what marks
+     this as the nested level. */
+  padding-inline-start: 0;
 }
 
 /* The nested process levels share the base header row: no level-specific
@@ -3831,10 +3920,18 @@
 .message-error-dismiss:focus-visible { outline: 2px solid var(--ds-accent); outline-offset: 2px; }
 
 .tool-activity-preview {
+  max-width: min(100%, var(--chat-prose-max-width, 720px));
+  margin: 1px 0 0 26px;
+  overflow: hidden;
+  color: var(--ds-text-muted);
+  font-size: var(--text-xs-plus);
   line-height: var(--leading-normal);
   overflow-wrap: anywhere;
   text-overflow: clip;
   white-space: normal;
+}
+.tool-activity-group.has-subagents .tool-activity-preview {
+  margin: -3px 38px 8px;
 }
 .subagent-topology-node-title-row { flex-wrap: wrap; gap: 3px 8px; }
 .subagent-topology-node-title {

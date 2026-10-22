@@ -107,6 +107,9 @@ export type StartupDependencies = {
     developerMode?: unknown;
   } | null) => void;
   applyDeveloperMode: (settings?: { developerMode?: unknown } | null) => void;
+  applyMacosWindowTranslucency: (
+    settings?: { macosWindowTranslucency?: unknown } | null,
+  ) => void;
   applyPreventScreenSleep: (settings?: { preventScreenSleep?: unknown } | null) => void;
   applyKeepAwakeWhileRunning: (settings?: { keepAwakeWhileRunning?: unknown } | null) => void;
   applyTemporaryWorkspaceContextMenu: (settings?: { temporaryWorkspaceContextMenu?: unknown } | null) => Promise<void>;
@@ -169,6 +172,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       planUiProbe,
       applyApplicationMenuSettings,
       applyDeveloperMode,
+      applyMacosWindowTranslucency,
       applyPreventScreenSleep,
       applyKeepAwakeWhileRunning,
       applyTemporaryWorkspaceContextMenu,
@@ -382,12 +386,14 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
           theme?: unknown;
           keybindings?: unknown;
           developerMode?: unknown;
+          macosWindowTranslucency?: unknown;
           preventScreenSleep?: unknown;
           keepAwakeWhileRunning?: unknown;
           temporaryWorkspaceContextMenu?: unknown;
         } | null;
         applyApplicationMenuSettings(stored);
         applyDeveloperMode(stored);
+        applyMacosWindowTranslucency(stored);
         applyPreventScreenSleep(stored);
         applyKeepAwakeWhileRunning(stored);
         await applyTemporaryWorkspaceContextMenu(stored);

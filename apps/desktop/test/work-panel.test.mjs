@@ -50,6 +50,23 @@ test("closing a tab restores focus to its neighbor or the new-tab action", () =>
   assert.match(panelSource, /else newTabButtonRef\.current\?\.focus\(\)/);
 });
 
+test("activating an overflowing tab keeps its close action in view", () => {
+  const scrollEffectStart = panelSource.indexOf("useLayoutEffect(() => {\n    if (!activeTabId) return;");
+  const scrollEffectEnd = panelSource.indexOf("  }, [activeTabId, tabs.length]);", scrollEffectStart);
+  assert.ok(scrollEffectStart >= 0);
+  assert.ok(scrollEffectEnd > scrollEffectStart);
+  const scrollEffect = panelSource.slice(scrollEffectStart, scrollEffectEnd);
+  assert.match(scrollEffect, /tabWrapperRefs\.current\[activeTabId\]\?\.scrollIntoView/);
+  assert.match(scrollEffect, /tabButtonRefs\.current\[activeTabId\]\?\.scrollIntoView/);
+  assert.match(scrollEffect, /tabCloseButtonRefs\.current\[activeTabId\]\?\.scrollIntoView/);
+  assert.ok(
+    scrollEffect.indexOf("tabCloseButtonRefs") > scrollEffect.indexOf("tabButtonRefs"),
+    "the close button should be the final scroll target",
+  );
+  assert.match(panelSource, /tabWrapperRefs\.current\[tab\.id\] = node/);
+  assert.match(panelSource, /tabCloseButtonRefs\.current\[tab\.id\] = node/);
+});
+
 test("work panel replaces the context panel overlay", async () => {
   await assert.rejects(
     access(new URL("../src/components/ContextPanel.tsx", import.meta.url)),

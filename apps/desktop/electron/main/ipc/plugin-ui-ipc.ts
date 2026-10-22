@@ -12,6 +12,12 @@ import type { PluginPanelTheme } from "../../shared/plugin-panel-chrome";
 import type { IpcRegistrar } from "./types";
 import { registerPluginInlineViewIpc } from "./plugin-inline-view-ipc";
 import { pluginProviderCatalogEntries } from "../plugin-provider-catalog";
+import { createSessionPushGate } from "../plugin-session-push-gate";
+import {
+  PLUGIN_COMPOSER_SUGGESTION_REFUSALS,
+  type PluginComposerSuggestionRefusal,
+} from "@pi-desktop/plugin-sdk";
+import type { ComposerSuggestionAnswer } from "../services/composer-suggestion";
 
 export type PluginUiIpcDependencies = {
   registrar: IpcRegistrar;
@@ -27,6 +33,12 @@ export type PluginUiIpcDependencies = {
   setActivePluginSession: (
     next: { sessionId: string; projectPath: string | null } | null,
   ) => void;
+  /**
+   * The shell's answer to one composer suggestion (`pi.composer.suggest`): the
+   * main process is waiting on it, because only the renderer knows whether the
+   * draft could take the line.
+   */
+  settleComposerSuggestion: (answer: ComposerSuggestionAnswer) => boolean;
 };
 
 /** Register plugin panels, work-panel views, themes and services. */
@@ -41,6 +53,7 @@ export function registerPluginUiIpc({
   getUpdaterLocale,
   getPluginPanelTheme,
   setActivePluginSession,
+  settleComposerSuggestion,
 }: PluginUiIpcDependencies): void {
   registerPluginInlineViewIpc({ registrar, plugins, pluginActiveInProject, currentWorkspacePath, getUpdaterLocale });
   const handle = (channel: string, fn: (...args: any[]) => Promise<any>) => {
@@ -101,7 +114,7 @@ export function registerPluginUiIpc({
    * The newest selection the shell reported, so a slower invoke that lands
    * after a newer one cannot restore a session the user already left.
    */
-  let activeSessionSeq = 0;
+  const sessionPushGate = createSessionPushGate();
   /**
    * The session on screen, as the shell sees it.
    *
@@ -116,12 +129,14 @@ export function registerPluginUiIpc({
     IPC.invoke.pluginSessionActive,
     async (
       payload:
-        | { sessionId?: string | null; projectPath?: string | null; seq?: number | null }
+        | { sessionId?: string | null; projectPath?: string | null; seq?: number | null; bootId?: string | null }
         | null,
     ) => {
       const seq = typeof payload?.seq === "number" ? payload.seq : 0;
-      if (seq > 0 && seq < activeSessionSeq) return { ok: true, ignored: true };
-      if (seq > 0) activeSessionSeq = seq;
+      const bootId = typeof payload?.bootId === "string" ? payload.bootId : null;
+      if (sessionPushGate({ seq, bootId }).ignored) {
+        return { ok: true, ignored: true };
+      }
       const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId.trim() : "";
       if (!sessionId) {
         setActivePluginSession(null);
@@ -133,6 +148,36 @@ export function registerPluginUiIpc({
       const projectPath =
         typeof payload?.projectPath === "string" ? payload.projectPath.trim() : "";
       setActivePluginSession({ sessionId, projectPath: projectPath || null });
+      return { ok: true };
+    },
+  );
+  /**
+   * The shell's answer to one composer suggestion (`pi.composer.suggest`).
+   *
+   * Nothing is refused here: the offer it answers may already have been
+   * replaced, dropped, or timed out, and a late answer to a forgotten offer is
+   * simply not applied. `ok` therefore says the message was well formed, not
+   * that a suggestion is on screen.
+   */
+  handle(
+    IPC.invoke.pluginComposerSuggestionResult,
+    async (
+      payload:
+        | { requestId?: string | null; shown?: boolean | null; reason?: string | null }
+        | null,
+    ) => {
+      const requestId = typeof payload?.requestId === "string" ? payload.requestId.trim() : "";
+      if (!requestId) throw new Error("INVALID_ARGUMENT: requestId is required");
+      const reason =
+        typeof payload?.reason === "string" &&
+        (PLUGIN_COMPOSER_SUGGESTION_REFUSALS as readonly string[]).includes(payload.reason)
+          ? (payload.reason as PluginComposerSuggestionRefusal)
+          : undefined;
+      settleComposerSuggestion({
+        requestId,
+        shown: payload?.shown === true,
+        ...(reason ? { reason } : {}),
+      });
       return { ok: true };
     },
   );

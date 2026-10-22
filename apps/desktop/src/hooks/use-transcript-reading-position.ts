@@ -71,11 +71,18 @@ export function useTranscriptReadingPosition({
   useLayoutEffect(() => {
     const reopening = visible && !wasVisibleRef.current;
     wasVisibleRef.current = visible;
-    if (!visible || pinnedRef.current) return;
+    if (!visible) return;
     if (reopening) {
-      pendingRef.current = getTranscriptReadingPosition(sessionId);
+      const bookmark = getTranscriptReadingPosition(sessionId);
+      if (bookmark?.pinned === false) {
+        pendingRef.current = bookmark;
+        pinnedRef.current = false;
+      } else if (!pinnedRef.current) {
+        pendingRef.current = bookmark;
+      }
       alignmentUntilRef.current = 0;
     }
+    if (pinnedRef.current) return;
     const position = pendingRef.current;
     if (!transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion))) return;
     clearTranscriptReadingPosition(sessionId);

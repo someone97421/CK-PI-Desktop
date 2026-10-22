@@ -28,6 +28,15 @@ test("every shipped catalog matches English keys and interpolation variables", (
   }
 });
 
+test("MCP OAuth no-DCR recovery guidance is localized in every shipped catalog", () => {
+  const key = "extensions.mcp.authDcrUnavailable";
+  for (const [id, catalog] of Object.entries(catalogs)) {
+    const value = flattenCatalog(catalog)[key];
+    assert.equal(typeof value, "string", `${id} ${key}`);
+    assert.notEqual(value.trim(), "", `${id} ${key}`);
+    if (id !== "en") assert.notEqual(value, english[key], `${id} ${key} must not fall back to English`);
+  }
+});
 test("canonical thinking levels are not translated catalog entries", () => {
   const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
   const effortKeys = [

@@ -42,7 +42,8 @@ import {
 } from "@pi-desktop/host-runtime";
 import { openableMp4Path } from "../open-attachment-video";
 import { resolveChatFileRef } from "../chat-ref-resolve";
-import { getWorkspaceFileIndex } from "../fs-index";
+import { rebaseWorktreeRef } from "../worktree-ref";
+import { getWorkspaceFileIndex, searchWorkspaceFiles } from "../fs-index";
 import {
   projectFolderPaths,
   refreshProjectGroups,
@@ -776,7 +777,9 @@ export function registerWorkspaceIpc({
     return root;
   };
 
-  const fileWorkspace = async (scope: FileWorkspaceScope) => {
+  const fileWorkspace = async (scope: FileWorkspaceScope): Promise<{
+    path: string | null; project: boolean; isolated?: boolean; parent?: string;
+  }> => {
     if (scope.sessionId) {
       if (!host) throw new Error("host unavailable");
       return resolveSessionWorkspace(host, scope.sessionId);
@@ -980,6 +983,14 @@ export function registerWorkspaceIpc({
     return getWorkspaceFileIndex(root);
   });
 
+  handle(IPC.invoke.fsSearch, async (input: FileWorkspaceScope & { query?: string } = {}) => {
+    // Remote file services do not expose query search yet.
+    if (await remoteScope(input)) return { entries: [], truncated: true };
+    const { path: root } = await fileWorkspace(input);
+    if (!root) return { entries: [], truncated: false };
+    return searchWorkspaceFiles(root, String(input.query ?? ""));
+  });
+
   /**
    * Resolve a file reference from chat to a real file (D320 follow-up).
    * The renderer knows the workspace but not where a session keeps its scratch
@@ -993,12 +1004,19 @@ export function registerWorkspaceIpc({
     async (
       input: { ref?: string; sessionId?: string } = {},
     ): Promise<FsChatRefResolveResult> => {
-      const ref = String(input.ref ?? "").trim();
-      if (!ref) return { match: null };
+      const rawRef = String(input.ref ?? "").trim();
+      if (!rawRef) return { match: null };
       const remote = await remoteFileWorkspace(input.sessionId);
-      if (remote && !(await isLocalStoredFile(ref))) return await readRemoteFiles(remote, "resolve", ref) as FsChatRefResolveResult;
-      const { path: workspaceRoot, project } = await fileWorkspace(input);
-      const temporaryWorkspace = !project;
+      if (remote && !(await isLocalStoredFile(rawRef))) return await readRemoteFiles(remote, "resolve", rawRef) as FsChatRefResolveResult;
+      const workspace = await fileWorkspace(input);
+      const workspaceRoot = workspace.path;
+      const temporaryWorkspace = !workspace.project;
+      const ref = await rebaseWorktreeRef(
+        rawRef,
+        workspace.isolated && workspaceRoot && workspace.parent
+          ? { worktree: workspaceRoot, parent: workspace.parent }
+          : null,
+      );
       const roots = {
         project: temporaryWorkspace && workspaceRoot
           ? [{ path: workspaceRoot, name: basename(workspaceRoot) || workspaceRoot, primary: true }]

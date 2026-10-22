@@ -243,8 +243,7 @@ test("transcript keeps assistant thinking in a separate disclosure", () => {
   assert.match(transcriptSource, /tool-row thinking/);
   assert.match(transcriptSource, /className="tool-row-header"/);
   assert.match(transcriptSource, /aria-expanded=\{open\}/);
-  assert.match(transcriptSource, /aria-hidden=\{!open\}/);
-  assert.match(transcriptSource, /inert=\{!open\}/);
+  assert.match(transcriptSharedSource, /\{open \? \(\s*<div className="tool-row-body"/);
   assert.match(transcriptSource, /IconSparkles/);
   assert.match(transcriptSource, /messageThinking as thinkingText/);
   assert.match(transcriptSource, /thinking-prose[\s\S]*?Markdown source=\{text\}/);
@@ -279,10 +278,10 @@ test("末条工具的自动展开与思考可见性独立", () => {
   assert.match(transcriptDisclosureSource, /revealRequest\?: number/);
   assert.match(transcriptDisclosureSource, /const currentOpen = useRef\(open\)/);
   assert.match(transcriptDisclosureSource, /const setManualOpen = useCallback/);
-  assert.match(transcriptSource, /useAutomaticDisclosure\(\s*hasSubagentTopology \? live : visibleItems\.length <= 1/);
+  assert.match(transcriptSource, /useAutomaticDisclosure\(\s*hasSubagentTopology \|\| visibleItems\.length <= 1/);
   assert.match(
     transcriptSource,
-    /<ThinkingRow[\s\S]*?autoOpen=\{live && item === lastItem\}/,
+    /<ThinkingRow[\s\S]*?autoOpen=\{thinkingDefaultOpen \|\| \(live && item === lastItem\)\}/,
   );
   assert.match(
     transcriptSource,
@@ -293,7 +292,7 @@ test("末条工具的自动展开与思考可见性独立", () => {
   assert.match(transcriptSource, /onClick=\{toggleDisclosure\}/);
   assert.match(transcriptSource, /onCollapse=\{collapseDisclosure\}/);
   assert.match(transcriptSource, /onUserInteraction=\{claimDisclosure\}/);
-  assert.match(transcriptSource, /const tail = live && !open \? currentDetail : ""/);
+  assert.match(transcriptActivityGroupSource, /const tail = live && !open \? currentDetail : ""/);
 });
 
 test("activity headers omit the redundant status capsule", () => {

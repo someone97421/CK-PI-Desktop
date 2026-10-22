@@ -122,6 +122,7 @@ import {
   dedupeToolCallMessages,
   reportDuplicateToolCallDrop,
 } from "./tool-call-dedupe.js";
+import { removeTrailingAssistantMessages } from "./system-transcript.js";
 import {
   classifyProviderError,
   delayWithAbort,
@@ -1136,13 +1137,11 @@ export class SubagentRun {
     const retryError = this.pendingProviderRetry;
     if (!retryError) return;
     this.pendingProviderRetry = undefined;
-    const messages = [...this.agent.state.messages];
-    if (messages.at(-1)?.role !== "assistant") {
-      throw new Error("Cannot retry a subagent provider stream without its failed assistant message");
-    }
     // A failed provider stream can leave more than one assistant row after a
-    // tool round. Remove the entire failed suffix before continuing.
-    while (messages.at(-1)?.role === "assistant") messages.pop();
+    // tool round. Compaction may already have replaced the failed assistant
+    // with a summary or retained user message, so an assistant tail is
+    // optional. Remove any failed suffix before continuing.
+    const messages = removeTrailingAssistantMessages(this.agent.state.messages);
     this.setAgentMessages(messages);
     this.providerRetryInProgress = true;
     try {

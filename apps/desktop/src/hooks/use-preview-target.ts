@@ -202,6 +202,8 @@ function useResolveChatFileRef() {
         return null;
       }
       if (!matchesFileContext(workspacePath, sessionId)) return null;
+      // 隔离会话保留绝对路径，确保文件视图打开 worktree 中的副本。
+      const isolated = Boolean(session?.worktree);
       const match = result.match;
       if (!match) {
         const key = result.reason === "outside-allowed-roots"
@@ -225,7 +227,7 @@ function useResolveChatFileRef() {
       // absolute path and the file view switches to that folder (ADR 0263).
       const primary = match.projectRoot ? match.projectRoot.primary : true;
       return {
-        path: primary && ownerId === state.activeSessionId ? match.relativePath : match.absolutePath,
+        path: primary && !isolated && ownerId === state.activeSessionId ? match.relativePath : match.absolutePath,
         absolutePath: match.absolutePath,
         relativePath: match.relativePath,
         inProject: true,

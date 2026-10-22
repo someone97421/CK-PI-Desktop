@@ -248,7 +248,9 @@ function LocalWorkPanel({
   const tabReorderState = useRef<WorkPanelTabReorderState | null>(null);
   const tabStripRef = useRef<HTMLDivElement | null>(null);
   const suppressedTabClickPointerIdsRef = useRef<Set<number>>(new Set());
+  const tabWrapperRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const tabButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const tabCloseButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const newTabButtonRef = useRef<HTMLButtonElement | null>(null);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [dropIndicator, setDropIndicator] = useState<{
@@ -317,7 +319,15 @@ function LocalWorkPanel({
 
   useLayoutEffect(() => {
     if (!activeTabId) return;
+    tabWrapperRefs.current[activeTabId]?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
     tabButtonRefs.current[activeTabId]?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+    tabCloseButtonRefs.current[activeTabId]?.scrollIntoView({
       block: "nearest",
       inline: "nearest",
     });
@@ -870,6 +880,9 @@ function LocalWorkPanel({
                       : TAB_ICONS[tab.kind];
                   return (
                     <div
+                      ref={(node) => {
+                        tabWrapperRefs.current[tab.id] = node;
+                      }}
                       className={cx(
                         "work-panel-tab",
                         selected && "active",
@@ -909,6 +922,9 @@ function LocalWorkPanel({
                       </button>
                       <button
                         type="button"
+                        ref={(node) => {
+                          tabCloseButtonRefs.current[tab.id] = node;
+                        }}
                         className="work-panel-tab-close"
                         aria-label={t("panel.closeTab", { name: label })}
                         title={t("panel.closeTab", { name: label })}

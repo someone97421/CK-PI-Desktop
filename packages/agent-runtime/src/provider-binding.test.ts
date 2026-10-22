@@ -1236,6 +1236,52 @@ describe("buildProviderModel model-level wire API", () => {
     expect(claudeRelay.api).toBe("openai-completions");
   });
 
+  it("routes OpenCode Go Claude models through the catalog Anthropic endpoint (issue #1728)", async () => {
+    const provider: RuntimeProviderConfig = {
+      ...keyedProvider,
+      id: "opencode-go",
+      name: "OpenCode Go",
+      vendorKey: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+      modelId: "claude-haiku-5-5",
+      apiStyle: "opencode_go",
+      modelConfig: {
+        source: "models.dev",
+        name: "Claude Haiku 5.5",
+        baseUrl: "https://opencode.ai/zen/go",
+        api: "anthropic_messages",
+        reasoning: true,
+        input: ["text"],
+        contextWindow: 200_000,
+        maxTokens: 64_000,
+      },
+    };
+    const model = buildProviderModel(provider);
+    expect(model.api).toBe("anthropic-messages");
+    expect(model.baseUrl).toBe("https://opencode.ai/zen/go");
+
+    const urls: string[] = [];
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return new Response("bad gateway", { status: 502 });
+    });
+    const result = await createProviderModels(provider, model)
+      .streamSimple(
+        model,
+        {
+          systemPrompt: "system",
+          messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+          tools: [],
+        },
+        { fetch },
+      )
+      .result();
+
+    expect(result.stopReason).toBe("error");
+    expect(urls).toHaveLength(1);
+    expect(new URL(urls[0]).pathname).toBe("/zen/go/v1/messages");
+  });
+
   it("posts responses models to the responses endpoint", async () => {
     const provider = responsesCatalogProvider;
     const model = buildProviderModel(provider);

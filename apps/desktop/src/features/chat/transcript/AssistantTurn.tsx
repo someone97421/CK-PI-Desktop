@@ -20,11 +20,11 @@ import {
   collectDelegationStatuses,
   collectDelegationTimings,
 } from "../../../lib/subagent-topology";
-import {
-  resolveThinkingDisplayMode,
-  shouldGroupTurnProcess,
-} from "../../../lib/turn-process";
+import { segmentTurnProcess } from "../../../lib/turn-process";
 import { sessionAllows } from "../../../lib/remote-session-safety";
+import { resolveShowThinking } from "../../../lib/thinking-visibility";
+import { resolveTranscriptDisplayMode } from "../../../lib/transcript-display-mode";
+import { cachedVisibleProcessSteps } from "../../../lib/transcript-activity-summary";
 import { useSlotSessionId } from "../../../plugins/renderer-slots/use-slots";
 import { useAppStore } from "../../../stores/app-store";
 import { TranscriptReadOnlyContext } from "./context";
@@ -54,6 +54,8 @@ import {
 } from "../../../lib/transcript-summary";
 import { AssistantTurnParts } from "./AssistantTurnParts";
 import { TurnProcess } from "./TurnProcess";
+import { ToolRow } from "./ToolRow";
+import { ReviewChangeCard } from "../../../components/ReviewChangeCard";
 import { ActionSlotSide } from "./ActionBarSlots";
 import { EntryExtraStack } from "./EntryExtraStack";
 import { slotMessage } from "../../../plugins/renderer-slots/slot-message";
@@ -290,6 +292,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     ? slotMessage("assistant", { ...actionMessage, content }) : undefined,
   [complete, actionMessage, content]);
   const streaming = !settledTask && isActive && summary.streaming;
+  const showThinking = useAppStore((state) => resolveShowThinking(state.settings));
   /*
     The turn owns the menu for its whole subtree, the answer rows it renders
     included: Regenerate and Branch act on the turn's answer message, so a menu
@@ -354,15 +357,19 @@ export const AssistantTurn = memo(function AssistantTurn({
   statusesRef.current = turnDelegationStatuses;
   timingsRef.current = turnDelegationTimings;
   const isPlainHistory = !task;
-  const groupProcess = useAppStore((state) =>
-    shouldGroupTurnProcess(
-      resolveThinkingDisplayMode(state.settings?.thinkingDisplayMode),
-    ),
-  );
   const { process, responses, lastActivityPart } = summary;
+  const displayMode = useAppStore((state) => resolveTranscriptDisplayMode(state.settings));
+  const segments = useMemo(
+    () => isPlainHistory ? segmentTurnProcess(process, displayMode) : [],
+    [process, displayMode, isPlainHistory],
+  );
   const turnProcessActive = !settledTask && isActive;
   const activePart = turnProcessActive ? entry.parts.at(-1) : undefined;
   const processOwnsActiveTail = activePart !== undefined && process.includes(activePart);
+  const visibleSteps = useMemo(
+    () => cachedVisibleProcessSteps(process, !showThinking, turnProcessActive && processOwnsActiveTail),
+    [process, showThinking, turnProcessActive, processOwnsActiveTail],
+  );
   const partContext = {
     isActive: turnProcessActive, activePart, lastActivityPart, runtimeActivity,
     turnDelegationStatuses, turnDelegationTimings,
@@ -386,10 +393,24 @@ export const AssistantTurn = memo(function AssistantTurn({
             </TaskProcessDrawer>
             <AssistantTurnParts parts={responses} {...partContext} />
           </>
-        ) : isPlainHistory && groupProcess ? (
+        ) : isPlainHistory ? (
           <>
-            <TurnProcess turnId={entry.id} processParts={process} turnParts={entry.parts} isActive={turnProcessActive && processOwnsActiveTail} delegationStatuses={turnDelegationStatuses}>
-              <AssistantTurnParts parts={process} {...partContext} />
+            <TurnProcess
+              turnId={entry.id} processParts={process} turnParts={entry.parts}
+              visibleSteps={visibleSteps} isActive={turnProcessActive}
+              delegationStatuses={turnDelegationStatuses}
+              failed={summary.hasError} activity={runtimeActivity}
+            >
+              {segments.map((segment) => segment.kind === "run" ? (
+                <div className="turn-run-row" key={`run-${segment.key}`}>
+                  <ToolRow imagesInTurn message={segment.item.message}
+                    autoOpen={lastActivityPart?.kind === "activity" && lastActivityPart.items.at(-1) === segment.item}
+                    {...(segment.item.delegate ? { delegate: segment.item.delegate } : {})} />
+                  <ReviewChangeCard message={segment.item.message} />
+                </div>
+              ) : (
+                <AssistantTurnParts key={`process-${segment.key}`} parts={segment.parts} {...partContext} />
+              ))}
             </TurnProcess>
             <AssistantTurnParts parts={responses} {...partContext} />
           </>

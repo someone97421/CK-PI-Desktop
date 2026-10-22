@@ -5137,6 +5137,39 @@ describe("DesktopAgentRuntime assistant thinking events", () => {
     await runtime.dispose();
   });
 
+  it("retries from a compacted transcript when the failed assistant is gone (issue #1768)", async () => {
+    const runtime = createRuntime();
+    const agent = (runtime as any).agent;
+    const user = { role: "user", content: "hello", timestamp: 1 };
+    const compactedTail = {
+      role: "compactionSummary",
+      content: "Earlier work was summarized.",
+      timestamp: 2,
+    };
+    agent.state.messages = [user, compactedTail];
+    agent.continue = vi.fn(async () => undefined);
+    agent.waitForIdle = vi.fn(async () => undefined);
+    (runtime as any).pendingProviderRetry = {
+      code: "STREAM_FAILED",
+      message: "stream terminated",
+      retriable: true,
+    };
+    (runtime as any).providerTransientRetryAttempt = 1;
+
+    vi.useFakeTimers();
+    try {
+      const retry = (runtime as any).retryPendingProviderFailure();
+      await vi.runAllTimersAsync();
+      await retry;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(agent.state.messages).toEqual([user, compactedTail]);
+    expect(agent.continue).toHaveBeenCalledOnce();
+    await runtime.dispose();
+  });
+
   it("does not continue steering after a recovery becomes pending", async () => {
     const runtime = createRuntime({ onEvent: vi.fn() });
     const agent = (runtime as any).agent;

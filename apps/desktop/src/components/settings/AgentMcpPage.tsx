@@ -9,6 +9,7 @@ import {
 import { api } from "../../lib/api";
 import { useAppStore } from "../../stores/app-store";
 import { useHostCollection } from "../../hooks/use-host-collection";
+import { mcpOAuthErrorTranslationKey } from "../../lib/mcp-oauth-error";
 import {
   AgentCapabilityPage,
   AgentProjectPicker,
@@ -295,7 +296,11 @@ export function AgentMcpPage() {
         });
         cleanup();
       } else if (event.kind === "error") {
-        showToast(event.message || t("extensions.mcp.authFailed"), { variant: "error" });
+        const errorKey = mcpOAuthErrorTranslationKey(event.errorCode);
+        showToast(
+          (errorKey && t(errorKey)) || event.message || t("extensions.mcp.authFailed"),
+          { variant: "error" },
+        );
         cleanup();
       } else if (event.kind === "cancelled") {
         cleanup();

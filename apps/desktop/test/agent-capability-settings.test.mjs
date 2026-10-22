@@ -464,3 +464,8 @@ test("MCP OAuth subscribe is owned by a ref cleaned up on unmount", () => {
   assert.match(mcp, /api\.onMcpOAuth\(/);
   assert.match(mcpIpc, /oauth\.start\(server\.id, server\.url, server\)/);
 });
+
+test("MCP OAuth error events use localized recovery copy when available", () => {
+  assert.match(mcp, /mcpOAuthErrorTranslationKey\(event\.errorCode\)/);
+  assert.match(mcp, /\(errorKey && t\(errorKey\)\) \|\| event\.message/);
+});

@@ -34,6 +34,23 @@ export function clearTranscriptReadingPosition(sessionId: string | undefined) {
   const state = sessionId ? readingStates.get(sessionId) : undefined;
   if (state) state.position = undefined;
 }
+
+export type TranscriptRevealOwnership = "reading-position" | "pinned" | "retained";
+
+/**
+ * Which effect owns a pane reveal. A recorded unpinned bookmark wins over a
+ * stale follow flag: follow mode can still read `true` when a send or retry hid
+ * the pane, and bottoming there would undo the position the reader is meant to
+ * return to (issue #1771).
+ */
+export function transcriptRevealOwnership(
+  bookmark: TranscriptReadingPosition | undefined,
+  pending: boolean,
+  pinned: boolean,
+): TranscriptRevealOwnership {
+  if (bookmark?.pinned === false || pending) return "reading-position";
+  return pinned ? "pinned" : "retained";
+}
 export function forgetTranscriptReadingState(sessionId: string) {
   readingStates.delete(sessionId);
 }

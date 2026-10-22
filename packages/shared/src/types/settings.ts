@@ -55,6 +55,8 @@ export type JevKeyCheckResult = {
  */
 export type CloseBehavior = "ask" | "tray" | "quit";
 
+export type TranscriptDisplayMode = "flat" | "command-first" | "fully-folded";
+
 export type AppSettings = {
   imageGeneration?: import("../image-generation.js").ImageGenerationBinding | null;
   /** All models marked for image generation; absent falls back to imageGeneration. */
@@ -116,6 +118,16 @@ export type AppSettings = {
   theme: ThemePreference;
   /** Custom label shown in the desktop sidebar; empty uses the localized app name. */
   appDisplayName?: string;
+  /**
+   * macOS only: keep the native `sidebar` vibrancy material behind a
+   * transparent window surface. This is the shipped look, so absent and `true`
+   * both mean translucent; `false` paints an opaque surface, which keeps the
+   * window out of WindowServer's per-frame recomposition path (#1064) at the
+   * cost of the desktop blur. Other platforms ignore it. Electron fixes
+   * `transparent` when the window is created, so a change applies on the next
+   * launch.
+   */
+  macosWindowTranslucency?: boolean;
   /** UI language; `auto` (and absent) follows the OS locale. */
   language?: "auto" | "en" | "zh-CN";
   /**
@@ -135,6 +147,10 @@ export type AppSettings = {
   homeMediaSize?: number;
   /** 仅控制思考内容展示；缺省开启，兼容旧 thinkingDisplayMode，不影响模型思考级别及过程折叠。 */
   showThinking?: boolean;
+  /** 普通轮次的过程展示方式；缺省全部折叠，任务级抽屉保持独立。 */
+  transcriptDisplayMode?: TranscriptDisplayMode;
+  /** @deprecated 保留旧客户端设置兼容；当前展示使用 transcriptDisplayMode。 */
+  keepCommandsExpanded?: boolean;
   /** 保留旧配置读取兼容；compact 隐藏思考，其他值显示。 */
   thinkingDisplayMode?: "detailed" | "compact";
   /**

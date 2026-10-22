@@ -12,16 +12,22 @@ export function ProcessActivityGroup({
   active,
   disclosure,
   children,
+  preview,
 }: {
   items: readonly AssistantActivityItem[];
   active: boolean;
   disclosure: ReturnType<typeof useAutomaticDisclosure>;
   children: ReactNode;
+  preview?: string;
 }) {
   const { t } = useTranslation();
   const detailsId = useId();
   const grouped = items.length > 1;
-  const open = !grouped || disclosure.open;
+  // A group below a collapsed whole-turn process is not expanded even when the
+  // user left it open: `disclosure.open` already folds in that gate, and the
+  // choice itself survives so reopening the process restores it.
+  const parentVisible = disclosure.parentVisible;
+  const open = (!grouped || disclosure.open) && parentVisible;
   const summary = useMemo(() => cachedActivitySummary(items), [items]);
   if (items.length === 0) return null;
   return (
@@ -51,6 +57,9 @@ export function ProcessActivityGroup({
           ) : null}
           <span className="tool-activity-caret" aria-hidden><IconChevronRight size={12} /></span>
         </button>
+      ) : null}
+      {grouped && !open && parentVisible && preview ? (
+        <div className="tool-activity-preview" aria-hidden>{preview}</div>
       ) : null}
       <div
         id={detailsId}

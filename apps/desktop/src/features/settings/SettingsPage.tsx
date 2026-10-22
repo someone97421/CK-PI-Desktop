@@ -51,10 +51,12 @@ import { ConfigTransferSection } from "../../components/settings/ConfigTransferS
 import { AppearancePanels } from "../../components/settings/AppearancePanels";
 import { AppearanceMediaSection } from "../../components/settings/AppearanceMediaSection";
 import { ShowThinkingRow } from "../../components/settings/ShowThinkingRow";
+import { TranscriptDisplayModeRow } from "../../components/settings/TranscriptDisplayModeRow";
 import { FontSizeRow } from "../../components/settings/FontSizeRow";
 import { LanguageRow } from "../../components/settings/LanguageRow";
 import { SettingsMenuSelect } from "../../components/settings/SettingsMenuSelect";
 import { ThemeRow } from "../../components/settings/ThemeRow";
+import { MacosWindowTranslucencyRow } from "../../components/settings/MacosWindowTranslucencyRow";
 import { NetworkProxySection } from "../../components/settings/NetworkProxySection";
 import { ProjectsPage } from "../../pages/ProjectsPage";
 import { AgentSkillsPage } from "../../components/settings/AgentSkillsPage";
@@ -428,6 +430,9 @@ export function SettingsPage() {
               <SettingsCard>
                 <AppDisplayNameRow settings={settings} saveSettings={saveSettings} />
                 <LanguageRow settings={settings} saveSettings={saveSettings} />
+                {platform === "darwin" && (
+                  <MacosWindowTranslucencyRow settings={settings} saveSettings={saveSettings} />
+                )}
               </SettingsCard>
 
               <SettingsCard title={t("settings.sidebar")}>
@@ -584,6 +589,7 @@ export function SettingsPage() {
                 <CommandShellRow settings={settings} saveSettings={saveSettings} />
                 <LinkOpenTargetRow settings={settings} saveSettings={saveSettings} />
                 <ShowThinkingRow settings={settings} saveSettings={saveSettings} />
+                <TranscriptDisplayModeRow settings={settings} saveSettings={saveSettings} />
                 <ContextUsageDisplayRow
                   settings={settings}
                   saveSettings={saveSettings}

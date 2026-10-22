@@ -56,6 +56,11 @@ import type {
 
 type RuntimeMap = Map<string, DesktopAgentRuntime>;
 
+function nativeProjectPaths(params: { projectPaths?: unknown } | undefined): string[] {
+  const value = params?.projectPaths;
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
 const runtimes: RuntimeMap = new Map();
 const hostProxy = new ParentHostProxy();
 const testRuntimeIds = new WeakMap<DesktopAgentRuntime, string>();
@@ -431,9 +436,11 @@ async function handle(method: string, params: any): Promise<unknown> {
     case "sidecar.health":
       return { ok: true, runtimes: runtimes.size };
     case "native.session.list":
-      return { sessions: await nativePiService().list() };
+      return { sessions: await nativePiService().list({ projectPaths: nativeProjectPaths(params) }) };
     case "native.session.search":
-      return nativePiService().search(String(params.query ?? ""));
+      return nativePiService().search(String(params?.query ?? ""), {
+        projectPaths: nativeProjectPaths(params),
+      });
     case "native.session.get":
       return {
         session: nativePiService().detail(String(params.id ?? ""), {

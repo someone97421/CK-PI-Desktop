@@ -31,9 +31,11 @@ it.each([
     const extensions = names.map((name) => {
       const entry = join(root, `${name}.ts`);
       writeFileSync(entry, `export default function (pi) {
-        pi.on("before_agent_start", (event) => ({
-          systemPrompt: event.systemPrompt + "\\n\\nMARKER-${name}"
-        }));
+        pi.on("before_agent_start", (event) => {
+          if (event.messageType !== "user") return;
+          if (!event.prompt) throw new Error("Missing user prompt");
+          return { systemPrompt: event.systemPrompt + "\\n\\nMARKER-${name}" };
+        });
       }`);
       return { id: name, entry, label: name, root, source: "plugin" as const };
     });

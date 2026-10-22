@@ -29,7 +29,7 @@ test("automatic disclosure does not claim a reading position", () => {
   // the scroll anchor notifier reserved for direct user interaction.
   assert.match(disclosure, /if \(previousOpen\.current && !open && !choice && ownsReadingPosition/);
   const revealEffect = disclosure.match(
-    /useLayoutEffect\(\(\) => \{\s*if \(revealRequest === undefined[\s\S]*?\n  \}, \[choices, key, parent\.claim, revealRequest\]\);/,
+    /useLayoutEffect\(\(\) => \{\s*if \(revealRequest === undefined[\s\S]*?\n  \}, \[choices, key, scope\.claim, revealRequest\]\);/,
   )?.[0];
   assert.ok(revealEffect, "the automatic reveal effect is missing");
   assert.doesNotMatch(revealEffect, /notifyAnchor/);

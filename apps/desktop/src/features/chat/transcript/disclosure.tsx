@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
 import { sessionReadingState, type TranscriptDisclosureChoice } from "../../../lib/transcript-reading-position";
+import { ScopeContext, type DisclosureScopeValue } from "./disclosure-scope";
 
 type Choice = TranscriptDisclosureChoice;
 
@@ -45,10 +46,14 @@ class DisclosureChoices {
 }
 
 const ChoicesContext = createContext<DisclosureChoices | null>(null);
-const ParentContext = createContext<{ claim: () => void; visible: boolean }>({
-  claim: () => {},
-  visible: true,
-});
+
+/*
+ * A level's own visibility is a second gate beside the stored choice, so a
+ * collapsed parent closes everything it reveals without erasing - or even
+ * overriding - a child's explicit choice. Reopening the parent restores the
+ * rows the user had opened, which is what a nested disclosure should do.
+ */
+export type { DisclosureScopeValue } from "./disclosure-scope";
 
 /** Explicit choices survive pane eviction, but never persist to the host. */
 export function TranscriptDisclosureProvider({ children, sessionId }: { children: ReactNode; sessionId?: string }) {
@@ -81,52 +86,58 @@ export function useAutomaticDisclosure(
   const choices = sharedChoices ?? localChoices;
   const fallbackId = useId();
   const key = identity ?? fallbackId;
-  const parent = useContext(ParentContext);
   const subscribe = useCallback((listener: () => void) => choices.subscribe(key, listener), [choices, key]);
   const snapshot = useCallback(() => choices.get(key), [choices, key]);
   const choice = useSyncExternalStore(subscribe, snapshot, snapshot);
   // A pending reveal is the derived default, so the first paint (and SSR)
   // already shows the row the transcript search asked to open.
-  const open = choice?.open ?? (
+  const requestedOpen = choice?.open ?? (
     revealRequest !== undefined && choice?.revealRequest !== revealRequest
       ? true
       : automaticOpen
   );
+  const scope = useContext(ScopeContext);
+  // A level below a collapsed parent renders nothing, whatever its own choice
+  // says. The choice is left untouched so reopening the parent restores it.
+  const open = requestedOpen && scope.visible;
+
   const titleRef = useRef<HTMLButtonElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const notifyAnchor = useDisclosureAnchorNotifier();
   const currentOpen = useRef(open);
   currentOpen.current = open;
 
+  // The claim goes to the level that owns this one, not to the root: opening a
+  // row inside a process disclosure has to keep that process open too.
   const claim = useCallback(() => {
     if (!choices.get(key)) choices.set(key, { open: currentOpen.current });
-    parent.claim();
-  }, [choices, key, parent.claim]);
+    scope.claim();
+  }, [choices, key, scope.claim]);
 
   useLayoutEffect(() => {
     if (revealRequest === undefined || choices.get(key)?.revealRequest === revealRequest) return;
     choices.set(key, { open: true, revealRequest });
-    parent.claim();
-  }, [choices, key, parent.claim, revealRequest]);
+    scope.claim();
+  }, [choices, key, scope.claim, revealRequest]);
 
   const previousOpen = useRef(open);
   useLayoutEffect(() => {
     // Completion must not hide keyboard focus or an active text selection.
     if (previousOpen.current && !open && !choice && ownsReadingPosition(bodyRef.current)) {
       choices.set(key, { open: true });
-      parent.claim();
+      scope.claim();
     }
     previousOpen.current = open;
-  }, [choice, choices, key, open, parent.claim]);
+  }, [choice, choices, key, open, scope.claim]);
 
   const setManualOpen = useCallback((next: boolean) => {
-    parent.claim();
+    scope.claim();
     notifyAnchor?.(titleRef.current);
     if (!next && bodyRef.current?.contains(document.activeElement)) {
       titleRef.current?.focus({ preventScroll: true });
     }
     choices.set(key, { ...choices.get(key), open: next });
-  }, [choices, key, notifyAnchor, parent.claim]);
+  }, [choices, key, notifyAnchor, scope.claim]);
   const toggle = useCallback(() => setManualOpen(!currentOpen.current), [setManualOpen]);
   const collapse = useCallback(() => setManualOpen(false), [setManualOpen]);
 
@@ -137,13 +148,23 @@ export function useAutomaticDisclosure(
     claim,
     titleRef,
     bodyRef,
-    parentVisible: parent.visible,
+    // Kept for callers that read the parent's visibility directly; the scope
+    // itself already folded it into `open`.
+    parentVisible: scope.visible,
     // Pointer selection and keyboard interaction establish ownership before
     // a streaming update can apply an automatic close.
     bodyEvents: { onPointerDownCapture: claim, onFocusCapture: claim },
   };
 }
 
+/**
+ * Reveal a level's contents to the disclosures nested inside it.
+ *
+ * The scope states both who owns this level's reveals and whether they are
+ * currently shown, so a nested level needs no knowledge of its ancestors: a
+ * collapsed whole-turn process closes every group under it, while each group
+ * keeps the choice the user made for it.
+ */
 export function DisclosureScope({
   disclosure,
   open = disclosure.open,
@@ -153,9 +174,9 @@ export function DisclosureScope({
   open?: boolean;
   children: ReactNode;
 }) {
-  const value = useMemo(() => ({
+  const value = useMemo<DisclosureScopeValue>(() => ({
     claim: disclosure.claim,
-    visible: disclosure.parentVisible && open,
-  }), [disclosure.claim, disclosure.parentVisible, open]);
-  return <ParentContext.Provider value={value}>{children}</ParentContext.Provider>;
+    visible: open,
+  }), [disclosure.claim, open]);
+  return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }
