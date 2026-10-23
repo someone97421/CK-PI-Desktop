@@ -5,6 +5,12 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "新增默认关闭的聊天内嵌可视化，支持交互图表、展开和主题跟随；关闭时保留文件，生成开关从下一次发送起生效。",
+  "浏览器在隐藏面板、切换会话后保持页面可操作，界面重载恢复标签，继续使用会话实际工作目录。",
+  "聊天增加项目面包屑、标题行内改名和逐轮 token 用量，改善过程分组、阅读位置及文件引用。",
+  "输入框新增右键编辑和命令技能入口，修复滚动关闭菜单及发送失败恢复过时草稿的问题。",
+  "模型支持显式设置 reasoning_effort，保存、复制和导入导出保持一致；更新模型目录并保留手动配置。",
+  "修复工具停止等待、重复工具 ID、长会话输出预算、过期系统证书及空回复持久化，扩展上下文回调覆盖首个请求。",
   "插件可跟随当前本地会话及运行状态，并主动打开自己的工作面板；切换会话后忽略迟到的视图请求。",
   "工作模式改为菜单选择，改善模型与思考档位、侧栏日期和待办按钮；展开侧栏不再覆盖右侧面板宽度偏好。",
   "修复 WTQ Pool 等流式 ZIP 插件包安装时的 bad zip local header 错误，兼容尾部数据描述符。",
@@ -85,6 +91,12 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Add opt-in inline visualizations with interactive charts, expanded views and theme support; retain files when disabled and refresh generation settings on the next message.",
+  "Keep browser pages usable while panels are hidden or another chat is selected, restoring tabs after renderer reloads and retaining session workspace resolution.",
+  "Add project breadcrumbs, inline title editing and per-turn token usage; improve process grouping, reading position and file references.",
+  "Add composer editing and command/skill menus; fix scroll-dismissed menus and stale draft restoration after delayed send failures.",
+  "Support explicit reasoning_effort settings across saving, copying and configuration import/export; refresh the model catalog while preserving manual overrides.",
+  "Fix tool cancellation waits, reused tool IDs, long-session output budgets, expired system certificates and empty reply persistence; run extension context hooks before the first request too.",
   "Let plugins follow the selected local session and running turn and reveal their work-panel views; ignore stale view requests after switching sessions.",
   "Select operating modes from a menu, refine model/reasoning controls, sidebar dates and checklist buttons, and preserve panel width preferences when reopening the sidebar.",
   "Fix bad zip local header errors when installing streaming ZIP plugin packages such as WTQ Pool, including data-descriptor archives.",
