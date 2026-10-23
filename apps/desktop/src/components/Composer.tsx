@@ -599,6 +599,10 @@ export function Composer({
             suggestion={suggestion}
             onPaste={pasteClipboardFiles}
             onAcceptCompletion={completions.acceptCompletion}
+            onInsertFromMenu={localToolsAllowed ? (kind, selection) => {
+              inputHistory.exitBrowsing();
+              completions.openCommandPicker(kind, selection);
+            } : undefined}
             onSubmit={(steering) => void submitFromComposer(steering)}
             onInsertNewline={insertNewlineInEditor}
             onInput={(source, caret) => {

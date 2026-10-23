@@ -15,6 +15,8 @@ import { composerSuggestionKeyAction } from "./plugins/suggestion-keys";
 import type { ComposerSuggestionView } from "./hooks/useComposerSuggestion";
 import type { CompletionController } from "./hooks/useComposerCompletions";
 import type { ComposerImagePreviewController } from "./hooks/useComposerImagePreview";
+import { ContextMenu } from "../../../components/ContextMenu";
+import { useComposerContextMenu } from "./hooks/useComposerContextMenu";
 
 export type ComposerInputProps = {
   imagePreview?: ComposerImagePreviewController;
@@ -35,6 +37,7 @@ export type ComposerInputProps = {
   suggestion?: ComposerSuggestionView | null;
   onPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
   onAcceptCompletion: (index: number) => void;
+  onInsertFromMenu?: (kind: "commands" | "skills", selection: { start: number; end: number }) => void;
   onSubmit: (steering?: boolean) => void;
   onInsertNewline: () => void;
   onInput: (source: string, caret: number) => void;
@@ -68,6 +71,7 @@ export function ComposerInput({
   suggestion = null,
   onPaste,
   onAcceptCompletion,
+  onInsertFromMenu,
   onSubmit,
   onInsertNewline,
   onInput,
@@ -78,6 +82,7 @@ export function ComposerInput({
   onFocus,
   onBlur,
 }: ComposerInputProps) {
+  const inputMenu = useComposerContextMenu({ inputRef, inputBlocked, onInsert: onInsertFromMenu });
   useLayoutEffect(() => {
     const editor = inputRef.current;
     return editor ? installComposerDeletionGuard(editor) : undefined;
@@ -104,6 +109,7 @@ export function ComposerInput({
           autoCapitalize="off"
           translate="no"
           onPaste={onPaste}
+          onContextMenu={inputMenu.onContextMenu}
           onBeforeInput={(event) => {
             const native = event.nativeEvent as InputEvent;
             if (
@@ -224,6 +230,7 @@ export function ComposerInput({
           </span>
         ) : null}
       </div>
+      <ContextMenu state={inputMenu.contextMenu} onClose={inputMenu.closeContextMenu} />
     </div>
   );
 }

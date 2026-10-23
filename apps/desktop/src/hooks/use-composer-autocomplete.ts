@@ -76,7 +76,7 @@ const COMMAND_GROUP_ORDER = {
 function filterCommands(
   commands: ComposerCommand[],
   query: string,
-  skillsOnly = false,
+  filter: "all" | "commands" | "skills" = "all",
 ): AutocompleteItem[] {
   const matched: Array<{
     command: ComposerCommand;
@@ -84,7 +84,8 @@ function filterCommands(
     sortText: string;
   }> = [];
   for (const command of commands) {
-    if (skillsOnly && command.kind !== "skill") continue;
+    if (filter === "skills" && command.kind !== "skill") continue;
+    if (filter === "commands" && command.kind === "skill") continue;
     const byName = fuzzyMatchCommand(query, command.name);
     if (byName) {
       matched.push({ command, match: byName, sortText: command.name });
@@ -205,6 +206,10 @@ export function useComposerAutocomplete({
   const [highlight, setHighlight] = useState(0);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
   const frozenRef = useRef<ComposerTrigger | null>(null);
+  const [commandFilter, setCommandFilter] = useState<{
+    kind: "commands" | "skills";
+    tokenStart: number;
+  } | null>(null);
 
   const liveTrigger = useMemo(
     () => (enabled ? detectTrigger(value, cursor) : null),
@@ -224,6 +229,12 @@ export function useComposerAutocomplete({
   useEffect(() => {
     if (dismissedKey && triggerKey !== dismissedKey) setDismissedKey(null);
   }, [triggerKey, dismissedKey]);
+
+  useEffect(() => {
+    if (commandFilter && (trigger?.mode !== "slash" || trigger.tokenStart !== commandFilter.tokenStart)) {
+      setCommandFilter(null);
+    }
+  }, [trigger, commandFilter]);
 
   // Lazy source fetch with a short TTL, keyed by workspace.
   useEffect(() => {
@@ -327,14 +338,17 @@ export function useComposerAutocomplete({
   const items = useMemo<AutocompleteItem[]>(() => {
     if (!trigger || dismissed) return [];
     if (trigger.mode === "slash") {
-      return commands ? filterCommands(commands, trigger.query, trigger.tokenStart > 0) : [];
+      const filter = commandFilter?.tokenStart === trigger.tokenStart
+        ? commandFilter.kind
+        : trigger.tokenStart > 0 ? "skills" : "all";
+      return commands ? filterCommands(commands, trigger.query, filter) : [];
     }
     if (!files) return [];
     return filterFiles(
       foundHere ? [...foundHere.entries, ...files.entries] : files.entries,
       trigger.query,
     );
-  }, [trigger, dismissed, commands, files, foundHere]);
+  }, [trigger, dismissed, commands, files, foundHere, commandFilter]);
 
   // New query or mode restarts keyboard navigation at the top hit.
   const itemsKey = trigger ? `${trigger.mode}:${trigger.query}` : "";
@@ -349,6 +363,7 @@ export function useComposerAutocomplete({
 
   const close = useCallback(() => {
     if (triggerKey) setDismissedKey(triggerKey);
+    setCommandFilter(null);
   }, [triggerKey]);
 
   const accept = useCallback(
@@ -377,10 +392,22 @@ export function useComposerAutocomplete({
         item.kind === "command"
           ? formatCommandInsert(item.command.name)
           : formatFileInsert(item.entry.path, item.entry.kind);
-      return applyCompletion(value, trigger, insert);
+      let replacement = trigger;
+      if (item.kind === "command" && commandFilter?.tokenStart === trigger.tokenStart) {
+        let tokenEnd = trigger.tokenEnd;
+        while (tokenEnd < value.length && !/\s/.test(value[tokenEnd])) tokenEnd += 1;
+        replacement = { ...trigger, tokenEnd };
+      }
+      return applyCompletion(value, replacement, insert);
     },
-    [trigger, items, value],
+    [trigger, items, value, commandFilter],
   );
+
+  const openCommandPicker = (kind: "commands" | "skills", tokenStart: number) => {
+    setDismissedKey(null);
+    setCommandFilter({ kind, tokenStart });
+    setHighlight(0);
+  };
 
   return {
     open,
@@ -394,5 +421,6 @@ export function useComposerAutocomplete({
     noWorkspace: open && trigger?.mode === "file" && !hasWorkspace,
     close,
     accept,
+    openCommandPicker,
   };
 }

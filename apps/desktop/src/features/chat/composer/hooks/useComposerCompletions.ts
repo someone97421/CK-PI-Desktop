@@ -19,6 +19,7 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
+import { detectTrigger } from "@pi-desktop/shared";
 import {
   useComposerAutocomplete,
   type AutocompleteItem,
@@ -229,5 +230,28 @@ export function useComposerCompletions({
     setTypedValue(handleInput(source, caret));
   };
 
-  return { ac, acceptCompletion, handleInput: handleTypedInput };
+  const openCommandPicker = (
+    kind: "commands" | "skills",
+    selection: { start: number; end: number },
+  ) => {
+    if (!enabled) return;
+    invalidateComposerTransforms();
+    setHighlight(0);
+    const existing = selection.start === selection.end ? detectTrigger(value, selection.start) : null;
+    if (existing?.mode === "slash" && (kind === "skills" || existing.tokenStart === 0)) {
+      applyEditorDraft(value, fileReferencesRef.current, selection.start);
+      host.openCommandPicker(kind, existing.tokenStart);
+      return;
+    }
+    const start = kind === "commands" ? 0 : selection.start;
+    const before = value.slice(0, start);
+    const after = value.slice(start);
+    const prefix = before && !/\s$/.test(before) ? " " : "";
+    const suffix = after && !/^\s/.test(after) ? " " : "";
+    const tokenStart = start + prefix.length;
+    applyEditorDraft(`${before}${prefix}/${suffix}${after}`, fileReferencesRef.current, tokenStart + 1);
+    host.openCommandPicker(kind, tokenStart);
+  };
+
+  return { ac, acceptCompletion, handleInput: handleTypedInput, openCommandPicker };
 }

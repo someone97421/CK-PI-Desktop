@@ -33,6 +33,7 @@ import {
 } from "../work-panel-window";
 import { readWindowState, writeWindowState } from "../window-preferences";
 import { suppressLinuxFramelessSystemMenu } from "../frameless-system-menu";
+import { installEditableContextMenu } from "../editable-context-menu";
 import { readAppearanceIconPath } from "../appearance-media";
 import { DEFAULT_WINDOW_CORNER_RADIUS, installWindowShape } from "../window-shape";
 import {
@@ -269,6 +270,7 @@ export async function createWindow({
     );
   }
   suppressLinuxFramelessSystemMenu(window);
+  installEditableContextMenu(window);
   const initialBounds = window.getBounds();
   windowState.workPanelBaseBounds = restoredBounds
     ? { ...restoredBounds }
