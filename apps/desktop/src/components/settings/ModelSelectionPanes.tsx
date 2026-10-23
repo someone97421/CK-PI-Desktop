@@ -37,6 +37,7 @@ import {
 import { api } from "../../lib/api";
 import { Button, Field, HelpIcon, Input, Tooltip, TooltipButton, cx } from "../ui";
 import { IconClose, IconGripVertical, IconHelp, IconPlus, IconRefresh, IconSearch } from "../icons";
+import { ReasoningEffortSelect } from "./ReasoningEffortSelect";
 import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import { filterChosenModels, hidesAddedBinding } from "./model-chosen-filter";
 import {
@@ -950,6 +951,12 @@ export function ModelSelectionPanes({
                         })}
                       </div>
                     </div>
+                    {(!apiStyle || apiStyle === "chat_completions" || apiStyle === "opencode_go") ? (
+                      <ReasoningEffortSelect
+                        value={binding.supportsReasoningEffort}
+                        onChange={(supportsReasoningEffort) => updateBinding(binding.id, { supportsReasoningEffort })}
+                      />
+                    ) : null}
                     <div className="provider-chosen-capabilities">
                       <span className="provider-chosen-thinking-label">
                         {t("settings.modelCapabilities")}

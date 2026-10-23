@@ -16,6 +16,7 @@ import {
 } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import {
+  commandsForSession,
   fetchComposerCommands,
   prewarmComposerCommands,
   readComposerCommandsCache,
@@ -148,12 +149,17 @@ export type ComposerCommandResolution =
   | { status: "unknown" }
   | { status: "unavailable"; error: Error };
 
+function activeSessionHasRemoteWorkspace(state: ReturnType<typeof useAppStore.getState>): boolean {
+  return Boolean(state.sessions.find((session) => session.id === state.activeSessionId)?.remoteWorkspace);
+}
+
 /**
  * Resolve a typed "/name" against the merged command and skill list at send
  * time (builtin/plugin dispatch and skill validation); templates, non-command
  * names, and unknown names stay on the prompt path. Reuses the menu's TTL cache
  * when warm, so a warm cache keeps resolving through a source blip.
  */
+
 export async function resolveComposerCommand(
   name: string,
 ): Promise<ComposerCommandResolution> {
@@ -173,7 +179,9 @@ export async function resolveComposerCommand(
       };
     }
   }
-  const command = commands.find((c) => c.name === name);
+  const command = commandsForSession(commands, {
+    remote: activeSessionHasRemoteWorkspace(useAppStore.getState()),
+  }).find((c) => c.name === name);
   return command ? { status: "resolved", command } : { status: "unknown" };
 }
 
@@ -188,6 +196,7 @@ export function useComposerAutocomplete({
   composing: boolean;
   enabled: boolean;
 }) {
+  const remoteSession = useAppStore(activeSessionHasRemoteWorkspace);
   const workspaceKey = useAppStore((s) => s.workspace?.path ?? "");
   const hasWorkspace = workspaceKey !== "";
   const commandKey = useAppStore(composerCommandScopeKey);
@@ -341,14 +350,16 @@ export function useComposerAutocomplete({
       const filter = commandFilter?.tokenStart === trigger.tokenStart
         ? commandFilter.kind
         : trigger.tokenStart > 0 ? "skills" : "all";
-      return commands ? filterCommands(commands, trigger.query, filter) : [];
+      return commands
+        ? filterCommands(commandsForSession(commands, { remote: remoteSession }), trigger.query, filter)
+        : [];
     }
     if (!files) return [];
     return filterFiles(
       foundHere ? [...foundHere.entries, ...files.entries] : files.entries,
       trigger.query,
     );
-  }, [trigger, dismissed, commands, files, foundHere, commandFilter]);
+  }, [trigger, dismissed, commands, remoteSession, files, foundHere, commandFilter]);
 
   // New query or mode restarts keyboard navigation at the top hit.
   const itemsKey = trigger ? `${trigger.mode}:${trigger.query}` : "";

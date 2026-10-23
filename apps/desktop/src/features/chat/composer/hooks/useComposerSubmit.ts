@@ -15,6 +15,7 @@ import {
 import { readEditorValue, type ComposerFileReference } from "../editor";
 import type { ComposerDraftSnapshot } from "../../../../lib/composer-smart-stop";
 import type { ComposerDraftController } from "./useComposerDraft";
+import { submitWithLatestDraftRestore } from "./submit-with-latest-draft-restore.mjs";
 
 type UseComposerSubmitOptions = {
   value: string;
@@ -182,16 +183,19 @@ export function useComposerSubmit({
       return;
     }
     draft.clearDraftForKey(submittedDraftKey, submittedDraftRevision, submittedDraft);
-    const accepted = steering
-      ? await steerPrompt(inlineContent, submittedDraft)
-      : await sendPrompt(
-          inlineContent,
-          submittedDraft,
-          activeSessionId ?? undefined,
-          captureAcceptedSession,
-        );
-    if (!accepted) draft.restoreDraftForKey(submittedDraftKey, submittedDraft);
-    else remember();
+    const accepted = await submitWithLatestDraftRestore(
+      submittedDraftKey,
+      () => steering
+        ? steerPrompt(inlineContent, submittedDraft)
+        : sendPrompt(
+            inlineContent,
+            submittedDraft,
+            activeSessionId ?? undefined,
+            captureAcceptedSession,
+          ),
+      () => draft.restoreDraftForKey(submittedDraftKey, submittedDraft),
+    );
+    if (accepted) remember();
   };
 
   return { submit };

@@ -532,7 +532,7 @@ export async function createWindow({
   });
   let windowCloseAccepted = false;
   window.webContents.on("did-start-loading", () => {
-    browserHost.disposeGuest();
+    browserHost.detachPresentation();
     windowState.notificationViewingSessionId = null;
     if (windowState.mainWindow === window) resetMenuRendererReady(window);
   });

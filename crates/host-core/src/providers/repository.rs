@@ -103,6 +103,7 @@ fn hydrate_dynamic_plugin_models(db: &Database, provider: &mut ProviderPublic) -
                 thinking_levels: Vec::new(),
                 default_thinking_level: None,
                 thinking_protocol: None,
+                supports_reasoning_effort: None,
                 supports_images: model
                     .capabilities
                     .iter()

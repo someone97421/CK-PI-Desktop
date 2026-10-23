@@ -13,6 +13,11 @@ function payload() {
 const provider = { ...payload().providers[0]!.input, id: "local-1", enabled: true, hasSecret: true, supportsReasoning: true, supportedThinkingLevels: ["off", "high"], createdAt: "1", updatedAt: "1" } as ProviderPublic;
 
 describe("provider sync boundary", () => {
+  it.each([true, false, null])("preserves reasoning effort override %s", (supportsReasoningEffort) => {
+    const input = payload();
+    Object.assign(input.providers[0]!.input.models[0]!, { supportsReasoningEffort });
+    expect(parseProviderImportPayload(input)).toEqual(input);
+  });
   it("preserves current model settings and meaningful zero values", () => {
     const input = payload();
     expect(parseProviderImportPayload(input)).toEqual(input);
@@ -44,6 +49,7 @@ describe("provider sync boundary", () => {
     { models: [{ ...model, thinkingLevels: ["not-a-level"] }] }, { models: [{ ...model, defaultThinkingLevel: "low" }] },
     { models: [{ ...model, supportsDocuments: "yes" }] }, { defaultModelId: "missing" },
     { models: [{ ...model, supportsAudio: "yes" }] }, { models: [{ ...model, supportsVideo: "yes" }] },
+    { models: [{ ...model, supportsReasoningEffort: "true" }] },
   ])("rejects malformed inputs without echoing diagnostics: %j", (patch) => {
     const value = payload();
     Object.assign(value.providers[0]!.input, patch);

@@ -766,6 +766,12 @@ export function registerWorkspaceIpc({
     return browserHost.getState();
   });
 
+  handle(IPC.invoke.browserGetPages, async (input: { sessionId?: string } = {}) => {
+    const sessionId = String(input.sessionId ?? "").trim();
+    if (!sessionId) return [];
+    return browserHost.getPages(sessionId);
+  });
+
   const requireWorkspaceRoot = async (sessionId?: string) => {
     const owner = getHost();
     if (!owner) throw new Error("host unavailable");

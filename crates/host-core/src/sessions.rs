@@ -2085,6 +2085,13 @@ pub fn fork_session_through(
         &mut records,
         &mut compactions,
     )?;
+    let visualization_files = fork_files::preserve_visualizations(
+        db.data_dir(),
+        source_id,
+        &id,
+        &mut records,
+        &mut compactions,
+    )?;
     let texts = records.iter().map(record_index_text).collect::<Vec<_>>();
     let now = now_ms();
     let created_at = ms_to_ts(now);
@@ -2135,6 +2142,7 @@ pub fn fork_session_through(
         return Err(error);
     }
     files.commit();
+    visualization_files.commit();
 
     let summary = SessionSummary {
         id,
@@ -6760,6 +6768,47 @@ mod tests {
             1
         );
         assert_eq!(std::fs::read_to_string(file).unwrap(), "keep source");
+    }
+
+    #[test]
+    fn fork_copies_referenced_visualizations_so_cards_survive_source_deletion() {
+        let db = test_db();
+        let source = create_session(&db, Some("Charts".into()), None, None, None, None).unwrap();
+        let dir = crate::visualizations::session_dir(db.data_dir(), &source.id).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let chart = dir.join("chart.html");
+        std::fs::write(&chart, "<p>chart</p>").unwrap();
+        std::fs::write(dir.join("unused.html"), "<p>unused</p>").unwrap();
+        let text = format!("::visualize{}", json!({"path": chart}));
+        append_message(
+            &db,
+            &source.id,
+            &UiMessage {
+                role: "assistant".into(),
+                ..user_msg("viz-1", &text, "2025-05-01T00:00:00Z")
+            },
+            None,
+        )
+        .unwrap();
+        let ForkSessionResult::Created(child) =
+            fork_session_through(&db, &source.id, None, None).unwrap()
+        else {
+            panic!("expected child")
+        };
+        let child_dir =
+            crate::visualizations::session_dir(db.data_dir(), &child.summary.id).unwrap();
+        let child_chart = child_dir.join("chart.html");
+        assert_eq!(
+            child.messages[0].content,
+            format!("::visualize{}", json!({"path": child_chart}))
+        );
+        assert!(!child_dir.join("unused.html").exists());
+        delete_session(&db, &source.id).unwrap();
+        crate::visualizations::remove_session_dir(db.data_dir(), &source.id);
+        assert_eq!(
+            std::fs::read_to_string(&child_chart).unwrap(),
+            "<p>chart</p>"
+        );
     }
 
     #[test]

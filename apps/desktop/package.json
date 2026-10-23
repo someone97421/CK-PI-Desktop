@@ -123,6 +123,10 @@
         "to": "skills"
       },
       {
+        "from": "resources/gen-ui",
+        "to": "gen-ui"
+      },
+      {
         "from": "resources/plugins",
         "to": "plugins"
       }

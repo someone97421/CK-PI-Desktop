@@ -274,7 +274,7 @@ test("accepted history uses sendPrompt's materialized session, not later global 
   assert.match(source, /if \(acceptedSessionId\) recordHistory\?\.\(submittedDraft, acceptedSessionId\);/);
   assert.match(
     source,
-    /if \(!accepted\) draft\.restoreDraftForKey\(submittedDraftKey, submittedDraft\);\s*else remember\(\);/,
+    /const accepted = await submitWithLatestDraftRestore\(\s*submittedDraftKey,[\s\S]*?\(\) => draft\.restoreDraftForKey\(submittedDraftKey, submittedDraft\),\s*\);\s*if \(accepted\) remember\(\);/,
   );
   const blocked = source.slice(
     source.indexOf('dispatch.action === "blocked"'),

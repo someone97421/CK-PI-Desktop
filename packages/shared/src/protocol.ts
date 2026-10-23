@@ -432,6 +432,7 @@ export const IPC = {
     browserSetVisible: "pi-desktop/browser/setVisible",
     browserOpenExternal: "pi-desktop/browser/openExternal",
     browserGetState: "pi-desktop/browser/getState",
+    browserGetPages: "pi-desktop/browser/getPages",
     fsList: "pi-desktop/fs/list",
     fsRead: "pi-desktop/fs/read",
     fsReadImageDataUrl: "pi-desktop/fs/readImageDataUrl",

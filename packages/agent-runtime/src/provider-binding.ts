@@ -384,7 +384,7 @@ export function buildProviderModel(
   const binding = apiBindingForProviderModel(provider);
   const catalog = provider.modelConfig;
   const catalogModel = catalog
-    ? (({ source: _source, transcriptBinding: _transcriptBinding, nativeCost, ...model }) => ({
+    ? (({ source: _source, transcriptBinding: _transcriptBinding, supportsReasoningEffort: _supportsReasoningEffort, nativeCost, ...model }) => ({
         ...model,
         ...(nativeCost ? { cost: nativeCost } : {}),
       }))(catalog)
@@ -436,9 +436,8 @@ export function buildProviderModel(
           ...(thinkingProtocolCompat ?? {}),
           ...(zhipuCompat ?? {}),
           ...(deepseekCompat ?? {}),
-          // 已保存的显式兼容参数优先于供应商默认值。
-          ...(catalogModel.compat?.supportsReasoningEffort !== undefined
-            ? { supportsReasoningEffort: catalogModel.compat.supportsReasoningEffort }
+          ...(typeof catalog?.supportsReasoningEffort === "boolean"
+            ? { supportsReasoningEffort: catalog.supportsReasoningEffort }
             : {}),
           supportsDeveloperRole: catalogModel.compat?.supportsDeveloperRole === true,
         }

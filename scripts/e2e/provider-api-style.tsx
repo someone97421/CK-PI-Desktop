@@ -1,3 +1,4 @@
+import { verifyReasoningEffort } from "./provider-reasoning-effort";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createInstance } from "i18next";
@@ -13,7 +14,7 @@ import { copyProviderConfiguration } from "../../apps/desktop/src/components/set
 import { CUSTOM_SERVICE } from "../../apps/desktop/src/components/settings/service-catalog";
 import { api } from "../../apps/desktop/src/lib/api";
 
-declare global { var providerApiStyleProbe: () => Promise<unknown>; }
+declare global { var providerApiStyleProbe: (reasoningOnly?: boolean) => Promise<unknown>; }
 const assert = (value: unknown, message: string) => { if (!value) throw new Error(message); };
 const pause = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 /* Anchored menus mount, position and reveal on animation frames, so wait for a
@@ -34,10 +35,10 @@ const fixture = (apiStyle: string): ProviderPublic => ({
     thinkingLevels: ["off"], defaultThinkingLevel: "off" }],
 });
 
-globalThis.providerApiStyleProbe = async () => {
+globalThis.providerApiStyleProbe = async (reasoningOnly = false) => {
   const i18n = createInstance();
   await i18n.init({ lng: "en", resources: {
-    en: { translation: catalogs.en }, "zh-CN": { translation: catalogs["zh-CN"] },
+    en: { translation: catalogs.en }, "zh-CN": { translation: catalogs["zh-CN"] }, de: { translation: catalogs.de },
   }, interpolation: { escapeValue: false } });
   const creates: ProviderCreateInput[] = [];
   const updates: ProviderUpdateInput[] = [];
@@ -217,8 +218,13 @@ globalThis.providerApiStyleProbe = async () => {
     await until(() => Boolean(searchInput()), "model capability settings");
   };
   try {
-    for (const locale of ["en", "zh-CN"]) {
+    for (const locale of (reasoningOnly ? ["en", "zh-CN", "de"] : ["en", "zh-CN"])) {
       await i18n.changeLanguage(locale);
+      if (reasoningOnly) {
+        await verifyReasoningEffort({ render, fixture, i18n, updates, click, control, until, frame });
+        results.push(`${locale}:reasoning-effort-auto-send-omit-save-reopen-protocol-switch`);
+        continue;
+      }
       render();
       const beforeStepfunCreate = creates.length;
       const beforeStepfunDiscovery = discoveries.length;
@@ -397,6 +403,8 @@ globalThis.providerApiStyleProbe = async () => {
         assert(JSON.stringify(original) === before, "edit/copy mutated source object");
         results.push(`${locale}:${style}:edit-change-copy-cancel`);
       }
+      await verifyReasoningEffort({ render, fixture, i18n, updates, click, control, until, frame });
+      results.push(`${locale}:reasoning-effort-auto-send-omit-save-reopen-protocol-switch`);
       for (const [vendorKey, baseUrl, modelId] of [
         ["deepseek", "https://api.deepseek.com", "deepseek-v4-flash"],
         ["xai", "https://api.x.ai/v1", "grok-4.7"],

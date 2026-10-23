@@ -121,6 +121,7 @@ export function createWorkPanelSlice({
   | "openFileInWorkPanel"
   | "openUrlInWorkPanel"
   | "updateBrowserWorkPanelTab"
+  | "restoreBrowserWorkPanelTabs"
 > {
   let workPanelFileRequestSeq = 0;
   const nextFileRequest = (tab?: WorkPanelTab): WorkPanelContext["fileRequest"] => {
@@ -418,6 +419,25 @@ export function createWorkPanelSlice({
         : tab);
       return { ...(visible ? { workPanelTabs: tabs } : {}),
         workPanelContexts: { ...state.workPanelContexts, [sessionId]: { ...context, tabs } } };
+    });
+  },
+  restoreBrowserWorkPanelTabs: (sessionId, pages) => {
+    if (!sessionId || isRemoteSession(get().sessions.find((session) => session.id === sessionId)) || sessionId.startsWith("remote:")) return;
+    set((state) => {
+      const visible = state.activeSessionId === sessionId && !isSessionSelectionPending(sessionId);
+      const context = visible ? currentWorkPanelContext(state) : state.workPanelContexts[sessionId] ?? emptyWorkPanelContext();
+      const retained = pages.flatMap((page): WorkPanelTab[] => {
+        const tabId = page.tabId;
+        if (page.sessionId !== sessionId || !tabId || context.tabs.some((tab) => tab.id === tabId)) return [];
+        return [{ ...browserPluginTab(), id: tabId, location: page.url, label: page.title || browserTabLabel(page.url) }];
+      });
+      const last = retained.at(-1);
+      if (!last) return {};
+      const next = { ...context, tabs: [...context.tabs, ...retained], activeTabId: context.activeTabId ?? last.id };
+      return {
+        workPanelContexts: { ...state.workPanelContexts, [sessionId]: next },
+        ...(visible ? { workPanelTabs: next.tabs, activeWorkPanelTabId: next.activeTabId } : {}),
+      };
     });
   },
   openUrlInWorkPanel: (url, ownerSessionId) => {

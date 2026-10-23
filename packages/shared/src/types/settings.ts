@@ -208,6 +208,8 @@ export type AppSettings = {
   chatContentMaxWidth?: number;
   /** Smoothly display incoming streaming text; absent enables it unless motion is reduced. */
   smoothStreaming?: boolean;
+  /** Inline visualization generation and cards; absent keeps the feature off. */
+  inlineVisualizations?: boolean;
   /** Keep the display awake while the app is running; absent defaults to false. */
   preventScreenSleep?: boolean;
   /**

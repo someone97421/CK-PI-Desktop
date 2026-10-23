@@ -249,6 +249,7 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     thinking_levels: vec!["high".into(), "medium".into()],
                     default_thinking_level: Some("medium".into()),
                     thinking_protocol: Some("adaptive".into()),
+                    supports_reasoning_effort: None,
                     supports_images: Some(true),
                     supports_documents: None,
                     supports_audio: Some(true),
@@ -266,6 +267,7 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     thinking_levels: vec![],
                     default_thinking_level: None,
                     thinking_protocol: None,
+                    supports_reasoning_effort: None,
                     supports_images: None,
                     supports_documents: Some(false),
                     supports_audio: None,
@@ -383,6 +385,7 @@ fn binding_with_alias(id: &str, alias: Option<&str>) -> ModelBinding {
         thinking_levels: Vec::new(),
         default_thinking_level: None,
         thinking_protocol: None,
+        supports_reasoning_effort: None,
         supports_images: None,
         supports_documents: None,
         supports_audio: None,
@@ -1568,6 +1571,7 @@ fn binding_with_limits(id: &str, context_window: u32, max_tokens: u32) -> ModelB
         thinking_levels: Vec::new(),
         default_thinking_level: None,
         thinking_protocol: None,
+        supports_reasoning_effort: None,
         supports_images: None,
         supports_documents: None,
         supports_audio: None,
@@ -1991,4 +1995,41 @@ fn sync_payloads_keep_only_storable_headers() {
     // holding it behaves the same before and after this runs.
     let raw = BTreeMap::from([("x-cjk".to_string(), "星".to_string())]);
     assert!(storable_headers(&raw).is_empty());
+}
+
+#[test]
+fn reasoning_effort_override_survives_provider_create_update_and_read() {
+    let (_dir, db, secrets) = test_context();
+    let binding = serde_json::json!({
+        "id": "deepseek-v4.1-flash", "thinkingLevels": ["off", "high"],
+        "supportsReasoningEffort": true
+    });
+    let input: ProviderCreateInput = serde_json::from_value(serde_json::json!({
+        "name": "Reasoning gateway", "baseUrl": "https://gateway.example/v1",
+        "authKind": "none", "apiStyle": "chat_completions", "models": [binding]
+    }))
+    .unwrap();
+    let provider = create_provider(&db, &secrets, input).unwrap();
+    assert_eq!(
+        serde_json::to_value(&provider).unwrap()["models"][0]["supportsReasoningEffort"],
+        true
+    );
+    for value in [
+        serde_json::json!(false),
+        serde_json::Value::Null,
+        serde_json::json!(true),
+    ] {
+        let mut model = binding.clone();
+        model["supportsReasoningEffort"] = value.clone();
+        let input: ProviderUpdateInput = serde_json::from_value(serde_json::json!({
+            "id": provider.id, "models": [model]
+        }))
+        .unwrap();
+        update_provider(&db, &secrets, input).unwrap();
+        let loaded = get_provider(&db, &secrets, &provider.id).unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(loaded).unwrap()["models"][0]["supportsReasoningEffort"],
+            value
+        );
+    }
 }

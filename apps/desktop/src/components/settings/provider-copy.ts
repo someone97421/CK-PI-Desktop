@@ -43,6 +43,8 @@ export function copyProviderConfiguration(provider: ProviderPublic, name: string
       ...(model.thinkingProtocol !== undefined
         ? { thinkingProtocol: model.thinkingProtocol }
         : {}),
+      ...(model.supportsReasoningEffort !== undefined
+        ? { supportsReasoningEffort: model.supportsReasoningEffort } : {}),
       ...(model.supportsImages !== undefined ? { supportsImages: model.supportsImages } : {}),
       ...(model.supportsDocuments !== undefined ? { supportsDocuments: model.supportsDocuments } : {}),
       ...(model.supportsAudio !== undefined ? { supportsAudio: model.supportsAudio } : {}),

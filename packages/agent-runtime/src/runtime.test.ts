@@ -174,6 +174,7 @@ function createRuntime(
     remoteWorkspace: { hostKey: string; path: string };
     workspaceRoot: string;
     scratchDir: string;
+    visualizationsDir: string;
     customSystemPrompt: import("./custom-system-prompt.js").CustomSystemPrompt;
     projectInstructions: import("./project-instructions.js").ProjectInstructions;
     projectMemory: string;
@@ -206,6 +207,7 @@ function createRuntime(
     remoteWorkspace: overrides.remoteWorkspace,
     workspaceRoot: overrides.workspaceRoot,
     scratchDir: overrides.scratchDir,
+    visualizationsDir: overrides.visualizationsDir,
     customSystemPrompt: overrides.customSystemPrompt,
     pluginTools: overrides.pluginTools,
     subagents: overrides.subagents,
@@ -11358,6 +11360,53 @@ describe("local runtime with a remote tool workspace", () => {
     expect(internals.provider.id).toBe(provider.id);
     expect(internals.agent.state.systemPrompt).not.toContain("/local/scratch");
     await runtime.dispose();
+  });
+});
+
+describe("inline visualization directory (ADR gen-ui-inline-visualization)", () => {
+  const systemPrompt = (runtime: DesktopAgentRuntime): string =>
+    (runtime as unknown as { agent: { state: { systemPrompt: string } } }).agent.state
+      .systemPrompt;
+
+  it("advertises the directory and skill to local sessions", async () => {
+    const runtime = createRuntime({ visualizationsDir: "/data/visualizations/session-1" });
+    const prompt = systemPrompt(runtime);
+    expect(prompt).toContain("Visualization directory");
+    expect(prompt).toContain("`/data/visualizations/session-1`");
+    expect(prompt).toContain("pi-desktop/visualize");
+    await runtime.dispose();
+  });
+
+  it("refreshes and clears the directory on a reused runtime with an unchanged skill list", async () => {
+    const runtime = createRuntime({});
+    try {
+      expect(systemPrompt(runtime)).not.toContain("Visualization directory");
+      runtime.setPluginSkills([], "/data/visualizations/session-1");
+      expect(systemPrompt(runtime)).toContain("`/data/visualizations/session-1`");
+      runtime.setPluginSkills([], "/moved/visualizations/session-1");
+      expect(systemPrompt(runtime)).toContain("`/moved/visualizations/session-1`");
+      expect(systemPrompt(runtime)).not.toContain("`/data/visualizations/session-1`");
+      runtime.setPluginSkills([], null);
+      expect(systemPrompt(runtime)).not.toContain("Visualization directory");
+      runtime.setPluginSkills([], "/data/visualizations/session-1");
+      expect(systemPrompt(runtime)).toContain("`/data/visualizations/session-1`");
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("omits the directory when none is provisioned or the workspace is remote", async () => {
+    const none = createRuntime({});
+    const remote = createRuntime({
+      remoteWorkspace: { hostKey: "ssh", path: "/remote/project" },
+      visualizationsDir: "/data/visualizations/session-1",
+    });
+    remote.setPluginSkills([], "/other/visualizations/session-1");
+    for (const runtime of [none, remote]) {
+      expect(systemPrompt(runtime)).not.toContain("Visualization directory");
+      expect(systemPrompt(runtime)).not.toContain("/data/visualizations");
+      await runtime.dispose();
+    }
   });
 });
 

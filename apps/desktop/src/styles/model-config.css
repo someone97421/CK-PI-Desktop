@@ -1167,6 +1167,14 @@
   gap: 12px;
 }
 
+.provider-chosen-reasoning-effort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .provider-chosen-thinking-default,
 .provider-chosen-thinking-protocol {
   display: flex;

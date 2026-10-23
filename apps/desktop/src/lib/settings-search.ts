@@ -149,6 +149,8 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.runStatusReminder",
       "settings.runStatusReminderDesc",
       "settings.smoothStreaming",
+      "settings.inlineVisualizations",
+      "settings.inlineVisualizationsDesc",
       "settings.smoothStreamingDesc",
       "settings.showThinking",
       "settings.showThinkingDesc",

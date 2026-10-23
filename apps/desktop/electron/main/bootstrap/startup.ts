@@ -13,6 +13,7 @@ import {
   type NativeMenuAction,
 } from "@pi-desktop/shared";
 import { installApplicationMenu } from "../application-menu";
+import { installGenUiProtocol } from "../gen-ui-protocol";
 import { installPluginAssetProtocol } from "../plugin-asset-protocol";
 import { installPluginRendererProtocol } from "../plugin-renderer-protocol";
 import { applyNetworkProxyFromAppSettings } from "../network-proxy";
@@ -210,6 +211,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     installPluginRendererProtocol((pluginId, generation, requestPath) =>
       plugins.resolveRendererSource(pluginId, generation, requestPath),
     );
+    installGenUiProtocol({ getHost });
     // 在创建窗口前恢复已保存的关闭行为。
     const storedBehavior = readCloseBehavior(dataDir);
     if (storedBehavior) state.closeBehavior = storedBehavior;

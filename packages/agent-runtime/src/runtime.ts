@@ -132,6 +132,7 @@ import {
   subagentToolsLabel,
   type ProposalKind,
   type SubagentPermission,
+  GEN_UI_SKILL_ID,
 } from "@pi-desktop/shared";
 import { createStreamCoalescer, type StreamCoalescer } from "./stream-coalescer.js";
 import type { RuntimeHost } from "./host-client.js";
@@ -991,6 +992,10 @@ export type AgentRuntimeOptions = {
    * Advertised to the model in the system prompt; host-core enforces it as
    * a second containment root. */
   scratchDir?: string;
+  /** Absolute per-session directory for inline visualization fragments
+   * (ADR gen-ui-inline-visualization). Advertised in the system prompt;
+   * host-core enforces it as a containment root. Ignored for remote sessions. */
+  visualizationsDir?: string;
   onEvent: (envelope: AgentEventEnvelope) => void;
   /**
    * Subagent definitions this session may delegate to (ADR 0062), already
@@ -1753,6 +1758,7 @@ export class DesktopAgentRuntime {
   private trackToolActivation = false;
   private activationHydrated = false;
   private scratchDir?: string;
+  private visualizationsDir?: string;
   private projectPath?: string;
   private remoteWorkspace?: { hostKey: string; path: string };
   /** Set only for an isolated session; see `RuntimeConfig.workspaceRoot`. */
@@ -1980,6 +1986,7 @@ export class DesktopAgentRuntime {
     this.commandShell = opts.commandShell;
     this.remoteWorkspace = opts.remoteWorkspace;
     this.scratchDir = opts.remoteWorkspace ? undefined : opts.scratchDir;
+    this.visualizationsDir = opts.remoteWorkspace ? undefined : opts.visualizationsDir;
     this.projectPath = opts.remoteWorkspace?.path ?? (opts.projectPath?.trim() || undefined);
     // Remote workspaces are never isolated (ADR 0329).
     this.workspaceRoot = opts.remoteWorkspace ? undefined : opts.workspaceRoot?.trim() || undefined;
@@ -2234,6 +2241,7 @@ Delegation rules:
         return { ...declarations, ...coordination,
           context: this.withRunStatusReminder(coordination?.context ?? declarations.context ?? context) };
       },
+      transformContext: (messages) => this.extensionContext(messages),
       prepareNextTurnWithContext: (context, signal) =>
         this.prepareNextTurn(context, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
@@ -2376,12 +2384,14 @@ Delegation rules:
   }
 
   /** 技能目录更新只追加变更，不替换会话或丢失 fork 的协调状态。 */
-  setPluginSkills(skills: PluginSkillDef[]): void {
+  setPluginSkills(skills: PluginSkillDef[], visualizationsDir: string | null = this.visualizationsDir ?? null): void {
     if (this.disposed) throw new Error("runtime disposed");
     if (this.getStatus().isRunning) throw new Error("cannot update skills during an active turn");
     const sorted = [...skills].sort((left, right) => left.id.localeCompare(right.id));
-    if (pluginSkillsDigest(this.pluginSkills) === pluginSkillsDigest(sorted)) return;
+    const directory = this.remoteWorkspace ? undefined : visualizationsDir ?? undefined;
+    if (pluginSkillsDigest(this.pluginSkills) === pluginSkillsDigest(sorted) && this.visualizationsDir === directory) return;
     this.pluginSkills = sorted;
+    this.visualizationsDir = directory;
     this.rebuildToolCatalog();
     this.setAgentTools(this.activeTools());
     this.setAgentSystemPrompt(this.composeSystemPrompt());
@@ -2486,7 +2496,12 @@ Delegation rules:
     const memoryPrompt = projectMemoryPrompt(this.projectMemory);
     const optionalToolsPrompt = this.optionalToolsPrompt();
     this.composedSections = {
-      runtime: this.baseSystemPrompt,
+      runtime: [
+        this.baseSystemPrompt,
+        ...(this.visualizationsDir ? [
+          `Visualization directory (absolute paths only, .html fragments only; see the ${GEN_UI_SKILL_ID} skill): \`${this.visualizationsDir}\``,
+        ] : []),
+      ].join("\n\n"),
       ...(this.trackToolActivation && this.declarationPolicy ? {
         [TOOL_ACTIVATION_SECTION]: toolActivationSection(this.declarationPolicy.key, this.activeDeferredToolNames),
       } : {}),
@@ -2573,17 +2588,20 @@ Delegation rules:
     return Object.keys(out).length ? out : undefined;
   }
 
-  /** `context` hook: extensions may rewrite the message list before a provider request. */
-  private async extensionContext(update: AgentLoopTurnUpdate): Promise<AgentLoopTurnUpdate> {
+  /**
+   * `context` hook: extensions may rewrite the message list of one provider
+   * request. The replacement only shapes that request; the run's working
+   * context and the transcript keep the original messages.
+   */
+  private async extensionContext(messages: AgentMessage[]): Promise<AgentMessage[]> {
     const runner = this.extensionRunner;
-    if (!runner?.hasHandlers("context") || !update.context) return update;
+    if (!runner?.hasHandlers("context")) return messages;
     const result = await runner.emit<{ messages?: AgentMessage[] }>(
       "context",
-      { type: "context", messages: update.context.messages },
+      { type: "context", messages },
       (_acc, next) => next,
     );
-    if (!Array.isArray(result?.messages)) return update;
-    return { ...update, context: { ...update.context, messages: result.messages } };
+    return Array.isArray(result?.messages) ? result.messages : messages;
   }
 
   /** Mirror pi-agent-core events to extension handlers (spec 16 §6). */
@@ -7282,13 +7300,6 @@ Delegation rules:
    * this hook.
    */
   private async prepareNextTurn(
-    turn: PrepareNextTurnContext,
-    signal?: AbortSignal,
-  ): Promise<AgentLoopTurnUpdate> {
-    return this.extensionContext(await this.prepareNextTurnWithoutExtensions(turn, signal));
-  }
-
-  private async prepareNextTurnWithoutExtensions(
     turn: PrepareNextTurnContext,
     _signal?: AbortSignal,
   ): Promise<AgentLoopTurnUpdate> {

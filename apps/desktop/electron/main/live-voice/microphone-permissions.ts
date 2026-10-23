@@ -1,4 +1,5 @@
 import type { BrowserWindow, Session, WebContents } from "electron";
+import { GEN_UI_SCHEME } from "@pi-desktop/shared";
 import { liveOwnerFromWebContents, isTrustedRendererUrl } from "./owner";
 import type { LiveOwner } from "./call-service";
 
@@ -19,12 +20,29 @@ export function allowsLiveMicrophonePermission(input: PermissionDecision): boole
   return input.mediaType === "audio" || input.mediaType === "unknown";
 }
 
+const GEN_UI_PREFIX = `${GEN_UI_SCHEME}:`;
+
+/**
+ * Visualization frames (ADR gen-ui-inline-visualization) run model-written
+ * code in this same session. They get no permission at all — not even the
+ * ones this handler otherwise leaves to the platform default. The frame is
+ * sandboxed without `allow-same-origin`, so its origin may read as "null";
+ * the frame URL still carries the scheme, so both are checked.
+ */
+export function isGenUiPermissionRequester(...urls: ReadonlyArray<string | undefined>): boolean {
+  return urls.some((url) => typeof url === "string" && url.toLowerCase().startsWith(GEN_UI_PREFIX));
+}
+
 export function installLiveMicrophonePermissionHandlers(input: {
   targetSession: Session;
   getMainWindow: () => BrowserWindow | null;
   hasReservation: (owner: LiveOwner) => boolean;
 }): void {
   input.targetSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (isGenUiPermissionRequester(details.requestingUrl)) {
+      callback(false);
+      return;
+    }
     const owner = requestOwner(input.getMainWindow(), contents, details.requestingUrl, details.isMainFrame);
     if (permission === "clipboard-sanitized-write") {
       callback(owner !== null);
@@ -41,6 +59,7 @@ export function installLiveMicrophonePermissionHandlers(input: {
   });
 
   input.targetSession.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
+    if (isGenUiPermissionRequester(requestingOrigin, details.requestingUrl)) return false;
     const owner = contents ? checkOwner(input.getMainWindow(), contents, requestingOrigin) : null;
     if (permission === "clipboard-sanitized-write") return owner !== null;
     return allowsLiveMicrophonePermission({

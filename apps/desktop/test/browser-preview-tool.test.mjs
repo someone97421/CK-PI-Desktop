@@ -66,19 +66,16 @@ test("main serves BrowserPreview from its originating session workspace", async 
   assert.match(handler, /browserHost\.previewFile\(\)/);
   const services = await readFile(new URL("../electron/main/services/plugin-services.ts", import.meta.url), "utf8");
   const roots = services.slice(services.indexOf("getFileRoots: async"), services.indexOf("getScratchDir:"));
-  assert.match(roots, /"session\.get", \{ id: sessionId \}/);
-  assert.match(roots, /res\.session\.worktree/);
-  assert.match(roots, /"worktree\.location", \{ sessionId \}/);
-  assert.match(roots, /return \[path, join\(dataDir, "scratch", sessionId\)\]/);
+  assert.match(roots, /resolveSessionWorkspace\(host, sessionId\)/);
+  assert.match(roots, /workspace\.path/);
+  assert.match(roots, /workspace\.project && !workspace\.isolated/);
+  assert.match(roots, /join\(dataDir, "scratch", sessionId\)/);
   assert.ok(
     handler.indexOf("resolveLocalFile(raw, root)") <
-      handler.indexOf("sendToRenderer(IPC.event.browserPreview"),
+      handler.indexOf("browserHost.openTab"),
   );
   assert.doesNotMatch(handler, /browserPane\.navigate/);
-  assert.match(
-    handler,
-    /sendToRenderer\(IPC\.event\.browserPreview, \{\s*sessionId,\s*path: file,\s*\}\)/,
-  );
+  assert.match(handler, /await browserHost\.openTab\(\{ path: file \}, sessionId\)/);
   assert.match(protocolSource, /browserPreview: "pi-desktop\/browser\/event\/preview"/);
 });
 
@@ -104,8 +101,9 @@ test("renderer routes browser preview events to the originating session", () => 
 
 test("plugin HTML open routes through the active session without Browser CDP", () => {
   assert.match(apiSource, /onBrowserOpenFile:[\s\S]*IPC\.event\.browserOpenFile/);
-  const hostOpen = pluginServicesSource.match(/openInBrowser: async \(fullPath\) => \{[\s\S]*?\n    \},/)?.[0] ?? "";
+  const hostOpen = pluginServicesSource.match(/const openFileInBrowser = async \(fullPath: string\): Promise<void> => \{[\s\S]*?\n  \};/)?.[0] ?? "";
   assert.ok(hostOpen, "host filesystem service dispatches Browser-open events");
+  assert.match(pluginServicesSource, /openInBrowser: openFileInBrowser/);
   assert.match(hostOpen, /browserHost\.previewFile\(\)/);
   assert.match(hostOpen, /IPC\.event\.browserOpenFile, \{ path: fullPath \}/);
   const rendererHandler =
@@ -147,7 +145,10 @@ test("agent runtime exposes BrowserPreview in every mode and prompts for it", ()
   assert.match(runtimeSource, /live-reloads/);
 });
 
-test("Browser tool automatically reveals its view before browser operations", async () => {
+test("Browser tool uses its connected page without forcing the side panel open", async () => {
+  assert.match(browserPluginSource, /side panel is hidden or another session is visible/);
+  assert.match(browserPluginSource, /Background operations never take focus/);
+  assert.doesNotMatch(browserPluginSource, /await pi\.browser\.reveal\(\)/);
 
   let registeredTool;
   const calls = [];
@@ -169,7 +170,7 @@ test("Browser tool automatically reveals its view before browser operations", as
     const plugin = await import("../resources/plugins/pi.browser/main.js");
     await plugin.onLoad();
     const result = await registeredTool.execute({ action: "snapshot" });
-    assert.deepEqual(calls, ["reveal", "snapshot"]);
+    assert.deepEqual(calls, ["snapshot"]);
     assert.deepEqual(result, {
       ok: true,
       action: "snapshot",

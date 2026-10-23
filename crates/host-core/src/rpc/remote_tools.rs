@@ -351,6 +351,7 @@ pub(super) async fn handle(
             session_id: &p.session_id,
             store: &hashline,
         }),
+        visualization_root: None,
     };
     let mut result = tokio::select! {
         result = tools::execute_tool_with_path_access(Some(&root),None,&p.tool_name,&p.args,options) => result,
