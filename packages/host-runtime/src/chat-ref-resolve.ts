@@ -101,7 +101,6 @@ function cleanRef(raw: string): string {
   }
   return value;
 }
-}
 
 function stripRefDecorations(raw: string): string {
   let value = raw.trim();

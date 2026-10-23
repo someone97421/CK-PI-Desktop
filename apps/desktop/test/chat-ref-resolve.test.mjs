@@ -487,11 +487,14 @@ test("a shorthand still searches the session's own store and not the wider one",
   assert.equal(await resolve("generated-1.png", { scratch, containment }), null);
 });
 
-test("an absolute path outside every root is still reported as restricted", async () => {
+test("an absolute path outside roots resolves with explicit external attribution", async () => {
   const store = tempTree("scratch-store-outside", []);
   const outside = tempTree("outside-store", ["generated-1.png"]);
   const image = join(outside, "generated-1.png");
   const options = roots({ scratch: null, containment: [{ kind: "scratch", path: store }] });
   assert.equal(await isChatRefOutsideRoots(image, options), true);
-  assert.equal(await resolveChatFileRef(image, options), null);
+  const match = await resolveChatFileRef(image, options);
+  assert.equal(match?.root, "external");
+  assert.equal(match?.absolutePath, image);
+  assert.equal(match?.matchedBy, "exact-absolute");
 });

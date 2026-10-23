@@ -7,9 +7,9 @@
  * portals to `document.body` as a viewport-fixed layer (a transformed or
  * `overflow: hidden` ancestor cannot trap it), it is measured before it is
  * revealed so it never flashes at the viewport origin, it clamps inside the
- * viewport, and it closes on an outside press, Escape, or a scroll of anything
- * behind it. `is-open` gates visibility because a `visibility: hidden` surface
- * cannot take focus.
+ * viewport, and it closes on an outside press, Escape, or a scroll of its
+ * originating surface. `is-open` gates visibility because a
+ * `visibility: hidden` surface cannot take focus.
  *
  * Menus are data, not children: `useContextMenu` owns the open request, call
  * sites hand it a label plus items, and one mounted `<ContextMenu>` renders it.
@@ -72,6 +72,7 @@ export type ContextMenuState = ContextMenuRequest & {
   point: ContextMenuPoint;
   /** Live selection at open time; empty when the caret was collapsed. */
   selection: string;
+  origin?: HTMLElement;
 };
 
 /**
@@ -180,7 +181,7 @@ export function useContextMenu() {
         target, is stored as empty so Copy still falls back.
       */
       const selection = snapshotSelection(event.currentTarget);
-      setState({ ...request, point: pointForEvent(event), selection });
+      setState({ ...request, point: pointForEvent(event), selection, origin: event.currentTarget });
     },
     [],
   );
@@ -285,6 +286,12 @@ export function ContextMenu({
       ) return;
       onClose();
     };
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (!state.origin || (target instanceof Node && target.contains(state.origin))) {
+        onOutside(event);
+      }
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       // Stop so a surrounding overlay does not also close on this Escape.
@@ -299,14 +306,14 @@ export function ContextMenu({
     };
     window.addEventListener("pointerdown", onOutside, true);
     window.addEventListener("contextmenu", onOutside, true);
-    window.addEventListener("scroll", onOutside, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onClose);
     window.addEventListener("blur", onClose);
     window.addEventListener("keydown", onKeyDown, true);
     return () => {
       window.removeEventListener("pointerdown", onOutside, true);
       window.removeEventListener("contextmenu", onOutside, true);
-      window.removeEventListener("scroll", onOutside, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onClose);
       window.removeEventListener("blur", onClose);
       window.removeEventListener("keydown", onKeyDown, true);

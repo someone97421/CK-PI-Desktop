@@ -281,6 +281,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   const automaticallyOpen = hasSubagentTopology || live || visibleItems.length <= AUTOMATIC_OPEN_MAX_ITEMS;
   const disclosure = useAutomaticDisclosure(
     automaticallyOpen,
+    revealRequest,
     disclosureKey("activity", first?.message.id ?? "", first?.kind ?? "", first?.kind === "hostedSearch" ? first.round.id : ""),
   );
   const { open, toggle: toggleDisclosure, collapse: collapseDisclosure, claim: claimDisclosure, titleRef } = disclosure;

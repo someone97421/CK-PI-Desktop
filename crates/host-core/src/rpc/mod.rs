@@ -3981,9 +3981,8 @@ async fn handle_request(
 
             // Register before permission evaluation so tools.abort can cancel
             // an approval wait as well as an already-spawned Bash process.
-            // Bash keeps its process registry; other tools use a typed registry
-            // to avoid cross-tool ID reuse. Background Bash remains deferred.
-            let cancellation_receiver = if p.tool_name == "Bash" {
+            // Bash and image generation share the process cancellation registry.
+            let cancellation_receiver = if matches!(p.tool_name.as_str(), "Bash" | "GenerateImages") {
                 let mut st = state.lock().await;
                 match st.register_bash_cancellation(&p.session_id, &p.tool_call_id) {
                     Ok(receiver) => Some(receiver),
@@ -8811,6 +8810,15 @@ mod tests {
 
     #[tokio::test]
     async fn tools_abort_cancels_a_pending_write_approval_before_it_can_mutate_files() {
+        assert_tool_approval_cancelled("Write").await;
+    }
+
+    #[tokio::test]
+    async fn tools_abort_cancels_a_pending_image_generation_approval() {
+        assert_tool_approval_cancelled("GenerateImages").await;
+    }
+
+    async fn assert_tool_approval_cancelled(tool_name: &'static str) {
         let data_dir = tempfile::tempdir().unwrap();
         let project = data_dir.path().join("project");
         fs::create_dir_all(&project).unwrap();
@@ -8820,7 +8828,7 @@ mod tests {
         app_state.handshook = true;
         let session = sessions::create_session(
             &app_state.db,
-            Some("Abort pending Write".into()),
+            Some(format!("Abort pending {tool_name}")),
             Some("agent".into()),
             None,
             None,
@@ -8848,7 +8856,7 @@ mod tests {
                 json!({
                     "sessionId": pending_session_id,
                     "toolCallId": "write-stop-pending-approval",
-                    "toolName": "Write",
+                    "toolName": tool_name,
                     "args": {
                         "path": destination_for_tool,
                         "content": "must not be written"
@@ -8859,8 +8867,11 @@ mod tests {
             )
             .await
         });
-        wait_for_tool_registration(&state, &session.id, "write-stop-pending-approval", "Write")
-            .await;
+        if tool_name == "GenerateImages" {
+            wait_for_bash_registration(&state, &session.id, "write-stop-pending-approval").await;
+        } else {
+            wait_for_tool_registration(&state, &session.id, "write-stop-pending-approval", tool_name).await;
+        }
         let permission: Value = serde_json::from_str(
             &tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
                 .await
@@ -8876,7 +8887,7 @@ mod tests {
             json!({
                 "sessionId": session.id,
                 "toolCallId": "write-stop-pending-approval",
-                "toolName": "Write"
+                "toolName": tool_name
             }),
             mpsc::unbounded_channel().0,
         )

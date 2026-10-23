@@ -24,8 +24,6 @@ type ActivityItemsProps = {
   delegationStatuses: ReadonlyMap<string, SubagentOutcome>;
   delegationTimings: ReadonlyMap<string, SubagentTiming>;
   onUserInteraction: () => void;
-  /** Flat and command-first expand every Thinking row by default. */
-  thinkingDefaultOpen?: boolean;
 };
 
 type ActivityItemBlockProps = Omit<ActivityItemsProps, "items" | "delegateItems" | "delegationStatuses" | "delegationTimings"> & {
@@ -40,7 +38,6 @@ type ActivityItemBlockProps = Omit<ActivityItemsProps, "items" | "delegateItems"
 const ActivityItemBlock = memo(function ActivityItemBlock({
   block, isLast, isActive, live, lastItem, topologyItem,
   delegateItems, delegationStatuses, delegationTimings, onUserInteraction,
-  thinkingDefaultOpen,
 }: ActivityItemBlockProps) {
   return <>{block.items.map((item) => {
     const delegation = Boolean(isDelegationActivityItem(item));
@@ -81,7 +78,7 @@ const ActivityItemBlock = memo(function ActivityItemBlock({
       key={`thinking-${item.message.id}`}
       message={item.message}
       streaming={isActive && item.message.status === "streaming"}
-      autoOpen={thinkingDefaultOpen || (live && item === lastItem)}
+      autoOpen
       onUserInteraction={onUserInteraction}
     />;
   })}</>;
@@ -106,7 +103,6 @@ export const ActivityItems = memo(function ActivityItems({ items, ...context }: 
       delegationStatuses={ownsTopology ? context.delegationStatuses : undefined}
       delegationTimings={ownsTopology ? context.delegationTimings : undefined}
       onUserInteraction={context.onUserInteraction}
-      thinkingDefaultOpen={context.thinkingDefaultOpen}
     />;
   })}</>;
 });

@@ -403,9 +403,6 @@ impl AppState {
         }
         self.active_tool_cancellations.clear();
         self.pending_tool_aborts.clear();
-        // Chat-started background tasks follow the application: signal every
-        // running supervisor so its process tree is terminated and reaped.
-        crate::background_tasks::stop_all_running_sync(&self.background_tasks);
 
         let pending_request_ids: Vec<String> = self.pending_permissions.keys().cloned().collect();
         for request_id in pending_request_ids {

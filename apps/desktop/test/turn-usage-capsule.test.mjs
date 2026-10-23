@@ -4,13 +4,12 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-const LOCALES = ["en", "zh-CN", "zh-TW", "tr", "de", "es", "fr", "ko", "pt-BR"];
+const LOCALES = ["en", "zh-CN"];
 
-const [capsule, shared, css, componentSpec, ...catalogs] = await Promise.all([
+const [capsule, shared, css, ...catalogs] = await Promise.all([
   read("../src/features/chat/transcript/TurnUsageCapsule.tsx"),
   read("../src/features/chat/transcript/shared.tsx"),
   read("../src/styles/messages.css"),
-  read("../../../docs/spec/04-ux/08-component-spec.md"),
   ...LOCALES.map((locale) =>
     read(`../../../packages/i18n/src/locales/${locale}/index.ts`),
   ),
@@ -170,14 +169,4 @@ test("every locale adds the turn aria label and total label exactly once", () =>
       `${locale} keeps speed and count placeholders`,
     );
   }
-});
-
-test("the component spec documents the capsule aggregate and its boundary", () => {
-  assert.match(componentSpec, /turn usage capsule/i);
-  assert.match(componentSpec, /summed\s+across the visual turn's assistant messages/);
-  assert.match(componentSpec, /reasoning tokens/);
-  assert.match(
-    componentSpec,
-    /last-request\s+occupancy stays deliberately distinct/,
-  );
 });

@@ -24,6 +24,7 @@ export function createGeminiAdapter(context: LiveAdapterContext): LiveAdapter {
   let readyReject: ((error: Error) => void) | null = null;
   const completedFunctionCalls = new Set<string>();
   const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
+  void ready.catch(() => undefined);
 
   function sendFunctionReceipt(input: {
     providerRequestId: string;
@@ -162,7 +163,7 @@ export function createGeminiAdapter(context: LiveAdapterContext): LiveAdapter {
     async close() {
       if (closed) return;
       closed = true;
-      if (setupSent) readyReject?.(new Error("Gemini Live call closed"));
+      readyReject?.(new Error("Gemini Live call closed"));
       socket?.off("message", onSocketMessage);
       socket?.off("close", onSocketClose);
       socket?.off("error", onSocketError);
