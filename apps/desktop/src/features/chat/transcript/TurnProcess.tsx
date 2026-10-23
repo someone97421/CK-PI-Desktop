@@ -112,22 +112,20 @@ export function TurnProcess({
     0, Math.floor(((isActive ? now : (endedAt ?? startedAt)) - startedAt) / 1000),
   );
   const elapsed = formatToolDuration(seconds);
-  // The header states the turn's outcome and nothing else: a shell command can
-  // be arbitrarily long, so echoing the current one would push the counts off
-  // the row. `startedAt` is absent for history that recorded no timing, and
-  // "0s" would be a lie there, so the duration is dropped instead.
+  // The header states the turn's outcome and its bounded metadata: status,
+  // recorded duration and direct tool count. A shell command can be arbitrarily
+  // long, so echoing the current one would push that metadata off the row.
+  // `startedAt` is absent for history that recorded no timing, and "0s" would be
+  // a lie there, so the duration is dropped instead.
   const hasTiming = startedAt !== undefined && seconds > 0;
   const phase = turnProcessPhase({ parts: turnParts, isActive, failed, activity });
+  // The header's label is the status alone. Duration and tool count are separate
+  // values so each can be omitted independently, and the caret can follow the
+  // last one instead of being pushed to the far edge of the band.
   const label = (() => {
-    if (phase.kind === "failed") {
-      return hasTiming ? t("chat.processFailedFor", { time: elapsed }) : t("chat.processFailed");
-    }
-    if (phase.kind === "stopped") {
-      return hasTiming ? t("chat.processStoppedFor", { time: elapsed }) : t("chat.processStopped");
-    }
-    if (phase.kind === "completed") {
-      return hasTiming ? t("chat.processCompletedFor", { time: elapsed }) : t("chat.processCompleted");
-    }
+    if (phase.kind === "failed") return t("chat.processFailed");
+    if (phase.kind === "stopped") return t("chat.processStopped");
+    if (phase.kind === "completed") return t("chat.processCompleted");
     // Live: only stages with their own settled wording get their own label. The
     // rest describe an instant at the start of a request, and naming them would
     // make the row flicker instead of telling the reader anything.
@@ -154,14 +152,18 @@ export function TurnProcess({
         <span className={`tool-activity-label${isActive ? " running" : ""}`}>
           {label}
         </span>
-        {summary.issues > 0 && phase.kind !== "failed" ? (
-          <span className="turn-process-error">
-            <IconCircleAlert size={14} aria-hidden />
-            {t("chat.activityFailures", { count: summary.issues })}
-          </span>
+        {isActive ? <span className="activity-marker" aria-hidden /> : null}
+        {hasTiming ? (
+          <>
+            <span className="turn-sep" aria-hidden>·</span>
+            <span className="turn-duration">{elapsed}</span>
+          </>
         ) : null}
         {toolCount > 0 ? (
-          <span className="tool-activity-count">{t("chat.processTools", { count: toolCount })}</span>
+          <>
+            <span className="turn-sep" aria-hidden>·</span>
+            <span className="tool-activity-count">{t("chat.processTools", { count: toolCount })}</span>
+          </>
         ) : null}
         <span className="tool-activity-caret" aria-hidden><IconChevronRight size={12} /></span>
       </button>

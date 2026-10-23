@@ -37,6 +37,23 @@ test("failed and partial MCP catalog searches can be retried", () => {
   assert.match(panel, /remote\.status === "ready" && remote\.failed\.length/);
 });
 
+test("a failed query keeps the last successful list with its timestamp", () => {
+  // Issue #1692 follow-up, MCP side: the last successful registry answer stays
+  // on screen when a later query fails, with the time it was taken.
+  assert.match(panel, /useState<MarketSnapshot<MarketItem> \| null>\(null\)/);
+  assert.match(panel, /snapshotMatchesQuery\(snapshot, search\)/);
+  assert.match(panel, /setSnapshot\(\{ entries, at: Date\.now\(\), query: query\.trim\(\) \}\)/);
+  assert.match(
+    panel,
+    /const showingSnapshot =\s*\n\s*snapshotForQuery != null &&\s*\n\s*remote\.entries\.length === 0 &&\s*\n\s*\(remote\.status === "error" \|\| remote\.status === "loading"\)/,
+  );
+  assert.match(panel, /displayEntries\.filter\(matches\)/);
+  assert.match(panel, /settings\.mcpMarket\.remoteStaleSnapshot/);
+  // Pagination beyond the first page also refreshes the snapshot: the entries
+  // on screen after Load more are what a later failure should keep.
+  assert.match(panel, /if \(entries\.length > 0\) \{\s*\n\s*setSnapshot\(/);
+});
+
 test("installed state comes from matching server ids", () => {
   assert.match(panel, /installedIds\.includes\(entry\.id\)/);
   assert.match(page, /installedIds=\{\[\.\.\.globalServers, \.\.\.projectServers\]/);

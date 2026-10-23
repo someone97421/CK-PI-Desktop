@@ -77,6 +77,8 @@ export function activityItemDetail(item: ActivityItem): string {
   return getToolSummary(item.message.toolName, item.message.toolArgs);
 }
 
+const AUTOMATIC_OPEN_MAX_ITEMS = 4;
+
 
 function waitingSubagentActionLabel(
   agent: AgentActivityAgent,
@@ -224,7 +226,6 @@ export const ActivityGroup = memo(function ActivityGroup({
   const showThinking = useAppStore((state) => resolveShowThinking(state.settings));
   const hideThinking = !showThinking;
   const displayMode = useAppStore((state) => resolveTranscriptDisplayMode(state.settings));
-  const thinkingDefaultOpen = displayMode !== "fully-folded";
   const { t } = useTranslation();
   const detailsId = useId();
   const rawDelegateItems = useMemo(() => items.filter(isDelegationActivityItem), [items]);
@@ -277,9 +278,9 @@ export const ActivityGroup = memo(function ActivityGroup({
   const visibleItems = useMemo(() => cachedVisibleActivityItems(items, hideThinking, isActive), [items, hideThinking, isActive]);
   const first = items[0];
   // 子任务完成及快照回执只更新内容，展开状态继续由用户控制。
+  const automaticallyOpen = hasSubagentTopology || live || visibleItems.length <= AUTOMATIC_OPEN_MAX_ITEMS;
   const disclosure = useAutomaticDisclosure(
-    hasSubagentTopology || visibleItems.length <= 1 || live,
-    revealRequest,
+    automaticallyOpen,
     disclosureKey("activity", first?.message.id ?? "", first?.kind ?? "", first?.kind === "hostedSearch" ? first.round.id : ""),
   );
   const { open, toggle: toggleDisclosure, collapse: collapseDisclosure, claim: claimDisclosure, titleRef } = disclosure;
@@ -360,7 +361,6 @@ export const ActivityGroup = memo(function ActivityGroup({
     delegationStatuses={delegationStatuses}
     delegationTimings={delegationTimings}
     onUserInteraction={claimDisclosure}
-    thinkingDefaultOpen={thinkingDefaultOpen}
   />;
 
   // flat 只省略普通活动组，子代理仍保留拓扑卡片与停止入口。
@@ -400,6 +400,7 @@ export const ActivityGroup = memo(function ActivityGroup({
         <span className={`tool-activity-label ${live ? "running" : ""}`}>
           {label}
         </span>
+        {live ? <span className="activity-marker" aria-hidden /> : null}
         {hasSubagentTopology ? (
           <span className="subagent-activity-metrics">
             {t("chat.subagentCount", { count: subagentSummary.total })}

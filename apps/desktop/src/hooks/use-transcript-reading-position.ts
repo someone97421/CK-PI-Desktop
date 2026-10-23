@@ -45,6 +45,9 @@ export function useTranscriptReadingPosition({
   });
   const pendingRef = useRef(initialPosition?.pinned === false ? initialPosition : undefined);
   const requestRef = useRef<AbortController | null>(null);
+  const completedRestoreRef = useRef<TranscriptReadingPosition | null>(null);
+  const restoreReadyRef = useRef(!onRestore);
+  const [restoreRevision, setRestoreRevision] = useState(0);
   const alignmentUntilRef = useRef(0);
   const wasVisibleRef = useRef(false);
   const cancel = useCallback(() => {
@@ -97,11 +100,20 @@ export function useTranscriptReadingPosition({
   // completion when a pane hides/unmounts, or the reader takes over during IO.
   useLayoutEffect(() => {
     const position = pendingRef.current;
-    if (!visible || !position || !onRestore) return;
+    if (!visible || !position || !onRestore || completedRestoreRef.current === position) return;
+    // Do not start the bounded alignment window while the target may still be
+    // loading. A slow history read must not be aborted by the fallback timer.
+    restoreReadyRef.current = false;
     const controller = new AbortController();
     requestRef.current = controller;
     void onRestore(position, controller.signal).then((found) => {
-      if (controller.signal.aborted || found) return;
+      if (controller.signal.aborted) return;
+      if (found) {
+        completedRestoreRef.current = position;
+        restoreReadyRef.current = true;
+        setRestoreRevision((revision) => revision + 1);
+        return;
+      }
       cancel();
       callbacks.current.onMissing();
       callbacks.current.remember();
@@ -117,10 +129,11 @@ export function useTranscriptReadingPosition({
       return;
     }
     if (!pendingRef.current || !scroller || !content) return;
+    if (!restoreReadyRef.current) return;
     let timer = 0;
     const align = () => {
       const position = pendingRef.current;
-      if (!position) return;
+      if (!position || !restoreReadyRef.current) return;
       if (alignmentUntilRef.current && performance.now() >= alignmentUntilRef.current) {
         cancel();
         callbacks.current.remember();
@@ -144,7 +157,7 @@ export function useTranscriptReadingPosition({
       window.clearTimeout(timer);
       observer?.disconnect();
     };
-  }, [cancel, contentRef, contentVersion, onPosition, scrollRef, visible]);
+  }, [cancel, contentRef, contentVersion, onPosition, onRestore, restoreRevision, scrollRef, visible]);
 
   // Save laid-out geometry as well as native scrolls (e.g. disclosure changes).
   useLayoutEffect(() => {

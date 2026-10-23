@@ -26,6 +26,8 @@ import {
 import { createFrameBatcher } from "../../lib/frame-batcher";
 import {
   clearSessionAsks,
+  dropSessionAskDrafts,
+  dropToolCallAskDrafts,
   enqueueAsk,
   removeAskForToolCall,
 } from "../../lib/pending-asks";
@@ -377,6 +379,11 @@ export function createEventsSlice({
             state.pendingAsks,
             envelope.sessionId,
           ),
+          askDrafts: dropSessionAskDrafts(
+            state.askDrafts,
+            state.pendingAsks,
+            envelope.sessionId,
+          ),
           latestTurnResults:
             event.type === "error" && event.error.code === "TURN_ABORTED"
               ? withoutRecordKey(state.latestTurnResults, envelope.sessionId)
@@ -469,10 +476,17 @@ export function createEventsSlice({
             envelope.sessionId,
             event.toolCallId,
           );
+          const askDrafts = dropToolCallAskDrafts(
+            state.askDrafts,
+            state.pendingAsks,
+            envelope.sessionId,
+            event.toolCallId,
+          );
           return pendingPermissions === state.pendingPermissions &&
-            pendingAsks === state.pendingAsks
+            pendingAsks === state.pendingAsks &&
+            askDrafts === state.askDrafts
             ? {}
-            : { pendingPermissions, pendingAsks };
+            : { pendingPermissions, pendingAsks, askDrafts };
         });
       }
 

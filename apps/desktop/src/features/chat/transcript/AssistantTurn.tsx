@@ -24,6 +24,7 @@ import { segmentTurnProcess } from "../../../lib/turn-process";
 import { sessionAllows } from "../../../lib/remote-session-safety";
 import { resolveShowThinking } from "../../../lib/thinking-visibility";
 import { resolveTranscriptDisplayMode } from "../../../lib/transcript-display-mode";
+import { reviewChangeFromMessage } from "../../../lib/workspace-review";
 import { cachedVisibleProcessSteps } from "../../../lib/transcript-activity-summary";
 import { useSlotSessionId } from "../../../plugins/renderer-slots/use-slots";
 import { useAppStore } from "../../../stores/app-store";
@@ -424,6 +425,7 @@ export const AssistantTurn = memo(function AssistantTurn({
             usage={usage}
             responseDurationMs={responseDurationMs}
             responseOutputTokens={responseOutputTokens}
+            responseOutputEstimated={summary.responseOutputEstimated}
           />
         ) : null}
         {(content || hasError) && actionMessage && !transcriptReadOnly ? (

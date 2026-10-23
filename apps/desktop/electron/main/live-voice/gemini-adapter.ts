@@ -18,6 +18,7 @@ export function createGeminiAdapter(context: LiveAdapterContext): LiveAdapter {
   const apiKey = context.auth.apiKey;
   let socket: Awaited<ReturnType<typeof openLiveWebSocket>> | null = null;
   let closed = false;
+  let failed = false;
   let muted = context.signal.aborted;
   let readyResolve: (() => void) | null = null;
   let readyReject: ((error: Error) => void) | null = null;
@@ -69,6 +70,25 @@ export function createGeminiAdapter(context: LiveAdapterContext): LiveAdapter {
     ).catch(() => context.onEvent({ kind: "error", code: "LIVE_WORK_INTENT_UNAVAILABLE" }));
   }
 
+  function onSocketFailure(code: string, reason: string): void {
+    if (closed || failed || context.signal.aborted) return;
+    failed = true;
+    // connect() crosses IPC; raw provider diagnostics belong only in the log.
+    readyReject?.(Object.assign(new Error(code), { errorCode: code }));
+    context.onEvent({ kind: "error", code, reason });
+  }
+
+  function onSocketClose(code: number, reason: Buffer | undefined): void {
+    const errorCode = [1002, 1003, 1007, 1008, 1009].includes(code) ? "LIVE_PROTOCOL_ERROR" : "LIVE_NETWORK_ERROR";
+    // A close event may omit its reason; it must not turn socket teardown into
+    // a TypeError that escapes the adapter.
+    const detail = reason ? reason.toString("utf8") : "";
+    onSocketFailure(errorCode, `Gemini Live socket closed (${code}): ${detail}`);
+  }
+
+  function onSocketError(error: Error): void {
+    onSocketFailure("LIVE_NETWORK_ERROR", error.message);
+  }
   function onSocketMessage(data: unknown): void {
     try {
       const value = websocketJson(data, MAX_LIVE_JSON_BYTES);
@@ -109,12 +129,8 @@ export function createGeminiAdapter(context: LiveAdapterContext): LiveAdapter {
       const liveSocket = await openLiveWebSocket({ url: url.toString(), signal: context.signal, endpointOrigin: "third-party" });
       socket = liveSocket;
       liveSocket.on("message", onSocketMessage);
-      liveSocket.once("close", (code) => {
-        if (!closed) context.onEvent({ kind: "error", code: code === 1000 ? "LIVE_NETWORK_ERROR" : "LIVE_NETWORK_ERROR" });
-      });
-      liveSocket.once("error", () => {
-        if (!closed) context.onEvent({ kind: "error", code: "LIVE_NETWORK_ERROR" });
-      });
+      liveSocket.once("close", onSocketClose);
+      liveSocket.once("error", onSocketError);
       await waitForSocketReady(liveSocket, context.signal);
       sendJsonBounded(liveSocket, geminiSetupMessage({ modelId: binding.modelId, voice: binding.voice, ...(context.workProfile ? { workProfile: context.workProfile } : {}) }));
       await waitForReady(ready, context.signal, 12_000, "Gemini Live setup timed out");
@@ -146,7 +162,10 @@ export function createGeminiAdapter(context: LiveAdapterContext): LiveAdapter {
     async close() {
       if (closed) return;
       closed = true;
-      readyReject?.(new Error("Gemini Live call closed"));
+      if (setupSent) readyReject?.(new Error("Gemini Live call closed"));
+      socket?.off("message", onSocketMessage);
+      socket?.off("close", onSocketClose);
+      socket?.off("error", onSocketError);
       if (socket && socket.readyState !== WebSocket.CLOSED) socket.close(1000, "call ended");
       completedFunctionCalls.clear();
       socket = null;

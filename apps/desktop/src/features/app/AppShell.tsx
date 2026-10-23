@@ -1,4 +1,10 @@
-import { type CSSProperties, lazy, type ReactNode, Suspense } from "react";
+import {
+  type CSSProperties,
+  lazy,
+  type ReactNode,
+  Suspense,
+  useState,
+} from "react";
 import { ChatSurface } from "../../components/ChatSurface";
 import { ConversationTopbar } from "../../components/ConversationTopbar";
 import { ExtensionPromptHost } from "../../components/ExtensionPromptDialog";
@@ -89,6 +95,7 @@ export function AppShell() {
     sidebarToggleShortcut,
     workPanelToggleTooltip,
   } = useAppShellRuntime();
+  const [toastAnchor, setToastAnchor] = useState<HTMLElement | null>(null);
   useCopyTex();
 
   // A boot that never reaches the shell gets a surface it can act on instead of
@@ -160,7 +167,7 @@ export function AppShell() {
             )}
 
             {!workPanelMaximized && (
-              <section className="main-pane">
+              <section ref={setToastAnchor} className="main-pane">
                 {page === "chat" ? (
                   <ConversationTopbar
                     sidebarCollapsed={sidebarCollapsed}
@@ -305,7 +312,7 @@ export function AppShell() {
           </Suspense>
         ) : null}
         <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
-        <ToastHost />
+        <ToastHost anchorElement={page === "settings" ? null : toastAnchor} />
         <PluginRendererHost />
         <ExtensionPromptHost />
         {page === "settings" ? <UpdateBanner /> : null}

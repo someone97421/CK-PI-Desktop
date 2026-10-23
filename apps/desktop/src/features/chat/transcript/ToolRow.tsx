@@ -5,6 +5,7 @@ import { useChatSessionCapability } from "../../../hooks/use-chat-session-capabi
 import { SubagentStopButton } from "./SubagentStopButton";
 import { PlanHistoryCard } from "./PlanHistoryCard";
 import { planSubmission } from "../../../lib/plan-history";
+import { reviewChangeFromMessage } from "../../../lib/workspace-review";
 import { GeneratedImages } from "./GeneratedImages";
 import "../../../styles/generated-images.css";
 import {
@@ -501,6 +502,7 @@ function HostToolRow({
                   )
                 : actionLabel}
             </span>
+            {status === "running" ? <span className="activity-marker" aria-hidden /> : null}
             {lifecycle && roster.length > 0 ? (
               <span className="tool-row-agent is-count">
                 {t("chat.subagentCount", { count: roster.length })}
@@ -733,7 +735,15 @@ function SubagentRunFollow({
           <div ref={contentRef}>
             {items.map((item) =>
               item.kind === "tool" ? (
-                <SubagentToolMessage key={item.message.id} message={item.message} />
+                reviewChangeFromMessage(item.message) ? (
+                  <ReviewChangeCard
+                    key={item.message.id}
+                    message={item.message}
+                    asToolRow
+                  />
+                ) : (
+                  <SubagentToolMessage key={item.message.id} message={item.message} />
+                )
               ) : item.kind === "thinking" ? (
                 <ThinkingRow
                   key={`thinking-${item.message.id}`}

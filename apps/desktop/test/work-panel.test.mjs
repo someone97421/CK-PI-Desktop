@@ -702,3 +702,22 @@ test("preview mode keeps shell actions and restores routes before navigation", (
   assert.match(globalStyles, /\.work-panel-header \{[^}]*app-region:\s*drag;/);
   assert.match(globalStyles, /\.app-shell\.work-panel-maximized \.work-panel-main \{[^}]*var\(--ds-bg-dock-raised\) 0 var\(--ds-toolbar-height\)/);
 });
+
+test("the active tab scrolls its wrapper so the sibling close button stays visible", () => {
+  // Issue #1762: the close button is a sibling of the tab button inside the
+  // tab wrapper. Scrolling the button with `inline: "nearest"` moves nothing
+  // once the button is visible, leaving the close button clipped outside the
+  // strip's overflow edge.
+  // Upstream #1775 introduced the wrapper refs; this branch keeps them and
+  // adds the shared reveal helper plus the resize/hover paths.
+  assert.match(panelSource, /const tabWrapperRefs = useRef<Record<string, HTMLDivElement \| null>>\(\{\}\)/);
+  assert.match(
+    panelSource,
+    /tabWrapperRefs\.current\[tabId\]\?\.scrollIntoView\(/,
+  );
+  assert.match(panelSource, /tabWrapperRefs\.current\[tab\.id\] = node/);
+  // The strip reserves the close button's width at the inline end as a
+  // structural guarantee against sub-pixel clipping.
+  const strip = globalStyles.match(/\.work-panel-tab-strip \{[^}]*\}/)?.[0] ?? "";
+  assert.match(strip, /scroll-padding-inline:\s*2px 24px;/);
+});

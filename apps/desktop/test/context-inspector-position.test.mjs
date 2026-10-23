@@ -77,6 +77,21 @@ test("the popover opens above the trigger and falls back below it", () => {
   assert.equal(below.top, 128 + 8);
 });
 
+test("a turn footer can prefer the space below while the dock keeps above", () => {
+  const trigger = { left: 600, top: 400, bottom: 428 };
+  const above = place(trigger);
+  const below = placeContextInspector({
+    trigger,
+    popover: POPOVER,
+    pane: PANE,
+    viewport: VIEWPORT,
+    prefer: "below",
+  });
+  assert.ok(above && below);
+  assert.equal(above.top, 400 - POPOVER.height - 8);
+  assert.equal(below.top, 428 + 8);
+});
+
 test("a pane with no usable width leaves the popover unplaced", () => {
   assert.equal(
     place({ left: 10, top: 700, bottom: 728 }, { left: 0, right: 20 }),

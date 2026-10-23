@@ -45,6 +45,7 @@ export function ProcessActivityGroup({
           <span className={`tool-activity-label${active ? " running" : ""}`}>
             {t(summary.label, { count: summary.count })}
           </span>
+          {active ? <span className="activity-marker" aria-hidden /> : null}
           {summary.thinking > 0 && summary.tools > 0 ? (
             <span className="tool-activity-count">{t("chat.activityIncludesThinking")}</span>
           ) : null}

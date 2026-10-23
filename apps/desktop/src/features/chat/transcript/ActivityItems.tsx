@@ -1,6 +1,7 @@
 import { Fragment, memo } from "react";
 import type { AssistantActivityItem } from "../../../lib/assistant-turns";
 import { isDelegationActivityItem, type DelegationActivityItem, type SubagentOutcome, type SubagentTiming } from "../../../lib/subagent-topology";
+import { reviewChangeFromMessage } from "../../../lib/workspace-review";
 import { ReviewChangeCard } from "../../../components/ReviewChangeCard";
 import { ThinkingRow } from "./shared";
 import { HostedSearchRow } from "./HostedSearchRow";
@@ -42,8 +43,6 @@ const ActivityItemBlock = memo(function ActivityItemBlock({
   thinkingDefaultOpen,
 }: ActivityItemBlockProps) {
   return <>{block.items.map((item) => {
-    // The topology predicate narrows to all tools, but a false result can still
-    // be an ordinary tool. Do not exclude tools from the remaining branches.
     const delegation = Boolean(isDelegationActivityItem(item));
     if (delegation) {
       if (item !== topologyItem || !delegateItems) return null;
@@ -55,16 +54,21 @@ const ActivityItemBlock = memo(function ActivityItemBlock({
         onUserInteraction={onUserInteraction}
       />;
     }
-    // The literal last item of the last activity part owns this default,
-    // never the last item of an internal render block.
     const autoOpenLatest = isLast && item === lastItem;
-    if (item.kind === "tool") return (
-      <Fragment key={item.message.id}>
+    if (item.kind === "tool") {
+      if (reviewChangeFromMessage(item.message)) {
+        return <ReviewChangeCard
+          key={item.message.id}
+          message={item.message}
+          asToolRow
+        />;
+      }
+      return <Fragment key={item.message.id}>
         <ToolRow imagesInTurn message={item.message} autoOpen={autoOpenLatest}
           onUserInteraction={onUserInteraction} {...(item.delegate ? { delegate: item.delegate } : {})} />
         <ReviewChangeCard message={item.message} />
-      </Fragment>
-    );
+      </Fragment>;
+    }
     if (item.kind === "hostedSearch") return <HostedSearchRow
       key={`hosted-search-${item.message.id}-${item.round.id}`}
       messageId={item.message.id}

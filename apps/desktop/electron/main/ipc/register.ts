@@ -74,6 +74,7 @@ export type RegisterIpcDependencies = {
   activeUserSubagentDocuments: (...args: any[]) => Promise<any>;
   disabledBuiltinSubagents: () => Promise<string[]>;
   disabledBuiltinSkills: () => Promise<string[]>;
+  completionNoticeTurns: Set<string>;
   liveCallService?: LiveCallService;
   mcpOAuth?: McpOAuthManager;
   markLifecycleDialogRendererReady: (window: BrowserWindow) => boolean;
@@ -111,6 +112,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     updater,
     dataDir,
     activeTurns,
+    completionNoticeTurns,
     isTurnDispatchable,
     sessionProjects,
     persistenceOutbox,
@@ -456,6 +458,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     queuedSteeringJournal,
     dataDir,
     activeTurns,
+    completionNoticeTurns,
     recordTurnStart,
     isTurnDispatchable,
     activeTurnUsages,

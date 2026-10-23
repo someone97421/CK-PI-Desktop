@@ -36,6 +36,7 @@ import {
 } from "../../lib/sidebar-preferences";
 import { retainedTemporaryDrafts } from "../../lib/temporary-drafts";
 import { api } from "../../lib/api";
+import { dropAskDraft } from "../../lib/pending-asks";
 import { isRemoteSession, safeSessionSummary, sessionAllows } from "../../lib/remote-session-safety";
 import { createRefreshCoordinator } from "../../lib/refresh-coordinator";
 import { openRemoteProjectSession, remoteProjectForSession } from "../../lib/remote-project-session";
@@ -247,6 +248,98 @@ export function createSessionSlice({
       }
     },
 
+    /**
+     * Reconcile a session's decision cards with the Host-owned read.
+     *
+     * `pendingAsks` / `pendingPermissions` live in renderer memory only, so a
+     * renderer reload forgets both. A successful read is authoritative for
+     * requests that existed when the read started: answered or completed cards
+     * are removed, while requests delivered during the read are preserved.
+     * Failed reads remain non-destructive, and an older overlapping read cannot
+     * overwrite a newer result.
+     *
+     * Only this desktop's own sessions have that read. `native-pi:` sessions
+     * are read-mostly imports and remote sessions are driven over RACP-WS, so
+     * both keep their own transports.
+     */
+    restorePendingInteractive: async (sessionId) => {
+      if (!sessionId || sessionId.startsWith("native-pi:")) return;
+      const session = get().sessions.find(
+        (candidate) => candidate.id === sessionId,
+      );
+      if (!session) return;
+      if (session.source === "pi-native" || session.source === "remote") return;
+
+      const generation =
+        (pendingInteractiveRestoreGenerations.get(sessionId) ?? 0) + 1;
+      pendingInteractiveRestoreGenerations.set(sessionId, generation);
+      const beforeRead = get();
+      const initialAskIds = new Set(
+        (beforeRead.pendingAsks[sessionId] ?? []).map((ask) => ask.requestId),
+      );
+      const initialPermissionIds = new Set(
+        (beforeRead.pendingPermissions[sessionId] ?? []).map(
+          (permission) => permission.requestId,
+        ),
+      );
+
+      let pending: PendingInteractiveRequests;
+      try {
+        pending = await api.pendingInteractive(sessionId);
+      } catch {
+        return;
+      }
+      if (
+        pendingInteractiveRestoreGenerations.get(sessionId) !== generation
+      ) {
+        return;
+      }
+
+      set((state) => {
+        if (!state.sessions.some((candidate) => candidate.id === sessionId)) {
+          return {};
+        }
+        const pendingAsks = reconcilePendingQueue(
+          state.pendingAsks[sessionId] ?? [],
+          initialAskIds,
+          pending.asks,
+        );
+        const pendingPermissions = reconcilePendingQueue(
+          state.pendingPermissions[sessionId] ?? [],
+          initialPermissionIds,
+          pending.permissions,
+        );
+        const nextPendingAsks = replacePendingQueue(
+          state.pendingAsks,
+          sessionId,
+          pendingAsks,
+        );
+        const nextPendingPermissions = replacePendingQueue(
+          state.pendingPermissions,
+          sessionId,
+          pendingPermissions,
+        );
+        const keptAskIds = new Set(pendingAsks.map((ask) => ask.requestId));
+        let askDrafts = state.askDrafts;
+        for (const ask of state.pendingAsks[sessionId] ?? []) {
+          if (!keptAskIds.has(ask.requestId)) {
+            askDrafts = dropAskDraft(askDrafts, ask.requestId);
+          }
+        }
+        if (
+          nextPendingAsks === state.pendingAsks &&
+          nextPendingPermissions === state.pendingPermissions &&
+          askDrafts === state.askDrafts
+        ) {
+          return {};
+        }
+        return {
+          pendingAsks: nextPendingAsks,
+          pendingPermissions: nextPendingPermissions,
+          askDrafts,
+        };
+      });
+    },
     refreshPlanCheckpoints: async () => {
       const sessionIds = get().sessions.map((session) => session.id);
       await Promise.allSettled(

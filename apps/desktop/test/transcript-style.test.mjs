@@ -129,11 +129,41 @@ test("tool details do not add a second visual indent", () => {
 });
 
 
-test("the turn process and the levels it reveals share one left edge", () => {
+test("a review-backed edit is one tool-level row", () => {
+  // The card is the tool row in the transcript: full band, no 24px inset, and
+  // its diff body starts directly beneath the only header.
+  const toolRow = stylesSource.match(
+    /\.review-change-card\.is-tool-row \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(toolRow);
+  assert.match(toolRow, /width:\s*100%;/);
+  assert.doesNotMatch(toolRow, /margin:[^;]*24px/);
+  const body = stylesSource.match(
+    /\.review-change-card\.is-tool-row \.review-change-card-body \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(body);
+  assert.match(body, /margin-left:\s*0;/);
+  // Header order matches the file ledger: mark, path, counts, caret. The panel
+  // keeps its DOM order because these rules only apply to the tool-row variant.
+  const order = { mark: 0, path: 1, counts: 2, caret: 3 };
+  for (const [part, position] of Object.entries(order)) {
+    const rule = stylesSource.match(
+      new RegExp(`\\.review-change-card\\.is-tool-row \\.review-change-card-${part} \\{([^}]*)\\}`),
+    )?.[1];
+    assert.ok(rule, `expected an is-tool-row ${part} rule`);
+    assert.match(rule, new RegExp(`order:\\s*${position};`));
+  }
+  // Copy shares the rollback action rhythm in the diff body.
+  assert.match(
+    stylesSource,
+    /\.review-change-rollback,\s*\n\.review-change-copy \{/,
+  );
+});
+
+test("the turn process header and nested group headers share one left edge", () => {
   // A nested group header sits on the same vertical line as the turn header that
-  // reveals it. Indentation used to carry that hierarchy; it is now carried by
-  // type size and colour, so a stray padding here would silently bring the
-  // staircase back.
+  // reveals it. Its body restores the released v0.20.1 step: child rows move in
+  // by 12px so the group reads as one level below its own header.
   const turnBody = stylesSource.match(/\.turn-process-body \{([^}]*)\}/)?.[1];
   assert.ok(turnBody);
   assert.match(turnBody, /padding-left:\s*0;/);
@@ -141,7 +171,7 @@ test("the turn process and the levels it reveals share one left edge", () => {
     /\.process-activity-group\.grouped > \.process-activity-body \{([^}]*)\}/,
   )?.[1];
   assert.ok(groupedBody);
-  assert.match(groupedBody, /padding-inline-start:\s*0;/);
+  assert.match(groupedBody, /padding-inline-start:\s*12px;/);
   // Both disclosure headers use the tool-row inline geometry: content at the
   // prose edge, fill four pixels into the gutter.
   const activityHeader = stylesSource.match(/\n\.tool-activity-header \{([^}]*)\}/)?.[1];
@@ -166,7 +196,7 @@ test("nested process levels keep a subtle type and colour hierarchy", () => {
   assert.match(runName, /font-size:\s*var\(--text-sm\);/);
 });
 
-test("collapse rails keep separate zero-padding gutter lanes", () => {
+test("collapse rails keep separate gutter lanes", () => {
   const turnRail = stylesSource.match(
     /\.turn-process-body > \.disclosure-collapse-rail \{([^}]*)\}/,
   )?.[1];
@@ -177,8 +207,19 @@ test("collapse rails keep separate zero-padding gutter lanes", () => {
     /\.process-activity-body > \.disclosure-collapse-rail \{([^}]*)\}/,
   )?.[1];
   assert.ok(groupRail);
-  assert.match(groupRail, /left:\s*-18px;/);
+  // The rail sits in the 12px gutter beside the indented child rows.
+  assert.match(groupRail, /left:\s*-12px;/);
   assert.match(groupRail, /width:\s*14px;/);
+  // It stays invisible at rest; only hover or focus paints the 2px bar.
+  const railBase = stylesSource.match(
+    /\.disclosure-collapse-rail::before \{([^}]*)\}/,
+  )?.[1];
+  assert.ok(railBase);
+  assert.match(railBase, /background:\s*transparent;/);
+  assert.match(
+    stylesSource,
+    /\.disclosure-collapse-rail:hover::before,\s*\n\.disclosure-collapse-rail:focus-visible::before \{[\s\S]*?background:\s*var\(--ds-text-muted\);/,
+  );
   const messageRow = stylesSource.match(/\.message-row \{([^}]*)\}/)?.[1];
   assert.ok(messageRow);
   assert.match(messageRow, /overflow-clip-margin:\s*34px;/);

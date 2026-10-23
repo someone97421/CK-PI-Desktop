@@ -2,13 +2,15 @@ import { useChatSessionCapability } from "../hooks/use-chat-session-capability";
 import { memo, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
+  ReviewChange,
   ReviewChangeStatus,
   UiMessage,
 } from "@pi-desktop/shared";
 import { reviewChangeFromMessage } from "../lib/workspace-review";
 import { useAppStore } from "../stores/app-store";
+import { useCopy } from "./Markdown";
 import { cx } from "./ui";
-import { IconCheck, IconChevronRight, IconSnapshot } from "./icons";
+import { IconCheck, IconChevronRight, IconCopy, IconSnapshot } from "./icons";
 
 /* Git-status letters carry the status without relying on color alone; the
    localized word stays in the row's accessible name. */
@@ -18,14 +20,30 @@ const STATUS_MARKS: Record<ReviewChangeStatus, string> = {
   deleted: "D",
 };
 
+function reviewDiffText(change: ReviewChange): string {
+  return change.hunks
+    .map((hunk) =>
+      [
+        hunk.header,
+        ...hunk.lines.map((line) =>
+          `${line.type === "add" ? "+" : line.type === "del" ? "-" : " "}${line.text}`,
+        ),
+      ].join("\n"),
+    )
+    .join("\n");
+}
+
 function DiffBody({ message, compact }: { message: UiMessage; compact: boolean }) {
   const { t } = useTranslation();
   const change = reviewChangeFromMessage(message);
   const localToolsAllowed = useChatSessionCapability("canUseLocalTools");
   const rollback = useAppStore((state) => state.rollbackWorkspaceChange);
+  const { copied, copy } = useCopy();
   const [rollingBack, setRollingBack] = useState(false);
 
   if (!change) return null;
+
+  const diffText = reviewDiffText(change);
 
   const runRollback = async () => {
     if (!localToolsAllowed || !change.reversible || change.state === "rolledBack" || rollingBack) return;
@@ -87,6 +105,16 @@ function DiffBody({ message, compact }: { message: UiMessage; compact: boolean }
             {t("panel.review.rollbackUnavailable")}
           </span>
         )}
+        <button
+          type="button"
+          className={cx("review-change-copy", copied && "copied")}
+          onClick={() => copy(diffText)}
+          disabled={!diffText}
+          title={t("chat.copy")}
+        >
+          {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
+          {copied ? t("chat.copied") : t("chat.copy")}
+        </button>
       </div>
     </div>
   );
@@ -95,9 +123,12 @@ function DiffBody({ message, compact }: { message: UiMessage; compact: boolean }
 export const ReviewChangeCard = memo(function ReviewChangeCard({
   message,
   compact = false,
+  asToolRow = false,
 }: {
   message: UiMessage;
   compact?: boolean;
+  /** The card is the tool-level row: one file header and its diff body. */
+  asToolRow?: boolean;
 }) {
   const { t } = useTranslation();
   const change = reviewChangeFromMessage(message);
@@ -122,9 +153,15 @@ export const ReviewChangeCard = memo(function ReviewChangeCard({
 
   return (
     <section
-      className={cx("review-change-card", compact && "is-compact", open && "open")}
+      className={cx(
+        "review-change-card",
+        compact && "is-compact",
+        asToolRow && "is-tool-row",
+        open && "open",
+      )}
       data-state={change.state}
       data-status={change.status}
+      data-message-id={asToolRow ? message.id : undefined}
     >
       <button
         type="button"

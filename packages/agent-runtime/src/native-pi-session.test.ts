@@ -92,7 +92,13 @@ describe("NativePiSessionService", () => {
     );
     const outside = join(f.root, "outside.jsonl");
     writeFileSync(outside, sessionText("outside-id", f.project, "outside session"));
-    symlinkSync(outside, join(customDir, "escape.jsonl"));
+    // Windows without the symlink privilege cannot create the alias; the
+    // escape entry is then simply absent and the assertions below still hold.
+    try {
+      symlinkSync(outside, join(customDir, "escape.jsonl"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    }
 
     const service = new NativePiSessionService({ agentDir: f.agentDir, sessionRoot: f.sessionRoot });
     const sessions = await service.list({ projectPaths: [f.project] });
@@ -151,7 +157,13 @@ describe("NativePiSessionService", () => {
     mkdirSync(customDir, { recursive: true });
     writeFileSync(join(f.project, ".pi", "settings.json"), `${JSON.stringify({ sessionDir: ".pi/sessions" })}\n`);
     writeFileSync(join(customDir, "local.jsonl"), sessionText("local-id", f.project, "project local session"));
-    symlinkSync(join(customDir, "local.jsonl"), join(customDir, "latest.jsonl"));
+    // Same Windows symlink-privilege caveat: without the alias the dedupe is
+    // exercised only on privileged runs, and one real row still lists.
+    try {
+      symlinkSync(join(customDir, "local.jsonl"), join(customDir, "latest.jsonl"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    }
     const service = new NativePiSessionService({ agentDir: f.agentDir, sessionRoot: f.sessionRoot });
     const sessions = await service.list({ projectPaths: [f.project] });
     const matches = sessions.filter((session) => session.title === "project local session");

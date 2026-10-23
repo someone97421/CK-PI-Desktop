@@ -120,6 +120,7 @@ import {
 } from "./subagent-model-binding.js";
 import {
   dedupeToolCallMessages,
+  createToolCallIdentity,
   reportDuplicateToolCallDrop,
 } from "./tool-call-dedupe.js";
 import { removeTrailingAssistantMessages } from "./system-transcript.js";
@@ -329,6 +330,7 @@ const SUBAGENT_CHECKPOINT_FAILURE_MESSAGE =
 /** 同一内存上下文可执行多轮；正常完成才可被父 Agent 显式召回。 */
 export class SubagentRun {
   readonly observation: SubagentObserver;
+  private readonly uniqueToolCalls: ReturnType<typeof createToolCallIdentity>;
   private readonly agent: Agent;
   private readonly opts: SubagentRunOptions;
   private currentAssistant?: UiMessage;
@@ -403,6 +405,7 @@ export class SubagentRun {
         secrets,
       );
     }
+    this.uniqueToolCalls = createToolCallIdentity(opts.initialMessages ?? []);
     this.provider = opts.provider;
     this.thinkingLevel = opts.thinkingLevel;
     let initialMessages: AgentMessage[] = opts.initialMessages ? [...opts.initialMessages] : [];
@@ -789,6 +792,7 @@ export class SubagentRun {
       maxTokens: this.opts.definition.maxTokens,
       requestLimitBytes: ["native-media-analyst", "media-analyst"].includes(this.opts.definition.name) ? GEMINI_INLINE_REQUEST_BYTES : undefined,
       onUsage: usage => this.recordUsage(usage),
+      uniqueToolCalls: this.uniqueToolCalls,
     }, this.retryState);
   }
 

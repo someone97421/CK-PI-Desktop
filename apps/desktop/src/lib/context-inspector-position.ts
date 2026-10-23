@@ -49,6 +49,7 @@ export function placeContextInspector({
   viewport,
   margin = CONTEXT_INSPECTOR_MARGIN,
   gap = CONTEXT_INSPECTOR_GAP,
+  prefer = "above",
 }: {
   trigger: ContextInspectorTrigger;
   popover: { width: number; height: number };
@@ -57,6 +58,11 @@ export function placeContextInspector({
   viewport: { width: number; height: number };
   margin?: number;
   gap?: number;
+  /**
+   * Which side wins when both fit. The composer inspector opens above its
+   * bottom-docked trigger; a turn footer prefers the space below the answer.
+   */
+  prefer?: "above" | "below";
 }): ContextInspectorPlacement | null {
   const left = (pane ? pane.left : 0) + margin;
   const right = (pane ? pane.right : viewport.width) - margin;
@@ -75,12 +81,20 @@ export function placeContextInspector({
     margin,
     viewport.height - popover.height - margin,
   );
+  const fitsAbove = above >= margin && above <= maximumTop;
+  const fitsBelow = below >= margin && below <= maximumTop;
   const top =
-    above >= margin && above <= maximumTop
-      ? above
-      : below >= margin && below <= maximumTop
+    prefer === "below"
+      ? fitsBelow
         ? below
-        : Math.min(Math.max(margin, below), maximumTop);
+        : fitsAbove
+          ? above
+          : Math.min(Math.max(margin, below), maximumTop)
+      : fitsAbove
+        ? above
+        : fitsBelow
+          ? below
+          : Math.min(Math.max(margin, below), maximumTop);
 
   return { top, left: clampedLeft, maxWidth };
 }
