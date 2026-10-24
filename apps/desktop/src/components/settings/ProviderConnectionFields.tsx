@@ -10,7 +10,7 @@
 import type { RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { CatalogApiStyle } from "@pi-desktop/shared";
-import { Field, Input, SettingsToggle } from "../ui";
+import { Button, Field, Input } from "../ui";
 import { SettingsMenuSelect } from "./SettingsMenuSelect";
 import { ServiceMonogram } from "./ServiceMonogram";
 import { ProviderApiKeyInput } from "./ProviderApiKeyInput";
@@ -35,8 +35,8 @@ export type ProviderConnectionFieldsProps = {
   apiKey: string;
   savedKeyProviderId?: string;
   onApiKeyChange: (value: string) => void;
-  noApiKeyRequired: boolean;
-  onNoApiKeyRequiredChange: (required: boolean) => void;
+  hasSavedApiKey?: boolean;
+  onClearApiKey?: () => void;
   name: string;
   onNameChange: (value: string) => void;
   baseUrl: string;
@@ -66,8 +66,8 @@ export function ProviderConnectionFields({
   apiKey,
   savedKeyProviderId,
   onApiKeyChange,
-  noApiKeyRequired,
-  onNoApiKeyRequiredChange,
+  hasSavedApiKey = false,
+  onClearApiKey,
   name,
   onNameChange,
   baseUrl,
@@ -81,7 +81,9 @@ export function ProviderConnectionFields({
   requiresApiStyleChoice,
 }: ProviderConnectionFieldsProps) {
   const { t } = useTranslation();
-  const keyHint = editing ? t("settings.apiKeyKeepHint") : undefined;
+  const keyHint = custom && !hasSavedApiKey
+    ? t("settings.apiKeyOptionalHint")
+    : editing ? t("settings.apiKeyKeepHint") : undefined;
 
   return (
     <div className={named ? "provider-setup-fields is-named" : "provider-setup-fields is-custom"}>
@@ -174,30 +176,26 @@ export function ProviderConnectionFields({
             <div className="provider-setup-key">
               <Field label={t("settings.apiKey")} hint={keyHint}>
                 <ProviderApiKeyInput
-                  key={`${savedKeyProviderId ?? "new"}:${noApiKeyRequired}`}
+                  key={savedKeyProviderId ?? "new"}
                   inputRef={apiKeyRef}
                   savedKeyProviderId={savedKeyProviderId}
                   value={apiKey}
-                  disabled={saving || noApiKeyRequired}
+                  disabled={saving}
                   onChange={onApiKeyChange}
                 />
               </Field>
-              <div className="provider-setup-no-api-key-option">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm text-text-secondary">
-                    {t("settings.noApiKeyRequired")}
-                  </span>
-                  <SettingsToggle
-                    checked={noApiKeyRequired}
-                    label={t("settings.noApiKeyRequired")}
-                    disabled={saving}
-                    onChange={() => onNoApiKeyRequiredChange(!noApiKeyRequired)}
-                  />
-                </div>
-                <p className="text-xs text-text-muted">
-                  {t("settings.noApiKeyHint")}
-                </p>
-              </div>
+              {hasSavedApiKey && onClearApiKey ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="self-start"
+                  disabled={saving}
+                  onClick={onClearApiKey}
+                >
+                  {t("settings.clearApiKey")}
+                </Button>
+              ) : null}
             </div>
             <Field
               label={t("settings.apiStyle")}

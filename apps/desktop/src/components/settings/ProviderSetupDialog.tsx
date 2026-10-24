@@ -131,7 +131,7 @@ export function ProviderSetupDialog({
   const [name, setName] = useState(() => initialDraft?.name ?? initialName(provider));
   const [baseUrl, setBaseUrl] = useState(() => initialDraft?.baseUrl ?? initialBaseUrl(provider));
   const [apiKey, setApiKey] = useState("");
-  const [noApiKeyRequired, setNoApiKeyRequired] = useState(() => provider?.authKind === "none");
+  const [clearSavedApiKey, setClearSavedApiKey] = useState(false);
   const [apiStyle, setApiStyle] = useState<CatalogApiStyle>(() =>
     initialDraft?.apiStyle ?? normalizeApiStyle(provider?.apiStyle),
   );
@@ -172,10 +172,15 @@ export function ProviderSetupDialog({
     providerRows,
   );
 
+  useEffect(() => {
+    if (clearSavedApiKey) apiKeyRef.current?.focus();
+  }, [clearSavedApiKey]);
+
   const namedPreset = NAMED_ENDPOINT_PRESETS.find((preset) => preset.id === service);
   const named = Boolean(namedPreset);
   const custom = service === CUSTOM_SERVICE;
-  const noAuth = custom && noApiKeyRequired;
+  const hasSavedApiKey = Boolean(provider?.hasSecret && provider.authKind !== "none" && !clearSavedApiKey);
+  const noAuth = (custom || clearSavedApiKey) && !apiKey.trim() && !hasSavedApiKey;
   const selectedVendorKey = providerSetupVendorKey(provider, namedPreset?.vendorKey, serviceChanged);
   // Jev 独立配置密钥，不创建模型提供商条目。
   const jevService = service === JEV_SERVICE;
@@ -220,12 +225,12 @@ export function ProviderSetupDialog({
     discoveryActive,
     {
       baseUrl: requestBaseUrl,
-      apiKey,
+      apiKey: custom ? apiKey.trim() : apiKey,
       apiStyle: resolvedApiStyle,
       vendorKey: selectedVendorKey,
       headers,
     },
-    provider,
+    clearSavedApiKey ? null : provider,
   );
   // The probe's own answer is reported once as a toast instead of a status row
   // under the key, which held a line of the dialog open for as long as it stood.
@@ -359,6 +364,7 @@ export function ProviderSetupDialog({
   const save = async () => {
     const providerName = resolvedName.trim();
     const providerBaseUrl = normalizeBaseUrlInput(resolvedBaseUrl, resolvedApiStyle);
+    const secretValue = custom ? apiKey.trim() : apiKey;
     if (
       requiresApiStyleChoice ||
       !providerName ||
@@ -393,10 +399,10 @@ export function ProviderSetupDialog({
           models: persisted,
           apiStyle: resolvedApiStyle,
           headers,
-          ...((custom || (named && serviceChanged)) && noAuth !== (provider.authKind === "none")
+          ...((custom || named) && noAuth !== (provider.authKind === "none")
             ? { authKind: noAuth ? "none" : "api_key_and_base_url" }
             : {}),
-          ...(noAuth ? {} : apiKey ? { secretValue: apiKey } : {}),
+          ...(secretValue ? { secretValue } : {}),
         });
         await onSaved(result.provider ?? provider, persisted, imageModelIdsToSave);
       } else {
@@ -409,7 +415,7 @@ export function ProviderSetupDialog({
           authKind: noAuth ? "none" : "api_key_and_base_url",
           defaultModelId: persisted[0]?.id,
           models: persisted,
-          ...(noAuth ? {} : { secretValue: apiKey || undefined }),
+          ...(noAuth ? {} : { secretValue: secretValue || undefined }),
           apiStyle: resolvedApiStyle,
           headers,
         });
@@ -497,6 +503,7 @@ export function ProviderSetupDialog({
               item.baseUrl === suggestion.baseUrl && item.apiStyle === suggestion.apiStyle,
             );
             setService(preset?.id ?? CUSTOM_SERVICE);
+            setServiceChanged(true);
             setBaseUrl(suggestion.baseUrl);
             setApiStyle(suggestion.apiStyle);
           }}
@@ -514,12 +521,12 @@ export function ProviderSetupDialog({
             apiKeyRef={apiKeyRef}
             nameRef={nameRef}
             apiKey={apiKey}
-            savedKeyProviderId={provider?.hasSecret ? provider.id : undefined}
+            savedKeyProviderId={hasSavedApiKey ? provider?.id : undefined}
             onApiKeyChange={setApiKey}
-            noApiKeyRequired={noApiKeyRequired}
-            onNoApiKeyRequiredChange={(required) => {
-              setNoApiKeyRequired(required);
-              if (required) setApiKey("");
+            hasSavedApiKey={hasSavedApiKey}
+            onClearApiKey={() => {
+              setClearSavedApiKey(true);
+              setApiKey("");
             }}
             name={name}
             onNameChange={setName}

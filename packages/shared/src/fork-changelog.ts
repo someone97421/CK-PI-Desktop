@@ -5,6 +5,8 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "简化自定义服务密钥填写：新服务留空即无需密钥，编辑时保留旧密钥，支持查看及显式清除后保存。",
+  "工作面板可收窄到更小宽度，为聊天区域留出更多空间。",
   "新增默认关闭的聊天内嵌可视化，支持交互图表、展开和主题跟随；关闭时保留文件，生成开关从下一次发送起生效。",
   "浏览器在隐藏面板、切换会话后保持页面可操作，界面重载恢复标签，继续使用会话实际工作目录。",
   "聊天增加项目面包屑、标题行内改名和逐轮 token 用量，改善过程分组、阅读位置及文件引用。",
@@ -91,6 +93,8 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Simplify custom endpoint API keys: leave new keys empty for no authentication, retain saved keys on edits, and keep reveal and explicit clear-on-save actions.",
+  "Allow a narrower work panel to leave more room for chat.",
   "Add opt-in inline visualizations with interactive charts, expanded views and theme support; retain files when disabled and refresh generation settings on the next message.",
   "Keep browser pages usable while panels are hidden or another chat is selected, restoring tabs after renderer reloads and retaining session workspace resolution.",
   "Add project breadcrumbs, inline title editing and per-turn token usage; improve process grouping, reading position and file references.",
