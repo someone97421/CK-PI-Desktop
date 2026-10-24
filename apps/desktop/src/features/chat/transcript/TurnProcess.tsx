@@ -101,8 +101,8 @@ export function TurnProcess({
     return () => window.clearInterval(timer);
   }, [isActive]);
   const scope = useMemo<DisclosureScopeValue>(
-    () => ({ claim: disclosure.claim, visible: disclosure.open }),
-    [disclosure.claim, disclosure.open],
+    () => ({ claim: disclosure.claim, reveal: disclosure.reveal, visible: disclosure.open }),
+    [disclosure.claim, disclosure.open, disclosure.reveal],
   );
   // With nothing to reveal there is no disclosure - but the rows still have to
   // render. Hidden reasoning superseded by a separate answer is exactly this

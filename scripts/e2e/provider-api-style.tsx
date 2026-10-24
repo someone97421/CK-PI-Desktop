@@ -114,7 +114,8 @@ globalThis.providerApiStyleProbe = async (reasoningOnly = false) => {
     flushSync(() => element!.click());
   };
   const button = (key: string) => [...document.querySelectorAll<HTMLButtonElement>("button")]
-    .find((element) => element.textContent?.trim() === i18n.t(key));
+    .find((element) => element.getAttribute("aria-label") === i18n.t(key)
+      || element.textContent?.trim() === i18n.t(key));
   const control = (key: string) => {
     const element = button(key);
     assert(element, `missing control ${key}`);

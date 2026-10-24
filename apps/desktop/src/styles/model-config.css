@@ -272,6 +272,22 @@
   min-width: 0;
 }
 
+.provider-setup-key-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.provider-setup-key-control > .password-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.provider-setup-key-control > button {
+  flex-shrink: 0;
+}
+
 .provider-service-anchor {
   width: 100%;
   min-width: 0;

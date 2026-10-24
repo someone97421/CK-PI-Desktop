@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
@@ -26,7 +27,6 @@ class DisclosureChoices {
   }
 
   get = (key: string) => this.choices.get(key);
-
   set(key: string, choice: Choice) {
     const previous = this.choices.get(key);
     if (previous?.open === choice.open && previous.revealRequest === choice.revealRequest) return;
@@ -67,13 +67,39 @@ export function disclosureKey(kind: string, ...ids: string[]) {
   return JSON.stringify([kind, ...ids]);
 }
 
-function ownsReadingPosition(body: HTMLElement | null): boolean {
-  if (!body) return false;
-  if (body.contains(document.activeElement)) return true;
+/**
+ * Whether a reader is still inside these levels.
+ *
+ * Keyboard focus anywhere in the level - including the title of a row nested
+ * under it - and an active text selection both count: an automatic close must
+ * never hide content the reader is using.
+ */
+function ownsReadingPosition(...levels: Array<HTMLElement | null>): boolean {
+  const active = document.activeElement;
+  if (levels.some((level) => Boolean(level && active && level.contains(active)))) return true;
   const selection = window.getSelection();
-  return Boolean(selection && !selection.isCollapsed && (
-    body.contains(selection.anchorNode) || body.contains(selection.focusNode)
-  ));
+  return Boolean(selection && !selection.isCollapsed && levels.some((level) => Boolean(
+    level && (level.contains(selection.anchorNode) || level.contains(selection.focusNode)),
+  )));
+}
+
+/*
+ * One listener set for every disclosure in the transcript. Each level only
+ * re-reads its own DOM, so a focus or selection change costs a handful of
+ * `contains` checks instead of one listener pair per row, and a level can never
+ * miss the event that releases its hold because its effect had not run yet.
+ */
+const readingSyncs = new Set<() => void>();
+let readingHubInstalled = false;
+function installReadingHub() {
+  if (readingHubInstalled || typeof document === "undefined") return;
+  readingHubInstalled = true;
+  const syncAll = () => {
+    for (const sync of [...readingSyncs]) sync();
+  };
+  document.addEventListener("focusin", syncAll);
+  document.addEventListener("selectionchange", syncAll);
+  window.addEventListener("pointerup", syncAll);
 }
 
 export function useAutomaticDisclosure(
@@ -89,46 +115,80 @@ export function useAutomaticDisclosure(
   const subscribe = useCallback((listener: () => void) => choices.subscribe(key, listener), [choices, key]);
   const snapshot = useCallback(() => choices.get(key), [choices, key]);
   const choice = useSyncExternalStore(subscribe, snapshot, snapshot);
-  // A pending reveal is the derived default, so the first paint (and SSR)
-  // already shows the row the transcript search asked to open.
-  const requestedOpen = choice?.open ?? (
-    revealRequest !== undefined && choice?.revealRequest !== revealRequest
-      ? true
-      : automaticOpen
-  );
   const scope = useContext(ScopeContext);
-  // A level below a collapsed parent renders nothing, whatever its own choice
-  // says. The choice is left untouched so reopening the parent restores it.
-  const open = requestedOpen && scope.visible;
 
   const titleRef = useRef<HTMLButtonElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const notifyAnchor = useDisclosureAnchorNotifier();
+
+  /*
+   * Reading protection is transient state, never a disclosure choice. It is
+   * derived from the DOM: focus or a selection inside the level defers an
+   * automatic close, and leaving the level hands control straight back to the
+   * automatic default. Recording those moments as choices is what used to
+   * disable automatic folding for the rest of the pane's life.
+   */
+  const [reading, setReading] = useState(false);
+
+  // A pending reveal is the derived default, so the first paint (and SSR)
+  // already shows the row the transcript search asked to open.
+  const derivedOpen = revealRequest !== undefined && choice?.revealRequest !== revealRequest
+    ? true
+    : automaticOpen;
+  // An explicit choice is authoritative. Without one, a reader inside the level
+  // defers an automatic close without changing what the default would be.
+  const requestedOpen = choice ? choice.open : (derivedOpen || reading);
+  const open = requestedOpen && scope.visible;
+
   const currentOpen = useRef(open);
   currentOpen.current = open;
 
-  // The claim goes to the level that owns this one, not to the root: opening a
+  const ownsReading = useCallback(
+    () => ownsReadingPosition(titleRef.current, bodyRef.current),
+    [],
+  );
+  const syncReading = useCallback(
+    () => setReading(ownsReadingPosition(titleRef.current, bodyRef.current)),
+    [],
+  );
+
+  useEffect(() => {
+    installReadingHub();
+    readingSyncs.add(syncReading);
+    return () => {
+      readingSyncs.delete(syncReading);
+    };
+  }, [syncReading]);
+
+  // The claim goes to the level that owns this one, not to the root: reading a
   // row inside a process disclosure has to keep that process open too.
   const claim = useCallback(() => {
-    if (!choices.get(key)) choices.set(key, { open: currentOpen.current });
+    installReadingHub();
+    syncReading();
     scope.claim();
-  }, [choices, key, scope.claim]);
+  }, [scope.claim, syncReading]);
+
+  // A revealed path stays open: the reader asked for that content, and closing
+  // the search must not take it away again.
+  const reveal = useCallback(() => {
+    if (!choices.get(key)) choices.set(key, { open: true });
+    scope.reveal();
+  }, [choices, key, scope.reveal]);
 
   useLayoutEffect(() => {
     if (revealRequest === undefined || choices.get(key)?.revealRequest === revealRequest) return;
     choices.set(key, { open: true, revealRequest });
-    scope.claim();
-  }, [choices, key, scope.claim, revealRequest]);
+    scope.reveal();
+  }, [choices, key, scope.reveal, revealRequest]);
 
-  const previousOpen = useRef(open);
+  // Completion must not hide keyboard focus or an active text selection. The
+  // reader can arrive without the pointer/focus events above (find in page,
+  // restored selection), so the transition checks the DOM itself.
+  const previousDerived = useRef(derivedOpen);
   useLayoutEffect(() => {
-    // Completion must not hide keyboard focus or an active text selection.
-    if (previousOpen.current && !open && !choice && ownsReadingPosition(bodyRef.current)) {
-      choices.set(key, { open: true });
-      scope.claim();
-    }
-    previousOpen.current = open;
-  }, [choice, choices, key, open, scope.claim]);
+    if (!choice && previousDerived.current && !derivedOpen && ownsReading()) setReading(true);
+    previousDerived.current = derivedOpen;
+  }, [choice, derivedOpen, ownsReading]);
 
   const setManualOpen = useCallback((next: boolean) => {
     scope.claim();
@@ -146,13 +206,14 @@ export function useAutomaticDisclosure(
     toggle,
     collapse,
     claim,
+    reveal,
     titleRef,
     bodyRef,
     // Kept for callers that read the parent's visibility directly; the scope
     // itself already folded it into `open`.
     parentVisible: scope.visible,
-    // Pointer selection and keyboard interaction establish ownership before
-    // a streaming update can apply an automatic close.
+    // Pointer and keyboard interaction re-check the reading hold before a
+    // streaming update can apply an automatic close.
     bodyEvents: { onPointerDownCapture: claim, onFocusCapture: claim },
   };
 }
@@ -176,7 +237,8 @@ export function DisclosureScope({
 }) {
   const value = useMemo<DisclosureScopeValue>(() => ({
     claim: disclosure.claim,
+    reveal: disclosure.reveal,
     visible: open,
-  }), [disclosure.claim, open]);
+  }), [disclosure.claim, disclosure.reveal, open]);
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }

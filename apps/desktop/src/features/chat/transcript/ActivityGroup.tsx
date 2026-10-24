@@ -1,5 +1,6 @@
 import { SubagentStopButton } from "./SubagentStopButton";
 import { subagentExecutionIdentity } from "./SubagentSupervision";
+import { activityGroupStartsOpen } from "../../../lib/activity-group-folding";
 import { activityTimingInputs, cachedVisibleActivityItems } from "../../../lib/transcript-activity-summary";
 import { reuseReferences } from "../../../lib/transcript-summary";
 import { ActivityItems } from "./ActivityItems";
@@ -77,9 +78,6 @@ export function activityItemDetail(item: ActivityItem): string {
   return getToolSummary(item.message.toolName, item.message.toolArgs);
 }
 
-const AUTOMATIC_OPEN_MAX_ITEMS = 4;
-
-
 function waitingSubagentActionLabel(
   agent: AgentActivityAgent,
   t: Translate,
@@ -153,6 +151,8 @@ type ActivityGroupProps = {
   items: ActivityItem[];
   embedded?: boolean;
   isActive: boolean;
+  /** The owning assistant turn is still running. */
+  turnActive: boolean;
   endedAt?: string;
   /** Last activity chunk of this assistant turn. */
   isLast?: boolean;
@@ -189,6 +189,7 @@ function activityGroupPropsEqual(
   if (
     previous.embedded !== next.embedded ||
     previous.isActive !== next.isActive ||
+    previous.turnActive !== next.turnActive ||
     previous.endedAt !== next.endedAt ||
     previous.isLast !== next.isLast ||
     previous.runtimeActivity !== next.runtimeActivity ||
@@ -217,6 +218,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   items,
   embedded: _embedded = false,
   isActive,
+  turnActive,
   endedAt,
   isLast = false,
   runtimeActivity,
@@ -277,8 +279,12 @@ export const ActivityGroup = memo(function ActivityGroup({
     ? searchTarget.requestId : undefined, [items, searchTarget]);
   const visibleItems = useMemo(() => cachedVisibleActivityItems(items, hideThinking, isActive), [items, hideThinking, isActive]);
   const first = items[0];
-  // 子任务完成及快照回执只更新内容，展开状态继续由用户控制。
-  const automaticallyOpen = hasSubagentTopology || live || visibleItems.length <= AUTOMATIC_OPEN_MAX_ITEMS;
+  // 自动规则只决定默认值；子任务回执不覆盖用户的展开选择或外层显示模式。
+  const automaticallyOpen = activityGroupStartsOpen(visibleItems, {
+    subagentTopology: hasSubagentTopology,
+    turnActive,
+    groupActive: live,
+  });
   const disclosure = useAutomaticDisclosure(
     automaticallyOpen,
     revealRequest,

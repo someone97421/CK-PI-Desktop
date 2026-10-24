@@ -9,8 +9,13 @@ import { createContext } from "react";
  * the type.
  */
 export type DisclosureScopeValue = {
-  /** Claim interaction for this level and, through it, for every ancestor. */
+  /**
+   * Hold this level and its ancestors open while a reader is using the content.
+   * The hold is transient and never becomes a disclosure choice.
+   */
   claim: () => void;
+  /** Reveal this level and its ancestors, and keep the revealed path open. */
+  reveal: () => void;
   /** Whether this level's contents are currently shown at all. */
   visible: boolean;
 };
@@ -18,5 +23,6 @@ export type DisclosureScopeValue = {
 /** The implicit root scope: nothing above the transcript owns it. */
 export const ScopeContext = createContext<DisclosureScopeValue>({
   claim: () => {},
+  reveal: () => {},
   visible: true,
 });

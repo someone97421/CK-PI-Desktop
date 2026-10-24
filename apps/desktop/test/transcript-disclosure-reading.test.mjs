@@ -25,11 +25,21 @@ test("a manual disclosure hands over its title before the state changes", () => 
 });
 
 test("automatic disclosure does not claim a reading position", () => {
-  // Automatic reveal/collapse may claim the parent hierarchy, but never calls
-  // the scroll anchor notifier reserved for direct user interaction.
-  assert.match(disclosure, /if \(previousOpen\.current && !open && !choice && ownsReadingPosition/);
+  // Automatic reveal and collapse never call the scroll anchor notifier
+  // reserved for direct user interaction. A reader inside the level is a
+  // transient hold, never a permanent disclosure choice - recording those
+  // moments is what used to disable automatic folding for the pane's life.
+  const claimBody = disclosure.match(
+    /const claim = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[scope\.claim, syncReading\]\);/,
+  )?.[0];
+  assert.ok(claimBody, "the transient reading hold is missing");
+  assert.doesNotMatch(claimBody, /choices\.set/);
+  assert.match(
+    disclosure,
+    /if \(!choice && previousDerived\.current && !derivedOpen && ownsReading\(\)\) setReading\(true\);/,
+  );
   const revealEffect = disclosure.match(
-    /useLayoutEffect\(\(\) => \{\s*if \(revealRequest === undefined[\s\S]*?\n  \}, \[choices, key, scope\.claim, revealRequest\]\);/,
+    /useLayoutEffect\(\(\) => \{\s*if \(revealRequest === undefined[\s\S]*?\n  \}, \[choices, key, scope\.reveal, revealRequest\]\);/,
   )?.[0];
   assert.ok(revealEffect, "the automatic reveal effect is missing");
   assert.doesNotMatch(revealEffect, /notifyAnchor/);

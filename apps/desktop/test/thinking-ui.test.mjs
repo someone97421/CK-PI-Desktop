@@ -278,10 +278,14 @@ test("末条工具的自动展开与思考可见性独立", () => {
   assert.match(transcriptDisclosureSource, /revealRequest\?: number/);
   assert.match(transcriptDisclosureSource, /const currentOpen = useRef\(open\)/);
   assert.match(transcriptDisclosureSource, /const setManualOpen = useCallback/);
-  assert.match(transcriptSource, /useAutomaticDisclosure\(\s*hasSubagentTopology \|\| visibleItems\.length <= 1/);
+  assert.match(transcriptActivityGroupSource, /useAutomaticDisclosure\(\s*automaticallyOpen/);
   assert.match(
     transcriptSource,
-    /<ThinkingRow[\s\S]*?autoOpen=\{thinkingDefaultOpen \|\| \(live && item === lastItem\)\}/,
+    /<ThinkingRow[\s\S]*?autoOpen\s+onUserInteraction=\{onUserInteraction\}/,
+  );
+  assert.match(
+    transcriptSource,
+    /const automaticallyOpen = activityGroupStartsOpen\(visibleItems, \{\s*subagentTopology: hasSubagentTopology,\s*turnActive,\s*groupActive: live,\s*\}\);/,
   );
   assert.match(
     transcriptSource,

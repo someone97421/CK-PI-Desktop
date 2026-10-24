@@ -100,6 +100,7 @@ const TurnPartBlock = memo(function TurnPartBlock({
       endedAt={part.endedAt}
       isActive={part === activePart}
       isLast={part === lastActivityPart}
+      turnActive={isActive}
       runtimeActivity={part === activePart ? runtimeActivity : undefined}
       turnDelegationStatuses={turnDelegationStatuses}
       turnDelegationTimings={turnDelegationTimings}

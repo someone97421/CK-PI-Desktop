@@ -239,6 +239,22 @@ test("向后补页保留分页内部顺序、同时间位置和搜索原文", ()
   assert.equal(result.messageEnd, 5);
 });
 
+test("无重叠的向后物理分页不受跨页时间戳回退影响", () => {
+  const first = message("first", "先记录", { createdAt: "2026-09-28T10:00:00Z" });
+  const second = message("second", "后记录", { createdAt: "2026-09-28T09:59:00Z" });
+  const view = {
+    messages: [first], messageStart: 0, messageEnd: 1,
+    hasMoreBefore: false, hasMoreAfter: true, loading: "after", focus: null,
+  };
+  const result = extendTranscriptView(view, page([second], {
+    messageStart: 1, messageEnd: 2, hasMoreAfter: false,
+  }).session, "after");
+  assert.deepEqual(result.messages.map((row) => row.id), ["first", "second"]);
+  assert.deepEqual(view.messages, [first], "续页不修改原阅读窗口");
+  assert.equal(result.messageEnd, 2);
+  assert.equal(result.hasMoreAfter, false);
+});
+
 test("search supersedes an ordinary page and return-to-latest cancels historical paging", async () => {
   const older = deferred();
   const later = deferred();
@@ -655,4 +671,72 @@ test("a reading bookmark is stale only after the transcript tail actually change
   assert.equal(transcriptReadingPositionIsStale(position, []), false, "an empty loading read cannot disprove the bookmark");
   assert.equal(transcriptReadingPositionIsStale(position, [streaming, message("next")]), true);
   assert.equal(transcriptReadingPositionIsStale(position, [{ ...streaming, content: "final", status: "complete" }]), true);
+});
+
+test("a restored range joins live output only after paging closes the gap", async () => {
+  const calls = [];
+  const canonical = [message("cached-before"), message("tail", "streaming")];
+  const r = reader(async (_id, options) => {
+    calls.push(options);
+    return calls.length === 1
+      ? page([message("old")], { messageStart: 20, messageEnd: 80 })
+      : page([message("tail", "persisted")], {
+          messageStart: 80, messageEnd: 100, hasMoreAfter: false,
+        });
+  }, { messages: canonical, runningSessions: { s: true } });
+  await r.restoreTranscriptReading("s", bookmark, new AbortController().signal);
+  assert.deepEqual(r.visible().map((row) => row.id), ["old"], "do not skip unloaded history");
+  await r.loadTranscriptPage("s", "after");
+  assert.equal(r.view().hasMoreAfter, false);
+  assert.deepEqual(r.visible().map((row) => row.id), ["old", "tail"], "do not prepend cached rows on continuation");
+  assert.equal(r.visible().at(-1).content, "streaming");
+  r.set({ messages: [message("cached-before"), message("tail", "complete"), message("new")], runningSessions: {} });
+  assert.deepEqual(r.visible().map((row) => row.id), ["old", "tail", "new"]);
+  assert.equal(r.visible().find((row) => row.id === "tail").content, "complete");
+  assert.equal(r.get().messages.some((row) => row.id === "old"), false, "reading must not populate model input");
+});
+
+test("a restored range already at the tail uses canonical updates without adding older cached rows", () => {
+  const restored = { ...transcriptViewFromSession(page([message("tail", "persisted")], {
+    messageStart: 90, messageEnd: 100, hasMoreAfter: false,
+  }).session), restored: true };
+  const live = [message("before"), message("tail", "latest"), message("next")];
+  assert.deepEqual(transcriptViewMessages(live, restored).map((row) => [row.id, row.content]),
+    [["tail", "latest"], ["next", "next"]]);
+  const search = { ...restored, focus: { ...target("tail"), requestId: 1 } };
+  assert.deepEqual(transcriptViewMessages(live, search).map((row) => [row.id, row.content]),
+    [["tail", "persisted"]], "explicit search keeps its selected snapshot");
+});
+
+test("a bookmark inside the page being revalidated keeps that page instead of a narrower window", async () => {
+  // Returning to a retained session commits its page while `selectingSessionId`
+  // is still set and then swaps `messages` for the revalidated window. The
+  // bookmarked row is already in that page, so restoration must publish the page
+  // itself: reading a range around the anchor would both narrow the transcript
+  // and report `hasMoreAfter`, which paints the load-later affordance on a
+  // conversation nobody left.
+  const r = reader(async () => { throw new Error("unexpected read"); }, {
+    messages: [message("old"), message("tail")], selectingSessionId: "s",
+  });
+  assert.equal(await r.restoreTranscriptReading("s", bookmark, new AbortController().signal), true);
+  assert.deepEqual(r.visible().map((row) => row.id), ["old", "tail"]);
+  assert.equal(r.view().restored, true);
+  assert.equal(r.view().hasMoreAfter, false);
+});
+
+test("a saved anchor does not supersede in-flight navigation when both rows are loaded", async () => {
+  const focused = {
+    ...transcriptViewFromSession(page([message("old"), message("target")]).session, {
+      ...target("target"), requestId: 7,
+    }),
+    loading: "target",
+  };
+  const r = reader(async () => { throw new Error("automatic restore must not read"); }, {
+    messages: [message("old"), message("target")],
+    selectingSessionId: "s",
+    transcriptViews: { s: focused },
+  });
+
+  assert.equal(await r.restoreTranscriptReading("s", bookmark, new AbortController().signal), false);
+  assert.equal(r.view(), focused, "explicit navigation keeps ownership of the reading view");
 });

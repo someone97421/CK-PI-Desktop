@@ -51,9 +51,9 @@ export function ProcessActivityGroup({
           ) : null}
           {active ? <span className="tool-activity-count">{t("chat.running")}</span> : null}
           {summary.issues > 0 ? (
-            <span className="turn-process-error">
+            <span className="activity-issue-count">
               <IconCircleAlert size={14} aria-hidden />
-              {t("chat.activityFailures", { count: summary.issues })}
+              <span>{t("chat.activityFailures", { count: summary.issues })}</span>
             </span>
           ) : null}
           <span className="tool-activity-caret" aria-hidden><IconChevronRight size={12} /></span>

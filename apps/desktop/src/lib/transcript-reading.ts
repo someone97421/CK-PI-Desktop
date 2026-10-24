@@ -150,9 +150,10 @@ function replaceReadingOverlap(
 /** Live output remains authoritative outside an explicit historical search. */
 export function transcriptViewMessages(live: UiMessage[], view?: TranscriptView): UiMessage[] {
   if (!view) return live;
-  // Search deliberately holds its historical snapshot. Do not index or merge
-  // the live transcript when it cannot contribute anything to this view.
-  if (view.focus || view.restored) return withNavigationParent(view.messages, view.parentMessage);
+  // Search holds its selected snapshot. Restoration only stays isolated while
+  // unread physical pages separate it from the live tail.
+  if (view.focus || (view.restored && view.hasMoreAfter))
+    return withNavigationParent(view.messages, view.parentMessage);
 
   const normalized = dedupeSessionMessages(live);
   const source = getSessionMessageSnapshot(normalized);
@@ -164,8 +165,15 @@ export function transcriptViewMessages(live: UiMessage[], view?: TranscriptView)
   const cached = projections.get(source.owner);
   let messages = cached && replaceReadingOverlap(cached, source, view.parentMessage);
   if (!messages) {
+    // The live cache can start before a short restored range. Joining at the
+    // first overlapping identity avoids prepending rows and moving the anchor;
+    // without overlap, do not invent continuity across an unknown gap.
+    const restoredStart = view.restored
+      ? normalized.findIndex((message) => getSessionMessageSnapshot(view.messages).positions.has(message.id))
+      : 0;
+    const liveTail = restoredStart < 0 ? EMPTY_TRANSCRIPT : normalized.slice(restoredStart);
     messages = withNavigationParent(
-      mergeReadingMessages(view.messages, normalized),
+      mergeReadingMessages(view.messages, liveTail),
       view.parentMessage,
     );
     getSessionMessageSnapshot(messages);
@@ -179,9 +187,14 @@ export function extendTranscriptView(
   session: SessionDetail,
   direction: "before" | "after",
 ): TranscriptView {
-  const merged = direction === "before"
-    ? mergeReadingMessages(session.messages, view.messages)
-    : mergeReadingMessages(view.messages, session.messages);
+  // 物理游标已确定前后关系的续页直接追加，时间戳回退不能重排记录。
+  const appendPage = direction === "after" && view.messageEnd !== undefined
+    && session.messageStart !== undefined && session.messageStart >= view.messageEnd;
+  const merged = appendPage
+    ? dedupeSessionMessages([...view.messages, ...session.messages])
+    : direction === "before"
+      ? mergeReadingMessages(session.messages, view.messages)
+      : mergeReadingMessages(view.messages, session.messages);
   const focused = view.messages.find((message) => message.id === view.focus?.messageId);
   const messages = focused ? upsertLiveSessionMessage(merged, focused) : merged;
   return {
