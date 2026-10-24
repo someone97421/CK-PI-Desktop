@@ -1290,3 +1290,5 @@ WTQ Pool 修复证据与范围：
 源码审阅补修：显式清除密钥后切到命名预设仍不引用旧凭据，保存继续落实清除；端点格式建议切换服务时同步更新服务来源，命名服务保存新密钥时恢复密钥认证。保留取消编辑不落盘；补充相关回归场景源码。已完成独立只读审阅及主代理复核，本地未执行用例。
 
 正式合并提交为 `53209f7244f872abe74150400bc5600e167ff8a1`，第一父 `ee7e2fc270fdec66c9f8050e1af17204f54132d1`，第二父 `1a812ed7b84e0bd1b117080eb4e51c76eba35d48`。未解决冲突为空，差异格式检查及 `git merge-base --is-ancestor` 检查通过；实际改动 11 个文件，未改构建版本和应用内提示词。
+
+云端发布结果：Actions [40067086815](https://github.com/someone97421/CK-PI-Desktop/actions/runs/40067086815) 全部成功，源码为 `4443d2851556f183189458b3acb33fdb7012ffb6`。macOS arm64 / x64 原生构建、架构与 DMG 检查、Windows x64 安装版和单文件便携版构建及发布任务均通过。已发布 [20261024-133922（v2610.2413.3922）](https://github.com/someone97421/CK-PI-Desktop/releases/tag/v2610.2413.3922)，标记为预发布且非草稿；安装包、macOS 更新 ZIP、blockmap、SHA-256 文件及 `latest.yml` / `latest-mac.yml` 均已上传。GitHub latest 正式版仍为 `v2610.2216.4408`。本地未运行测试或实机安装验证；云端成功不等同于全部交互用例已验证。
