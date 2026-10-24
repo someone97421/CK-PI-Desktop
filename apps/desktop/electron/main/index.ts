@@ -53,6 +53,7 @@ import { InflightCheckpointer } from "@pi-desktop/host-runtime";
 import { withGitBranch } from "./workspace-git";
 import { createPlanUiProbe } from "./plan-ui-probe";
 import { registerIpcHandlers } from "./ipc/register";
+import { noteSessionStorageActivity } from "./services/session-storage";
 import { MainProcessState } from "./bootstrap/main-state";
 import { registerApplicationActivation } from "./bootstrap/app-activation";
 import {
@@ -655,6 +656,11 @@ const sessionCoordination = createSessionCoordination({
   activeTurns,
   getMainWindow,
   getViewingSessionId: () => mainState.notificationViewingSessionId,
+  onSessionActivity: (sessionId) => {
+    void noteSessionStorageActivity(dataDir, sessionId).catch((error) => {
+      logger.app("session", "warn", "scratch activity checkpoint failed", { sessionId, data: String(error) });
+    });
+  },
   /**
    * Plugin surfaces follow turn starts from here, so a selected session that
    * begins running is reported with the durable turn id instead of being
@@ -912,6 +918,7 @@ function registerIpc() {
     updater,
     dataDir,
     activeTurns,
+    isSessionBusy: (sessionId: string) => isSessionBusy(sessionId) || sessionConfiguration.hasPending(sessionId),
     completionNoticeTurns,
     isTurnDispatchable,
     sessionProjects,

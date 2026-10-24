@@ -156,7 +156,7 @@ export class SubagentObserver {
     this.notify({ kind: "report", report });
   }
 
-  guide(instruction: string, interval?: number, commandId: string = randomUUID()): SubagentGuideReceipt {
+  guide(instruction: string, interval?: number, commandId: string = randomUUID(), source?: SubagentGuideReceipt["source"]): SubagentGuideReceipt {
     const existing = this.guides.find((entry) => entry.commandId === commandId);
     if (existing) return { ...existing };
     let reason: string | undefined;
@@ -169,6 +169,7 @@ export class SubagentObserver {
     const receipt: SubagentGuideReceipt = {
       execution: this.execution,
       delegationId: this.delegationId, commandId, instruction: this.safe(instruction, 12_000),
+      ...(source ? { source } : {}),
       ...(interval !== undefined ? { reportIntervalSteps: interval } : {}),
       receivedAt: Date.now(), status: reason ? "rejected" : "accepted", ...(reason ? { reason } : {}),
     };

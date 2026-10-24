@@ -18,6 +18,7 @@ import type { PersistenceOutbox } from "../persistence-outbox";
 import type { ComposerCommandService } from "./composer-ipc";
 import type { IpcRegistrar } from "./types";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
+import type { SubagentGuideRequest } from "@pi-desktop/shared";
 
 import { getSessionCompactionModel, setSessionCompactionModel, type SessionCompactionModel } from "../runtime/session-compaction-models";
 export type AgentIpcDependencies = {
@@ -787,6 +788,13 @@ export function registerAgentIpc({
       }
     }
     return subagentSnapshots.readRecallStatus(req.sessionId, req.delegationId);
+  });
+
+  handle(IPC.invoke.subagentGuide, async (req: SubagentGuideRequest) => {
+    if (!req || typeof req.sessionId !== "string" || !req.sessionId.trim()) throw new Error("sessionId is required");
+    rejectNativeAgentOperation(req.sessionId);
+    if (!sidecar) throw new Error("sidecar unavailable");
+    return sidecar.call("agent.subagentGuide", req);
   });
 
   handle(IPC.invoke.subagentStop, async (req: { sessionId: string; delegationId: string; expectedExecution?: number }) => {

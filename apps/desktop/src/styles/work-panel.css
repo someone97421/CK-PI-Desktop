@@ -809,12 +809,39 @@
   padding-top: 8px;
 }
 
-.subagent-transcript-model-picker {
+.subagent-transcript-model {
+  display: flex;
   flex: 1 1 auto;
-  max-width: calc(100% - 36px);
-  justify-content: flex-start;
-  cursor: not-allowed;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-sm);
 }
+
+.subagent-transcript-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-transcript-model > svg,
+.subagent-transcript-thinking { flex: none; }
+.subagent-transcript-thinking { color: var(--ds-text-muted); }
+
+.subagent-transcript-composer-controls > .subagent-transcript-send {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+}
+
+.subagent-transcript-feedback {
+  margin: 6px 0 0;
+  color: var(--ds-text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.subagent-transcript-feedback.is-error { color: var(--ds-error); }
 
 .subagent-transcript-composer-controls > .stop-btn {
   width: 26px;

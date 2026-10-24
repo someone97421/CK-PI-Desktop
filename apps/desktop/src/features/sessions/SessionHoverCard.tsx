@@ -1,9 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { portalToBody } from "../../lib/portal-visibility";
 import { useTranslation } from "react-i18next";
-import type { ProjectWorkspace, SessionCollaborationSummary, SessionReference } from "@pi-desktop/shared";
+import type {
+  ProjectWorkspace,
+  SessionCollaborationSummary,
+  SessionReference,
+  SessionStorageUsage,
+} from "@pi-desktop/shared";
 import { api } from "../../lib/api";
-import { IconArrowUpRight, IconBranch, IconClock, IconFolder } from "../../components/icons";
+import { formatSessionBytes, onSessionStorageUpdated } from "../../lib/session-storage";
+import { isRemoteSession } from "../../lib/remote-session-safety";
+import {
+  IconArrowUpRight,
+  IconBranch,
+  IconClock,
+  IconDatabase,
+  IconFolder,
+  IconTrash,
+} from "../../components/icons";
 import { observeSessionCollaboration } from "./session-collaboration-reader";
 import {
   collaborationStatusKey,
@@ -40,6 +54,8 @@ export function SessionHoverCard({
   const elementRef = useRef<HTMLDivElement>(null);
   useHoverCardSelection(elementRef, keepVisible, scheduleHide, registerDismissGuard);
   const [position, setPosition] = useState<{ top: number; left: number }>();
+  const [storageState, setStorageState] = useState<{ id: string; usage: SessionStorageUsage }>();
+  const [storageFailedId, setStorageFailedId] = useState<string>();
   const [summary, setSummary] = useState<SessionCollaborationSummary>();
   const [readState, setReadState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [project, setProject] = useState<{ space: string; branch?: string }>({
@@ -47,6 +63,8 @@ export function SessionHoverCard({
     branch: card.branch,
   });
   const { session, target } = card;
+  const storageSupported = session.source !== "pi-native" && !isRemoteSession(session);
+  const storage = storageSupported && storageState?.id === session.id ? storageState.usage : undefined;
 
   useEffect(() => {
     // The card is reusable; its per-session read state must not leak into the
@@ -65,6 +83,29 @@ export function SessionHoverCard({
       onUnavailable: () => setReadState("unavailable"),
     });
   }, [card.space, card.branch, session.id, target]);
+
+  useEffect(() => {
+    setStorageState(undefined);
+    setStorageFailedId(undefined);
+    if (!storageSupported) return;
+    let current = true;
+    let updated = false;
+    const unsubscribe = onSessionStorageUpdated(({ id, usage }) => {
+      if (current && id === session.id) {
+        updated = true;
+        setStorageState({ id, usage });
+      }
+    });
+    void api.getSessionStorage(session.id).then((usage) => {
+      if (current && !updated && target.isConnected) setStorageState({ id: session.id, usage });
+    }).catch(() => {
+      if (current && !updated) setStorageFailedId(session.id);
+    });
+    return () => {
+      current = false;
+      unsubscribe();
+    };
+  }, [session.id, storageSupported, target]);
 
   useEffect(() => {
     if (card.temporary) return;
@@ -273,6 +314,34 @@ export function SessionHoverCard({
             {t("nav.hoverCardUpdatedAt", { when: timestamp(session.updatedAt) })}
           </span>
         </div>
+        {storage ? (
+          <>
+            <div className="sidebar-session-hover-card-meta-row">
+              <span className="sidebar-session-hover-card-meta-icon" aria-hidden><IconDatabase size={12} /></span>
+              <span className="sidebar-session-hover-card-meta-value">
+                {t("nav.hoverCardStorageTotal", { size: formatSessionBytes(storage.totalBytes) })}
+                {storage.partial ? ` · ${t("nav.hoverCardStoragePartial")}` : null}
+              </span>
+            </div>
+            <div className="sidebar-session-hover-card-meta-row">
+              <span className="sidebar-session-hover-card-meta-icon" aria-hidden><IconTrash size={12} /></span>
+              <span className="sidebar-session-hover-card-meta-value">
+                {t("nav.hoverCardStorageTemporary", { size: formatSessionBytes(storage.temporaryBytes) })}
+                {storage.busy || runningSessions[session.id] ? ` · ${t("nav.hoverCardStorageBusy")}` : null}
+              </span>
+            </div>
+            <div className="sidebar-session-hover-card-meta-row">
+              <span className="sidebar-session-hover-card-meta-value">{t("nav.hoverCardStorageScope")}</span>
+            </div>
+          </>
+        ) : storageSupported ? (
+          <div className="sidebar-session-hover-card-meta-row">
+            <span className="sidebar-session-hover-card-meta-icon" aria-hidden><IconDatabase size={12} /></span>
+            <span className="sidebar-session-hover-card-meta-value">
+              {t(storageFailedId === session.id ? "nav.hoverCardStorageUnavailable" : "nav.hoverCardStorageLoading")}
+            </span>
+          </div>
+        ) : null}
       </div>
     </div>,
   );

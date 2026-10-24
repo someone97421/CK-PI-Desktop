@@ -89,8 +89,8 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(Mutex::new(AppState::open(&data_dir)?));
     tracing::info!(path = %data_dir.display(), "host-core starting");
     {
-        // Sweep orphaned/stale session scratch dirs left behind by crashes or
-        // deletions that bypassed session.delete (D114).
+        // Sweep orphaned session scratch dirs left behind by crashes or
+        // deletions. Desktop handles live-session temporary-file retention.
         let st = state.lock().await;
         // Only sweep with a real session list: an empty fallback on a db
         // error would wipe scratch dirs of sessions that still exist.

@@ -1,4 +1,4 @@
-import { shell } from "electron";
+import { app, shell } from "electron";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import {
@@ -31,6 +31,7 @@ import type { IpcRegistrar } from "./types";
 import type { SessionConfigurationQueue } from "../runtime/session-configuration";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts.js";
+import { SessionStorageService, type StorageSession } from "../services/session-storage";
 
 type RuntimeSession = {
   id?: string;
@@ -94,6 +95,8 @@ export type SessionIpcDependencies = {
   getSidecar: () => AgentSidecar | null;
   dataDir: string;
   activeTurns: ReadonlyMap<string, string>;
+  isSessionBusy?: (sessionId: string) => boolean;
+  isQuitting?: () => boolean;
   sessionProjects: Map<string, string | null>;
   persistenceOutbox: PersistenceOutbox;
   subagentSnapshots: SubagentSnapshotStore;
@@ -117,6 +120,8 @@ export function registerSessionIpc({
   getSidecar,
   dataDir,
   activeTurns,
+  isSessionBusy = (id) => activeTurns.has(id),
+  isQuitting = () => false,
   sessionProjects,
   persistenceOutbox,
   subagentSnapshots,
@@ -143,6 +148,37 @@ export function registerSessionIpc({
       return fn(...args);
     });
   };
+
+  const storage = new SessionStorageService({
+    dataDir,
+    available: () => !isQuitting() && Boolean(getHost()) && Boolean(getSidecar()),
+    acquire: acquireSessionOperation,
+    listSessions: async () => {
+      const currentHost = getHost();
+      if (!currentHost) throw new Error("host unavailable");
+      const result = await currentHost.call<{ sessions: (StorageSession & { remoteWorkspace?: unknown })[] }>("session.list");
+      return result.sessions.filter((session) => !session.remoteWorkspace);
+    },
+    getSession: async (id) => {
+      const currentHost = getHost();
+      if (!currentHost) throw new Error("host unavailable");
+      const result = await currentHost.call<{ session?: StorageSession & { remoteWorkspace?: unknown } }>("session.get", { id, messageLimit: 1 });
+      if (!result.session || result.session.remoteWorkspace) throw new Error("Local session not found");
+      return result.session;
+    },
+    isBusy: async (id) => {
+      if (isSessionBusy(id)) return true;
+      const currentSidecar = getSidecar();
+      if (!currentSidecar) throw new Error("sidecar unavailable");
+      const result = await currentSidecar.call<{ scratchBusy?: boolean; status: { isRunning: boolean; pendingToolConfirmations?: number } }>("agent.getStatus", { sessionId: id });
+      return isSessionBusy(id) || result.scratchBusy !== false || result.status.isRunning || (result.status.pendingToolConfirmations ?? 0) > 0;
+    },
+    log: (message, data) => logger.app("session", "info", message, { data }),
+  });
+  storage.start();
+  app.once("will-quit", () => storage.stop());
+  handle(IPC.invoke.sessionStorage, async (input: { id: string }) => storage.usage(input.id));
+  handle(IPC.invoke.sessionCleanScratch, async (input: { id: string }) => storage.clean(input.id));
 
   /**
    * The one gate for the two transcript-rewrite entrances — replacement and

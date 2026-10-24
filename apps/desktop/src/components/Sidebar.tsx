@@ -26,6 +26,7 @@ import {
 } from "../lib/sidebar-floating-menu";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
+import { formatSessionBytes, notifySessionStorageUpdated } from "../lib/session-storage";
 import { formatSessionLastReplyDate } from "../lib/sidebar-session-date";
 import { SessionHoverCard } from "../features/sessions/SessionHoverCard";
 import { useSessionHoverCard } from "../features/sessions/useSessionHoverCard";
@@ -274,6 +275,8 @@ export function Sidebar({
   const [projectRecords, setProjectRecords] = useState<ProjectRecord[]>([]);
   const [sessionMenu, setSessionMenu] = useState<string | null>(null);
   const [renameFor, setRenameFor] = useState<SessionSummary | null>(null);
+  const [cleaningSessionIds, setCleaningSessionIds] = useState<Set<string>>(new Set());
+  const cleaningSessionIdsRef = useRef(new Set<string>());
   const [editProjectFor, setEditProjectFor] = useState<ProjectEntry | null>(null);
   const [deleteProjectFor, setDeleteProjectFor] = useState<ProjectEntry | null>(null);
   // Which row menu item is armed for its second, confirming click.
@@ -1393,6 +1396,39 @@ export function Sidebar({
     }
   };
 
+  const cleanSessionScratch = async (session: SessionSummary) => {
+    if (session.source === "pi-native" || isRemoteSession(session)) return;
+    if (cleaningSessionIdsRef.current.has(session.id)) return;
+    closeMenus(false);
+    if (useAppStore.getState().runningSessions[session.id]) {
+      showToast(t("nav.cleanSessionScratchRunning"), { variant: "warning" });
+      return;
+    }
+    if (!window.confirm(t("nav.cleanSessionScratchConfirm", { name: taskTitle(session.title) }))) return;
+    if (useAppStore.getState().runningSessions[session.id]) {
+      showToast(t("nav.cleanSessionScratchRunning"), { variant: "warning" });
+      return;
+    }
+    cleaningSessionIdsRef.current.add(session.id);
+    setCleaningSessionIds(new Set(cleaningSessionIdsRef.current));
+    showToast(t("nav.cleanSessionScratchCleaning"));
+    try {
+      const result = await api.cleanSessionScratch(session.id);
+      notifySessionStorageUpdated(session.id, result.usage);
+      showToast(t(result.failedEntries > 0
+        ? "nav.cleanSessionScratchPartial"
+        : "nav.cleanSessionScratchDone", {
+        size: formatSessionBytes(result.freedBytes),
+        count: result.failedEntries,
+      }), { variant: result.failedEntries > 0 ? "warning" : "success" });
+    } catch (error) {
+      reportError(error);
+    } finally {
+      cleaningSessionIdsRef.current.delete(session.id);
+      setCleaningSessionIds(new Set(cleaningSessionIdsRef.current));
+    }
+  };
+
   const toggleProjectPin = (entry: ProjectEntry) => {
     toggleProjectPinned(entry.path);
     closeMenus();
@@ -1650,6 +1686,23 @@ export function Sidebar({
                 }),
               ]
             : []),
+          ...(!native && !isRemoteSession(session)
+            ? [
+                sidebarMenuAction({
+                  id: "clean-session-scratch",
+                  label: t(cleaningSessionIds.has(session.id)
+                    ? "nav.cleanSessionScratchCleaning"
+                    : "nav.cleanSessionScratch"),
+                  icon: <IconTrash size={14} />,
+                  disabled: Boolean(runningSessions[session.id]) || cleaningSessionIds.has(session.id),
+                  busy: cleaningSessionIds.has(session.id),
+                  title: runningSessions[session.id]
+                    ? t("nav.cleanSessionScratchRunning")
+                    : t("nav.cleanSessionScratchHint"),
+                  onSelect: () => void cleanSessionScratch(session),
+                }),
+              ]
+            : []),
           ...(native
             ? []
             : [
@@ -1680,6 +1733,8 @@ export function Sidebar({
     [
       armedDelete,
       archiveSession,
+      cleanSessionScratch,
+      cleaningSessionIds,
       copyConversationId,
       copySessionPath,
       copySessionLink,

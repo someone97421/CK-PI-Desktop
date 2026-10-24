@@ -288,7 +288,6 @@ async function renderSupervision(context, { desktopInvoke } = {}) {
       kind: "action",
       key: "action-revoke",
       action: "revoke",
-      icon: "stop",
       disabled: false,
       text: translate(locale, "chat.subagentRevokeRecall"),
       title: translate(locale, "chat.subagentRevokeRecallTooltip"),

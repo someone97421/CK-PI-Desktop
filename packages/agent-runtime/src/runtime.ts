@@ -102,6 +102,7 @@ import type {
   Risk,
   SubagentDefinition,
   SubagentGuideReceipt,
+  SubagentGuideRequest,
   SubagentRunStatus,
   SessionThinkingLevel,
   SubagentThinkingLevel,
@@ -5994,6 +5995,48 @@ Delegation rules:
     };
   }
 
+  /** 用户引导只作用于已存在的执行，不创建或召回任务。 */
+  guideSubagent(req: SubagentGuideRequest): SubagentGuideReceipt {
+    if (!req || req.sessionId !== this.sessionId ||
+      typeof req.delegationId !== "string" || !req.delegationId.trim() ||
+      !Number.isSafeInteger(req.expectedExecution) || req.expectedExecution < 1 ||
+      typeof req.commandId !== "string" || !req.commandId.trim() ||
+      typeof req.instruction !== "string" || !req.instruction.trim() || req.instruction.length > 12_000) {
+      throw new Error("Invalid subagent guidance parameters.");
+    }
+    return this.acceptSubagentGuide(req.delegationId, req.instruction, req.commandId, {
+      expectedExecution: req.expectedExecution, source: "user",
+    });
+  }
+
+  private acceptSubagentGuide(
+    delegationId: string, instruction: string, commandId: string,
+    options: { expectedExecution?: number; source?: SubagentGuideReceipt["source"]; reportIntervalSteps?: number } = {},
+  ): SubagentGuideReceipt {
+    const record = this.delegations.get(delegationId);
+    const matchesExecution = options.expectedExecution === undefined || options.expectedExecution === (record?.execution ?? 1);
+    // 回执丢失后的重试返回原结果，包括刚结束的执行，避免重复投递。
+    const existing = matchesExecution ? record?.run?.observation.guides.find(guide => guide.commandId === commandId) : undefined;
+    if (existing) return { ...existing };
+    const refusal = !record ? "No subagent with that id exists in this session."
+      : !matchesExecution ? "That subagent execution is no longer current."
+      : record.startedEpoch !== this.turnEpoch ? "That subagent belongs to an earlier parent turn."
+      : this.disposed || this.runCancelled ? "The session has stopped."
+      : record.status !== "running" ? `That subagent is ${record.status}.` : undefined;
+    if (!record?.run || refusal) {
+      const receipt: SubagentGuideReceipt = {
+        execution: options.expectedExecution ?? record?.execution ?? 1, delegationId, commandId,
+        instruction: record?.run?.observation.safe(instruction, 12_000) ?? redactSubagentData(instruction).slice(0, 12_000),
+        ...(options.source ? { source: options.source } : {}),
+        status: "rejected", receivedAt: Date.now(), reason: `${refusal ?? "That subagent has no active run."} Guidance was not applied.`,
+      };
+      // 过期执行的拒绝不写进新执行的时间线。
+      if (record && matchesExecution) this.onSubagentObservation(record, { kind: "guide", guide: receipt });
+      return receipt;
+    }
+    return record.run.guide(instruction, options.reportIntervalSteps, commandId, options.source);
+  }
+
   private buildSubagentGuideTool(): AgentTool {
     return {
       name: SUBAGENT_GUIDE_TOOL_NAME, label: "Task Guide", executionMode: "sequential",
@@ -6004,27 +6047,11 @@ Delegation rules:
       }),
       execute: async (toolCallId, params) => {
         if (!isRecord(params)) return this.subagentToolError(toolCallId, "Invalid guidance parameters.");
-        const delegationId = String(params.delegationId);
-        const record = this.delegations.get(delegationId);
-        const instruction = String(params.instruction ?? "");
-        // 已结束、越轮次或不属于本会话的目标：返回明确的未应用回执，绝不自动重启它。
-        const refusal = !record ? "No subagent with that id exists in this session."
-          : record.startedEpoch !== this.turnEpoch ? "That subagent belongs to an earlier parent turn."
-          : record.status !== "running" ? `That subagent is ${record.status}.` : undefined;
-        if (!record?.run || refusal) {
-          const receipt: SubagentGuideReceipt = {
-            execution: record?.execution ?? 1, delegationId, commandId: toolCallId,
-            instruction: record?.run?.observation.safe(instruction, 12_000) ?? redactSubagentData(instruction).slice(0, 12_000),
-            status: "rejected", receivedAt: Date.now(), reason: `${refusal ?? "That subagent has no active run."} Guidance was not applied.`,
-          };
-          // 已知目标的拒绝也进入其观测时间线；未知目标不能伪造子任务归属。
-          if (record) this.onSubagentObservation(record, { kind: "guide", guide: receipt });
-          this.failedHostToolCalls.add(toolCallId);
-          return { content: [{ type: "text", text: JSON.stringify(receipt) }], details: { error: receipt.reason, guide: receipt }, isError: true };
-        }
-        const receipt = record.run.guide(instruction, params.reportIntervalSteps as number | undefined, toolCallId);
+        const receipt = this.acceptSubagentGuide(String(params.delegationId), String(params.instruction ?? ""), toolCallId, {
+          reportIntervalSteps: params.reportIntervalSteps as number | undefined,
+        });
         if (receipt.status === "rejected") this.failedHostToolCalls.add(toolCallId);
-        return { content: [{ type: "text", text: JSON.stringify(receipt) }], details: { guide: receipt }, isError: receipt.status === "rejected" };
+        return { content: [{ type: "text", text: JSON.stringify(receipt) }], details: { guide: receipt, ...(receipt.status === "rejected" ? { error: receipt.reason } : {}) }, isError: receipt.status === "rejected" };
       },
     };
   }
@@ -9579,6 +9606,13 @@ Delegation rules:
     this.acceptingSteering = false;
     this.gracefulStopRequested = true;
     return { requested: true };
+  }
+
+  /** 临时文件清理须等待实际执行收尾，不能把取消主轮次视为文件已空闲。 */
+  isScratchBusy(): boolean {
+    return this.getStatus().isRunning || [...this.delegations.values()].some(
+      (record) => record.status === "running" || record.settling || record.resumingLock,
+    );
   }
 
   getStatus(): AgentStatus {

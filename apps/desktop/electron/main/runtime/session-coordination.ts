@@ -40,6 +40,7 @@ export type SessionCoordinationDependencies = {
    * Optional: coordination stays usable without any observer.
    */
   onTurnStarted?: (sessionId: string, turnId: string) => void;
+  onSessionActivity?: (sessionId: string) => void;
 };
 
 /**
@@ -54,6 +55,7 @@ export function createSessionCoordination({
   getMainWindow,
   getViewingSessionId,
   onTurnStarted,
+  onSessionActivity,
 }: SessionCoordinationDependencies) {
   const sessionOperationTails = new Map<string, Promise<void>>();
   const turnSettlements = new Map<string, Set<() => void>>();
@@ -90,6 +92,7 @@ export function createSessionCoordination({
     turns.add(turn);
     startedTurnsBySession.set(id, turns);
     try {
+      onSessionActivity?.(id);
       onTurnStarted?.(id, turn);
     } catch {
       // An observer must never fail the turn it was told about. Each plugin
@@ -280,6 +283,7 @@ export function createSessionCoordination({
    * newer turn on the same session keeps its own records. Idempotent.
    */
   function releaseTurnClaims(sessionId: string, turnId: string): void {
+    onSessionActivity?.(sessionId);
     const key = planSubmissionTurnKey(sessionId.trim(), turnId.trim());
     pendingAbortReasons.delete(key);
     const waiters = turnSettlements.get(key);

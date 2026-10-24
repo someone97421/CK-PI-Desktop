@@ -1287,8 +1287,8 @@ export class SubagentRun {
    * 复用同一底层机制），不再等本轮结束后另发 prompt。返回的是本次命令的受理回执；
    * applying/applied/cancelled 的后续状态通过 observation 事件回执。
    */
-  guide(instruction: string, interval?: number, commandId?: string): SubagentGuideReceipt {
-    const receipt = this.observation.guide(instruction, interval, commandId);
+  guide(instruction: string, interval?: number, commandId?: string, source?: SubagentGuideReceipt["source"]): SubagentGuideReceipt {
+    const receipt = this.observation.guide(instruction, interval, commandId, source);
     if (receipt.status !== "accepted") return receipt;
     if (this.executing) this.steerAcceptedGuides();
     return receipt;

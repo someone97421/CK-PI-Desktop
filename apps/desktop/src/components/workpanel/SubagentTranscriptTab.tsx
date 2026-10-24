@@ -1,5 +1,5 @@
 import { toolResultPayload } from "../../lib/tool-presentation";
-import { SubagentStopButton } from "../../features/chat/transcript/SubagentStopButton";
+import { SubagentGuideComposer } from "./SubagentGuideComposer";
 import { useSubagentExecution } from "../../features/chat/transcript/SubagentSupervision";
 import { delegationExecutionKey, isDelegationStartTool } from "../../lib/tool-display";
 import { collectDelegationStatuses, subagentOutcome } from "../../lib/subagent-topology";
@@ -9,8 +9,8 @@ import { useAppStore } from "../../stores/app-store";
 import { useFollowScroll } from "../../hooks/use-follow-scroll";
 import { useSubagentTranscriptView } from "../../hooks/use-subagent-transcript-view";
 import { useTranscriptSearchFocus } from "../../hooks/use-transcript-search-focus";
-import { IconArrowDown, IconBot, IconChevronDown } from "../icons";
-import { Textarea, TooltipButton } from "../ui";
+import { IconArrowDown } from "../icons";
+import { TooltipButton } from "../ui";
 import { DisclosureAnchorContext } from "../../lib/disclosure-anchor-context";
 import { TranscriptDisclosureProvider } from "../../features/chat/transcript/disclosure";
 import { buildSubagentTranscript } from "../../lib/subagent-transcript";
@@ -36,9 +36,7 @@ import { delegateModelId, delegateThinkingLevel } from "../../features/chat/tran
  * on the same delegation append further turns, so a resumed delegate reads as
  * one continuing user/assistant exchange.
  *
- * The tab allows explicit cancellation; the composer at the foot is a disabled textarea
- * whose placeholder says the delegate is driven by the main agent. There is
- * deliberately no send path.
+ * 底部提供当前执行的文字引导、模型展示和停止操作。
  */
 export function SubagentTranscriptTab({ delegationId }: { delegationId: string }) {
   const sessionId = useAppStore((state) => state.activeSessionId);
@@ -206,29 +204,17 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
             <IconArrowDown size={14} />
           </TooltipButton>
         ) : null}
-        <footer className="subagent-transcript-composer">
-          <Textarea
-            disabled
-            rows={2}
-            aria-label={t("panel.subagentReadOnly")}
-            placeholder={t("panel.subagentReadOnly")}
-          />
-          <div className="subagent-transcript-composer-controls">
-            <button
-              type="button"
-              className="icon-btn composer-model-thinking-chip subagent-transcript-model-picker"
-              disabled
-              aria-haspopup="listbox"
-              aria-label={`${t("chat.model")}: ${delegateSettings.modelId || "—"}. ${t("chat.reasoningLevel")}: ${delegateSettings.thinkingLevel || "—"}`}
-            >
-              <span className="composer-model-thinking-icon" aria-hidden="true"><IconBot size={14} /></span>
-              <span className="composer-model-thinking-model">{delegateSettings.modelId || "—"}</span>
-              <span className="composer-model-thinking-level">{delegateSettings.thinkingLevel || "—"}</span>
-              <IconChevronDown size={12} aria-hidden="true" className="composer-model-thinking-chevron" />
-            </button>
-            <SubagentStopButton sessionId={delegateExecution.sessionId} delegationId={delegateExecution.delegationId} execution={delegateExecution.execution} running={delegateRunning && delegateExecution.live} compact />
-          </div>
-        </footer>
+        <SubagentGuideComposer
+          key={`${delegateExecution.sessionId}:${delegateExecution.delegationId}:${delegateExecution.execution}`}
+          sessionId={delegateExecution.sessionId}
+          delegationId={delegateExecution.delegationId}
+          execution={delegateExecution.execution}
+          running={delegateRunning && delegateExecution.live}
+          stopping={delegateExecution.phase === "stopping"}
+          modelId={delegateSettings.modelId}
+          thinkingLevel={delegateSettings.thinkingLevel}
+          messages={messages}
+        />
       </div>
     </DisclosureAnchorContext.Provider>
   );

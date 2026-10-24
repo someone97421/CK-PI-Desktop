@@ -292,6 +292,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getSidecar,
     dataDir,
     activeTurns,
+    isSessionBusy: dependencies.isSessionBusy,
+    isQuitting: dependencies.isQuitting,
     sessionProjects,
     persistenceOutbox,
     logger,

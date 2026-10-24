@@ -571,6 +571,17 @@ async function handle(method: string, params: any): Promise<unknown> {
       await runtime.compactManually();
       return { accepted: true };
     }
+    case "agent.subagentGuide": {
+      const runtime = runtimes.get(String(params.sessionId ?? ""));
+      if (!runtime) throw new Error("No active runtime for subagent guidance.");
+      return runtime.guideSubagent({
+        sessionId: params.sessionId,
+        delegationId: params.delegationId,
+        expectedExecution: params.expectedExecution,
+        commandId: params.commandId,
+        instruction: params.instruction,
+      });
+    }
     case "agent.subagentStop": {
       const sessionId = String(params.sessionId ?? "");
       const runtime = runtimes.get(sessionId);
@@ -702,6 +713,7 @@ async function handle(method: string, params: any): Promise<unknown> {
       }
       const runtime = runtimes.get(sessionId);
       return {
+        scratchBusy: runtime?.isScratchBusy() ?? false,
         status: runtime?.getStatus() ?? {
           sessionId,
           isRunning: false,

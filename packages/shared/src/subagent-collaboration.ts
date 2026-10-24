@@ -30,6 +30,15 @@ export type SubagentProgressReport = {
   statement?: string;
 };
 
+/** 界面直接引导已有执行；commandId 用于重试去重。 */
+export type SubagentGuideRequest = {
+  sessionId: string;
+  delegationId: string;
+  expectedExecution: number;
+  commandId: string;
+  instruction: string;
+};
+
 /**
  * 指导回执。状态含义：accepted 已受理并入队待送达；applying 已排入子代理当前轮
  * （底层 steer），等待下一个安全点注入；applied 文本已进入子上下文；cancelled
@@ -41,6 +50,8 @@ export type SubagentGuideReceipt = {
   delegationId: string;
   commandId: string;
   instruction: string;
+  /** 旧回执缺省为主智能体引导。 */
+  source?: "user" | "parent";
   reportIntervalSteps?: number;
   status: "accepted" | "applying" | "applied" | "cancelled" | "rejected";
   /** 受理时间；同一 commandId 的后续状态更新保持不变。 */

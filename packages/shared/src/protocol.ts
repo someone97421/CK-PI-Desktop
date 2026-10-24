@@ -113,6 +113,7 @@ export const IPC = {
     agentStopSubagents: "pi-desktop/agent/stop-subagents",
     agentStop: "pi-desktop/agent/stop",
     subagentStop: "pi-desktop/agent/subagent/stop",
+    subagentGuide: "pi-desktop/agent/subagent/guide",
     subagentRecallStatus: "pi-desktop/agent/subagent/recall-status",
     subagentPersistenceGet: "agent:subagent-persistence:get",
     subagentPersistenceSet: "agent:subagent-persistence:set",
@@ -134,6 +135,8 @@ export const IPC = {
     sessionSearchContext: "pi-desktop/session/searchContext",
     sessionGet: "pi-desktop/session/get",
     sessionCollaboration: "pi-desktop/session/collaboration",
+    sessionStorage: "pi-desktop/session/storage",
+    sessionCleanScratch: "pi-desktop/session/clean-scratch",
     /** Validate and select a durable session from a reviewed host operation. */
     sessionOpen: "pi-desktop/session/open",
     sessionDelete: "pi-desktop/session/delete",

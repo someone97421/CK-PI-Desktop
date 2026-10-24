@@ -30,6 +30,8 @@ import type {
   SpeechTranscribeRequest,
   AgentStopResponse,
   SubagentStopResult,
+  SubagentGuideRequest,
+  SubagentGuideReceipt,
   SubagentRecallStatus,
   SubagentPersistenceSettings,
   AgentStopSubagentsRequest,
@@ -168,6 +170,8 @@ import type {
   TrustedExtensionUiPromptResponse,
   SessionTodoSnapshot,
   StorageInfo,
+  SessionStorageUsage,
+  SessionScratchCleanupResult,
 } from "@pi-desktop/shared";
 import {
   defaultCommandShellForPlatform,
@@ -791,6 +795,10 @@ export const api = {
     })),
   getSessionCollaboration: (sessionId: string) =>
     invoke<SessionCollaborationSummary>(IPC.invoke.sessionCollaboration, { sessionId }),
+  getSessionStorage: (id: string) =>
+    invoke<SessionStorageUsage>(IPC.invoke.sessionStorage, { id }),
+  cleanSessionScratch: (id: string) =>
+    invoke<SessionScratchCleanupResult>(IPC.invoke.sessionCleanScratch, { id }),
   deleteSession: (id: string) => invoke(IPC.invoke.sessionDelete, id),
   getSessionScratchPath: (sessionId: string) =>
     invoke<{ path: string }>(IPC.invoke.sessionGetScratchPath, { sessionId }),
@@ -1210,6 +1218,8 @@ export const api = {
     invoke<AgentStopResponse>(IPC.invoke.agentStop, { sessionId, ...(turnId ? { turnId } : {}) }),
   stopSubagent: (sessionId: string, delegationId: string, expectedExecution?: number) =>
     invoke<SubagentStopResult>(IPC.invoke.subagentStop, { sessionId, delegationId, expectedExecution }),
+  guideSubagent: (req: SubagentGuideRequest) =>
+    invoke<SubagentGuideReceipt>(IPC.invoke.subagentGuide, req),
   subagentRecallStatus: (sessionId: string, delegationId: string) =>
     invoke<SubagentRecallStatus>(IPC.invoke.subagentRecallStatus, { sessionId, delegationId }),
   getSubagentPersistenceSettings: () =>

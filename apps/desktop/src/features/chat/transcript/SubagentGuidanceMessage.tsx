@@ -13,7 +13,7 @@ export function SubagentGuidanceMessage({ guide, messageId }: {
   return <article className="subagent-guidance-message" data-message-id={messageId}
     data-status={guide.status} data-guide-id={guide.commandId}>
     <header>
-      <strong>{t("chat.subagentGuidanceSender")}</strong>
+      <strong>{t(guide.source === "user" ? "chat.subagentGuidanceUserSender" : "chat.subagentGuidanceSender")}</strong>
       {guide.execution !== undefined ? <span>{t("chat.subagentExecution", { execution: guide.execution })}</span> : null}
     </header>
     <p className="subagent-guidance-content selectable">{guide.instruction}</p>
