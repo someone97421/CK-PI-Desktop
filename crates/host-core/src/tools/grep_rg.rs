@@ -13,11 +13,15 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Cap on `rg --json` stdout so a pathological tree cannot fill host memory
 /// before we apply the Grep result budget.
 const RG_STDOUT_CAP: usize = 8 * 1024 * 1024;
+/// How often an `rg` run checks its call's abort flag.
+const RG_CANCEL_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 pub struct SystemGrep<'a> {
     pub pattern: &'a str,
@@ -123,10 +127,36 @@ fn grep_with_rg(rg: &Path, req: SystemGrep<'_>) -> Option<Value> {
         .spawn()
         .ok()?;
     let stdout = child.stdout.take()?;
+    // A stopped call must not leave rg scanning: the read below blocks until
+    // rg writes, so a helper watches the abort flag and kills the child.
+    let child = Arc::new(Mutex::new(child));
+    let finished = Arc::new(AtomicBool::new(false));
+    let aborted = Arc::new(AtomicBool::new(false));
+    let watcher = super::cancel::current().map(|receiver| {
+        let (child, finished, aborted) = (child.clone(), finished.clone(), aborted.clone());
+        std::thread::spawn(move || {
+            while !finished.load(Ordering::Acquire) {
+                if *receiver.borrow() {
+                    aborted.store(true, Ordering::Release);
+                    if let Ok(mut child) = child.lock() {
+                        let _ = child.kill();
+                    }
+                    return;
+                }
+                std::thread::sleep(RG_CANCEL_POLL);
+            }
+        })
+    });
+    let kill = |child: &Mutex<std::process::Child>| {
+        if let Ok(mut child) = child.lock() {
+            let _ = child.kill();
+        }
+    };
     let mut reader = BufReader::with_capacity(64 * 1024, stdout);
     let mut raw = String::new();
     let mut total = 0_usize;
     let mut capped = false;
+    let mut read_failed = false;
     let mut parsed: BTreeMap<PathBuf, FileHits> = BTreeMap::new();
     loop {
         raw.clear();
@@ -136,18 +166,32 @@ fn grep_with_rg(rg: &Path, req: SystemGrep<'_>) -> Option<Value> {
                 total = total.saturating_add(n);
                 if total > RG_STDOUT_CAP {
                     capped = true;
-                    let _ = child.kill();
+                    kill(&*child);
                     break;
                 }
                 consume_rg_line(&raw, req.search_dir, &mut parsed);
             }
             Err(_) => {
-                let _ = child.kill();
-                return None;
+                kill(&*child);
+                read_failed = true;
+                break;
             }
         }
     }
-    let status = child.wait().ok()?;
+    finished.store(true, Ordering::Release);
+    if let Some(watcher) = watcher {
+        let _ = watcher.join();
+    }
+    let status = child.lock().ok()?.wait().ok();
+    // The caller discards an aborted answer; returning it here keeps the
+    // in-process fallback from rescanning the tree for nobody.
+    if aborted.load(Ordering::Acquire) {
+        return Some(build_result(req, parsed, true));
+    }
+    let status = status?;
+    if read_failed {
+        return None;
+    }
     // 0 = matches, 1 = no matches. Anything else is an rg failure: fall back.
     if !status.success() && status.code() != Some(1) {
         return None;

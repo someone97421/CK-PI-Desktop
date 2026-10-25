@@ -7,6 +7,8 @@ const ACTIVITY_FILE = ".pi-scratch-activity";
 const RETAINED_NAMES = new Set(["pasted", "tool-output", "delegations", ACTIVITY_FILE]);
 const activityWrites = new Map<string, Promise<void>>();
 const activityTimes = new Map<string, number>();
+const USAGE_CACHE_MS = 30_000;
+const USAGE_CACHE_LIMIT = 64;
 
 function validId(id: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(id);
@@ -53,30 +55,44 @@ async function ownedPath(dataDir: string, path: string): Promise<boolean> {
 type FileEntry = { path: string; bytes: number; mtime: number; ctime: number; ino: number; dev: number };
 type Tree = { bytes: number; latest: number; partial: boolean; files: FileEntry[]; directories: string[] };
 
-async function scanTree(dataDir: string, root: string, skip?: (name: string) => boolean): Promise<Tree> {
+async function scanTree(
+  dataDir: string, root: string, skip?: (name: string) => boolean,
+  options: { signal?: AbortSignal; collectEntries?: boolean } = {},
+): Promise<Tree> {
   const tree: Tree = { bytes: 0, latest: 0, partial: false, files: [], directories: [] };
   const visit = async (path: string, top: boolean): Promise<void> => {
+    options.signal?.throwIfAborted();
     try {
       const stat = await lstat(path);
+      options.signal?.throwIfAborted();
       if (stat.isSymbolicLink()) { tree.partial = true; return; }
       tree.latest = Math.max(tree.latest, stat.mtimeMs, stat.birthtimeMs);
       if (stat.isDirectory()) {
-        tree.directories.push(path);
+        if (options.collectEntries !== false) tree.directories.push(path);
         for (const entry of await readdir(path, { withFileTypes: true })) {
           if (top && skip?.(entry.name.toLowerCase())) continue;
           await visit(join(path, entry.name), false);
         }
       } else if (stat.isFile()) {
         tree.bytes += stat.size;
-        tree.files.push({ path, bytes: stat.size, mtime: stat.mtimeMs, ctime: stat.ctimeMs, ino: stat.ino, dev: stat.dev });
+        if (options.collectEntries !== false) tree.files.push({ path, bytes: stat.size, mtime: stat.mtimeMs, ctime: stat.ctimeMs, ino: stat.ino, dev: stat.dev });
       }
-    } catch (error) { if (!missing(error)) tree.partial = true; }
+    } catch (error) { options.signal?.throwIfAborted(); if (!missing(error)) tree.partial = true; }
   };
   try {
     if (await ownedPath(dataDir, root)) await visit(root, true);
     else tree.partial = true;
-  } catch (error) { if (!missing(error)) tree.partial = true; }
+  } catch (error) { options.signal?.throwIfAborted(); if (!missing(error)) tree.partial = true; }
+  options.signal?.throwIfAborted();
   return tree;
+}
+
+function recentlyActive(session: StorageSession): boolean {
+  const now = Date.now();
+  return [session.updatedAt, session.lastUserMessageAt].some((timestamp) => {
+    const value = Date.parse(timestamp ?? "");
+    return Number.isFinite(value) && now - value < SCRATCH_RETENTION_MS;
+  });
 }
 
 export type StorageSession = { id: string; updatedAt?: string; lastUserMessageAt?: string };
@@ -89,6 +105,12 @@ type Dependencies = {
   available: () => boolean;
   log: (message: string, data?: unknown) => void;
 };
+type UsageSize = Omit<SessionStorageUsage, "busy">;
+type UsageScan = {
+  controller: AbortController;
+  readers: Set<string | symbol>;
+  promise: Promise<UsageSize>;
+};
 
 export class SessionStorageService {
   private sweeping = false;
@@ -96,6 +118,8 @@ export class SessionStorageService {
   private initial?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private readonly busySessions = new Set<string>();
+  private readonly usageCache = new Map<string, { at: number; activity: number; value: UsageSize }>();
+  private readonly usageScans = new Map<string, UsageScan>();
 
   constructor(private readonly deps: Dependencies) {}
 
@@ -114,6 +138,9 @@ export class SessionStorageService {
     clearTimeout(this.initial);
     clearInterval(this.timer);
     this.timer = undefined;
+    for (const scan of this.usageScans.values()) scan.controller.abort();
+    this.usageScans.clear();
+    this.usageCache.clear();
   }
 
   private scratch(id: string): string {
@@ -135,34 +162,90 @@ export class SessionStorageService {
     return busy;
   }
 
-  async usage(id: string): Promise<SessionStorageUsage> {
-    this.scratch(id);
+  cancelUsage(id: string, requestId: string): void {
+    const scan = this.usageScans.get(id);
+    if (!scan || !scan.readers.delete(requestId) || scan.readers.size) return;
+    scan.controller.abort();
+    this.usageScans.delete(id);
+  }
+
+  private invalidateUsage(id: string): void {
+    this.usageCache.delete(id);
+    const scan = this.usageScans.get(id);
+    scan?.controller.abort();
+    this.usageScans.delete(id);
+  }
+
+  async usage(id: string, requestId?: string): Promise<SessionStorageUsage> {
+    const root = this.scratch(id);
+    if (this.stopped || !this.deps.available()) throw new Error("Session storage is unavailable");
+    const activity = activityTimes.get(root) ?? 0;
+    const cached = this.usageCache.get(id);
+    if (cached && cached.activity === activity && Date.now() - cached.at < USAGE_CACHE_MS) {
+      return { ...cached.value, busy: await this.busy(id) };
+    }
+    let scan = this.usageScans.get(id);
+    if (!scan) {
+      const controller = new AbortController();
+      const pending: UsageScan = {
+        controller,
+        readers: new Set(),
+        promise: this.measureUsage(id, controller.signal).then((value) => {
+          controller.signal.throwIfAborted();
+          this.usageCache.delete(id);
+          this.usageCache.set(id, { at: Date.now(), activity, value });
+          while (this.usageCache.size > USAGE_CACHE_LIMIT) {
+            this.usageCache.delete(this.usageCache.keys().next().value!);
+          }
+          return value;
+        }).finally(() => {
+          if (this.usageScans.get(id) === pending) this.usageScans.delete(id);
+        }),
+      };
+      scan = pending;
+      this.usageScans.set(id, scan);
+    }
+    const reader = requestId ?? Symbol();
+    scan.readers.add(reader);
+    try {
+      const value = await scan.promise;
+      scan.controller.signal.throwIfAborted();
+      if (!scan.readers.has(reader)) throw new DOMException("Storage request cancelled", "AbortError");
+      return { ...value, busy: await this.busy(id) };
+    } finally { scan.readers.delete(reader); }
+  }
+
+  private async measureUsage(id: string, signal: AbortSignal): Promise<UsageSize> {
     await this.deps.getSession(id);
-    const temporary = await this.temporary(id);
+    signal.throwIfAborted();
+    // 占用统计只累计数字，删除时才需要保留逐文件身份和目录列表。
+    const scan = (path: string, skip?: (name: string) => boolean) =>
+      scanTree(this.deps.dataDir, path, skip, { signal, collectEntries: false });
+    const temporary = await scan(this.scratch(id), (name) => RETAINED_NAMES.has(name));
     const retained: Tree[] = [];
     for (const name of RETAINED_NAMES) {
-      retained.push(await scanTree(this.deps.dataDir, join(this.scratch(id), name)));
+      retained.push(await scan(join(this.scratch(id), name)));
     }
     for (const path of [
       join(this.deps.dataDir, "visualizations", id),
       join(this.deps.dataDir, "review-changes", id),
       join(this.deps.dataDir, "subagent-contexts", "v1", id),
-    ]) retained.push(await scanTree(this.deps.dataDir, path));
+    ]) retained.push(await scan(path));
     // transcript、revision、inflight 及其索引/临时落盘文件均使用 <id>. 前缀。
     const transcripts = join(this.deps.dataDir, "sessions");
     let partial = temporary.partial;
     try {
       if (!await ownedPath(this.deps.dataDir, transcripts)) partial = true;
       else for (const entry of await readdir(transcripts)) {
-        if (entry.startsWith(`${id}.`)) retained.push(await scanTree(this.deps.dataDir, join(transcripts, entry)));
+        signal.throwIfAborted();
+        if (entry.startsWith(`${id}.`)) retained.push(await scan(join(transcripts, entry)));
       }
-    } catch (error) { if (!missing(error)) partial = true; }
+    } catch (error) { signal.throwIfAborted(); if (!missing(error)) partial = true; }
     const retainedBytes = retained.reduce((sum, tree) => sum + tree.bytes, 0);
     return {
       totalBytes: temporary.bytes + retainedBytes,
       temporaryBytes: temporary.bytes,
       retainedBytes,
-      busy: await this.busy(id),
       partial: partial || retained.some((tree) => tree.partial),
     };
   }
@@ -195,6 +278,7 @@ export class SessionStorageService {
         if (automatic) return null;
         throw Object.assign(new Error("Cannot clean files while the session is running"), { errorCode: "AGENT_BUSY" });
       }
+      this.invalidateUsage(id);
       let freedBytes = 0;
       let failedEntries = tree.partial ? 1 : 0;
       for (const file of tree.files) {
@@ -220,6 +304,9 @@ export class SessionStorageService {
         }
       }
       this.deps.log("session scratch cleaned", { sessionId: id, automatic, freedBytes, failedEntries });
+      this.invalidateUsage(id);
+      // 自动清理不消费占用报告，避免每个旧会话都再扫描一遍全部保留文件。
+      if (automatic) return null;
       return { freedBytes, failedEntries, usage: await this.usage(id) };
     } finally { release(); }
   }
@@ -232,6 +319,12 @@ export class SessionStorageService {
       for (const session of sessions) {
         if (this.stopped || !this.deps.available()) break;
         if (!validId(session.id)) continue;
+        // 会话时间戳本身未满保留期时，完整扫描也必然跳过；先排除以免逐个遍历文件树。
+        // 保留期已从这次活动起算，不再需要“运行转空闲”时的重新计时。
+        if (recentlyActive(session)) {
+          this.busySessions.delete(session.id);
+          continue;
+        }
         try { await this.clean(session.id, true); }
         catch (error) { this.deps.log("session scratch cleanup deferred", { sessionId: session.id, error: String(error) }); }
       }

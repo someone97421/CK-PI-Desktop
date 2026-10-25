@@ -177,7 +177,13 @@ export function registerSessionIpc({
   });
   storage.start();
   app.once("will-quit", () => storage.stop());
-  handle(IPC.invoke.sessionStorage, async (input: { id: string }) => storage.usage(input.id));
+  handle(IPC.invoke.sessionStorage, async (input: { id: string; requestId?: string; cancel?: boolean }) => {
+    if (input.cancel && input.requestId) {
+      storage.cancelUsage(input.id, input.requestId);
+      return;
+    }
+    return storage.usage(input.id, input.requestId);
+  });
   handle(IPC.invoke.sessionCleanScratch, async (input: { id: string }) => storage.clean(input.id));
 
   /**

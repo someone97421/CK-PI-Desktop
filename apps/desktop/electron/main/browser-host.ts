@@ -472,8 +472,9 @@ export class BrowserHost {
 
   async snapshot(sessionId?: string, tabId?: string): Promise<{ tree: string; url: string; title: string }> {
     const page = this.currentPage(sessionId, tabId);
-    const wc = this.requireWebContents(page);
-    return withCdpDeadline(page, wc, () => page.cdp.snapshot(wc), "snapshot");
+    return page.pane.withStableViewport((wc) =>
+      withCdpDeadline(page, wc, () => page.cdp.snapshot(wc), "snapshot"),
+    );
   }
 
   async screenshot(input: { fullPage?: boolean } = {}, sessionId?: string, tabId?: string): Promise<{ mimeType: string; data: string; path?: string }> {
@@ -497,13 +498,15 @@ export class BrowserHost {
   }
   async fill(uid: string, text: string, sessionId?: string, tabId?: string): Promise<void> {
     const page = this.currentPage(sessionId, tabId);
-    const wc = this.requireWebContents(page);
-    return withCdpDeadline(page, wc, () => page.cdp.fill(wc, uid, text), "fill");
+    return page.pane.withStableViewport((wc) =>
+      withCdpDeadline(page, wc, () => page.cdp.fill(wc, uid, text), "fill"),
+    );
   }
   async evaluate(expression: string, sessionId?: string, tabId?: string): Promise<unknown> {
     const page = this.currentPage(sessionId, tabId);
-    const wc = this.requireWebContents(page);
-    return withCdpDeadline(page, wc, () => page.cdp.evaluate(wc, expression), "evaluate");
+    return page.pane.withStableViewport((wc) =>
+      withCdpDeadline(page, wc, () => page.cdp.evaluate(wc, expression), "evaluate"),
+    );
   }
   console(limit?: number, sessionId?: string, tabId?: string): { messages: ReturnType<BrowserCdp["console"]> } {
     const page = this.operationPage(sessionId, tabId);
@@ -514,11 +517,12 @@ export class BrowserHost {
   }
   async cdpCommand(method: string, params?: unknown, sessionId?: string, tabId?: string): Promise<unknown> {
     const page = this.currentPage(sessionId, tabId);
-    const wc = this.requireWebContents(page);
     if (method === "Page.captureScreenshot") {
       return captureScreenshotWithDeadline(page, (view) => page.cdp.send(view, method, params));
     }
-    return withCdpDeadline(page, wc, () => page.cdp.send(wc, method, params), `cdp ${method}`);
+    return page.pane.withStableViewport((wc) =>
+      withCdpDeadline(page, wc, () => page.cdp.send(wc, method, params), `cdp ${method}`),
+    );
   }
 
   /** Resolve containment roots from the owning session, not the visible UI. */
@@ -545,6 +549,8 @@ export class BrowserHost {
     }
     this.locations.delete(key);
     if (this.selectedTabs.get(sessionId) === tabId) this.selectedTabs.delete(sessionId);
+    // 关闭工具连接的页面后断开连接，后续操作回退到仍存在的选中页。
+    if (this.connectedTabs.get(sessionId) === tabId) this.connectedTabs.delete(sessionId);
   }
 
   closeSession(sessionId: string): void {

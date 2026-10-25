@@ -192,7 +192,8 @@ async function cursorUpdate() {
   const controlsHovered = ui.updateCursor(x, y);
   const interactive = !!focused || controlsHovered || !!element?.closest('[data-interactive]') || !!sprite?.hitTest(x, y);
   const wanted = !interactive;
-  if (wanted !== ignoreMouse) { await widget('setIgnoreMouse', { ignore: wanted }); ignoreMouse = wanted; }
+  // 已由 cursorLoop 查询屏幕光标，穿透时不需要全局鼠标消息转发。
+  if (wanted !== ignoreMouse) { await widget('setIgnoreMouse', { ignore: wanted, forward: false }); ignoreMouse = wanted; }
   const rect = sprite?.canvas.getBoundingClientRect();
   if (rect) {
     const dx = x - rect.left - rect.width / 2, dy = y - rect.top - rect.height / 2;

@@ -90,15 +90,28 @@ function ownsReadingPosition(...levels: Array<HTMLElement | null>): boolean {
  * miss the event that releases its hold because its effect had not run yet.
  */
 const readingSyncs = new Set<() => void>();
+/** Levels currently held open by a reader; only these can need a release. */
+const readingHolders = new Set<object>();
 let readingHubInstalled = false;
+
 function installReadingHub() {
   if (readingHubInstalled || typeof document === "undefined") return;
   readingHubInstalled = true;
   const syncAll = () => {
     for (const sync of [...readingSyncs]) sync();
   };
+  // Typing in the composer fires selectionchange on every keystroke. A
+  // collapsed caret can only claim a level through focus (handled by
+  // focusin), so while no level is held it has nothing to recompute.
+  const syncSelection = () => {
+    if (readingHolders.size === 0) {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) return;
+    }
+    syncAll();
+  };
   document.addEventListener("focusin", syncAll);
-  document.addEventListener("selectionchange", syncAll);
+  document.addEventListener("selectionchange", syncSelection);
   window.addEventListener("pointerup", syncAll);
 }
 
@@ -147,18 +160,24 @@ export function useAutomaticDisclosure(
     () => ownsReadingPosition(titleRef.current, bodyRef.current),
     [],
   );
-  const syncReading = useCallback(
-    () => setReading(ownsReadingPosition(titleRef.current, bodyRef.current)),
-    [],
-  );
+  // Holder bookkeeping is synchronous with the DOM check, so a release event
+  // right after a claim is never skipped by the hub's fast path.
+  const [holder] = useState(() => ({}));
+  const syncReading = useCallback(() => {
+    const owns = ownsReadingPosition(titleRef.current, bodyRef.current);
+    if (owns) readingHolders.add(holder);
+    else readingHolders.delete(holder);
+    setReading(owns);
+  }, [holder]);
 
   useEffect(() => {
     installReadingHub();
     readingSyncs.add(syncReading);
     return () => {
       readingSyncs.delete(syncReading);
+      readingHolders.delete(holder);
     };
-  }, [syncReading]);
+  }, [holder, syncReading]);
 
   // The claim goes to the level that owns this one, not to the root: reading a
   // row inside a process disclosure has to keep that process open too.
@@ -186,9 +205,12 @@ export function useAutomaticDisclosure(
   // restored selection), so the transition checks the DOM itself.
   const previousDerived = useRef(derivedOpen);
   useLayoutEffect(() => {
-    if (!choice && previousDerived.current && !derivedOpen && ownsReading()) setReading(true);
+    if (!choice && previousDerived.current && !derivedOpen && ownsReading()) {
+      readingHolders.add(holder);
+      setReading(true);
+    }
     previousDerived.current = derivedOpen;
-  }, [choice, derivedOpen, ownsReading]);
+  }, [choice, derivedOpen, holder, ownsReading]);
 
   const setManualOpen = useCallback((next: boolean) => {
     scope.claim();

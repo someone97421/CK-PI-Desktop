@@ -795,8 +795,19 @@ export const api = {
     })),
   getSessionCollaboration: (sessionId: string) =>
     invoke<SessionCollaborationSummary>(IPC.invoke.sessionCollaboration, { sessionId }),
-  getSessionStorage: (id: string) =>
-    invoke<SessionStorageUsage>(IPC.invoke.sessionStorage, { id }),
+  getSessionStorage: async (id: string, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    const requestId = crypto.randomUUID();
+    const cancel = () => {
+      void invoke(IPC.invoke.sessionStorage, { id, requestId, cancel: true }).catch(() => undefined);
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const usage = await invoke<SessionStorageUsage>(IPC.invoke.sessionStorage, { id, requestId });
+      signal?.throwIfAborted();
+      return usage;
+    } finally { signal?.removeEventListener("abort", cancel); }
+  },
   cleanSessionScratch: (id: string) =>
     invoke<SessionScratchCleanupResult>(IPC.invoke.sessionCleanScratch, { id }),
   deleteSession: (id: string) => invoke(IPC.invoke.sessionDelete, id),

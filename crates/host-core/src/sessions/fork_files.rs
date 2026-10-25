@@ -226,15 +226,16 @@ fn copy_regular_file(path: &Path, target: &Path) -> Result<()> {
 fn rewrite_visualization_value(
     value: &mut Value,
     source_id: &str,
-    file: &str,
-    target: &str,
+    target_for: &mut dyn FnMut(&str) -> Option<String>,
 ) -> bool {
     match value {
-        Value::String(text) => visualizations::references::rewrite(text, source_id, file, target),
+        Value::String(text) => {
+            visualizations::references::rewrite_with(text, source_id, target_for)
+        }
         Value::Array(values) => {
             let mut changed = false;
             for value in values {
-                changed |= rewrite_visualization_value(value, source_id, file, target);
+                changed |= rewrite_visualization_value(value, source_id, target_for);
             }
             changed
         }
@@ -261,7 +262,7 @@ fn rewrite_visualization_value(
                 "details",
             ] {
                 if let Some(value) = values.get_mut(key) {
-                    changed |= rewrite_visualization_value(value, source_id, file, target);
+                    changed |= rewrite_visualization_value(value, source_id, target_for);
                 }
             }
             changed
@@ -274,27 +275,23 @@ fn rewrite_visualizations(
     records: &mut [MessageRecord],
     compactions: &mut [CompactionRecord],
     source_id: &str,
-    file: &str,
-    target: &str,
-) -> bool {
-    let mut changed = false;
+    target_for: &mut dyn FnMut(&str) -> Option<String>,
+) {
     for record in records
         .iter_mut()
         .filter(|record| record.role == "assistant" && record.tool_name.is_none())
     {
-        changed |= rewrite_visualization_value(&mut record.blocks, source_id, file, target);
+        rewrite_visualization_value(&mut record.blocks, source_id, target_for);
     }
     for record in compactions {
-        changed |=
-            visualizations::references::rewrite(&mut record.summary, source_id, file, target);
+        visualizations::references::rewrite_with(&mut record.summary, source_id, target_for);
         for value in [&mut record.retained_tail, &mut record.details]
             .into_iter()
             .flatten()
         {
-            changed |= rewrite_visualization_value(value, source_id, file, target);
+            rewrite_visualization_value(value, source_id, target_for);
         }
     }
-    changed
 }
 
 /// Give a fork its own copies of the visualization fragments its transcript
@@ -345,31 +342,41 @@ pub(super) fn preserve_visualizations(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(guard),
         Err(error) => return Err(error.into()),
     };
+    // Collect the copyable fragments first, then rewrite the transcript in a
+    // single pass. Rewriting once per file rescanned every message for each
+    // fragment, which grew with files x transcript under the state lock.
+    let mut available = std::collections::HashMap::new();
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
         if !visualizations::is_regular_fragment_file(&path)? {
             continue;
         }
-        let name = entry.file_name();
-        let Some(file_name) = name.to_str() else {
+        let Ok(file_name) = entry.file_name().into_string() else {
             continue;
         };
-        let target_reference = destination.join(&name);
-        if !rewrite_visualizations(
-            records,
-            compactions,
-            source_id,
-            file_name,
-            &target_reference.to_string_lossy(),
-        ) {
+        available.insert(file_name, path);
+    }
+    if available.is_empty() {
+        return Ok(guard);
+    }
+    let mut referenced = std::collections::BTreeSet::new();
+    // Copies use the canonical data-parent spelling chosen at the start, but
+    // references advertise the child's original data-directory spelling.
+    let mut target_for = |file: &str| -> Option<String> {
+        available.contains_key(file).then(|| {
+            referenced.insert(file.to_owned());
+            destination.join(file).to_string_lossy().into_owned()
+        })
+    };
+    rewrite_visualizations(records, compactions, source_id, &mut target_for);
+    for file_name in referenced {
+        let Some(path) = available.get(&file_name) else {
             continue;
-        }
-        // Use the canonical data-parent spelling chosen at the start, but
-        // advertise the child's original data-directory spelling.
+        };
         visualizations::ensure_session_root(&guard.destination)?;
         visualizations::validate_session_root(&source)?;
-        copy_regular_file(&path, &guard.destination.join(&name))?;
+        copy_regular_file(path, &guard.destination.join(&file_name))?;
     }
     Ok(guard)
 }

@@ -13,7 +13,7 @@
 ## 宿主接口
 
 - `entryExtra` 使用可选 `task: { messageIds: readonly string[], settled: boolean }`。只在 `settled` 时显示任务卡，完全按宿主提供的消息 ID 筛选本轮。
-- `pi.desktop.invoke({ operation: 'session/get', args: [{ id, messageBefore?, messageLimit? }] })` 返回 `{ session }`。插件读取 `session.messages`，以 `session.messageStart` 为物理游标向前翻页，直到 `session.hasMoreBefore` 为 false；不设置 `contentLimit`，避免再次截断已持久化的差异。
+- `pi.desktop.invoke({ operation: 'session/get', args: [{ id, messageAround?, messageBefore?, messageLimit? }] })` 返回 `{ session }`。任务卡和本轮面板用首尾消息定位，只读取对应区间；整个会话面板才向前遍历全部历史。结果按任务短期缓存并合并在途读取，切换会话会停止无用分页；找不到旧消息锚点时回退完整查找。刷新和撤销会使缓存失效。不设置 `contentLimit`，避免再次截断已持久化的差异。
 - `pi.desktop.invoke({ operation: 'workspace/review/rollback', args: [{ sessionId, snapshotId }] })` 返回 `{ status, snapshotId, messageId, path }`。状态按 Rust 实现为 `rolledBack`、`alreadyRolledBack`、`conflict`、`unavailable`。
 - `pi.session.getActive()` 与 `session:activated` 判断本地会话；在任务结束、手动刷新或撤销后按需更新，不全量定时轮询历史。
 - 聊天 renderer 仅通过 `plugin.call` 请求小摘要和打开视图。历史分页读取在插件主进程异步完成，待完成时才返回摘要，避免阻塞 renderer 调用的两秒窗口。完整差异通过视图自定义桥 `review.read` 获取，不经 renderer 的 64 KB 返回通道。

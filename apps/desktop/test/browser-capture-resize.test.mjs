@@ -24,7 +24,7 @@ const electron = `data:text/javascript,${encodeURIComponent(`
     static instances = [];
     contentView = new View();
     destroyed = false;
-    constructor(options) { this.size = [options.width, options.height]; BrowserWindow.instances.push(this); }
+    constructor(options) { this.options = options; this.size = [options.width, options.height]; BrowserWindow.instances.push(this); }
     getContentSize() { return this.size; }
     setContentSize(width, height) { this.size = [width, height]; }
     isDestroyed() { return this.destroyed; }
@@ -361,6 +361,8 @@ test("page-local viewport work restores throttling and resizing on failure", asy
   const { host, wc, resize } = await harness(t);
   const paneSurface = WebContentsView.instances.at(-1).parent;
   host.setChromeSurface(null);
+  assert.equal(BrowserWindow.instances.at(-1).options.webPreferences.backgroundThrottling, true,
+    "后台宿主空闲时必须限流，不能永久让所有隐藏页面绘制");
   const started = once(wc, "capture-start");
   const failed = assert.rejects(host.screenshot({}, "session"), /fixture failure/);
   await started;

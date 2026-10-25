@@ -214,6 +214,15 @@ export async function getWorkspaceFileIndex(root: string): Promise<FsIndexResult
   return (await slotFor(root)).index;
 }
 
+/** Entries scored between event-loop yields; keeps one slice well under a frame. */
+const FS_SEARCH_CHUNK = 4000;
+/** Latest query per root: a newer query supersedes the older one mid-scan. */
+const searchGenerations = new Map<string, number>();
+/** Process-wide counter, so a generation is never reused after cleanup. */
+let searchGenerationCounter = 0;
+
+const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
+
 /**
  * The best `limit` entries for an "@" query over the whole listing, ranked
  * like the renderer ranks the snapshot. A truncated snapshot keeps the
@@ -227,20 +236,40 @@ export async function searchWorkspaceFiles(
 ): Promise<FsIndexResult> {
   const needle = query.trim().slice(0, FS_SEARCH_MAX_QUERY);
   if (!needle) return { entries: [], truncated: false };
-  const slot = await slotFor(root);
-  const listing =
-    slot.walked && !slot.listing.complete
-      ? await (slot.deeper ??= walkListing(
-          root,
-          FS_SEARCH_MAX_ENTRIES,
-          Date.now() + SEARCH_WALK_TIMEOUT_MS,
-        ))
-      : slot.listing;
-  const best = selectBestMatches(matchEntries(listing.entries, needle), limit, (hit) => ({
-    score: hit.score,
-    text: hit.entry.path,
-  }));
-  return { entries: best.map((hit) => hit.entry), truncated: !listing.complete };
+  // 主进程上分批评分并让出事件循环；同一工作区的新查询到来后放弃旧查询。
+  const generation = ++searchGenerationCounter;
+  searchGenerations.set(root, generation);
+  const superseded = () => searchGenerations.get(root) !== generation;
+  try {
+    const slot = await slotFor(root);
+    const listing =
+      slot.walked && !slot.listing.complete
+        ? await (slot.deeper ??= walkListing(
+            root,
+            FS_SEARCH_MAX_ENTRIES,
+            Date.now() + SEARCH_WALK_TIMEOUT_MS,
+          ))
+        : slot.listing;
+    const key = (hit: { entry: FsIndexEntry; score: number }) => ({
+      score: hit.score,
+      text: hit.entry.path,
+    });
+    let best: Array<{ entry: FsIndexEntry; score: number }> = [];
+    for (let start = 0; start < listing.entries.length; start += FS_SEARCH_CHUNK) {
+      if (start > 0) {
+        await yieldToEventLoop();
+        // The caller already discards a stale answer; stop spending CPU on it.
+        if (superseded()) return { entries: [], truncated: true };
+      }
+      const chunk = listing.entries.slice(start, start + FS_SEARCH_CHUNK);
+      // compareMatches is a total order, so merging per-chunk winners keeps
+      // exactly the ranking of a single pass over the whole listing.
+      best = selectBestMatches([...best, ...matchEntries(chunk, needle)], limit, key);
+    }
+    return { entries: best.map((hit) => hit.entry), truncated: !listing.complete };
+  } finally {
+    if (!superseded()) searchGenerations.delete(root);
+  }
 }
 
 function* matchEntries(

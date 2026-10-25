@@ -88,6 +88,7 @@ export function SessionHoverCard({
     setStorageState(undefined);
     setStorageFailedId(undefined);
     if (!storageSupported) return;
+    const controller = new AbortController();
     let current = true;
     let updated = false;
     const unsubscribe = onSessionStorageUpdated(({ id, usage }) => {
@@ -96,13 +97,14 @@ export function SessionHoverCard({
         setStorageState({ id, usage });
       }
     });
-    void api.getSessionStorage(session.id).then((usage) => {
+    void api.getSessionStorage(session.id, controller.signal).then((usage) => {
       if (current && !updated && target.isConnected) setStorageState({ id: session.id, usage });
     }).catch(() => {
       if (current && !updated) setStorageFailedId(session.id);
     });
     return () => {
       current = false;
+      controller.abort();
       unsubscribe();
     };
   }, [session.id, storageSupported, target]);

@@ -8,6 +8,9 @@ import { isAbsolute, resolve } from "node:path";
  */
 export type WorktreeRefContext = { worktree: string; parent: string };
 
+/** Line reference suffixes the chat resolver accepts (`:12`, `:12:3`, `#L12`). */
+const LINE_SUFFIX = /(?::\d+(?::\d+|-\d+)?|#L\d+(?:-L?\d+)?)$/i;
+
 /**
  * Rewrite an absolute chat reference that points into the parent checkout onto
  * the same relative path inside the session's worktree.
@@ -25,12 +28,19 @@ export async function rebaseWorktreeRef(
   context: WorktreeRefContext | null,
   isFile: (path: string) => Promise<boolean> = defaultIsFile,
 ): Promise<string> {
-  if (!context || !isAbsolute(ref)) return ref;
-  if (relativeWithin(context.worktree, ref) !== null) return ref;
-  const relativePath = relativeWithin(context.parent, ref);
+  if (!context) return ref;
+  // 与解析器一致地去掉 `@`、引号和行号，再按真实路径重定位，最后保留行号。
+  let path = ref.trim();
+  if (path.startsWith("@")) path = path.slice(1).trim();
+  if (path.length >= 2 && path.startsWith("\"") && path.endsWith("\"")) path = path.slice(1, -1).trim();
+  const suffix = path.match(LINE_SUFFIX)?.[0] ?? "";
+  path = path.slice(0, path.length - suffix.length);
+  if (!isAbsolute(path)) return ref;
+  if (relativeWithin(context.worktree, path) !== null) return ref;
+  const relativePath = relativeWithin(context.parent, path);
   if (!relativePath) return ref;
   const candidate = resolve(context.worktree, ...relativePath.split("/"));
-  return (await isFile(candidate)) ? candidate : ref;
+  return (await isFile(candidate)) ? `${candidate}${suffix}` : ref;
 }
 
 /**

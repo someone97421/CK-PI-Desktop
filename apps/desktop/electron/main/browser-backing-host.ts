@@ -17,7 +17,8 @@ export class BrowserBackingHost {
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
-          backgroundThrottling: false,
+          // 保留页面不等于持续绘制；具体工具操作由 BrowserPane 临时解除限流。
+          backgroundThrottling: true,
         },
       });
       this.window = window;

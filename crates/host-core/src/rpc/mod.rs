@@ -4563,7 +4563,14 @@ async fn handle_request(
                     )
                     .await
                 } else {
-                    let execute = tools::execute_tool_with_path_access(
+                    // Read/Glob/Grep get the abort flag so their blocking body
+                    // stops on its own. The call still waits for that body:
+                    // the tool permit and the cancellation registration must
+                    // cover the real work, or repeated stops would pile up
+                    // unbudgeted background scans (#1767 follow-up). The
+                    // runtime already stops waiting on these read-only tools.
+                    let read_only = matches!(p.tool_name.as_str(), "Read" | "Glob" | "Grep");
+                    let result = tools::execute_tool_cancellable(
                         ws_path.as_deref(),
                         scratch_path.as_deref(),
                         &p.tool_name,
@@ -4575,17 +4582,13 @@ async fn handle_request(
                             hashline: Some(hashline_ctx),
                             visualization_root: visualization_path.as_deref(),
                         },
-                    );
-                    if matches!(p.tool_name.as_str(), "Read" | "Glob" | "Grep") {
-                        let mut read_cancellation = cancellation_receiver.clone();
-                        tokio::select! {
-                            result = execute => result,
-                            _ = wait_for_tool_cancellation(&mut read_cancellation) => {
-                                tool_aborted_result(&p, call_started)
-                            }
-                        }
+                        if read_only { cancellation_receiver.clone() } else { None },
+                    )
+                    .await;
+                    if read_only && tool_cancellation_requested(&cancellation_receiver) {
+                        tool_aborted_result(&p, call_started)
                     } else {
-                        execute.await
+                        result
                     }
                 };
                 result.tool_call_id = p.tool_call_id.clone();

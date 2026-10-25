@@ -306,7 +306,8 @@ export function useComposerAutocomplete({
   // this `@` token and its rows merge with the index's.
   const fileQuery =
     trigger?.mode === "file" && !dismissed && files?.truncated ? trigger.query : "";
-  const searchScope = `${commandKey}\n${workspaceKey}\n${triggerKey ?? ""}`;
+  // 结果归属于本次查询文本；改写查询后旧结果不再参与过滤或截断判断。
+  const searchScope = `${commandKey}\n${workspaceKey}\n${triggerKey ?? ""}\n${fileQuery}`;
   useEffect(() => {
     if (!fileQuery) return;
     let cancelled = false;

@@ -246,7 +246,7 @@ function activated(next) {
     render();
     return;
   }
-  if (!next.activeTurn) void load(true);
+  if (!next.activeTurn) void load();
 }
 function listen(name, handler) {
   if (!bridge) return;

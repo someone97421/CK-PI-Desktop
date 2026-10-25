@@ -1063,10 +1063,9 @@ export class PluginPanelHost {
         if (typeof payload.ignore !== "boolean") {
           throw new Error("INVALID_ARGUMENT: ignore must be a boolean");
         }
-        // `forward` keeps pointer moves reaching the page while clicks pass
-        // through, which is what lets a companion tell when the cursor has come
-        // back over it.
-        win.setIgnoreMouseEvents(payload.ignore, { forward: true });
+        // Windows 的 forward 会在主线程安装全局鼠标钩子；自行轮询光标的
+        // widget 可关闭转发，避免主进程短暂停顿拖住系统鼠标。旧调用保持兼容。
+        win.setIgnoreMouseEvents(payload.ignore, { forward: payload.forward !== false });
         return { ok: true, ignore: payload.ignore };
       }
       case "setAlwaysOnTop": {

@@ -20,6 +20,7 @@ use crate::workspace::{
     resolve_tool_path_with_external, simple_canonicalize, ContainedRoots, ToolRoot,
 };
 
+mod cancel;
 mod grep_rg;
 pub mod hashline;
 pub mod ignore_rules;
@@ -1105,6 +1106,7 @@ async fn run_file_tool(
     args: &Value,
     allow_external_paths: bool,
     hashline: Option<&HashlineContext<'_>>,
+    cancellation: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> Result<Value, hashline::ToolError> {
     let workspace = workspace.map(Path::to_path_buf);
     let tool_name = tool_name.to_string();
@@ -1117,6 +1119,7 @@ async fn run_file_tool(
         // thread for the duration of the body.
         #[cfg(test)]
         let _test_rg = test_rg.map(grep_rg::install_test_rg);
+        let _cancellation = cancel::install(cancellation);
         let hashline = hashline.as_ref().map(|(id, store)| HashlineContext {
             session_id: id,
             store,
@@ -1147,6 +1150,19 @@ pub async fn execute_tool_with_path_access(
     tool_name: &str,
     args: &Value,
     options: ToolExecutionOptions<'_>,
+) -> ToolsExecuteResult {
+    execute_tool_cancellable(workspace, scratch, tool_name, args, options, None).await
+}
+
+/// Like `execute_tool_with_path_access`, with the call's abort flag handed to
+/// the blocking file-tool body so a stopped Read/Glob/Grep ends its own work.
+pub async fn execute_tool_cancellable(
+    workspace: Option<&Path>,
+    scratch: Option<&Path>,
+    tool_name: &str,
+    args: &Value,
+    options: ToolExecutionOptions<'_>,
+    cancellation: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> ToolsExecuteResult {
     let ToolExecutionOptions {
         timeout_ms: requested_timeout_ms,
@@ -1204,6 +1220,7 @@ pub async fn execute_tool_with_path_access(
                 args,
                 allow_external_paths,
                 hashline.as_ref(),
+                cancellation,
             )
             .await
         }
@@ -1958,6 +1975,10 @@ fn candidate_files(
     let mut candidates: Vec<(PathBuf, SystemTime)> = Vec::new();
     let mut capped = false;
     for entry in walker.build().flatten() {
+        if cancel::cancelled() {
+            capped = true;
+            break;
+        }
         let path = entry.path();
         if !path.is_file() {
             continue;
@@ -2163,6 +2184,11 @@ fn tool_grep(
     let mut clipped_lines = 0_usize;
     let mut bytes = 0_usize;
     'files: for path in &files {
+        // An aborted call's answer is discarded; stop reading files for it.
+        if cancel::cancelled() {
+            truncated = true;
+            break;
+        }
         let Ok(mut reader) = LineReader::open(path) else {
             continue;
         };
@@ -2178,6 +2204,10 @@ fn tool_grep(
         // what was readable beat dropping the file entirely.
         while let Ok(Some(line)) = reader.next_line(MAX_LINE_CHARS) {
             line_no += 1;
+            if line_no % 4096 == 0 && cancel::cancelled() {
+                truncated = true;
+                break 'files;
+            }
             if !re.is_match(&line.text) {
                 continue;
             }

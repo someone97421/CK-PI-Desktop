@@ -45,7 +45,11 @@ fn parse_json(json: &str) -> Option<Value> {
     serde_json::from_str(&escaped).ok()
 }
 
-fn rewrite_line(line: &str, source_id: &str, file_name: &str, target: &str) -> Option<String> {
+fn rewrite_line(
+    line: &str,
+    source_id: &str,
+    target_for: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<String> {
     let trimmed = line.trim();
     let json = trimmed.strip_prefix("::visualize")?;
     if !json.starts_with('{') || !json.ends_with('}') {
@@ -54,10 +58,10 @@ fn rewrite_line(line: &str, source_id: &str, file_name: &str, target: &str) -> O
     let mut value = parse_json(json)?;
     let path = value.as_object_mut()?.get_mut("path")?;
     let (session, file) = location(path.as_str()?)?;
-    if session != source_id || file != file_name {
+    if session != source_id {
         return None;
     }
-    *path = Value::String(target.to_owned());
+    *path = Value::String(target_for(&file)?);
     let encoded = serde_json::to_string(&value).ok()?;
     let prefix_len = line.len() - line.trim_start().len();
     let suffix_start = line.trim_end().len();
@@ -82,11 +86,26 @@ fn fence_marker(line: &str) -> Option<(char, usize, &str)> {
     (length >= 3).then_some((marker, length, &line[length..]))
 }
 
+/// Single-file form of [`rewrite_with`].
+#[cfg(test)]
+pub(crate) fn rewrite(text: &mut String, source_id: &str, file_name: &str, target: &str) -> bool {
+    rewrite_with(text, source_id, &mut |file: &str| {
+        (file == file_name).then(|| target.to_owned())
+    })
+}
+
 /// Rewrite only real standalone directives, not prose paths, indented code,
 /// or arbitrary fenced examples. The renderer also accepts a final fenced
 /// block consisting of exactly one reference; preserve that compatibility.
 /// JSON encoding of the child path is identical on every platform.
-pub(crate) fn rewrite(text: &mut String, source_id: &str, file_name: &str, target: &str) -> bool {
+///
+/// One pass covers every fragment of `source_id`: `target_for` maps a
+/// referenced file name to its new path, or `None` to leave the line.
+pub(crate) fn rewrite_with(
+    text: &mut String,
+    source_id: &str,
+    target_for: &mut dyn FnMut(&str) -> Option<String>,
+) -> bool {
     if !text.contains("::visualize") {
         return false;
     }
@@ -126,7 +145,7 @@ pub(crate) fn rewrite(text: &mut String, source_id: &str, file_name: &str, targe
     let mut changed = false;
     for (index, line) in lines.iter().enumerate() {
         if eligible.contains(&index) {
-            if let Some(rewritten) = rewrite_line(line, source_id, file_name, target) {
+            if let Some(rewritten) = rewrite_line(line, source_id, target_for) {
                 output.push_str(&rewritten);
                 changed = true;
                 continue;
