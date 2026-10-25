@@ -235,6 +235,52 @@ describe("classifyAgentError", () => {
     });
   });
 
+  it("does not treat TLS authentication wording as an API-key rejection", () => {
+    expect(classifyAgentError(new Error("mutual TLS authentication failed")))
+      .toMatchObject({
+        code: "NETWORK_ERROR",
+        retriable: true,
+        details: { networkCategory: "tls" },
+      });
+
+    const handshake = classifyAgentError(
+      new Error("authentication handshake timed out"),
+    );
+    expect(handshake).not.toMatchObject({ code: "PROVIDER_UNAUTHORIZED" });
+    expect(handshake.retriable).toBe(true);
+    expect(["NETWORK_ERROR", "TIMEOUT"]).toContain(handshake.code);
+
+    expect(classifyAgentError(new Error("Invalid API key"))).toMatchObject({
+      code: "PROVIDER_UNAUTHORIZED",
+      retriable: false,
+    });
+    expect(classifyAgentError(new Error("unauthorized"))).toMatchObject({
+      code: "PROVIDER_UNAUTHORIZED",
+      retriable: false,
+    });
+    expect(classifyAgentError(new Error("permission denied"))).toMatchObject({
+      code: "PROVIDER_UNAUTHORIZED",
+      retriable: false,
+    });
+
+    // A real credential phrase still names the key or the credentials, and a
+    // certificate errno stays terminal even when the text says authentication.
+    expect(classifyAgentError(new Error("invalid authentication credentials")))
+      .toMatchObject({ code: "PROVIDER_UNAUTHORIZED", retriable: false });
+    expect(classifyAgentError(new Error("authentication failed"))).toMatchObject({
+      code: "PROVIDER_UNAUTHORIZED",
+      retriable: false,
+    });
+    expect(classifyAgentError(Object.assign(
+      new Error("mutual TLS authentication failed"),
+      { code: "CERT_HAS_EXPIRED" },
+    ))).toMatchObject({
+      code: "NETWORK_ERROR",
+      retriable: false,
+      details: { networkCategory: "tls", networkCode: "CERT_HAS_EXPIRED" },
+    });
+  });
+
   it("classifies pi-ai '<status>: <body>' errorMessage strings", () => {
     expect(classifyAgentError('429: {"error":{"type":"rate_limit_error"}}'))
       .toMatchObject({ code: "PROVIDER_RATE_LIMITED", retriable: true });
@@ -494,6 +540,50 @@ describe("classifyAgentError", () => {
     abortErr.name = "AbortError";
     expect(classifyAgentError(abortErr)).toMatchObject({ code: "TURN_ABORTED" });
     expect(classifyAgentError("Turn aborted while compacting context")).toMatchObject({
+      code: "TURN_ABORTED",
+      retriable: false,
+    });
+  });
+
+  it("does not treat transport abort wording as a user Stop", () => {
+    // Socket and stream failures say "abort" without being a cancellation.
+    // They must stay retriable so provider retry runs and the UI does not
+    // show Stop.
+    expect(classifyAgentError(new Error("software caused connection abort"))).toMatchObject({
+      code: "NETWORK_ERROR",
+      retriable: true,
+      details: { networkCategory: "reset" },
+    });
+    expect(classifyAgentError(new Error("connection aborted"))).toMatchObject({
+      code: "NETWORK_ERROR",
+      retriable: true,
+      details: { networkCategory: "reset" },
+    });
+    expect(classifyAgentError(new Error("stream aborted"))).toMatchObject({
+      code: "STREAM_FAILED",
+      retriable: true,
+    });
+    expect(classifyAgentError(new Error("provider aborted the stream"))).toMatchObject({
+      code: "STREAM_FAILED",
+      retriable: true,
+    });
+
+    expect(classifyAgentError("Request aborted")).toMatchObject({
+      code: "TURN_ABORTED",
+      retriable: false,
+    });
+    expect(classifyAgentError("The operation was aborted")).toMatchObject({
+      code: "TURN_ABORTED",
+      retriable: false,
+    });
+    expect(classifyAgentError("Turn aborted while compacting context")).toMatchObject({
+      code: "TURN_ABORTED",
+      retriable: false,
+    });
+    const abortErr = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+    });
+    expect(classifyAgentError(abortErr)).toMatchObject({
       code: "TURN_ABORTED",
       retriable: false,
     });

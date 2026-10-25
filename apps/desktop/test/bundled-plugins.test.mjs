@@ -52,6 +52,17 @@ test("the file view is a sandboxed page over the public bridge", () => {
   assert.match(view, /meta name="pi-plugin-chrome" content="v2"/);
 });
 
+test("the file manager search panel remains readable in both themes", () => {
+  assert.match(
+    view,
+    /\.cm-editor \.cm-panel\.cm-search \.cm-textfield\{[^}]*background:var\(--surface\);color:var\(--fg\);caret-color:var\(--fg\)/,
+  );
+  assert.match(
+    view,
+    /\.cm-editor \.cm-panel\.cm-search \.cm-button\{[^}]*background:var\(--surface-hover\);color:var\(--fg\)/,
+  );
+});
+
 test("the vendored copy stays traceable to its upstream release", () => {
   assert.match(upstream, /github\.com\/Tioit-Wang\/pi-desktop-plugin-file-manager/);
   assert.match(upstream, /42fd918e7c23599fa61b0e58b7f7b2e4fa7b2680/);

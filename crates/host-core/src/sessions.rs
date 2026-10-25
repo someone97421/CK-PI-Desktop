@@ -388,9 +388,8 @@ pub struct SearchHit {
 /// keys the renderer writes — `chat.untitledTask` and `nav.newChat` — have
 /// their own label per locale, and a non-ASCII uppercase letter (a future
 /// "Ñö..." entry) would slip past ASCII-case-insensitive matching (#1755).
-/// Keep this in sync with the migration list in
-/// `db/session_title_source_migration.rs` and `LEGACY_DEFAULT_TITLES` in the
-/// renderer.
+/// Keep this in sync with `LEGACY_DEFAULT_TITLES` in
+/// `apps/desktop/src/lib/session-title-utils.ts`.
 const PLACEHOLDER_TITLES: [&str; 19] = [
     "",
     "new task",

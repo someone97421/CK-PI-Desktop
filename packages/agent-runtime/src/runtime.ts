@@ -1480,10 +1480,14 @@ export function toolResultFromUi(
   if (rawBlocks) {
     for (const b of rawBlocks) {
       if (!isRecord(b)) continue;
-      if (b.type === "text" && typeof b.text === "string") {
-        const mediaRef = mediaReferenceOf(b);
-        const mediaUrl = externalMediaReferenceOf(b);
-        blocks.push({ type: "text", text: b.text, ...(mediaRef ? { mediaRef } : {}), ...(mediaUrl ? { mediaUrl } : {}) });
+      // Same text rule as live execution: embedded MCP resources and resource
+      // links stay visible after a session restore. Binary resources have no
+      // text and stay out. Plain text blocks keep the fork's media references.
+      const blockText = hostContentBlockText(b);
+      if (blockText !== undefined) {
+        const mediaRef = b.type === "text" ? mediaReferenceOf(b) : undefined;
+        const mediaUrl = b.type === "text" ? externalMediaReferenceOf(b) : undefined;
+        blocks.push({ type: "text", text: blockText, ...(mediaRef ? { mediaRef } : {}), ...(mediaUrl ? { mediaUrl } : {}) });
       } else if (
         b.type === "image" &&
         typeof b.data === "string" &&
@@ -1497,8 +1501,9 @@ export function toolResultFromUi(
     // and image blocks so a restart does not flatten them into JSON (#1360).
     for (const b of raw) {
       if (!isRecord(b)) continue;
-      if (b.type === "text" && typeof b.text === "string") {
-        blocks.push({ type: "text", text: b.text });
+      const blockText = hostContentBlockText(b);
+      if (blockText !== undefined) {
+        blocks.push({ type: "text", text: blockText });
       } else if (
         b.type === "image" &&
         typeof b.data === "string" &&
