@@ -997,6 +997,8 @@ export type AgentRuntimeOptions = {
    * (ADR gen-ui-inline-visualization). Advertised in the system prompt;
    * host-core enforces it as a containment root. Ignored for remote sessions. */
   visualizationsDir?: string;
+  /** 本地主代理按需读取的配置文档路径，不向子代理注入。 */
+  configurationGuidePath?: string;
   onEvent: (envelope: AgentEventEnvelope) => void;
   /**
    * Subagent definitions this session may delegate to (ADR 0062), already
@@ -1025,6 +1027,7 @@ export type RuntimeMatchConfig = {
   customSystemPrompt?: CustomSystemPrompt;
   projectInstructions?: ProjectInstructions;
   projectMemory?: string;
+  configurationGuidePath?: string;
   projectPath?: string;
   /** Remote tool root. Model requests and runtime state remain on this machine. */
   remoteWorkspace?: { hostKey: string; path: string };
@@ -1765,6 +1768,7 @@ export class DesktopAgentRuntime {
   private activationHydrated = false;
   private scratchDir?: string;
   private visualizationsDir?: string;
+  private configurationGuidePath?: string;
   private projectPath?: string;
   private remoteWorkspace?: { hostKey: string; path: string };
   /** Set only for an isolated session; see `RuntimeConfig.workspaceRoot`. */
@@ -1993,6 +1997,7 @@ export class DesktopAgentRuntime {
     this.remoteWorkspace = opts.remoteWorkspace;
     this.scratchDir = opts.remoteWorkspace ? undefined : opts.scratchDir;
     this.visualizationsDir = opts.remoteWorkspace ? undefined : opts.visualizationsDir;
+    this.configurationGuidePath = opts.remoteWorkspace ? undefined : opts.configurationGuidePath;
     this.projectPath = opts.remoteWorkspace?.path ?? (opts.projectPath?.trim() || undefined);
     // Remote workspaces are never isolated (ADR 0329).
     this.workspaceRoot = opts.remoteWorkspace ? undefined : opts.workspaceRoot?.trim() || undefined;
@@ -2504,6 +2509,9 @@ Delegation rules:
     this.composedSections = {
       runtime: [
         this.baseSystemPrompt,
+        ...(this.configurationGuidePath ? [
+          `需要配置本应用的指令、技能、MCP 或子智能体时，先用 Read 读取配置参考文档：\`${this.configurationGuidePath}\`。`,
+        ] : []),
         ...(this.visualizationsDir ? [
           `Visualization directory (absolute paths only, .html fragments only; see the ${GEN_UI_SKILL_ID} skill): \`${this.visualizationsDir}\``,
         ] : []),
@@ -2759,6 +2767,7 @@ Delegation rules:
       (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "") &&
       (this.projectPath ?? "") === (config.remoteWorkspace?.path ?? config.projectPath?.trim() ?? "") &&
       safeJson(this.remoteWorkspace ?? null) === safeJson(config.remoteWorkspace ?? null) &&
+      this.configurationGuidePath === (config.remoteWorkspace ? undefined : config.configurationGuidePath) &&
       (this.workspaceRoot ?? "") === (config.workspaceRoot?.trim() ?? "") &&
       // Editing `~/.agents/subagents/*.md` must reach the next prompt. Definition
       // bodies are part of the `Task` tool's behavior, so unlike skills they

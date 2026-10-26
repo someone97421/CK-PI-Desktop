@@ -188,6 +188,10 @@ test("packaging keeps only shipped locales and excludes non-runtime artifacts", 
   // in agent-runtime-bundle-package.test.mjs.
   assert.deepEqual(packageJson.build.extraResources, [
     {
+      from: "resources/models.dev",
+      to: "models.dev",
+    },
+    {
       from: "build/icon.png",
       to: "tray-icon.png",
     },
@@ -200,6 +204,11 @@ test("packaging keeps only shipped locales and excludes non-runtime artifacts", 
       from: "resources/skills",
       to: "skills",
     },
+    // 配置手册按需复制到会话 scratch，不把正文注入系统提示。
+    {
+      from: "resources/agent-docs",
+      to: "agent-docs",
+    },
     // The inline visualization kit (stylesheet, runtime, pinned libraries)
     // is read from disk by the pi-genui: protocol handler.
     {
@@ -211,10 +220,6 @@ test("packaging keeps only shipped locales and excludes non-runtime artifacts", 
     {
       from: "resources/plugins",
       to: "plugins",
-    },
-    {
-      from: "resources/models.dev",
-      to: "models.dev",
     },
   ]);
   assert.doesNotMatch(JSON.stringify(packageJson.build), /node-pty/);

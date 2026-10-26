@@ -34,6 +34,7 @@ import {
   type UserSubagentDocument,
 } from "@pi-desktop/agent-runtime";
 import { builtinSkills, effectiveDisabledBuiltinSkills, VISUALIZE_SKILL_ID } from "../builtin-skills";
+import { prepareConfigurationGuide } from "../configuration-guide";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
 import {
   catalogModelConfigFor,
@@ -806,6 +807,23 @@ export function createSessionLaunchRuntime({
         });
       }
     }
+    const scratchDir = join(dataDir, "scratch", sessionId);
+    let configurationGuidePath: string | undefined;
+    if (!remoteWorkspace) {
+      try {
+        configurationGuidePath = await prepareConfigurationGuide({
+          scratchDir,
+          dataDir,
+          projectPath,
+          workspaceRoot: workspaceRoot ?? projectPath ?? scratchDir,
+        });
+      } catch (error) {
+        logger.app("session", "warn", "配置参考文档准备失败", {
+          sessionId,
+          data: String(error),
+        });
+      }
+    }
     return {
       providerId: provider.id,
       modelId,
@@ -820,7 +838,8 @@ export function createSessionLaunchRuntime({
         runStatusReminder: settings.runStatusReminder !== false,
         ...(jevApiKey ? { jevApiKey } : {}),
         commandShell,
-        scratchDir: join(dataDir, "scratch", sessionId),
+        scratchDir,
+        ...(configurationGuidePath ? { configurationGuidePath } : {}),
         // Remote-host tools write on that host; Main can only serve local files.
         // The feature switch and a disabled visualize skill both withhold the
         // directory, so the prompt never points the model at a skill it cannot

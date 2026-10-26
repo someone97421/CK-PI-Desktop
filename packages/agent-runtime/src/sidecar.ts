@@ -131,6 +131,7 @@ type RuntimeParams = {
   scratchDir?: string;
   /** Per-session visualization directory; omitted for remote sessions. */
   visualizationsDir?: string;
+  configurationGuidePath?: string;
   /** Session-bound workspace root supplied by Electron main. */
   projectPath?: string;
   remoteWorkspace?: { hostKey: string; path: string };
@@ -267,6 +268,7 @@ async function runtimeFor(
     projectPath: params.projectPath,
     remoteWorkspace: params.remoteWorkspace,
     workspaceRoot: params.workspaceRoot,
+    configurationGuidePath: params.configurationGuidePath,
     commandShell: params.commandShell,
     // A summary-model change retires the runtime: the next launch rebuilds the
     // summary binding instead of reusing the previous one.
@@ -356,6 +358,7 @@ async function runtimeFor(
     projectPath: params.projectPath,
     remoteWorkspace: params.remoteWorkspace,
     workspaceRoot: params.workspaceRoot,
+    configurationGuidePath: params.configurationGuidePath,
     customSystemPrompt: params.customSystemPrompt,
     projectInstructions: params.projectInstructions,
     projectMemory: params.projectMemory,

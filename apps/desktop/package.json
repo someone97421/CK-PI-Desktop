@@ -123,6 +123,10 @@
         "to": "skills"
       },
       {
+        "from": "resources/agent-docs",
+        "to": "agent-docs"
+      },
+      {
         "from": "resources/gen-ui",
         "to": "gen-ui"
       },
