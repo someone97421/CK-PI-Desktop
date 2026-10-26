@@ -1,6 +1,6 @@
 ---
 name: responses-image-generation
-description: 使用 OpenAI 兼容 Responses API 的 image_generation 原生工具生成图片并保存为本地文件。适用于 GPT Image 生图、上传单张或多张参考图进行改图与风格参考、通过 Codex 或 sub2api 等中转复用现有认证生成图片，以及验证 Responses 生图能力的场景。
+description: 使用 OpenAI 兼容 Responses API 的 image_generation 原生工具生成图片并保存为本地文件。适用于 GPT Image 生图、上传单张或多张参考图进行改图与风格参考、复用现有服务认证生成图片，以及验证 Responses 生图能力的场景。
 compatibility: 需要 Python 3.11+、网络访问，以及支持 image_generation 的 Responses 服务；脚本仅使用 Python 标准库。
 ---
 
