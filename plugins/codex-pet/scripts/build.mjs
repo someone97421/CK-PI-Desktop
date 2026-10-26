@@ -45,6 +45,7 @@ try {
     copyFile(join(root, 'manifest.json'), join(staging, 'manifest.json')),
     cp(join(root, 'ui'), join(staging, 'ui'), { recursive: true }),
     cp(join(root, 'shared'), join(staging, 'shared'), { recursive: true }),
+    cp(join(root, 'pets'), join(staging, 'pets'), { recursive: true }),
     copyOptional('README.md', staging),
     copyOptional('docs', staging),
   ]);

@@ -76,7 +76,25 @@ class PetLibrary {
     this.mutations = result.catch(() => {});
     return result;
   }
-  async init() { await fs.mkdir(this.directory, { recursive: true }); return this.refresh(); }
+  async init(bundledDirectory) {
+    await fs.mkdir(this.directory, { recursive: true });
+    await this.refresh();
+    if (bundledDirectory) {
+      const marker = path.join(this.dataPath, 'bundled-pets.json');
+      let installed = [];
+      try { installed = JSON.parse(await fs.readFile(marker, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      for (const entry of await fs.readdir(bundledDirectory, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const folder = path.join(bundledDirectory, entry.name);
+        const manifest = normalizeManifest(JSON.parse(await fs.readFile(path.join(folder, 'pet.json'), 'utf8')));
+        if (installed.includes(manifest.id)) continue;
+        if (!this.rows.some((row) => row.id === manifest.id)) await this.put(manifest, await fs.readFile(path.join(folder, manifest.spritesheetPath)));
+        installed.push(manifest.id);
+      }
+      await fs.writeFile(marker, `${JSON.stringify(installed)}\n`);
+    }
+    return this.list();
+  }
   async refresh() {
     const rows = [], errors = [];
     const entries = await fs.readdir(this.directory, { withFileTypes: true });

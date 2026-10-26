@@ -1,6 +1,7 @@
 'use strict';
 
 const { execFile } = require('node:child_process');
+const path = require('node:path');
 const { PetLibrary, fail } = require('./lib/pet-library.cjs');
 const { QuickChat } = require('./lib/quick-chat.cjs');
 const { ActivityMonitor } = require('./lib/activity.cjs');
@@ -8,7 +9,7 @@ const { importInstallLink } = require('./lib/install-link.cjs');
 
 const SERVICE = 'codex-pet-activity';
 const SHORTCUT = 'show-pet';
-const DEFAULTS = { selectedPetId: null, visible: true, size: 96, alwaysOnTop: true, filter: 'pixelated', motion: 'system', frameRate: null, gaze: true, position: null, pollSeconds: 8, shortcut: process.platform === 'darwin' ? 'Alt+Space' : 'Super+Alt+P' };
+const DEFAULTS = { selectedPetId: 'clawd-svg', visible: true, size: 96, alwaysOnTop: true, filter: 'pixelated', motion: 'system', frameRate: null, gaze: true, position: null, pollSeconds: 8, shortcut: process.platform === 'darwin' ? 'Alt+Space' : 'Super+Alt+P' };
 
 function createPlugin(providedHost) {
   let host, library, chat, monitor, ready, unloaded = false;
@@ -80,7 +81,7 @@ function createPlugin(providedHost) {
     library = new PetLibrary(dataPath);
     chat = new QuickChat(host, dataPath);
     monitor = new ActivityMonitor(host, { pollSeconds: settings.pollSeconds });
-    await Promise.all([library.init(), chat.init(), refreshCatalog()]);
+    await Promise.all([library.init(path.join(__dirname, 'pets')), chat.init(), refreshCatalog()]);
     if (!library.list().some((pet) => pet.id === settings.selectedPetId)) settings.selectedPetId = null;
     for (const [id, title, run] of [
       ['pet', locale === 'en' ? 'Show or hide pet' : '显示或隐藏宠物', () => settings.visible ? hide() : show()],

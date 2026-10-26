@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useTranslation } from "react-i18next";
 import { api } from "../../lib/api";
 import { pluginViewIcon } from "../../lib/plugin-view-icons";
+import { useNativeViewOcclusion } from "../../lib/native-view-occlusion";
 import { useAppStore } from "../../stores/app-store";
 import { IconPlug } from "../icons";
 import { WorkTabEmpty } from "./WorkTabEmpty";
@@ -11,11 +12,8 @@ import { WorkTabEmpty } from "./WorkTabEmpty";
  *
  * The surface itself is a main-process `WebContentsView`, the same isolated
  * page a `ui.panel` window hosts; this component renders nothing into it. It
- * measures the placeholder rect and drives visibility. The view composites
- * above renderer content, so a panel-wide blocking overlay still hides it.
- * The work-panel menu temporarily blocks the active view while open, which
- * keeps the menu inside the dock without changing plugin bounds or pushing the
- * plugin body down.
+ * measures the placeholder rect and drives visibility. Native content yields
+ * to blocking dialogs and global floating surfaces that overlap its bounds.
  */
 export function PluginViewTab({
   pluginId,
@@ -47,6 +45,7 @@ export function PluginViewTab({
   locationRef.current = location;
   const viewLocation = pluginId === "pi.browser" && viewId === "browser" ? undefined : location;
   const [failed, setFailed] = useState(false);
+  const occluded = useNativeViewOcclusion(surfaceRef, !failed);
   const viewIdentity = JSON.stringify([pluginId, viewId, sessionId, viewLocation, tabId, scopedWorkspace, workspacePath]);
   const [readyIdentity, setReadyIdentity] = useState<string | null>(null);
   const boundsFrameRef = useRef(0);
@@ -115,11 +114,11 @@ export function PluginViewTab({
   useEffect(() => {
     const surface = surfaceRef.current;
     if (!surface || failed) return;
-    void api.pluginViewSetVisible(pluginId, viewId, readyIdentity === viewIdentity && !blocked, sessionId);
+    void api.pluginViewSetVisible(pluginId, viewId, readyIdentity === viewIdentity && !blocked && !occluded, sessionId);
     return () => {
       void api.pluginViewSetVisible(pluginId, viewId, false);
     };
-  }, [pluginId, viewId, blocked, failed, sessionId, readyIdentity, viewIdentity]);
+  }, [pluginId, viewId, blocked, occluded, failed, sessionId, readyIdentity, viewIdentity]);
 
   useEffect(() => {
     const surface = surfaceRef.current;

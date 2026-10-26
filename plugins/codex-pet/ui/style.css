@@ -86,6 +86,7 @@ body[data-surface="settings"] {
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html[data-codex-pet-surface="pet"], body[data-surface="pet"] { overflow: hidden; overscroll-behavior: none; }
+body[data-surface="pet"] { --pet-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.2); }
 body[data-surface="pet"] #app { position: fixed; top: 12px; left: 12px; width: 360px; margin: 0; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
