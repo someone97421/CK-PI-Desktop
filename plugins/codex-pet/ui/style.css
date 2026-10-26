@@ -152,6 +152,8 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
   height: var(--pet-size);
   position: relative;
 }
+/* 画布保留键盘焦点，但不在透明宠物周围绘制矩形焦点框。 */
+#pet-canvas:focus { outline: none; }
 #pet-stage[data-filter="pixelated"] canvas { image-rendering: pixelated; }
 #pet-stage[data-visible="false"] { opacity: 0.25; }
 #pet-hit {

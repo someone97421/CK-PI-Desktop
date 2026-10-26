@@ -2,7 +2,6 @@ import { isRemoteSession, sessionAllows } from "../lib/remote-session-safety";
 import { inheritedSessionModelBinding } from "../lib/session-model";
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -34,10 +33,7 @@ import { AskToolCard } from "./AskToolCard";
 import { PlanApprovalBar } from "./PlanApprovalBar";
 import { TodoDock } from "./TodoDock";
 import {
-  COMPOSER_MAX_VISIBLE_ROWS,
-  COMPOSER_MIN_HEIGHT_PX,
   PLACEHOLDER_KEYS,
-  cssPixels,
   isPermissionMode,
   isThinkingLevel,
   thinkingLevelForProvider,
@@ -284,59 +280,6 @@ export function Composer({
   const placeholderKey =
     placeholderKeys[placeholderIndex % placeholderKeys.length] ?? placeholderKeys[0];
   const placeholderText = t(placeholderKey);
-
-  const textareaMetricsRef = useRef<{ lineHeight: number; verticalChrome: number } | null>(null);
-  const appliedHeightRef = useRef<number | null>(null);
-  const appliedOverflowRef = useRef<string | null>(null);
-  useEffect(() => {
-    textareaMetricsRef.current = null;
-    appliedHeightRef.current = null;
-    appliedOverflowRef.current = null;
-  }, [variant]);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let metrics = textareaMetricsRef.current;
-    if (!metrics) {
-      const style = window.getComputedStyle(el);
-      metrics = {
-        lineHeight: cssPixels(style.lineHeight) || COMPOSER_MIN_HEIGHT_PX,
-        verticalChrome:
-          cssPixels(style.paddingTop) +
-          cssPixels(style.paddingBottom) +
-          cssPixels(style.borderTopWidth) +
-          cssPixels(style.borderBottomWidth),
-      };
-      textareaMetricsRef.current = metrics;
-    }
-    const maxHeight = Math.ceil(
-      metrics.lineHeight * COMPOSER_MAX_VISIBLE_ROWS + metrics.verticalChrome,
-    );
-    const applied =
-      appliedHeightRef.current !== null &&
-      el.style.height === `${appliedHeightRef.current}px`
-        ? appliedHeightRef.current
-        : null;
-    let content = applied === null ? -1 : el.scrollHeight;
-    if (
-      applied === null ||
-      (content <= el.clientHeight && applied > COMPOSER_MIN_HEIGHT_PX)
-    ) {
-      el.style.height = "auto";
-      content = el.scrollHeight;
-    }
-    const next = Math.max(COMPOSER_MIN_HEIGHT_PX, Math.min(content, maxHeight));
-    const overflowY = content > maxHeight ? "auto" : "hidden";
-    if (appliedHeightRef.current !== next || el.style.height !== `${next}px`) {
-      el.style.height = `${next}px`;
-      appliedHeightRef.current = next;
-    }
-    if (appliedOverflowRef.current !== overflowY) {
-      el.style.overflowY = overflowY;
-      appliedOverflowRef.current = overflowY;
-    }
-  }, [value]);
-
 
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const draftConfiguration = useAppStore((s) => s.draftConfiguration);

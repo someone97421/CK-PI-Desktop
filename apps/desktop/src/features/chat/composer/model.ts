@@ -15,9 +15,6 @@ import { sameComposerModelId } from "../../../lib/composer-models.ts";
 import type { ComposerPluginPart } from "../../../lib/composer-smart-stop";
 import { providerThinkingLevels } from "../../../lib/session-thinking.ts";
 
-export const COMPOSER_MIN_HEIGHT_PX = 28;
-export const COMPOSER_MAX_VISIBLE_ROWS = 7;
-
 export const PLACEHOLDER_KEYS = {
   home: [
     "chat.placeholderHome",
@@ -152,11 +149,6 @@ export function thinkingProviderForModel(
     supportedThinkingLevels:
       configuredLevels ?? model.supportedThinkingLevels ?? provider.supportedThinkingLevels,
   };
-}
-
-export function cssPixels(value: string): number {
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export { sessionThinkingMenuLevels };

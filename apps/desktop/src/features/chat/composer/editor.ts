@@ -343,10 +343,6 @@ function buildChipElement(
     thumbnail.alt = "";
     thumbnail.draggable = false;
     thumbnail.hidden = true;
-    thumbnail.width = 24;
-    thumbnail.height = 24;
-    thumbnail.style.objectFit = "cover";
-    thumbnail.style.borderRadius = "3px";
     thumbnail.addEventListener("error", () => { thumbnail.hidden = true; });
     chip.appendChild(thumbnail);
   }

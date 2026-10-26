@@ -382,8 +382,9 @@
   width: 100%;
   min-height: 3lh;
   max-height: 7lh;
-  overflow-y: hidden;
-  resize: none;
+  /* 由浏览器处理异步缩略图和换行后的溢出，避免滚动状态滞后。 */
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   border: 0;
   outline: none;
   background: transparent;
@@ -434,6 +435,14 @@
   display: inline-flex;
   flex: 0 0 auto;
   color: var(--ds-text-muted);
+}
+
+.composer-chip > img[data-image-reference] {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  object-fit: cover;
+  border-radius: 3px;
 }
 
 .composer-chip-name {
