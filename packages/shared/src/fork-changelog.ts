@@ -5,6 +5,12 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "内置按需配置参考文档，涵盖指令、技能、MCP 和子智能体；本地主智能体只接收一行入口，正文不常驻上下文。",
+  "修复长草稿粘贴图片后的滚动异常，并将长图缩略图限制在附件 chip 内。",
+  "精简 Responses 生图技能简介，减少不必要的服务名称触发接口关键词拦截。",
+  "修复连接与流式响应中断被误判为用户停止，以及 TLS 握手和证书问题被误判为密钥认证失败。",
+  "恢复会话时保留 MCP 资源正文和链接，减少原生 Pi 会话列表对未变化文件的重复解析。",
+  "升级时保护来源不明的旧会话标题，改善大字体模式按钮、深色文件查找框和桌宠焦点框显示。",
   "简化自定义服务密钥填写：新服务留空即无需密钥，编辑时保留旧密钥，支持查看及显式清除后保存。",
   "工作面板可收窄到更小宽度，为聊天区域留出更多空间。",
   "新增默认关闭的聊天内嵌可视化，支持交互图表、展开和主题跟随；关闭时保留文件，生成开关从下一次发送起生效。",
@@ -93,6 +99,12 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Bundle an on-demand configuration guide for instructions, skills, MCP and subagents; local main agents receive only a one-line entry point, without loading the document into every request.",
+  "Fix scrolling after pasting images into long drafts and keep tall-image thumbnails inside attachment chips.",
+  "Simplify the Responses image skill description to reduce keyword filtering triggered by unnecessary service names.",
+  "Distinguish connection and stream interruptions from user stops, and TLS handshake or certificate failures from credential rejection.",
+  "Restore MCP resource text and links with session history, and avoid repeatedly parsing unchanged native Pi session files.",
+  "Protect ambiguous legacy titles during upgrades and improve scaled mode buttons, dark file-search controls and pet focus outlines.",
   "Simplify custom endpoint API keys: leave new keys empty for no authentication, retain saved keys on edits, and keep reveal and explicit clear-on-save actions.",
   "Allow a narrower work panel to leave more room for chat.",
   "Add opt-in inline visualizations with interactive charts, expanded views and theme support; retain files when disabled and refresh generation settings on the next message.",
