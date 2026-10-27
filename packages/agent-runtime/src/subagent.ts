@@ -22,15 +22,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { mediaStore } from "./media-store.js";
+import { toolExecutionMode, withDynamicTaskExecutionMode } from "./tool-execution-policy.js";
 import {
   Agent,
   type AfterToolCallContext,
   type AfterToolCallResult,
+  type BeforeToolCallContext,
+  type BeforeToolCallResult,
   type AgentEvent,
   type AgentMessage,
   type AgentTool,
-  type BeforeToolCallContext,
-  type BeforeToolCallResult,
 } from "@earendil-works/pi-agent-core";
 import {
   isContextOverflow,
@@ -214,6 +215,8 @@ export type SubagentRunOptions = {
   /** Host-backed tools, built by the session runtime so a delegate's calls
    * take the exact same path as the parent's. */
   tools: AgentTool[];
+  /** Ordered preparation owned by this delegate, never the parent's prompt state. */
+  beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
   onEvent: (envelope: AgentEventEnvelope) => void;
   /**
    * Result of the parent's own `afterToolCall` bookkeeping for one call, so a
@@ -443,18 +446,33 @@ export class SubagentRun {
       // 每次模型请求都检查快照上下文，覆盖首次请求、恢复、重试与工具后续轮。
       transformContext: (messages, signal) => this.prepareRequestContext(messages, signal),
       afterToolCall: async (context) => this.afterToolCall(context),
-      beforeToolCall: async (context) => this.beforeToolCall(context),
-      // 引导不再结束本轮：TaskGuide 立即 steer 进当前轮，文本在下一个安全点注入子上下文，
-      // 本轮尚未开始的旧工具由 beforeToolCall 跳过。
+      beforeToolCall: async (context, signal) => {
+        const blocked = this.beforeToolCall(context);
+        if (blocked?.block) return blocked;
+        return this.opts.beforeToolCall?.(context, signal);
+      },
       initialState: {
         model: binding.model,
-        tools: opts.tools,
+        // Preserve the parent's provenance decision; a same-name extension must
+        // not inherit the builtin allowlist. Also reject unproven parallel hints.
+        tools: opts.tools.map((tool) =>
+          withDynamicTaskExecutionMode(
+            {
+              ...tool,
+              executionMode:
+                tool.executionMode === "parallel"
+                  ? toolExecutionMode(tool.name)
+                  : "sequential",
+            },
+            () => this.agent?.state.messages.at(-1),
+          ),
+        ),
         thinkingLevel: binding.agentThinkingLevel,
         messages: initialMessages.some((message) => message.role === "system")
           ? syncSystemTools(replaceSystemPrompt(initialMessages, opts.systemPrompt), opts.tools)
           : initialSystemTranscript(opts.systemPrompt, opts.tools, initialMessages),
       },
-      toolExecution: "sequential",
+      toolExecution: "parallel",
       // 同一安全点的多批指导一次注入，避免第二批又等一个轮次边界。
       steeringMode: "all",
     });
@@ -468,6 +486,11 @@ export class SubagentRun {
       current = Object.getPrototypeOf(current) as object | null;
     }
     return false;
+  }
+
+  setSystemPrompt(prompt: string): void {
+    this.opts.systemPrompt = prompt;
+    this.agent.state.messages = replaceSystemPrompt(this.agent.state.messages, prompt);
   }
 
   private setAgentMessages(messages: AgentMessage[]): void {
@@ -1296,7 +1319,7 @@ export class SubagentRun {
 
   /**
    * 把已受理的指导排入子代理当前轮：文本在下一个轮次边界注入模型上下文，
-   * 正在运行的工具不被强杀，本轮剩余的旧工具由 beforeToolCall 跳过。
+   * 正在运行的工具不被强杀，尚未进入执行批次的旧工具由 beforeToolCall 跳过。
    * 未运行（尚未开始或已在空档）时保持 accepted，由运行循环兜底送达。
    */
   private steerAcceptedGuides(): boolean {

@@ -2047,6 +2047,7 @@ sklm: {
     builtInCatalog: "models.dev",
     modelsDevCatalog: "models.dev",
     removeModel: "移除模型",
+    modelUnlistedHint: "最近一次完整模型列表未返回此模型。已保留配置，仍可在聊天中选择；是否可用以实际调用为准。",
     reorderModel: "调整 {{name}} 的顺序。拖动或使用上下方向键。",
     reorderProvider: "调整 {{name}} 的顺序。拖动或使用上下方向键。",
     serviceRowLabel: "{{name}}。按 Enter 编辑；拖动或使用上下方向键调整顺序。",
@@ -2522,6 +2523,8 @@ sklm: {
     pluginViews: "插件视图",
     openItems: "打开的资源",
     closeTab: "关闭{{name}}",
+    closeOtherTabs: "关闭其他标签页",
+    closeAllTabs: "关闭所有标签页",
     tabs: {
       review: "审阅",
       browser: "浏览器",

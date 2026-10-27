@@ -500,11 +500,21 @@ export function createSessionSlice({
                 thinkingLevel: selected.thinkingLevel,
               });
             } else {
-              void api.configureSession(id, {
+              // The active-session branch reports a refused write through its
+              // flush; a background session must not drop the pin silently,
+              // because the row keeps the optimistic value while the host
+              // reverts to the previous model on the next launch.
+              const pinWrite = api.configureSession(id, {
                 mode: selected.mode,
                 providerId: pin.providerId,
                 modelId: pin.modelId,
                 thinkingLevel: selected.thinkingLevel,
+              });
+              void pinWrite.catch((error) => {
+                get().showToast(
+                  error instanceof Error ? error.message : String(error),
+                  { variant: "error" },
+                );
               });
             }
           }

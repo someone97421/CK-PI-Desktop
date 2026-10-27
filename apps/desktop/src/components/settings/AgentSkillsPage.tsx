@@ -9,6 +9,7 @@ import {
 import { api } from "../../lib/api";
 import { useAppStore } from "../../stores/app-store";
 import { useHostCollection } from "../../hooks/use-host-collection";
+import { useRowBusy } from "../../hooks/use-row-busy";
 import {
   AgentCapabilityPage,
   AgentProjectPicker,
@@ -109,7 +110,7 @@ export function AgentSkillsPage() {
   const [filter, setFilter] = useState<CapabilityFilter>("all");
   const [importOpen, setImportOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const rowBusy = useRowBusy();
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [editor, setEditor] = useState<SkillEditorState | null>(null);
   const [view, setView] = useState<"skills" | "market">("skills");
@@ -210,9 +211,8 @@ export function AgentSkillsPage() {
    */
   const toggle = async (skill: UserSkillRecord, level: AgentCapabilityLevel) => {
     const key = rowKey(level, skill.id);
-    if (busyId === key || skill.documentStatus) return;
+    if (skill.documentStatus || !rowBusy.begin(key)) return;
     const next = !skill.enabled;
-    setBusyId(key);
     patchRow(level, skill.id, { enabled: next });
     try {
       await api.setUserSkillEnabled(skill.id, next, levelQuery(level));
@@ -226,15 +226,14 @@ export function AgentSkillsPage() {
       patchRow(level, skill.id, { enabled: skill.enabled });
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
-      setBusyId(null);
+      rowBusy.end(key);
     }
   };
 
   const toggleBuiltin = async (skill: BuiltinSkillRecord) => {
     const key = builtinRowKey(skill.id);
-    if (busyId === key) return;
+    if (!rowBusy.begin(key)) return;
     const next = !skill.enabled;
-    setBusyId(key);
     patchBuiltin(skill.id, { enabled: next });
     try {
       await api.setBuiltinSkillEnabled(skill.id, next);
@@ -248,7 +247,7 @@ export function AgentSkillsPage() {
       patchBuiltin(skill.id, { enabled: skill.enabled });
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
-      setBusyId(null);
+      rowBusy.end(key);
     }
   };
 
@@ -275,7 +274,7 @@ export function AgentSkillsPage() {
 
   const openEdit = async (skill: UserSkillRecord, level: AgentCapabilityLevel) => {
     const key = rowKey(level, skill.id);
-    setBusyId(key);
+    if (!rowBusy.begin(key)) return;
     try {
       const result = await api.readUserSkill(skill.id, levelQuery(level));
       setEditor({
@@ -286,7 +285,7 @@ export function AgentSkillsPage() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
-      setBusyId(null);
+      rowBusy.end(key);
     }
   };
 
@@ -330,7 +329,7 @@ export function AgentSkillsPage() {
 
   const remove = async (skill: UserSkillRecord, level: AgentCapabilityLevel) => {
     const key = rowKey(level, skill.id);
-    setBusyId(key);
+    if (!rowBusy.begin(key)) return;
     try {
       await api.removeUserSkill(skill.id, { ...levelQuery(level), path: skill.path });
       await load();
@@ -344,7 +343,7 @@ export function AgentSkillsPage() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
-      setBusyId(null);
+      rowBusy.end(key);
       setArmed(null);
     }
   };
@@ -357,7 +356,8 @@ export function AgentSkillsPage() {
       showToast(t("settings.selectProjectFirst"), { variant: "error" });
       return;
     }
-    setBusyId(sourceKind === "dir" ? "import-dir" : "import");
+    const importKey = sourceKind === "dir" ? "import-dir" : "import";
+    if (!rowBusy.begin(importKey)) return;
     try {
       const result = await api.importUserSkill({
         level,
@@ -390,7 +390,7 @@ export function AgentSkillsPage() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
-      setBusyId(null);
+      rowBusy.end(importKey);
     }
   };
 
@@ -447,7 +447,7 @@ export function AgentSkillsPage() {
       return;
     }
     const key = rowKey(level, skill.id);
-    setBusyId(key);
+    if (!rowBusy.begin(key)) return;
     try {
       const result = await api.transferUserSkill({
         id: skill.id,
@@ -470,14 +470,14 @@ export function AgentSkillsPage() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
-      setBusyId(null);
+      rowBusy.end(key);
     }
   };
 
   const renderRow = (skill: UserSkillRecord, level: AgentCapabilityLevel) => {
     const key = rowKey(level, skill.id);
     const name = skill.name || skill.id;
-    const busy = busyId === key;
+    const busy = rowBusy.isBusy(key);
     const isArmed = armed === key;
     // Both link flavours live outside this app's ownership, so neither opens
     // the editor and neither can move. An extra-path (`linked`) document is
@@ -620,7 +620,7 @@ export function AgentSkillsPage() {
   const renderBuiltinRow = (skill: BuiltinSkillRecord) => {
     const key = builtinRowKey(skill.id);
     const name = skill.name || skill.id;
-    const busy = busyId === key;
+    const busy = rowBusy.isBusy(key);
     return (
       <CapabilityRow
         key={key}
@@ -654,7 +654,7 @@ export function AgentSkillsPage() {
   const importButton = (level: AgentCapabilityLevel) => (
     <>
       <CapabilityButton
-        busy={busyId === "import"}
+        busy={rowBusy.isBusy("import")}
         title={
           level === "project"
             ? t("settings.capabilityImportToProject")
@@ -666,7 +666,7 @@ export function AgentSkillsPage() {
         {t("settings.importSkillFile")}
       </CapabilityButton>
       <CapabilityButton
-        busy={busyId === "import-dir"}
+        busy={rowBusy.isBusy("import-dir")}
         title={
           level === "project"
             ? t("settings.capabilityImportToProject")

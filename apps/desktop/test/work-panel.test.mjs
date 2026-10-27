@@ -301,7 +301,13 @@ test("work panel header exposes a scrollable tab strip and direct new-page actio
   );
   assert.doesNotMatch(pluginSurface, /isResizing/);
   assert.doesNotMatch(panelSource, /createPortal|newTabMenuRef|menuOpen/);
-  assert.doesNotMatch(panelSource, /onContextMenu|work-panel-context-menu/);
+  assert.match(panelSource, /onContextMenu=\{\(event\) =>/);
+  assert.match(panelSource, /id: "close-tab"/);
+  assert.match(panelSource, /id: "close-other-tabs"[\s\S]*?closeOtherTabsAndFocus\(tab\.id\)/);
+  assert.match(panelSource, /disabled: tabs\.length <= 1/);
+  assert.match(panelSource, /id: "close-all-tabs"[\s\S]*?closeAllTabsAndFocus/);
+  assert.match(panelSource, /<ContextMenu state=\{tabContextMenu\}/);
+  assert.doesNotMatch(panelSource, /work-panel-context-menu/);
   assert.doesNotMatch(globalStyles, /work-panel-new-menu|work-panel-menu-item|work-panel-open-dot/);
   assert.match(globalStyles, /\.work-panel-tab-strip \{[^}]*overflow-x:\s*auto;/s);
   assert.match(globalStyles, /\.work-panel-tab-strip \{[^}]*gap:\s*6px;/s);
@@ -541,8 +547,8 @@ test("file preview request ids stay unique across session contexts", () => {
     /const nextFileRequest = \(tab\?: WorkPanelTab\)[\s\S]*?createWorkPanelFileRequest\(tab, \+\+workPanelFileRequestSeq\)/,
   );
   assert.ok(
-    storeSource.match(/nextFileRequest\((?:tab|activeTab)\)/g)?.length === 4,
-    "open, replace, activation, and close paths must share the position-preserving request",
+    storeSource.match(/nextFileRequest\((?:tab|activeTab)\)/g)?.length === 5,
+    "open, replace, activation, close, and close-other paths must share the position-preserving request",
   );
   assert.doesNotMatch(storeSource, /seq:\s*\([^)]*fileRequest\?\.seq[^)]*\) \+ 1/);
 });

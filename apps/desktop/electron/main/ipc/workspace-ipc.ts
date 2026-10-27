@@ -348,11 +348,10 @@ export function registerWorkspaceIpc({
             .map((path) => resolve(path)),
         ),
       ];
-      if (safeFolders.some((path) => !existsSync(path) || !statSync(path).isDirectory())) {
-        throw Object.assign(new Error("project group folders must be directories"), {
-          errorCode: ErrorCodes.INVALID_ARGUMENT,
-        });
-      }
+      // No blanket existence pre-check here: the host validates the submitted
+      // roots (folders new to the group must exist on disk) while roots the
+      // group already owns may have been renamed or unmounted externally and
+      // must stay editable so the group can be healed (#1869).
       // The promoted primary must be one of the folders this call keeps.
       const safePrimary = primary ? resolve(primary) : "";
       if (safePrimary && !safeFolders.includes(safePrimary)) {

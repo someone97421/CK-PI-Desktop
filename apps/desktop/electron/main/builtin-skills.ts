@@ -5,6 +5,7 @@ import { GEN_UI_SKILL_ID } from "@pi-desktop/shared";
 import type { PluginSkillDef } from "@pi-desktop/agent-runtime";
 import type { LoadedSkillDocument } from "./skill-document";
 import { getModuleDirectory } from "./module-path";
+import { pluginWorkspaceContains } from "./plugin-workspace-contains";
 
 /**
  * Skills PI-Desktop ships itself.
@@ -68,8 +69,7 @@ export function isPluginWorkspace(
       // An unparseable manifest is not evidence either way.
     }
   }
-  const prefix = workspacePath.endsWith("/") ? workspacePath : `${workspacePath}/`;
-  return pluginPaths.some((path) => path === workspacePath || path.startsWith(prefix));
+  return pluginPaths.some((pluginPath) => pluginWorkspaceContains(workspacePath, pluginPath));
 }
 
 /** Front matter carries the skill's title and applicability line. */

@@ -271,9 +271,10 @@ export function ModelSelectionPanes({
   const visibleRows = useMemo(() => {
     // The service pane follows a live answer. Configured-only rows remain in
     // the chosen pane, including hand-typed IDs absent from discovery.
+    const listedRows = rows.filter((row) => row.info?.discoveryState !== "unlisted");
     const availableRows = discovery.source === "remote"
-      ? rows.filter((row) => row.info && row.info.source !== "user")
-      : rows;
+      ? listedRows.filter((row) => row.info && row.info.source !== "user")
+      : listedRows;
     const needle = modelQuery.trim().toLowerCase();
     if (!needle) return availableRows;
     return availableRows.filter(
@@ -674,6 +675,9 @@ export function ModelSelectionPanes({
                     <span className="provider-chosen-row-id font-mono selectable">
                       {binding.id}
                     </span>
+                    {info?.discoveryState === "unlisted" ? (
+                      <HelpIcon label={t("settings.modelUnlistedHint")} />
+                    ) : null}
                     {binding.alias?.trim() ? (
                       <span className="provider-chosen-row-alias">{binding.alias.trim()}</span>
                     ) : null}

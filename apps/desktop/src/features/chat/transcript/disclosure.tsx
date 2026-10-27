@@ -157,14 +157,14 @@ export function useAutomaticDisclosure(
   currentOpen.current = open;
 
   const ownsReading = useCallback(
-    () => ownsReadingPosition(titleRef.current, bodyRef.current),
+    () => ownsReadingPosition(bodyRef.current),
     [],
   );
   // Holder bookkeeping is synchronous with the DOM check, so a release event
   // right after a claim is never skipped by the hub's fast path.
   const [holder] = useState(() => ({}));
   const syncReading = useCallback(() => {
-    const owns = ownsReadingPosition(titleRef.current, bodyRef.current);
+    const owns = ownsReadingPosition(bodyRef.current);
     if (owns) readingHolders.add(holder);
     else readingHolders.delete(holder);
     setReading(owns);

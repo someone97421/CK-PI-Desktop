@@ -4,6 +4,7 @@ import {
   inferEndpointProfile,
   normalizeApiStyle,
   type ModelBinding,
+  type ModelInfo,
   type ProviderReorderInput,
   type OAuthRespondInput,
 } from "@pi-desktop/shared";
@@ -403,6 +404,18 @@ export function registerProviderIpc({
       } else {
         await modelsDevCatalog.ensureLoaded();
       }
+      type CachedModel = Pick<ModelInfo, "modelId" | "displayName"> & Partial<ModelInfo>;
+      const usesSavedDiscoveryEndpoint = provider
+        && baseUrl.replace(/\/+$/, "") === (provider.baseUrl ?? "").trim().replace(/\/+$/, "")
+        && apiStyle === (provider.apiStyle ?? "chat_completions");
+      const cachedModels = provider && (req.source === "cache" || usesSavedDiscoveryEndpoint)
+        ? (await host.call<{ models: CachedModel[] }>("providers.listModels", {
+            providerId: provider.id,
+          })).models ?? []
+        : [];
+      let discoveryStates = new Map(cachedModels.map((model) => [
+        model.modelId.trim().toLowerCase(), model.discoveryState,
+      ]));
       const decorate = (
         model: {
           modelId: string;
@@ -412,6 +425,7 @@ export function registerProviderIpc({
           contextWindow?: number;
           maxTokens?: number;
           source?: "bundled" | "discovered" | "user";
+          discoveryState?: ModelInfo["discoveryState"];
         },
         // Vendor accounts can span wire APIs, so a model may need a style of
         // its own rather than the row's. The endpoint is per call too: the live
@@ -460,6 +474,7 @@ export function registerProviderIpc({
           // Catalog enrichment must not turn a configured-only row into
           // evidence that the endpoint still serves it.
           source: model.source ?? info.source,
+          discoveryState: model.discoveryState ?? discoveryStates.get(model.modelId.trim().toLowerCase()),
           modelId: model.modelId,
           displayName: info.displayName || modelConfig.name,
           providerId: provider?.id ?? "",
@@ -504,7 +519,7 @@ export function registerProviderIpc({
         return [...discovered, ...extra];
       };
 
-      const cacheForCurrentProvider = async (models: unknown[]) => {
+      const cacheForCurrentProvider = async (models: unknown[], complete: boolean) => {
         if (!provider || req.source === "cache") return;
         const savedBaseUrl = (provider.baseUrl ?? "").trim().replace(/\/+$/, "");
         const requestBaseUrl = baseUrl.replace(/\/+$/, "");
@@ -523,10 +538,14 @@ export function registerProviderIpc({
             (latestProvider?.apiStyle ?? "chat_completions") === apiStyle &&
             latestProvider?.vendorKey === declaredVendorKey;
           if (endpointStillCurrent) {
-            await host!.call("providers.cacheModels", {
+            const cached = await host!.call<{ models: CachedModel[] }>("providers.cacheModels", {
               providerId: provider.id,
               models,
+              complete,
             });
+            discoveryStates = new Map((cached.models ?? []).map((model) => [
+              model.modelId.trim().toLowerCase(), model.discoveryState,
+            ]));
           }
         } catch (e) {
           logger.app("provider", "warn", "model cache update failed", {
@@ -551,6 +570,7 @@ export function registerProviderIpc({
                     {
                       modelId: option.modelId,
                       displayName: option.modelId,
+                      discoveryState: "published",
                     },
                     option.apiStyle,
                   ),
@@ -570,22 +590,13 @@ export function registerProviderIpc({
       }
 
       if (req.source === "cache" && provider) {
-        const cached = await host.call<{
-          models: Array<{
-            modelId: string;
-            displayName: string;
-            capabilities?: string[];
-            contextWindow?: number;
-            source?: "bundled" | "discovered" | "user";
-          }>;
-        }>("providers.listModels", { providerId: provider.id });
         // Keep every configured binding visible when the endpoint cache is
         // partial or empty. Decorating these ids through models.dev or generic
         // defaults preserves the per-model state for offline editing too.
-        const cachedById = new Map(cached.models.map((model) => [model.modelId, model]));
+        const cachedById = new Map(cachedModels.map((model) => [model.modelId.trim().toLowerCase(), model]));
         for (const binding of provider.models ?? []) {
-          if (!cachedById.has(binding.id)) {
-            cachedById.set(binding.id, {
+          if (!cachedById.has(binding.id.trim().toLowerCase())) {
+            cachedById.set(binding.id.trim().toLowerCase(), {
               modelId: binding.id,
               displayName: binding.id,
               source: "user" as const,
@@ -657,10 +668,12 @@ export function registerProviderIpc({
               ...(outcome.apiStyleHint ? { apiStyleHint: outcome.apiStyleHint } : {}),
               evidence: outcome.evidence.type,
             };
-            const models = outcome.models.map((model) => decorate(model));
+            const models = outcome.models.map((model) => decorate({
+              ...model, discoveryState: "published",
+            }));
             // Only what the endpoint actually served is cached; a configured id
             // it never offered must not be recorded as discovered.
-            await cacheForCurrentProvider(models);
+            await cacheForCurrentProvider(models, outcome.complete);
             return {
               models: withConfiguredBindings(models),
               source: "remote" as const,
@@ -709,7 +722,7 @@ export function registerProviderIpc({
       const fallback = fallbackModelId
         ? [decorate({ modelId: fallbackModelId, displayName: fallbackModelId })]
         : [];
-      return { models: fallback, source: "fallback", ...resolution, error: discoveryError };
+      return { models: withConfiguredBindings(fallback), source: "fallback", ...resolution, error: discoveryError };
     },
   );
 

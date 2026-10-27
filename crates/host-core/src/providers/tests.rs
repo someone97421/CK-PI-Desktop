@@ -960,6 +960,7 @@ fn discovered_models_are_cached_without_overwriting_user_rows() {
                 context_window: Some(128_000),
             },
         ],
+        true,
     )
     .unwrap();
     assert_eq!(changed, 2);
@@ -981,6 +982,7 @@ fn discovered_models_are_cached_without_overwriting_user_rows() {
                 context_window: None,
             },
         ],
+        true,
     )
     .unwrap();
 
@@ -1063,6 +1065,7 @@ fn deleting_a_binding_and_saving_forgets_its_cached_parameters() {
                 context_window: Some(64_000),
             },
         ],
+        true,
     )
     .unwrap();
     assert_eq!(list_models(&db, Some(&provider.id)).unwrap().len(), 3);
@@ -1163,12 +1166,56 @@ fn a_probe_answer_forgets_models_it_no_longer_publishes() {
         &db,
         &provider.id,
         &answer(&["model-a", "model-b", "custom-model"]),
+        true,
     )
     .unwrap();
     assert_eq!(list_models(&db, Some(&provider.id)).unwrap().len(), 4);
 
+    let original_bindings = get_provider(&db, &secrets, &provider.id)
+        .unwrap()
+        .unwrap()
+        .models;
     // The endpoint stopped publishing model-b.
-    cache_discovered_models(&db, &provider.id, &answer(&["model-a"])).unwrap();
+    cache_discovered_models(&db, &provider.id, &answer(&["model-a"]), true).unwrap();
+
+    let states = serde_json::to_value(list_models(&db, Some(&provider.id)).unwrap()).unwrap();
+    let state = |id: &str| {
+        states
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["modelId"] == id)
+            .unwrap()["discoveryState"]
+            .clone()
+    };
+    assert_eq!(
+        state("custom-model"),
+        "unlisted",
+        "saved bindings need durable discovery state"
+    );
+    assert_eq!(state("model-a"), "published");
+    assert!(
+        state("pinned-model").is_null(),
+        "user-owned rows are not reconciled"
+    );
+    assert_eq!(
+        get_provider(&db, &secrets, &provider.id)
+            .unwrap()
+            .unwrap()
+            .models,
+        original_bindings
+    );
+    let reopened = Database::open(&db.data_dir().join("pi.sqlite")).unwrap();
+    assert_eq!(
+        serde_json::to_value(list_models(&reopened, Some(&provider.id)).unwrap()).unwrap(),
+        states
+    );
+    cache_discovered_models(&db, &provider.id, &[], true).unwrap();
+    assert_eq!(
+        serde_json::to_value(list_models(&db, Some(&provider.id)).unwrap()).unwrap(),
+        states,
+        "an empty answer must not invalidate the last successful snapshot"
+    );
 
     let mut cached: Vec<String> = list_models(&db, Some(&provider.id))
         .unwrap()
@@ -1180,6 +1227,34 @@ fn a_probe_answer_forgets_models_it_no_longer_publishes() {
         cached,
         vec!["custom-model", "model-a", "pinned-model"],
         "the unpublished model goes with the answer; the user's rows stay"
+    );
+    cache_discovered_models(&db, &provider.id, &answer(&["new-page"]), false).unwrap();
+    let rows = list_models(&db, Some(&provider.id)).unwrap();
+    assert_eq!(
+        rows.iter()
+            .find(|row| row.model_id == "model-a")
+            .unwrap()
+            .discovery_state
+            .as_deref(),
+        Some("published")
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|row| row.model_id == "custom-model")
+            .unwrap()
+            .discovery_state
+            .as_deref(),
+        Some("unlisted")
+    );
+    cache_discovered_models(&db, &provider.id, &answer(&["custom-model"]), true).unwrap();
+    let rows = list_models(&db, Some(&provider.id)).unwrap();
+    assert_eq!(
+        rows.iter()
+            .find(|row| row.model_id == "custom-model")
+            .unwrap()
+            .discovery_state
+            .as_deref(),
+        Some("published")
     );
 }
 
@@ -1230,6 +1305,7 @@ fn changing_the_endpoint_forgets_the_discovered_answer() {
                 context_window: Some(32_000),
             },
         ],
+        true,
     )
     .unwrap();
     assert_eq!(list_models(&db, Some(&provider.id)).unwrap().len(), 2);
@@ -1270,6 +1346,29 @@ fn changing_the_endpoint_forgets_the_discovered_answer() {
         .map(|model| model.model_id)
         .collect();
     assert_eq!(cached, vec!["model-a"]);
+    let reset = list_models(&db, Some(&provider.id)).unwrap();
+    assert!(reset.iter().all(|model| model.discovery_state.is_none()));
+    cache_discovered_models(
+        &db,
+        &provider.id,
+        &[DiscoveredModelInput {
+            model_id: "new-endpoint-model".into(),
+            display_name: "New".into(),
+            capabilities: vec![],
+            context_window: None,
+        }],
+        true,
+    )
+    .unwrap();
+    let rows = list_models(&db, Some(&provider.id)).unwrap();
+    assert!(
+        rows.iter()
+            .find(|model| model.model_id == "model-a")
+            .unwrap()
+            .discovery_state
+            .is_none(),
+        "the new endpoint never published the old configured id"
+    );
 }
 
 #[test]

@@ -1819,6 +1819,76 @@ fn project_group_update_switches_the_primary_root() {
 }
 
 #[test]
+fn project_group_update_allows_a_root_renamed_away_externally() {
+    // #1869: when a group folder is renamed (or unmounted) outside the app,
+    // editing the group must still be able to keep the stale root while its
+    // replacement is added, and must be able to drop the stale root afterwards.
+    let dir = tempfile::tempdir().unwrap();
+    let stale = dir.path().join("stale");
+    let replacement = dir.path().join("replacement");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::create_dir_all(&replacement).unwrap();
+    let db = Database::open(&dir.path().join("pi.sqlite")).unwrap();
+    let group = db
+        .create_project_group("Renamed away", &[stale.to_string_lossy().into()])
+        .unwrap();
+    let canonical_stale = crate::db::canonical_project_path(&stale.to_string_lossy()).unwrap();
+    let canonical_replacement =
+        crate::db::canonical_project_path(&replacement.to_string_lossy()).unwrap();
+
+    // The folder is renamed externally after the group stored it.
+    std::fs::remove_dir_all(&stale).unwrap();
+
+    // Keeping the stale root while adding and promoting its replacement must
+    // not be blocked by the on-disk directory check. The submission uses the
+    // stored spelling, exactly as the edit dialog echoes the root back.
+    let updated = db
+        .update_project_group(
+            &group.id,
+            "Renamed away",
+            &[
+                replacement.to_string_lossy().into(),
+                canonical_stale.clone(),
+            ],
+            Some(&canonical_replacement),
+        )
+        .expect("a root the group already owns may be missing on disk");
+    assert_eq!(updated.primary_path, canonical_replacement);
+    assert_eq!(updated.roots.len(), 2);
+    assert_eq!(updated.roots[0].path, canonical_replacement);
+    assert_eq!(updated.roots[1].path, canonical_stale);
+
+    // A later edit can drop the stale root entirely, healing the group.
+    let healed = db
+        .update_project_group(
+            &group.id,
+            "Renamed away",
+            &[replacement.to_string_lossy().into()],
+            Some(&canonical_replacement),
+        )
+        .expect("the stale root can be dropped from the group");
+    assert_eq!(healed.roots.len(), 1);
+    assert_eq!(healed.roots[0].path, canonical_replacement);
+    assert!(healed.detached_paths.contains(&canonical_stale));
+
+    // A folder that is new to the group must still exist on disk.
+    let missing = dir.path().join("missing");
+    assert!(db
+        .update_project_group(
+            &group.id,
+            "Renamed away",
+            &[
+                replacement.to_string_lossy().into(),
+                missing.to_string_lossy().into(),
+            ],
+            Some(&canonical_replacement),
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("not a directory"));
+}
+
+#[test]
 fn remove_project_from_group_detaches_even_with_chats_and_may_move_primary() {
     let dir = tempfile::tempdir().unwrap();
     let primary = dir.path().join("primary");
@@ -2161,4 +2231,32 @@ fn session_index_migration_preserves_records_and_reopens() {
         assert!(index_sql.contains("sessions(updated_at DESC, id DESC)"));
         assert_eq!(db.get_project_memory("/workspace/index-check").unwrap().content, "保留业务记录");
     }
+}
+
+#[test]
+fn v24_model_discovery_upgrade_preserves_rows_and_reopens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pi.sqlite");
+    {
+        let db = Database::open(&path).unwrap();
+        db.conn().execute_batch("ALTER TABLE models DROP COLUMN discovery_state;
+            INSERT INTO providers(id, name, type, protocol, auth_kind, config_json, created_at, updated_at)
+            VALUES ('fixture', 'Fixture', 'openai_compatible', 'openai_compatible', 'none', '{}', 1, 1);
+            INSERT INTO models(provider_id, model_id, display_name, source, updated_at)
+            VALUES ('fixture', 'known', 'Known', 'discovered', 1), ('fixture', 'manual', 'Manual', 'user', 1);
+            PRAGMA user_version = 24;").unwrap();
+    }
+    let db = Database::open(&path).unwrap();
+    assert_eq!(schema_version(db.conn()), SCHEMA_VERSION);
+    assert!(migration_backup_path(&path, 24).exists());
+    let models = crate::providers::list_models(&db, Some("fixture")).unwrap();
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0].discovery_state.as_deref(), Some("published"));
+    assert!(models[1].discovery_state.is_none());
+    drop(db);
+    let db = Database::open(&path).unwrap();
+    assert_eq!(
+        crate::providers::list_models(&db, Some("fixture")).unwrap(),
+        models
+    );
 }

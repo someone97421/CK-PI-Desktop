@@ -29,6 +29,11 @@ import { pluginViewIcon, pluginViewInitial } from "../../lib/plugin-view-icons";
 import { useAppStore } from "../../stores/app-store";
 import type { WorkPanelTab } from "../../stores/app-store";
 import { cx } from "../ui";
+import {
+  ContextMenu,
+  useContextMenu,
+  type ContextMenuItem,
+} from "../ContextMenu";
 import { TooltipButton } from "../ui";
 import type { IconProps } from "../icons";
 import {
@@ -219,6 +224,11 @@ function LocalWorkPanel({
 }) {
   const { t } = useTranslation();
   const blockingOverlayActive = useBlockingOverlayActive();
+  const {
+    contextMenu: tabContextMenu,
+    openContextMenu: openTabContextMenu,
+    closeContextMenu: closeTabContextMenu,
+  } = useContextMenu();
   const rawTabs = useAppStore((s) => s.workPanelTabs);
   const tabs = rawTabs.filter(isKnownWorkPanelTab);
   const activeTabId = useAppStore((s) => s.activeWorkPanelTabId);
@@ -230,6 +240,8 @@ function LocalWorkPanel({
   const reorderTabs = useAppStore((s) => s.reorderWorkPanelTabs);
   const closeTab = useAppStore((s) => s.closeWorkPanelTab);
   const openWorkPanelTab = useAppStore((s) => s.openWorkPanelTab);
+  const closeOtherTabs = useAppStore((s) => s.closeOtherWorkPanelTabs);
+  const closeAllTabs = useAppStore((s) => s.closeAllWorkPanelTabs);
   const openNewWorkPanelTab = useAppStore((s) => s.openNewWorkPanelTab);
   const replaceWorkPanelTab = useAppStore((s) => s.replaceWorkPanelTab);
   const setWidth = useAppStore((s) => s.setWorkPanelWidth);
@@ -661,6 +673,17 @@ function LocalWorkPanel({
     });
   }, [onCloseSubagentPanel, subagentPanel?.delegationId]);
 
+  const closeOtherTabsAndFocus = useCallback(
+    (tabId: string) => {
+      closeOtherTabs(tabId);
+      requestAnimationFrame(() => tabButtonRefs.current[tabId]?.focus());
+    },
+    [closeOtherTabs],
+  );
+  const closeAllTabsAndFocus = useCallback(() => {
+    closeAllTabs();
+    requestAnimationFrame(() => newTabButtonRef.current?.focus());
+  }, [closeAllTabs]);
   const onTabKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLButtonElement>, tabId: string) => {
       const index = tabs.findIndex((tab) => tab.id === tabId);
@@ -932,6 +955,31 @@ function LocalWorkPanel({
                       // revealing opacity is not enough when the control sits
                       // outside the strip, so bring the whole box in first.
                       onPointerEnter={() => revealTab(tab.id)}
+                      onContextMenu={(event) => {
+                        const items: ContextMenuItem[] = [
+                          {
+                            id: "close-tab",
+                            label: t("panel.closeTab", { name: label }),
+                            onSelect: () => closeTabAndFocus(tab.id),
+                          },
+                          {
+                            id: "close-other-tabs",
+                            label: t("panel.closeOtherTabs"),
+                            disabled: tabs.length <= 1,
+                            separatorBefore: true,
+                            onSelect: () => closeOtherTabsAndFocus(tab.id),
+                          },
+                          {
+                            id: "close-all-tabs",
+                            label: t("panel.closeAllTabs"),
+                            onSelect: closeAllTabsAndFocus,
+                          },
+                        ];
+                        openTabContextMenu(event, {
+                          label: t("panel.tabsLabel"),
+                          items,
+                        });
+                      }}
                       key={tab.id}
                     >
                       <button
@@ -1136,6 +1184,7 @@ function LocalWorkPanel({
           )}
         </div>
       </div>
+      <ContextMenu state={tabContextMenu} onClose={closeTabContextMenu} />
     </aside>
   );
 }

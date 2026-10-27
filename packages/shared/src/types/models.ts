@@ -330,6 +330,8 @@ export type ModelInfo = {
   cost?: ModelCost;
   interleaved?: ModelInterleaved;
   status?: string;
+  /** Last endpoint-list membership; absence is unknown, not an inference failure. */
+  discoveryState?: "published" | "unlisted";
   /** Provider-local upstream metadata, including models.dev adapter details. */
   provider?: ModelProviderMetadata;
   /** Model metadata extension published by models.dev. */

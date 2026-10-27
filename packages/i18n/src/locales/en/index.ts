@@ -2075,6 +2075,7 @@ sklm: {
     builtInCatalog: "models.dev",
     modelsDevCatalog: "models.dev",
     removeModel: "Remove model",
+    modelUnlistedHint: "The latest complete model list did not include this model. Its configuration is preserved and it remains selectable in chat; availability depends on the actual request.",
     reorderModel: "Reorder {{name}}. Drag or use the Up and Down arrow keys.",
     reorderProvider: "Reorder {{name}}. Drag or use the Up and Down arrow keys.",
     serviceRowLabel: "{{name}}. Press Enter to edit; drag or use the Up and Down arrow keys to reorder.",
@@ -2550,6 +2551,8 @@ sklm: {
     pluginViews: "Plugin views",
     openItems: "Open resources",
     closeTab: "Close {{name}}",
+    closeOtherTabs: "Close other tabs",
+    closeAllTabs: "Close all tabs",
     tabs: {
       review: "Review",
       browser: "Browser",

@@ -83,4 +83,80 @@ describe("PathMutex", () => {
     held.resolve();
     await expect(first).resolves.toBe(1);
   });
+
+  it("allows concurrent reads on the same path while serializing reads against writes", async () => {
+    const mutex = new PathMutex();
+    const order: string[] = [];
+    const r1Gate = deferred();
+    const r2Gate = deferred();
+    const wGate = deferred();
+    const r3Gate = deferred();
+
+    const r1 = mutex.read("src/app.ts", async () => {
+      order.push("r1:start");
+      await r1Gate.promise;
+      order.push("r1:end");
+    });
+    const r2 = mutex.read("./src/App.ts", async () => {
+      order.push("r2:start");
+      await r2Gate.promise;
+      order.push("r2:end");
+    });
+    const w = mutex.run("src/app.ts", async () => {
+      order.push("w:start");
+      await wGate.promise;
+      order.push("w:end");
+    });
+    const r3 = mutex.read("src/app.ts", async () => {
+      order.push("r3:start");
+      await r3Gate.promise;
+      order.push("r3:end");
+    });
+    const r4 = mutex.read("src/app.ts", async () => {
+      order.push("r4:start");
+      await r3Gate.promise;
+      order.push("r4:end");
+    });
+
+    // `r1` and `r2` overlap; `w` waits for both; `r3` and `r4` wait for `w`.
+    expect(order).toEqual(["r1:start", "r2:start"]);
+    r1Gate.resolve();
+    await r1;
+    expect(order).toEqual(["r1:start", "r2:start", "r1:end"]);
+
+    r2Gate.resolve();
+    await r2;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order).toEqual(["r1:start", "r2:start", "r1:end", "r2:end", "w:start"]);
+
+    wGate.resolve();
+    await w;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order).toEqual([
+      "r1:start",
+      "r2:start",
+      "r1:end",
+      "r2:end",
+      "w:start",
+      "w:end",
+      "r3:start",
+      "r4:start",
+    ]);
+
+    r3Gate.resolve();
+    await Promise.all([r3, r4]);
+    expect(order).toEqual([
+      "r1:start",
+      "r2:start",
+      "r1:end",
+      "r2:end",
+      "w:start",
+      "w:end",
+      "r3:start",
+      "r4:start",
+      "r3:end",
+      "r4:end",
+    ]);
+    expect(mutex.busy).toBe(false);
+  });
 });

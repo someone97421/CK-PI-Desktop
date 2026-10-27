@@ -5,6 +5,8 @@ import {
   activateWorkPanelTabState,
   browserPluginTab,
   browserTabLabel,
+  closeAllWorkPanelTabsState,
+  closeOtherWorkPanelTabsState,
   closeWorkPanelTabState,
   createWorkPanelFileRequest,
   emptyWorkPanelContext,
@@ -114,6 +116,8 @@ export function createWorkPanelSlice({
   | "activateWorkPanelTab"
   | "reorderWorkPanelTabs"
   | "closeWorkPanelTab"
+  | "closeOtherWorkPanelTabs"
+  | "closeAllWorkPanelTabs"
   | "collapseWorkPanel"
   | "resetWorkPanelContext"
   | "setWorkPanelWidth"
@@ -127,6 +131,27 @@ export function createWorkPanelSlice({
   const nextFileRequest = (tab?: WorkPanelTab): WorkPanelContext["fileRequest"] => {
     if (!tab || tab.kind !== "file" || !tab.resource) return null;
     return createWorkPanelFileRequest(tab, ++workPanelFileRequestSeq);
+  };
+  const closeBrowserWorkPanelTab = (sessionId: string, tabId: string) => {
+    void api.pluginViewClose("pi.browser", "browser", { sessionId, tabId })
+      .catch((error) => get().showToast(String(error), { variant: "error" }));
+  };
+  const releaseSideChatTabs = (state: AppState, tabs: WorkPanelTab[]) => {
+    let sideChats = state.sideChats;
+    const released = new Set<string>();
+    for (const tab of tabs) {
+      const sessionId = sideChatTabSessionId(tab);
+      if (!sessionId) continue;
+      const next = removeSideChat(sideChats, sessionId);
+      if (next !== sideChats) released.add(sessionId);
+      sideChats = next;
+    }
+    return {
+      sideChats,
+      sideChatTranscripts: released.size
+        ? Object.fromEntries(Object.entries(state.sideChatTranscripts).filter(([id]) => !released.has(id)))
+        : state.sideChatTranscripts,
+    };
   };
 
   return {
@@ -321,9 +346,11 @@ export function createWorkPanelSlice({
   },
   closeWorkPanelTab: (tabId) => {
     const current = get();
-    if (current.activeSessionId && current.workPanelTabs.some((tab) => tab.id === tabId && tab.resource === "pi.browser/browser")) {
-      void api.pluginViewClose("pi.browser", "browser", { sessionId: current.activeSessionId, tabId })
-        .catch((error) => get().showToast(String(error), { variant: "error" }));
+    const browserTab = current.workPanelTabs.find(
+      (tab) => tab.id === tabId && tab.resource === "pi.browser/browser",
+    );
+    if (current.activeSessionId && browserTab) {
+      closeBrowserWorkPanelTab(current.activeSessionId, browserTab.id);
     }
     set((state) => {
       const sessionId = state.activeSessionId;
@@ -369,6 +396,72 @@ export function createWorkPanelSlice({
           [sessionId]: nextContext,
         },
       };
+    });
+  },
+  closeOtherWorkPanelTabs: (tabId) => {
+    const current = get();
+    const sessionId = current.activeSessionId;
+    if (!sessionId) return;
+    const state = {
+      tabs: current.workPanelTabs,
+      activeTabId: current.activeWorkPanelTabId,
+    };
+    const next = closeOtherWorkPanelTabsState(state, tabId);
+    if (next === state) return;
+    for (const tab of state.tabs) {
+      if (tab.id !== tabId && tab.resource === "pi.browser/browser") {
+        closeBrowserWorkPanelTab(sessionId, tab.id);
+      }
+    }
+    const activeTab = next.tabs.find((tab) => tab.id === next.activeTabId);
+    const fileRequest = nextFileRequest(activeTab) ?? current.workPanelFileRequest;
+    const nextContext: WorkPanelContext = {
+      open: current.workPanelOpen,
+      tabs: next.tabs,
+      activeTabId: next.activeTabId,
+      fileRequest,
+    };
+    set({
+      ...releaseSideChatTabs(current, state.tabs.filter((tab) => tab.id !== tabId)),
+      workPanelTabs: next.tabs,
+      activeWorkPanelTabId: next.activeTabId,
+      workPanelFileRequest: fileRequest,
+      workPanelContexts: {
+        ...current.workPanelContexts,
+        [sessionId]: nextContext,
+      },
+    });
+  },
+  closeAllWorkPanelTabs: () => {
+    const current = get();
+    const sessionId = current.activeSessionId;
+    if (!sessionId) return;
+    const state = {
+      tabs: current.workPanelTabs,
+      activeTabId: current.activeWorkPanelTabId,
+    };
+    const next = closeAllWorkPanelTabsState(state);
+    if (next === state) return;
+    for (const tab of state.tabs) {
+      if (tab.resource === "pi.browser/browser") {
+        closeBrowserWorkPanelTab(sessionId, tab.id);
+      }
+    }
+    const nextContext: WorkPanelContext = {
+      open: current.workPanelOpen,
+      tabs: next.tabs,
+      activeTabId: next.activeTabId,
+      fileRequest: null,
+    };
+    set({
+      ...releaseSideChatTabs(current, state.tabs),
+      workPanelTabs: next.tabs,
+      activeWorkPanelTabId: next.activeTabId,
+      workPanelFileRequest: null,
+      workPanelContexts: {
+        ...current.workPanelContexts,
+        [sessionId]: nextContext,
+      },
     });
   },
   collapseWorkPanel: () => {
@@ -449,7 +542,11 @@ export function createWorkPanelSlice({
     );
     if (!hasBrowser) {
       if (/^https?:\/\//i.test(url.trim())) {
-        void api.browserOpenExternal(url.trim());
+        // `shell.openExternal` rejects when the OS has no handler or a policy
+        // blocks the URL; without this the click looked like a no-op.
+        void api
+          .browserOpenExternal(url.trim())
+          .catch((error) => get().showToast(String(error), { variant: "error" }));
       }
       return;
     }

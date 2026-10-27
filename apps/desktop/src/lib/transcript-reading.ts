@@ -33,6 +33,19 @@ export const TRANSCRIPT_PAGE_SIZE = 100;
 export const TRANSCRIPT_SEARCH_PAGE_SIZE = 60;
 export const TRANSCRIPT_CONTENT_LIMIT = 64 * 1024;
 
+/** Reading ownership is independent of whether its range reaches live output. */
+export function isTranscriptAtLiveTail(
+  live: readonly UiMessage[],
+  messages: readonly UiMessage[],
+  view?: TranscriptView,
+): boolean {
+  if (view?.focus || view?.hasMoreAfter) return false;
+  // The canonical surface must show first-event waits even before it has rows.
+  if (!view) return true;
+  const tailId = live.at(-1)?.id;
+  return Boolean(tailId) && messages.at(-1)?.id === tailId;
+}
+
 export function transcriptViewFromSession(
   session: SessionDetail,
   focus: TranscriptSearchTarget | null = null,

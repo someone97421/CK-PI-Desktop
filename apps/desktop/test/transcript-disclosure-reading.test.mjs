@@ -36,7 +36,7 @@ test("automatic disclosure does not claim a reading position", () => {
   assert.doesNotMatch(claimBody, /choices\.set/);
   assert.match(
     disclosure,
-    /if \(!choice && previousDerived\.current && !derivedOpen && ownsReading\(\)\) setReading\(true\);/,
+    /if \(!choice && previousDerived\.current && !derivedOpen && ownsReading\(\)\) \{\s*readingHolders\.add\(holder\);\s*setReading\(true\);/,
   );
   const revealEffect = disclosure.match(
     /useLayoutEffect\(\(\) => \{\s*if \(revealRequest === undefined[\s\S]*?\n  \}, \[choices, key, scope\.reveal, revealRequest\]\);/,
@@ -195,4 +195,18 @@ test("a nested owner holds its own position and passes the hold outward", () => 
   // Growing the dock grows the transcript's content too, so an outer scroller
   // still in follow mode would drag the same title away.
   assert.match(anchorControl, /outerNotifier\?\.\(title\);/);
+});
+
+test("a level's reading protection is restricted to its body and excludes its title toggle", () => {
+  // Focus on the toggle header itself must not mark the level as 'reading'
+  // and force it open prematurely before click completes.
+  assert.match(
+    disclosure,
+    /const ownsReading = useCallback\(\s*\(\) => ownsReadingPosition\(bodyRef\.current\),\s*\[\],\s*\);/,
+  );
+  assert.match(
+    disclosure,
+    /const syncReading = useCallback\(\(\) => \{\s*const owns = ownsReadingPosition\(bodyRef\.current\);\s*if \(owns\) readingHolders\.add\(holder\);\s*else readingHolders\.delete\(holder\);\s*setReading\(owns\);\s*\}, \[holder\]\);/,
+  );
+  assert.doesNotMatch(disclosure, /ownsReadingPosition\(titleRef\.current/);
 });

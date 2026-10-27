@@ -178,6 +178,9 @@ pub struct ModelBinding {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCatalogItem {
+    /// Endpoint-list membership, not proof of whether inference will succeed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discovery_state: Option<String>,
     pub provider_id: String,
     pub model_id: String,
     pub display_name: String,

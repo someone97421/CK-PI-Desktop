@@ -28,7 +28,7 @@ const temp = await mkdtemp(join(tmpdir(), "pi-tab-close-"));
 
 try {
   const styles = await Promise.all(
-    ["tokens", "base", "chat-shell", "work-panel"].map((name) =>
+    ["tokens", "base", "chat-shell", "ui-kit", "work-panel"].map((name) =>
       readFile(join(root, `apps/desktop/src/styles/${name}.css`), "utf8"),
     ),
   );
@@ -71,7 +71,7 @@ app.whenReady().then(async () => {
   win.webContents.on("console-message", (event) => console.error(event.message));
   try {
     await win.loadFile(path.join(__dirname, "index.html"));
-    for (const stage of ["narrow-active", "resize-same-tab", "hover-inactive"]) {
+    for (const stage of ["narrow-active", "resize-same-tab", "hover-inactive", "context-menu-user-path"]) {
       const result = await win.webContents.executeJavaScript(
         "window.tabCloseProbe(" + JSON.stringify(stage) + ")");
       console.log("TAB_CLOSE " + JSON.stringify(result));
@@ -99,9 +99,16 @@ app.whenReady().then(async () => {
     .split("\n")
     .filter((line) => line.startsWith("TAB_CLOSE "))
     .map((line) => JSON.parse(line.slice("TAB_CLOSE ".length)));
-  assert.equal(results.length, 3, "expected three probe stages");
+  assert.equal(results.length, 4, "expected three geometry stages and one context-menu user path");
 
   for (const result of results) {
+    if (result.stage === "context-menu-user-path") {
+      assert.equal(result.passed, true, "tab context-menu user path failed");
+      assert.equal(result.remainingTabs, 0, "Close All Tabs did not empty the strip");
+      assert.equal(result.activeTabId, null, "Close All Tabs retained an active tab");
+      console.log("context menu user path: PASS");
+      continue;
+    }
     console.log(
       `${result.stage}: strip [${result.stripLeft.toFixed(1)}, ${result.stripRight.toFixed(1)}] ` +
         `clientWidth=${result.stripClientWidth} ` +

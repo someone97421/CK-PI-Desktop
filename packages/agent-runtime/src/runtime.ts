@@ -4,6 +4,8 @@ import {
   mutationTerminationAdvice, mutationTerminationMessage,
 } from "./mutation-recovery.js";
 import { resolveMcpToolSelection } from "./mcp-tool-selection.js";
+import { toolExecutionMode, withDynamicTaskExecutionMode } from "./tool-execution-policy.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { TOOL_ACTIVATION_SECTION, toolDeclarationPolicy, toolActivationSection, restoredToolActivation, syncToolActivation, type ToolDeclarationPolicy } from "./fixed-tool-declarations.js";
 import { orderSystemRows, SystemTranscriptJournal } from "./system-transcript-journal.js";
 import { planWorkspaceRequiredResult } from "./plan-workspace-error.js";
@@ -191,7 +193,7 @@ import {
   providerRequestKey,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
-import { PathMutex } from "./path-lock.js";
+import { normalizeLockPath, PathMutex } from "./path-lock.js";
 import { readMediaToolResult, type ToolInputCapabilities } from "./read-media.js";
 import { mediaStore } from "./media-store.js";
 import { clampOutputToContext, effectiveModelContextWindow, estimateOutputCapInputTokens, requestTranscript } from "./output-cap.js";
@@ -516,6 +518,8 @@ export type DelegationRecord = {
   parentToolCallId?: string;
   run?: SubagentRun;
   delegationId: string;
+  /** True when the delegate declares file-mutating tools (`Write` / `Edit`). */
+  writable?: boolean;
   /**
    * Chain id under which host-core keeps this Write/Edit subagent's own git
    * worktree in an isolated session (ADR 0329); absent otherwise.
@@ -1776,6 +1780,10 @@ export class DesktopAgentRuntime {
   private commandShell: CommandShellOption;
   private baseProjectInstructions?: ProjectInstructions;
   private projectInstructions?: ProjectInstructions;
+  /** Weak argument identity binds preparation to the exact validated call, without retained IDs. */
+  private preparedPathToolArgs = new WeakMap<object, unknown>();
+  private builtinTools = new WeakSet<AgentTool>();
+  private instructionExecution = new AsyncLocalStorage<(instructions: ProjectInstructions | undefined) => void>();
   private projectMemory?: string;
   /** Per-prompt claims prevent repeated path-resolution RPCs for one directory. */
   private pathInstructionClaims = new Map<
@@ -2265,12 +2273,9 @@ Delegation rules:
       // Plan transitions must be the only tool call in an assistant batch.
       // Sequential execution also makes the host-confirmed mode change visible
       // before the next model request in the same run.
-      beforeToolCall: (context) => this.beforeToolCall(context),
-      // Every tool except `Task` carries `executionMode: "sequential"`, and pi
-      // runs a batch sequentially as soon as it contains one such tool. So the
-      // only batch that actually runs concurrently is a batch of nothing but
-      // `Task` calls — subagent fan-out (ADR 0062) — and every existing tool
-      // ordering guarantee is untouched.
+      beforeToolCall: (context, signal) => this.beforeToolCall(context, signal),
+      // pi prepares the entire parallel batch in source order before launching
+      // execution. Any sequential member still makes the whole batch sequential.
       toolExecution: "parallel",
       steeringMode: "all",
       // A queued renderer prompt ends a completed turn at the next boundary.
@@ -2656,6 +2661,7 @@ Delegation rules:
 
   private async beforeToolCall(
     context: BeforeToolCallContext,
+    signal?: AbortSignal,
   ): Promise<BeforeToolCallResult | undefined> {
     if (this.deferredToolNames.has(context.toolCall.name) && !this.activeDeferredToolNames.has(context.toolCall.name)) {
       return { block: true, reason: `Call ${TOOL_SEARCH_NAME} to activate ${context.toolCall.name} before using it.` };
@@ -2677,7 +2683,10 @@ Delegation rules:
       if (!this.isToolAllowedInMode(context.toolCall.name)) {
         return { block: true, reason: modeToolDenial(context.toolCall.name, this.mode) };
       }
-      return this.extensionToolCall(context);
+      const blocked = await this.extensionToolCall(context);
+      if (blocked?.block) return blocked;
+      await this.preparePathToolCall(context, undefined, undefined, undefined, signal);
+      return undefined;
     }
     const submitKind = submitToolKind(context.toolCall.name);
     if (submitKind && this.mode !== submitKind) {
@@ -3446,7 +3455,6 @@ Delegation rules:
                 workspaceRoot ?? this.projectPath ?? this.scratchDir,
               )
           : undefined;
-        await this.loadPathInstructions(toolName, params, worktreeKey);
         const isBash = toolName === "Bash";
         const timeoutMs = isBash ? commandTimeoutMs(params) : undefined;
         let progress = "";
@@ -3872,14 +3880,32 @@ Delegation rules:
         // this line — the lock key, the host call, the transcript record — sees
         // canonical argument names only (D273).
         execute: async (toolCallId, rawParams, signal, onUpdate) => {
-          const params = normalizeToolParams(toolName, rawParams);
+          const prepared = typeof rawParams === "object" && rawParams !== null
+            && this.preparedPathToolArgs.has(rawParams);
+          const params = prepared
+            ? this.preparedPathToolArgs.get(rawParams as object)
+            : normalizeToolParams(toolName, rawParams);
+          if (prepared) this.preparedPathToolArgs.delete(rawParams as object);
           requireAliasedParams(toolName, params);
-          return PATH_MUTATING_TOOLS.has(toolName)
-            ? this.writeLocks.run(
-                isRecord(params) ? String(params.path ?? "") : "",
-                () => run(toolCallId, params, signal, onUpdate),
-              )
-            : run(toolCallId, params, signal, onUpdate);
+          if (READ_ONLY_CORE_TOOLS.has(toolName)) {
+            await this.waitForBatchWritableDelegations(toolCallId, signal);
+          }
+          // Direct/internal invocations retain preflight. pi invocations have
+          // already committed instructions in the ordered preparation phase.
+          if (!prepared) await this.loadPathInstructions(toolName, params, this.delegateWorktrees.get(toolCallId), this.instructionExecution.getStore());
+          if (PATH_MUTATING_TOOLS.has(toolName)) {
+            return this.writeLocks.run(
+              this.pathLockKey(toolCallId, params),
+              () => run(toolCallId, params, signal, onUpdate),
+            );
+          }
+          if (toolName === "Read") {
+            return this.writeLocks.read(
+              this.pathLockKey(toolCallId, params),
+              () => run(toolCallId, params, signal, onUpdate),
+            );
+          }
+          return run(toolCallId, params, signal, onUpdate);
         },
       };
     };
@@ -3957,6 +3983,7 @@ Delegation rules:
       tools.push("PluginScaffold", "PluginPack", "GenerateImages", ...Object.keys(scheduledToolParameters));
     }
     const builtins = tools.map(exec);
+    for (const tool of builtins) this.builtinTools.add(tool);
     const jevTools: AgentTool[] =
       this.mode === "agent" && this.jevApiKey
         ? [createJevClassifierTool(this.jevApiKey)]
@@ -4032,6 +4059,7 @@ Delegation rules:
             this.buildSubagentResumeTool(),
           ]
         : [];
+    for (const tool of subagentTools) this.builtinTools.add(tool);
     const contextTools = this.compactionEnabled
       ? [this.buildContextCompactionTool()]
       : [];
@@ -4061,23 +4089,26 @@ Delegation rules:
     for (const tool of this.buildToolDefinitions()) {
       if (!this.isToolAllowedInMode(tool.name) && !retainModeToolDeclaration(tool.name)) continue;
       // The execution mode is decided here, in one place, so no tool can grow
-      // an accidental parallel batch: everything is sequential except `Task`.
-      // pi runs a whole batch sequentially when it holds one sequential tool,
-      // so only an all-`Task` batch fans out.
+      // an accidental parallel batch: unknown tools remain sequential.
+      // pi runs a whole batch sequentially when it holds one sequential tool;
+      // the batch-level policy also keeps Task mixed with file reads behind
+      // the delegate completion boundary.
       // The provider-facing schema is settled here too, at the single origin of
       // every tool, so the session agent and a delegated `Task` run send the
       // same declaration (#864).
-      catalog.set(
-        tool.name,
+      const builtin = this.builtinTools.has(tool);
+      const catalogTool = withDynamicTaskExecutionMode(
         withModeExecutionGuard(
           withExplicitRequired({
             ...tool,
-            executionMode:
-              tool.name === SUBAGENT_TOOL_NAME ? "parallel" : "sequential",
+            executionMode: builtin ? toolExecutionMode(tool.name) : "sequential",
           }),
           () => this.isToolAllowedInMode(tool.name) ? undefined : modeToolDenial(tool.name, this.mode),
         ),
+        () => this.agent?.state.messages.at(-1),
       );
+      if (builtin) this.builtinTools.add(catalogTool);
+      catalog.set(tool.name, catalogTool);
     }
     this.toolCatalog = catalog;
     this.deferredToolNames = new Set(
@@ -4418,7 +4449,7 @@ Delegation rules:
    * collaboration rules are deliberately left out — a delegate has no user to
    * talk to, and its report format is set by `composeSubagentSystemPrompt`.
    */
-  private subagentGuidance(definition: SubagentDefinition, worktreeKey?: string): string[] {
+  private subagentGuidance(definition: SubagentDefinition, worktreeKey?: string, instructions: ProjectInstructions | null | undefined = this.baseProjectInstructions): string[] {
     const tools = new Set(
       resolveSubagentToolNames(definition, [...this.toolCatalog.keys()]),
     );
@@ -4445,7 +4476,7 @@ Delegation rules:
       const skillsPrompt = pluginSkillsPrompt(this.pluginSkills);
       if (skillsPrompt) blocks.push(skillsPrompt);
     }
-    const projectPrompt = projectInstructionsPrompt(this.projectInstructions);
+    const projectPrompt = projectInstructionsPrompt(instructions ?? undefined);
     if (this.workspaceRoot) blocks.push(isolatedWorkspaceGuidance());
     const workspace = (worktreeKey ? this.delegateWorkspaceRoots.get(worktreeKey) : undefined) ?? this.workspaceRoot;
     if (workspace) blocks.push(`Workspace: ${workspace}`);
@@ -4651,6 +4682,7 @@ Delegation rules:
           sessionId: this.sessionId,
           parentToolCallId: toolCallId,
           delegationId,
+          writable: declaredToolNames.some((name) => PATH_MUTATING_TOOLS.has(name)),
           taskTurnId: this.turnId,
           agentName: definition.name,
           modelId: provider.modelId,
@@ -4720,10 +4752,11 @@ Delegation rules:
           record.pendingBegin = undefined;
         }
         try {
+          const preparation = this.delegatePathPreparation(record, definition, tools, reportIntervalSteps);
           const scopedTools = this.scopeDelegateTools(tools, definition, delegationId, () => record.run?.inputCapabilities ?? {
             supportsVision: visionFromModelConfig(provider.modelConfig),
             ...mediaCapabilitiesForProvider(provider),
-          }, worktreeKey);
+          }, worktreeKey, preparation.applyInstructions);
           record.run = new SubagentRun({
           delegationId,
           reportIntervalSteps,
@@ -4762,6 +4795,7 @@ Delegation rules:
             toolNames: declaredToolNames,
           }),
           tools: scopedTools,
+          beforeToolCall: preparation.beforeToolCall,
           onEvent: (envelope) => {
             this.noteDelegationActivity(record, envelope);
             this.onEvent(envelope);
@@ -4827,6 +4861,30 @@ Delegation rules:
 
   }
 
+  private delegatePathPreparation(
+    record: DelegationRecord,
+    definition: SubagentDefinition,
+    tools: AgentTool[],
+    reportIntervalSteps: number,
+  ) {
+    const builtinToolNames = new Set(tools.filter((tool) => this.builtinTools.has(tool)).map((tool) => tool.name));
+    const applyInstructions = (instructions: ProjectInstructions | undefined) => {
+      record.run?.setSystemPrompt(composeSubagentSystemPrompt({
+        definition,
+        reportIntervalSteps,
+        guidance: this.subagentGuidance(definition, record.worktreeKey, instructions ?? null),
+        toolNames: tools.map((tool) => tool.name),
+      }));
+    };
+    return {
+      applyInstructions,
+      beforeToolCall: async (context: BeforeToolCallContext, signal?: AbortSignal) => {
+        await this.preparePathToolCall(context, applyInstructions, builtinToolNames, record.worktreeKey, signal);
+        return undefined;
+      },
+    };
+  }
+
   /** 按子代理隔离权限、媒体输入能力与编辑恢复计数。 */
   private scopeDelegateTools(
     tools: AgentTool[],
@@ -4834,6 +4892,7 @@ Delegation rules:
     mutationOwner: string,
     getInputCapabilities: () => ToolInputCapabilities,
     worktreeKey?: string,
+    applyInstructions?: (instructions: ProjectInstructions | undefined) => void,
   ): AgentTool[] {
     const scope = definition.permission ?? DEFAULT_SUBAGENT_PERMISSION;
     return tools.map((tool) => ({
@@ -4844,7 +4903,10 @@ Delegation rules:
         this.mutationOwners.set(toolCallId, mutationOwner);
         if (worktreeKey) this.delegateWorktrees.set(toolCallId, worktreeKey);
         try {
-          return await tool.execute(toolCallId, args, signal, onUpdate);
+          return await this.instructionExecution.run(
+            applyInstructions ?? (() => undefined),
+            () => tool.execute(toolCallId, args, signal, onUpdate),
+          );
         } finally {
           this.delegatePermissionScopes.delete(toolCallId);
           this.delegateInputCapabilities.delete(toolCallId);
@@ -5862,10 +5924,11 @@ Delegation rules:
             const tools = declaredToolNames
               .map((name) => this.toolCatalog.get(name))
               .filter((tool): tool is AgentTool => tool !== undefined);
+            const preparation = this.delegatePathPreparation(record, definition, tools, cp.observer.interval);
             const scopedTools = this.scopeDelegateTools(tools, definition, record.delegationId, () => record.run?.inputCapabilities ?? {
               supportsVision: visionFromModelConfig(provider!.modelConfig),
               ...mediaCapabilitiesForProvider(provider!),
-            }, record.worktreeKey);
+            }, record.worktreeKey, preparation.applyInstructions);
 
             const thinkingLevel: SubagentThinkingLevel =
               definition.thinkingLevel === "omit"
@@ -5902,6 +5965,7 @@ Delegation rules:
                 toolNames: declaredToolNames,
               }),
               tools: scopedTools,
+              beforeToolCall: preparation.beforeToolCall,
               onEvent: (envelope) => {
                 this.noteDelegationActivity(record, envelope);
                 this.onEvent(envelope);
@@ -6640,10 +6704,96 @@ Delegation rules:
     }
   }
 
+  private pathLockKey(toolCallId: string, params: unknown): string {
+    const rawPath = isRecord(params) ? normalizeLockPath(params.path) : "";
+    if (!rawPath) return "";
+    const worktreeKey = this.delegateWorktrees.get(toolCallId);
+    return worktreeKey ? `${worktreeKey}\0${rawPath}` : rawPath;
+  }
+
+  /**
+   * When a parent assistant message mixes `Task` with `Read`/`Glob`/`Grep`, any
+   * read ordered after a writable `Task` in that same message waits for the
+   * preceding writable delegation(s) from that message to settle before reading
+   * the workspace, while `Task` itself still returns its ADR 0089 started state.
+   */
+  private async waitForBatchWritableDelegations(
+    toolCallId: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!toolCallId || this.mutationOwners.has(toolCallId)) return;
+    const messages = this.agent?.state.messages ?? [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+      const toolCalls = message.content.filter(
+        (block): block is Extract<AssistantMessage["content"][number], { type: "toolCall" }> =>
+          block.type === "toolCall",
+      );
+      const currentIndex = toolCalls.findIndex((call) => call.id === toolCallId);
+      if (currentIndex < 0) continue;
+      if (currentIndex === 0) return;
+      const precedingTaskIds = new Set(
+        toolCalls
+          .slice(0, currentIndex)
+          .filter((call) => call.name === SUBAGENT_TOOL_NAME)
+          .map((call) => call.id),
+      );
+      if (precedingTaskIds.size === 0) return;
+      const running = [...this.delegations.values()].filter(
+        (record) =>
+          record.status === "running" &&
+          record.writable === true &&
+          record.parentToolCallId !== undefined &&
+          precedingTaskIds.has(record.parentToolCallId),
+      );
+      if (running.length === 0) return;
+      const completions = Promise.all(running.map((record) => record.completion));
+      if (!signal) {
+        await completions;
+        return;
+      }
+      if (signal.aborted) return;
+      await new Promise<void>((resolve) => {
+        const onAbort = () => resolve();
+        signal.addEventListener("abort", onAbort, { once: true });
+        void completions.finally(() => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        });
+      });
+      return;
+    }
+  }
+
+  private async preparePathToolCall(
+    context: BeforeToolCallContext,
+    apply?: (instructions: ProjectInstructions | undefined) => void,
+    builtinToolNames?: ReadonlySet<string>,
+    worktreeKey?: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const name = context.toolCall.name;
+    const selected = context.context?.tools?.find((tool) => tool.name === name);
+    const builtin = builtinToolNames ? builtinToolNames.has(name) : selected && this.builtinTools.has(selected);
+    if (!builtin || signal?.aborted) return;
+    if (!builtinToolNames && READ_ONLY_CORE_TOOLS.has(name)) {
+      await this.waitForBatchWritableDelegations(context.toolCall.id, signal);
+    }
+    if (signal?.aborted || !PATH_SCOPED_INSTRUCTION_TOOLS.has(name)) return;
+    const params = normalizeToolParams(name, context.args);
+    requireAliasedParams(name, params);
+    await this.loadPathInstructions(name, params, worktreeKey, apply);
+    if (typeof context.args === "object" && context.args !== null) {
+      this.preparedPathToolArgs.set(context.args, params);
+    }
+  }
+
   private async loadPathInstructions(
     toolName: string,
     params: unknown,
     delegationId?: string,
+    apply?: (instructions: ProjectInstructions | undefined) => void,
   ): Promise<void> {
     if (this.remoteWorkspace || !PATH_SCOPED_INSTRUCTION_TOOLS.has(toolName)) {
       return undefined;
@@ -6680,7 +6830,7 @@ Delegation rules:
     // Rules are scoped to the file currently being accessed. Rebuild the
     // complete chain so sibling-directory rules never leak into one another
     // and edits to an existing instruction file take effect immediately.
-    this.applyProjectInstructions(
+    (apply ?? ((instructions) => this.applyProjectInstructions(instructions)))(
       resolved.fallback ? this.baseProjectInstructions : resolved.instructions,
     );
   }

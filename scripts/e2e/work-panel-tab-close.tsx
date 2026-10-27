@@ -29,8 +29,15 @@ type CloseGeometry = {
   hitIsClose: boolean;
   hitIsDescendant: boolean;
 };
+
+type TabContextMenuPathResult = {
+  stage: "context-menu-user-path";
+  passed: true;
+  remainingTabs: number;
+  activeTabId: string | null;
+};
 declare global {
-  var tabCloseProbe: (stage: string) => Promise<CloseGeometry>;
+  var tabCloseProbe: (stage: string) => Promise<CloseGeometry | TabContextMenuPathResult>;
 }
 
 const assert = (condition: unknown, message: string) => {
@@ -131,8 +138,115 @@ function measure(stage: string): CloseGeometry {
   };
 }
 
+async function runTabContextMenuUserPath(): Promise<TabContextMenuPathResult> {
+  useAppStore.setState({
+    workPanelOpen: true,
+    workPanelTabs: [],
+    activeWorkPanelTabId: null,
+    workPanelFileRequest: null,
+    workPanelContexts: {},
+  });
+  renderPanel(1000);
+  openManyLongTabs(3);
+  await rendered();
+
+  const tabIds = () =>
+    [...host.querySelectorAll<HTMLElement>(".work-panel-tab")].map(
+      (tab) => tab.dataset.workPanelTabId,
+    );
+  const initialIds = tabIds();
+  assert(initialIds.length === 3, "fixture did not create three tabs");
+  const firstId = initialIds[0];
+  const secondId = initialIds[1];
+  if (!firstId || !secondId) throw new Error("fixture tab ids are missing");
+
+  const openTabMenu = async (tabId: string, keyboard = false) => {
+    const wrapper = host.querySelector<HTMLElement>(
+      `[data-work-panel-tab-id="${CSS.escape(tabId)}"]`,
+    );
+    assert(wrapper, "target tab wrapper is missing");
+    const tabButton = wrapper!.querySelector<HTMLElement>("[role=tab]");
+    assert(tabButton, "target tab button is missing");
+    window.getSelection()?.removeAllRanges();
+    if (keyboard) tabButton!.focus({ preventScroll: true });
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: keyboard ? 0 : 24,
+      clientY: keyboard ? 0 : 24,
+    });
+    flushSync(() => wrapper!.dispatchEvent(event));
+    assert(event.defaultPrevented, "tab context menu did not prevent the platform menu");
+    await rendered();
+    const menu = document.body.querySelector<HTMLElement>('[role="menu"]');
+    assert(
+      menu,
+      `tab context menu did not open (menus=${document.body.querySelectorAll("[role=menu]").length}; tabs=${host.querySelectorAll(".work-panel-tab").length})`,
+    );
+    assert(
+      menu!.getAttribute("aria-label") === "Side panel tabs",
+      "tab context menu label was not localized",
+    );
+    return menu!;
+  };
+  const menuItem = (menu: HTMLElement, id: string) => {
+    const item = menu.querySelector<HTMLButtonElement>(
+      `[data-context-menu-item="${id}"]`,
+    );
+    assert(item, "missing context-menu item " + id);
+    return item!;
+  };
+
+  let menu = await openTabMenu(firstId, true);
+  document.activeElement?.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+  );
+  await rendered();
+  assert(
+    (document.activeElement as HTMLElement | null)?.dataset.contextMenuItem ===
+      "close-other-tabs",
+    "ArrowDown did not move focus through the tab menu",
+  );
+  document.activeElement?.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  await rendered();
+  assert(!document.body.querySelector('[role="menu"]'), "Escape did not close the tab menu");
+
+  menu = await openTabMenu(firstId);
+  flushSync(() => menuItem(menu, "close-tab").click());
+  await rendered();
+  assert(!tabIds().includes(firstId), "Close Tab left the target tab open");
+
+  menu = await openTabMenu(secondId);
+  flushSync(() => menuItem(menu, "close-other-tabs").click());
+  await rendered();
+  assert(tabIds().length === 1 && tabIds()[0] === secondId, "Close Other Tabs did not retain its target");
+  assert(activeTabId() === secondId, "Close Other Tabs did not activate its target");
+
+  menu = await openTabMenu(secondId);
+  assert(menuItem(menu, "close-other-tabs").disabled, "Close Other Tabs must be disabled for one tab");
+  flushSync(() => menuItem(menu, "close-all-tabs").click());
+  await rendered();
+  assert(tabIds().length === 0, "Close All Tabs left resources open");
+  assert(useAppStore.getState().activeWorkPanelTabId === null, "Close All Tabs retained an active tab");
+  assert(useAppStore.getState().workPanelOpen, "Close All Tabs collapsed the work panel");
+  assert(host.querySelector('[data-testid="work-panel-empty"]'), "Close All Tabs did not show the New launcher");
+
+  return {
+    stage: "context-menu-user-path",
+    passed: true,
+    remainingTabs: tabIds().length,
+    activeTabId: useAppStore.getState().activeWorkPanelTabId,
+  };
+}
+
 globalThis.tabCloseProbe = async (stage) => {
   await ready;
+  if (stage === "context-menu-user-path") {
+    await ready;
+    return runTabContextMenuUserPath();
+  }
 
   if (stage === "narrow-active") {
     renderPanel(900);

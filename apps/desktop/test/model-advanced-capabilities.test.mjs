@@ -174,7 +174,7 @@ test("a configured model keeps its published record when discovery omits it", ()
   // Discovery stays the authority on what the service offers: only the rows it
   // returned are cached as discovered.
   const liveReturn = mainSource.slice(
-    mainSource.indexOf("await cacheForCurrentProvider(models);"),
+    mainSource.indexOf("await cacheForCurrentProvider(models, outcome.complete);"),
   );
   assert.match(liveReturn.slice(0, 260), /models: withConfiguredBindings\(models\)/);
 });

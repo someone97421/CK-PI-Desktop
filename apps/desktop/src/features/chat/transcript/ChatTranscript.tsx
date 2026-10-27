@@ -58,6 +58,8 @@ type ChatTranscriptProps = {
   paneVisible?: boolean;
   searchTarget?: TranscriptSearchTarget | null;
   readingWindow?: boolean;
+  /** The displayed range includes this session's canonical live tail. */
+  liveTail?: boolean;
   onRestoreReading?: RestoreTranscriptReading;
   hasMoreAfter?: boolean;
   onLoadNewer?: () => Promise<void>;
@@ -93,6 +95,7 @@ function TranscriptBody({
   paneVisible = true,
   searchTarget = null,
   readingWindow = false,
+  liveTail = !readingWindow,
   onRestoreReading,
   hasMoreAfter = false,
   onLoadNewer,
@@ -104,7 +107,7 @@ function TranscriptBody({
   const openTranscriptMenu = useTranscriptMenu();
   const { copyText, selectText } = useChatTextActions();
   const showToast = useAppStore((state) => state.showToast);
-  const transcriptRunning = isRunning && !readingWindow;
+  const transcriptRunning = isRunning && liveTail;
   const transcriptReadOnly = useContext(TranscriptReadOnlyContext);
   const sessionTitle = useActiveSessionTitle();
   const latestTurnResult = useAppStore((state) =>
@@ -156,7 +159,8 @@ function TranscriptBody({
     compactions,
     hasMoreBefore,
     onLoadOlder,
-    isRunning: transcriptRunning,
+    // Rejoining live output is not a new turn: keep the reader's scroll owner.
+    isRunning: isRunning && !readingWindow,
     pendingPermission,
     askPending,
     approvalPending,
@@ -332,7 +336,7 @@ function TranscriptBody({
               {t("chat.loadLaterMessages")}
             </button>
           ) : null}
-          {!readingWindow ? (
+          {liveTail ? (
             <TurnOutcomeCard
               messages={messages}
               result={latestTurnResult}

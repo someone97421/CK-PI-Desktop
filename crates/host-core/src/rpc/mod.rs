@@ -79,6 +79,8 @@ struct JsonRpcNotification {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CacheModelsParams {
+    #[serde(default)]
+    complete: bool,
     provider_id: String,
     models: Vec<DiscoveredModelInput>,
 }
@@ -2651,9 +2653,13 @@ async fn handle_request(
             let input: CacheModelsParams = serde_json::from_value(params)
                 .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
             let st = state.lock().await;
-            let cached =
-                providers::cache_discovered_models(&st.db, &input.provider_id, &input.models)
-                    .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            let cached = providers::cache_discovered_models(
+                &st.db,
+                &input.provider_id,
+                &input.models,
+                input.complete,
+            )
+            .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             let models = providers::list_models(&st.db, Some(&input.provider_id))
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             Ok(json!({ "cached": cached, "models": models }))

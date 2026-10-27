@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { Type } from "typebox";
 import { type Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream,
@@ -37,6 +38,7 @@ import {
 } from "./provider-retry.js";
 import { getGlobalDispatcher } from "undici";
 import { describeProviderFetchFailure } from "./provider-transport-recovery.js";
+import { resolveBatchExecutionMode } from "./tool-execution-policy.js";
 /**
  * The delegate loop itself is covered in `subagent.test.ts`; here only the
  * `Task` wiring around it is under test, so `SubagentRun` is replaced by a
@@ -61,6 +63,7 @@ vi.mock("./subagent.js", async (importOriginal) => {
     SubagentRun: class {
       private signal?: AbortSignal;
       readonly observation: InstanceType<typeof SubagentObserver>;
+      private options: any;
       constructor(options: unknown) {
         if (subagentRuns.constructorError !== undefined) {
           throw subagentRuns.constructorError;
@@ -69,10 +72,14 @@ vi.mock("./subagent.js", async (importOriginal) => {
         this.observation = new SubagentObserver(opts.delegationId ?? opts.parentToolCallId,
           opts.definition.reportIntervalSteps ?? opts.reportIntervalSteps, "definition", () => {});
         subagentRuns.calls.push(options);
+        this.options = options;
         // Per-instance: concurrent delegates must abort on their own signal.
         this.signal = (options as { signal?: AbortSignal }).signal;
       }
       stop(source: "user" | "parent" | "session") { this.observation.stop(source); }
+      setSystemPrompt(prompt: string) {
+        this.options.systemPrompt = prompt;
+      }
       run() {
         if (subagentRuns.deferred) {
           return new Promise((resolve) => {
@@ -287,6 +294,160 @@ function runtimeTool(runtime: DesktopAgentRuntime, name: string): AgentTool {
   return tool;
 }
 
+describe("ordered read preparation", () => {
+  it.each([
+    ["Bash", false], ["Write", false], ["Edit", false], ["Bash", true],
+  ] as const)("keeps Read/%s/Read sequential (Stop=%s)", async (middle, stop) => {
+    const entered: string[] = [];
+    const release = new Map<string, (result: unknown) => void>();
+    const host = { call: vi.fn(async (method: string, args: any) => {
+      if (method === "project.instructions.resolve") return { entries: [] };
+      if (method !== "tools.execute") return undefined;
+      entered.push(args.toolCallId);
+      return new Promise(resolve => release.set(args.toolCallId, resolve));
+    }) };
+    const runtime = createRuntime({ host });
+    const internal = runtime as any;
+    let requests = 0;
+    internal.models = { streamSimple: () => {
+      const first = ++requests === 1;
+      const message = assistantMessage({ content: first ? [
+        { type: "toolCall", id: "first", name: "Read", arguments: { path: "a.txt" } },
+        { type: "toolCall", id: "middle", name: middle, arguments: middle === "Bash"
+          ? { command: "echo fixture" } : middle === "Write"
+            ? { path: "a.txt", content: "fixture" } : { path: "a.txt", tag: "ABCD", ops: "PUT >$:\n+fixture" } },
+        { type: "toolCall", id: "last", name: "Read", arguments: { path: "a.txt" } },
+      ] : [{ type: "text", text: "done" }], stopReason: first ? "toolUse" : "stop" }) as AssistantMessage;
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({ type: "start", partial: message });
+        stream.push({ type: "done", reason: first ? "toolUse" : "stop", message });
+        stream.end(message);
+      });
+      return stream;
+    } };
+    let pending: ReturnType<DesktopAgentRuntime["prompt"]> | undefined;
+    try {
+      pending = runtime.prompt("Run the mixed batch.");
+      await vi.waitFor(() => expect(entered).toEqual(["first"]));
+      await Promise.resolve();
+      expect(entered).toEqual(["first"]);
+      release.get("first")!({ ok: true, content: "before" });
+      await vi.waitFor(() => expect(entered).toEqual(["first", "middle"]));
+      const aborting = stop ? runtime.abort() : undefined;
+      release.get("middle")!({ ok: true, content: "after" });
+      await aborting;
+      if (!stop) {
+        await vi.waitFor(() => expect(entered).toEqual(["first", "middle", "last"]));
+        release.get("last")!({ ok: true, content: "after" });
+      }
+      await pending;
+      expect(entered).toEqual(stop ? ["first", "middle"] : ["first", "middle", "last"]);
+    } finally {
+      await runtime.abort();
+      for (const resolve of release.values()) resolve({ ok: true, content: "cleanup" });
+      await pending;
+      await runtime.dispose();
+    }
+  });
+
+  it("prepares sibling instructions in order, overlaps execution and preserves result IDs", async () => {
+    const entered: string[] = [];
+    const resolvers = new Map<string, (value: unknown) => void>();
+    const requests: AgentMessage[][] = [];
+    const host = {
+      call: vi.fn(async (method: string, args: any) => {
+        if (method === "project.instructions.resolve") {
+          return { entries: [{ source: `${args.path}/AGENTS.md`, content: `rules:${args.path}` }] };
+        }
+        if (method === "tools.execute") {
+          entered.push(args.toolCallId);
+          return new Promise((resolve) => resolvers.set(args.toolCallId, resolve));
+        }
+        return undefined;
+      }),
+    };
+    const runtime = createRuntime({ host });
+    const internal = runtime as any;
+    internal.models = {
+      streamSimple: (_model: unknown, context: { messages: AgentMessage[] }) => {
+        requests.push([...context.messages]);
+        const first = requests.length === 1;
+        const message = assistantMessage({
+          content: first
+            ? ["a", "b"].map((id) => ({ type: "toolCall", id, name: "Read", arguments: { path: `${id}/file.ts` } }))
+            : [{ type: "text", text: "done" }],
+          stopReason: first ? "toolUse" : "stop",
+        }) as AssistantMessage;
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => {
+          stream.push({ type: "start", partial: message });
+          stream.push({ type: "done", reason: first ? "toolUse" : "stop", message });
+          stream.end(message);
+        });
+        return stream;
+      },
+    };
+    try {
+      const pending = runtime.prompt("Read both files.", "user-parallel", "turn-parallel");
+      await vi.waitFor(() => expect(entered).toEqual(["a", "b"]));
+      // Both entered before either result is released: no timing-based assertion.
+      expect(host.call.mock.calls.filter(([method]) => method === "project.instructions.resolve").map(([, args]) => args.path))
+        .toEqual(["a/file.ts", "b/file.ts"]);
+      expect(internal.agent.state.systemPrompt).toContain("rules:b/file.ts");
+      expect(internal.agent.state.systemPrompt).not.toContain("rules:a/file.ts");
+      resolvers.get("b")!({ ok: true, content: "B" });
+      await Promise.resolve();
+      resolvers.get("a")!({ ok: true, content: "A" });
+      await pending;
+      expect(requests[1].filter((message) => message.role === "toolResult").map((message: any) => message.toolCallId))
+        .toEqual(["a", "b"]);
+      expect(internal.agent.state.systemPrompt).toContain("rules:b/file.ts");
+    } finally {
+      for (const resolve of resolvers.values()) resolve({ ok: true, content: "cleanup" });
+      await runtime.dispose();
+    }
+  });
+
+  it("keeps a delegate's direct-call instruction updates out of the parent", async () => {
+    const host = { call: vi.fn(async (method: string, args: any) => method === "project.instructions.resolve"
+      ? { entries: [{ source: "AGENTS.md", content: `rules:${args.path}` }] }
+      : { ok: true, content: "read" }) };
+    const runtime = createRuntime({ host });
+    const internal = runtime as any;
+    const apply = vi.fn();
+    const childTools = internal.scopeDelegateTools([runtimeTool(runtime, "Read")], { permission: "default" }, "child", () => ({ supportsVision: false }), undefined, apply);
+    try {
+      await runtimeTool(runtime, "Read").execute("parent-read", { path: "parent/a.ts" });
+      await childTools[0].execute("child-read", { path: "child/b.ts" });
+      expect(apply).toHaveBeenCalledWith({ entries: [{ source: "AGENTS.md", content: "rules:child/b.ts" }] });
+      expect(internal.agent.state.systemPrompt).toContain("rules:parent/a.ts");
+      expect(internal.agent.state.systemPrompt).not.toContain("rules:child/b.ts");
+    } finally { await runtime.dispose(); }
+  });
+
+  it("prepares delegated reads against the child's prompt and reuses canonical arguments", async () => {
+    const host = { call: vi.fn(async (method: string, args: any) => method === "project.instructions.resolve"
+      ? { entries: [{ source: "AGENTS.md", content: `rules:${args.path}` }] }
+      : { ok: true, content: "read" }) };
+    const runtime = createRuntime({ host, subagents: [{ name: "reader", description: "Read", tools: ["Read"], prompt: "Read", source: "builtin" }] });
+    subagentRuns.calls.length = 0;
+    try {
+      await runtimeTool(runtime, "Task").execute("task-prepared", { agent: "reader", task: "Read the child file.", reportIntervalSteps: 32 });
+      const child = subagentRuns.calls[0];
+      const args = { file_path: "child/file.ts" };
+      await child.beforeToolCall({ toolCall: { name: "Read", id: "child-prepared" }, args });
+      expect(child.systemPrompt).toContain("rules:child/file.ts");
+      expect((runtime as any).agent.state.systemPrompt).not.toContain("rules:child/file.ts");
+      await child.tools.find((tool: AgentTool) => tool.name === "Read").execute("child-prepared", args);
+      expect(host.call.mock.calls.filter(([method]) => method === "project.instructions.resolve")).toHaveLength(1);
+      expect(host.call).toHaveBeenCalledWith("tools.execute", expect.objectContaining({
+        toolCallId: "child-prepared", args: { path: "child/file.ts" },
+      }));
+    } finally { await runtime.dispose(); }
+  });
+});
+
 /** Minimal pi-ai assistant message; overrides carry the shape under test. */
 function assistantMessage(overrides: {
   content: unknown[];
@@ -312,6 +473,330 @@ function assistantMessage(overrides: {
     content: overrides.content,
   };
 }
+
+describe("Task/read batch execution policy", () => {
+  const message = (...names: string[]) => assistantMessage({
+    content: names.map((name, index) => ({
+      type: "toolCall",
+      id: `call-${index}`,
+      name,
+      arguments: {},
+    })),
+  }) as AssistantMessage;
+
+  it.each([
+    [["Task", "Read"], "sequential"],
+    [["Task", "Glob"], "sequential"],
+    [["Task", "Grep"], "sequential"],
+    [["Task", "Task"], undefined],
+    [["Read", "Read"], undefined],
+    [["Read", "Glob", "Grep"], undefined],
+  ] as const)("resolves %j to %s", (names, expected) => {
+    expect(resolveBatchExecutionMode(message(...names))).toBe(expected);
+  });
+});
+
+describe("Task/read mixed-batch safety", () => {
+  /** A parent Task call; the delegate it starts is settled by the test. */
+  function taskCall(id: string) {
+    return {
+      type: "toolCall",
+      id,
+      name: "Task",
+      arguments: { agent: "explorer", task: "Edit target.txt.", reportIntervalSteps: 32 },
+    };
+  }
+
+  /** A parent read/search of the workspace the delegate is expected to edit. */
+  function readCall(id: string, name: "Read" | "Glob" | "Grep" = "Read") {
+    return {
+      type: "toolCall",
+      id,
+      name,
+      arguments:
+        name === "Read"
+          ? { path: "target.txt" }
+          : { path: ".", pattern: "target*" },
+    };
+  }
+
+  /**
+   * A parent turn whose first assistant message issues `calls` as one batch.
+   * Every `tools.execute` stays pending until the test releases it, so each
+   * assertion is about dispatch order and never about elapsed time.
+   */
+  function setupMixedBatch(
+    calls: unknown[] = [taskCall("task"), readCall("read")],
+  ) {
+    const entered: string[] = [];
+    const events: any[] = [];
+    const releases = new Map<string, (result: unknown) => void>();
+    const host = {
+      call: vi.fn(async (method: string, args: any) => {
+        if (method === "project.instructions.resolve") return { entries: [] };
+        if (method !== "tools.execute") return undefined;
+        entered.push(args.toolCallId);
+        return new Promise((resolve) => { releases.set(args.toolCallId, resolve); });
+      }),
+    };
+    const runtime = createRuntime({
+      host,
+      onEvent: (envelope) => { events.push((envelope as any).event); },
+      subagents: [{
+        name: "explorer",
+        description: "Explore files.",
+        tools: ["Read", "Write", "Edit"],
+        prompt: "Explore files.",
+        source: "builtin",
+      }],
+    });
+    const internal = runtime as any;
+    let requests = 0;
+    internal.models = {
+      streamSimple: () => {
+        const first = ++requests === 1;
+        const message = assistantMessage({
+          content: first ? calls : [{ type: "text", text: "done" }],
+          stopReason: first ? "toolUse" : "stop",
+        }) as AssistantMessage;
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => {
+          stream.push({ type: "start", partial: message });
+          stream.push({ type: "done", reason: first ? "toolUse" : "stop", message });
+          stream.end(message);
+        });
+        return stream;
+      },
+    };
+    subagentRuns.deferred = true;
+    subagentRuns.instances.length = 0;
+    subagentRuns.resolveRun = undefined;
+    return {
+      runtime,
+      internal,
+      entered,
+      events,
+      release: (toolCallId: string) => releases.get(toolCallId),
+    };
+  }
+
+  async function teardown(runtime: DesktopAgentRuntime) {
+    subagentRuns.deferred = false;
+    subagentRuns.resolveRun = undefined;
+    await runtime.dispose();
+  }
+
+  /** The Task tool result the model actually received for one call. */
+  function taskToolResult(events: any[], toolCallId = "task") {
+    const end = events.find(
+      (event) => event.type === "tool_end" && event.toolCallId === toolCallId,
+    );
+    return end.result as {
+      content: Array<{ type: string; text: string }>;
+      details: { delegationId: string; status: string };
+    };
+  }
+
+  function settled(status: "completed" | "failed" = "completed") {
+    return status === "completed"
+      ? {
+          agentName: "explorer",
+          status: "completed",
+          report: "Edited target.txt.",
+          turns: 1,
+          toolCalls: 1,
+        }
+      : {
+          agentName: "explorer",
+          status: "failed",
+          report: "",
+          turns: 0,
+          toolCalls: 0,
+          error: { code: "DELEGATE_FAILED", message: "boom" },
+        };
+  }
+
+  /** Index of one tool event; a missing event is a broken fixture. */
+  function toolIndex(events: any[], type: string, toolCallId: string) {
+    const index = events.findIndex(
+      (event) => event.type === type && event.toolCallId === toolCallId,
+    );
+    if (index < 0) throw new Error(`missing ${type} for ${toolCallId}`);
+    return index;
+  }
+
+  it.each(["Read", "Glob", "Grep"] as const)(
+    "returns the started notice while holding a same-batch %s behind a writable delegate's Edit",
+    async (readTool) => {
+      const batch = setupMixedBatch([taskCall("task"), readCall("read", readTool)]);
+      subagentRuns.calls.length = 0;
+      try {
+        const pending = batch.runtime.prompt("Run the delegate and read its target.");
+        await vi.waitFor(() => expect(subagentRuns.instances).toHaveLength(1));
+        // ADR 0089 still holds inside a mixed batch: Task is non-blocking.
+        await vi.waitFor(() => {
+          expect(
+            batch.events.some((event) => event.type === "tool_end" && event.toolCallId === "task"),
+          ).toBe(true);
+        });
+        const task = taskToolResult(batch.events);
+        expect(task.details.status).toBe("running");
+        expect(task.content[0].text).toContain("in the background");
+        expect(subagentRuns.instances[0].settled).toBe(false);
+
+        // The writable delegate mutates target.txt while the parent read/search
+        // from the same assistant batch is still held back from entering the Host.
+        const childEdit = subagentRuns.calls[0].tools.find(
+          (tool: AgentTool) => tool.name === "Edit",
+        );
+        const editPending = childEdit.execute(
+          "delegate-edit",
+          { path: "target.txt", tag: "ABCD", ops: "PUT >$:\n+updated" },
+          undefined,
+          undefined,
+        );
+        await vi.waitFor(() => expect(batch.entered).toEqual(["delegate-edit"]));
+        await Promise.resolve();
+        expect(batch.entered).toEqual(["delegate-edit"]);
+        batch.release("delegate-edit")!({ ok: true, content: "edited" });
+        await editPending;
+
+        subagentRuns.resolveRun!(settled());
+        await vi.waitFor(() => expect(batch.entered).toEqual(["delegate-edit", "read"]));
+        expect(toolIndex(batch.events, "tool_end", "task"))
+          .toBeLessThan(toolIndex(batch.events, "tool_start", "read"));
+        batch.release("read")!({ ok: true, content: "updated" });
+        await pending;
+        const read = batch.events.find(
+          (event) => event.type === "tool_end" && event.toolCallId === "read",
+        );
+        expect(read.result.content[0].text).toContain("updated");
+      } finally {
+        await teardown(batch.runtime);
+      }
+    },
+  );
+
+  it("serializes a parent Read against an in-flight shared-workspace delegate Edit on the same path", async () => {
+    const batch = setupMixedBatch([taskCall("task")]);
+    subagentRuns.calls.length = 0;
+    try {
+      await runtimeTool(batch.runtime, "Task").execute("task", {
+        agent: "explorer",
+        task: "Edit target.txt.",
+        reportIntervalSteps: 32,
+      });
+      const childEdit = subagentRuns.calls[0].tools.find(
+        (tool: AgentTool) => tool.name === "Edit",
+      );
+      const parentRead = runtimeTool(batch.runtime, "Read");
+
+      const editPending = childEdit.execute(
+        "delegate-edit",
+        { path: "target.txt", tag: "ABCD", ops: "PUT >$:\n+updated" },
+        undefined,
+        undefined,
+      );
+      await vi.waitFor(() => expect(batch.entered).toEqual(["delegate-edit"]));
+
+      // A parent read on the same path waits for the delegate's Edit to finish,
+      // while a read on an unrelated path proceeds immediately.
+      const samePathRead = parentRead.execute("read-same", { path: "./target.txt" }, undefined, undefined);
+      const otherPathRead = parentRead.execute("read-other", { path: "other.txt" }, undefined, undefined);
+      await vi.waitFor(() => expect(batch.entered).toEqual(["delegate-edit", "read-other"]));
+      batch.release("read-other")!({ ok: true, content: "other" });
+      await otherPathRead;
+      expect(batch.entered).toEqual(["delegate-edit", "read-other"]);
+
+      batch.release("delegate-edit")!({ ok: true, content: "edited" });
+      await editPending;
+      await vi.waitFor(() =>
+        expect(batch.entered).toEqual(["delegate-edit", "read-other", "read-same"]),
+      );
+      batch.release("read-same")!({ ok: true, content: "updated" });
+      await samePathRead;
+      subagentRuns.resolveRun!(settled());
+    } finally {
+      await teardown(batch.runtime);
+    }
+  });
+
+  it("runs a Read the model ordered first before the Task starts", async () => {
+    const batch = setupMixedBatch([readCall("read"), taskCall("task")]);
+    try {
+      const pending = batch.runtime.prompt("Read the target, then delegate.");
+      await vi.waitFor(() => expect(batch.entered).toEqual(["read"]));
+      // The Task in this batch has not started a delegate yet, so this read is
+      // not racing anything and the batch order alone keeps the file stable.
+      expect(subagentRuns.instances).toEqual([]);
+      batch.release("read")!({ ok: true, content: "before" });
+      await vi.waitFor(() => expect(subagentRuns.instances).toHaveLength(1));
+      const read = batch.events.find(
+        (event) => event.type === "tool_end" && event.toolCallId === "read",
+      );
+      expect(read.result.content[0].text).toContain("before");
+      expect(toolIndex(batch.events, "tool_end", "read"))
+        .toBeLessThan(toolIndex(batch.events, "tool_start", "task"));
+      expect(taskToolResult(batch.events).details.status).toBe("running");
+      subagentRuns.resolveRun!(settled());
+      await pending;
+    } finally {
+      await teardown(batch.runtime);
+    }
+  });
+
+  it("settles a failed delegate without disturbing the batch", async () => {
+    const batch = setupMixedBatch();
+    try {
+      const pending = batch.runtime.prompt("Run the delegate and read its target.");
+      await vi.waitFor(() => expect(subagentRuns.instances).toHaveLength(1));
+      subagentRuns.resolveRun!(settled("failed"));
+      await vi.waitFor(() => expect(batch.entered).toEqual(["read"]));
+      batch.release("read")!({ ok: true, content: "unchanged" });
+      await pending;
+      // The Task call already returned its started notice; the failure belongs
+      // to the delegation registry and reaches the parent through TaskWait.
+      const task = taskToolResult(batch.events);
+      expect(task.details.status).toBe("running");
+      expect(
+        batch.internal.delegations.get(task.details.delegationId).status,
+      ).toBe("failed");
+      const read = batch.events.find(
+        (event) => event.type === "tool_end" && event.toolCallId === "read",
+      );
+      expect(read.result.content[0].text).toContain("unchanged");
+    } finally {
+      await teardown(batch.runtime);
+    }
+  });
+
+  it("starts both delegates of a Task-only batch together", async () => {
+    const batch = setupMixedBatch([taskCall("task-a"), taskCall("task-b")]);
+    try {
+      const pending = batch.runtime.prompt("Delegate the work twice.");
+      // Both delegates are running before either settles: Task-only fan-out
+      // keeps its parallel behaviour.
+      await vi.waitFor(() => expect(subagentRuns.instances).toHaveLength(2));
+      await vi.waitFor(() => {
+        expect(
+          batch.events.filter(
+            (event) => event.type === "tool_end" && String(event.toolCallId).startsWith("task-"),
+          ),
+        ).toHaveLength(2);
+      });
+      for (const id of ["task-a", "task-b"]) {
+        const result = taskToolResult(batch.events, id);
+        expect(result.details.status).toBe("running");
+        expect(result.content[0].text).toContain("in the background");
+      }
+      subagentRuns.resolveRun!(settled());
+      subagentRuns.resolveRun!(settled());
+      await pending;
+    } finally {
+      await teardown(batch.runtime);
+    }
+  });
+});
 
 function runtimeMatches(
   runtime: DesktopAgentRuntime,
@@ -7972,13 +8457,16 @@ describe("DesktopAgentRuntime subagents", () => {
     } finally { await runtime.dispose(); }
   });
 
-  it("is the only tool allowed to run in parallel", async () => {
+  it("allows only Task and read/search tools to run in parallel", async () => {
     const runtime = createRuntime({ subagents: [explorer] });
     const catalog = (runtime as any).toolCatalog as Map<string, any>;
 
     expect(catalog.get("Task").executionMode).toBe("parallel");
     for (const [name, tool] of catalog) {
-      if (name === "Task") continue;
+      if (["Task", "Read", "Glob", "Grep"].includes(name)) {
+        expect(tool.executionMode).toBe("parallel");
+        continue;
+      }
       expect(tool.executionMode).toBe("sequential");
     }
 
@@ -9179,6 +9667,7 @@ describe("DesktopAgentRuntime subagents", () => {
     subagentRuns.deferred = false;
     await runtime.dispose();
   });
+
 
   it("scopes a mutating delegate's tool calls with its permission", async () => {
     const mutator: SubagentDefinition = {
@@ -11712,5 +12201,53 @@ describe("isolated-session subagent worktrees (ADR 0329)", () => {
     expect(delegateWorktreeNote({ result: "noChanges" }, resume)).toContain("no file changes");
     expect(delegateWorktreeNote({ result: "notMerged", reason: "busy" }, resume)).toContain("busy");
     expect(delegateWorktreeNote({ result: "none" }, resume)).toBe("");
+  });
+});
+
+describe("parallel policy tool provenance", () => {
+  const explorer = { name: "explorer", description: "Read", tools: ["Read"], prompt: "Read", source: "builtin" as const };
+  it("does not prepare native file work for a parent extension named Read", async () => {
+    const host = { call: vi.fn() };
+    const runtime = createRuntime({ host });
+    const internal = runtime as any;
+    const execute = vi.fn(async () => ({ content: [], details: {} }));
+    internal.extensionRunner = { hasHandlers: () => false, getAgentTools: () => [{ name: "Read", label: "extension", description: "dynamic",
+      parameters: Type.Object({}), execute }] };
+    try {
+      internal.rebuildToolCatalog();
+      const tool = internal.toolCatalog.get("Read");
+      expect(tool.executionMode).toBe("sequential");
+      const toolCall = { type: "toolCall", name: "Read", id: "dynamic-parent", arguments: {} };
+      await expect(internal.agent.beforeToolCall({ toolCall, args: {},
+        assistantMessage: { content: [toolCall] }, context: { tools: [tool] } })).resolves.toBeUndefined();
+      await tool.execute(toolCall.id, {});
+      expect(execute).toHaveBeenCalledOnce();
+      expect(host.call.mock.calls.some(([method]) =>
+        method === "project.instructions.resolve")).toBe(false);
+    } finally { internal.extensionRunner = undefined; await runtime.dispose(); }
+  });
+
+  it("keeps delegate file preparation tied to selected provenance across parent rebuilds", async () => {
+    const host = { call: vi.fn() };
+    const runtime = createRuntime({ host, subagents: [explorer] });
+    const internal = runtime as any;
+    const execute = vi.fn(async () => ({ content: [], details: {} }));
+    internal.extensionRunner = { hasHandlers: () => false, getAgentTools: () => [{ name: "Read", label: "extension", description: "dynamic",
+      parameters: Type.Object({}), execute }] };
+    subagentRuns.calls.length = 0;
+    try {
+      internal.rebuildToolCatalog();
+      await internal.toolCatalog.get("Task").execute("task-dynamic-read", { agent: "explorer", task: "Read.", reportIntervalSteps: 32 });
+      const child = subagentRuns.calls[0];
+      const tool = child.tools.find((entry: AgentTool) => entry.name === "Read");
+      expect(tool.executionMode).toBe("sequential");
+      internal.extensionRunner = undefined;
+      internal.rebuildToolCatalog();
+      await expect(child.beforeToolCall({ toolCall: { name: "Read", id: "dynamic-child" }, args: {} })).resolves.toBeUndefined();
+      await tool.execute("dynamic-child", {});
+      expect(execute).toHaveBeenCalledOnce();
+      expect(host.call.mock.calls.some(([method]) =>
+        method === "project.instructions.resolve")).toBe(false);
+    } finally { internal.extensionRunner = undefined; await runtime.dispose(); }
   });
 });

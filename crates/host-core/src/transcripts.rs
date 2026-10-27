@@ -615,8 +615,11 @@ pub fn write_inflight(data_dir: &Path, session_id: &str, record: &InflightRecord
 /// `None`: a torn checkpoint is worth less than the transcript it would sit in.
 pub fn read_inflight(data_dir: &Path, session_id: &str) -> Result<Option<InflightRecord>> {
     let path = inflight_path(data_dir, session_id)?;
-    let raw = match fs::read_to_string(&path) {
-        Ok(raw) => raw,
+    // Lossy on purpose: a crash mid-write can tear the JSON or a multi-byte
+    // character, and this file's contract is that a torn checkpoint reads as
+    // absent rather than failing the caller.
+    let raw = match fs::read(&path) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
@@ -1237,8 +1240,18 @@ pub fn update_message(data_dir: &Path, session_id: &str, record: &MessageRecord)
             return Ok(true);
         }
     }
-    let raw = match fs::read_to_string(&path) {
-        Ok(raw) => raw,
+    let raw = match fs::read(&path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(raw) => raw,
+            // A crash mid-append can tear a multi-byte character in the tail.
+            // Every reader in this file tolerates that (`read_line_tolerant`)
+            // and `append_line` repairs the tail on the next append, so an
+            // update must not be the one path that answers InvalidData for it.
+            Err(error) => {
+                let bytes = error.into_bytes();
+                String::from_utf8_lossy(&bytes).into_owned()
+            }
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
@@ -1978,6 +1991,58 @@ mod tests {
             .as_str()
             .unwrap()
             .contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn update_message_survives_a_torn_tail() {
+        // A crash mid-append can tear the trailing line. `update_message` used
+        // to be the one writer that read the file with `read_to_string`, so the
+        // settle path answered InvalidData until some later append happened to
+        // repair the tail.
+        let dir = tempdir().unwrap();
+        append_message(
+            dir.path(),
+            "s1",
+            "2026-07-26T00:00:00Z",
+            &record("m1", "first"),
+        )
+        .unwrap();
+        let path = transcript_path(dir.path(), "s1").unwrap();
+        let mut raw = fs::read(&path).unwrap();
+        raw.extend_from_slice(&[0xE6, 0x92]);
+        fs::write(&path, &raw).unwrap();
+
+        let mut updated = record("m1", "settled");
+        updated.role = "assistant".into();
+        assert!(update_message(dir.path(), "s1", &updated).unwrap());
+
+        let loaded = read_transcript(dir.path(), "s1").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "m1");
+        assert_eq!(loaded[0].role, "assistant");
+        assert_eq!(loaded[0].blocks[0]["text"].as_str(), Some("settled"));
+
+        // The repair leaves a terminated, unparseable line behind, which every
+        // reader already skips and the next append terminates normally.
+        append_message(
+            dir.path(),
+            "s1",
+            "2026-07-26T00:00:00Z",
+            &record("m2", "after"),
+        )
+        .unwrap();
+        let after = read_transcript(dir.path(), "s1").unwrap();
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[1].id, "m2");
+    }
+
+    #[test]
+    fn torn_inflight_checkpoint_reads_as_absent() {
+        let dir = tempdir().unwrap();
+        let path = inflight_path(dir.path(), "s1").unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, [b'{', b'"', 0xE6, 0x92]).unwrap();
+        assert!(read_inflight(dir.path(), "s1").unwrap().is_none());
     }
 
     #[test]
