@@ -2,6 +2,8 @@ import { dialog, globalShortcut, shell, type BrowserWindow } from "electron";
 import { basename, extname, join, relative } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 import { resolveRealOpenablePath } from "@pi-desktop/host-runtime";
+import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts";
+import { createPluginWorkspaceReader } from "../remote/plugin-workspace-files";
 import {
   IPC,
   ErrorCodes,
@@ -799,6 +801,7 @@ export function createPluginServices({
     browserHost.setChromeSurface(surface);
   };
   plugins.setServices({
+    readRemoteWorkspaceFiles: createPluginWorkspaceReader({ getHost, getBoot: getActiveRemoteHostsBoot }),
     /**
      * The richer workspace payload, so `pi.workspace.get` and the
      * `workspace:changed` event both expose the open project's folder roots

@@ -54,31 +54,39 @@ test("the file view is a sandboxed page over the public bridge", () => {
 
 test("the file manager search panel remains readable in both themes", () => {
   assert.match(
-    view,
+    viewBundle,
     /\.cm-editor \.cm-panel\.cm-search \.cm-textfield\{[^}]*background:var\(--surface\);color:var\(--fg\);caret-color:var\(--fg\)/,
   );
   assert.match(
-    view,
+    viewBundle,
     /\.cm-editor \.cm-panel\.cm-search \.cm-button\{[^}]*background:var\(--surface-hover\);color:var\(--fg\)/,
   );
 });
 
 test("the vendored copy stays traceable to its upstream release", () => {
   assert.match(upstream, /github\.com\/Tioit-Wang\/pi-desktop-plugin-file-manager/);
-  assert.match(upstream, /42fd918e7c23599fa61b0e58b7f7b2e4fa7b2680/);
-  // 上游主分支保持最近标签的版本号，实际来源另外固定到提交。
+  assert.match(upstream, /92ccff9b7c1102d1664915c44ae1e5f3bb5c56a6/);
+  assert.match(upstream, /f47ce21fab3c59f3f4b94d30f3e3a0c8124447e1/);
+  // The bundled hotfix is intentionally newer than its upstream base while
+  // remaining below the next stable upstream release.
   const tag = upstream.match(/`v(\d+\.\d+\.\d+)`/);
-  assert.ok(tag, "UPSTREAM.md must name the vendored tag");
-  assert.equal(manifest.version, tag[1]);
-  // Every file the vendored copy does not patch still hashes to the recorded
-  // value, so a silent edit cannot pass as the released artifact.
+  assert.ok(tag, "UPSTREAM.md must name the vendored base tag");
+  assert.equal(tag[1], "0.9.0");
+  assert.equal(manifest.version, "0.9.1-pi.1");
+  assert.match(upstream, /Not published; no marketplace artifact/);
+  // Every upstream or locally rebuilt file hashes to a recorded value, so a
+  // silent edit cannot pass as the released artifact or documented patch.
   for (const file of [
     "main.js",
+    "remote-workspace.js",
     "README.md",
     "CHANGELOG.md",
     "views/index.html",
     "views/assets/index.js",
     "views/assets/pdfjs-LICENSES.txt",
+    "manifest.json",
+    "LICENSE",
+    "package.json",
   ]) {
     const hash = createHash("sha256")
       .update(readFileSync(resolve(`${FILE_MANAGER}/${file}`)))

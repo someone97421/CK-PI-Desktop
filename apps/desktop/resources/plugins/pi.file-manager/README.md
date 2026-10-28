@@ -1,5 +1,52 @@
 # 文件管理器（File Manager）
 
+## SSH workspaces
+
+Remote directory browsing and text/image previews use the Host's scoped
+`pi.fs.list` / `pi.fs.readPreview` service, rather than this computer's Node
+filesystem. The panel labels remote projects as read-only. Text previews are
+limited to 512 KiB and images to 5 MiB; unsupported and oversized files report
+their status explicitly. Search, Git, watch, editing and local application
+actions are unavailable remotely. Returning to a local project restores the
+ordinary local features. Failed directory requests show their error and a Retry
+button instead of remaining on Loading.
+
+This requires Desktop remote workspace metadata and the paired Host's
+`workspacePluginFiles` capability from the companion fix for
+[PI-Desktop #1711](https://github.com/vastsa/PI-Desktop/issues/1711). Older Hosts
+report an upgrade error; remote requests never substitute local files. Local
+projects remain compatible with the existing minimum Desktop version.
+
+Run `pnpm verify:remote` and `pnpm verify:tree` in `views-src` for isolated
+regressions. Cross-repository Electron validation runs the production view and
+plugin process through Desktop's broker, a loopback RACP server and the real
+Host filesystem service; see `scripts/e2e-remote-file-manager.mjs` in the
+companion Desktop branch. It does not connect to user SSH servers or profiles.
+
+### Paired release for #1711
+
+Version 0.9.1 keeps this repair distinct from the existing v0.9.0 tag.
+Delivery through the companion
+[Desktop PR #1824](https://github.com/vastsa/PI-Desktop/pull/1824) requires a
+plugin release and a bundled update. Tag the accepted plugin commit and
+publish the same runtime bytes to the marketplace; preserve the existing
+v0.9.0 tag.
+
+Prepare the runtime with `node scripts/prepare-package.mjs`, then run the
+official `pi-plugin check dist/runtime` and `pi-plugin pack dist/runtime`.
+The runtime includes `remote-workspace.js` and
+`views/assets/pdfjs-LICENSES.txt` as well as the main process, manifest,
+built view, README and changelog; omitting either new runtime file makes the
+vendored update incomplete.
+
+After publication, Desktop must copy the released runtime, preserve its local
+MIT license and CommonJS marker, and update `UPSTREAM.md` and the bundled
+provenance tests using the real tag, commit, marketplace artifact checksum
+and per-file checksums. Run the cross-repository Electron journey against
+`apps/desktop/resources/plugins/pi.file-manager` on the updated Desktop PR
+integration candidate. A separate development-plugin run does not validate
+the shipped bundle.
+
 在 PI-Desktop 的**右侧工作面板**里浏览、查看并编辑当前项目的文件：完整目录树（图标随文件类型变化）、左右分栏（左侧文件列表可整块收起）、代码高亮编辑与保存、PDF 预览、图片与音视频查看、CSV/JSON 结构化查看、在项目组注册了多个本地文件夹时切换当前浏览的那个 folder（按项目记住），以及新建、重命名/移动、右键复制路径、**通过…打开**（二级子菜单列出这台机器上真的装了的程序，按文件类型过滤，选中即用那个程序打开）、按文件名搜索、**git 联动**（文件列表里直接标出哪些文件被修改、哪些是新增，并能逐行查看它相对上次提交的具体变更）、**文件监听**（文件在编辑器之外被改动会自动重新读取并刷新列表）；宿主还可以让视图直接打开某个文件——包括它自己选定的项目外路径（会话临时目录 / 附件）。
 
 ## 功能

@@ -41,6 +41,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { AsyncLocalStorage } = require("node:async_hooks");
+const { isRemoteWorkspace, invokeRemote } = require("./remote-workspace.js");
 const workspaceScope = new AsyncLocalStorage();
 
 async function scopedWorkspace() {
@@ -225,6 +226,7 @@ async function exists(target) {
 async function currentRoot() {
   const workspace = await scopedWorkspace();
   if (!workspace?.path) return null;
+  if (isRemoteWorkspace(workspace)) throw fail("REMOTE_UNSUPPORTED", "Remote files must use the Host read gateway");
   return rootPayload(workspace, selectedRootOf(workspace));
 }
 
@@ -245,6 +247,7 @@ function rootPayload(workspace, root) {
   return {
     path: root.path,
     name: root.name,
+    ...(workspace.remote ? { remote: workspace.remote } : {}),
     ...(typeof workspace.projectId === "string" && workspace.projectId
       ? { projectId: workspace.projectId }
       : {}),
@@ -3299,9 +3302,9 @@ async function handleHello() {
     ignoreFiles: IGNORE_FILE_NAMES,
     // 这个运行时能不能监听：不能的话视图把「自动刷新」开关显示成不可用，
     // 而不是让用户开了却永远没反应。
-    watch: { available: fsWatchFn() !== null },
+    watch: { available: !isRemoteWorkspace(root) && fsWatchFn() !== null },
     // Older hosts may load this plugin before the built-in Browser action API exists.
-    capabilities: { openHtmlInBrowser: typeof pi.fs.openInBrowser === "function" },
+    capabilities: { openHtmlInBrowser: !isRemoteWorkspace(root) && typeof pi.fs.openInBrowser === "function" },
     prefs,
   };
 }
@@ -3335,7 +3338,17 @@ async function onPanelInvoke(channel, payload) {
   const handler = CHANNELS[channel];
   if (!handler) return { ok: false, code: "UNSUPPORTED", message: `unknown channel: ${channel}` };
   try {
-    return await workspaceScope.run(payload?.__workspaceScope, () => handler(payload ?? {}));
+    return await workspaceScope.run(payload?.__workspaceScope, async () => {
+      const workspace = await scopedWorkspace();
+      if (payload?.workspacePath !== undefined && payload.workspacePath !== workspace?.path) {
+        throw fail("WORKSPACE_CHANGED", "The workspace changed while the file was loading");
+      }
+      if (isRemoteWorkspace(workspace) && !["fm.hello", "fm.prefs.get", "fm.prefs.set"].includes(channel)) {
+        const scopedApi = { fs: pi.fs, workspace: { get: scopedWorkspace } };
+        return await invokeRemote(scopedApi, workspace, channel, payload ?? {}, { isDenied, maxListEntries: MAX_LIST_ENTRIES });
+      }
+      return await handler(payload ?? {});
+    });
   } catch (error) {
     return toFailure(error);
   }

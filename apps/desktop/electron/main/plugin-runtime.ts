@@ -15,6 +15,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { homedir } from "node:os";
 import { pluginNetFetch, parseFetchRedirect, type PluginFetchTransport } from "./plugin-net-fetch";
 import type { LoadedSkillDocument } from "./skill-document";
+import { assertLocalPluginRoot, pluginFsReadOptions, readRemotePluginFiles, type PluginRemoteFilesRead } from "./plugin-remote-files";
 import { getModuleDirectory } from "./module-path";
 import {
   busTopicAllowed,
@@ -29,6 +30,7 @@ import {
   normalizeFsPath,
   parseNetDomains,
   parseSkillFrontmatter,
+  PLUGIN_FS_LIST_MAX_ENTRIES,
   pluginMcpToolKey,
   pluginSkillId,
   pluginThemeId,
@@ -57,6 +59,7 @@ import {
   type PluginFsMode,
   type PluginFsPolicy,
   type PluginFsRule,
+  type PluginFsReadOptions,
   type PluginLlmContext,
   type PluginManifest,
   type PluginModelInfo,
@@ -323,6 +326,7 @@ export type PluginHostServices = {
   getWorkspaceInfo?: () => PluginWorkspaceInfo | null;
   /** 工具所属会话的有效工作目录；支持宿主异步解析 isolated 和临时目录。 */
   getWorkspacePathForSession?: (sessionId: string) => string | null | Promise<string | null>;
+  readRemoteWorkspaceFiles?: PluginRemoteFilesRead;
   /** The set of `contributes.agentExtensions` modules changed (load/unload). */
   agentExtensionsChanged?: () => void;
   getLocale?: () => string;
@@ -808,8 +812,6 @@ export const MAX_COMPLETE_SYSTEM_CHARS = 32 * 1024;
 export const MAX_COMPLETE_MESSAGE_CHARS = 200_000;
 /** Kept from the pre-scope implementation: a listing is not a search index. */
 const MAX_GLOB_MATCHES = 500;
-/** Entries returned for one directory. A tree is walked lazily, not dumped. */
-const MAX_LIST_ENTRIES = 1000;
 /** Maximum bytes one plugin range call may cross the broker with. */
 const MAX_FS_READ_RANGE_BYTES = 8 * 1024 * 1024;
 /**
@@ -2625,7 +2627,7 @@ export class PluginRuntime {
           context?.droppedPath,
         );
       case "fs.readPreview":
-        return api.fs.readPreview(String(payload?.path ?? ""));
+        return api.fs.readPreview(String(payload?.path ?? ""), pluginFsReadOptions(payload?.workspacePath));
       case "fs.openDefault":
         await api.fs.openDefault(String(payload?.path ?? ""));
         return { ok: true };
@@ -2641,7 +2643,7 @@ export class PluginRuntime {
       case "fs.glob":
         return api.fs.glob(String(payload?.pattern ?? "*"));
       case "fs.list":
-        return api.fs.list(String(payload?.path ?? ""));
+        return api.fs.list(String(payload?.path ?? ""), pluginFsReadOptions(payload?.workspacePath));
       // Deleting is not reachable from a panel; choosing a directory is, and
       // has to be, because a "pick a folder" button is panel UI by nature.
       case "fs.requestDirectory":
@@ -5247,6 +5249,33 @@ export class PluginRuntime {
     return scoped ?? this.services.getWorkspacePath();
   }
 
+  private async remoteFsRead(loaded: LoadedPlugin, operation: "list" | "preview", ref: string, options?: PluginFsReadOptions) {
+    this.assertPermission(loaded, "fs.read");
+    const rule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
+    return readRemotePluginFiles({
+      workspacePath: await this.fsRoot(loaded, rule), currentWorkspacePath: () => this.fsRoot(loaded, rule),
+      isActive: () => this.loaded.get(loaded.manifest.id) === loaded,
+      scope: rule.scope, read: this.services.readRemoteWorkspaceFiles,
+      audit: (entry) => this.services.audit?.({ ...entry, pluginId: loaded.manifest.id }),
+    }, operation, ref, options);
+  }
+
+  private async assertFileWorkspace(loaded: LoadedPlugin, options?: PluginFsReadOptions): Promise<void> {
+    if (!options) return;
+    if (this.loaded.get(loaded.manifest.id) !== loaded) throw apiError("PLUGIN_UNLOADED", "The plugin was unloaded during the file request");
+    const rule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
+    if (await this.fsRoot(loaded, rule) !== options.workspacePath) throw apiError("WORKSPACE_CHANGED", "The file view's workspace has changed");
+  }
+
+  private async captureFileWorkspace(loaded: LoadedPlugin, options?: PluginFsReadOptions): Promise<PluginFsReadOptions> {
+    this.assertPermission(loaded, "fs.read");
+    await this.assertFileWorkspace(loaded, options);
+    const rule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
+    const workspacePath = await this.fsRoot(loaded, rule);
+    if (!workspacePath) throw apiError("NOT_FOUND", "No workspace is open");
+    return { workspacePath };
+  }
+
   /**
    * Resolve one file request and decide whether it may proceed.
    *
@@ -5302,6 +5331,7 @@ export class PluginRuntime {
     }
     const rule: PluginFsRule = loaded.fsPolicy[mode] ?? { root: "workspace", scope: [] };
     const root = await this.fsRoot(loaded, rule);
+    assertLocalPluginRoot(root);
     if (!root) {
       throw apiError(
         "NOT_FOUND",
@@ -5379,6 +5409,7 @@ export class PluginRuntime {
     loaded: LoadedPlugin,
     requestPath: string,
   ): Promise<{ full: string; rel: string; root: string } | null> {
+    assertLocalPluginRoot(await this.fsRoot(loaded, loaded.fsPolicy.read ?? { root: "workspace", scope: [] }));
     if (!isAbsolute(String(requestPath ?? ""))) return null;
     const rule: PluginFsRule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
     if (rule.root !== "workspace") return null;
@@ -6107,7 +6138,11 @@ export class PluginRuntime {
             await handle.close().catch(() => {});
           }
         },
-        readPreview: async (pathFromRoot: string) => {
+        readPreview: async (pathFromRoot: string, options?: PluginFsReadOptions) => {
+          const admitted = await this.captureFileWorkspace(loaded, options);
+          const remote = await this.remoteFsRead(loaded, "preview", pathFromRoot, admitted);
+          if (remote && remote.kind !== "list") return remote;
+          await this.assertFileWorkspace(loaded, admitted);
           const { full, rel } = await this.resolveFsRequest(
             loaded,
             "read",
@@ -6125,6 +6160,7 @@ export class PluginRuntime {
             throw apiError("INVALID_ARGUMENT", "only files can be previewed");
           }
           const preview = await previewFile(full, rel);
+          await this.assertFileWorkspace(loaded, admitted);
           this.services.audit?.({
             pluginId,
             api: "fs.readPreview",
@@ -6276,11 +6312,15 @@ export class PluginRuntime {
          * paths, denied names, skipped heavy directories — because a listing is
          * a read: what a plugin may not open, it may not learn the name of.
          */
-        list: async (pathFromRoot: string) => {
+        list: async (pathFromRoot: string, options?: PluginFsReadOptions) => {
+          const admitted = await this.captureFileWorkspace(loaded, options);
+          const remote = await this.remoteFsRead(loaded, "list", pathFromRoot, admitted);
+          if (remote?.kind === "list") return remote.entries;
+          await this.assertFileWorkspace(loaded, admitted);
           this.assertPermission(loaded, "fs.read");
           const rule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
-          const root = await this.fsRoot(loaded, rule);
-          if (!root) throw apiError("NOT_FOUND", "No workspace is open");
+          const root = admitted.workspacePath;
+          assertLocalPluginRoot(root);
           const rel = normalizeFsPath(String(pathFromRoot ?? ""));
           if (rel.split("/").includes("..")) {
             throw apiError("INVALID_ARGUMENT", "path must stay inside the root");
@@ -6304,7 +6344,7 @@ export class PluginRuntime {
             mtimeMs?: number;
           }> = [];
           for (const name of names.sort()) {
-            if (entries.length >= MAX_LIST_ENTRIES) break;
+            if (entries.length >= PLUGIN_FS_LIST_MAX_ENTRIES) break;
             const childRel = rel ? `${rel}/${name}` : name;
             const full = join(dir, name);
             if (isDeniedFsPath(childRel)) continue;
@@ -6367,6 +6407,7 @@ export class PluginRuntime {
           this.assertPermission(loaded, "fs.read");
           const rule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
           const root = await this.fsRoot(loaded, rule);
+          assertLocalPluginRoot(root);
           if (!root) throw apiError("NOT_FOUND", "No workspace is open");
           const matches: string[] = [];
           const visit = (dir: string, rel = "") => {

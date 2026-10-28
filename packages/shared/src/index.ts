@@ -70,6 +70,7 @@ export * from "./font-size.js";
 export * from "./appearance.js";
 export * from "./font-metadata.js";
 export * from "./chat-content-width.js";
+export * from "./radial-menu.js";
 export * from "./racp.js";
 export * from "./trusted-extensions.js";
 export * from "./provider-retry.js";

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fix SSH workspaces remaining on Loading: remote directories and text/image
+  previews now use the paired Host's scoped SDK reads, with explicit read-only
+  controls, upgrade/errors and retry. Local file operations never receive an
+  opaque remote project identity.
+- Discard late previews, ancestor-directory opens and refresh loops after a
+  workspace change. Restore local editor detection, Browser and watch
+  capabilities when returning from a remote project.
+- Show root and nested directory failures with their actual error and Retry
+  action, rather than incorrectly showing Loading indefinitely.
+
 - HTML、HTM 与 XHTML 文件的「通过…打开」菜单新增「在内置浏览器中打开」，仅在宿主提供 Browser API 时显示；与宿主声明的 `fs.read` 文件范围一致。
 - 重新整理目录树右键菜单的分组与顺序，并补齐右键刷新；空白区域只显示新建和刷新，文件与文件夹按类型显示操作。
 - 新增 **PDF 只读预览**：连续上下滚动，支持「单页 / 双页 / 双页（封面单独）」布局、上一页 / 下一页、输入页码跳转、10%–400% 手动缩放、适应宽度、100% 实际大小，以及有文字层时的选择与复制。

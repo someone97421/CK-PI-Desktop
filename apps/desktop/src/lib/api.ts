@@ -181,6 +181,8 @@ import {
   normalizeMode,
   normalizeNetworkProxy,
   normalizeNetworkPolicy,
+  normalizeRadialMenuPreferences,
+  radialMenuWriteError,
   resolveFontScale,
   normalizeChatContentMaxWidth,
   validateNetworkPolicy,
@@ -458,6 +460,7 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     ),
     fontScale: resolveFontScale(settings),
     ...(settings.appearance === undefined ? {} : { appearance: normalizeAppearance(settings.appearance) }),
+    radialMenu: normalizeRadialMenuPreferences(settings.radialMenu),
     networkProxy: normalizeNetworkProxy(
       (settings as { networkProxy?: unknown }).networkProxy,
     ),
@@ -493,6 +496,12 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     !isTranscriptDisplayModeValue(settings.transcriptDisplayMode)
   ) {
     throw Object.assign(new Error("transcriptDisplayMode is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
+  }
+  const radialMenuProblem = radialMenuWriteError(settings.radialMenu);
+  if (radialMenuProblem) {
+    throw Object.assign(new Error(radialMenuProblem), {
       errorCode: "INVALID_PARAMS",
     });
   }

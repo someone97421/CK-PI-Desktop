@@ -52,6 +52,7 @@ import { AppearancePanels } from "../../components/settings/AppearancePanels";
 import { AppearanceMediaSection } from "../../components/settings/AppearanceMediaSection";
 import { ShowThinkingRow } from "../../components/settings/ShowThinkingRow";
 import { TranscriptDisplayModeRow } from "../../components/settings/TranscriptDisplayModeRow";
+import { RadialMenuSettings } from "../../components/settings/RadialMenuSettings";
 import { FontSizeRow } from "../../components/settings/FontSizeRow";
 import { LanguageRow } from "../../components/settings/LanguageRow";
 import { SettingsMenuSelect } from "../../components/settings/SettingsMenuSelect";
@@ -653,6 +654,11 @@ export function SettingsPage() {
                   saveSettings={saveSettings}
                 />
               </SettingsCard>
+
+              <RadialMenuSettings
+                settings={settings}
+                saveSettings={saveSettings}
+              />
 
             </div>
           )}

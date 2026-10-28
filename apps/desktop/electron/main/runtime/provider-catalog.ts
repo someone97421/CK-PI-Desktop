@@ -4,6 +4,8 @@ import {
   defaultCommandShellForPlatform,
   isCommandShellId,
   isAppearanceSettings,
+  normalizeRadialMenuPreferences,
+  radialMenuWriteError,
   validateNetworkProxy,
   validateSpeechSettings,
   type CommandShellId,
@@ -174,7 +176,7 @@ export function createProviderCatalogRuntime({
   ): T & { defaultCommandShell: CommandShellId } => {
     const value = (
       settings && typeof settings === "object" ? settings : {}
-    ) as T & { defaultCommandShell?: unknown };
+    ) as T & { defaultCommandShell?: unknown; radialMenu?: unknown };
     return {
       ...(value as T),
       infiniteProviderRetry: (value as T & { infiniteProviderRetry?: unknown })
@@ -190,6 +192,7 @@ export function createProviderCatalogRuntime({
         (value as T & { transcriptDisplayMode?: unknown }).transcriptDisplayMode === "fully-folded"
           ? (value as T & { transcriptDisplayMode?: unknown }).transcriptDisplayMode
           : "fully-folded",
+      radialMenu: normalizeRadialMenuPreferences(value.radialMenu),
       defaultCommandShell: isCommandShellId(value.defaultCommandShell)
         ? value.defaultCommandShell
         : defaultCommandShellForPlatform(process.platform),
@@ -213,6 +216,7 @@ export function createProviderCatalogRuntime({
       appDisplayName?: unknown;
       macosWindowTranslucency?: unknown;
       transcriptDisplayMode?: unknown;
+      radialMenu?: unknown;
     };
     if (value.appearance !== undefined && !isAppearanceSettings(value.appearance)) {
       throw Object.assign(new Error("appearance is invalid"), {
@@ -282,6 +286,12 @@ export function createProviderCatalogRuntime({
       typeof value.macosWindowTranslucency !== "boolean"
     ) {
       throw Object.assign(new Error("macosWindowTranslucency is invalid"), {
+        errorCode: ErrorCodes.INVALID_PARAMS,
+      });
+    }
+    const radialMenuProblem = radialMenuWriteError(value.radialMenu);
+    if (radialMenuProblem) {
+      throw Object.assign(new Error(radialMenuProblem), {
         errorCode: ErrorCodes.INVALID_PARAMS,
       });
     }
