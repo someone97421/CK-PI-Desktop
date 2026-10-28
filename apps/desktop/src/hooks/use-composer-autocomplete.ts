@@ -197,16 +197,20 @@ export function useComposerAutocomplete({
   enabled: boolean;
 }) {
   const remoteSession = useAppStore(activeSessionHasRemoteWorkspace);
-  const workspaceKey = useAppStore((s) => s.workspace?.path ?? "");
-  const hasWorkspace = workspaceKey !== "";
   const commandKey = useAppStore(composerCommandScopeKey);
+  const workspaceKey = commandKey;
+  const hasWorkspace = useAppStore((s) => Boolean(
+    s.activeSessionId || s.workspace?.path || s.draftTemporaryWorkspacePath,
+  ));
   const scope = useMemo(() => JSON.parse(commandKey)[0] as Parameters<typeof api.composerCommands>[0], [commandKey]);
   const ready = useAppStore((s) => s.ready);
   const [commands, setCommands] = useState<ComposerCommand[] | null>(null);
-  const [files, setFiles] = useState<{
+  const [fileSource, setFiles] = useState<{
+    key: string;
     entries: FsIndexEntry[];
     truncated: boolean;
   } | null>(null);
+  const files = fileSource?.key === workspaceKey ? fileSource : null;
   const [found, setFound] = useState<{
     scope: string;
     entries: FsIndexEntry[];
@@ -245,7 +249,7 @@ export function useComposerAutocomplete({
     }
   }, [trigger, commandFilter]);
 
-  // Lazy source fetch with a short TTL, keyed by workspace.
+  // 文件缓存按会话或草稿目录隔离，与宿主解析文件根的作用域一致。
   useEffect(() => {
     if (!trigger || dismissed) return;
     const now = Date.now();
@@ -269,7 +273,7 @@ export function useComposerAutocomplete({
       };
     }
     if (!hasWorkspace) {
-      setFiles({ entries: [], truncated: false });
+      setFiles({ key: workspaceKey, entries: [], truncated: false });
       return;
     }
     if (
@@ -277,23 +281,24 @@ export function useComposerAutocomplete({
       filesCache.key === workspaceKey &&
       now - filesCache.at < SOURCE_TTL_MS
     ) {
-      setFiles({ entries: filesCache.entries, truncated: filesCache.truncated });
+      setFiles({ key: workspaceKey, entries: filesCache.entries, truncated: filesCache.truncated });
       return;
     }
     let cancelled = false;
     void api
       .fsIndex(scope)
       .then((res) => {
+        if (cancelled) return;
         filesCache = {
           key: workspaceKey,
           at: Date.now(),
           entries: res.entries,
           truncated: res.truncated,
         };
-        if (!cancelled) setFiles({ entries: res.entries, truncated: res.truncated });
+        setFiles({ key: workspaceKey, entries: res.entries, truncated: res.truncated });
       })
       .catch(() => {
-        if (!cancelled) setFiles({ entries: [], truncated: false });
+        if (!cancelled) setFiles({ key: workspaceKey, entries: [], truncated: false });
       });
     return () => {
       cancelled = true;

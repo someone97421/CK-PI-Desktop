@@ -5,7 +5,7 @@ import {
   dialog,
 } from "electron";
 import { join } from "node:path";
-import { hasSingleInstanceLock, initialTemporaryWorkspace, isDevelopmentBuild } from "./installation";
+import { hasSingleInstanceLock, initialTemporaryWorkspace, isDevelopmentBuild, onMacTemporaryWorkspaceLaunch } from "./installation";
 import { getStorageBootstrap } from "./storage/bootstrap";
 import { SubagentSnapshotStore } from "./runtime/subagent-snapshot-store";
 import { createSubagentSessionAuthority } from "./runtime/subagent-session-authority";
@@ -1106,4 +1106,9 @@ registerApplicationActivation({
   hasVisibleWindow,
   onTemporaryWorkspaceLaunch: (commandLine, additionalData) =>
     temporaryWorkspaceRuntime.enqueueFromCommandLine(commandLine, additionalData),
+});
+
+onMacTemporaryWorkspaceLaunch((workspacePath) => {
+  temporaryWorkspaceRuntime.enqueueFromCommandLine([], { temporaryWorkspacePath: workspacePath });
+  restoreMainWindow();
 });
