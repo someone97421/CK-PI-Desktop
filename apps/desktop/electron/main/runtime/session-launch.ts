@@ -19,6 +19,7 @@ import {
   type SessionThinkingLevel,
   type UserSkillRecord,
   type UserSubagentRecord,
+  normalizeRunStatusReminderMinutes,
 } from "@pi-desktop/shared";
 import {
   capabilitiesFromModelConfig,
@@ -835,7 +836,7 @@ export function createSessionLaunchRuntime({
         ...(overrides.turnId ? { turnId: overrides.turnId } : {}),
         thinkingLevel,
         infiniteProviderRetry: settings.infiniteProviderRetry === true,
-        runStatusReminder: settings.runStatusReminder !== false,
+        runStatusReminderMinutes: normalizeRunStatusReminderMinutes(settings.runStatusReminderMinutes),
         ...(jevApiKey ? { jevApiKey } : {}),
         commandShell,
         scratchDir,

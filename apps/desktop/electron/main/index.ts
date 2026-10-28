@@ -1053,7 +1053,7 @@ registerApplicationStartup({
   applyKeepAwakeWhileRunning,
   applyTemporaryWorkspaceContextMenu: (settings) =>
     temporaryWorkspaceRuntime.applyContextMenu(settings).catch((error) => {
-      logger.app("diagnostics", "warn", "Windows Explorer context menu refresh failed", {
+      logger.app("diagnostics", "warn", "Temporary workspace context menu refresh failed", {
         data: String(error),
       });
     }),

@@ -81,7 +81,7 @@ export type AppSettings = {
   /** App-owned real-time voice bindings; separate from local dictation. */
   liveVoice?: LiveVoiceSettings;
   defaultMode: Mode;
-  /** Windows 资源管理器临时会话入口；Windows 上缺省开启。 */
+  /** 资源管理器右键菜单／访达快速操作的临时会话入口；Windows 与 macOS 上缺省开启。 */
   temporaryWorkspaceContextMenu?: boolean;
   /**
    * Keep retryable provider/network failures retrying until the request succeeds.
@@ -93,11 +93,11 @@ export type AppSettings = {
    */
   infiniteProviderRetry?: boolean;
   /**
-   * 运行状态提醒（fork 定制）：主代理每次运行从本轮开始计时，每满五分钟在下一次
-   * 模型请求的上下文末尾注入一条系统消息，报告运行时长与主代理累计 token。
-   * 消息不写入持久化对话。缺省开启；设为 false 关闭。
+   * 运行状态提醒间隔（分钟，fork 定制）：主代理每次运行从本轮开始计时，每满该间隔
+   * 在下一次模型请求的上下文末尾追加隐藏通知，报告运行时长与主代理累计 token。
+   * 通知不写入持久化对话。0 或缺省表示关闭，最大 1440。
    */
-  runStatusReminder?: boolean;
+  runStatusReminderMinutes?: number;
   /** Allow Agent mode to call TypeSafe Jev for explicit structured classifications. */
   jevEnabled?: boolean;
   /** 应用运行期间阻止系统空闲休眠；缺省开启。 */

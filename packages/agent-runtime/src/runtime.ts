@@ -894,8 +894,14 @@ const CONTEXT_REMINDER_MAX_TOKENS = 32_000;
 const CONTEXT_REMINDER_RATIO = 0.15;
 /** Close enough to the boundary that the next turn is likely to cross it. */
 const CONTEXT_FALLBACK_REMINDER_TOKENS = 2_000;
-/** 运行状态提醒间隔：本轮运行每满五分钟，随下一次模型请求注入一次。 */
-const RUN_STATUS_REMINDER_INTERVAL_MS = 5 * 60_000;
+/** 运行状态提醒间隔上限（分钟），与设置校验一致。 */
+const MAX_RUN_STATUS_REMINDER_MINUTES = 1440;
+
+function runStatusReminderIntervalMs(minutes: unknown): number {
+  return typeof minutes === "number" && Number.isInteger(minutes) && minutes > 0 && minutes <= MAX_RUN_STATUS_REMINDER_MINUTES
+    ? minutes * 60_000
+    : 0;
+}
 
 function contextBudgetReminder(remaining: number): string {
   return [
@@ -946,8 +952,8 @@ export type AgentRuntimeOptions = {
   thinkingLevel: SessionThinkingLevel;
   /** Persisted opt-in for retrying transient provider failures until success. */
   infiniteProviderRetry?: boolean;
-  /** 运行状态提醒开关；缺省开启（false 关闭）。 */
-  runStatusReminder?: boolean;
+  /** 运行状态提醒间隔（分钟）；0 或缺省关闭。 */
+  runStatusReminderMinutes?: number;
   /** TypeSafe Jev credential, resolved by Electron main only when enabled. */
   jevApiKey?: string;
   systemPrompt?: string;
@@ -1956,8 +1962,8 @@ export class DesktopAgentRuntime {
   private readonly runClock = new RunClock();
   private readonly userWaitingToolCalls = new Set<string>();
   private turnSubagentUsage?: MessageUsage;
-  /** 运行状态提醒开关（fork 定制）。 */
-  private runStatusReminder: boolean;
+  /** 运行状态提醒间隔（毫秒，fork 定制）；0 表示关闭。 */
+  private runStatusReminderIntervalMs: number;
 
   /** 上次提醒时累计的实际运行毫秒数，以及本轮主代理累计用量。 */
   private runStatusRemindedElapsedMs = 0;
@@ -1973,7 +1979,7 @@ export class DesktopAgentRuntime {
     this.provider = opts.provider;
     this.thinkingLevel = clampThinkingLevel(opts.provider, opts.thinkingLevel);
     this.infiniteProviderRetry = opts.infiniteProviderRetry === true;
-    this.runStatusReminder = opts.runStatusReminder !== false;
+    this.runStatusReminderIntervalMs = runStatusReminderIntervalMs(opts.runStatusReminderMinutes);
     this.jevApiKey = opts.jevApiKey;
     this.host = opts.host;
     this.persistenceClient = new SubagentPersistenceClient(opts.host, opts.sessionId);
@@ -2039,7 +2045,7 @@ export class DesktopAgentRuntime {
       // File-reference formatting.
       "File references: when citing a real local file, use a Markdown link with a short label and the exact absolute path as its target, e.g. [file.ts](/workspace/src/file.ts:42). Add only a starting line (:line or :line:column) when useful; do not use ranges or GitHub #L anchors. Wrap destinations containing spaces in angle brackets. Do not wrap links in backticks or use file://, vscode://, or https:// for local files. Link only to existing files in the accessible workspace; mention unavailable or other-repository files as code text.",
       // 以用户目标约束执行范围、信息获取和收尾，保持进展可见。
-      "Collaboration: answer in the user's language. State the intended outcome briefly before starting tool work; update the user when findings, decisions, or blockers change. Keep updates substantive rather than narrating each tool batch. Treat host-injected run-status notices (elapsed time and token usage) as internal information for monitoring progress and cost; do not acknowledge them in user-facing responses. Carry the work through end to end within the requested scope. Use the user's goal and constraints to identify the deliverable and completion criteria; resolve routine details yourself and ask only about decisions that materially change scope or outcome. Choose the smallest complete change that satisfies those criteria. Each further investigation, edit, or check should address a specific unresolved requirement, observed defect, or material uncertainty. Reuse established findings and delegate reports; reopen them only for changed evidence or a concrete gap. Keep validation proportional to the change and within the user's testing limits. When the criteria are met and permitted checks are complete, deliver the result; distinguish any unverified behavior or remaining blocker. If work stops making progress, summarize what is known and choose a narrower next step instead of repeating the same investigation or adding review cycles. Make the final answer self-contained: outcome, changes, validation actually performed, and anything still open.",
+      "Collaboration: answer in the user's language. State the intended outcome briefly before starting tool work; update the user when findings, decisions, or blockers change. Keep updates substantive rather than narrating each tool batch. Carry the work through end to end within the requested scope. Use the user's goal and constraints to identify the deliverable and completion criteria; resolve routine details yourself and ask only about decisions that materially change scope or outcome. Choose the smallest complete change that satisfies those criteria. Each further investigation, edit, or check should address a specific unresolved requirement, observed defect, or material uncertainty. Reuse established findings and delegate reports; reopen them only for changed evidence or a concrete gap. Keep validation proportional to the change and within the user's testing limits. When the criteria are met and permitted checks are complete, deliver the result; distinguish any unverified behavior or remaining blocker. If work stops making progress, summarize what is known and choose a narrower next step instead of repeating the same investigation or adding review cycles. Make the final answer self-contained: outcome, changes, validation actually performed, and anything still open.",
       // Delegate only under the stated conditions, then choose by capability.
       ...(this.subagents.length
         ? [
@@ -2393,10 +2399,10 @@ Delegation rules:
     this.infiniteProviderRetry = enabled;
   }
 
-  /** 热更新运行状态提醒开关，无需重建空闲 runtime。 */
-  setRunStatusReminder(enabled: boolean): void {
+  /** 热更新运行状态提醒间隔，无需重建空闲 runtime。 */
+  setRunStatusReminderMinutes(minutes: number): void {
     if (this.disposed) throw new Error("runtime disposed");
-    this.runStatusReminder = enabled;
+    this.runStatusReminderIntervalMs = runStatusReminderIntervalMs(minutes);
   }
 
   /** 技能目录更新只追加变更，不替换会话或丢失 fork 的协调状态。 */
@@ -7613,23 +7619,24 @@ Delegation rules:
   }
 
   /**
-   * 运行状态提醒（fork 定制）：本轮运行每满五分钟，在模型请求前追加临时消息。
+   * 运行状态提醒（fork 定制）：本轮运行每满设定间隔，在模型请求前追加临时消息。
    * 重建上下文时按原会话消息锚点恢复，成功压缩后清理，不写入持久化对话。
    * 扣除阻塞主代理的人工等待，工具执行与子代理等待仍计入。
    */
   private withRunStatusReminder(context: AgentContext): AgentContext {
     context = { ...context, messages: this.restoreTransientStatusMessages(context.messages) };
-    if (!this.runStatusReminder || !this.runClock.snapshot()) return context;
+    if (!this.runStatusReminderIntervalMs || !this.runClock.snapshot()) return context;
     const now = Date.now();
     const elapsedMs = this.runClock.elapsedMs(now);
-    if (elapsedMs - this.runStatusRemindedElapsedMs < RUN_STATUS_REMINDER_INTERVAL_MS) return context;
+    if (elapsedMs - this.runStatusRemindedElapsedMs < this.runStatusReminderIntervalMs) return context;
     this.runStatusRemindedElapsedMs = elapsedMs;
     const minutes = Math.floor(elapsedMs / 60_000);
     const seconds = Math.floor((elapsedMs % 60_000) / 1000);
     const usage = this.runStatusTurnUsage;
+    const note = `（每 ${this.runStatusReminderIntervalMs / 60_000} 分钟提醒一次）仅供掌握进度与开销，无需回应，也不要在给用户的回复中提及。`;
     const content = usage
-      ? `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；主代理累计 token：输入 ${usage.inputTokens.toLocaleString("en-US")}，输出 ${usage.outputTokens.toLocaleString("en-US")}。仅为信息，无需回应。`
-      : `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；暂无 token 用量记录。仅为信息，无需回应。`;
+      ? `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；主代理累计 token：输入 ${usage.inputTokens.toLocaleString("en-US")}，输出 ${usage.outputTokens.toLocaleString("en-US")}。${note}`
+      : `[运行状态] 本次运行已持续 ${minutes} 分 ${seconds} 秒；暂无 token 用量记录。${note}`;
     // 部分 Pi 适配器会将 system 消息折叠到顶部；隐藏 custom 通知保持对话内的位置。
     const message: AgentMessage = {
       role: "custom", customType: "run-status", display: false, content, timestamp: now,

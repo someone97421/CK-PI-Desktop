@@ -5,6 +5,9 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "运行状态提醒改为填写提醒间隔（分钟），0 为关闭，缺省关闭。",
+  "macOS 访达新增“在此处开启临时会话”快速操作，可在设置中开关。",
+  "同步上游：聊天空白处可选环形右键菜单；文件管理器支持远程项目只读浏览，查找框跟随主题。",
   "内置按需配置参考文档，涵盖指令、技能、MCP 和子智能体；本地主智能体只接收一行入口，正文不常驻上下文。",
   "修复长草稿粘贴图片后的滚动异常，并将长图缩略图限制在附件 chip 内。",
   "精简 Responses 生图技能简介，减少不必要的服务名称触发接口关键词拦截。",
@@ -99,6 +102,9 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "The run status reminder now takes an interval in minutes; 0 turns it off and is the default.",
+  "macOS Finder adds an “Open a temporary session here” quick action, toggled in Settings.",
+  "Upstream sync: optional radial menu on the transcript background; File Manager browses remote projects read-only and its search panel follows the theme.",
   "Bundle an on-demand configuration guide for instructions, skills, MCP and subagents; local main agents receive only a one-line entry point, without loading the document into every request.",
   "Fix scrolling after pasting images into long drafts and keep tall-image thumbnails inside attachment chips.",
   "Simplify the Responses image skill description to reduce keyword filtering triggered by unnecessary service names.",

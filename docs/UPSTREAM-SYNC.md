@@ -1375,3 +1375,9 @@ WTQ Pool 修复证据与范围：
 兼容影响：无数据库或持久化格式变化；新增设置项 `radialMenu` 缺省视为关闭。远程插件读取需要同版本 pi-host；远程入口仍按开发构建与开发者模式显隐。
 
 验证范围：冲突处理、差异审阅、冲突标记检查，49 个改动 TS/TSX/MJS 文件语法解析及文件管理器 `main.js` `node --check` 通过。正式合并提交为 `1a28189d2d0504cf97941b2c9e3e09b39bd6ee93`，父关系和上游祖先关系核对通过。未运行测试、typecheck、构建、依赖安装或服务，未推送或发布。
+
+### 后续：运行状态提醒间隔、访达快速操作与 macOS 构建（2026-10-28）
+
+- 运行状态提醒由开关改为 `runStatusReminderMinutes`（分钟，0 关闭，缺省 0，上限 1440），旧 `runStatusReminder` 不再读取。按用户确认的方案 A，系统指令删去 run-status 说明，改在通知正文写明间隔及不在回复中提及；间隔为 0 时不注入任何相关内容。
+- macOS 以 `~/Library/Services` 下的访达快速操作提供“在此处开启临时会话”，复用 `temporaryWorkspaceContextMenu` 设置（macOS 缺省开启）与 `--temporary-workspace` 单实例通路；仅支持选中文件夹，访达窗口空白处无此入口。探针 workflow 经 `plutil -lint` 与 `automator` 验证路径传递（含空格与单引号）。
+- 先执行 `pnpm install --frozen-lockfile` 同步新增 workspace 依赖，再经 `pnpm --filter @pi-desktop/desktop dist:mac` 构建 arm64，退出码 0，版本 `20261028-103117`。产物位于 `apps/desktop/release/20261028-103117-8apwpI/`（DMG 135794525 字节、ZIP 134659214 字节及更新描述、blockmap），上一批自动清理。`hdiutil verify` 与 `codesign --verify --deep --strict` 通过；包内确认新提醒逻辑、访达快速操作与设置页改动已打入。构建日志仅有既有 Rust 未使用代码警告与 Vite 分包大小提示；ad-hoc 签名，未公证。未运行单元测试或独立 typecheck，未安装启动新包或在访达中实测。

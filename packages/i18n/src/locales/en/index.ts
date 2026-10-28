@@ -1003,6 +1003,8 @@ export const en = {
     keepAwakeWhileRunningDesc: "Prevent idle system sleep while PI-Desktop is running. The display may turn off; manual sleep and closing the lid still work.",
     temporaryWorkspaceContextMenu: "Explorer temporary sessions",
     temporaryWorkspaceContextMenuDesc: "Add “Open a temporary session here” to Windows Explorer folder menus. A session is created only when you send the first message.",
+    temporaryWorkspaceContextMenuMac: "Finder temporary sessions",
+    temporaryWorkspaceContextMenuMacDesc: "Right-click a folder in Finder and choose “在此处开启临时会话” under Quick Actions or Services. A session is created only when you send the first message.",
     storage: {
       unavailableHint: "The storage directory is currently unavailable. Reconnect the drive before starting; the app will not create empty data or switch to another directory.",
       browserSource: "Browser data source",
@@ -1752,7 +1754,8 @@ sklm: {
     infiniteProviderRetry: "Retry until success",
     infiniteProviderRetryDesc: "Keep retrying network and transient provider failures until the request succeeds. You can still stop the turn; API usage may continue while enabled.",
     runStatusReminder: "Run status reminder",
-    runStatusReminderDesc: "Every five minutes of a run, the agent is told in the next model request how long it has been running and its cumulative token usage. The note is not written into the conversation and disappears after compaction.",
+    runStatusReminderDesc: "Reminder interval in minutes; 0 turns it off. Each time a run reaches the interval, the agent is told in the next model request how long it has been running and its cumulative token usage. The note is not written into the conversation and disappears after compaction.",
+    runStatusReminderSaveError: "Couldn't save the run status reminder interval.",
     smoothStreaming: "Smooth streaming",
     smoothStreamingDesc: "Release streamed text character by character. Automatically disabled when the system prefers reduced motion.",
     inlineVisualizations: "Inline visualizations",

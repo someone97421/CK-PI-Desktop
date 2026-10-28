@@ -2934,10 +2934,32 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
     await runtime.dispose();
   });
 
-  it("问答等待不推进运行计时或五分钟提醒，回答后继续累计", async () => {
+  it("运行状态提醒缺省关闭，按设定分钟数提醒", async () => {
     let now = 1_000;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     const runtime = createRuntime();
+    const internal = runtime as any;
+    try {
+      internal.resetRunStatusReminder();
+      now += 60 * 60_000;
+      expect(internal.withRunStatusReminder({ messages: [] }).messages).toHaveLength(0);
+      runtime.setRunStatusReminderMinutes(2);
+      expect(internal.withRunStatusReminder({ messages: [] }).messages.at(-1).content).toContain("60 分 0 秒");
+      now += 60_000;
+      expect(internal.withRunStatusReminder({ messages: [] }).messages).toHaveLength(1);
+      now += 60_000;
+      expect(internal.withRunStatusReminder({ messages: [] }).messages.at(-1).content).toContain("62 分 0 秒");
+    } finally {
+      await runtime.dispose();
+      clock.mockRestore();
+    }
+  });
+
+  it("问答等待不推进运行计时或提醒，回答后继续累计", async () => {
+    let now = 1_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const runtime = createRuntime();
+    runtime.setRunStatusReminderMinutes(5);
     const internal = runtime as any;
     try {
       internal.resetRunStatusReminder();

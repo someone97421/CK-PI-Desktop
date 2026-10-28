@@ -997,6 +997,8 @@ export const zhCN = {
     imageModel: "生图模型",
     temporaryWorkspaceContextMenu: "资源管理器临时会话",
     temporaryWorkspaceContextMenuDesc: "在 Windows 资源管理器的文件夹菜单中添加“在此处开启临时会话”。首次发送消息时才创建会话。",
+    temporaryWorkspaceContextMenuMac: "访达临时会话",
+    temporaryWorkspaceContextMenuMacDesc: "在访达中右键文件夹，可从“快速操作”或“服务”中选择“在此处开启临时会话”。首次发送消息时才创建会话。",
     storage: {
       unavailableHint: "保存目录暂时不可用。请重新连接磁盘后启动；应用不会创建空白数据或切换到其他目录。",
       browserSource: "浏览器数据来源",
@@ -1730,7 +1732,8 @@ sklm: {
     infiniteProviderRetry: "无尽重试",
     infiniteProviderRetryDesc: "网络或临时服务故障会一直重试直到成功。仍可随时停止，但开启后可能持续消耗 API 用量。",
     runStatusReminder: "运行状态提醒",
-    runStatusReminderDesc: "主代理运行每满五分钟，在下一次模型请求中告知其已运行时长与累计 token 用量；消息不写入对话记录，压缩后自然消失。",
+    runStatusReminderDesc: "提醒间隔（分钟），0 为关闭。主代理运行每满该间隔，在下一次模型请求中告知其已运行时长与累计 token 用量；消息不写入对话记录，压缩后自然消失。",
+    runStatusReminderSaveError: "无法保存运行状态提醒间隔。",
     smoothStreaming: "平滑流式显示",
     smoothStreamingDesc: "将流式文本逐字释放；系统开启减少动态效果时自动禁用。",
     inlineVisualizations: "聊天内嵌可视化",

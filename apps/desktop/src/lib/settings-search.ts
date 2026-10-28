@@ -88,6 +88,8 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.preventScreenSleepDesc",
       "settings.temporaryWorkspaceContextMenu",
       "settings.temporaryWorkspaceContextMenuDesc",
+      "settings.temporaryWorkspaceContextMenuMac",
+      "settings.temporaryWorkspaceContextMenuMacDesc",
       "settings.storage.title",
       "settings.storage.dataPath",
       "settings.storage.cache",

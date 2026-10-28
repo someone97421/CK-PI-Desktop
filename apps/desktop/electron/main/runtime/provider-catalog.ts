@@ -5,6 +5,8 @@ import {
   isCommandShellId,
   isAppearanceSettings,
   normalizeRadialMenuPreferences,
+  normalizeRunStatusReminderMinutes,
+  MAX_RUN_STATUS_REMINDER_MINUTES,
   radialMenuWriteError,
   validateNetworkProxy,
   validateSpeechSettings,
@@ -181,8 +183,9 @@ export function createProviderCatalogRuntime({
       ...(value as T),
       infiniteProviderRetry: (value as T & { infiniteProviderRetry?: unknown })
         .infiniteProviderRetry === true,
-      runStatusReminder: (value as T & { runStatusReminder?: unknown })
-        .runStatusReminder !== false,
+      runStatusReminderMinutes: normalizeRunStatusReminderMinutes(
+        (value as T & { runStatusReminderMinutes?: unknown }).runStatusReminderMinutes,
+      ),
       keepAwakeWhileRunning: (value as T & { keepAwakeWhileRunning?: unknown })
         .keepAwakeWhileRunning !== false,
       jevEnabled: (value as T & { jevEnabled?: unknown }).jevEnabled === true,
@@ -206,7 +209,7 @@ export function createProviderCatalogRuntime({
     const value = settings as T & {
       defaultCommandShell?: unknown;
       infiniteProviderRetry?: unknown;
-      runStatusReminder?: unknown;
+      runStatusReminderMinutes?: unknown;
       keepAwakeWhileRunning?: unknown;
       jevEnabled?: unknown;
       updatePreference?: unknown;
@@ -248,10 +251,10 @@ export function createProviderCatalogRuntime({
       });
     }
     if (
-      Object.prototype.hasOwnProperty.call(value, "runStatusReminder") &&
-      typeof value.runStatusReminder !== "boolean"
+      Object.prototype.hasOwnProperty.call(value, "runStatusReminderMinutes") &&
+      normalizeRunStatusReminderMinutes(value.runStatusReminderMinutes) !== value.runStatusReminderMinutes
     ) {
-      throw Object.assign(new Error("runStatusReminder is invalid"), {
+      throw Object.assign(new Error(`runStatusReminderMinutes must be an integer between 0 and ${MAX_RUN_STATUS_REMINDER_MINUTES}`), {
         errorCode: ErrorCodes.INVALID_PARAMS,
       });
     }

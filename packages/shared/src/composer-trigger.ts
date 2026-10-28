@@ -43,6 +43,15 @@ export function normalizeLargePasteThreshold(value: unknown): number {
   return value;
 }
 
+export const MAX_RUN_STATUS_REMINDER_MINUTES = 1440;
+
+/** 运行状态提醒间隔（分钟）；0 表示关闭，非法值按关闭处理。 */
+export function normalizeRunStatusReminderMinutes(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_RUN_STATUS_REMINDER_MINUTES
+    ? value
+    : 0;
+}
+
 const WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
 /** Characters that end the token scan-back, per pi's autocomplete. */
 const DELIMITERS = new Set([" ", "\t", "\n", "\r", '"', "'", "="]);

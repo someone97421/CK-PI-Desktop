@@ -887,13 +887,13 @@ fn normalize_settings_value(mut value: Value) -> Value {
             "networkPolicy": { "mode": "relaxed" },
             "keepAwakeWhileRunning": true,
             "preventScreenSleep": false,
-            "temporaryWorkspaceContextMenu": cfg!(windows),
+            "temporaryWorkspaceContextMenu": cfg!(any(windows, target_os = "macos")),
             "linkOpenTarget": "external",
             "showThinking": object.get("thinkingDisplayMode").and_then(Value::as_str) != Some("compact"),
             "contextUsageDisplay": "remaining",
             "enterToSend": true,
             "infiniteProviderRetry": false,
-            "runStatusReminder": true,
+            "runStatusReminderMinutes": 0,
             "smoothStreaming": true
         });
         for (key, default) in defaults.as_object().unwrap() {

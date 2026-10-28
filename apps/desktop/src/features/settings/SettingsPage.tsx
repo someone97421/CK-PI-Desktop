@@ -69,6 +69,7 @@ import {
   CommandShellRow,
   ContextUsageDisplayRow,
   LargePasteThresholdRow,
+  RunStatusReminderRow,
   LinkOpenTargetRow,
   SettingsCard,
   SettingsRow,
@@ -511,14 +512,20 @@ export function SettingsPage() {
                     onChange={() => void saveSettings({ preventScreenSleep: !settings.preventScreenSleep })}
                   />
                 </SettingsRow>
-                {platform === "win32" && (
+                {(platform === "win32" || platform === "darwin") && (
                   <SettingsRow
-                    title={t("settings.temporaryWorkspaceContextMenu")}
-                    description={t("settings.temporaryWorkspaceContextMenuDesc")}
+                    title={t(platform === "darwin"
+                      ? "settings.temporaryWorkspaceContextMenuMac"
+                      : "settings.temporaryWorkspaceContextMenu")}
+                    description={t(platform === "darwin"
+                      ? "settings.temporaryWorkspaceContextMenuMacDesc"
+                      : "settings.temporaryWorkspaceContextMenuDesc")}
                   >
                     <SettingsToggle
                       checked={settings.temporaryWorkspaceContextMenu !== false}
-                      label={t("settings.temporaryWorkspaceContextMenu")}
+                      label={t(platform === "darwin"
+                        ? "settings.temporaryWorkspaceContextMenuMac"
+                        : "settings.temporaryWorkspaceContextMenu")}
                       onChange={() => void saveSettings({
                         temporaryWorkspaceContextMenu: settings.temporaryWorkspaceContextMenu === false,
                       })}
@@ -615,16 +622,10 @@ export function SettingsPage() {
                     onChange={() => void saveSettings({ infiniteProviderRetry: settings.infiniteProviderRetry !== true })}
                   />
                 </SettingsRow>
-                <SettingsRow
-                  title={t("settings.runStatusReminder")}
-                  description={t("settings.runStatusReminderDesc")}
-                >
-                  <SettingsToggle
-                    checked={settings.runStatusReminder !== false}
-                    label={t("settings.runStatusReminder")}
-                    onChange={() => void saveSettings({ runStatusReminder: settings.runStatusReminder === false })}
-                  />
-                </SettingsRow>
+                <RunStatusReminderRow
+                  settings={settings}
+                  saveSettings={saveSettings}
+                />
                 <SettingsRow
                   title={t("settings.smoothStreaming")}
                   description={t("settings.smoothStreamingDesc")}

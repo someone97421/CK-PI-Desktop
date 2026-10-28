@@ -105,8 +105,8 @@ type RuntimeParams = {
   turnId?: string;
   thinkingLevel?: SessionThinkingLevel;
   infiniteProviderRetry?: boolean;
-  /** 运行状态提醒开关；缺省开启（false 关闭）。 */
-  runStatusReminder?: boolean;
+  /** 运行状态提醒间隔（分钟）；0 或缺省关闭。 */
+  runStatusReminderMinutes?: number;
   /** Opt-in TypeSafe classifier credential resolved by Electron main. */
   jevApiKey?: string;
   provider: RuntimeProviderConfig;
@@ -285,7 +285,7 @@ async function runtimeFor(
       ? params.visualizationsDir : null);
     reusable.setCompactionSettings(params.compactionSettings);
     reusable.setInfiniteProviderRetry(params.infiniteProviderRetry === true);
-    reusable.setRunStatusReminder(params.runStatusReminder !== false);
+    reusable.setRunStatusReminderMinutes(params.runStatusReminderMinutes ?? 0);
     reusable.setMode(mode);
     return reusable;
   }
@@ -343,7 +343,7 @@ async function runtimeFor(
     commandShell: params.commandShell,
     thinkingLevel,
     infiniteProviderRetry: params.infiniteProviderRetry === true,
-    runStatusReminder: params.runStatusReminder !== false,
+    runStatusReminderMinutes: params.runStatusReminderMinutes ?? 0,
     jevApiKey: params.jevApiKey,
     history,
     compaction,

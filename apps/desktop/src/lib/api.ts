@@ -447,7 +447,8 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     infiniteProviderRetry:
       (settings as { infiniteProviderRetry?: unknown }).infiniteProviderRetry === true,
     temporaryWorkspaceContextMenu:
-      settings.temporaryWorkspaceContextMenu ?? (window.piDesktop?.platform === "win32"),
+      settings.temporaryWorkspaceContextMenu ??
+      (window.piDesktop?.platform === "win32" || window.piDesktop?.platform === "darwin"),
     jevEnabled: (settings as { jevEnabled?: unknown }).jevEnabled === true,
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
