@@ -1,274 +1,208 @@
 # 这是一个助手（this-is-a-agent）🦖
 
-基于 [PI-Desktop](https://github.com/vastsa/PI-Desktop) 的个人自用 fork，面向自己的日常编程、文件处理和智能体协作。桌面界面使用 Electron，业务核心使用 Rust，模型与工具执行由 Agent Runtime 承担，并通过插件扩展浏览器、终端、桌面控制和远程访问。
+这是 [PI-Desktop](https://github.com/vastsa/PI-Desktop) 的个人 fork，仓库为 [someone97421/CK-PI-Desktop](https://github.com/someone97421/CK-PI-Desktop)。它保留上游的 Electron 桌面应用、Rust host-core、Pi Agent Runtime、插件、技能和 MCP 生态，重点维护自己的产品身份、本地数据兼容和主 Agent / 子 Agent 协作体验。
 
-仓库为 **[someone97421/CK-PI-Desktop](https://github.com/someone97421/CK-PI-Desktop)**：不向上游提交贡献，软件更新与反馈只指向本 fork；只维护简体中文和 English，保留跟随系统选项。
-
-## 主 Agent 与子 Agent 协作
-
-主 Agent 负责理解任务、整合结果和最终交付。简单串行任务直接完成；只有在并行推进、上下文隔离或独立判断有明确收益时才派发子 Agent。独立任务可以并行，有依赖的工作必须等前序完成并读取结果。这是本 fork 投入最多的部分。
-
-### 工具与角色
-
-| 工具 | 用途 |
-| --- | --- |
-| `Task` | 派发子任务，立即返回任务 ID，子 Agent 在后台持续执行 |
-| `TaskWait` | 等待结果或阶段汇报；超时不取消子任务，显式指定 ID 可重读已完成报告 |
-| `TaskList` | 查看任务状态、执行轮次、进度和是否可以召回 |
-| `TaskInspect` | 按步骤、工具调用或历史页读取有界记录 |
-| `TaskGuide` | 向运行中的子 Agent 追加指导，在安全时机进入原上下文 |
-| `TaskStop` | 单独取消子任务，已产生的文件或外部操作不会自动撤销 |
-| `TaskResume` | 对正常完成的子任务追加修改意见，复用上下文，校验 `expectedExecution` 后开启下一次执行 |
-
-内置六种角色：
-
-| 角色 | 定位 | 工具 |
-| --- | --- | --- |
-| `explorer` | 调查代码库中的具体问题、子系统、调用链或故障假设，返回精简证据 | Read / Glob / Grep / Bash |
-| `code-reviewer` | 只读审阅已完成的改动，找出行为缺陷、边界情况和缺失覆盖 | Read / Glob / Grep |
-| `worker` | 承担自包含的实现任务，例如功能、模块或重构 | Read / Glob / Grep / Edit / Write / Bash |
-| `fixer` | 诊断并修复具体缺陷、回归或失败，在委派范围内恢复正确行为 | Read / Glob / Grep / Edit / Write / Bash |
-| `ui-designer` | 设计并实现有完整交互状态的界面或组件 | Read / Glob / Grep / BrowserPreview / Bash / Edit / Write |
-| `native-media-analyst` | Gemini 原生音视频理解，必要时先做预处理，再读完整段素材并返回原始时间点 | Read / Glob / Bash |
-
-可在设置中管理角色的开关、模型、工具与汇报间隔；`native-media-analyst` 需要配置支持原生音视频输入的 Gemini 模型。定义中固定的主模型不受 `Task.model` 覆盖，配置的备用模型在失败后接替。
-
-### 报告何时送达
-
-**进度报告按完成的工具调用次数计算。** 一次“步”是一次实际发起并结束的工具调用，失败调用同样计数；流式文本、状态更新和未执行的跳过项不计。间隔是汇报频率，不是时间、任务预算或停止条件。
-
-| 角色 | 默认汇报间隔 |
-| --- | --- |
-| explorer、code-reviewer、native-media-analyst | 32 次工具调用 |
-| worker、fixer、ui-designer | 64 次工具调用 |
-
-用户设置优先；派发时可以用 `reportIntervalSteps` 指定，没有固定间隔的定义必须明确指定。间隔取自定义（用户固定）时，`TaskGuide` 不能再顺带改它。同一个间隔还决定提示词里的收敛预期：子代理被要求在约三分之二间隔处收敛（32 次对应约 21 次），并明确这是灵活估算、不是配额或硬上限，预计明显超出时要带现状、剩余工作和原因收尾。
-
-报告由工具事件机械整理，不额外调用模型生成摘要。进入主 Agent 上下文前经过有界收件箱：
-
-- 优先级为停止回执 < 引导回执 < 进度报告，用户停止的回执永远最先送达。
-- 单条正文超过约 5000 字符时截断，并提示用 `TaskInspect` 查完整记录。
-- 同一子任务的进度报告超过 8 条时，最旧的一条合并为可查询的引用，避免单个子任务刷屏撑爆父上下文。
-- 单次投递上限约 12000 字符，取走后即移出收件箱；只接受同一轮、未取消、无错误的事件。
-
-**完整报告在子任务结算完成后，于主 Agent 的下一个安全边界进入上下文**，不必等主 Agent 整个执行循环结束；正在执行的工具和已开始的模型输出会先完成。自动投递、`TaskWait` 与结束后兜底共用同一份消费状态，不会重复补送，超出单次预算的结果留到下一边界。
-
-进度与报告都以隐藏消息进入上下文：模型可读，但不冒充用户消息、不在界面显示，压缩时也不会顶掉用户任务锚点。右侧子 Agent 面板可以实时显示输出，界面上看到文字不等于主 Agent 已读到完整报告；阶段汇报也不等于子任务已完成。
-
-### 引导、停止与恢复
-
-主 Agent 对子 Agent 的纠偏走 `TaskGuide`，规则刻意保守：普通进度报告只意味着“继续独立工作或使用 `TaskWait`”，不要求中途审查或干预；只有在明确交付风险，或同一执行连续两次进度报告后仍空闲时，才用一次 `TaskGuide` 聚焦剩余交付物并推动收尾。只有明显停滞才考虑接管，且接管前必须确认子 Agent 已经停止。
-
-`TaskGuide` 受理后立即把指导排进子 Agent 的**当前轮**，与用户“立即发送”复用同一底层机制，不另起一轮、也不等本轮结束。生效点是安全点：
-
-- 正在执行的工具不会被强行中断，让它跑完；
-- 本轮尚未开始的旧工具调用被跳过，并明确要求按新指导重新规划、不自动重试旧计划；
-- 停止优先：停止会先清空尚未注入的排队指导，再中断执行。
-
-“已接收”和“已生效”是两级独立回执；指导最终送不进子上下文时会被标记为已取消。
-
-普通停止复用同一套取消方法：界面即时反馈并最多等待五秒，`TaskStop` 保留立即回执，真实执行收尾后才发布终态。历史状态沿任务记录回写，允许停止中和完成后的保存反馈，拒绝旧执行或旧修订覆盖新状态。用户可以通过聊天卡片或详情页单独停止子任务；已完成的子任务可以撤销未来的召回。
-
-正常完成的子任务支持 `TaskResume`，每次召回递增执行轮次；停止、失败或上下文已释放的任务不能借此重新启动。等待召回期间不请求模型，也不占运行并发名额。
-
-子代理快照是可选旁路增益：任务启动、结果交付、内存续跑和本地停止都不依赖存储成功，后台保存与撤销不阻塞任务。快照以本地 JSON 保存并兼容读取已有加密快照，恢复时重新获取当前凭据并核对模型、工具、权限等条件，保留任务身份与内容完整性校验。跨重启可恢复完整上下文；无法完整恢复时返回普通会话中的任务与结果材料，由主 Agent 决定续接，不自动重跑。运行中崩溃不会自动续跑。快照属于本地运行数据，不进入仓库。
-
-### 主 Agent 的运行计时与消耗通知
-
-每次运行开始时重置计时与用量基准：普通对话轮与 Plan / Goal 批准后的执行轮各算一次运行。运行每满设定的提醒间隔，在下一次模型请求前追加一条状态通知：
-
-> [运行状态] 本次运行已持续 X 分 Y 秒；主代理累计 token：输入 n，输出 n。（每 N 分钟提醒一次）仅供掌握进度与开销，无需回应，也不要在给用户的回复中提及。
-
-间隔为 0 时既不注入通知，系统指令里也没有关于它的说明。
-
-- **计时按墙钟走**，包含长时间的工具调用和等待子代理的时间，所以这个时长就是“这轮实际跑了多久”；等待你审批工具或回答提问的时间不计入。
-- **用量只统计主 Agent 自己的模型请求**，压缩等内部请求不计入，这个数字直接对应本次运行的实际开销，不会被后台压缩抬高。
-- **提醒间隔是节流间隔**，不是每次请求都追加；通知搭在下一次模型请求的上下文里，不额外发起模型调用。
-- 通知以隐藏消息注入：不在聊天界面显示、不写入数据库，成功压缩后清理；上下文重建时按原会话消息锚点插回原位，顺序不乱。
-- 在「设置 → AI」填写提醒间隔（分钟，`runStatusReminderMinutes`），0 为关闭，缺省 0；修改后下一次发送即生效。
-
-以上是本地运行时能力。远程会话按 RACP 实际支持展示，不能直接等同于本地会话。
+这个 fork 最有特色的部分是**子代理协调编排**：子代理可以在后台持续工作，程序从真实工具事件生成进度报告，主 Agent 可以在不中断执行的情况下纠偏，用户可以单独停止某个任务，完成后还可以把审核意见送回原上下文继续修改。
 
 ## 与上游的主要区别
 
+| 方向 | 上游能力 | 本 fork 的做法 |
+| --- | --- | --- |
+| 子代理执行 | 提供任务派发、等待、查询和停止等基础能力 | 将每个子代理作为可观察、可控制、可召回的独立运行实例管理 |
+| 过程汇报 | 主要依靠最终结果和运行状态 | 按实际完成的工具调用次数生成增量报告，子代理继续执行，不等待主 Agent 批准 |
+| 运行中纠偏 | 常规 steering 难以精确控制同一回复里的后续工具调用 | `TaskGuide` 在工具边界拦截旧计划，保留已完成结果，应用新指令后沿原上下文继续 |
+| 单任务停止 | 通过取消路径结束任务 | UI 停止按钮、`TaskStop` 和 Sidecar 控制共用定向停止器，只影响目标子代理 |
+| 完成后返工 | 上游 `Task.resume` / 转录重建路线 | 使用 fork 的 `TaskResume`、稳定 `delegationId` 和 `expectedExecution`，复用可验证的原始上下文 |
+| 上下文保存 | 不采用上游转录恢复通路 | 支持可选的加密子代理快照、冷启动查询和显式召回，重新校验当前配置后再执行 |
+| 主 Agent 上下文 | 由运行时自行处理子任务结果 | 通过隐藏的 `subagent-supervision` 与 `subagent-coordination` 消息注入报告和协调快照，不伪装成用户消息或顶部 system 指令 |
+| 任务展示 | 普通过程展示 | 任务级过程抽屉、子代理拓扑、执行轮次、耗时、token、报告和控制回执独立展示 |
+| 任务隔离 | 共享项目执行环境 | 支持显式 Git worktree 隔离会话；可写子代理可以绑定自己的工作区并在父会话中交付结果 |
+
+上游的新运行时、模型适配、插件市场、MCP、远程主机和基础界面会持续吸收；子代理协作则沿本 fork 的数据结构、控制语义和用户体验继续适配。详细同步边界见 [`docs/UPSTREAM-SYNC.md`](docs/UPSTREAM-SYNC.md)。
+
+## 子代理协调编排
+
+### 运行结构
+
+主 Agent 通过 `Task` 派发子任务。子代理在自己的模型上下文、工具清单、权限和工作区中独立运行；主 Agent 同时可以继续处理自己的任务。多个互相独立的 `Task` 可以并行发出，有依赖的工作由主 Agent 根据报告和结果安排顺序。
+
+```text
+主 Agent
+  │
+  ├─ Task ───────────────→ 子代理运行实例
+  │                         │
+  │                         ├─ 模型请求
+  │                         ├─ 工具调用
+  │                         ├─ 步骤观察器
+  │                         └─ 执行快照 / 结果
+  │
+  ├─ TaskWait / TaskList ← 阶段报告与状态
+  ├─ TaskInspect         ← 有界步骤和历史记录
+  ├─ TaskGuide ─────────→ 当前轮引导并自动继续
+  ├─ TaskStop ──────────→ 定向停止与召回撤销
+  └─ TaskResume ────────→ 完成后的原上下文返工
+```
+
+子代理工具执行、界面展示、主 Agent 上下文和持久化记录是四条关联但独立的路径。这样阶段报告不会阻塞子代理，界面上的进度也不会被误认为主 Agent 已经读完全部细节。
+
+### 程序生成的阶段报告
+
+`reportIntervalSteps` 控制汇报频率，单位是**已经完成的工具调用次数**。它是报告间隔，不是任务预算、超时或停止条件。用户在子代理定义中固定间隔时优先使用该值；没有固定值时由 `Task` 派发参数提供，二者都缺少时拒绝启动并返回可纠正的参数错误。
+
+运行时在真实工具入口记录步骤，并在结果收束后计数：
+
+- 已实际发起的成功和失败工具调用都会计步。
+- 同一个工具调用 ID 的重复事件只计一次，模型文字和流式分块不单独计步。
+- 由引导或停止拦下、从未真正执行的旧计划不会伪造成工具结果。
+- 报告包含任务 ID、执行轮次、报告序号、步骤区间、工具摘要、结果状态、耗时、错误和文件引用。
+- 摘要由程序根据事件记录生成，保留事实、Agent 陈述和不确定项的区别，不额外消耗子代理模型请求。
+
+报告进入主 Agent 的有界收件箱。自动投递、`TaskWait` 和结束后的兜底路径共享消费游标，以 `(delegationId, reportSeq)` 去重；主 Agent 正在生成回复或执行工具时，报告会排队到下一个可处理边界。多个子代理同时汇报时，运行时合并增量，但保留每份报告的范围和定位信息。
+
+### `TaskGuide`：在当前轮纠偏
+
+`TaskGuide` 专门处理**仍在运行的子代理**。它沿用原来的 `delegationId` 和 Agent 上下文，不创建替代任务，也不要求先暂停再恢复。
+
+引导的执行顺序是：
+
+1. 登记引导命令，关闭当前旧计划尚未开始的工具入口。
+2. 已经开始的工具正常结束，结果归入原执行段。
+3. 尚未开始的 B、C 等旧计划被标记为未执行，并保留合法的工具消息配对。
+4. 在同一个子代理上下文中插入新指令，重置本段报告计数。
+5. 通过原运行实例自动继续执行，累计步骤、耗时和 token 继续保留。
+
+因此，当子代理正在执行 A 时收到引导，A 会完成，旧计划中的 B/C 不会抢在引导之前执行；新指令生效后，子代理根据已有上下文重新判断下一步。引导状态区分 `accepted`、`applying`、`applied`、`cancelled` 和 `rejected`，主 Agent 与界面可以分别看到“已接收”和“已生效”。
+
+实现上，`TaskGuide` 结合 `beforeToolCall`、`afterToolCall`、`shouldStopAfterTurn` 和同一实例的追加 prompt，解决单纯调用 `agent.steer()` 无法保证 A/B/C 边界的问题。核心代码位于 [`packages/agent-runtime/src/subagent.ts`](packages/agent-runtime/src/subagent.ts) 和 [`packages/agent-runtime/src/runtime.ts`](packages/agent-runtime/src/runtime.ts)。
+
+### `TaskStop`：单独终止一个子代理
+
+停止按钮和 `TaskStop` 使用同一条定向控制路径，经 Renderer、Electron IPC、Sidecar 路由到所属运行实例。停止某个子代理不会结束主会话，也不会影响其他子代理。
+
+停止请求先快速返回“正在终止”，运行时随后禁止新的工具调用、取消模型请求并尝试取消在途工具；只有执行确实收束后才发布最终状态。已完成的文件和外部操作保留，部分结果、工具记录、停止来源和无法取消的在途操作都会进入任务记录。停止优先于待生效引导，旧回执不能重新打开任务。
+
+`TaskStop` 还负责关闭已完成任务的后续召回入口。控制请求携带执行轮次，旧卡片或迟到的回调不能误停新一轮执行。
+
+### `TaskResume`：把审核意见送回原上下文
+
+正常完成的子代理可以被主 Agent 审核后显式召回：
+
+```ts
+type TaskResumeInput = {
+  delegationId: string;
+  expectedExecution: number;
+  instruction: string;
+};
+```
+
+`delegationId` 保持不变，`execution` 单调增加。`expectedExecution` 用来拒绝旧卡片、重复点击和迟到请求；`instruction` 是审核意见或下一轮工作要求。召回会：
+
+- 复用原来的 Agent 消息、工具结果、模型绑定和权限边界；
+- 新建执行轮次和审计记录，保留首轮结果及其时间、用量和报告；
+- 让观察器开启新的执行段，同时保持累计步骤、报告序号和累计用量连续；
+- 返回快速接收回执，不等待下一次模型完成；
+- 让 `TaskGuide`、`TaskWait`、`TaskInspect` 和 `TaskStop` 继续作用于新的执行轮次。
+
+已停止、失败、仍在运行或上下文已释放的任务不会被隐式重建。主 Agent 必须明确调用 `TaskResume`，系统不会因为看到历史中的“已完成”就自动重新执行。
+
+### 快照与跨重启召回
+
+子代理上下文由 `SubagentRun` 导出为带版本的白名单快照，保存模型消息、压缩状态、模型绑定、工具声明、观察器状态、执行轮次和用量归属。凭据、Cookie、环境变量全集、工具句柄、浏览器/终端/SSH 会话和 AbortController 不进入快照；恢复时从当前配置重新获取凭据和工具实现。
+
+桌面主进程的 `SubagentSnapshotStore` 负责快照目录、加密 generation/control、执行代次、持久化回执、撤销和清理。Sidecar 只通过窄接口访问它，运行时不直接操作 Electron API 或业务目录。快照目录跟随实际业务数据目录，随数据目录迁移而迁移。
+
+`TaskList` 和 `TaskInspect` 可以先读取磁盘上的轻量任务目录，不创建 Agent、不请求模型、不执行工具。真正 `TaskResume` 时，运行时重新校验会话、项目、模型、工具、插件、权限和快照版本，再构造 idle 的子代理实例；通过校验后才登记新的执行轮次并发起模型请求。
+
+内存召回和磁盘恢复共用执行版本、控制回执和停止标记。正在运行的任务崩溃后不会从旧快照自动续跑；正常完成的任务可以在运行实例释放或应用重启后由主 Agent 显式召回。快照持久化是可选旁路能力，保存失败会保留内存结果并明确记录持久化状态。
+
+### 主 Agent 的隐藏协调上下文
+
+阶段报告和协调快照不会写成用户消息，也不会被拼到提供商适配器顶部的 system 指令中。运行时在请求准备阶段追加两类隐藏 `custom` 消息：
+
+- `subagent-supervision`：阶段报告、完成报告、停止和引导回执，帮助主 Agent 了解外部任务状态。
+- `subagent-coordination`：当前子代理列表、执行轮次、最近报告、引导状态和持久化状态的快照，帮助主 Agent 在多轮请求和上下文重建后继续协调。
+
+这些消息带有会话内的位置锚点，后续请求会按原顺序恢复；成功压缩后归并为最新状态并清理旧快照。任务结果、审计事件和可查询步骤沿现有任务记录保存，运行状态消息本身不污染普通聊天正文。
+
+相关设计与实现记录：
+
+- [`docs/SUBAGENT-COLLABORATION-DECISIONS.md`](docs/SUBAGENT-COLLABORATION-DECISIONS.md)
+- [`docs/SUBAGENT-COLLABORATION-IMPLEMENTATION.md`](docs/SUBAGENT-COLLABORATION-IMPLEMENTATION.md)
+- [`docs/SUBAGENT-PERSISTENCE-RECOVERY-PLAN.md`](docs/SUBAGENT-PERSISTENCE-RECOVERY-PLAN.md)
+
+## 其他 fork 定制
+
+子代理协作之外，本 fork 还保留以下与上游不同的产品层选择：
+
 | 方向 | 本 fork 的做法 |
 | --- | --- |
-| 产品身份 | 中文名「这是一个助手」，英文名与可执行程序名 `this-is-a-agent`，独立应用 ID `com.someone97421.this-is-a-agent`（开发版加 `.dev`），恐龙图标与独立的安装、卸载、快捷方式身份 |
-| 版本与发布 | 以北京时间构建时间作为可见版本 `YYYYMMDD-HHMMSS`，内部编码为 SemVer `YYMM.DDHH.MMSS`；统一经 `scripts/build.mjs` 构建，Windows 便携版固定单文件 EXE，更新源只指向本 fork |
-| 数据与缓存 | 共用上游 `~/.pi-desktop` 业务数据并跟随上游 schema（当前 24）；Electron / Chromium 缓存、崩溃报告与日志独立保存；默认目录取得单实例锁时沿用原版 `PI-Desktop` 名称作为互操作边界 |
-| 子代理编排 | 保留 `TaskResume`、执行版本校验、快照旁路化保存与跨重启上下文召回、当前轮引导与持久化回执、任务级过程抽屉与耗时/token 统计；不引入上游 `Task.resume` 的转录重建与自动续跑通路 |
-| 主代理上下文 | 运行状态提醒（按设定分钟数报告时长与 token，等待你的时间不计入）、只追加的子代理协调快照、独立压缩模型、用户手填上下文窗口优先，均为本 fork 独有 |
-| 模型与提示词 | 保留模型绑定、模型配置导入导出、Google fetch 兼容、Gemini 原生音视频；运行时与模型元数据采用 Pi 1.3 与 models.dev，自定义供应商不按名称或端点推断元数据；会话自动命名与提示词增强改为可选插件 |
-| 界面与交互 | 保留引用、批注、侧边对话，固定 275px 仅折叠侧栏，分区系统字体与字重、浅深配色，多候选生图模型；过程显示模式、隔离会话与后台任务按上游主路径承接；临时会话可选独立工作目录，macOS 半透明窗口默认开启且可显式关闭 |
-| 语言 | 只维护简体中文与 English；旧配置中的其他语言回退到这两种 |
-| 流程与文档 | 单人自用约定，以仓库根 `AGENTS.md` 为准；不写 spec / ADR / E2E 流程文档，上游旧文档整体归档在 `docs/archive/` 只作参考 |
+| 产品身份 | 中文名「这是一个助手」，英文名及可执行程序名 `this-is-a-agent`，独立应用 ID `com.someone97421.this-is-a-agent`，独立图标、缓存、安装包和更新源 |
+| 数据目录 | 继续复用 `~/.pi-desktop` 业务数据，同时隔离 Electron / Chromium 缓存、日志和崩溃报告；支持 `PI_DESKTOP_DATA_DIR` |
+| 模型与上下文 | 保留模型绑定、模型配置导入导出、独立压缩模型、用户填写上下文窗口优先、Google fetch 兼容、Gemini 原生音视频和可选原生搜索 |
+| 聊天与审查 | 保留引用、批注、侧边对话、任务级过程抽屉、文件审查卡、耗时/token 统计和多级过程显示 |
+| 工作区 | 临时会话可以选择独立目录；隔离会话使用 Git worktree；文件管理器、浏览器和终端作为右侧工作面板插件运行 |
+| 扩展 | 支持技能、MCP、OAuth、插件市场、插件托管提供商、自定义 Agent、定时任务和局域网远程控制 |
+| 语言与版本 | 只维护简体中文和 English；构建版本使用北京时间 `YYYYMMDD-HHMMSS`，数据库 schema 为 25，宿主 protocol 为 11 |
 
-模型绑定、插件 ID、数据库文件名、兼容 IPC/API、内部 `@pi-desktop/*` 包名与 Rust host 二进制名继续沿用原版命名，以便共用业务数据和插件生态。
+## 快速开始
 
-## 当前功能
+### 环境要求
 
-| 方向 | 已实现能力 |
-| --- | --- |
-| 项目与对话 | 项目管理与分组、会话搜索与导入、图片/文件附件与 Gemini 音视频附件、消息编辑与重试、持久化待发队列、基于 git worktree 的隔离会话 |
-| 编程工作区 | 文件浏览与审阅、代码修改、命令执行、可超出当前轮继续运行的后台 Bash 任务、浏览器工作面板、内置终端 |
-| 聊天展示 | 平铺／命令工具优先／全折叠三种过程显示，思考与工具记录、耗时/token 统计、引用、批注、侧边对话、文件审查卡、输入框上方的后台任务条 |
-| 模型配置 | 多提供商、配置导入导出与排序、模型绑定、备用渠道、独立压缩模型、提示词增强模板、多候选生图模型与默认选择、可选无限重试 |
-| 模型能力 | 按模型配置思考档位并支持 `omit` 跟随提供商默认行为；Gemini 支持音频与视频原生输入，Responses / Anthropic Messages 可显式启用原生联网搜索；模型输出预算遵循目录公布的上下文上限 |
-| 提示词 | 项目与全局 `SYSTEM.md` / `APPEND_SYSTEM.md`，以及自定义智能体和子智能体提示词 |
-| 智能体模式 | Agent 执行、Plan 计划、Goal 目标模式，以及工具权限与审批 |
-| 扩展能力 | 技能、MCP 与 OAuth、插件市场（含评分与评论）、插件托管提供商、插件会话跟随与输入框单行建议、自定义智能体、主题与浮动窗口接口 |
-| 定时任务 | 手动、按小时、每天或每周调度，可独立指定项目、模型、思考档位与权限模式，保留运行记录 |
-| 个性化 | 浅深配色、分区系统字体与字重、固定 275px 可折叠侧栏（项目首屏 3 条会话，每次加载更多 5 条）、可调宽度的右侧工作面板、macOS 半透明窗口开关 |
-| 远程使用 | RACP / SSH 远程主机与 `pi-host`，默认开启宽松网络以连接局域网与自建服务；另有手机浏览器访问本机的局域网远控插件 |
-| 云同步 | 加密 S3 配置同步与单向备份，含进度、冲突处理和历史恢复；项目列表保留在本机 |
+- Node.js **22.19.0 或更高版本**
+- pnpm **12.8.1**
+- 可编译 Rust host-core 的 Rust 工具链
+- Windows 构建需要 MSVC 和 Windows SDK
 
-模型相关功能取决于所选提供商与模型的实际支持。原生联网搜索默认关闭，需在模型配置中启用。云同步与远程主机入口在安装版隐藏，只在开发构建并开启开发者模式时出现。
-
-实时语音暂缓接入：设置入口、页面、通话按钮与运行接线均下线，保留底层语音服务、`voice-runtime` 包、既有设置、历史记录与队列来源字段，数据库兼容不变。
-
-## 消息队列与“立即发送”
-
-会话运行中点击待发消息的“立即发送”，会将该消息投递到**当前轮**，不停止当前任务，也不等待轮结束。空闲时沿持久化优先队列由下一轮发送。
-
-队列记录在取得持久化回执后移除；失败时保留消息，结果未知时保留隔离状态，避免自动重复投递。普通队列支持移动与编辑，优先顺序继续持久保存。用户引导可以唤醒 `TaskWait`，不会因此取消正在运行的子 Agent。
-
-## 隔离会话、过程显示与后台任务
-
-**隔离会话**沿用上游 worktree 主路径，只在你显式创建时生效，普通项目和临时会话不自动隔离。每个隔离会话在自己的 git worktree 与分支中运行，项目身份、技能与 MCP 配置跟随主项目，文件工具和预览跟随隔离目录；项目里尚未提交的改动不会带入隔离会话。会话内的未提交改动在合并前会先提交到会话分支，合并前可以预览，冲突时保留现场，删除会话会先提示未合并的工作将丢失。项目可以配置 worktree 初始化命令（例如安装依赖），并用 `.worktreeinclude` 复制被忽略的文件；远程项目不支持隔离会话。
-
-**过程显示**在「设置 → 外观 → 过程显示」切换，可选平铺、命令工具优先和全折叠，缺省为全折叠。任务级过程抽屉与子代理拓扑独立，命令工具优先不会拆开抽屉内部的命令。
-
-**后台任务**让 Bash 命令脱离当前轮继续运行，输入框上方会显示任务条，可展开输出或停止；应用退出时统一结束这些进程。适合启动开发服务器这类需要跨轮存活的工作。
-
-## 多模态输入与媒体分析
-
-图片、音频和视频都可以随消息发送。音频与视频的原生输入目前由 Gemini（`google-generative-ai`）承担，并要求模型能力声明支持对应类型；其他模型收到这类附件时会退化为文字占位说明，不会中断请求。常见音视频格式按扩展名解析 MIME，单次请求内联媒体的上限约 100MB。
-
-`native-media-analyst` 子代理使用 `Read`、`Glob` 与 `Bash`：先用 ffprobe 核对参数，必要时用 ffmpeg 在临时目录生成独立命名、保留时间点映射的分析副本，再在输入限制内一次性理解完整视频（含长视频）与音频，返回结论、覆盖范围、预处理说明和原始时间点；遇到输入限制时向主 Agent 说明。
-
-## 插件
-
-桌面包内置浏览器、文件管理器、终端、子代理观测和 Responses 生图等插件资源。子代理观测通过输入框旁的任务状态条、聊天任务卡或工作面板打开，展示当前会话的任务详情和过程记录；插件 ID 为 `local.subagent-observer`，源码位于 `apps/desktop/resources/plugins/local.subagent-observer/`，随主程序装配。终端插件跟随宿主配色与字体，只在终端自身显示滚动条。Responses 生图使用兼容服务的原生 `image_generation` 能力，是否可用取决于服务端支持与当前认证配置。应用还内置插件开发与生图说明两项技能。
-
-仓库 `plugins/` 下提供以下独立插件，需要在应用的插件页面导入对应 `.piplug`：
-
-| 插件 | 当前能力 | 说明 |
-| --- | --- | --- |
-| [Computer Use（Win 版）](plugins/computer-use-win/README.md) | Windows x64 桌面控制、UI Automation、截图、键鼠、Office 操作与工作流技能 | 0.4.0 源码内置 cua-driver 0.28.2 离线包；支持自动启动、修复启动、允许列表和急停。WPS 实际兼容性需按应用验证 |
-| [Computer Use（Mac 常驻版）](plugins/computer-use-mac/README.md) | Apple Silicon / Intel 桌面控制，复用同一套工具名称与参数 | 0.4.1 内置官方签名驱动，沿用 `cn.star.computer-use` ID，导入时替换 Win 版，二者不要同时安装 |
-| [局域网远程控制](plugins/lan-remote-control/README.md) | 手机浏览器查看项目与会话、聊天和附件、待发队列、子代理观测、模型与思考级别设置、审批与 Plan/Goal 决议 | 插件 ID `local.lan-remote-control`；电脑设置密码并开启服务，设备登录后操作由宿主直接执行 |
-| [Codex 宠物](plugins/codex-pet/README.md) | Codex 格式宠物导入、动画浮窗、悬停控制条、单行快捷聊天与富媒体粘贴、会话活动和未读通知 | 插件 ID `local.codex-pet`；消息沿用宠物关联对话，不附带预设素材；v2 原版规格及其他缺口见 [下一阶段](plugins/codex-pet/docs/PHASE-2.md) |
-| [任务文件审查增强](plugins/file-review/README.md) | 本地会话的任务文件汇总卡、按文件分组的修改记录，以及本轮／整会话筛选 | 插件 ID `local.file-review`；不随应用内置。原生逐次修改审查、右侧基础审查面板与安全撤销由宿主保留，卸载插件只移除增强入口 |
-
-Computer Use 与局域网远控在侧栏提供状态入口，面板负责启停和设置。仅更新插件不能获得旧主程序尚未具备的宿主接口；运行时或宿主能力变化需要更新主程序。
-
-局域网远控默认不监听网络。开启后只监听本机私网 IPv4 地址，并保存开启意图；应用重启后按设置恢复。密码以 scrypt 校验值保存，设备令牌只存摘要。HTTP/WS 入口用于可信局域网，电脑需保持运行并且网络可达。
-
-### 插件构建
-
-局域网远控使用自己的构建脚本：
+### 开发与构建
 
 ```bash
-npm --prefix plugins/lan-remote-control ci --ignore-scripts
-npm --prefix plugins/lan-remote-control run pack
-```
-
-成功打包后在插件的 `dist/` 中生成 `.piplug`，并按脚本递增补丁版本。Computer Use 按其 README 使用宿主 `PluginPack` 打包，文件名标注平台；外层采用安装器支持的无压缩格式，内部保留驱动压缩包。Codex 宠物在准备好工作区依赖后单独构建：
-
-```bash
-npm --prefix plugins/codex-pet run test
-npm --prefix plugins/codex-pet run check
-npm --prefix plugins/codex-pet run pack
-```
-
-插件安装包输出到各自 `dist/`，只保留最近一次成功生成的 `.piplug`；不构建主程序，不自动提交或推送。
-
-## 远程主机
-
-设置中的远程主机入口支持 RACP 连接、SSH 配对与安装，可直接从主机目录清单创建远程项目；SSH 配置失配时会按上游行为自动对齐，断开后重连并带失败冷却。局域网远控插件则用于从手机浏览器操作本机桌面会话。
-
-新建远程项目沿用上游本地智能体架构：模型请求、凭据、转录和项目元数据留在本机，只有工作区工具经 RACP 交给远程主机执行；历史远程会话保持原有的远程路由。远程调用失败、取消或断开时按失败关闭处理，不会重放副作用，也不会退回本地执行。
-
-`pi-host` 与桌面应用复用日期版本。SSH 一键安装从本 fork 的发布下载，因此需要先发布对应版本的 Linux x64 主机包及 SHA-256 校验文件。源码存在或桌面包构建成功，不代表相应主机包已经发布。
-
-## 从源码运行与构建
-
-环境要求：Node.js **≥22.19.0**，项目 `packageManager` 指定 **pnpm 12.8.1**，以及可编译 host-core 的 Rust 工具链。Windows 构建还需要对应的 MSVC / Windows SDK 环境。具体依赖版本以根目录和工作区清单为准。
-
-```bash
-# 安装工作区依赖
 pnpm install
-
-# 开发启动
 pnpm dev
 
-# 编译 JS 工作区与 Rust host
 pnpm build
-
-# Windows 安装版与便携版
+pnpm pack
 pnpm --filter @pi-desktop/desktop dist:win
-
-# 当前平台的解包目录
-pnpm run pack
-
-# 其他桌面平台的打包入口（需要相应构建环境）
 pnpm --filter @pi-desktop/desktop dist:mac
 pnpm --filter @pi-desktop/desktop dist:linux
-
-# Linux x64 远程主机包
 pnpm build:pi-host
 ```
 
-正式构建、开发启动与打包统一经过 `scripts/build.mjs`。桌面默认输出到 `apps/desktop/release/`；可以通过 `THIS_IS_A_AGENT_OUTPUT_DIR` 指定输出根目录，建议使用绝对路径。
+开发、编译和打包统一经过 `scripts/build.mjs`。桌面产物默认写入 `apps/desktop/release/`；可用 `THIS_IS_A_AGENT_OUTPUT_DIR` 指定输出根目录，用 `THIS_IS_A_AGENT_BUILD_TIME` 为多平台构建复用同一版本时间。
 
-每次成功构建保留一整套产物：安装包、便携版、解包目录、更新描述文件与 blockmap。新版成功后清理输出目录中的旧构建批次；失败时保留上一份成功产物。`pnpm build` 只做编译，需要安装文件时使用 `dist:win` 等打包入口。
+## 内置与可选插件
 
-Linux x64 的 `pi-host` 原生构建会编译 host-core；在其他平台打包时，需要通过 `THIS_IS_A_AGENT_PI_HOST_CORE` 提供目标二进制，并准备目标平台的终端依赖。
+桌面应用随包提供浏览器、文件管理器、终端、子代理观测和 Responses 原生生图插件。仓库 [`plugins/`](plugins/) 下提供可选的桌面控制、局域网远程控制、Codex 宠物和任务文件审查插件，安装包通过应用插件页面导入。
 
-### 版本与发布
+- [Computer Use（Win）](plugins/computer-use-win/README.md)
+- [Computer Use（Mac）](plugins/computer-use-mac/README.md)
+- [局域网远程控制](plugins/lan-remote-control/README.md)
+- [Codex 宠物](plugins/codex-pet/README.md)
+- [任务文件审查增强](plugins/file-review/README.md)
 
-- 产品名：**这是一个助手**；英文名及可执行程序名：**this-is-a-agent**。
-- 身份源为根目录 `app-branding.json`，应用 ID 为 `com.someone97421.this-is-a-agent`，开发版加 `.dev` 后缀。
-- 根目录 `ico.png` 是唯一图标源，用 `python scripts/make-icon.py` 派生 Windows ICO、macOS ICNS、Linux PNG、托盘图标和界面品牌图片。
-- 北京时间构建时间作为可见版本：`YYYYMMDD-HHMMSS`；内部编码为 SemVer `YYMM.DDHH.MMSS`，例如 `20261011-130239` 对应 `2610.1113.239`。
-- 同一次构建树复用 `THIS_IS_A_AGENT_BUILD_TIME`；多平台生成同一版本时传相同 ISO 时间。
-- 版本文件由 `scripts/prepare-build.mjs` 生成，同步 package、Cargo、应用常量与产物名称；不要手工修改 `packages/shared/src/app-build.ts`。
-- GitHub 发布标签使用内部 SemVer，标题和安装包名显示完整日期时间。自动更新发布需要 `latest*.yml` 和对应安装文件；提交推送与本地构建不等于发布更新。
-
-## 数据与兼容性
-
-业务数据默认使用 **`~/.pi-desktop`**，包括会话、项目、配置、凭据、插件状态与业务日志。可在 **设置 → 常规 → 数据存储位置** 选择空目录，确认后按待迁移任务重启：下次启动在业务服务初始化前复制并校验数据（含浏览器 profile），成功后切到新目录，原目录保留；迁移失败时继续使用原目录并可重试。位置指针保存在系统应用数据目录的 `this-is-a-agent/storage-location.json`，没有该文件时沿用旧的 `data-directory.json`；`PI_DESKTOP_DATA_DIR` 环境变量优先于界面配置。更改数据目录后网页可能需要重新登录。
-
-当前数据库为 **schema 24**，宿主协议为 **protocol 11**。应用日期版本与数据库版本独立；升级沿迁移链 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 → 24 逐步执行并在每步前备份，保留已有数据。只支持 schema 23 或更早版本的旧安装包不能打开升级后的共用数据库，回退需要使用升级前备份并另行保留后续新增数据。schema 24 新增隔离会话的 worktree 登记与项目初始化命令。
-
-同一真实业务目录只允许一个桌面进程启动。默认目录取锁时沿用原版 `PI-Desktop` 的锁名/profile，之后恢复本 fork 身份与独立缓存；自定义数据目录按归一化真实路径区分。这是与原版默认目录的互操作边界，不能保证拦住绕过该锁的历史程序或直接启动的旧 host。
-
-卸载不删除这份共用业务数据。数据库文件名、插件 ID、兼容 IPC/API、内部 `@pi-desktop/*` 包名与 Rust host 二进制名保留兼容命名。
-
-## 仓库导航
+## 仓库结构
 
 | 路径 | 内容 |
 | --- | --- |
-| `apps/desktop/` | Electron 主进程、桌面界面、内置插件与技能资源 |
-| `apps/pi-host/` | 无界面远程主机 |
-| `packages/agent-runtime/` | 主 Agent、子 Agent、工具执行、上下文与报告投递 |
-| `packages/agent-host/` | 智能体宿主进程、事件日志、审批与轮次队列 |
-| `packages/host-runtime/`、`packages/racp/` | 共享宿主运行时与远程连接协议 |
-| `packages/voice-runtime/` | 语音运行时服务（实时语音界面与接线暂缓） |
-| `packages/shared/`、`packages/i18n/` | 协议、类型、应用常量与语言资源 |
-| `packages/plugin-sdk/`、`packages/plugin-devkit/` | 插件接口、校验与打包工具 |
-| `crates/host-core/` | Rust 业务核心（数据库、迁移与宿主能力） |
-| `plugins/` | 独立插件源码与资源 |
-| `scripts/` | 开发、构建、图标与产物管理脚本 |
-| `docs/` | 上游同步记录、本地决策、进度与归档参考 |
+| [`apps/desktop/`](apps/desktop/) | Electron 主进程、界面、内置插件和技能资源 |
+| [`apps/pi-host/`](apps/pi-host/) | 无界面远程主机 |
+| [`packages/agent-runtime/`](packages/agent-runtime/) | Agent、子 Agent、工具执行、上下文和任务报告 |
+| [`packages/agent-host/`](packages/agent-host/) | 智能体宿主、审批、事件和队列 |
+| [`packages/host-runtime/`](packages/host-runtime/) | 共享宿主运行时 |
+| [`packages/racp/`](packages/racp/) | 远程连接协议 |
+| [`packages/plugin-sdk/`](packages/plugin-sdk/) | 插件运行时接口 |
+| [`packages/plugin-devkit/`](packages/plugin-devkit/) | 插件检查和打包工具 |
+| [`packages/shared/`](packages/shared/) | 共享类型、协议和应用常量 |
+| [`crates/host-core/`](crates/host-core/) | Rust 数据库、迁移和宿主能力 |
+| [`plugins/`](plugins/) | 独立插件源码和资源 |
+| [`scripts/`](scripts/) | 开发、构建、图标和产物管理脚本 |
+| [`docs/`](docs/) | 本 fork 的决策、进度和同步记录 |
 
-## 维护约定
+## 相关文档
 
-这是自用 fork，底线只有几条：不向上游或任何其他仓库提 issue / PR，不新增 `upstream` 远端；凭据、私人数据与运行缓存不进仓库；改数据库或持久化格式时保持旧数据兼容，否则先说明迁移方案；提交信息用中文；没跑的测试就如实说明没跑。
-
-- 默认在当前分支工作，不新建分支或 worktree，获准推送时只推本 fork 的当前分支。
-- 默认不运行测试、全量构建或启动服务；需要验证时只覆盖改动及直接相关部分，并如实说明验证范围。
-- 开发服务必须在可见终端中前台运行，关闭终端时一并结束服务及其子进程；`kill-dev.cmd` 只结束当前工作区的开发进程。
-- 构建产物按批次整批保留最近一次成功结果，不误删产物目录之外的文件。
-
-上游同步按 `docs/UPSTREAM-SYNC.md` 的增量记录进行：通过 `git fetch https://github.com/vastsa/PI-Desktop.git main` 获取并固定目标 SHA，用正常 `git merge --no-ff` 建立真实合并关系，逐项保留本文列出的定制边界，完成后更新“最后正式合入的上游 SHA”，只向本 fork 推送。仅核对或挑补丁的 SHA 不算正式合入。
+- [`AGENTS.md`](AGENTS.md)：仓库开发约定和产品边界
+- [`docs/README.md`](docs/README.md)：活跃文档与归档说明
+- [`docs/RELEASE-NOTES.md`](docs/RELEASE-NOTES.md)：版本更新记录
+- [`docs/UPSTREAM-SYNC.md`](docs/UPSTREAM-SYNC.md)：上游同步位置与保留项
+- [`apps/pi-host/README.md`](apps/pi-host/README.md)：远程主机构建与 SSH 配置
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)：代码贡献与本地开发提示
+- [`LICENSE`](LICENSE)：许可证
