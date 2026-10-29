@@ -527,6 +527,23 @@ export function isOfficialDeepSeekEndpoint(input: { baseUrl?: string }): boolean
 export const DEEPSEEK_REASONING_REPLAY_PLACEHOLDER =
   "[reasoning not retained for this turn]";
 
+/**
+ * The placeholder a model echoed back as the start of its own reasoning (and
+ * its observed `[reasoning retained for this turn]` rewrite), repeated or not.
+ */
+const ECHOED_REASONING_REPLAY_PLACEHOLDER =
+  /^(?:\s*\[reasoning (?:not )?retained for this turn\])+\s*/;
+
+/**
+ * Thinking without a leading echo of {@link DEEPSEEK_REASONING_REPLAY_PLACEHOLDER}.
+ * Models read the replayed placeholder as their previous reasoning and
+ * continued it, so persisted thinking can start with it (#1945). It is not
+ * reasoning: it is neither shown nor replayed. Stored text is not rewritten.
+ */
+export function withoutReasoningReplayPlaceholder(thinking: string): string {
+  return thinking.replace(ECHOED_REASONING_REPLAY_PLACEHOLDER, "");
+}
+
 export type DeepSeekRequestCompat = {
   requiresReasoningContentOnAssistantMessages: true;
   /**

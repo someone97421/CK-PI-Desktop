@@ -1,14 +1,16 @@
 /** Session-root-confined attachment hydration for restored user messages. */
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { copyFile, mkdir, realpath, stat } from "node:fs/promises";
+import { copyFile, mkdir, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { MediaStore } from "./media-store.js";
 import {
   formatFileInsert,
+  imageExceedsInlineDimensions,
   isSvgAttachment,
   MAX_INLINE_IMAGE_BYTES,
   MAX_INLINED_IMAGE_HISTORY_BYTES,
+  probeImageDimensions,
   SVG_MIME_TYPE,
   mediaMimeType,
   supportsMediaMime,
@@ -68,6 +70,17 @@ async function replayedAttachmentPath(
     if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
   }
   return target;
+}
+
+async function readImageHeader(path: string): Promise<Buffer> {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(128 * 1024);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function hydrateAttachmentHistory(
@@ -137,9 +150,13 @@ export async function hydrateAttachmentHistory(
       }
       const size = (await stat(canonical)).size;
       const media = supportsMediaMime(attachment.mimeType, params);
+      const dimensions = supportsVision && attachment.kind === "image" && size <= MAX_INLINE_IMAGE_BYTES
+        ? probeImageDimensions(await readImageHeader(canonical))
+        : undefined;
       const canInline = media
         ? base64ByteLength(size) < GEMINI_INLINE_REQUEST_BYTES
-        : supportsVision && attachment.kind === "image" && size <= MAX_INLINE_IMAGE_BYTES;
+        : supportsVision && attachment.kind === "image" && size <= MAX_INLINE_IMAGE_BYTES
+          && !imageExceedsInlineDimensions(dimensions);
       if (canInline) return { attachment, canonicalPath: canonical, size };
       return {
         attachment,
@@ -190,7 +207,11 @@ export async function hydrateAttachmentHistory(
   for (const item of selectedForInlining) {
       try {
         if ((await stat(item.canonicalPath!)).size !== item.size) continue;
-        const mediaRef = await store.putFile(item.canonicalPath!, item.attachment.mimeType ?? "image/png", item.size!);
+        const mediaRef = await store.putFile(
+          item.canonicalPath!,
+          item.attachment.mimeType ?? "image/png",
+          item.size!,
+        );
         item.attachment = {
           ...item.attachment,
           mediaRef,

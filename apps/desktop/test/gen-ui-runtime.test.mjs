@@ -59,9 +59,51 @@ test("the error shell reports a code and never echoes caller text", async () => 
   assert.match(unknown, /"code":"not-found"/);
 });
 
+test("script errors are honored only from the card's own frame and stay bounded plain text", async (t) => {
+  const ssr = await slotSsr(t);
+  const { genUiScriptErrorFromMessage } = await ssr.load("/src/features/chat/gen-ui/gen-ui-frames.ts");
+  const own = {};
+  const event = (data, source = own) => ({ source, data });
+  const type = "pi-genui:script-error";
+
+  assert.equal(
+    genUiScriptErrorFromMessage(event({ type, message: "Error: viz: no element sb-bar" }), own),
+    "Error: viz: no element sb-bar",
+  );
+  assert.equal(genUiScriptErrorFromMessage(event({ type, message: "x" }, {}), own), null);
+  assert.equal(genUiScriptErrorFromMessage(event({ type, message: "x" }), null), null);
+  assert.equal(genUiScriptErrorFromMessage(event({ type: "pi-genui:error", message: "x" }), own), null);
+  // A failure without a usable message is still a failure.
+  assert.equal(genUiScriptErrorFromMessage(event({ type, message: 42 }), own), "");
+  assert.equal(genUiScriptErrorFromMessage(event({ type, message: "a\n\n  b" }), own), "a b");
+  assert.equal(genUiScriptErrorFromMessage(event({ type, message: "y".repeat(1000) }), own).length, 300);
+});
+
+test("the guest runtime reports the first script error to its parent", async () => {
+  const { buildGenUiDocument } = await import("../electron/main/gen-ui-document.ts");
+  const html = buildGenUiDocument("<p>hi</p>", { kit: { css: "", head: "", runtime: "", vendorUrls: new Map() } });
+  const head = html.slice(0, html.indexOf("</head>"));
+  assert.match(head, /const SCRIPT_ERROR = "pi-genui:script-error"/);
+  assert.match(head, /addEventListener\("error", /);
+  assert.match(head, /addEventListener\("unhandledrejection", /);
+  assert.match(head, /parent\.postMessage\(\{ type: SCRIPT_ERROR, message \}, "\*"\)/);
+  // The runtime script, including its error listener, runs before the fragment.
+  assert.ok(html.indexOf("SCRIPT_ERROR") < html.indexOf("<p>hi</p>"));
+});
+
+test("a script error notice renders the guest message as text, not markup", async (t) => {
+  const ssr = await slotSsr(t);
+  const { GenUiScriptErrorNotice } = await ssr.load("/src/features/chat/gen-ui/GenUiCard.tsx");
+  const html = ssr.render(createElement(GenUiScriptErrorNotice, { message: "<img src=x onerror=alert(1)>" }));
+  assert.match(html, /role="alert"/);
+  assert.match(html, new RegExp(catalogs.en.chat.genUi.scriptError.replace("'", "&#x27;")));
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(html, /<img/);
+});
+
 test("the guest runtime announces readiness and forwards only Escape", async () => {
   const { buildGenUiDocument } = await import("../electron/main/gen-ui-document.ts");
-  const html = buildGenUiDocument("<p>hi</p>", { kit: { css: "", runtime: "", vendorUrls: new Map() } });
+  const html = buildGenUiDocument("<p>hi</p>", { kit: { css: "", head: "", runtime: "", vendorUrls: new Map() } });
   const head = html.slice(0, html.indexOf("</head>"));
   assert.match(head, /const READY = "pi-genui:ready"/);
   assert.match(head, /parent\.postMessage\(\{ type: READY \}, "\*"\)/);
@@ -239,6 +281,7 @@ test("every locale has a reason for each unavailable state", () => {
     "unavailableTooLarge",
     "unavailableNotFragment",
     "unavailableRuntime",
+    "scriptError",
   ];
   for (const [locale, catalog] of Object.entries(catalogs)) {
     for (const key of keys) {

@@ -47,6 +47,25 @@ export function clampGuestBounds(
   };
 }
 
+/**
+ * Convert a chrome page's hole from its own CSS pixels to DIP.
+ *
+ * A docked view follows the app's Appearance type scale as page zoom
+ * (`PluginViewHost`), so a rect the page measured at 125% covers 1.25 DIP per
+ * pixel in the window. Without this the guest page would sit in a hole smaller
+ * than the one the chrome actually draws from 100% type upward.
+ */
+export function scaleGuestHole(hole: BrowserRect, scale: unknown): BrowserRect {
+  const factor = Number(scale);
+  if (!Number.isFinite(factor) || factor <= 0 || factor === 1) return hole;
+  return {
+    x: hole.x * factor,
+    y: hole.y * factor,
+    width: hole.width * factor,
+    height: hole.height * factor,
+  };
+}
+
 function asRect(value: unknown): BrowserRect | null {
   if (!value || typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
@@ -74,6 +93,12 @@ type ChromeSurface = {
   viewId: string;
   visible: boolean;
   bounds: BrowserRect;
+  /**
+   * Page zoom the chrome page is painting at. The page measures its guest hole
+   * in its own CSS pixels, so once the host scales that page with the app's
+   * type scale one chrome CSS pixel covers `scale` DIP (see `scaleGuestHole`).
+   */
+  scale?: number;
 };
 
 type BrowserRevealWaiter = {
@@ -597,7 +622,10 @@ export class BrowserHost {
 
   private guestBounds(): BrowserRect | null {
     if (!this.chrome?.visible || !this.hole || this.holePluginId !== this.chrome.pluginId) return null;
-    return clampGuestBounds(this.chrome.bounds, this.hole);
+    return clampGuestBounds(
+      this.chrome.bounds,
+      scaleGuestHole(this.hole, this.chrome.scale),
+    );
   }
 
   private applyGuest(): void {

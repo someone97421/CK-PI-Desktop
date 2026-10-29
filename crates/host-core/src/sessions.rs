@@ -11,6 +11,10 @@ use std::collections::HashMap;
 use crate::transcripts::{self, CompactionRecord, MessageRecord, RevisionRecord};
 
 mod fork_files;
+mod history_mutations;
+pub use history_mutations::{
+    activate_message_revision_canonical, delete_message, retract_pending_prompt,
+};
 mod model_system;
 mod usage;
 pub use usage::record_usage;
@@ -130,6 +134,10 @@ pub struct SessionSummary {
     pub thinking_level: String,
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
+    /// The `/fast` switch for this session's main turns (ADR 0334). Requests
+    /// use the priority tier only when the model binding also allows it.
+    #[serde(default)]
+    pub fast_mode: bool,
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_user_message_at: Option<String>,
@@ -1368,7 +1376,8 @@ const SUMMARY_SELECT: &str =
             )),
             (SELECT json_extract(value_json, '$') FROM kv
              WHERE ns = 'session-workspace' AND key = s.id) AS temporary_workspace_path,
-            EXISTS (SELECT 1 FROM task_runs r WHERE r.session_id = s.id) AS scheduled_run
+            EXISTS (SELECT 1 FROM task_runs r WHERE r.session_id = s.id) AS scheduled_run,
+            s.fast_mode
      FROM sessions s LEFT JOIN projects p ON p.id = s.project_id
      WHERE s.deleted_at IS NULL";
 
@@ -1389,6 +1398,7 @@ pub(crate) fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Sess
         last_user_message_at: row.get::<_, Option<i64>>(11)?.map(ms_to_ts),
         // Search and listing build different column lists; use the shared alias.
         scheduled_run: row.get("scheduled_run")?,
+        fast_mode: row.get("fast_mode")?,
         worktree: None,
     })
 }
@@ -1446,6 +1456,8 @@ pub struct SessionCreateOptions {
     pub temporary_workspace_path: Option<String>,
     pub thinking_level: Option<String>,
     pub permission_mode: Option<String>,
+    /// The `/fast` switch (ADR 0334); false keeps the default service tier.
+    pub fast_mode: bool,
 }
 
 pub fn create_session_with_thinking(
@@ -1469,6 +1481,7 @@ pub fn create_session_with_thinking(
             thinking_level,
             permission_mode: None,
             draft_id: None,
+            fast_mode: false,
         },
     )
 }
@@ -1505,6 +1518,7 @@ pub fn create_session_with_options(
         temporary_workspace_path,
         thinking_level,
         permission_mode,
+        fast_mode,
     } = options;
     let now = now_ms();
     let id = match draft_id {
@@ -1552,8 +1566,8 @@ pub fn create_session_with_options(
             .prepare_cached(
                 "INSERT INTO sessions (
                     id, title, project_id, provider_id, model_id, mode, thinking_level,
-                    permission_mode, title_source, created_at, updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                    permission_mode, title_source, fast_mode, created_at, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
             )?
             .execute(params![
                 id,
@@ -1565,6 +1579,7 @@ pub fn create_session_with_options(
                 thinking_level,
                 permission_mode,
                 title_source,
+                fast_mode,
                 now
             ])?;
         if let Some(path) = temporary_workspace_path.as_deref() {
@@ -1583,6 +1598,7 @@ pub fn create_session_with_options(
         mode,
         thinking_level,
         permission_mode,
+        fast_mode,
         updated_at: ms_to_ts(now),
         last_user_message_at: None,
         created_at: ms_to_ts(now),
@@ -2114,10 +2130,11 @@ pub fn fork_session_through(
             .prepare_cached(
                 "INSERT INTO sessions (
                     id, title, project_id, provider_id, model_id, mode, thinking_level,
-                    permission_mode, source, pinned, last_seq, created_at, updated_at
+                    permission_mode, fast_mode, source, pinned, last_seq, created_at,
+                    updated_at
                  )
                  SELECT ?1, ?2, project_id, provider_id, model_id, mode, thinking_level,
-                        permission_mode, NULL, 0, ?3, ?4, ?4
+                        permission_mode, fast_mode, NULL, 0, ?3, ?4, ?4
                  FROM sessions WHERE id = ?5",
             )?
             .execute(params![id, title, records.len() as i64, now, source_id])?;
@@ -2154,6 +2171,7 @@ pub fn fork_session_through(
         mode: source.summary.mode,
         thinking_level: source.summary.thinking_level,
         permission_mode: source.summary.permission_mode,
+        fast_mode: source.summary.fast_mode,
         updated_at: created_at.clone(),
         last_user_message_at: records.iter().rev().find(|record| record.role == "user")
             .map(|record| record.created_at.clone()),
@@ -2201,6 +2219,31 @@ pub fn configure_session_with_thinking(
     thinking_level: Option<&str>,
     permission_mode: Option<&str>,
 ) -> Result<Option<SessionSummary>> {
+    configure_session_with_fast_mode(
+        db,
+        id,
+        mode,
+        provider_id,
+        model_id,
+        thinking_level,
+        permission_mode,
+        None,
+    )
+}
+
+/// Full configurator. Every `None` preserves the persisted value, including
+/// the `/fast` switch (ADR 0334).
+#[allow(clippy::too_many_arguments)]
+pub fn configure_session_with_fast_mode(
+    db: &Database,
+    id: &str,
+    mode: &str,
+    provider_id: Option<&str>,
+    model_id: Option<&str>,
+    thinking_level: Option<&str>,
+    permission_mode: Option<&str>,
+    fast_mode: Option<bool>,
+) -> Result<Option<SessionSummary>> {
     if !(is_valid_mode(mode) || mode == "chat") {
         return Err(anyhow!("mode must be plan or agent"));
     }
@@ -2227,7 +2270,8 @@ pub fn configure_session_with_thinking(
              SET mode = ?2, provider_id = COALESCE(?3, provider_id),
                  model_id = COALESCE(?4, model_id),
                  thinking_level = COALESCE(?5, thinking_level),
-                 permission_mode = COALESCE(?6, permission_mode), updated_at = ?7
+                 permission_mode = COALESCE(?6, permission_mode),
+                 fast_mode = COALESCE(?8, fast_mode), updated_at = ?7
              WHERE id = ?1",
         )?
         .execute(params![
@@ -2237,7 +2281,8 @@ pub fn configure_session_with_thinking(
             model_id,
             thinking_level,
             permission_mode,
-            now_ms()
+            now_ms(),
+            fast_mode
         ])?;
     if changed == 0 {
         return Ok(None);
@@ -3852,6 +3897,23 @@ pub fn activate_message_revision(
     revision_index: i64,
     prefix: &[UiMessage],
 ) -> Result<Vec<UiMessage>> {
+    activate_message_revision_with_prefix(
+        db,
+        session_id,
+        root_user_id,
+        revision_index,
+        Some(prefix),
+    )
+}
+
+/// None requires a durable family anchor; Some preserves the legacy prefix API.
+fn activate_message_revision_with_prefix(
+    db: &Database,
+    session_id: &str,
+    root_user_id: &str,
+    revision_index: i64,
+    prefix: Option<&[UiMessage]>,
+) -> Result<Vec<UiMessage>> {
     let session_created = session_created_at(db, session_id)?;
     {
         let conn = db.conn();
@@ -3871,10 +3933,19 @@ pub fn activate_message_revision(
     let live = get_session(db, session_id)?
         .map(|detail| detail.messages)
         .unwrap_or_default();
+    if prefix.is_none()
+        && live_branch_start(&live, root_user_id)
+            .filter(|&index| live[index].role == "user")
+            .is_none()
+    {
+        return Err(anyhow!(
+            "NOT_FOUND: revision family anchor missing from canonical transcript"
+        ));
+    }
     let live_start = archive_live_branch(db, session_id, root_user_id, &live)?;
     let prefix: &[UiMessage] = match live_start {
         Some(start) => &live[..start],
-        None => prefix,
+        None => prefix.ok_or_else(|| anyhow!("NOT_FOUND: canonical revision prefix missing"))?,
     };
 
     let payload =
@@ -5121,6 +5192,76 @@ mod tests {
         assert_eq!(omitted.thinking_level, "omit");
     }
 
+    /// ADR 0334: `/fast` is stored per session, survives configures that do
+    /// not mention it, and is copied by a fork.
+    #[test]
+    fn session_fast_mode_is_persisted_preserved_and_forked() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        assert!(!session.fast_mode);
+
+        let set = |enabled: Option<bool>, mode: &str| {
+            configure_session_with_fast_mode(
+                &db,
+                &session.id,
+                mode,
+                None,
+                None,
+                None,
+                None,
+                enabled,
+            )
+            .unwrap()
+            .unwrap()
+        };
+        assert!(set(Some(true), "agent").fast_mode);
+        assert!(set(None, "plan").fast_mode);
+        let kept = configure_session(&db, &session.id, "agent", None, None)
+            .unwrap()
+            .unwrap();
+        assert!(kept.fast_mode);
+        assert!(
+            get_session(&db, &session.id)
+                .unwrap()
+                .unwrap()
+                .summary
+                .fast_mode
+        );
+
+        let ForkSessionResult::Created(fork) =
+            fork_session_through(&db, &session.id, None, None).unwrap()
+        else {
+            panic!("expected fork");
+        };
+        assert!(fork.summary.fast_mode);
+        assert!(
+            get_session(&db, &fork.summary.id)
+                .unwrap()
+                .unwrap()
+                .summary
+                .fast_mode
+        );
+
+        assert!(!set(Some(false), "agent").fast_mode);
+
+        let created = create_session_with_options(
+            &db,
+            SessionCreateOptions {
+                fast_mode: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(created.fast_mode);
+        assert!(
+            get_session(&db, &created.id)
+                .unwrap()
+                .unwrap()
+                .summary
+                .fast_mode
+        );
+    }
+
     #[test]
     fn create_session_permission_mode_is_optional_and_validated() {
         let db = test_db();
@@ -5467,6 +5608,7 @@ mod tests {
             mode: "agent".into(),
             thinking_level: "off".into(),
             permission_mode: "inherit".into(),
+            fast_mode: false,
             worktree: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-02T00:00:00Z".into(),
@@ -5521,6 +5663,7 @@ mod tests {
             mode: "agent".into(),
             thinking_level: "off".into(),
             permission_mode: "inherit".into(),
+            fast_mode: false,
             worktree: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),
@@ -6511,6 +6654,7 @@ mod tests {
             mode: "agent".into(),
             thinking_level: "medium".into(),
             permission_mode: "inherit".into(),
+            fast_mode: false,
             worktree: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             updated_at: "2025-01-01T00:00:00Z".into(),

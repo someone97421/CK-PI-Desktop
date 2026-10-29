@@ -46,6 +46,8 @@ async function run() {
   await mkdir(join(dataDir, "visualizations", "victim"), { recursive: true });
   await writeFile(join(dataDir, "visualizations", "victim", "secret.html"),
     "<p>CROSS_SESSION_PRIVATE_MARKER</p><script>parent.postMessage({type:'fixture:loaded'},'*')</script>");
+  await writeFile(join(sessionDir, "broken.html"),
+    `<div id="chart"></div><script>viz.render("missing-chart", { mark: "bar", data: [{ k: "a", v: 1 }], x: "k", y: "v" });</script>`);
   await writeFile(join(sessionDir, "attacker.html"), `<p>attacker</p><script>addEventListener('message',event=>{if(event.data!=='attack')return;try{parent.postMessage({type:'cross-read',stolen:parent.frames[1].document.querySelector('p').textContent},'*')}catch(error){parent.postMessage({type:'cross-read',error:error.name},'*')}});parent.postMessage({type:'fixture:loaded'},'*')</script>`);
   await writeFile(join(sessionDir, "limit.html"), Buffer.alloc(GEN_UI_MAX_FRAGMENT_BYTES, 0x20));
   const limit = await readFragment({ sessionId: "probe_session", fileName: "limit.html" });
@@ -85,6 +87,58 @@ async function run() {
     await host(`window.genUiProbe.mount(${JSON.stringify(message(0))});window.genUiProbe.waitLoaded(1)`);
     const inline = guests()[0];
     assert.equal(await inline.executeJavaScript("d3.version"), "7.9.0");
+    // The `viz` helpers are preloaded and draw a container-sized chart.
+    assert.equal(
+      await inline.executeJavaScript(
+        '(async()=>{const el=document.createElement("div");el.style.width="300px";document.body.append(el);viz.chart(el,({svg,width})=>svg.append("rect").attr("width",width),{label:"probe"});await Promise.resolve();return el.querySelector("svg").getAttribute("viewBox")})()',
+      ),
+      "0 0 300 240",
+    );
+    // A declarative `viz.render` spec draws marks, axes, and a legend.
+    assert.equal(
+      await inline.executeJavaScript(
+        '(async()=>{const el=document.createElement("div");el.style.width="400px";document.body.append(el);viz.render(el,{mark:"bar",data:[{k:"a",v:1,s:"x"},{k:"b",v:2,s:"y"}],x:"k",y:"v",color:"s",label:"probe"});await Promise.resolve();return [el.querySelectorAll("rect").length,el.querySelectorAll(".viz-axis").length>0,el.querySelectorAll(".viz-legend-item").length].join()})()',
+      ),
+      "2,true,2",
+    );
+    // Spec edge cases that a model-written fragment hits in practice.
+    const vizCases = await inline.executeJavaScript(`(async () => {
+      const box = (w = 400) => { const el = document.createElement("div"); el.style.width = w + "px"; document.body.append(el); return el; };
+      const out = {};
+      const days = box();
+      viz.render(days, { mark: "line", data: [{ d: "2025-01-15", v: 1 }, { d: "2025-01-16", v: 2 }], x: "d", y: "v" });
+      const years = box();
+      viz.render(years, { mark: "line", data: [{ y: 2019, v: 1 }, { y: 2026, v: 3 }], x: "y", y: "v" });
+      const again = box();
+      viz.render(again, { mark: "bar", data: [{ k: "a", v: 1, s: "x" }, { k: "b", v: 2, s: "y" }], x: "k", y: "v", color: "s" });
+      const second = viz.render(again, { mark: "bar", data: [{ k: "a", v: 3, s: "x" }, { k: "b", v: 1, s: "y" }], x: "k", y: "v", color: "s" });
+      second.update({ data: [{ k: "c", v: 5, s: "x" }, { k: "d", v: 2, s: "y" }] });
+      const donut = box();
+      viz.render(donut, { mark: "arc", data: [{ k: "rent", v: 3 }, { k: "food", v: 1 }], x: "k", y: "v" });
+      await Promise.resolve();
+      out.dateTip = days.querySelector("[data-tooltip]").getAttribute("data-tooltip");
+      out.dateTicks = [...days.querySelectorAll(".viz-axis-x .tick text")].map((t) => t.textContent).join("|");
+      out.yearTicks = [...years.querySelectorAll(".viz-axis-x .tick text")].map((t) => t.textContent).join("|");
+      out.again = [again.querySelectorAll("svg").length, again.querySelectorAll(".viz-legend").length, [...again.querySelectorAll(".viz-axis-x .tick text")].map((t) => t.textContent).join("")].join();
+      out.fixedWidth = days.querySelector("svg").hasAttribute("width");
+      out.donutLegend = donut.querySelector(".viz-legend-item").textContent;
+      // redraw() draws synchronously, so the spec error is caught here instead
+      // of escaping as an uncaught guest error.
+      try { viz.render(box(), { mark: "heatmap", data: [{ a: 1, b: 2 }], x: "a", y: "b" }).redraw(); out.heatmap = "no error"; }
+      catch (error) { out.heatmap = error.message; }
+      second.destroy();
+      out.destroyed = [again.querySelectorAll("svg").length, again.querySelectorAll(".viz-legend").length].join();
+      return out;
+    })()`);
+    assert.match(vizCases.dateTip, /2025-01-15/);
+    assert.doesNotMatch(vizCases.dateTip, /08:00|00:00/);
+    assert.doesNotMatch(vizCases.dateTicks, /:/);
+    assert.doesNotMatch(vizCases.yearTicks, /,/);
+    assert.equal(vizCases.again, "1,1,cd");
+    assert.equal(vizCases.fixedWidth, false);
+    assert.match(vizCases.donutLegend, /^rent /);
+    assert.equal(vizCases.heatmap, "viz.render: mark heatmap needs value");
+    assert.equal(vizCases.destroyed, "0,0");
     assert.equal(await host('document.querySelector("iframe").getAttribute("sandbox")'), "allow-scripts");
     await inline.executeJavaScript('document.getElementById("slider").value="17";document.getElementById("slider").dispatchEvent(new Event("input",{bubbles:true}));');
     assert.equal(await inline.executeJavaScript("window.fixtureValue()"), "17");
@@ -112,6 +166,15 @@ async function run() {
     const missing = message(0).replace("chart0.html", "missing.html");
     await host(`window.genUiProbe.mount(${JSON.stringify(missing)});window.genUiProbe.wait(()=>!!document.querySelector(".is-unavailable"),"missing error shell")`);
     checks.push("remote and missing files show unavailable cards");
+
+    // A fragment that passes a wrong container id to `viz.render` (seen in a
+    // real model run) used to leave a blank card with the error only in the
+    // guest console; the card now says why.
+    const broken = message(0).replace("chart0.html", "broken.html");
+    await host(`window.genUiProbe.mount(${JSON.stringify(broken)});window.genUiProbe.wait(()=>!!document.querySelector(".gen-ui-script-error"),"script error notice")`);
+    assert.match(await host('document.querySelector(".gen-ui-script-error").textContent'), /viz: no element missing-chart/);
+    assert.equal(await host('document.querySelectorAll(".gen-ui-card iframe").length'), 1);
+    checks.push("fragment script errors show in the card");
 
     window.setContentSize(900, 2600);
     const all = Array.from({ length: 8 }, (_, index) => message(index)).join("\n");

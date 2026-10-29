@@ -354,6 +354,7 @@ export function createSessionCoordination({
         ...(!projectPath && draftSessionId ? { draftId: draftSessionId } : {}),
         ...(projectPath ? {} : temporaryWorkspacePath ? { temporaryWorkspacePath } : {}),
         permissionMode: draftConfig?.permissionMode,
+        ...(draftConfig?.fastMode ? { fastMode: true } : {}),
         providerId: inherited.providerId,
         modelId: inherited.modelId,
         projectPath: projectPath ?? undefined,

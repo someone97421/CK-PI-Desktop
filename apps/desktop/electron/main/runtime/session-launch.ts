@@ -837,6 +837,9 @@ export function createSessionLaunchRuntime({
         thinkingLevel,
         infiniteProviderRetry: settings.infiniteProviderRetry === true,
         runStatusReminderMinutes: normalizeRunStatusReminderMinutes(settings.runStatusReminderMinutes),
+        // The session `/fast` switch only reaches a model the user allowed it
+        // for in model settings (ADR 0334).
+        fastMode: session.fastMode === true && storedModel?.fastModeAllowed === true,
         ...(jevApiKey ? { jevApiKey } : {}),
         commandShell,
         scratchDir,

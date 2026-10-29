@@ -9,6 +9,7 @@ import {
   genUiErrorFromMessage,
   genUiHeightFromMessage,
   genUiKeyFromMessage,
+  genUiScriptErrorFromMessage,
   genUiWheelFromMessage,
   isGenUiReadyMessage,
 } from "./gen-ui-frames";
@@ -27,6 +28,7 @@ export function GenUiFrame({
   initialHeight = GEN_UI_INITIAL_HEIGHT,
   onHeight,
   onError,
+  onScriptError,
   onEscape,
 }: {
   url: string;
@@ -38,14 +40,16 @@ export function GenUiFrame({
   onHeight?: (height: number) => void;
   /** Main served an error shell for this URL. */
   onError?: (code: GenUiErrorCode) => void;
+  /** A fragment script threw; the bounded, plain-text message. */
+  onScriptError?: (message: string) => void;
   /** Escape was pressed inside the guest. */
   onEscape?: () => void;
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [height, setHeight] = useState(initialHeight);
-  const callbacks = useRef({ onHeight, onError, onEscape });
+  const callbacks = useRef({ onHeight, onError, onScriptError, onEscape });
   useEffect(() => {
-    callbacks.current = { onHeight, onError, onEscape };
+    callbacks.current = { onHeight, onError, onScriptError, onEscape };
   });
 
   useEffect(() => {
@@ -86,6 +90,11 @@ export function GenUiFrame({
       const error = genUiErrorFromMessage(event, frameWindow);
       if (error !== null) {
         callbacks.current.onError?.(error);
+        return;
+      }
+      const scriptError = genUiScriptErrorFromMessage(event, frameWindow);
+      if (scriptError !== null) {
+        callbacks.current.onScriptError?.(scriptError);
         return;
       }
       if (genUiKeyFromMessage(event, frameWindow) === "Escape") callbacks.current.onEscape?.();

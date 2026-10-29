@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 11 as const;
-export const SCHEMA_VERSION = 25 as const;
+export const SCHEMA_VERSION = 27 as const;
 export { APP_ID, APP_NAME, APP_SLUG, APP_REPOSITORY, APP_VERSION, APP_DISPLAY_VERSION,
   APP_BUILD_TIME, APP_BUILD_TIMEZONE, APP_LEGACY_LOCK_NAME } from "./app-build.js";
 
@@ -37,6 +37,16 @@ export const NATIVE_MENU_ACTIONS = [
 ] as const;
 
 export type NativeMenuAction = (typeof NATIVE_MENU_ACTIONS)[number];
+
+export type WorkPanelTabMenuAction = "closeTab" | "closeOtherTabs" | "closeAllTabs";
+export type WorkPanelTabMenuRequest = {
+  closeTabLabel: string;
+  closeOtherTabsLabel: string;
+  closeAllTabsLabel: string;
+  canCloseOthers: boolean;
+  x: number;
+  y: number;
+};
 
 export const WINDOW_CONTROL_ACTIONS = [
   "getState",
@@ -166,6 +176,8 @@ export const IPC = {
     piSyncStatus: "pi-desktop/piSync/status",
     piSyncPreviewExport: "pi-desktop/piSync/previewExport",
     piSyncExport: "pi-desktop/piSync/export",
+    sessionDeleteMessage: "pi-desktop/session/deleteMessage",
+    sessionRetractPendingPrompt: "pi-desktop/session/retractPendingPrompt",
     sessionReplaceMessages: "pi-desktop/session/replaceMessages",
     sessionSaveRevision: "pi-desktop/session/saveRevision",
     sessionListRevisions: "pi-desktop/session/listRevisions",
@@ -456,6 +468,7 @@ export const IPC = {
     lifecycleDialogReady: "pi-desktop/window/lifecycleDialog/ready",
     lifecycleDialogRespond: "pi-desktop/window/lifecycleDialog/respond",
     menuRendererReady: "pi-desktop/menu/rendererReady",
+    workPanelTabMenu: "pi-desktop/workPanel/tabMenu",
     traySetSessionPreferences: "pi-desktop/tray/setSessionPreferences",
     nativeMenuAction: "pi-desktop/menu/nativeAction",
   },

@@ -16,15 +16,17 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { copyFile } from "node:fs/promises";
+import { copyFile, open } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { MediaStore } from "@pi-desktop/agent-runtime/media-store";
 import {
   ErrorCodes,
   formatFileInsert,
   formatPromptPathText,
+  imageExceedsInlineDimensions,
   isSvgAttachment,
   locateInlinePromptPaths,
+  probeImageDimensions,
   SVG_MIME_TYPE,
   MAX_INLINE_IMAGE_BYTES,
   mediaMimeType,
@@ -234,6 +236,17 @@ async function fallbackPathForStoredAttachment(
   return target;
 }
 
+async function readImageHeader(path: string): Promise<Buffer> {
+  const handle = await open(path, "r");
+  try {
+    const buffer = Buffer.alloc(128 * 1024);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function preparePromptAttachments(
   dataRoot: string,
   sessionId: string,
@@ -278,7 +291,13 @@ export async function preparePromptAttachments(
 
     let size = statSync(source.absolute).size;
     const mediaEnabled = isMedia && supportsMediaMime(mimeType, mediaCapabilities);
-    const inline = (isImage && supportsVision && size <= MAX_INLINE_IMAGE_BYTES) || mediaEnabled;
+    const read = isImage && supportsVision && size <= MAX_INLINE_IMAGE_BYTES
+      ? await readImageHeader(source.absolute)
+      : undefined;
+    // A provider rejects an image past the pixel limit even when the bytes are
+    // small; it takes the `@path` fallback instead of poisoning history (#1913).
+    const pixelAllowed = !imageExceedsInlineDimensions(probeImageDimensions(read ?? Buffer.alloc(0)));
+    const inline = ((isImage && supportsVision && size <= MAX_INLINE_IMAGE_BYTES && pixelAllowed) || mediaEnabled);
     if (inline) {
       inlineBytes += base64ByteLength(size);
       if ((mediaCapabilities.supportsAudio || mediaCapabilities.supportsVideo) && inlineBytes >= GEMINI_INLINE_REQUEST_BYTES) {

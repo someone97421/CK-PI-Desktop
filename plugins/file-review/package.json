@@ -1,6 +1,6 @@
 {
   "name": "local-file-review",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "任务文件审查增强独立插件",
   "scripts": {

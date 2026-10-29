@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { mediaStore } from "./media-store.js";
 import { toolExecutionMode, withDynamicTaskExecutionMode } from "./tool-execution-policy.js";
+import { DESKTOP_AGENT_IDENTITY } from "./agent-identity.js";
 import {
   Agent,
   type AfterToolCallContext,
@@ -75,6 +76,7 @@ import {
   replaceSystemPrompt,
   syncSystemTools,
 } from "./system-transcript.js";
+import { recoverMalformedToolCalls } from "./tool-call-recovery.js";
 import { withProviderFetchFailure } from "./provider-transport-recovery.js";
 import {
   assistantContent,
@@ -408,7 +410,6 @@ export class SubagentRun {
         secrets,
       );
     }
-    this.uniqueToolCalls = createToolCallIdentity(opts.initialMessages ?? []);
     this.provider = opts.provider;
     this.thinkingLevel = opts.thinkingLevel;
     let initialMessages: AgentMessage[] = opts.initialMessages ? [...opts.initialMessages] : [];
@@ -436,9 +437,12 @@ export class SubagentRun {
     } else {
       this.attemptedModels.add(`${opts.provider.id}/${opts.provider.modelId}`);
     }
+    initialMessages = recoverMalformedToolCalls(initialMessages);
+    this.uniqueToolCalls = createToolCallIdentity(initialMessages);
 
     const binding = this.modelBinding();
     this.agent = new Agent({
+      identity: DESKTOP_AGENT_IDENTITY,
       streamFn: binding.streamFn,
       getApiKey: binding.getApiKey,
       convertToLlm: (messages) =>

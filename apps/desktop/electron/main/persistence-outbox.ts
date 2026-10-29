@@ -1,8 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { decodeBinaryStorage, encodeBinaryStorage } from "@pi-desktop/host-runtime";
+import { ErrorCodes } from "@pi-desktop/shared";
 import type { HostProcess } from "./host-process";
-import { compactToolMessage } from "@pi-desktop/shared";
-import { MediaStore } from "@pi-desktop/agent-runtime/media-store";
 
 type MessageAppend = {
   key: string;
@@ -30,11 +30,11 @@ export class PersistenceOutbox {
   private readonly path: string;
   private readonly tempPath: string;
   private readonly logger: OutboxLogger;
-  private readonly mediaStore: MediaStore;
   private readonly now: () => number;
   private readonly retries = new WeakMap<MessageAppend, AppendRetry>();
   private entries: MessageAppend[] = [];
   private flushing: Promise<void> | null = null;
+  private readonly mutationDrains = new Map<string, number>();
   private persistChain = Promise.resolve();
   private mutationChain = Promise.resolve();
   private readonly loaded: Promise<void>;
@@ -44,9 +44,12 @@ export class PersistenceOutbox {
     this.path = join(dataDir, "session-message-outbox.json");
     this.tempPath = `${this.path}.tmp`;
     this.logger = logger;
-    this.mediaStore = new MediaStore(join(dataDir, "attachments"));
     this.now = options.now ?? Date.now;
     this.loaded = this.load();
+    // Observe startup failures immediately while preserving rejection for every caller.
+    void this.loaded.catch((error: unknown) => {
+      this.logger("error", "session persistence outbox recovery failed", String(error));
+    });
   }
 
   setOnMessagePersisted(callback?: (sessionId: string) => Promise<void> | void): void {
@@ -68,7 +71,6 @@ export class PersistenceOutbox {
     getHost: () => HostProcess | null,
   ): Promise<void> {
     await this.loaded;
-    entry = { ...entry, message: await this.mediaStore.externalize(compactToolMessage(entry.message)) };
     const existing = this.entries.findIndex((item) => item.key === entry.key);
     if (existing >= 0) this.entries[existing] = entry;
     else {
@@ -118,13 +120,24 @@ export class PersistenceOutbox {
     replace: () => Promise<T>,
   ): Promise<T> {
     let result: T;
+    this.mutationDrains.set(sessionId, (this.mutationDrains.get(sessionId) ?? 0) + 1);
     return this.queueMutation(async () => {
       await this.flush(getHost);
       if (this.entries.some((entry) => entry.sessionId === sessionId)) {
-        throw new Error("会话仍有未成功保存的消息，暂时无法替换历史，请稍后重试");
+        throw Object.assign(new Error("会话仍有未成功保存的消息，暂时无法修改历史，请稍后重试"), {
+          errorCode: ErrorCodes.HOST_UNAVAILABLE,
+        });
       }
       result = await replace();
-    }).then(() => result!);
+    }).then(() => result!).finally(() => {
+      const remaining = (this.mutationDrains.get(sessionId) ?? 1) - 1;
+      if (remaining) this.mutationDrains.set(sessionId, remaining);
+      else this.mutationDrains.delete(sessionId);
+    });
+  }
+
+  prepareSessionMutation(sessionId: string, getHost: () => HostProcess | null): Promise<void> {
+    return this.prepareSessionReplacement(sessionId, getHost, async () => undefined);
   }
 
   size(): number {
@@ -156,6 +169,14 @@ export class PersistenceOutbox {
       } catch (error) {
         // 旧请求的失败不暂停并发替换或删除后留下的消息。
         if (this.entries[0] !== current) continue;
+        if (this.mutationDrains.has(current.sessionId)) {
+          this.logger("warn", "session persistence mutation drain paused", {
+            key: current.key,
+            sessionId: current.sessionId,
+            data: String(error),
+          });
+          return;
+        }
         if (isDuplicateMessageIdError(error)) {
           this.logger("warn", "session persistence flush deferred duplicate message id", {
             key: current.key,
@@ -241,28 +262,13 @@ export class PersistenceOutbox {
   private async load(): Promise<void> {
     try {
       const raw = await readFile(this.path, "utf8");
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        this.entries = parsed.filter((entry): entry is MessageAppend => {
-          return (
-            entry &&
-            typeof entry.key === "string" &&
-            typeof entry.sessionId === "string" &&
-            ("message" in entry || ("usage" in entry && typeof entry.turnId === "string"))
-          );
-        }).map((entry) => ({ ...entry, message: compactToolMessage(entry.message) }));
-        for (const entry of this.entries) {
-          // 先成功保存媒体再替换该条；失败时仍保留可重试的完整消息。
-          try {
-            entry.message = await this.mediaStore.externalize(entry.message);
-          } catch (error) {
-            this.logger("warn", "outbox media externalization failed", { key: entry.key, error: String(error) });
-          }
-        }
-      }
-    } catch (error: any) {
-      if (error?.code !== "ENOENT") {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error("Invalid session persistence outbox: expected an array");
+      this.entries = parsed.map(decodeAppend);
+    } catch (error: unknown) {
+      if (!isMissingFile(error)) {
         this.logger("warn", "session persistence outbox load failed", String(error));
+        throw error;
       }
     }
   }
@@ -278,7 +284,7 @@ export class PersistenceOutbox {
         }
         return;
       }
-      await writeFile(this.tempPath, `${JSON.stringify(this.entries)}\n`, "utf8");
+      await writeFile(this.tempPath, `${JSON.stringify(this.entries.map(encodeBinaryStorage))}\n`, "utf8");
       await rename(this.tempPath, this.path);
     });
     this.persistChain = write.catch(() => undefined);
@@ -311,4 +317,19 @@ function isPoisonMessageError(error: unknown): boolean {
  */
 function isForeignKeyError(error: unknown): boolean {
   return /FOREIGN KEY constraint failed/i.test(String(error));
+}
+
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function decodeAppend(value: unknown): MessageAppend {
+  const entry = decodeBinaryStorage(value);
+  if (!entry || typeof entry !== "object" ||
+      !("key" in entry) || typeof entry.key !== "string" ||
+      !("sessionId" in entry) || typeof entry.sessionId !== "string" ||
+      !("message" in entry || ("usage" in entry && "turnId" in entry && typeof entry.turnId === "string"))) {
+    throw new Error("Invalid session persistence outbox entry");
+  }
+  return entry as MessageAppend;
 }

@@ -1,6 +1,8 @@
 import {
   GEN_UI_ERROR_MESSAGE,
   GEN_UI_KEY_MESSAGE,
+  GEN_UI_MAX_SCRIPT_ERROR_LENGTH,
+  GEN_UI_SCRIPT_ERROR_MESSAGE,
   GEN_UI_READY_MESSAGE,
   GEN_UI_SIZE_MESSAGE,
   GEN_UI_THEME_MESSAGE,
@@ -9,7 +11,12 @@ import {
   isGenUiErrorCode,
   type GenUiErrorCode,
 } from "@pi-desktop/shared";
-import { GEN_UI_ASSET_ORIGIN, type GenUiKit, rewriteGenUiVendorUrls } from "./gen-ui-kit";
+import {
+  GEN_UI_ASSET_ORIGIN,
+  type GenUiKit,
+  rewriteGenUiVendorUrls,
+  stripPreloadedGenUiScripts,
+} from "./gen-ui-kit";
 
 /**
  * Host shell around a model-written visualization fragment
@@ -119,6 +126,8 @@ const RUNTIME_SCRIPT = `(() => {
   const VIEW = ${JSON.stringify(GEN_UI_VIEW_MESSAGE)};
   const READY = ${JSON.stringify(GEN_UI_READY_MESSAGE)};
   const KEY = ${JSON.stringify(GEN_UI_KEY_MESSAGE)};
+  const SCRIPT_ERROR = ${JSON.stringify(GEN_UI_SCRIPT_ERROR_MESSAGE)};
+  const MAX_ERROR = ${GEN_UI_MAX_SCRIPT_ERROR_LENGTH};
   const NAME = ${THEME_VAR_NAME.toString()};
   const MAX_VARS = ${MAX_THEME_VARS};
   const MAX_VALUE = ${MAX_THEME_VALUE_LENGTH};
@@ -147,6 +156,22 @@ const RUNTIME_SCRIPT = `(() => {
     if (event.key !== "Escape") return;
     parent.postMessage({ type: KEY, key: "Escape" }, "*");
   });
+  // A fragment script that throws usually leaves the chart blank, and the
+  // console is out of the user's reach. Report the first failure so the card
+  // can say why; later errors are typically consequences of the first.
+  let reportedError = false;
+  const reportError = (reason) => {
+    if (reportedError) return;
+    reportedError = true;
+    let message = "";
+    try {
+      message = String(reason && typeof reason === "object" && "message" in reason ? reason.message : reason);
+    } catch {}
+    message = message.replace(/\\s+/g, " ").trim().slice(0, MAX_ERROR);
+    parent.postMessage({ type: SCRIPT_ERROR, message }, "*");
+  };
+  addEventListener("error", (event) => reportError(event.error ?? event.message));
+  addEventListener("unhandledrejection", (event) => reportError(event.reason));
   addEventListener("message", (event) => {
     if (event.source !== parent) return;
     const data = event.data;
@@ -231,7 +256,7 @@ ${body}
 
 export interface GenUiDocumentOptions {
   /** Kit stylesheet and runtime; see `gen-ui-kit.ts`. */
-  kit: Pick<GenUiKit, "css" | "runtime" | "vendorUrls">;
+  kit: Pick<GenUiKit, "css" | "head" | "runtime" | "vendorUrls">;
   /** Initial theme variables; filtered with `sanitizeGenUiThemeVars`. */
   themeVars?: Record<string, string>;
 }
@@ -253,8 +278,8 @@ export function buildGenUiDocument(fragment: string, options: GenUiDocumentOptio
   const { kit } = options;
   return shell(
     `${kit.css}\n${SHELL_CSS}`,
-    `${themeStyle(options.themeVars)}<script>${RUNTIME_SCRIPT}</script>`,
-    `${rewriteGenUiVendorUrls(fragment, kit.vendorUrls)}\n${kit.runtime}`,
+    `${themeStyle(options.themeVars)}<script>${RUNTIME_SCRIPT}</script>${kit.head}`,
+    `${rewriteGenUiVendorUrls(stripPreloadedGenUiScripts(fragment), kit.vendorUrls)}\n${kit.runtime}`,
   );
 }
 

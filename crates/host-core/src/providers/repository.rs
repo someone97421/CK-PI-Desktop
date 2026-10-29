@@ -114,6 +114,7 @@ fn hydrate_dynamic_plugin_models(db: &Database, provider: &mut ProviderPublic) -
                 supports_video: None,
                 available_for_subagents: None,
                 native_web_search: None,
+                fast_mode_allowed: None,
             }
         })
         .collect();

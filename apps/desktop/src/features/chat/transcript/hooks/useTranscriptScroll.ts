@@ -45,6 +45,7 @@ import {
   transcriptRevealOwnership,
 } from "../../../../lib/transcript-reading-position";
 import { useTranscriptReadingPosition, type RestoreTranscriptReading } from "../../../../hooks/use-transcript-reading-position";
+import { useTurnCompletionScroll } from "./useTurnCompletionScroll";
 
 import { useAppStore } from "../../../../stores/app-store";
 import type { ResponseAnnotation } from "../../../../lib/response-annotations";
@@ -493,6 +494,13 @@ export function useTranscriptScroll({
     scrollToBottom,
   ]);
 
+  // A completed turn the reader followed ends at its prompt, not its last line.
+  useTurnCompletionScroll({
+    isRunning, paneVisible, readingWindow, messages, scrollRef, contentRef,
+    isFollowing: () => pinnedRef.current && !isDisclosureAnchorHeld(),
+    onAnchored: releaseFollow,
+  });
+
   useLayoutEffect(() => {
     scheduleFollowScroll();
   }, [
@@ -782,12 +790,16 @@ export function useTranscriptScroll({
     releaseDisclosureAnchor();
     pinnedRef.current = true;
     setShowJump(false);
+    // Persist the explicit follow intent before smooth scrolling yields. A
+    // session/project switch can hide or unmount this pane before its native
+    // scroll event; leaving the old bookmark would restore history on return.
+    rememberReadingPosition();
     scrollToBottom(
       window.matchMedia("(prefers-reduced-motion: reduce)").matches
         ? "auto"
         : "smooth",
     );
-  }, [cancelReadingPosition, releaseDisclosureAnchor, scrollToBottom]);
+  }, [cancelReadingPosition, releaseDisclosureAnchor, rememberReadingPosition, scrollToBottom]);
 
   // D269: history progression follows the visible top boundary, not only a
   // native scroll event. A tail page can collapse to less than one viewport,

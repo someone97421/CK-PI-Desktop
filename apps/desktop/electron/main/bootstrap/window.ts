@@ -14,6 +14,7 @@ import type { BrowserHost } from "../browser-host";
 import type { HostProcess } from "../host-process";
 import type { Logger } from "../logger";
 import type { PluginViewHost } from "../plugin-view-host";
+import { detachPluginViewOnRendererReload } from "../plugin-view-navigation";
 import {
   baseWindowBounds,
   clampBoundsOriginToWorkArea,
@@ -756,6 +757,10 @@ export async function createWindow({
 
   browserHost.setWindow(window);
   pluginViews.setWindow(window);
+  detachPluginViewOnRendererReload(
+    window.webContents,
+    () => pluginViews.hideVisibleView(),
+  );
   window.on("closed", () => {
     screen.removeListener("display-metrics-changed", reconcileDisplayTopology);
     screen.removeListener("display-added", reconcileDisplayTopology);
@@ -1368,6 +1373,39 @@ export async function createWindow({
             await new Promise((r) => setTimeout(r, 250));
             await windowState.mainWindow!.webContents.executeJavaScript(
               `void window.__PI_DESKTOP__?.seedReviewChanges?.(0)`,
+            );
+            await new Promise((r) => setTimeout(r, 250));
+            // Per-turn changed-files card (D674): relaxed rows for a few
+            // files, dense rows plus `+N more` for many.
+            const shootTurnChanges = async (files: number, name: string) => {
+              await windowState.mainWindow!.webContents.executeJavaScript(
+                `void window.__PI_DESKTOP__?.seedTurnChanges?.(${files})`,
+              );
+              await new Promise((r) => setTimeout(r, 450));
+              await windowState.mainWindow!.webContents.executeJavaScript(
+                `document.querySelector(".turn-changes-card")?.scrollIntoView({ block: "center" })`,
+              );
+              await new Promise((r) => setTimeout(r, 250));
+              await shot(name);
+            };
+            await shootTurnChanges(3, "pi-turn-changes");
+            await shootTurnChanges(15, "pi-turn-changes-dense");
+            await windowState.mainWindow!.webContents.executeJavaScript(
+              `window.__PI_DESKTOP__?.setThemeAttr("dark")`,
+            );
+            await new Promise((r) => setTimeout(r, 350));
+            await shot("pi-turn-changes-dense-dark");
+            await windowState.mainWindow!.webContents.executeJavaScript(
+              `window.__PI_DESKTOP__?.setThemeAttr("light")`,
+            );
+            // A row click opens Review on that file with its change expanded.
+            await windowState.mainWindow!.webContents.executeJavaScript(
+              `document.querySelectorAll(".turn-changes-row")[1]?.click()`,
+            );
+            await new Promise((r) => setTimeout(r, 600));
+            await shot("pi-turn-changes-open-review");
+            await windowState.mainWindow!.webContents.executeJavaScript(
+              `void window.__PI_DESKTOP__?.seedTurnChanges?.(0)`,
             );
             await new Promise((r) => setTimeout(r, 250));
             // A run row keeps its command in the head and only its output in the

@@ -123,4 +123,24 @@ describe("tool execution identity", () => {
     for await (const event of wrappedErrors) expect(event).toBe(errorEvent);
     expect(await wrappedErrors.result()).toBe(failed);
   });
+
+  it("exposes the same rejected batch through the terminal event and result", async () => {
+    const original = message(["valid", ""]);
+    original.content.unshift({ type: "text", text: "Retain this explanation." });
+    const snapshot = structuredClone(original);
+    const stream = createAssistantMessageEventStream();
+    const wrapped = createToolCallIdentity()(stream, []);
+    stream.push({ type: "done", reason: "toolUse", message: original });
+    stream.end(original);
+    const events = [];
+    for await (const event of wrapped) events.push(event);
+    const result = await wrapped.result();
+    expect(events).toEqual([{ type: "error", reason: "error", error: result }]);
+    expect(result).toMatchObject({
+      content: [{ type: "text", text: "Retain this explanation." }], stopReason: "error",
+      errorDetails: { code: "LOCAL_REQUEST_ERROR", phase: "context-validation" },
+    });
+    expect(await wrapped.result()).toEqual(result);
+    expect(original).toEqual(snapshot);
+  });
 });

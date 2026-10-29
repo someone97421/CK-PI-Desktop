@@ -48,6 +48,29 @@ test("正文中的图片保存位置与可读取的媒体引用", async (t) => {
   assert.equal(appendPromptFallbackPaths(content, [prepared]), content);
 });
 
+test("像素尺寸超过准入上限的图片使用文件回退", async (t) => {
+  const { data, path } = await fixture(t);
+  // A small, valid PNG header for a 780 x 14182 full-page screenshot (#1913).
+  const tall = Buffer.from(png);
+  tall.writeUInt32BE(780, 16);
+  tall.writeUInt32BE(14182, 20);
+  await writeFile(path, tall);
+  const attachment = { path, name: "pasted-a.png", kind: "image", mimeType: "image/png" };
+  const [prepared] = await preparePromptAttachments(
+    data,
+    sessionId,
+    undefined,
+    [attachment],
+    true,
+    {},
+    "look at this",
+  );
+  assert.equal(prepared.message.kind, "image");
+  assert.match(prepared.message.ref, /^attachments\//);
+  assert.equal(prepared.inlineData, undefined);
+  assert.ok(appendPromptFallbackPaths("look at this", [prepared]).includes(prepared.fallbackPath));
+});
+
 test("未在正文中引用的图片不记录行内位置并保留文件回退", async (t) => {
   const { data, path } = await fixture(t);
   const attachment = { path, name: "pasted-a.png", kind: "image", mimeType: "image/png" };

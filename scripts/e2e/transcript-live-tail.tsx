@@ -8,6 +8,7 @@ import { SessionPane } from "../../apps/desktop/src/components/SessionPane";
 import { Composer } from "../../apps/desktop/src/components/Composer";
 import { useAppStore } from "../../apps/desktop/src/stores/app-store";
 import type { AppState } from "../../apps/desktop/src/stores/app-state";
+import { getTranscriptReadingPosition } from "../../apps/desktop/src/lib/transcript-reading-position";
 
 const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 function assert(condition: unknown, label: string): asserts condition {
@@ -22,9 +23,10 @@ async function until(predicate: () => boolean, label: string) {
 }
 function Surface() {
   const active = useAppStore((state) => state.activeSessionId);
+  const retained = useAppStore((state) => state.retainedSessionIds);
   return <>
     <div className="session-panes">
-      {["live-tail", "other-tail"].map((id) => <SessionPane key={id} sessionId={id} visible={id === active} />)}
+      {retained.map((id) => <SessionPane key={id} sessionId={id} visible={id === active} />)}
     </div>
     <Composer />
   </>;
@@ -67,6 +69,51 @@ globalThis.transcriptLiveTailProbe = async () => {
     await frame();
     assert(activeLabel(), "ordinary live process must be running");
     assert(stop(), "the running composer must offer Stop");
+    const canonicalScroller = host.querySelector<HTMLElement>('[data-session-pane="live-tail"] .thread-scroll')!;
+    canonicalScroller.style.flex = "0 0 120px";
+    const atBottom = () => Math.abs(canonicalScroller.scrollHeight - canonicalScroller.clientHeight - canonicalScroller.scrollTop) < 2;
+    await until(() => canonicalScroller.scrollHeight > canonicalScroller.clientHeight + 200 && atBottom(),
+      "the initial running pane overflows and follows latest");
+    canonicalScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -500 }));
+    canonicalScroller.scrollTop = 160;
+    canonicalScroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await frame();
+    assert(getTranscriptReadingPosition("live-tail")?.pinned === false,
+      `reading history must record an unpinned bookmark: ${JSON.stringify(getTranscriptReadingPosition("live-tail"))}`);
+    const jump = host.querySelector<HTMLButtonElement>('[data-session-pane="live-tail"] .jump-latest-btn')!;
+    assert(jump, "history reading offers return to latest");
+    // Do not yield to a native scroll event between the click and hiding the
+    // pane. A smooth scroll has not reached the bottom when navigation wins.
+    flushSync(() => jump.click());
+    assert(getTranscriptReadingPosition("live-tail")?.pinned === true,
+      "return to latest must synchronously replace the old reading bookmark");
+    set({ activeSessionId: "other-tail", messages: [], isRunning: false,
+      retainedTranscripts: { "live-tail": messages, "other-tail": [] } });
+    set({ activeSessionId: "live-tail", messages, isRunning: true });
+    await until(atBottom, "an immediate retained return stays pinned");
+    assert(!host.querySelector('[data-session-pane="live-tail"] .jump-latest-btn'),
+      "retained reveal must not resurrect the old unpinned bookmark");
+    // A project switch drops the original DOM entirely. Its bookmark must
+    // still preserve the explicit follow intent across the fresh mount.
+    canonicalScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -500 }));
+    canonicalScroller.scrollTop = 160;
+    canonicalScroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await frame();
+    flushSync(() => host.querySelector<HTMLButtonElement>('[data-session-pane="live-tail"] .jump-latest-btn')!.click());
+    set({ activeSessionId: "other-tail", messages: [], isRunning: false,
+      retainedSessionIds: ["other-tail"], retainedTranscripts: { "other-tail": [] } });
+    await frame();
+    assert(!host.querySelector('[data-session-pane="live-tail"]'), "project switch must unmount the original pane");
+    messages = [user, tool, { ...answer, content: "Output while the project was hidden." }];
+    set({ activeSessionId: "live-tail", messages, isRunning: true,
+      retainedSessionIds: ["live-tail", "other-tail"] });
+    await until(() => {
+      const current = host.querySelector<HTMLElement>('[data-session-pane="live-tail"] .thread-scroll');
+      return Boolean(current && Math.abs(current.scrollHeight - current.clientHeight - current.scrollTop) < 2);
+    }, "a project return follows output produced while hidden");
+    assert(activeLabel() && stop(), "project return must remain visibly running");
+    assert(!host.querySelector('[data-session-pane="live-tail"] .jump-latest-btn'),
+      "remount must not require a second return-to-latest click");
     set({ messages: [], selectingSessionId: undefined });
     await frame();
     assert(host.querySelector('[data-session-pane="live-tail"] [data-testid="working-indicator"]'),
@@ -160,7 +207,8 @@ globalThis.transcriptLiveTailProbe = async () => {
     } }] });
     await frame();
     assert(label()?.textContent === i18n.t("chat.processFailed"), "failure retains its failed status");
-    return { ok: true, restoredLiveStatus: true, retainedSessionStatus: true, historicalIsolation: true };
+    return { ok: true, restoredLiveStatus: true, retainedSessionStatus: true,
+      historicalIsolation: true, returnToLatestRetention: true, projectReturnFollow: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.stack : String(error), label: label()?.textContent, stop: Boolean(stop()) };
   } finally {

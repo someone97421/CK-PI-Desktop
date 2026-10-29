@@ -10,6 +10,7 @@ import {
   matchNamedPreset,
   matchZhipuPreset,
   normalizeEndpointUrl,
+  withoutReasoningReplayPlaceholder,
   zhipuRequestCompat,
 } from "./provider-presets.js";
 
@@ -372,5 +373,27 @@ describe("addressesPublishedVendorHost", () => {
     ]) {
       expect(addressesPublishedVendorHost(baseUrl)).toBe(false);
     }
+  });
+});
+
+describe("withoutReasoningReplayPlaceholder", () => {
+  it("drops a leading echo of the replay placeholder (#1945)", () => {
+    expect(withoutReasoningReplayPlaceholder(DEEPSEEK_REASONING_REPLAY_PLACEHOLDER)).toBe("");
+    expect(
+      withoutReasoningReplayPlaceholder(`${DEEPSEEK_REASONING_REPLAY_PLACEHOLDER}\nreal plan`),
+    ).toBe("real plan");
+    expect(
+      withoutReasoningReplayPlaceholder(
+        `${DEEPSEEK_REASONING_REPLAY_PLACEHOLDER} ${DEEPSEEK_REASONING_REPLAY_PLACEHOLDER}real plan`,
+      ),
+    ).toBe("real plan");
+    // The model's observed rewrite of the echoed placeholder.
+    expect(withoutReasoningReplayPlaceholder("[reasoning retained for this turn] plan")).toBe("plan");
+  });
+
+  it("leaves real reasoning, including a later mention, unchanged", () => {
+    expect(withoutReasoningReplayPlaceholder("real plan")).toBe("real plan");
+    const mention = `the relay sent ${DEEPSEEK_REASONING_REPLAY_PLACEHOLDER} earlier`;
+    expect(withoutReasoningReplayPlaceholder(mention)).toBe(mention);
   });
 });

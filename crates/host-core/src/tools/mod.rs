@@ -24,7 +24,10 @@ mod cancel;
 mod grep_rg;
 pub mod hashline;
 pub mod ignore_rules;
+mod image_dimensions;
 pub mod shell;
+#[cfg(windows)]
+mod windows_process_tree;
 
 pub use hashline::{HashlineContext, HashlineStore};
 
@@ -177,12 +180,29 @@ impl ProcessOwnership {
     }
 
     #[cfg(windows)]
-    fn terminate(&self, _pid: u32) -> Result<(), String> {
+    fn terminate(&self, pid: u32) -> Result<(), String> {
         let Some(job) = self.job else {
             return Err("shell runner process ownership is unavailable".into());
         };
-        if unsafe { TerminateJobObject(job, 1) == 0 } {
-            Err("TerminateJobObject failed for the shell runner".into())
+        let mut job_error = if unsafe { TerminateJobObject(job, 1) == 0 } {
+            Some("TerminateJobObject failed for the shell runner".to_string())
+        } else {
+            None
+        };
+
+        // When a shell is spawned on Windows, child processes created by the
+        // shell (and their descendants) might escape the Job Object if they
+        // were spawned before or concurrently with AssignProcessToJobObject.
+        // To guarantee clean termination of the entire tree, take a snapshot of
+        // processes and explicitly terminate any descendants of `pid`.
+        let tree_error = if pid != 0 {
+            terminate_windows_process_tree(pid).err()
+        } else {
+            None
+        };
+
+        if let Some(err) = job_error.take().or(tree_error) {
+            Err(err)
         } else {
             Ok(())
         }
@@ -248,6 +268,11 @@ impl Drop for ProcessOwnership {
     fn drop(&mut self) {
         self.close_now();
     }
+}
+
+#[cfg(windows)]
+fn terminate_windows_process_tree(root_pid: u32) -> Result<(), String> {
+    windows_process_tree::terminate_tree(root_pid)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1432,6 +1457,19 @@ fn read_image_block(
             "TOOL_BINARY_CONTENT".into(),
             format!("{display} does not look like a valid {mime} image"),
         ));
+    }
+    // A small file can still exceed the pixel size providers accept; inlining
+    // it would fail every later request that replays this result (#1913).
+    if let Some((width, height)) = image_dimensions::probe_image_dimensions(&bytes) {
+        let limit = image_dimensions::MAX_INLINE_IMAGE_EDGE_PX;
+        if width.max(height) > limit {
+            return Err((
+                "TOOL_FAILED".into(),
+                format!(
+                    "{display} is {width}x{height} px; images whose longest edge exceeds {limit} px are not inlined"
+                ),
+            ));
+        }
     }
     use base64::Engine as _;
     let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -3895,7 +3933,7 @@ mod tests {
         // Minimal real signatures so the sniffing branch is exercised.
         let png = b"\x89PNG\r\n\x1a\nfake-png-body";
         let jpeg = b"\xff\xd8\xff\xe0fake-jpeg-body";
-        let gif = b"GIF89afake-gif-body";
+        let gif = b"GIF89a\x01\x00\x01\x00fake-gif-body";
         let webp = b"RIFF\x00\x00\x00\x00WEBPVP8 fake-webp-body";
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.png"), png).unwrap();
@@ -3980,6 +4018,43 @@ mod tests {
         // read must still reject it without trusting the stale size argument.
         let error = read_image_block(&path, "big.png", 1, "image/png").unwrap_err();
         assert_eq!(error.0, "TOOL_FAILED");
+    }
+
+    #[tokio::test]
+    async fn read_refuses_images_past_the_pixel_limit() {
+        // A small, valid PNG header for a 780 x 14182 full-page screenshot.
+        let mut tall = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        tall.extend(780u32.to_be_bytes());
+        tall.extend(14182u32.to_be_bytes());
+        tall.extend([8, 2, 0, 0, 0]);
+        let mut wide = tall.clone();
+        wide[16..24].copy_from_slice(&[0, 0, 0x1f, 0x40, 0, 0, 0x03, 0x0c]);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("page.png"), &tall).unwrap();
+        std::fs::write(dir.path().join("edge.png"), &wide).unwrap();
+
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &serde_json::json!({ "path": "page.png" }),
+            5_000,
+        )
+        .await;
+        assert!(!result.ok);
+        assert_eq!(result.error_code.as_deref(), Some("TOOL_FAILED"));
+        assert!(result.content.to_string().contains("780x14182 px"));
+
+        // Exactly at the limit is still inlined.
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &serde_json::json!({ "path": "edge.png" }),
+            5_000,
+        )
+        .await;
+        assert!(result.ok, "8000 x 780 should inline: {}", result.content);
     }
 
     #[tokio::test]

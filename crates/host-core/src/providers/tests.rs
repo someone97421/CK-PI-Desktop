@@ -256,6 +256,7 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     supports_video: Some(false),
                     available_for_subagents: Some(true),
                     native_web_search: None,
+                    fast_mode_allowed: Some(true),
                 },
                 ModelBinding {
                     id: "plain-model".into(),
@@ -274,6 +275,7 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     supports_video: None,
                     available_for_subagents: None,
                     native_web_search: None,
+                    fast_mode_allowed: None,
                 },
             ]),
             default_model_id: None,
@@ -301,6 +303,8 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
     assert_eq!(provider.models[1].default_thinking_level, None);
     assert_eq!(provider.models[0].available_for_subagents, Some(true));
     assert_eq!(provider.models[1].available_for_subagents, None);
+    assert_eq!(provider.models[0].fast_mode_allowed, Some(true));
+    assert_eq!(provider.models[1].fast_mode_allowed, None);
 
     let raw: String = db
         .conn()
@@ -324,6 +328,8 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
     assert_eq!(config["models"][1]["supportsDocuments"], false);
     assert!(config["models"][1].get("availableForSubagents").is_none());
     assert!(config["models"][1].get("supportsImages").is_none());
+    assert_eq!(config["models"][0]["fastModeAllowed"], true);
+    assert!(config["models"][1].get("fastModeAllowed").is_none());
     assert_eq!(provider.models[0].supports_images, Some(true));
     assert_eq!(provider.models[1].supports_documents, Some(false));
     assert_eq!(config["models"][0]["supportsAudio"], true);
@@ -392,6 +398,7 @@ fn binding_with_alias(id: &str, alias: Option<&str>) -> ModelBinding {
         supports_video: None,
         available_for_subagents: None,
         native_web_search: None,
+        fast_mode_allowed: None,
     }
 }
 
@@ -1677,6 +1684,7 @@ fn binding_with_limits(id: &str, context_window: u32, max_tokens: u32) -> ModelB
         supports_video: None,
         available_for_subagents: None,
         native_web_search: None,
+        fast_mode_allowed: None,
     }
 }
 

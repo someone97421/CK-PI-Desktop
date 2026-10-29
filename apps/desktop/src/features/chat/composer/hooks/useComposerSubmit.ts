@@ -13,6 +13,7 @@ import {
   resolveSlashDispatch,
 } from "../slash-dispatch";
 import { readEditorValue, type ComposerFileReference } from "../editor";
+import { nextSendableQueuedPrompt, type QueuedPrompt } from "../../../../lib/queued-prompts";
 import type { ComposerDraftSnapshot } from "../../../../lib/composer-smart-stop";
 import type { ComposerDraftController } from "./useComposerDraft";
 import { submitWithLatestDraftRestore } from "./submit-with-latest-draft-restore.mjs";
@@ -31,6 +32,9 @@ type UseComposerSubmitOptions = {
   t: TFunction;
   sendPrompt: AppState["sendPrompt"];
   steerPrompt: AppState["steerPrompt"];
+  sendQueuedNow: AppState["sendQueuedNow"];
+  /** This session's follow-ups; the steer shortcut promotes the first one. */
+  queuedPrompts: readonly QueuedPrompt[];
   showToast: AppState["showToast"];
   /** Record an accepted submission for ArrowUp recall. */
   recordHistory?: (snapshot: ComposerDraftSnapshot, sessionId: string) => void;
@@ -65,6 +69,8 @@ export function useComposerSubmit({
   t,
   sendPrompt,
   steerPrompt,
+  sendQueuedNow,
+  queuedPrompts,
   showToast,
   recordHistory,
   draft,
@@ -79,7 +85,15 @@ export function useComposerSubmit({
     const annotationsPending = localCommandsAllowed && !steering && Boolean(
       state.activeSessionId && state.responseAnnotations[state.activeSessionId]?.length,
     );
-    if (!serializedContent && !annotationsPending) return;
+    // A follow-up that was queued during the turn has already left the editor,
+    // so the steer shortcut would otherwise find no draft and do nothing. With
+    // the composer empty it sends the first waiting row now instead, which is
+    // the same promotion its own Send now button performs.
+    if (!serializedContent && !annotationsPending) {
+      const waiting = steering && !sendBlocked ? nextSendableQueuedPrompt(queuedPrompts) : undefined;
+      if (waiting) await sendQueuedNow(waiting.id);
+      return;
+    }
     if (sendBlocked || (steering && !steeringAllowed)) {
       if (pasting) showToast(t("chat.pasteInProgress"), { variant: "info" });
       return;

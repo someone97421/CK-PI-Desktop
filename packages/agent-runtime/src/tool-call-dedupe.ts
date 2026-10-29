@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, AssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { rejectMalformedToolCalls } from "./tool-call-recovery.js";
 
 type RecordLike = Record<string, unknown>;
 
@@ -62,6 +63,7 @@ export function createToolCallIdentity(initialHistory: readonly unknown[] = []):
     for (const id of callIdsIn(history)) seenIds.add(id);
     const previousIds = new Set(seenIds);
     const normalize = (message: AssistantMessage): AssistantMessage => {
+      message = rejectMalformedToolCalls(message);
       if (message.stopReason === "error" || message.stopReason === "aborted") return message;
       const used = new Set(previousIds);
       const freshId = idAllocator([...previousIds, ...callIdsIn([message])]);
@@ -82,7 +84,11 @@ export function createToolCallIdentity(initialHistory: readonly unknown[] = []):
         if (property === "result") return async () => normalize(await target.result());
         if (property === Symbol.asyncIterator) return async function* () {
           for await (const event of target) {
-            yield event.type === "done" ? { ...event, message: normalize(event.message) } : event;
+            if (event.type !== "done") { yield event; continue; }
+            const message = normalize(event.message);
+            yield message.stopReason === "error"
+              ? { type: "error", reason: "error", error: message }
+              : { ...event, message };
           }
         };
         return Reflect.get(target, property, receiver);

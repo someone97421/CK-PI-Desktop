@@ -154,7 +154,7 @@ async function onLoad() {
 
 async function onRendererCall(method, args = {}) {
   const id = sessionId(args.sessionId);
-  if (method === 'review.open') return open(id, args.scopeKey);
+  if (method === 'review.open') return open(id, args.scopeKey || (args.messageIds ? scopeFor(id, args.messageIds) : undefined));
   if (method !== 'review.summary') fail('INVALID_ARGUMENT', '未知操作 / Unknown operation');
   if (active?.sessionId !== id) return { local: false, pending: false };
   const key = scopeFor(id, args.messageIds);

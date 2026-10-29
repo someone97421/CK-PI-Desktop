@@ -29,7 +29,7 @@ export function MarketplacePanel({
   installedById,
   selectedId,
   openDetail,
-  busyId,
+  isPluginBusy,
   queueInstall,
   reviewSummaries,
   reviewTickers,
@@ -227,7 +227,7 @@ export function MarketplacePanel({
                           <Button
                             variant="primary"
                             size="sm"
-                            disabled={busyId === item.id || packagePending}
+                            disabled={isPluginBusy(item.id) || packagePending}
                             title={
                               packagePending
                                 ? t("plugins.packagePendingHint", {
@@ -246,7 +246,7 @@ export function MarketplacePanel({
                           >
                             {packagePending
                               ? t("plugins.packagePending")
-                              : busyId === item.id
+                              : isPluginBusy(item.id)
                                 ? t("plugins.installing")
                                 : upgradable
                                   ? t("plugins.updateNow")

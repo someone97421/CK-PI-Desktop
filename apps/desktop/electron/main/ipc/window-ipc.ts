@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, Menu } from "electron";
 import { isWindowBackgroundColor, MAX_WINDOW_CORNER_RADIUS } from "@pi-desktop/plugin-sdk";
 import {
   builtinWindowBackground,
@@ -12,7 +12,13 @@ import {
   type WindowControlAction,
   type LifecycleDialogChoice,
   type TraySessionPreferences,
+  type WorkPanelTabMenuAction,
 } from "@pi-desktop/shared";
+import {
+  clampWorkPanelTabMenuPointToDip,
+  parseWorkPanelTabMenuRequest,
+  waitForNativeMenuResult,
+} from "../work-panel-tab-menu";
 import {
   emptyWorkPanelReservationState,
   parseWorkPanelChatWidth,
@@ -282,6 +288,45 @@ export function registerWindowIpc({
     }
     return { ready: true };
   });
+
+  handleWithEvent(IPC.invoke.workPanelTabMenu, async (event, input: unknown) => {
+    registrar.assertMainWindowSender(event);
+    const window = BrowserWindow.fromWebContents(event.sender);
+    const mainWindow = getMainWindow();
+    if (!window || window !== mainWindow || window.isDestroyed()) {
+      throw new Error("main window unavailable for work panel menu");
+    }
+    const request = parseWorkPanelTabMenuRequest(input);
+    if (!request) {
+      throw Object.assign(new Error("invalid work panel tab menu request"), {
+        errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
+    const [contentWidth, contentHeight] = window.getContentSize();
+    const { x, y } = clampWorkPanelTabMenuPointToDip(
+      request,
+      event.sender.getZoomFactor(),
+      contentWidth,
+      contentHeight,
+    );
+    let selected: WorkPanelTabMenuAction | null = null;
+    const menu = Menu.buildFromTemplate([
+      { label: request.closeTabLabel, click: () => { selected = "closeTab"; } },
+      { type: "separator" },
+      {
+        label: request.closeOtherTabsLabel,
+        enabled: request.canCloseOthers,
+        click: () => { selected = "closeOtherTabs"; },
+      },
+      { label: request.closeAllTabsLabel, click: () => { selected = "closeAllTabs"; } },
+    ]);
+    return waitForNativeMenuResult(
+      window,
+      (onMenuClosed) => menu.popup({ window, x, y, callback: onMenuClosed }),
+      () => selected,
+    );
+  });
+
 
   handle(IPC.invoke.nativeMenuAction, async (input: { action?: string } = {}) => {
     if (
