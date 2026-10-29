@@ -39,6 +39,7 @@ import {
 import { getGlobalDispatcher } from "undici";
 import { describeProviderFetchFailure } from "./provider-transport-recovery.js";
 import { resolveBatchExecutionMode } from "./tool-execution-policy.js";
+import { DESKTOP_AGENT_IDENTITY } from "./agent-identity.js";
 /**
  * The delegate loop itself is covered in `subagent.test.ts`; here only the
  * `Task` wiring around it is under test, so `SubagentRun` is replaced by a
@@ -293,6 +294,42 @@ function runtimeTool(runtime: DesktopAgentRuntime, name: string): AgentTool {
   if (!tool) throw new Error(`Runtime tool not found: ${name}`);
   return tool;
 }
+
+describe("Pi 1.4 client identity", () => {
+  it("forwards the desktop identity through a user prompt to the provider adapter", async () => {
+    const runtime = createRuntime();
+    const internal = runtime as unknown as {
+      models: {
+        streamSimple: (
+          model: unknown,
+          context: { messages: AgentMessage[] },
+          options?: { identity?: unknown },
+        ) => ReturnType<typeof createAssistantMessageEventStream>;
+      };
+    };
+    const identities: unknown[] = [];
+    internal.models = {
+      streamSimple: (_model, _context, options) => {
+        identities.push(options?.identity);
+        const message = assistantMessage({ content: [{ type: "text", text: "Ready." }] }) as AssistantMessage;
+        const stream = createAssistantMessageEventStream();
+        queueMicrotask(() => {
+          stream.push({ type: "start", partial: message });
+          stream.push({ type: "done", reason: "stop", message });
+          stream.end(message);
+        });
+        return stream;
+      },
+    };
+
+    try {
+      await runtime.prompt("Say ready.", "identity-user", "identity-turn");
+      expect(identities).toEqual([DESKTOP_AGENT_IDENTITY]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+});
 
 describe("ordered read preparation", () => {
   it.each([
@@ -2287,6 +2324,114 @@ describe("DesktopAgentRuntime configuration matching", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // Same 64Ki UTF-16 budget and 60/40 marker split as appendToolProgress.
+  // Kept here so the tools.output path can lock the cap without exporting it.
+  const TOOL_PROGRESS_CAP_CHARS = 64 * 1024;
+  const TOOL_PROGRESS_CAP_MARKER = "\n\n[tool output progress truncated]\n\n";
+  const LONE_SURROGATE =
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+  async function flushedBashProgress(chunks: readonly string[]): Promise<string[]> {
+    vi.useFakeTimers();
+    try {
+      const listeners = new Set<(method: string, params: unknown) => void>();
+      let finishExecution!: (value: unknown) => void;
+      const execution = new Promise((resolve) => {
+        finishExecution = resolve;
+      });
+      const host = {
+        call: vi.fn((method: string) =>
+          method === "tools.execute"
+            ? execution
+            : Promise.resolve({ ok: true, content: "done" }),
+        ),
+        onNotification: vi.fn((handler: (method: string, params: unknown) => void) => {
+          listeners.add(handler);
+          return () => listeners.delete(handler);
+        }),
+      };
+      const updates: unknown[] = [];
+      const runtime = createRuntime({ host });
+      const bash = runtimeTool(runtime, "Bash");
+      const pending = bash.execute(
+        "bash-progress-cap",
+        { command: "printf progress" },
+        undefined,
+        (update: unknown) => updates.push(update),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      for (const chunk of chunks) {
+        for (const listener of listeners) {
+          listener("tools.output", {
+            sessionId: "session-1",
+            toolCallId: "bash-progress-cap",
+            commandShellId: "bash",
+            stream: "stdout",
+            chunk,
+          });
+        }
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      finishExecution({ ok: true, content: "done" });
+      await pending;
+      await runtime.dispose();
+      return updates.map((update) => (update as { content: Array<{ text: string }> }).content[0]!.text);
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it("bounds supplementary-plane Bash progress to the UTF-16 cap without splitting pairs", async () => {
+    const chunk = "😀".repeat(40_000);
+    expect(chunk.length).toBe(80_000);
+    const texts = await flushedBashProgress([chunk, "z"]);
+    expect(texts).toHaveLength(2);
+    for (const text of texts) {
+      expect(text.length).toBeLessThanOrEqual(TOOL_PROGRESS_CAP_CHARS);
+      expect(text).not.toMatch(LONE_SURROGATE);
+    }
+    expect(texts[0]).toContain(TOOL_PROGRESS_CAP_MARKER);
+    expect(texts[1]?.endsWith("z")).toBe(true);
+  });
+
+  it("keeps a surrogate pair whole when Bash progress truncation lands on it", async () => {
+    const marker = TOOL_PROGRESS_CAP_MARKER;
+    const remaining = TOOL_PROGRESS_CAP_CHARS - marker.length;
+    const head = Math.ceil(remaining * 0.6);
+    const tail = remaining - head;
+    // One emoji starts on the last code unit of the head budget, and another
+    // starts on the code unit just before the tail budget. A code-unit slice
+    // would keep a lone surrogate; a code-point budget leaves both out.
+    const chunk = `${"a".repeat(head - 1)}😀${"b".repeat(100)}😀${"c".repeat(tail - 1)}`;
+    const [text] = await flushedBashProgress([chunk]);
+    expect(text).toBeDefined();
+    expect(text!.length).toBeLessThanOrEqual(TOOL_PROGRESS_CAP_CHARS);
+    expect(text).not.toMatch(LONE_SURROGATE);
+    expect(text!.indexOf(marker)).toBe(head - 1);
+    expect(text!.endsWith("c".repeat(tail - 1))).toBe(true);
+    expect(text).not.toContain("😀");
+  });
+
+  it("preserves ASCII truncation and in-cap concatenation for Bash progress", async () => {
+    const marker = TOOL_PROGRESS_CAP_MARKER;
+    const remaining = TOOL_PROGRESS_CAP_CHARS - marker.length;
+    const head = Math.ceil(remaining * 0.6);
+    const tail = remaining - head;
+    const oversized = `${"H".repeat(head)}${"M".repeat(1_000)}${"T".repeat(tail)}`;
+    const [truncated] = await flushedBashProgress([oversized]);
+    const expected = `${"H".repeat(head)}${marker}${"T".repeat(tail)}`;
+    expect(truncated).toBe(expected);
+    expect(truncated?.length).toBe(TOOL_PROGRESS_CAP_CHARS);
+    expect(truncated?.indexOf(marker)).toBe(head);
+
+    const within = await flushedBashProgress(["hello ", "😀世界"]);
+    expect(within).toEqual(["hello ", "hello 😀世界"]);
+
+    const exact = "e".repeat(TOOL_PROGRESS_CAP_CHARS);
+    const [atCap] = await flushedBashProgress([exact]);
+    expect(atCap).toBe(exact);
   });
 
   it("removes streamed-output resources when the host dies or runtime is disposed", async () => {
@@ -4388,6 +4533,52 @@ describe("DesktopAgentRuntime thinking configuration", () => {
         thinkingSignature: "reasoning_content",
       },
       { type: "text", text: "answer" },
+    ]);
+
+    await runtime.dispose();
+  });
+
+  it("does not replay an echoed reasoning placeholder as the model's own thinking (#1945)", async () => {
+    const runtime = createRuntime({
+      provider: {
+        ...provider,
+        vendorKey: "deepseek",
+        baseUrl: "https://relay.example/v1",
+        modelId: "deepseek-v4",
+        modelConfig: {
+          ...provider.modelConfig!,
+          baseUrl: "https://relay.example/v1",
+        },
+      },
+      history: [
+        {
+          id: "assistant-echo-only",
+          role: "assistant",
+          content: "first answer",
+          thinking: "[reasoning not retained for this turn]",
+          createdAt: new Date().toISOString(),
+          status: "complete",
+        },
+        {
+          id: "assistant-echo-prefix",
+          role: "assistant",
+          content: "second answer",
+          thinking: "[reasoning not retained for this turn]real plan",
+          createdAt: new Date().toISOString(),
+          status: "complete",
+        },
+      ],
+    });
+    const assistants = (runtime as any).agent.state.messages.filter(
+      (message: any) => message.role === "assistant",
+    );
+
+    expect(assistants.map((message: any) => message.content)).toEqual([
+      [{ type: "text", text: "first answer" }],
+      [
+        { type: "thinking", thinking: "real plan", thinkingSignature: "reasoning_content" },
+        { type: "text", text: "second answer" },
+      ],
     ]);
 
     await runtime.dispose();

@@ -125,7 +125,7 @@ async function removeContextMenu(): Promise<void> {
   ]);
 }
 
-// macOS：以 Finder 快速操作（Services workflow）提供同一入口，经 open -n 交给单实例通路。
+// macOS：Finder 快速操作通过文件打开事件复用已有应用。
 const MAC_SERVICE_NAME = `${TEMPORARY_WORKSPACE_LABEL}.workflow`;
 
 function macServicePath(): string {
@@ -144,7 +144,7 @@ function macLaunchCommand(): string {
   const argument = `${TEMPORARY_WORKSPACE_ARGUMENT}="$dir"`;
   if (app.isPackaged) {
     const bundle = resolve(process.execPath, "..", "..", "..");
-    return `/usr/bin/open -n -a ${shellQuote(bundle)} --args ${argument}`;
+    return `/usr/bin/open -a ${shellQuote(bundle)} "$dir"`;
   }
   return `${shellQuote(process.execPath)} ${shellQuote(app.getAppPath())} ${argument} >/dev/null 2>&1 &`;
 }

@@ -1,5 +1,5 @@
 import { useChatSessionCapability } from "../hooks/use-chat-session-capability";
-import { memo, useId, useState } from "react";
+import { memo, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   ReviewChange,
@@ -124,16 +124,22 @@ export const ReviewChangeCard = memo(function ReviewChangeCard({
   message,
   compact = false,
   asToolRow = false,
+  openRequest,
 }: {
   message: UiMessage;
   compact?: boolean;
   /** The card is the tool-level row: one file header and its diff body. */
   asToolRow?: boolean;
+  /** Each new value expands the diff once; the user can collapse it again. */
+  openRequest?: number;
 }) {
   const { t } = useTranslation();
   const change = reviewChangeFromMessage(message);
   const detailsId = useId();
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (openRequest !== undefined) setOpen(true);
+  }, [openRequest]);
 
   if (!change) return null;
 
@@ -162,6 +168,7 @@ export const ReviewChangeCard = memo(function ReviewChangeCard({
       data-state={change.state}
       data-status={change.status}
       data-message-id={asToolRow ? message.id : undefined}
+      data-snapshot-id={change.snapshotId}
     >
       <button
         type="button"

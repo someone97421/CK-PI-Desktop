@@ -43,6 +43,20 @@ export function GenUiCard({ reference, ...owner }: { reference: GenUiReference }
   return <LiveGenUiCard key={source.url} url={source.url} title={title} />;
 }
 
+/** Shown above a live frame whose fragment script threw. */
+export function GenUiScriptErrorNotice({ message }: { message: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="gen-ui-script-error" role="alert">
+      <IconCircleAlert size={14} className="gen-ui-unavailable-icon" />
+      <div className="gen-ui-unavailable-text">
+        <span>{t("chat.genUi.scriptError")}</span>
+        {message ? <code className="gen-ui-script-error-message">{message}</code> : null}
+      </div>
+    </div>
+  );
+}
+
 function LiveGenUiCard({ url, title }: { url: string; title: string }) {
   const [error, setError] = useState<GenUiErrorCode | null>(null);
   if (error) return <UnavailableCard title={title} reason={error} />;
@@ -62,6 +76,9 @@ function PooledGenUiCard({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [viewport, dispatch] = useGenUiViewport(rootRef);
   const [expanded, setExpanded] = useState(false);
+  // A fragment script failure. The frame stays mounted (it may still show
+  // part of the content); the notice says why the rest is missing.
+  const [scriptError, setScriptError] = useState<string | null>(null);
   // The last reported height keeps a released or reloading card from jumping.
   const [height, setHeight] = useState(GEN_UI_INITIAL_HEIGHT);
   const live = isGenUiViewportLive(viewport);
@@ -100,9 +117,17 @@ function PooledGenUiCard({
           <IconPanelMaximize size={14} />
         </TooltipButton>
       </header>
+      {scriptError !== null ? <GenUiScriptErrorNotice message={scriptError} /> : null}
       <div className="gen-ui-body">
         {live ? (
-          <GenUiFrame url={url} title={frameTitle} initialHeight={height} onHeight={setHeight} onError={onError} />
+          <GenUiFrame
+            url={url}
+            title={frameTitle}
+            initialHeight={height}
+            onHeight={setHeight}
+            onError={onError}
+            onScriptError={setScriptError}
+          />
         ) : (
           <div className="gen-ui-placeholder" style={{ height }}>
             {viewport.evicted ? (

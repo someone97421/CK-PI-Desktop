@@ -7,8 +7,10 @@ import {
   GEN_UI_ERROR_MESSAGE,
   GEN_UI_KEY_MESSAGE,
   GEN_UI_MAX_HEIGHT,
+  GEN_UI_MAX_SCRIPT_ERROR_LENGTH,
   GEN_UI_MIN_HEIGHT,
   GEN_UI_READY_MESSAGE,
+  GEN_UI_SCRIPT_ERROR_MESSAGE,
   GEN_UI_SIZE_MESSAGE,
   GEN_UI_WHEEL_MESSAGE,
   isGenUiErrorCode,
@@ -82,6 +84,18 @@ export function genUiWheelFromMessage(event: FrameMessageEvent, frameWindow: unk
 export function genUiErrorFromMessage(event: FrameMessageEvent, frameWindow: unknown): GenUiErrorCode | null {
   const record = ownFrameMessage(event, frameWindow, GEN_UI_ERROR_MESSAGE);
   return record && isGenUiErrorCode(record.code) ? record.code : null;
+}
+
+/**
+ * A fragment script failure from this card's own frame, or null. The text is
+ * guest-controlled: it is whitespace-collapsed and bounded here and must only
+ * ever be rendered as plain text. An empty message is still a failure.
+ */
+export function genUiScriptErrorFromMessage(event: FrameMessageEvent, frameWindow: unknown): string | null {
+  const record = ownFrameMessage(event, frameWindow, GEN_UI_SCRIPT_ERROR_MESSAGE);
+  if (!record) return null;
+  const message = typeof record.message === "string" ? record.message : "";
+  return message.replace(/\s+/g, " ").trim().slice(0, GEN_UI_MAX_SCRIPT_ERROR_LENGTH);
 }
 
 /** A forwarded key from this card's own frame; only `Escape` is accepted. */

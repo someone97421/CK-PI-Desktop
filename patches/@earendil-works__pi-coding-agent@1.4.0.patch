@@ -1,5 +1,5 @@
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
-index 11ab140cd..cb2617f5f 100644
+index 8728a3e0d31f478f28d707cbf313225da4035aca..51f3c5bf0de0c5fedd3144e8d24957cdc5a16738 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
 @@ -69,10 +69,10 @@ function withoutDeletedHeaders(headers) {
@@ -15,7 +15,7 @@ index 11ab140cd..cb2617f5f 100644
      }
      return tokens;
  }
-@@ -419,7 +419,7 @@ export class AgentSession {
+@@ -418,7 +418,7 @@ export class AgentSession {
      _exceedsCompactionThreshold(model, projection) {
          if (model.contextWindow <= 0)
              return false;
@@ -24,7 +24,7 @@ index 11ab140cd..cb2617f5f 100644
      }
      async _compactBeforeNextAssistantResponse(context) {
          const projection = this.sessionManager.buildSessionProjection();
-@@ -591,7 +591,7 @@ export class AgentSession {
+@@ -590,7 +590,7 @@ export class AgentSession {
                      entryId = manager.appendContextEdit(draft.targetId, draft.replacement);
                      break;
                  case "compaction": {
@@ -33,7 +33,7 @@ index 11ab140cd..cb2617f5f 100644
                      entryId = manager.appendCompaction(draft.summary, draft.firstKeptEntryId, tokensBefore, draft.details, true, draft.usage);
                      break;
                  }
-@@ -2211,7 +2211,7 @@ export class AgentSession {
+@@ -2240,7 +2240,7 @@ export class AgentSession {
              }
              const settings = this.settingsManager.getCompactionSettings(model);
              const pathEntries = this.sessionManager.getBranch();
@@ -42,7 +42,7 @@ index 11ab140cd..cb2617f5f 100644
              if (!preparation) {
                  // Check why we can't compact
                  const lastEntry = pathEntries[pathEntries.length - 1];
-@@ -2268,7 +2268,7 @@ export class AgentSession {
+@@ -2297,7 +2297,7 @@ export class AgentSession {
              this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
              const newEntries = this.sessionManager.getEntries();
              this._refreshFinalizedContext();
@@ -51,7 +51,7 @@ index 11ab140cd..cb2617f5f 100644
              // Get the saved compaction entry for the extension event
              const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary);
              if (this._extensionRunner && savedCompactionEntry) {
-@@ -2451,11 +2451,11 @@ export class AgentSession {
+@@ -2480,11 +2480,11 @@ export class AgentSession {
          const hasContextEdits = projection.entries.some((entry) => entry.sourceEntry.type === "context_edit");
          const directContextTokens = assistantMessage.usage ? calculateContextTokens(assistantMessage.usage) : 0;
          if (hasContextEdits) {
@@ -65,7 +65,7 @@ index 11ab140cd..cb2617f5f 100644
              // Without provider usage, estimate.tokens is the pure message-size estimate.
              // Only usage-backed estimates need the stale pre-compaction check.
              if (estimate.lastUsageIndex !== null) {
-@@ -2501,7 +2501,7 @@ export class AgentSession {
+@@ -2530,7 +2530,7 @@ export class AgentSession {
                  return false;
              }
              const pathEntries = this.sessionManager.getBranch();
@@ -74,7 +74,7 @@ index 11ab140cd..cb2617f5f 100644
              if (!preparation) {
                  return false;
              }
-@@ -2557,7 +2557,7 @@ export class AgentSession {
+@@ -2586,7 +2586,7 @@ export class AgentSession {
              this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
              const newEntries = this.sessionManager.getEntries();
              this._refreshFinalizedContext();
@@ -83,7 +83,7 @@ index 11ab140cd..cb2617f5f 100644
              // Get the saved compaction entry for the extension event
              const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary);
              if (this._extensionRunner && savedCompactionEntry) {
-@@ -3495,7 +3495,7 @@ export class AgentSession {
+@@ -3524,7 +3524,7 @@ export class AgentSession {
              if (!hasPostCompactionUsage)
                  return { tokens: null, contextWindow, percent: null };
          }
@@ -93,7 +93,7 @@ index 11ab140cd..cb2617f5f 100644
          return {
              tokens: estimate.tokens,
 diff --git a/dist/core/bug-report.js b/dist/core/bug-report.js
-index bc4af31b5..24a4f8e28 100644
+index bc4af31b57f4a8696a68d4f2a529a26669955382..24a4f8e28624523112cac6c73464e93fb650f03a 100644
 --- a/dist/core/bug-report.js
 +++ b/dist/core/bug-report.js
 @@ -232,12 +232,12 @@ Numbered list, as specific as the transcript allows.
@@ -121,7 +121,7 @@ index bc4af31b5..24a4f8e28 100644
      const prompt = [
          messages.length < options.messages.length
 diff --git a/dist/core/compaction/branch-summarization.d.ts b/dist/core/compaction/branch-summarization.d.ts
-index 12cb88ef5..6ff73567b 100644
+index 12cb88ef5398b2365d5823597b7ccf063af567d6..6ff73567bbd5289b8b3f2fb82f923a5b5dc7860e 100644
 --- a/dist/core/compaction/branch-summarization.d.ts
 +++ b/dist/core/compaction/branch-summarization.d.ts
 @@ -6,7 +6,7 @@
@@ -143,7 +143,7 @@ index 12cb88ef5..6ff73567b 100644
   * Generate a summary of abandoned branch entries.
   *
 diff --git a/dist/core/compaction/branch-summarization.js b/dist/core/compaction/branch-summarization.js
-index 3f98859dd..b68f7adb1 100644
+index dba3462974d41ae6201ccf12a775c75ec6c7de5e..3c02d5cb0ae96362130b3c87967e55bb948028b2 100644
 --- a/dist/core/compaction/branch-summarization.js
 +++ b/dist/core/compaction/branch-summarization.js
 @@ -95,7 +95,7 @@ function getMessageFromEntry(entry) {
@@ -174,7 +174,7 @@ index 3f98859dd..b68f7adb1 100644
          return { summary: "No content to summarize" };
      }
 diff --git a/dist/core/compaction/compaction.d.ts b/dist/core/compaction/compaction.d.ts
-index 04416da43..fdf79d9f2 100644
+index 4c2a2703b8573db5ea1975276fef5bdea5a4990a..ba84715c1565bb2145d7ee9b7616080310a76530 100644
 --- a/dist/core/compaction/compaction.d.ts
 +++ b/dist/core/compaction/compaction.d.ts
 @@ -6,7 +6,7 @@
@@ -229,7 +229,7 @@ index 04416da43..fdf79d9f2 100644
   * Generate summaries for compaction using prepared data.
   * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
 diff --git a/dist/core/compaction/compaction.js b/dist/core/compaction/compaction.js
-index e4992e8d2..0797ad50e 100644
+index 9b1a409d96b39413d8598c79f14fee72f4cd533c..95f9b8fb0f6e64f23e6923a7b87b02a518e7b1f9 100644
 --- a/dist/core/compaction/compaction.js
 +++ b/dist/core/compaction/compaction.js
 @@ -4,8 +4,10 @@
@@ -385,7 +385,7 @@ index e4992e8d2..0797ad50e 100644
          if (messageTokens === 0)
              continue;
          accumulatedTokens += messageTokens;
-@@ -549,7 +518,7 @@ function findProjectedTurnStartIndex(entries, entryIndex, startIndex) {
+@@ -552,7 +521,7 @@ function findProjectedTurnStartIndex(entries, entryIndex, startIndex) {
      }
      return -1;
  }
@@ -394,7 +394,7 @@ index e4992e8d2..0797ad50e 100644
      const cutPoints = [];
      for (let i = startIndex; i < endIndex; i++) {
          const entry = entries[i];
-@@ -563,7 +532,7 @@ function findProjectedCutPoint(entries, startIndex, endIndex, keepRecentTokens)
+@@ -566,7 +535,7 @@ function findProjectedCutPoint(entries, startIndex, endIndex, keepRecentTokens)
      let exceededBudget = false;
      let cutIndex = cutPoints[0];
      for (let i = endIndex - 1; i >= startIndex; i--) {
@@ -403,7 +403,7 @@ index e4992e8d2..0797ad50e 100644
          if (messageTokens === 0)
              continue;
          accumulatedTokens += messageTokens;
-@@ -603,7 +572,7 @@ function findProjectedCutPoint(entries, startIndex, endIndex, keepRecentTokens)
+@@ -606,7 +575,7 @@ function findProjectedCutPoint(entries, startIndex, endIndex, keepRecentTokens)
          isSplitTurn: !startsTurn && turnStartIndex !== -1,
      };
  }
@@ -412,7 +412,7 @@ index e4992e8d2..0797ad50e 100644
      if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
          return undefined;
      }
-@@ -621,8 +590,8 @@ export function prepareCompaction(pathEntries, settings) {
+@@ -624,8 +593,8 @@ export function prepareCompaction(pathEntries, settings) {
          boundaryStart = prevCompactionIndex + 1;
      }
      const boundaryEnd = projectedEntries.length;
@@ -424,7 +424,7 @@ index e4992e8d2..0797ad50e 100644
      if (!firstKeptEntry?.id)
          return undefined;
 diff --git a/dist/core/compaction/utils.js b/dist/core/compaction/utils.js
-index ff5292a31..7f190eed0 100644
+index ff5292a31ab6a81a34c58c2eba0c49c5197f28fc..7f190eed0fe7df13fefec09ced8ab2fc5233b064 100644
 --- a/dist/core/compaction/utils.js
 +++ b/dist/core/compaction/utils.js
 @@ -2,6 +2,7 @@
@@ -468,7 +468,7 @@ index ff5292a31..7f190eed0 100644
          else if (msg.role === "toolResult") {
              const content = contentText(msg.content, "");
 diff --git a/dist/utils/tool-result-images.js b/dist/utils/tool-result-images.js
-index 37d8a2474..b194f69e3 100644
+index 37d8a2474d425e6ac8648745c02d1a247244cbd3..b194f69e3d5073a4c5177a0dfb2b67104eec5814 100644
 --- a/dist/utils/tool-result-images.js
 +++ b/dist/utils/tool-result-images.js
 @@ -27,10 +27,9 @@ export async function normalizeToolResultImages(content, options) {

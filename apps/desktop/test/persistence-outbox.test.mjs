@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -518,4 +519,204 @@ test("a restarted host retries the paused head without waiting out the backoff (
   await outbox.flush(() => restarted);
   assert.equal(outbox.size(), 0, "a fresh host generation drains the paused head at once");
   assert.equal(calls.length, paused + 1);
+});
+
+test("tool images persist once while flush restores all four business copies (#1868)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-images-"));
+  const data = "AAABBBcccDDDeeeFFF0123456789+/==";
+  const result = { content: [{ type: "image", mimeType: "image/png", data }], details: { images: [{ mimeType: "image/png", data, extra: "kept" }] } };
+  const message = { id: "image", role: "tool", content: JSON.stringify(result, null, 2), toolResult: result, metadata: { unknown: [1, "unchanged"] } };
+  const entry = { key: "message:s:image", sessionId: "s", message };
+  await new PersistenceOutbox(dir, silent).enqueue(entry, () => null);
+  const raw = await readFile(join(dir, "session-message-outbox.json"), "utf8");
+  assert.equal(raw.split(data).length - 1, 1, "disk must retain only one image data string");
+  const calls = [];
+  const reloaded = new PersistenceOutbox(dir, silent);
+  await reloaded.flush(() => mockHost(async (method, params) => { calls.push({ method, params }); }));
+  assert.deepEqual(calls, [{ method: "session.appendMessage", params: { sessionId: "s", message, turnId: undefined } }]);
+});
+
+test("ID mutation refuses an undrained target session and retains every queued entry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-mutation-"));
+  const outbox = new PersistenceOutbox(dir, silent);
+  await outbox.enqueue({ key: "message:s:a", sessionId: "s", message: { id: "a" } }, () => null);
+  await assert.rejects(outbox.prepareSessionMutation("s", () => null), (error) => error.errorCode === "HOST_UNAVAILABLE");
+  assert.equal(outbox.size(), 1);
+  await outbox.prepareSessionMutation("other", () => null);
+  assert.equal(outbox.size(), 1);
+  await outbox.prepareSessionMutation("s", () => mockHost(async () => undefined));
+  assert.equal(outbox.size(), 0);
+});
+
+test("legacy array messages and usage retain unknown fields after reload", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-legacy-"));
+  const entries = [
+    { key: "message:s:m", sessionId: "s", message: { id: "m", unknown: { nested: ["literal", 42] } }, unknown: "entry" },
+    { key: "usage:s:t", sessionId: "s", turnId: "t", usage: { tokens: 17, details: { arbitrary: [1, 2] } } },
+  ];
+  await writeFile(join(dir, "session-message-outbox.json"), JSON.stringify(entries));
+  const calls = [];
+  await new PersistenceOutbox(dir, silent).flush(() => mockHost(async (method, params) => { calls.push({ method, params }); }));
+  assert.deepEqual(calls, [
+    { method: "session.appendMessage", params: { sessionId: "s", message: entries[0].message, turnId: undefined } },
+    { method: "session.recordUsage", params: { sessionId: "s", usage: entries[1].usage, turnId: "t" } },
+  ]);
+});
+
+test("失败图片消息无损保留在原队列，重启及后续入队不丢失内容", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-dead-images-"));
+  const now = { value: 0 };
+  const data = "longImageData1234567890+/==";
+  const result = { content: [{ type: "image", mimeType: "image/png", data }], images: [{ mimeType: "image/png", data }] };
+  const message = { id: "image", content: JSON.stringify(result), toolResult: result, extra: { unknown: true } };
+  const outbox = new PersistenceOutbox(dir, silent, { now: () => now.value });
+  const rejecting = mockHost(async () => { throw new Error("unclassified failure"); });
+  await outbox.enqueue({ key: "message:s:image", sessionId: "s", message }, () => rejecting);
+  assert.equal(await drain(outbox, rejecting, now), 1);
+  const path = join(dir, "session-message-outbox.json");
+  const first = await readFile(path, "utf8");
+  assert.equal(first.split(data).length - 1, 1);
+  const reloaded = new PersistenceOutbox(dir, silent, { now: () => now.value });
+  await reloaded.enqueue({ key: "message:other:m", sessionId: "other", message: { id: "m" } }, () => rejecting);
+  assert.equal(await drain(reloaded, rejecting, now), 2);
+  const dead = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(dead.length, 2);
+  const { decodeBinaryStorage } = await import("@pi-desktop/host-runtime");
+  assert.deepEqual(decodeBinaryStorage(dead.find((entry) => entry.key === "message:s:image")).message, message);
+  assert.equal(dead.find((entry) => entry.key === "message:other:m").message.id, "m");
+});
+
+test("corrupt encoded outbox entries reject recovery and preserve the disk file", async () => {
+  for (const file of ["session-message-outbox.json"]) {
+    const dir = await mkdtemp(join(tmpdir(), "pi-outbox-corrupt-"));
+    const path = join(dir, file);
+    const raw = JSON.stringify([{ key: "message:s:m", sessionId: "s", message: { id: "m" }, binaryStorage: { version: 99, data: [], refs: [], texts: [] } }]);
+    await writeFile(path, raw);
+    const logs = [];
+    const outbox = new PersistenceOutbox(dir, (_level, message) => logs.push(message));
+    await assert.rejects(outbox.flush(() => null), /binary storage/i);
+    await assert.rejects(outbox.enqueue({ key: "message:s:new", sessionId: "s", message: { id: "new" } }, () => null), /binary storage/i);
+    assert.equal(await readFile(path, "utf8"), raw);
+    assert.ok(logs.some((message) => /load failed/.test(message)));
+  }
+});
+
+test("mutation waits for active append and refuses a backed-off target without dropping it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-mutation-flight-"));
+  let release;
+  let appendStarted;
+  const started = new Promise((resolve) => { appendStarted = resolve; });
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const host = mockHost(async () => { appendStarted(); await blocked; throw new Error("host unavailable"); });
+  const outbox = new PersistenceOutbox(dir, silent);
+  await outbox.enqueue({ key: "message:s:m", sessionId: "s", message: { id: "m" } }, () => host);
+  await started;
+  let settled = false;
+  const preparing = assert.rejects(outbox.prepareSessionMutation("s", () => host), (error) => error.errorCode === "HOST_UNAVAILABLE").then(() => { settled = true; });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  release();
+  await preparing;
+  assert.equal(outbox.size(), 1);
+  await assert.rejects(outbox.prepareSessionMutation("s", () => host), (error) => error.errorCode === "HOST_UNAVAILABLE");
+  const stored = JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8"));
+  assert.equal(stored[0].message.id, "m");
+});
+
+
+for (const failure of ["PERMISSION_DENIED: invalid provenance", "FOREIGN KEY constraint failed"]) {
+  test(`strict mutation preserves a pending append rejected with ${failure}`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-outbox-strict-reject-"));
+    const outbox = new PersistenceOutbox(dir, silent);
+    const entry = { key: "message:s:m", sessionId: "s", message: { id: "m", content: "must survive" } };
+    let started;
+    let release;
+    const called = new Promise((resolve) => { started = resolve; });
+    const blocked = new Promise((resolve) => { release = resolve; });
+    const host = mockHost(async () => { started(); await blocked; throw new Error(failure); });
+    await outbox.enqueue(entry, () => host);
+    await called;
+    const preparing = assert.rejects(outbox.prepareSessionMutation("s", () => host), (error) => error.errorCode === "HOST_UNAVAILABLE");
+    release();
+    await preparing;
+    assert.equal(outbox.size(), 1);
+    assert.deepEqual(JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8")), [entry]);
+    await outbox.flush(() => host);
+    assert.equal(outbox.size(), failure.startsWith("FOREIGN KEY") ? 0 : 1);
+  });
+}
+
+test("strict mutation retains the fifth transient failure instead of quarantining it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-strict-quarantine-"));
+  const now = { value: 0 };
+  const outbox = new PersistenceOutbox(dir, silent, { now: () => now.value });
+  const entry = { key: "message:s:m", sessionId: "s", message: { id: "m", content: "must survive" } };
+  let attempts = 0;
+  const host = mockHost(async () => { attempts++; throw new Error("unclassified refusal"); });
+  await outbox.enqueue(entry, () => host);
+  await outbox.flush(() => host);
+  for (let attempt = 1; attempt < 4; attempt++) {
+    now.value += 60_000;
+    await outbox.flush(() => host);
+  }
+  assert.equal(attempts, 4);
+  now.value += 60_000;
+  await assert.rejects(outbox.prepareSessionMutation("s", () => host), (error) => error.errorCode === "HOST_UNAVAILABLE");
+  assert.equal(attempts, 5);
+  assert.equal(outbox.size(), 1);
+  assert.deepEqual(JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8")), [entry]);
+  await assert.rejects(readFile(join(dir, "session-message-outbox.dead-letter.json")), (error) => error.code === "ENOENT");
+});
+
+test("concurrent strict drains preserve all target sessions across an active normal flush", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-strict-concurrent-"));
+  const outbox = new PersistenceOutbox(dir, silent);
+  const entries = ["a", "b"].map((sessionId) => ({ key: `message:${sessionId}:m`, sessionId, message: { id: sessionId } }));
+  for (const entry of entries) await outbox.enqueue(entry, () => null);
+  let started;
+  let release;
+  let calls = 0;
+  const called = new Promise((resolve) => { started = resolve; });
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const host = mockHost(async () => { calls++; started(); await blocked; throw new Error("PERMISSION_DENIED: refusal"); });
+  const ordinary = outbox.flush(() => host);
+  await called;
+  const preparing = entries.map((entry) => assert.rejects(outbox.prepareSessionMutation(entry.sessionId, () => host), (error) => error.errorCode === "HOST_UNAVAILABLE"));
+  release();
+  await Promise.all([ordinary, ...preparing]);
+  assert.equal(outbox.size(), 2);
+  assert.deepEqual(JSON.parse(await readFile(join(dir, "session-message-outbox.json"), "utf8")), entries);
+});
+
+test("历史修改不能用重复消息 ID 错误代替持久化成功回执", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-strict-duplicate-"));
+  const outbox = new PersistenceOutbox(dir, silent);
+  await outbox.enqueue({ key: "message:s:m", sessionId: "s", message: { id: "m" } }, () => null);
+  await assert.rejects(outbox.prepareSessionMutation("s", () => mockHost(async () => { throw new Error("UNIQUE constraint failed: messages.id"); })), (error) => error.errorCode === "HOST_UNAVAILABLE");
+  assert.equal(outbox.size(), 1);
+});
+
+test("delayed consumption of a rejected outbox load stays observed and fails closed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-outbox-load-observer-"));
+  await writeFile(join(dir, "session-message-outbox.json"), "invalid JSON");
+  const moduleUrl = new URL("../electron/main/persistence-outbox.ts", import.meta.url).href;
+  const source = `
+    import assert from "node:assert/strict";
+    import { PersistenceOutbox } from ${JSON.stringify(moduleUrl)};
+    const unhandled = [];
+    process.on("unhandledRejection", (error) => unhandled.push(String(error)));
+    let loaded;
+    const loadReported = new Promise((resolve) => { loaded = resolve; });
+    const logs = [];
+    const outbox = new PersistenceOutbox(${JSON.stringify(dir)}, (level, message) => { logs.push({ level, message }); loaded(); });
+    await loadReported;
+    await new Promise(setImmediate);
+    await new Promise(setImmediate);
+    assert.deepEqual(unhandled, [], "constructor must observe load rejection before a later caller awaits it");
+    assert.ok(logs.some((entry) => entry.level === "error"), "load rejection remains observable");
+    await assert.rejects(outbox.flush(() => null), SyntaxError);
+    await assert.rejects(outbox.enqueue({ key: "new", sessionId: "s", message: { id: "new" } }, () => null), SyntaxError);
+  `;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", source], { encoding: "utf8" });
+  assert.equal(child.status, 0, child.stderr || child.stdout);
 });

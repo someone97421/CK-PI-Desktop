@@ -448,7 +448,7 @@ test("stopping a turn undoes an unanswered prompt or settles the partial reply",
   assert.match(storeSource, /resolveComposerSmartStop\(merged, submittedDraft\)/);
   assert.match(
     storeSource,
-    /replaceSessionMessages\(sessionId,\s*fullStop\.kept\)/,
+    /retractPendingSessionPrompt\(\{[\s\S]*?sessionId,[\s\S]*?userMessageId: pendingUserMessageId/,
   );
   // Settling a partial reply is renderer-only: the runtime's aborted final row
   // (or its checkpoint) is the durable copy, and a rewrite from this snapshot
@@ -460,7 +460,7 @@ test("stopping a turn undoes an unanswered prompt or settles the partial reply",
 test("delete remains on user turns and is removed from assistant toolbar", async () => {
   const storeSource = await readStoreSource();
   assert.match(storeSource, /deleteMessage:\s*async \(messageId\)/);
-  assert.match(storeSource, /replaceSessionMessages\(sessionId,\s*next\)/);
+  assert.match(storeSource, /deleteSessionMessage\(\{ sessionId, messageId \}\)/);
   assert.match(transcriptSource, /deleteMessage\(message\.id\)/);
   assert.match(transcriptSource, /chat\.deleteMessage/);
   assert.match(

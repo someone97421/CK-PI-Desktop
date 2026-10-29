@@ -142,7 +142,7 @@ type TaskResumeInput = {
 | 聊天与审查 | 保留引用、批注、侧边对话、任务级过程抽屉、文件审查卡、耗时/token 统计和多级过程显示 |
 | 工作区 | 临时会话可以选择独立目录；隔离会话使用 Git worktree；文件管理器、浏览器和终端作为右侧工作面板插件运行 |
 | 扩展 | 支持技能、MCP、OAuth、插件市场、插件托管提供商、自定义 Agent、定时任务和局域网远程控制 |
-| 语言与版本 | 只维护简体中文和 English；构建版本使用北京时间 `YYYYMMDD-HHMMSS`，数据库 schema 为 25，宿主 protocol 为 11 |
+| 语言与版本 | 只维护简体中文和 English；构建版本使用北京时间 `YYYYMMDD-HHMMSS`，数据库 schema 为 27，宿主 protocol 为 11 |
 
 ## 快速开始
 

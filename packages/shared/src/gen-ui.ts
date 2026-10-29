@@ -64,6 +64,15 @@ export const GEN_UI_READY_MESSAGE = "pi-genui:ready";
 export const GEN_UI_KEY_MESSAGE = "pi-genui:key";
 /** Guest → host: Main served an error shell instead of the fragment. */
 export const GEN_UI_ERROR_MESSAGE = "pi-genui:error";
+/**
+ * Guest → host: a fragment script threw (an uncaught error or an unhandled
+ * rejection). The card stays mounted and shows the message, so a chart that
+ * failed to draw is not just a blank frame. Sent with `{ message }`, where
+ * the message is guest text: the host bounds it and renders it as plain text.
+ */
+export const GEN_UI_SCRIPT_ERROR_MESSAGE = "pi-genui:script-error";
+/** Longest script-error message the host shows; longer text is truncated. */
+export const GEN_UI_MAX_SCRIPT_ERROR_LENGTH = 300;
 
 /** Why Main could not serve a visualization; carried by `GEN_UI_ERROR_MESSAGE`. */
 export const GEN_UI_ERROR_CODES = ["not-found", "too-large", "not-fragment", "runtime-unavailable"] as const;

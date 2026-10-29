@@ -4,7 +4,12 @@ import type {
   MessageUsage,
   UiMessage,
 } from "@pi-desktop/shared";
-import { addUsage, hostedSearchRounds, runElapsedMs } from "@pi-desktop/shared";
+import {
+  addUsage,
+  hostedSearchRounds,
+  runElapsedMs,
+  withoutReasoningReplayPlaceholder,
+} from "@pi-desktop/shared";
 import { delegationExecutionKey, getToolAction, isDelegationStartTool } from "./tool-display";
 import { toolResultPayload } from "./tool-presentation";
 import { messageContentFacts } from "./transcript-summary";
@@ -70,7 +75,9 @@ export type TranscriptEntry =
 
 export function messageThinking(message: UiMessage): string {
   if (typeof message.thinking !== "string") return "";
-  return message.thinking.trim() ? message.thinking : "";
+  // An echoed replay placeholder is not the model's reasoning (#1945).
+  const thinking = withoutReasoningReplayPlaceholder(message.thinking);
+  return thinking.trim() ? thinking : "";
 }
 
 function isVisibleMessage(message: UiMessage): boolean {

@@ -633,7 +633,7 @@ export function useAppShellRuntime() {
   }, [ready]);
 
   useEffect(() => {
-    if (!ready || platform !== "win32") return;
+    if (!ready || (platform !== "win32" && platform !== "darwin")) return;
     let disposed = false;
     let draining = false;
     let requested = false;

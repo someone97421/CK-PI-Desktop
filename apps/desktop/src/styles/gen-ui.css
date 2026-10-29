@@ -89,6 +89,22 @@
   font-size: var(--text-xs);
 }
 
+.gen-ui-script-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 12px;
+  color: var(--ds-error);
+  font-size: var(--text-sm-plus);
+}
+
+.gen-ui-script-error-message {
+  overflow-wrap: anywhere;
+  color: var(--ds-text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+}
+
 .gen-ui-dialog {
   display: flex;
   width: min(100%, 1100px);

@@ -767,6 +767,20 @@ fn plugin_session_rpc_err(error: impl ToString) -> JsonRpcError {
     rpc_err(rpc_code, message, &code)
 }
 
+/// Optional session `/fast` switch (ADR 0334). Absent or null leaves the
+/// stored value; anything but a boolean is rejected rather than coerced.
+fn fast_mode_param(params: &Value) -> Result<Option<bool>, JsonRpcError> {
+    match params.get("fastMode") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(rpc_err(
+            1002,
+            "fastMode must be a boolean",
+            "INVALID_PARAMS",
+        )),
+    }
+}
+
 /// Parse the optional session thinking selector at the RPC boundary.  A
 /// missing/null value keeps the backwards-compatible default; present values
 /// must be strings from the host's allowlist rather than being silently
@@ -2691,6 +2705,7 @@ async fn handle_request(
         }
         "session.create" => {
             let thinking_level = thinking_level_param(&params)?;
+            let fast_mode = fast_mode_param(&params)?.unwrap_or(false);
             let permission_parent = permission_parent_param(&params)?;
             // ADR 0329: an isolated session gets its own git worktree.
             let isolated = params
@@ -2757,6 +2772,7 @@ async fn handle_request(
                         .map(str::to_string),
                     thinking_level,
                     permission_mode,
+                    fast_mode,
                 },
             )
             .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
@@ -2923,8 +2939,9 @@ async fn handle_request(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| rpc_err(1002, "mode required", "INVALID_PARAMS"))?;
             let thinking_level = thinking_level_param(&params)?;
+            let fast_mode = fast_mode_param(&params)?;
             let st = state.lock().await;
-            let session = sessions::configure_session_with_thinking(
+            let session = sessions::configure_session_with_fast_mode(
                 &st.db,
                 id,
                 mode,
@@ -2932,6 +2949,7 @@ async fn handle_request(
                 params.get("modelId").and_then(|v| v.as_str()),
                 thinking_level.as_deref(),
                 params.get("permissionMode").and_then(|v| v.as_str()),
+                fast_mode,
             )
             .map_err(|e| {
                 let message = e.to_string();
@@ -3082,6 +3100,55 @@ async fn handle_request(
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             Ok(json!({ "ok": true }))
         }
+        "session.deleteMessage" | "session.retractPendingPrompt" => {
+            let session_id = params
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .ok_or_else(|| rpc_err(1002, "sessionId required", "INVALID_PARAMS"))?;
+            let target_key = if method == "session.deleteMessage" {
+                "messageId"
+            } else {
+                "userMessageId"
+            };
+            let target_id = params
+                .get(target_key)
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .ok_or_else(|| rpc_err(1002, format!("{target_key} required"), "INVALID_PARAMS"))?;
+            let turn_id = match params.get("turnId") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(id)) if !id.trim().is_empty() => Some(id.as_str()),
+                Some(_) => {
+                    return Err(rpc_err(
+                        1002,
+                        "turnId must be a nonempty string",
+                        "INVALID_PARAMS",
+                    ))
+                }
+            };
+            let st = state.lock().await;
+            let result = if method == "session.deleteMessage" {
+                sessions::delete_message(&st.db, session_id, target_id)
+                    .and_then(|result| Ok(serde_json::to_value(result)?))
+            } else {
+                sessions::retract_pending_prompt(&st.db, session_id, target_id, turn_id)
+                    .and_then(|result| Ok(serde_json::to_value(result)?))
+            };
+            result.map_err(|error| {
+                let message = error.to_string();
+                let code = if message.starts_with("NOT_FOUND") {
+                    "NOT_FOUND"
+                } else if message.starts_with("TURN_RUNNING") {
+                    "TURN_RUNNING"
+                } else if message.starts_with("PERMISSION_DENIED") {
+                    "PERMISSION_DENIED"
+                } else {
+                    "INTERNAL"
+                };
+                rpc_err(if code == "NOT_FOUND" { 1007 } else { 1000 }, message, code)
+            })
+        }
         "session.truncateFrom" => {
             let session_id = params
                 .get("sessionId")
@@ -3192,13 +3259,33 @@ async fn handle_request(
                 serde_json::from_value(params.get("prefix").cloned().unwrap_or_else(|| json!([])))
                     .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
             let st = state.lock().await;
-            let messages = sessions::activate_message_revision(
-                &st.db,
-                session_id,
-                root_user_id,
-                revision_index,
-                &prefix,
-            )
+            let require_canonical = match params.get("requireCanonicalPrefix") {
+                None => false,
+                Some(Value::Bool(required)) => *required,
+                Some(_) => {
+                    return Err(rpc_err(
+                        1002,
+                        "requireCanonicalPrefix must be a boolean",
+                        "INVALID_PARAMS",
+                    ))
+                }
+            };
+            let messages = if require_canonical {
+                sessions::activate_message_revision_canonical(
+                    &st.db,
+                    session_id,
+                    root_user_id,
+                    revision_index,
+                )
+            } else {
+                sessions::activate_message_revision(
+                    &st.db,
+                    session_id,
+                    root_user_id,
+                    revision_index,
+                    &prefix,
+                )
+            }
             .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             Ok(json!({ "messages": messages }))
         }
@@ -5639,6 +5726,101 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
+    async fn bounded_history_mutation_rpcs_return_only_mutation_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = AppState::open(dir.path()).unwrap();
+        app.handshook = true;
+        let session = sessions::create_session(&app.db, None, None, None, None, None).unwrap();
+        let message: sessions::UiMessage = serde_json::from_value(json!({
+            "id": "pending", "role": "user", "content": "hello",
+            "createdAt": "2026-10-26T00:00:00Z"
+        }))
+        .unwrap();
+        let turn = sessions::begin_turn(&app.db, &session.id, None, None).unwrap();
+        sessions::append_message(&app.db, &session.id, &message, Some(&turn)).unwrap();
+        sessions::end_turn(&app.db, &turn, "aborted", None, None, false).unwrap();
+        let state = Arc::new(Mutex::new(app));
+        let tx = mpsc::unbounded_channel().0;
+        let result = handle_request(
+            state.clone(),
+            "session.retractPendingPrompt",
+            json!({
+                "sessionId": session.id, "userMessageId": "pending", "turnId": turn
+            }),
+            tx.clone(),
+        )
+        .await;
+        assert!(result.is_ok(), "bounded retract must exist: {result:?}");
+        assert_eq!(
+            result.unwrap(),
+            json!({"ok": true, "retracted": true, "removedCount": 1})
+        );
+        let deleted = handle_request(
+            state,
+            "session.deleteMessage",
+            json!({
+                "sessionId": session.id, "messageId": "pending"
+            }),
+            tx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            deleted,
+            json!({"ok": true, "deleted": false, "deletedCount": 0})
+        );
+    }
+
+    #[tokio::test]
+    async fn canonical_activation_rpc_rejects_missing_anchor_and_keeps_legacy_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = AppState::open(dir.path()).unwrap();
+        app.handshook = true;
+        let session = sessions::create_session(&app.db, None, None, None, None, None).unwrap();
+        let root = json!({"id":"root", "role":"user", "content":"archived", "createdAt":"2026-10-26T00:00:00Z"});
+        let message = serde_json::from_value(root.clone()).unwrap();
+        sessions::save_message_revision(&app.db, &session.id, "root", &[message], false).unwrap();
+        let state = Arc::new(Mutex::new(app));
+        let tx = mpsc::unbounded_channel().0;
+        let strict = handle_request(
+            state.clone(),
+            "session.activateRevision",
+            json!({
+                "sessionId":session.id, "rootUserId":"root", "revisionIndex":1,
+                "requireCanonicalPrefix":true
+            }),
+            tx.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert!(strict.message.contains("anchor missing"));
+        let prefix = json!({"id":"legacy-prefix", "role":"user", "content":"prefix", "createdAt":"2026-10-26T00:00:00Z"});
+        let legacy = handle_request(
+            state.clone(),
+            "session.activateRevision",
+            json!({
+                "sessionId":session.id, "rootUserId":"root", "revisionIndex":1, "prefix":[prefix]
+            }),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(legacy["messages"][0]["id"], "legacy-prefix");
+        let canonical = handle_request(
+            state,
+            "session.activateRevision",
+            json!({
+                "sessionId":session.id, "rootUserId":"root", "revisionIndex":1,
+                "requireCanonicalPrefix":true
+            }),
+            tx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(canonical["messages"][0]["id"], "legacy-prefix");
+    }
+
+    #[tokio::test]
     async fn builtin_skill_activation_rpc_round_trips() {
         let data_dir = tempfile::tempdir().unwrap();
         let mut app_state = AppState::open(data_dir.path()).unwrap();
@@ -6838,6 +7020,58 @@ mod tests {
             groups_after_delete["groups"][0]["primaryPath"],
             json!(remaining_canonical)
         );
+    }
+
+    /// ADR 0334: `fastMode` is an optional boolean on create and configure;
+    /// an absent value keeps the stored switch and a non-boolean is rejected.
+    #[tokio::test]
+    async fn session_fast_mode_rpc_is_optional_boolean_and_preserved() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let mut app_state = AppState::open(data_dir.path()).unwrap();
+        app_state.handshook = true;
+        let state = Arc::new(Mutex::new(app_state));
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let call = |method: &'static str, params: Value| {
+            handle_request(state.clone(), method, params, tx.clone())
+        };
+
+        let legacy = call("session.create", json!({ "mode": "agent" }))
+            .await
+            .unwrap();
+        assert_eq!(legacy["session"]["fastMode"], false);
+        let created = call(
+            "session.create",
+            json!({ "mode": "agent", "fastMode": true }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created["session"]["fastMode"], true);
+        let id = created["session"]["id"].as_str().unwrap().to_string();
+
+        let kept = call(
+            "session.configure",
+            json!({ "id": id, "mode": "plan", "thinkingLevel": "high" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(kept["session"]["fastMode"], true);
+        let off = call(
+            "session.configure",
+            json!({ "id": id, "mode": "agent", "fastMode": false }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(off["session"]["fastMode"], false);
+
+        for method in ["session.create", "session.configure"] {
+            let error = call(
+                method,
+                json!({ "id": id, "mode": "agent", "fastMode": "yes" }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.data.unwrap()["errorCode"], "INVALID_PARAMS");
+        }
     }
 
     #[tokio::test]

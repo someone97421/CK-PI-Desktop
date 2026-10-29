@@ -221,7 +221,7 @@ test("work panel uses the fixed-window internal dock", () => {
   // guest clamped to the plugin view is gone before the dock CSS animation.
   assert.match(
     panelSource,
-    /blocked=\{\s*exiting \|\| panelBlocked \|\| blockingOverlayActive\s*\}/,
+    /blocked=\{\s*exiting \|\| panelBlocked \|\| blockingOverlayActive\s*\}/s,
   );
   assert.match(panelSource, /nativeSurfaceReadyForExit/);
   assert.match(panelSource, /is-exit-pending/);

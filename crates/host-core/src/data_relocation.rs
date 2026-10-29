@@ -86,6 +86,31 @@ impl Roots {
             _ => false,
         }
     }
+
+    fn stored_record(&self, value: &mut Value) -> Result<bool> {
+        if value.get("binaryStorage").is_none() {
+            // Offline relocation must not upgrade a legacy profile's storage
+            // without its database version gate. Preserve the old plain form.
+            return Ok(self.structured(value));
+        }
+        let next = crate::transcripts::binary_storage::relocate(value.clone(), |record| {
+            self.structured(record)
+        })?;
+        let changed = next != *value;
+        *value = next;
+        Ok(changed)
+    }
+
+    fn stored_queue(&self, value: &mut Value) -> Result<bool> {
+        let Some(entries) = value.as_array_mut() else {
+            anyhow::bail!("invalid relocation persistence queue");
+        };
+        let mut changed = false;
+        for entry in entries {
+            changed |= self.stored_record(entry)?;
+        }
+        Ok(changed)
+    }
 }
 
 fn regular_file(path: &Path) -> Result<bool> {
@@ -136,13 +161,20 @@ fn replace_file(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<bool>) 
 }
 
 fn rewrite_json(path: &Path, rewrite: impl FnOnce(&mut Value) -> bool) -> Result<()> {
+    rewrite_json_checked(path, |value| Ok(rewrite(value)))
+}
+
+fn rewrite_json_checked(
+    path: &Path,
+    rewrite: impl FnOnce(&mut Value) -> Result<bool>,
+) -> Result<()> {
     if !regular_file(path)? {
         return Ok(());
     }
     let mut value: Value =
         serde_json::from_slice(&fs::read(path)?).context("parse relocation metadata")?;
     replace_file(path, |output| {
-        let changed = rewrite(&mut value);
+        let changed = rewrite(&mut value)?;
         if changed {
             serde_json::to_writer(output, &value)?;
         }
@@ -172,7 +204,7 @@ fn rewrite_transcript(path: &Path, roots: &Roots) -> Result<()> {
                 }
                 Err(error) => return Err(error).context("parse relocation transcript"),
             };
-            if roots.structured(&mut value) {
+            if roots.stored_record(&mut value)? {
                 serde_json::to_writer(&mut *output, &value)?;
                 if line.ends_with(b"\n") {
                     output.write_all(b"\n")?;
@@ -279,16 +311,20 @@ pub fn relocate(source: &Path, destination: &Path) -> Result<()> {
                         .file_name()
                         .is_some_and(|name| name.to_string_lossy().ends_with(".inflight.json")) =>
                 {
-                    rewrite_json(&path, |value| roots.structured(value))?;
+                    rewrite_json_checked(&path, |value| roots.stored_record(value))?;
                 }
                 _ => {}
             }
         }
     }
-    rewrite_json(
-        &roots.destination.join("session-message-outbox.json"),
-        |value| roots.structured(value),
-    )?;
+    for file in [
+        "session-message-outbox.json",
+        "session-message-outbox.dead-letter.json",
+    ] {
+        rewrite_json_checked(&roots.destination.join(file), |value| {
+            roots.stored_queue(value)
+        })?;
+    }
     let capabilities = roots.destination.join("agent-capabilities");
     if regular_directory(&capabilities)? {
         for name in ["mcp", "skills", "subagents", "subagent-builtins"] {
@@ -370,7 +406,7 @@ fn relocate_database(roots: &Roots) -> Result<()> {
             } else {
                 roots.remap(&text).map(|path| {
                     if table == "projects" {
-                        crate::db::normalize_project_path(&path).unwrap_or(path)
+                        crate::db::canonical_project_path(&path).unwrap_or(path)
                     } else {
                         path
                     }
@@ -403,7 +439,7 @@ fn relocate_database(roots: &Roots) -> Result<()> {
             {
                 roots
                     .remap(&key)
-                    .map(|path| crate::db::normalize_project_path(&path).unwrap_or(path))
+                    .map(|path| crate::db::canonical_project_path(&path).unwrap_or(path))
                     .unwrap_or_else(|| key.clone())
             } else {
                 key.clone()

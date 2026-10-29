@@ -62,7 +62,9 @@ app.whenReady().then(async () => {
   const child = spawn(electronBinary, [join(temp, "main.cjs")], { env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
   for (const stream of [child.stdout, child.stderr]) stream.on("data", (data) => { output += data; });
-  const timer = setTimeout(() => child.kill("SIGKILL"), 45_000);
+  // Four renderer probes share this process; slower hidden Windows frames can
+  // exceed the old single-probe budget even when every assertion passes.
+  const timer = setTimeout(() => child.kill("SIGKILL"), 90_000);
   let code;
   try { code = await new Promise((resolve, reject) => {
     child.once("error", reject); child.once("close", resolve);

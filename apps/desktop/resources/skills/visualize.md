@@ -45,8 +45,9 @@ After compaction, reload it when visualization work continues.
 - Keep it under 1 MB: aggregate, bin, downsample, or drop unused fields from
   large inline datasets.
 - Check that the script has no undefined identifiers, every queried element
-  exists, and the primary interaction updates the visual. Review with the
-  Read tool; do not run shell commands to check the file.
+  exists, and the primary interaction updates the visual. Use the Write result's
+  static diagnostics to guide corrections; read back when needed. These checks
+  do not establish that the interaction works.
 
 ### Reference in the reply
 
@@ -68,13 +69,8 @@ the reply, as plain text. The line looks like this (with real values):
 - There is no network: `fetch`, XHR, WebSocket, remote scripts, fonts, images,
   and map data are all blocked and fail silently. Draw with inline SVG or
   `<canvas>`; embed small assets as `data:` URIs.
-- Bundled libraries are available offline through these exact URLs. Keep them
-  unchanged; any other URL or version is blocked:
-  - D3 7.9.0: `<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>`.
-    D3 is not preloaded: a fragment that calls `d3` must include this tag
-    before its own script.
-  - Floating UI is already loaded by the runtime for tooltips; do not load it
-    again.
+- D3 7.9.0 (`d3`) and the `viz` helpers are preloaded; use them directly.
+  Floating UI is loaded by the runtime for tooltips. Other libraries are unavailable.
 - No popups, alerts, navigation, external links, form submission, cookies,
   or `localStorage`. Keep state in script variables; it resets when the card
   reloads.
@@ -100,9 +96,8 @@ the reply, as plain text. The line looks like this (with real values):
   values and labels in `--foreground` / `--muted-foreground`.
 - Keep grids and inactive structure thin (1–2px) and neutral. Never outline
   bars, progress tracks, or stacked segments.
-- For canvas or chart APIs that cannot read CSS variables, resolve them with
-  `getComputedStyle(document.documentElement).getPropertyValue(...)` and redraw
-  when the root's `style` attribute changes (`MutationObserver`).
+- For canvas or chart APIs that cannot read CSS variables, use
+  `viz.color("--primary")` inside a `viz.chart` draw function so theme changes redraw it.
 - Type scales from `--font-size-base` (14px); `.text-small` is 12px. Never go
   below 11px, never set custom font sizes or line heights, and use only
   `var(--font-weight-normal)` and `var(--font-weight-medium)`. Use `.tabular-nums` on changing numbers.
@@ -145,10 +140,8 @@ Choose the smallest composition that fits.
   widths, horizontal overflow, internal scrolling, `position: fixed`, or
   viewport-height layouts. Use `.table-responsive` only when table columns
   cannot fit.
-- Size every SVG from its actual container: set its `viewBox` from the
-  container's measured width and redraw with `ResizeObserver`. Never scale
-  down a fixed-width `viewBox`; at narrow widths reduce ticks and annotations
-  instead.
+- Use `viz.chart` for container-sized chart SVGs; it redraws on resize.
+  When `compact`, reduce ticks and annotations.
 
 ## Utility classes
 
@@ -188,19 +181,28 @@ them: no custom sizes, spacing, borders, radii, shadows, or colors.
 
 ## Charts
 
-- Give every axis a title with quantity and units, reserve at least 64px for
-  the y axis, and label important values directly. Add a legend only when
-  series cannot be labeled directly.
-- Derive padded domains from all observations (`d3.extent`); never hard-code
-  them. Keep marks inside the plot frame.
-- After drawing, keep tick, axis, and value labels from overlapping: leave
-  about 4px between labels, anchor edge labels inward, and drop optional
-  annotations first. At 360px show at most four x ticks.
-- Use one tooltip per chart, attached to real marks with `data-tooltip`
-  (label, value, units). Give isolated marks hit targets at least 32px across.
-- Animate transitions between chart states, not the initial appearance; never
-  loop motion, and honor `prefers-reduced-motion`.
-- Scope SVG styles to the chart's class.
+Prefer the preloaded `viz.render` helper for standard charts. It handles sizing,
+redraw, axes, legends, tooltips, and label overlap:
+
+```js
+const chart = viz.render("sales", { mark: "line", data, label: "Sales by month",
+  x: { field: "month", title: "Month" }, y: { field: "sales", title: "Sales (k)" },
+  color: "region" });
+slider.oninput = () => chart.update({ data: filter(slider.value) });
+```
+
+- Marks: `bar` (`stack: true` for stacked bars), `line`, `area`, `point`
+  (`size`, `trend: true`), `heatmap` (`x`, `y`, `value`), and `arc` (`theta`, `color`).
+  Channels accept a field name or `{ field, title, format, domain }`;
+  optional `tooltip: (d) => text` and `height` customize the chart.
+- For custom visuals, use `viz.chart(el, ({ svg, width, height, compact }) => {...}, { label })`.
+  It redraws on width/theme changes and `redraw()`. Helpers include
+  `viz.plot`, `viz.axes`, `viz.extent`, `viz.series`, `viz.pruneOverlaps`,
+  and `viz.regression(data, x, y)` returning `{ slope, intercept, r }`.
+- Title axes with quantity and units. Use `data-tooltip` on custom marks,
+  with hit targets at least 32px across for isolated marks.
+- Animate state transitions with `viz.duration(ms)` and scope SVG styles to
+  the chart's class.
 
 ## Accessibility
 

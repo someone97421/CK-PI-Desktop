@@ -71,7 +71,7 @@ app.whenReady().then(async () => {
   win.webContents.on("console-message", (event) => console.error(event.message));
   try {
     await win.loadFile(path.join(__dirname, "index.html"));
-    for (const stage of ["narrow-active", "resize-same-tab", "hover-inactive", "context-menu-user-path"]) {
+    for (const stage of ["narrow-active", "resize-same-tab", "hover-inactive", "context-menu-user-path", "plugin-view-menu-layer"]) {
       const result = await win.webContents.executeJavaScript(
         "window.tabCloseProbe(" + JSON.stringify(stage) + ")");
       console.log("TAB_CLOSE " + JSON.stringify(result));
@@ -99,7 +99,7 @@ app.whenReady().then(async () => {
     .split("\n")
     .filter((line) => line.startsWith("TAB_CLOSE "))
     .map((line) => JSON.parse(line.slice("TAB_CLOSE ".length)));
-  assert.equal(results.length, 4, "expected three geometry stages and one context-menu user path");
+  assert.equal(results.length, 5, "expected geometry, tab-menu, and plugin-layer stages");
 
   for (const result of results) {
     if (result.stage === "context-menu-user-path") {
@@ -107,6 +107,13 @@ app.whenReady().then(async () => {
       assert.equal(result.remainingTabs, 0, "Close All Tabs did not empty the strip");
       assert.equal(result.activeTabId, null, "Close All Tabs retained an active tab");
       console.log("context menu user path: PASS");
+      continue;
+    }
+    if (result.stage === "plugin-view-menu-layer") {
+      assert.equal(result.nativeMenuRequested, true, "Browser tab did not request the native menu");
+      assert.equal(result.pageRemainsVisibleWhileMenuOpen, true, "Browser page disappeared while the menu was open");
+      assert.equal(result.pageRemainsVisibleAfterMenuClose, true, "Browser page disappeared after menu close");
+      console.log("native menu preserves Browser page: PASS");
       continue;
     }
     console.log(

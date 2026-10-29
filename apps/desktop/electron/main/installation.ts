@@ -1,5 +1,5 @@
 import { app, dialog } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { APP_ID, APP_SLUG } from "@pi-desktop/shared";
@@ -18,6 +18,14 @@ export let defaultDataDir = "";
 export let storageOverridden = false;
 export let hasSingleInstanceLock = false;
 export let initialTemporaryWorkspace: string | null = null;
+
+const pendingMacWorkspacePaths: string[] = [];
+let macWorkspaceLaunchHandler: ((workspacePath: string) => void) | undefined;
+
+export function onMacTemporaryWorkspaceLaunch(handler: (workspacePath: string) => void): void {
+  macWorkspaceLaunchHandler = handler;
+  for (const workspacePath of pendingMacWorkspacePaths.splice(0)) handler(workspacePath);
+}
 
 if (!isBackupLockProcess) {
   ignoreBrokenStdio();
@@ -57,6 +65,20 @@ if (!isBackupLockProcess) {
     dataDir: effectiveDataDirectory, temporaryWorkspacePath: initialTemporaryWorkspace,
   }));
   if (!hasSingleInstanceLock) app.exit(0);
+  if (hasSingleInstanceLock && process.platform === "darwin") {
+    // 冷启动的文件打开事件可能早于存储准备及业务入口加载。
+    app.on("open-file", (event, path) => {
+      event.preventDefault();
+      try {
+        if (!statSync(path).isDirectory()) return;
+      } catch {
+        return;
+      }
+      const workspacePath = resolve(path);
+      if (macWorkspaceLaunchHandler) macWorkspaceLaunchHandler(workspacePath);
+      else pendingMacWorkspacePaths.push(workspacePath);
+    });
+  }
   app.commandLine.appendSwitch("disable-renderer-accessibility");
   if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`);
   app.on("will-quit", () => {

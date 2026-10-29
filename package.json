@@ -1,7 +1,7 @@
 {
   "name": "this-is-a-agent",
   "private": true,
-  "version": "2610.2810.3117",
+  "version": "2610.2909.4328",
   "description": "这是一个助手 — local-first AI coding agent desktop app",
   "packageManager": "pnpm@12.8.1+sha512.f64ba907507f5ceafe06c8d38e6052d0179444580ec1279ddd5bfc11cb48aa8a2644b66598e07e761da84872a9fc57d5f902b87fa49d024198d558612aabbe45",
   "engines": {
@@ -29,6 +29,7 @@
     "test:e2e:question-notification": "node scripts/e2e-question-notification.mjs",
     "test:e2e:scheduled": "node scripts/e2e-scheduled.mjs",
     "test:e2e:rpc-unicode": "node scripts/e2e-rpc-unicode.mjs",
+    "test:e2e:tool-result-persistence": "node --max-old-space-size=4096 scripts/e2e-tool-result-persistence.mjs",
     "test:e2e:transcript-cache": "node scripts/e2e-transcript-cache.mjs",
     "test:e2e:plan": "node scripts/e2e-plan.mjs",
     "test:e2e:plan-history": "node scripts/e2e-plan-history.mjs",
@@ -47,6 +48,7 @@
     "test:e2e:transcript-minimap-jump": "node scripts/e2e-transcript-minimap-jump.mjs",
     "test:e2e:radial-menu": "node scripts/e2e-radial-menu.mjs",
     "test:e2e:transcript-disclosure": "node scripts/e2e-transcript-disclosure-anchor.mjs",
+    "test:e2e:transcript-turn-completion": "node scripts/e2e-transcript-turn-completion.mjs",
     "test:e2e:images": "node scripts/e2e-image-generation.mjs && node scripts/e2e-image-generation-ui.mjs && node scripts/e2e-image-chat.mjs",
     "test:e2e:provider-client-certificate": "node --test scripts/e2e/wait-for-child-exit.test.mjs && node scripts/e2e-provider-client-certificate.mjs",
     "test:e2e:provider-order": "node scripts/e2e-provider-order.mjs",

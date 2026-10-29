@@ -9,6 +9,7 @@ import {
   type ComponentType,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useBlockingOverlayActive } from "../../lib/blocking-overlay";
@@ -25,6 +26,7 @@ import {
   subagentTabDisplayLabels,
   toolWorkPanelTab,
 } from "../../lib/work-panel-tabs";
+import { api } from "../../lib/api";
 import { pluginViewIcon, pluginViewInitial } from "../../lib/plugin-view-icons";
 import { useAppStore } from "../../stores/app-store";
 import type { WorkPanelTab } from "../../stores/app-store";
@@ -684,6 +686,50 @@ function LocalWorkPanel({
     closeAllTabs();
     requestAnimationFrame(() => newTabButtonRef.current?.focus());
   }, [closeAllTabs]);
+  const openNativeTabMenu = useCallback(
+    (
+      event: ReactMouseEvent<HTMLDivElement>,
+      tabId: string,
+      label: string,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const sessionId = activeSessionId;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const point =
+        event.clientX === 0 && event.clientY === 0
+          ? { x: rect.left + Math.min(24, rect.width / 2), y: rect.top + Math.min(24, rect.height / 2) }
+          : { x: event.clientX, y: event.clientY };
+      void api.openWorkPanelTabMenu({
+        closeTabLabel: t("panel.closeTab", { name: label }),
+        closeOtherTabsLabel: t("panel.closeOtherTabs"),
+        closeAllTabsLabel: t("panel.closeAllTabs"),
+        canCloseOthers: tabs.length > 1,
+        x: point.x,
+        y: point.y,
+      }).then((action) => {
+        if (!action || !sessionId) return;
+        const current = useAppStore.getState();
+        if (
+          current.activeSessionId !== sessionId ||
+          !current.workPanelTabs.some((tab) => tab.id === tabId)
+        ) return;
+        if (action === "closeTab") closeTabAndFocus(tabId);
+        else if (action === "closeOtherTabs") closeOtherTabsAndFocus(tabId);
+        else closeAllTabsAndFocus();
+      }).catch((error) => {
+        useAppStore.getState().showToast(String(error), { variant: "error" });
+      });
+    },
+    [
+      activeSessionId,
+      closeAllTabsAndFocus,
+      closeOtherTabsAndFocus,
+      closeTabAndFocus,
+      t,
+      tabs.length,
+    ],
+  );
   const onTabKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLButtonElement>, tabId: string) => {
       const index = tabs.findIndex((tab) => tab.id === tabId);
@@ -956,6 +1002,10 @@ function LocalWorkPanel({
                       // outside the strip, so bring the whole box in first.
                       onPointerEnter={() => revealTab(tab.id)}
                       onContextMenu={(event) => {
+                        if (tab.kind === "plugin") {
+                          openNativeTabMenu(event, tab.id, label);
+                          return;
+                        }
                         const items: ContextMenuItem[] = [
                           {
                             id: "close-tab",

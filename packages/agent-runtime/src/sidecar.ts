@@ -107,6 +107,8 @@ type RuntimeParams = {
   infiniteProviderRetry?: boolean;
   /** 运行状态提醒间隔（分钟）；0 或缺省关闭。 */
   runStatusReminderMinutes?: number;
+  /** Session `/fast` switch AND the model's opt-in, resolved by main (ADR 0334). */
+  fastMode?: boolean;
   /** Opt-in TypeSafe classifier credential resolved by Electron main. */
   jevApiKey?: string;
   provider: RuntimeProviderConfig;
@@ -286,47 +288,46 @@ async function runtimeFor(
     reusable.setCompactionSettings(params.compactionSettings);
     reusable.setInfiniteProviderRetry(params.infiniteProviderRetry === true);
     reusable.setRunStatusReminderMinutes(params.runStatusReminderMinutes ?? 0);
+    reusable.setFastMode(params.fastMode === true);
     reusable.setMode(mode);
     return reusable;
   }
 
-  let history: UiMessage[] = [];
-  let compaction: ContextCompactionRecord | undefined;
-  try {
-    const detail = await hostProxy.call<{
-      session?: {
-        messages?: UiMessage[];
-        compaction?: ContextCompactionRecord;
-      } | null;
-    }>("session.get", { id: sessionId });
-    let restoredMessages: UiMessage[] = [];
-    for (const message of detail?.session?.messages ?? []) {
-      try {
-        restoredMessages.push(await mediaStore.externalize(message));
-      } catch {
-        // 单个媒体落盘失败时保留旧内联记录，不清空整段历史。
-        restoredMessages.push(message);
-      }
-    }
-    // The current prompt is sent separately below. Exclude its persisted row
-    // before attachment hydration so it cannot consume the history byte budget.
-    if (currentPrompt !== undefined && params.userMessageId) {
-      restoredMessages = restoredMessages.filter((message) =>
-        message.role !== "user" || message.id !== params.userMessageId,
-      );
-    }
-    const supportsVision = visionFromModelConfig(params.provider.modelConfig);
-    history = await hydrateAttachmentHistory(restoredMessages, {
-      scratchDir: params.scratchDir,
-      projectPath: params.remoteWorkspace ? undefined : params.projectPath,
-      attachmentsDir: params.attachmentsDir,
-      supportsVision,
-      ...mediaCapabilitiesForProvider(params.provider),
+  const detail = await hostProxy.call<{
+    session?: {
+      messages?: UiMessage[];
+      compaction?: ContextCompactionRecord;
+    } | null;
+  }>("session.get", { id: sessionId });
+  if (!detail?.session) {
+    throw Object.assign(new Error("session not found while restoring history"), {
+      errorCode: "SESSION_NOT_FOUND",
     });
-    compaction = detail?.session?.compaction;
-  } catch {
-    // History restore is best-effort; a prompt can still start cleanly.
   }
+  let restoredMessages: UiMessage[] = [];
+  for (const message of detail.session.messages ?? []) {
+    try {
+      restoredMessages.push(await mediaStore.externalize(message));
+    } catch {
+      restoredMessages.push(message);
+    }
+  }
+  // The current prompt is sent separately below. Exclude its persisted row
+  // before attachment hydration so it cannot consume the history byte budget.
+  if (currentPrompt !== undefined && params.userMessageId) {
+    restoredMessages = restoredMessages.filter((message) =>
+      message.role !== "user" || message.id !== params.userMessageId,
+    );
+  }
+  const supportsVision = visionFromModelConfig(params.provider.modelConfig);
+  let history = await hydrateAttachmentHistory(restoredMessages, {
+    scratchDir: params.scratchDir,
+    projectPath: params.remoteWorkspace ? undefined : params.projectPath,
+    attachmentsDir: params.attachmentsDir,
+    supportsVision,
+    ...mediaCapabilitiesForProvider(params.provider),
+  });
+  const compaction = detail.session.compaction;
   // Older callers without a stable message id retain the previous content match.
   if (currentPrompt !== undefined && !params.userMessageId) {
     const last = history.at(-1);
@@ -344,6 +345,7 @@ async function runtimeFor(
     thinkingLevel,
     infiniteProviderRetry: params.infiniteProviderRetry === true,
     runStatusReminderMinutes: params.runStatusReminderMinutes ?? 0,
+    fastMode: params.fastMode === true,
     jevApiKey: params.jevApiKey,
     history,
     compaction,

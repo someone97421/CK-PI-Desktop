@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream, Type, type AssistantMessage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, PI_ATTRIBUTION, Type, type AssistantMessage } from "@earendil-works/pi-ai";
 import { NativePiSessionService } from "./native-pi-session.js";
 import {
   acquireNativePiSessionLease,
@@ -504,6 +504,33 @@ function fauxModelRuntime() {
 }
 
 describe("native continuation review regressions", () => {
+  it.each([true, false])("uses the native SDK telemetry preference for 1.4 attribution (%s)", async (enabled) => {
+    const f = await configuredFixture();
+    const settingsPath = join(f.agentDir, "settings.json");
+    const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+    writeFileSync(settingsPath, JSON.stringify({ ...settings, enableInstallTelemetry: enabled }));
+    const identities: unknown[] = [];
+    vi.spyOn(ModelRuntime.prototype, "streamSimple").mockImplementation((_model, _context, options) => {
+      identities.push(options?.identity);
+      return fauxStream();
+    });
+    const service = new NativePiSessionService(f);
+    try {
+      const [summary] = await service.list();
+      expect(summary.capabilities?.canPrompt).toBe(true);
+      await service.prompt(summary.id, "check native client identity", () => {});
+      await expect.poll(() => identities).toHaveLength(1);
+      expect(identities).toHaveLength(1);
+      expect(identities[0]).toMatchObject({
+        userAgent: "detailed",
+        version: "1.4.0",
+        attribution: enabled ? PI_ATTRIBUTION : null,
+      });
+    } finally {
+      service.disposeAll();
+    }
+  });
+
   it("uses the real offline credential/catalog and reports missing exact auth/model", async () => {
     const f = await configuredFixture();
     const service = new NativePiSessionService({ agentDir: f.agentDir, sessionRoot: f.sessionRoot });

@@ -586,6 +586,16 @@ fn store_layout_cache(data_dir: &Path, session_id: &str, layout: &TranscriptLayo
 
 #[cfg(unix)]
 fn file_identity(_path: &Path, metadata: &fs::Metadata) -> FileIdentity {
+    unix_file_identity(metadata)
+}
+
+#[cfg(unix)]
+pub(super) fn opened_file_identity(_file: &File, metadata: &fs::Metadata) -> FileIdentity {
+    unix_file_identity(metadata)
+}
+
+#[cfg(unix)]
+fn unix_file_identity(metadata: &fs::Metadata) -> FileIdentity {
     use std::os::unix::fs::MetadataExt;
     let mut file_id = [0u8; 16];
     file_id[..8].copy_from_slice(&metadata.ino().to_be_bytes());
@@ -598,15 +608,20 @@ fn file_identity(_path: &Path, metadata: &fs::Metadata) -> FileIdentity {
 
 #[cfg(windows)]
 fn file_identity(path: &Path, _metadata: &fs::Metadata) -> FileIdentity {
+    let Ok(file) = File::open(path) else {
+        return FileIdentity::Unavailable;
+    };
+    opened_file_identity(&file, _metadata)
+}
+
+#[cfg(windows)]
+pub(super) fn opened_file_identity(file: &File, _metadata: &fs::Metadata) -> FileIdentity {
     use std::{mem::size_of, os::windows::io::AsRawHandle};
     use windows_sys::Win32::{
         Foundation::HANDLE,
         Storage::FileSystem::{FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO},
     };
 
-    let Ok(file) = File::open(path) else {
-        return FileIdentity::Unavailable;
-    };
     let mut info = FILE_ID_INFO::default();
     let result = unsafe {
         GetFileInformationByHandleEx(
@@ -628,6 +643,11 @@ fn file_identity(path: &Path, _metadata: &fs::Metadata) -> FileIdentity {
 
 #[cfg(not(any(unix, windows)))]
 fn file_identity(_path: &Path, _metadata: &fs::Metadata) -> FileIdentity {
+    FileIdentity::Unavailable
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(super) fn opened_file_identity(_file: &File, _metadata: &fs::Metadata) -> FileIdentity {
     FileIdentity::Unavailable
 }
 

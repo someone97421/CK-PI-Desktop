@@ -31,13 +31,20 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod binary_integrity;
+#[cfg(test)]
+mod binary_integrity_tests;
+mod binary_migration;
+pub(crate) mod binary_storage;
+#[cfg(test)]
+mod binary_storage_tests;
 pub mod layout;
 #[cfg(test)]
 use layout::refresh_layout;
 pub use layout::TranscriptLayout;
 
 /// Bumped when the line format changes shape incompatibly.
-pub const TRANSCRIPT_SCHEMA: i64 = 1;
+pub const TRANSCRIPT_SCHEMA: i64 = 2;
 
 /// One persisted message: the canonical block array plus promoted fields,
 /// not the flat UiMessage projection (spec 04 §1 "lossless transcripts").
@@ -188,7 +195,9 @@ pub fn find_message_position(
     struct Identity {
         id: String,
     }
-    let mut reader = BufReader::new(File::open(transcript_path(data_dir, session_id)?)?);
+    let path = transcript_path(data_dir, session_id)?;
+    binary_migration::validate_header(&path)?;
+    let mut reader = BufReader::new(File::open(&path)?);
     let mut raw = Vec::new();
     let mut line = String::new();
     for (position, offset) in layout.message_offsets.iter().enumerate().rev() {
@@ -246,8 +255,9 @@ pub fn read_tool_call(
                         .any(|block| block.get("callId").and_then(Value::as_str) == Some(call_id))
                 });
         if matches_call {
-            match serde_json::from_str(&line) {
+            match binary_storage::read(&line) {
                 Ok(record) => return Ok(Some(record)),
+                Err(error) if binary_storage::is_error(&error) => return Err(error),
                 Err(error) if invalid_utf8 => {
                     tracing::warn!(%error, "skipping invalid indexed tool-call message");
                 }
@@ -537,7 +547,7 @@ fn extract_task_summary(
 /// the whole payload a second time — four passes over every byte written to a
 /// transcript, and an allocation per JSON node.
 fn tagged(tag: &str, body: &impl Serialize) -> Result<String> {
-    let body = serde_json::to_string(body)?;
+    let body = serde_json::to_string(&binary_storage::encode(serde_json::to_value(body)?)?)?;
     let fields = body
         .strip_prefix('{')
         .and_then(|rest| rest.strip_suffix('}'))
@@ -623,9 +633,10 @@ pub fn read_inflight(data_dir: &Path, session_id: &str) -> Result<Option<Infligh
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
     };
-    match serde_json::from_str::<InflightRecord>(raw.trim()) {
+    match binary_storage::read::<InflightRecord>(raw.trim()) {
         Ok(record) if record.schema == INFLIGHT_SCHEMA => Ok(Some(record)),
         Ok(_) => Ok(None),
+        Err(error) if binary_storage::is_error(&error) => Err(error),
         Err(error) => {
             tracing::warn!(path = %path.display(), %error, "skipping invalid inflight checkpoint");
             Ok(None)
@@ -729,7 +740,8 @@ mod durability {
     /// will. The record is serialized now, so the commit only touches the file.
     pub(super) fn owe_checkpoint(path: &Path, record: &InflightRecord) -> Result<()> {
         let decided = decision_order();
-        let payload = serde_json::to_string(record)?;
+        let payload =
+            serde_json::to_string(&binary_storage::encode(serde_json::to_value(record)?)?)?;
         if PENDING.try_with(|_| ()).is_err() {
             return write_checkpoint(path, &payload, decided);
         }
@@ -853,14 +865,26 @@ fn append_line(path: &Path, header: Option<String>, line: String) -> Result<()> 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    let converted = binary_migration::prepare(path, header.as_deref())?;
+    if converted {
+        if let Some((data_dir, session_id)) = path.parent().and_then(|p| p.parent()).zip(
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_suffix(".jsonl")),
+        ) {
+            layout::invalidate(data_dir, session_id);
+        }
+    }
     let fresh = !path.exists();
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     let mut buf = String::new();
     if fresh {
-        if let Some(header) = header {
-            buf.push_str(&header);
-            buf.push('\n');
-        }
+        buf.push_str(
+            header
+                .as_deref()
+                .unwrap_or("{\"type\":\"storage\",\"schema\":2}"),
+        );
+        buf.push('\n');
     } else if !ends_with_newline(path)? {
         // A crash mid-append left a torn tail. `read_transcript_window` tolerates it on
         // read, but appending straight after it would fuse the torn bytes and
@@ -873,7 +897,8 @@ fn append_line(path: &Path, header: Option<String>, line: String) -> Result<()> 
     file.write_all(buf.as_bytes())?;
     file.flush()?;
     file.sync_data()
-        .with_context(|| format!("flush {}", path.display()))
+        .with_context(|| format!("flush {}", path.display()))?;
+    binary_integrity::appended(path, file)
 }
 
 /// Whether a non-empty file ends in a newline; an empty file counts as
@@ -956,6 +981,7 @@ pub fn read_transcript_window_with_layout(
     message_limit: Option<usize>,
 ) -> Result<TranscriptRead> {
     let path = transcript_path(data_dir, session_id)?;
+    binary_migration::validate_header(&path)?;
     let mut out = TranscriptRead::default();
     let total = layout.message_count();
     let start = message_start.min(total);
@@ -1029,16 +1055,18 @@ pub fn read_transcript_window_with_layout(
             .with_context(|| format!("read indexed transcript line in {}", path.display()))?;
         let trimmed = line.trim();
         if is_message {
-            match serde_json::from_str::<MessageRecord>(trimmed) {
+            match binary_storage::read::<MessageRecord>(trimmed) {
                 Ok(record) => out.messages.push(record),
+                Err(error) if binary_storage::is_error(&error) => return Err(error),
                 Err(error) if invalid_utf8 => {
                     tracing::warn!(path = %path.display(), %error, "skipping invalid indexed message line");
                 }
                 Err(error) => return Err(error).context("decode indexed transcript message"),
             }
         } else {
-            match serde_json::from_str::<CompactionRecord>(trimmed) {
+            match binary_storage::read::<CompactionRecord>(trimmed) {
                 Ok(record) => out.compactions.push(record),
+                Err(error) if binary_storage::is_error(&error) => return Err(error),
                 Err(error) if invalid_utf8 => {
                     tracing::warn!(path = %path.display(), %error, "skipping invalid indexed compaction line");
                 }
@@ -1068,6 +1096,7 @@ pub fn read_transcript_window(
     message_limit: Option<usize>,
 ) -> Result<TranscriptRead> {
     let path = transcript_path(data_dir, session_id)?;
+    binary_migration::validate_header(&path)?;
     let file = match File::open(&path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(TranscriptRead::default()),
@@ -1096,16 +1125,18 @@ pub fn read_transcript_window(
                 message_index += 1;
                 let selected = index >= message_start && end.is_none_or(|limit| index < limit);
                 if selected {
-                    match serde_json::from_str::<MessageRecord>(line.trim()) {
+                    match binary_storage::read::<MessageRecord>(line.trim()) {
                         Ok(record) => out.messages.push(record),
+                        Err(error) if binary_storage::is_error(&error) => return Err(error),
                         Err(error) => {
                             tracing::warn!(path = %path.display(), %error, "skipping invalid message line");
                         }
                     }
                 }
             }
-            "compaction" => match serde_json::from_str::<CompactionRecord>(line.trim()) {
+            "compaction" => match binary_storage::read::<CompactionRecord>(line.trim()) {
                 Ok(record) => out.compactions.push(record),
+                Err(error) if binary_storage::is_error(&error) => return Err(error),
                 Err(error) => {
                     tracing::warn!(path = %path.display(), %error, "skipping invalid compaction line");
                 }
@@ -1181,6 +1212,7 @@ pub fn write_transcript_with_compactions(
         writer.get_ref().sync_data()?;
     }
     swap_into_place(&tmp, &path)?;
+    binary_integrity::invalidate(&path);
     layout::invalidate(data_dir, session_id);
     Ok(())
 }
@@ -1226,6 +1258,9 @@ fn swap_into_place(tmp: &Path, path: &Path) -> Result<()> {
 /// 21 MB, measured against the always-rewrite splice on the same fixture.
 pub fn update_message(data_dir: &Path, session_id: &str, record: &MessageRecord) -> Result<bool> {
     let path = transcript_path(data_dir, session_id)?;
+    if binary_migration::prepare(&path, Some(&header_line(session_id, &record.created_at)?))? {
+        layout::invalidate(data_dir, session_id);
+    }
     let replacement = tagged("message", record)?;
     // Fast path. A message is decided by the *last* occurrence of its id, so
     // when that occurrence is already the file's last line, appending the
@@ -1292,6 +1327,7 @@ pub fn update_message(data_dir: &Path, session_id: &str, record: &MessageRecord)
         writer.get_ref().sync_data()?;
     }
     swap_into_place(&tmp, &path)?;
+    binary_integrity::invalidate(&path);
     layout::invalidate(data_dir, session_id);
     Ok(true)
 }
@@ -1500,6 +1536,7 @@ pub fn read_revision(
     revision_index: i64,
 ) -> Result<Option<RevisionPayload>> {
     let path = revisions_path(data_dir, session_id)?;
+    binary_migration::validate_header(&path)?;
     let file = match File::open(&path) {
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -1547,16 +1584,14 @@ pub fn read_revision(
         }
         let body = line.trim();
         let decoded = if *kind == "revision_live" {
-            serde_json::from_str::<LiveRevisionRecord>(body)
-                .ok()
-                .map(RevisionPayload::Live)
+            binary_storage::read::<LiveRevisionRecord>(body).map(RevisionPayload::Live)
         } else {
-            serde_json::from_str::<RevisionRecord>(body)
-                .ok()
-                .map(RevisionPayload::Stored)
+            binary_storage::read::<RevisionRecord>(body).map(RevisionPayload::Stored)
         };
-        if decoded.is_some() {
-            return Ok(decoded);
+        match decoded {
+            Ok(record) => return Ok(Some(record)),
+            Err(error) if binary_storage::is_error(&error) => return Err(error),
+            Err(_) => {}
         }
     }
     Ok(None)
@@ -1586,6 +1621,7 @@ pub fn remove_session_files(data_dir: &Path, session_id: &str) {
         inflight.with_extension("json.tmp"),
         inflight,
     ] {
+        binary_integrity::invalidate(&path);
         if let Err(error) = fs::remove_file(&path) {
             if error.kind() != std::io::ErrorKind::NotFound {
                 tracing::warn!(path = %path.display(), %error, "transcript cleanup failed");
