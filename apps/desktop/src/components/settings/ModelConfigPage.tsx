@@ -286,7 +286,7 @@ export function ModelConfigPage() {
       provider.id,
       modelId,
     )) return;
-    setBusyId(provider.id);
+    if (!rowBusy.begin(provider.id)) return;
     try {
       await api.setSettings({
         ...settings,
@@ -300,7 +300,7 @@ export function ModelConfigPage() {
         variant: "error",
       });
     } finally {
-      setBusyId(null);
+      rowBusy.end(provider.id);
       setPickingDefault(false);
     }
   };
@@ -315,7 +315,8 @@ export function ModelConfigPage() {
     provider: ProviderPublic | null,
     modelId: string,
   ) => {
-    setBusyId(provider?.id ?? null);
+    const busyKey = provider?.id ?? "compaction:follow";
+    if (!rowBusy.begin(busyKey)) return;
     try {
       await saveSettingsPatch({
         compactionProviderId: provider?.id ?? "",
@@ -327,7 +328,7 @@ export function ModelConfigPage() {
         variant: "error",
       });
     } finally {
-      setBusyId(null);
+      rowBusy.end(busyKey);
       setPickingCompaction(false);
     }
   };
@@ -834,7 +835,7 @@ export function ModelConfigPage() {
                           aria-selected={isCurrent}
                           aria-label={`${providerDisplayName(provider)} · ${modelId}`}
                           className={cx("model-default-option", isCurrent && "is-current")}
-                          disabled={busyId === provider.id}
+                          disabled={rowBusy.isBusy(provider.id)}
                           onClick={() => void setDefaultModel(provider, modelId)}
                         >
                           <span className="model-default-option-check" aria-hidden>
@@ -932,6 +933,7 @@ export function ModelConfigPage() {
                             aria-selected={isCurrent}
                             aria-label={t("settings.compactionModelFollow")}
                             className={cx("model-default-option", isCurrent && "is-current")}
+                            disabled={rowBusy.isBusy("compaction:follow")}
                             onClick={() => void setCompactionModel(null, "")}
                           >
                             <span className="model-default-option-check" aria-hidden>
@@ -971,7 +973,7 @@ export function ModelConfigPage() {
                           aria-selected={isCurrent}
                           aria-label={`${row.provider.name} · ${row.modelId}`}
                           className={cx("model-default-option", isCurrent && "is-current")}
-                          disabled={busyId === row.provider.id}
+                          disabled={rowBusy.isBusy(row.provider.id)}
                           onClick={() => void setCompactionModel(row.provider, row.modelId)}
                         >
                           <span className="model-default-option-check" aria-hidden>
