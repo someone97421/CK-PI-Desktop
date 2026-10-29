@@ -3441,7 +3441,12 @@ pub fn update_tool_review_state(
     snapshot_id: &str,
     state: &str,
 ) -> Result<bool> {
-    if !session_exists(db, session_id)? {
+    let session_exists: bool = db.conn().query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+        params![session_id],
+        |row| row.get(0),
+    )?;
+    if !session_exists {
         return Ok(false);
     }
     let record = transcripts::layout::with_layout_recovery(db.data_dir(), session_id, |layout| {
