@@ -318,6 +318,11 @@ pub struct UiMessage {
     /// Internal model-context state, preserved outside visible message text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_system: Option<Value>,
+    /// Opaque provider replay data (thinking/text block boundaries and
+    /// signatures) for an assistant row. Stored in record meta; no SQL
+    /// migration, and older builds ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_replay: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -433,6 +438,9 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
     let mut meta_obj = serde_json::Map::new();
     if let Some(system) = &message.model_system {
         meta_obj.insert("modelSystem".into(), system.clone());
+    }
+    if let Some(replay) = &message.provider_replay {
+        meta_obj.insert("providerReplay".into(), replay.clone());
     }
     if let Some(command) = &message.command {
         meta_obj.insert("command".into(), json!(command));
@@ -598,6 +606,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
     };
     let meta = record.meta.unwrap_or(Value::Null);
     let model_system = meta.get("modelSystem").cloned();
+    let provider_replay = meta.get("providerReplay").cloned();
     let command = meta
         .get("command")
         .and_then(Value::as_str)
@@ -785,6 +794,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             task: task.clone(),
             hosted_search: hosted_search.clone(),
             model_system: None,
+            provider_replay: None,
         }
     } else {
         let content = blocks
@@ -832,6 +842,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             task,
             hosted_search,
             model_system,
+            provider_replay,
         }
     }
 }
@@ -3430,38 +3441,66 @@ pub fn update_tool_review_state(
     snapshot_id: &str,
     state: &str,
 ) -> Result<bool> {
-    let Some(detail) = get_session(db, session_id)? else {
+    if !session_exists(db, session_id)? {
+        return Ok(false);
+    }
+    let record = transcripts::layout::with_layout_recovery(db.data_dir(), session_id, |layout| {
+        if layout.message_count() == 0 {
+            return Ok(None);
+        }
+        let Some(position) =
+            transcripts::find_message_position(db.data_dir(), session_id, layout, message_id)?
+        else {
+            return Ok(None);
+        };
+        Ok(transcripts::read_transcript_window_with_layout(
+            db.data_dir(),
+            session_id,
+            layout,
+            position,
+            Some(1),
+        )?
+        .messages
+        .pop())
+    })?;
+    let Some(record) = record else {
         return Ok(false);
     };
-    let mut messages = detail.messages;
-    let mut changed = false;
-    for message in &mut messages {
-        if message.id != message_id || message.role != "tool" {
-            continue;
-        }
-        let Some(tool_result) = message.tool_result.as_mut().and_then(Value::as_object_mut) else {
-            continue;
-        };
-        let Some(details) = tool_result
-            .get_mut("details")
-            .and_then(Value::as_object_mut)
-        else {
-            continue;
-        };
-        let Some(review) = details.get_mut("review").and_then(Value::as_object_mut) else {
-            continue;
-        };
-        if review.get("snapshotId").and_then(Value::as_str) != Some(snapshot_id) {
-            continue;
-        }
-        review.insert("state".into(), Value::String(state.to_string()));
-        changed = true;
-        break;
+    let message = record_to_ui(record);
+    let matches_snapshot = message.role == "tool"
+        && message
+            .tool_result
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|result| result.get("details"))
+            .and_then(Value::as_object)
+            .and_then(|details| details.get("review"))
+            .and_then(Value::as_object)
+            .and_then(|review| review.get("snapshotId"))
+            .and_then(Value::as_str)
+            == Some(snapshot_id);
+    if !matches_snapshot {
+        return Ok(false);
     }
-    if changed {
-        replace_messages(db, session_id, &messages)?;
+    if message
+        .tool_result
+        .as_ref()
+        .and_then(|result| result.get("details")?.get("review")?.get("state")?.as_str())
+        == Some(state)
+    {
+        return Ok(true);
     }
-    Ok(changed)
+    transcripts::append_tool_review_state(
+        db.data_dir(),
+        session_id,
+        message_id,
+        snapshot_id,
+        state,
+    )?;
+    db.conn()
+        .prepare_cached("UPDATE sessions SET updated_at = ?1 WHERE id = ?2")?
+        .execute(params![now_ms(), session_id])?;
+    Ok(true)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4756,6 +4795,7 @@ mod tests {
             agent_name: None,
             hosted_search: None,
             model_system: None,
+            provider_replay: None,
             session_message: None,
             task_id: None,
             task: None,
@@ -5778,6 +5818,7 @@ mod tests {
             agent_name: None,
             hosted_search: None,
             model_system: None,
+            provider_replay: None,
             session_message: None,
             task_id: None,
             task: None,
@@ -5825,11 +5866,55 @@ mod tests {
             ],
         )
         .unwrap();
+        append_message(
+            &db,
+            &session.id,
+            &user_msg("m3", "继续", "2025-05-01T00:00:04Z"),
+            None,
+        )
+        .unwrap();
+        let transcript = db
+            .data_dir()
+            .join("sessions")
+            .join(format!("{}.jsonl", session.id));
+        let before_review_update = std::fs::read(&transcript).unwrap();
         assert!(
             update_tool_review_state(&db, &session.id, "m2", "snapshot-1", "rolledBack",).unwrap()
         );
+        let after_review_update = std::fs::read(&transcript).unwrap();
+        assert!(
+            after_review_update.starts_with(&before_review_update),
+            "review state updates must append instead of rewriting retained history"
+        );
+        assert!(after_review_update.len() - before_review_update.len() < 256);
+        assert!(
+            update_tool_review_state(&db, &session.id, "m2", "snapshot-1", "rolledBack").unwrap()
+        );
+        for (message_id, snapshot_id) in [
+            ("missing", "snapshot-1"),
+            ("m2", "wrong"),
+            ("m1", "snapshot-1"),
+        ] {
+            assert!(!update_tool_review_state(
+                &db,
+                &session.id,
+                message_id,
+                snapshot_id,
+                "rolledBack"
+            )
+            .unwrap());
+        }
+        assert_eq!(std::fs::read(&transcript).unwrap(), after_review_update);
         let updated = get_session(&db, &session.id).unwrap().unwrap();
-        assert_eq!(updated.summary.message_count, 2);
+        assert_eq!(updated.summary.message_count, 3);
+        assert_eq!(
+            updated
+                .messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["m1", "m2", "m3"]
+        );
         assert_eq!(
             updated.messages[1].tool_result,
             Some(json!({
@@ -5853,7 +5938,139 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(last_seq, 2);
+        assert_eq!(last_seq, 3);
+    }
+
+    #[test]
+    fn truncate_from_folds_review_state_into_the_retained_prefix() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let mut tool = user_msg("review-tool", "written", "2025-05-01T00:00:01Z");
+        tool.role = "tool".into();
+        tool.tool_call_id = Some("review-call".into());
+        tool.tool_name = Some("Write".into());
+        tool.tool_result = Some(json!({"details": {"review": {
+            "snapshotId": "snapshot-1", "state": "active"
+        }}}));
+        for message in [
+            user_msg("root", "write", "2025-05-01T00:00:00Z"),
+            tool,
+            user_msg("later-root", "regenerate", "2025-05-01T00:00:02Z"),
+        ] {
+            append_message(&db, &session.id, &message, None).unwrap();
+        }
+        assert!(update_tool_review_state(
+            &db,
+            &session.id,
+            "review-tool",
+            "snapshot-1",
+            "rolledBack"
+        )
+        .unwrap());
+        truncate_from(&db, &session.id, Some("later-root"), None).unwrap();
+        let raw = std::fs::read_to_string(
+            db.data_dir()
+                .join("sessions")
+                .join(format!("{}.jsonl", session.id)),
+        )
+        .unwrap();
+        let lines = raw
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(!lines.iter().any(|line| line["type"] == "tool_review_state"));
+        let stored_tool = lines
+            .iter()
+            .find(|line| line["id"] == "review-tool")
+            .unwrap();
+        assert_eq!(
+            stored_tool["blocks"][0]["result"]["details"]["review"]["state"],
+            "rolledBack"
+        );
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(
+            detail
+                .messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            ["root", "review-tool"]
+        );
+        assert_eq!(
+            detail.messages[1].tool_result.as_ref().unwrap()["details"]["review"]["state"],
+            "rolledBack"
+        );
+    }
+
+    #[test]
+    fn tool_review_state_survives_fork_revision_activation_and_deletion() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let mut tool = user_msg("review-tool", "written", "2025-05-01T00:00:01Z");
+        tool.role = "tool".into();
+        tool.tool_call_id = Some("review-call".into());
+        tool.tool_name = Some("Write".into());
+        tool.tool_result = Some(json!({"details": {"review": {
+            "snapshotId": "snapshot-1", "state": "active"
+        }}}));
+        let mut answer = user_msg("answer", "done", "2025-05-01T00:00:02Z");
+        answer.role = "assistant".into();
+        for message in [
+            user_msg("root", "write", "2025-05-01T00:00:00Z"),
+            tool,
+            answer,
+        ] {
+            append_message(&db, &session.id, &message, None).unwrap();
+        }
+        assert!(update_tool_review_state(
+            &db,
+            &session.id,
+            "review-tool",
+            "snapshot-1",
+            "rolledBack"
+        )
+        .unwrap());
+        let assert_rolled_back = |messages: &[UiMessage]| {
+            let tool = messages
+                .iter()
+                .find(|message| message.role == "tool")
+                .unwrap();
+            assert_eq!(
+                tool.tool_result.as_ref().unwrap()["details"]["review"]["state"],
+                "rolledBack"
+            );
+        };
+        let ForkSessionResult::Created(child) =
+            fork_session_through(&db, &session.id, None, None).unwrap()
+        else {
+            panic!("fork must succeed");
+        };
+        assert_rolled_back(&child.messages);
+
+        truncate_from(&db, &session.id, Some("root"), None).unwrap();
+        let mut replacement = user_msg("other-root", "new variant", "2025-05-01T00:00:03Z");
+        replacement.revision_root_id = Some("root".into());
+        replacement.revision_count = Some(2);
+        replacement.active_revision = Some(2);
+        append_message(&db, &session.id, &replacement, None).unwrap();
+        let restored = activate_message_revision_canonical(&db, &session.id, "root", 1).unwrap();
+        assert_rolled_back(&restored);
+        assert!(delete_message(&db, &session.id, "answer").unwrap().deleted);
+        let path = db.data_dir().join("test.sqlite");
+        drop(db);
+        let reopened = Database::open(&path).unwrap();
+        assert_rolled_back(
+            &get_session(&reopened, &session.id)
+                .unwrap()
+                .unwrap()
+                .messages,
+        );
+        assert_rolled_back(
+            &get_session(&reopened, &child.summary.id)
+                .unwrap()
+                .unwrap()
+                .messages,
+        );
     }
 
     #[test]
@@ -6447,6 +6664,7 @@ mod tests {
             agent_name: None,
             hosted_search: None,
             model_system: None,
+            provider_replay: None,
             session_message: None,
             task_id: None,
             task: None,
@@ -6493,6 +6711,64 @@ mod tests {
     }
 
     #[test]
+    fn assistant_provider_replay_roundtrips_in_record_meta() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let replay = json!({
+            "version": 1,
+            "blocks": [
+                { "type": "thinking", "length": 3, "signature": "sig-a" },
+                { "type": "text", "length": 6 }
+            ]
+        });
+        let assistant: UiMessage = serde_json::from_value(json!({
+            "id": "assistant-replay-1",
+            "role": "assistant",
+            "content": "answer",
+            "thinking": "abc",
+            "createdAt": "2025-05-01T00:00:01Z",
+            "status": "complete",
+            "providerReplay": replay,
+        }))
+        .unwrap();
+        let plain: UiMessage = serde_json::from_value(json!({
+            "id": "assistant-replay-2",
+            "role": "assistant",
+            "content": "plain",
+            "createdAt": "2025-05-01T00:00:02Z",
+            "status": "complete",
+        }))
+        .unwrap();
+        append_message(&db, &session.id, &assistant, None).unwrap();
+        append_message(&db, &session.id, &plain, None).unwrap();
+
+        let records = transcripts::read_transcript(db.data_dir(), &session.id).unwrap();
+        assert_eq!(
+            records[0]
+                .meta
+                .as_ref()
+                .and_then(|m| m.get("providerReplay")),
+            Some(&replay)
+        );
+        // Replay data lives in meta only: the visible blocks are unchanged.
+        assert_eq!(
+            records[0].blocks,
+            json!([{ "type": "thinking", "text": "abc" }, { "type": "text", "text": "answer" }])
+        );
+        assert!(records[1]
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("providerReplay"))
+            .is_none());
+
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(detail.messages[0].provider_replay, Some(replay));
+        assert_eq!(detail.messages[0].thinking.as_deref(), Some("abc"));
+        assert_eq!(detail.messages[0].content, "answer");
+        assert_eq!(detail.messages[1].provider_replay, None);
+    }
+
+    #[test]
     fn assistant_hosted_search_roundtrips_as_canonical_blocks() {
         let db = test_db();
         let session = create_session(&db, None, None, None, None, None).unwrap();
@@ -6529,6 +6805,7 @@ mod tests {
             nested_parent_tool_call_id: None,
             agent_name: None,
             model_system: None,
+            provider_replay: None,
             hosted_search: Some(json!({
                 "status": "completed",
                 "rounds": [

@@ -1,5 +1,10 @@
 import type { AgentActivity, AppSettings, UiMessage } from "@pi-desktop/shared";
-import type { AssistantActivityItem, AssistantTurnEntry, AssistantTurnPart } from "./assistant-turns";
+import type {
+  AssistantActivityItem,
+  AssistantTurnEntry,
+  AssistantTurnPart,
+  TranscriptEntry,
+} from "./assistant-turns";
 import { isStandaloneRunActivity } from "./assistant-turns";
 import { activityItemHasIssue } from "./activity-summary";
 import type { TranscriptDisplayMode } from "./transcript-display-mode";
@@ -138,6 +143,8 @@ export type TurnProcessPhase =
   | { kind: "failed" }
   | { kind: "stopped" }
   | { kind: "running"; phase?: AgentActivity["phase"] }
+  /** Nothing is driving the turn, yet its rows never settled. */
+  | { kind: "unsettled" }
   | { kind: "completed" };
 
 /** 失败和主动停止优先于运行状态；子代理结果不等于主轮次结果。 */
@@ -153,7 +160,40 @@ export function turnProcessPhase({ parts, isActive, failed, activity }: {
       : part.items.some((item) => item.message.status === "aborted"));
   if (stopped) return { kind: "stopped" };
   if (isActive) return { kind: "running", phase: activity?.phase };
+  if (turnHasStreamingRows(parts)) return { kind: "unsettled" };
   return { kind: "completed" };
+}
+
+/** 轮次中仍有未结算的正文或活动行，压缩记录不参与状态判断。 */
+export function turnHasStreamingRows(parts: readonly AssistantTurnPart[]): boolean {
+  return parts.some((part) => {
+    if (part.kind === "compaction") return false;
+    return part.kind === "message"
+      ? part.message.status === "streaming"
+      : part.items.some((item) => item.message.status === "streaming");
+  });
+}
+
+/** 系统更新和当前轮引导可排在运行轮次之后；普通用户消息划定新轮次边界。 */
+export function liveHistoryTurnId(
+  entries: readonly TranscriptEntry[],
+  tailEntry?: TranscriptEntry | null,
+): string | undefined {
+  if (tailEntry?.kind === "assistant-turn") return undefined;
+  for (let index = entries.length; index >= 0; index -= 1) {
+    const entry = index === entries.length ? (tailEntry ?? undefined) : entries[index];
+    if (!entry) continue;
+    if (entry.kind === "assistant-turn") {
+      return turnHasStreamingRows(entry.parts) ? entry.id : undefined;
+    }
+    if (entry.kind === "message") {
+      const { message } = entry;
+      if (message.role === "system") continue;
+      if (message.role === "user" && message.steering) continue;
+      break;
+    }
+  }
+  return undefined;
 }
 
 /** 工具前的文字属于过程；完成任务保留连续最终正文，思考不截断正文。 */

@@ -6,25 +6,24 @@
 
 ## 与上游的主要区别
 
-| 方向 | 上游能力 | 本 fork 的做法 |
+| 方向 | 与上游的关系 | 本 fork 的重点 |
 | --- | --- | --- |
-| 子代理执行 | 提供任务派发、等待、查询和停止等基础能力 | 将每个子代理作为可观察、可控制、可召回的独立运行实例管理 |
-| 过程汇报 | 主要依靠最终结果和运行状态 | 按实际完成的工具调用次数生成增量报告，子代理继续执行，不等待主 Agent 批准 |
-| 运行中纠偏 | 常规 steering 难以精确控制同一回复里的后续工具调用 | `TaskGuide` 在工具边界拦截旧计划，保留已完成结果，应用新指令后沿原上下文继续 |
-| 单任务停止 | 通过取消路径结束任务 | UI 停止按钮、`TaskStop` 和 Sidecar 控制共用定向停止器，只影响目标子代理 |
-| 完成后返工 | 上游 `Task.resume` / 转录重建路线 | 使用 fork 的 `TaskResume`、稳定 `delegationId` 和 `expectedExecution`，复用可验证的原始上下文 |
-| 上下文保存 | 不采用上游转录恢复通路 | 支持可选的加密子代理快照、冷启动查询和显式召回，重新校验当前配置后再执行 |
-| 主 Agent 上下文 | 由运行时自行处理子任务结果 | 通过隐藏的 `subagent-supervision` 与 `subagent-coordination` 消息注入报告和协调快照，不伪装成用户消息或顶部 system 指令 |
-| 任务展示 | 普通过程展示 | 任务级过程抽屉、子代理拓扑、执行轮次、耗时、token、报告和控制回执独立展示 |
-| 任务隔离 | 共享项目执行环境 | 支持显式 Git worktree 隔离会话；可写子代理可以绑定自己的工作区并在父会话中交付结果 |
+| 过程协作 | 在既有 Task 执行器上扩展 | 从实际工具事件生成阶段报告，主 Agent 可边做自己的工作、边掌握子任务进展 |
+| 运行中纠偏 | 扩展当前轮引导 | `TaskGuide` 复用“立即发送”的 steering 通路，跳过尚未开始的旧计划，在原上下文中继续 |
+| 完成后返工 | 保留独立于上游 `Task.resume` 转录重建的路径 | `TaskResume` 复用原上下文，以稳定 `delegationId` 和递增执行轮次组织审核、返工与结果交付 |
+| 上下文保存 | 保留 fork 的可选快照扩展 | 本地 JSON 保存有效上下文，内存优先；跨重启显式召回时按当前配置重建运行资源 |
+| 主 Agent 上下文 | 保留追加式协调状态 | 报告与协调快照分别通过隐藏 `custom` 消息进入上下文，状态变化按会话顺序追加，压缩后保留最新协调信息 |
+| 停止与任务记录 | 采用上游共用取消路径，补充 fork 状态 | 保留执行轮次校验、TaskResume 状态回写，以及完成后的“撤销未来召回” |
+| 任务展示 | 在上游过程展示基础上适配 | 任务级抽屉与子代理拓扑展示执行轮次、耗时、token、报告及引导回执 |
+| 工作区隔离 | 采用上游 Git worktree 主路径 | 保留隔离会话与可写子代理的工作区管理，将 TaskResume 内存及跨重启恢复接入同一条路径 |
 
-上游的新运行时、模型适配、插件市场、MCP、远程主机和基础界面会持续吸收；子代理协作则沿本 fork 的数据结构、控制语义和用户体验继续适配。详细同步边界见 [`docs/UPSTREAM-SYNC.md`](docs/UPSTREAM-SYNC.md)。
+上游已成熟的运行时、插件、存储和工作区能力持续合入，通过必要适配保留上述协作体验。当前同步位置和具体取舍见 [`docs/UPSTREAM-SYNC.md`](docs/UPSTREAM-SYNC.md)。
 
 ## 子代理协调编排
 
 ### 运行结构
 
-主 Agent 通过 `Task` 派发子任务。子代理在自己的模型上下文、工具清单、权限和工作区中独立运行；主 Agent 同时可以继续处理自己的任务。多个互相独立的 `Task` 可以并行发出，有依赖的工作由主 Agent 根据报告和结果安排顺序。
+主 Agent 通过 `Task` 派发有明确范围的子任务。子代理使用独立模型上下文及配置的工具和模型，工作目录由所属会话与隔离设置决定。主 Agent 可以同时推进独立工作；有依赖的任务在前序结果交付后再派发，同一范围保持单一执行者。
 
 ```text
 主 Agent
@@ -43,7 +42,7 @@
   └─ TaskResume ────────→ 完成后的原上下文返工
 ```
 
-子代理工具执行、界面展示、主 Agent 上下文和持久化记录是四条关联但独立的路径。这样阶段报告不会阻塞子代理，界面上的进度也不会被误认为主 Agent 已经读完全部细节。
+运行时记录过程并投递增量，主 Agent 负责判断依赖、整合结果和最终验收。需要核对细节时，通过 `TaskInspect` 按步骤或工具调用读取记录；需要返工时，把具体意见送回原子代理上下文。
 
 ### 程序生成的阶段报告
 
@@ -53,7 +52,7 @@
 
 - 已实际发起的成功和失败工具调用都会计步。
 - 同一个工具调用 ID 的重复事件只计一次，模型文字和流式分块不单独计步。
-- 由引导或停止拦下、从未真正执行的旧计划不会伪造成工具结果。
+- 被引导或停止拦下的旧计划记录为未执行，不计入完成步骤。
 - 报告包含任务 ID、执行轮次、报告序号、步骤区间、工具摘要、结果状态、耗时、错误和文件引用。
 - 摘要由程序根据事件记录生成，保留事实、Agent 陈述和不确定项的区别，不额外消耗子代理模型请求。
 
@@ -73,7 +72,7 @@
 
 因此，当子代理正在执行 A 时收到引导，A 会完成，旧计划中的 B/C 不会抢在引导之前执行；新指令生效后，子代理根据已有上下文重新判断下一步。引导状态区分 `accepted`、`applying`、`applied`、`cancelled` 和 `rejected`，主 Agent 与界面可以分别看到“已接收”和“已生效”。
 
-实现上，`TaskGuide` 结合 `beforeToolCall`、`afterToolCall`、`shouldStopAfterTurn` 和同一实例的追加 prompt，解决单纯调用 `agent.steer()` 无法保证 A/B/C 边界的问题。核心代码位于 [`packages/agent-runtime/src/subagent.ts`](packages/agent-runtime/src/subagent.ts) 和 [`packages/agent-runtime/src/runtime.ts`](packages/agent-runtime/src/runtime.ts)。
+实现上，`guide()` 受理后立即调用 `agent.steer()` 排入当前轮，配合工具执行前的检查跳过尚未开始的旧计划，并在消息进入上下文时更新引导回执。核心代码位于 [`subagent.ts`](packages/agent-runtime/src/subagent.ts) 和 [`runtime.ts`](packages/agent-runtime/src/runtime.ts)。
 
 ### `TaskStop`：单独终止一个子代理
 
@@ -81,7 +80,7 @@
 
 停止请求先快速返回“正在终止”，运行时随后禁止新的工具调用、取消模型请求并尝试取消在途工具；只有执行确实收束后才发布最终状态。已完成的文件和外部操作保留，部分结果、工具记录、停止来源和无法取消的在途操作都会进入任务记录。停止优先于待生效引导，旧回执不能重新打开任务。
 
-`TaskStop` 还负责关闭已完成任务的后续召回入口。控制请求携带执行轮次，旧卡片或迟到的回调不能误停新一轮执行。
+用户可以在已完成任务上撤销未来召回。界面控制携带所展示的执行轮次，运行时据此识别迟到请求；执行状态和保存反馈按同一轮次的递增修订回写。
 
 ### `TaskResume`：把审核意见送回原上下文
 
@@ -97,7 +96,7 @@ type TaskResumeInput = {
 
 `delegationId` 保持不变，`execution` 单调增加。`expectedExecution` 用来拒绝旧卡片、重复点击和迟到请求；`instruction` 是审核意见或下一轮工作要求。召回会：
 
-- 复用原来的 Agent 消息、工具结果、模型绑定和权限边界；
+- 优先复用内存中的 Agent 消息与工具结果；从快照恢复时使用当前模型、工具和权限配置；
 - 新建执行轮次和审计记录，保留首轮结果及其时间、用量和报告；
 - 让观察器开启新的执行段，同时保持累计步骤、报告序号和累计用量连续；
 - 返回快速接收回执，不等待下一次模型完成；
@@ -107,28 +106,24 @@ type TaskResumeInput = {
 
 ### 快照与跨重启召回
 
-子代理上下文由 `SubagentRun` 导出为带版本的白名单快照，保存模型消息、压缩状态、模型绑定、工具声明、观察器状态、执行轮次和用量归属。凭据、Cookie、环境变量全集、工具句柄、浏览器/终端/SSH 会话和 AbortController 不进入快照；恢复时从当前配置重新获取凭据和工具实现。
+`SubagentRun` 导出有效模型消息、压缩状态、模型绑定信息、观察器状态和用量归属，桌面主进程的 `SubagentSnapshotStore` 将它们保存为本地 JSON。快照随实际业务目录迁移，恢复时重新获取当前凭据与工具实现。
 
-桌面主进程的 `SubagentSnapshotStore` 负责快照目录、加密 generation/control、执行代次、持久化回执、撤销和清理。Sidecar 只通过窄接口访问它，运行时不直接操作 Electron API 或业务目录。快照目录跟随实际业务数据目录，随数据目录迁移而迁移。
+运行时负责任务启动、结果交付、内存续跑和本地停止，存储负责后台保存与撤销回执。保存失败会更新持久化状态，已经完成的结果和内存上下文仍可使用。等待召回期间不请求模型，也不占活跃任务名额。
 
-`TaskList` 和 `TaskInspect` 可以先读取磁盘上的轻量任务目录，不创建 Agent、不请求模型、不执行工具。真正 `TaskResume` 时，运行时重新校验会话、项目、模型、工具、插件、权限和快照版本，再构造 idle 的子代理实例；通过校验后才登记新的执行轮次并发起模型请求。
-
-内存召回和磁盘恢复共用执行版本、控制回执和停止标记。正在运行的任务崩溃后不会从旧快照自动续跑；正常完成的任务可以在运行实例释放或应用重启后由主 Agent 显式召回。快照持久化是可选旁路能力，保存失败会保留内存结果并明确记录持久化状态。
+跨重启时先读取轻量任务目录，再由 `TaskResume` 校验任务身份、执行版本和快照内容，使用当前配置恢复上下文。无法完整恢复时，返回历史任务与结果材料，供主 Agent 决定如何续接。运行中断不会自动重放工具。
 
 ### 主 Agent 的隐藏协调上下文
 
-阶段报告和协调快照不会写成用户消息，也不会被拼到提供商适配器顶部的 system 指令中。运行时在请求准备阶段追加两类隐藏 `custom` 消息：
+报告与协调状态分别通过隐藏 `custom` 消息进入主 Agent 上下文：
 
-- `subagent-supervision`：阶段报告、完成报告、停止和引导回执，帮助主 Agent 了解外部任务状态。
-- `subagent-coordination`：当前子代理列表、执行轮次、最近报告、引导状态和持久化状态的快照，帮助主 Agent 在多轮请求和上下文重建后继续协调。
+- `subagent-supervision` 投递阶段报告、完成报告和控制回执。
+- `subagent-coordination` 在状态变化时追加任务协调快照，记录任务、执行轮次、报告和召回状态。
 
-这些消息带有会话内的位置锚点，后续请求会按原顺序恢复；成功压缩后归并为最新状态并清理旧快照。任务结果、审计事件和可查询步骤沿现有任务记录保存，运行状态消息本身不污染普通聊天正文。
+协调快照通过 `prepareRequest` 追加到请求末尾，历史快照按消息锚点保留在原位置。它们与分钟运行提醒共用内存锚点，在同一运行实例的后续轮次和上下文重建中保持顺序；成功压缩后，把最新协调状态归并到摘要并清理旧快照。报告与任务历史仍可通过任务记录查询。
 
-相关设计与实现记录：
+「设置 → AI」还可以设置运行提醒间隔：主 Agent 每运行满设定分钟数，在下一次请求前收到本轮时长和自身累计 token，帮助长任务掌握进度与开销。间隔为 0 时关闭。
 
-- [`docs/SUBAGENT-COLLABORATION-DECISIONS.md`](docs/SUBAGENT-COLLABORATION-DECISIONS.md)
-- [`docs/SUBAGENT-COLLABORATION-IMPLEMENTATION.md`](docs/SUBAGENT-COLLABORATION-IMPLEMENTATION.md)
-- [`docs/SUBAGENT-PERSISTENCE-RECOVERY-PLAN.md`](docs/SUBAGENT-PERSISTENCE-RECOVERY-PLAN.md)
+当前实现可从 [`runtime.ts`](packages/agent-runtime/src/runtime.ts)、[`subagent-observer.ts`](packages/agent-runtime/src/subagent-observer.ts) 和 [`subagent-snapshot-store.ts`](apps/desktop/electron/main/runtime/subagent-snapshot-store.ts) 查阅；演进决策见 [`docs/DECISIONS.md`](docs/DECISIONS.md)。
 
 ## 其他 fork 定制
 
@@ -140,8 +135,8 @@ type TaskResumeInput = {
 | 数据目录 | 继续复用 `~/.pi-desktop` 业务数据，同时隔离 Electron / Chromium 缓存、日志和崩溃报告；支持 `PI_DESKTOP_DATA_DIR` |
 | 模型与上下文 | 保留模型绑定、模型配置导入导出、独立压缩模型、用户填写上下文窗口优先、Google fetch 兼容、Gemini 原生音视频和可选原生搜索 |
 | 聊天与审查 | 保留引用、批注、侧边对话、任务级过程抽屉、文件审查卡、耗时/token 统计和多级过程显示 |
-| 工作区 | 临时会话可以选择独立目录；隔离会话使用 Git worktree；文件管理器、浏览器和终端作为右侧工作面板插件运行 |
-| 扩展 | 支持技能、MCP、OAuth、插件市场、插件托管提供商、自定义 Agent、定时任务和局域网远程控制 |
+| 工作区与外观 | 临时会话可选独立目录，Windows/macOS 文件管理器提供临时会话入口；固定 275px 折叠侧栏、分区系统字体字重和浅深配色 |
+| 独立扩展 | 局域网远程控制、Codex 宠物和任务文件审查增强以可选插件提供；终端保持 fork 的配色、字体和 Windows 输出修复 |
 | 语言与版本 | 只维护简体中文和 English；构建版本使用北京时间 `YYYYMMDD-HHMMSS`，数据库 schema 为 27，宿主 protocol 为 11 |
 
 ## 快速开始
@@ -160,7 +155,7 @@ pnpm install
 pnpm dev
 
 pnpm build
-pnpm pack
+pnpm run pack
 pnpm --filter @pi-desktop/desktop dist:win
 pnpm --filter @pi-desktop/desktop dist:mac
 pnpm --filter @pi-desktop/desktop dist:linux

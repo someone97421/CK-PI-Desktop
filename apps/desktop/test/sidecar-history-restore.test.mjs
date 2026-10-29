@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 // Exercise the actual sidecar RPC boundary. Only the external Host service and
 // provider endpoint are fixtures; runtime admission and restore wiring are real.
@@ -12,7 +13,7 @@ test("history restore failures cannot accept a clean prompt for stable or legacy
   const server = createServer((_req, res) => { providerRequests++; res.writeHead(500); res.end(); });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  const child = spawn(process.execPath, [new URL("../../../packages/agent-runtime/dist/sidecar.js", import.meta.url).pathname], { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../../../packages/agent-runtime/dist/sidecar.js", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"] });
   t.after(() => { child.kill(); });
   let stderr = ""; child.stderr.on("data", (chunk) => { stderr += chunk; });
   const lines = createInterface({ input: child.stdout }); t.after(() => lines.close());

@@ -145,6 +145,12 @@ import { checkGenUiFragment, genUiFragmentCheckNote, isGenUiFragmentPath } from 
 import type { RuntimeHost } from "./host-client.js";
 import { classifyAgentError } from "./agent-errors.js";
 import {
+  captureAssistantProviderReplay,
+  restoreAssistantProviderReplay,
+  providerReplayForBubble,
+  providerReplayToolCallSignatures,
+} from "./assistant-provider-replay.js";
+import {
   assistantContent,
   isRecord,
   nowIso,
@@ -2232,14 +2238,6 @@ Delegation rules:
           m.api,
           this.fastMode,
         );
-        // The watchdog must be able to *stop* what it abandons. It wraps the
-        // retry adapter, so draining alone would let the adapter wake from its
-        // backoff and open a second request for this turn while the runtime is
-        // already re-running the turn — two provider requests and two bills for
-        // one answer. So the stall trips a signal this request owns, combined
-        // with pi's own run signal (Stop must keep working): the adapter refuses
-        // to start an attempt on an aborted signal, and its backoff sleep rejects.
-        const stallAbort = new AbortController();
         // Both output clamps, ours and pi-ai's inside `streamSimple`, must see
         // the instructions the adapter sends, not every superseded snapshot.
         const requestContext = requestTranscript(m, context);
@@ -2251,20 +2249,27 @@ Delegation rules:
           // `thinkingLevel: "omit"` would otherwise send it untouched, and
           // both consume an estimate that under-counts CJK text (issue B).
           maxTokens: clampOutputToContext(m, requestContext, hookedOptions.maxTokens),
-          signal: AbortSignal.any([
-            ...(hookedOptions.signal ? [hookedOptions.signal] : []),
-            stallAbort.signal,
-          ]),
         };
         const usageTurnId = this.turnId;
         const retryStream = createProviderRetryStream(
           m,
           requestContext,
           attemptOptions,
-          (retryOptions) => accountModelStream(m, () =>
-            this.thinkingLevel === "omit"
-              ? this.models.stream(omitThinkingModel(m), requestContext, retryOptions)
-              : this.models.streamSimple(m, requestContext, retryOptions), {
+          (retryOptions) => {
+            // Each network attempt owns its idle clock and abort signal.
+            // Deliberate backoff must not look like a stalled provider stream.
+            const stallAbort = new AbortController();
+            const timedOptions = {
+              ...retryOptions,
+              signal: AbortSignal.any([
+                ...(retryOptions.signal ? [retryOptions.signal] : []),
+                stallAbort.signal,
+              ]),
+            };
+            const stream = accountModelStream(m, () =>
+              this.thinkingLevel === "omit"
+                ? this.models.stream(omitThinkingModel(m), requestContext, timedOptions)
+                : this.models.streamSimple(m, requestContext, timedOptions), {
                 providerId: this.provider.id,
                 nativeCost: this.provider.modelConfig?.nativeCost,
                 onUsage: (usage) => {
@@ -2274,7 +2279,9 @@ Delegation rules:
                   }
                   this.emit({ type: "usage", usage }, usageTurnId);
                 },
-              }),
+              });
+            return withStreamIdleTimeout(stream, m, streamIdleTimeoutMs(), () => stallAbort.abort());
+          },
           {
             claim: (error, phase) => this.claimProviderRetry(error, phase),
             headers: () => this.providerRetryHeaders,
@@ -2292,14 +2299,7 @@ Delegation rules:
             },
           },
         );
-        // Zero-event idle watchdog: a stream that emits nothing for the
-        // configured budget ends as a STREAM_FAILED error and re-enters the
-        // shared transient retry path instead of hanging the turn on a
-        // connection the provider never closes.
-        return this.uniqueToolCalls(
-          withStreamIdleTimeout(retryStream, m, streamIdleTimeoutMs(), () => stallAbort.abort()),
-          context.messages,
-        );
+        return this.uniqueToolCalls(retryStream, context.messages);
       },
       // A vendor account has no long-lived key. Leaving it unset keeps pi-ai
       // from overriding the auth the provider just resolved for this request.
@@ -3166,6 +3166,8 @@ Delegation rules:
     // (the nearest one above), keeping each call adjacent to its result as
     // the provider APIs require.
     let toolCarrier: AssistantMessage | undefined;
+    // Function-call signatures of the carrier's row, restored by call id.
+    let carrierToolSignatures = new Map<string, string>();
     for (const m of orderSystemRows(history)) {
       // Subagent rows belong to the transcript and to review, never to the
       // parent's model context (ADR 0062): the parent only ever saw the `Task`
@@ -3205,21 +3207,35 @@ Delegation rules:
         const content: AssistantMessage["content"] = [];
         // A replay placeholder the model echoed is not its reasoning; sending
         // it back is what kept the model continuing it (#1945).
-        const thinking = withoutReasoningReplayPlaceholder(m.thinking ?? "");
-        if (thinking.trim()) {
-          // Completions DeepSeek replay needs thinkingSignature so convertMessages
-          // maps the block to reasoning_content instead of dropping it (#296).
-          content.push({
-            type: "thinking" as const,
-            thinking,
-            ...(deepSeekCompletionsReplay
-              ? { thinkingSignature: "reasoning_content" as const }
-              : {}),
-          });
-        }
-        content.push(...restoreHostedSearchReplay(m.hostedSearch));
-        if (m.content?.trim()) {
-          content.push({ type: "text" as const, text: m.content });
+        const rawThinking = m.thinking ?? "";
+        const thinking = withoutReasoningReplayPlaceholder(rawThinking);
+        // Signed blocks restore the request the live runtime sent, so a
+        // rebuild keeps the provider's prompt cache (#1972). Rows that were
+        // cleaned above, or whose text no longer matches, keep the plain path.
+        const replayed = thinking === rawThinking
+          ? restoreAssistantProviderReplay(m.providerReplay, rawThinking, m.content ?? "")
+          : undefined;
+        if (replayed) {
+          const firstText = replayed.findIndex((block) => block.type === "text");
+          const hosted = restoreHostedSearchReplay(m.hostedSearch);
+          if (firstText < 0) content.push(...replayed, ...hosted);
+          else content.push(...replayed.slice(0, firstText), ...hosted, ...replayed.slice(firstText));
+        } else {
+          if (thinking.trim()) {
+            // Completions DeepSeek replay needs thinkingSignature so convertMessages
+            // maps the block to reasoning_content instead of dropping it (#296).
+            content.push({
+              type: "thinking" as const,
+              thinking,
+              ...(deepSeekCompletionsReplay
+                ? { thinkingSignature: "reasoning_content" as const }
+                : {}),
+            });
+          }
+          content.push(...restoreHostedSearchReplay(m.hostedSearch));
+          if (m.content?.trim()) {
+            content.push({ type: "text" as const, text: m.content });
+          }
         }
         // Kept even when empty: a call-only turn has no text of its own and
         // becomes the carrier for the tool rows that follow. Assistants that
@@ -3241,6 +3257,7 @@ Delegation rules:
         };
         append(m.id, assistant);
         toolCarrier = assistant;
+        carrierToolSignatures = providerReplayToolCallSignatures(m.providerReplay);
       } else if (m.role === "tool") {
         if (!m.toolCallId || !m.toolName) continue;
         if (!toolCarrier) {
@@ -3257,12 +3274,15 @@ Delegation rules:
             timestamp,
           };
           append(`${m.id}:carrier`, toolCarrier);
+          carrierToolSignatures = new Map();
         }
+        const thoughtSignature = carrierToolSignatures.get(m.toolCallId);
         toolCarrier.content.push({
           type: "toolCall",
           id: m.toolCallId,
           name: m.toolName,
           arguments: toJsonObject(m.toolArgs),
+          ...(thoughtSignature ? { thoughtSignature } : {}),
         });
         toolCarrier.stopReason = "toolUse";
         append(m.id, toolResultFromUi(m, timestamp));
@@ -3723,8 +3743,13 @@ Delegation rules:
           // it armed is released here instead.
           if (abortGraceTimer) clearTimeout(abortGraceTimer);
         }
-        if (abortPromise) await abortPromise;
-        if (abortError) throw abortError;
+        // A local read-only stop cannot depend on the same Host answering a
+        // second RPC. Its abort request already observes late rejections.
+        // Other tools retain Host settlement ownership for their side effects.
+        if (!canAbandonWait) {
+          if (abortPromise) await abortPromise;
+          if (abortError) throw abortError;
+        }
         if (stopped) {
           throw Object.assign(
             new Error(`tool execution aborted while ${toolName} was running`),
@@ -9112,7 +9137,18 @@ Delegation rules:
               ? { error: classifiedError, isError: true }
               : {}),
             ...(hostedSearch ? { hostedSearch } : {}),
+            // Signatures only describe this response's own blocks. A bubble
+            // that kept text from an earlier recovery attempt no longer lines
+            // up with them, so it keeps only the function-call signatures,
+            // which are linked by call id rather than by text position.
+            providerReplay: failed || exemptSilence
+              ? undefined
+              : providerReplayForBubble(
+                  captureAssistantProviderReplay((event.message as any).content),
+                  nextText === content.text && nextThinking === content.thinking,
+                ),
           };
+          if (!this.currentAssistant.providerReplay) delete this.currentAssistant.providerReplay;
           this.emit({ type: "message_end", message: this.currentAssistant });
           this.activeProviderRetryAttempt = 0;
           this.streamStartedAt = undefined;
