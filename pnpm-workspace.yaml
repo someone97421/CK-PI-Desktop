@@ -61,7 +61,6 @@ patchedDependencies:
   '@earendil-works/pi-agent-core@1.4.0': patches/@earendil-works__pi-agent-core@1.4.0.patch
   '@earendil-works/pi-ai@1.4.0': patches/@earendil-works__pi-ai@1.4.0.patch
   '@earendil-works/pi-coding-agent@1.4.0': patches/@earendil-works__pi-coding-agent@1.4.0.patch
-resolutionMode: highest
 # shamefully-hoist also lives in .npmrc, but pnpm 12 applies it only from
 # here; without it public hoisting is empty and examples/ plugins cannot
 # resolve root-level react in tests.

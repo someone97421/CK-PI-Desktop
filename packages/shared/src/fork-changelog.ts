@@ -5,6 +5,11 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "修复访达临时会话重复启动和目录传递；临时会话绑定目录后可用 @ 检索并引用文件，改善中文文件索引。",
+  "升级 Pi 1.4，新增默认关闭、按模型显式允许的 /fast 优先服务档；修复配额重试、畸形工具调用和 DeepSeek 思考回放。",
+  "工具图片采用无损去重存储，历史操作按消息 ID 执行；数据库升级到 schema 27、转录格式 2，旧版回退须恢复升级前整份业务目录。",
+  "新增原生本轮文件变更摘要与完成后的阅读定位，修复窗口重开运行状态、插件视图重载、标签菜单和字号同步。",
+  "内嵌可视化预加载图表助手并提供错误反馈；保留当前轮引导、TaskResume、分钟提醒和既有外观定制。",
   "运行状态提醒改为填写提醒间隔（分钟），0 为关闭，缺省关闭。",
   "macOS 访达新增“在此处开启临时会话”快速操作，可在设置中开关。",
   "同步上游：聊天空白处可选环形右键菜单；文件管理器支持远程项目只读浏览，查找框跟随主题。",
@@ -102,6 +107,11 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Fix Finder temporary-session launches and folder handoff; @ now searches bound temporary workspaces, with correct UTF-8 filename indexing.",
+  "Upgrade to Pi 1.4 and add opt-in /fast priority service; fix quota retries, malformed tool-call recovery, and DeepSeek reasoning replay.",
+  "Store tool images losslessly with deduplication and mutate history by message ID. Database schema 27 and transcript format 2 require a full pre-upgrade data-directory backup for rollback.",
+  "Add native per-turn file summaries and completion reading position; fix running-state restoration, plugin reloads, tab menus, and font scaling.",
+  "Preload chart helpers for inline visualizations and report rendering errors while preserving steering, TaskResume, timed reminders, and appearance customizations.",
   "The run status reminder now takes an interval in minutes; 0 turns it off and is the default.",
   "macOS Finder adds an “Open a temporary session here” quick action, toggled in Settings.",
   "Upstream sync: optional radial menu on the transcript background; File Manager browses remote projects read-only and its search panel follows the theme.",
