@@ -7240,6 +7240,180 @@ describe("DesktopAgentRuntime per-turn context protection", () => {
     await runtime.dispose();
   });
 
+  /**
+   * Read of `src/a.ts`, then Edit of `src/b.ts`, then a trailing user message.
+   * A large `keepRecentTokens` parks the calls in pi's retained tail; a tiny
+   * one leaves them in `messagesToSummarize`. Codex folds both ranges into the
+   * summary, so the file lists have to agree.
+   */
+  function recentFileOperationEntries() {
+    const readAssistant = {
+      ...assistant,
+      content: [
+        {
+          type: "toolCall" as const,
+          id: "read-a",
+          name: "Read",
+          arguments: { path: "src/a.ts" },
+        },
+      ],
+      stopReason: "toolUse" as const,
+    };
+    const readResult = {
+      ...toolResult,
+      toolCallId: "read-a",
+      toolName: "Read",
+      content: [{ type: "text" as const, text: "contents of a" }],
+    };
+    const editAssistant = {
+      ...assistant,
+      timestamp: 3,
+      content: [
+        {
+          type: "toolCall" as const,
+          id: "edit-b",
+          name: "Edit",
+          arguments: { path: "src/b.ts" },
+        },
+      ],
+      stopReason: "toolUse" as const,
+    };
+    const editResult = {
+      ...toolResult,
+      toolCallId: "edit-b",
+      toolName: "Edit",
+      timestamp: 4,
+      content: [{ type: "text" as const, text: "edited b" }],
+    };
+    return [
+      {
+        type: "message",
+        id: "user-1",
+        seq: 0,
+        parentId: null,
+        timestamp: Date.parse("2026-07-28T00:00:00Z"),
+        message: { role: "user", content: "update the files", timestamp: 1 },
+      },
+      {
+        type: "message",
+        id: "read-assistant",
+        seq: 1,
+        parentId: "user-1",
+        timestamp: Date.parse("2026-07-28T00:00:01Z"),
+        message: readAssistant,
+      },
+      {
+        type: "message",
+        id: "read-a",
+        seq: 2,
+        parentId: "read-assistant",
+        timestamp: Date.parse("2026-07-28T00:00:02Z"),
+        message: readResult,
+      },
+      {
+        type: "message",
+        id: "edit-assistant",
+        seq: 3,
+        parentId: "read-a",
+        timestamp: Date.parse("2026-07-28T00:00:03Z"),
+        message: editAssistant,
+      },
+      {
+        type: "message",
+        id: "edit-b",
+        seq: 4,
+        parentId: "edit-assistant",
+        timestamp: Date.parse("2026-07-28T00:00:04Z"),
+        message: editResult,
+      },
+      {
+        type: "message",
+        id: "user-next",
+        seq: 5,
+        parentId: "edit-b",
+        timestamp: Date.parse("2026-07-28T00:00:05Z"),
+        message: { role: "user", content: "next", timestamp: 5 },
+      },
+    ];
+  }
+
+  function summarizedToolCalls(messages: any[]) {
+    return messages.flatMap((message) =>
+      Array.isArray(message.content)
+        ? message.content
+            .filter((block: any) => block.type === "toolCall")
+            .map((block: any) => ({ name: block.name, path: block.arguments.path }))
+        : [],
+    );
+  }
+
+  function prepareRecentFileOperations(
+    runtime: DesktopAgentRuntime,
+    keepRecentTokens: number,
+  ) {
+    (runtime as any).fullEntries = recentFileOperationEntries();
+    const entries = (runtime as any).entriesWithCompaction();
+    const budget = (runtime as any).contextBudget(
+      entries.map((entry: any) => entry.message),
+    );
+    return (runtime as any).prepareCompactionInput(
+      entries,
+      { ...budget, keepRecentTokens },
+      20_000,
+      "completed_turn",
+    );
+  }
+
+  it("records file operations from tool calls folded out of the retained tail", async () => {
+    const runtime = createRuntime();
+    // Larger than the whole history, so pi leaves the Read/Edit calls in
+    // `retainedTail`. The shaped preparation still summarizes them.
+    const preparation = prepareRecentFileOperations(runtime, 1_000_000);
+
+    expect(preparation.ok).toBe(true);
+    expect(summarizedToolCalls(preparation.value.messagesToSummarize)).toEqual([
+      { name: "read", path: "src/a.ts" },
+      { name: "edit", path: "src/b.ts" },
+    ]);
+    expect([...preparation.value.fileOps.read]).toEqual(["src/a.ts"]);
+    expect([...preparation.value.fileOps.edited]).toEqual(["src/b.ts"]);
+    expect([...preparation.value.fileOps.written]).toEqual([]);
+
+    (runtime as any).models = {
+      completeSimple: async () =>
+        assistantMessage({ content: [{ type: "text", text: "Older work." }] }),
+    };
+    const summary = await (runtime as any).generateCompaction(
+      preparation.value,
+      new AbortController().signal,
+    );
+    expect(summary.ok).toBe(true);
+    expect(summary.value.summary).toContain(
+      "<modified-files>\nsrc/b.ts\n</modified-files>",
+    );
+    expect(summary.value.details.modifiedFiles).toEqual(["src/b.ts"]);
+    await runtime.dispose();
+  });
+
+  it("does not duplicate file operations already collected before the fold", async () => {
+    const runtime = createRuntime();
+    // The trailing user message is the only thing that fits, so the calls stay
+    // in pi's `messagesToSummarize` and are collected before the fold.
+    const preparation = prepareRecentFileOperations(runtime, 1);
+
+    expect(preparation.ok).toBe(true);
+    expect(summarizedToolCalls(preparation.value.messagesToSummarize)).toEqual([
+      { name: "read", path: "src/a.ts" },
+      { name: "edit", path: "src/b.ts" },
+    ]);
+    expect([...preparation.value.fileOps.read]).toEqual(["src/a.ts"]);
+    expect([...preparation.value.fileOps.edited]).toEqual(["src/b.ts"]);
+    expect([...preparation.value.fileOps.written]).toEqual([]);
+    expect(preparation.value.fileOps.read.size).toBe(1);
+    expect(preparation.value.fileOps.edited.size).toBe(1);
+    await runtime.dispose();
+  });
+
   it("retains only the active user message and truncates it at the retention cap", async () => {
     const runtime = createRuntime();
     // Historical user messages are summarized. The active prompt is retained

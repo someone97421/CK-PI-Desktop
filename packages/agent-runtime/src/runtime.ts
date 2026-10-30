@@ -162,7 +162,10 @@ import {
 } from "./agent-messages.js";
 import { withExplicitRequired } from "./tool-schema.js";
 import { buildSessionContext } from "./session-context.js";
-import { prepareCompaction } from "./pi-runtime-compaction-plan.js";
+import {
+  collectMessageFileOperations,
+  prepareCompaction,
+} from "./pi-runtime-compaction-plan.js";
 import {
   ESTIMATED_TEXT_CHARS_PER_TOKEN,
   estimateContextTokens,
@@ -288,6 +291,7 @@ import {
   addSummaryUsage,
   compactionSummaryInputLimit,
   compactionSummaryOutputBudget,
+  compactionSummaryReserveTokens,
   estimateSummaryPromptTokens,
   planSummaryChunks,
   reduceSummaryInput,
@@ -7512,8 +7516,8 @@ Delegation rules:
    *
    * pi's cut point is still what marks the boundary, but the split it produces
    * is folded back together (see `codexShapedPreparation`), so
-   * `budget.keepRecentTokens` no longer decides what survives — it only decides
-   * which messages pi attributes file operations to.
+   * `budget.keepRecentTokens` no longer decides what survives. File operations
+   * are collected from that whole folded range, including the retained tail.
    */
   private prepareCompactionInput(
     entries: Entry[],
@@ -7572,10 +7576,19 @@ Delegation rules:
       ...preparation.turnPrefixMessages,
       ...preparation.retainedTail,
     ];
+    // 近期尾部也进入摘要；复制已有清单后补齐文件操作，保留原准备结果。
+    const fileOps: CompactionPreparation["fileOps"] = {
+      read: new Set(preparation.fileOps.read),
+      written: new Set(preparation.fileOps.written),
+      edited: new Set(preparation.fileOps.edited),
+    };
+    for (const message of preparation.retainedTail) {
+      collectMessageFileOperations(message, fileOps);
+    }
     const latestUser = messagesToSummarize
       .filter((message): message is UserMessage => message.role === "user")
       .at(-1);
-    return shapeCheckpointPreparation(preparation, {
+    return shapeCheckpointPreparation({ ...preparation, fileOps }, {
       firstKeptEntryId: this.fullEntries.at(-1)?.id,
       retentionCandidates:
         retentionMode === "active_turn" && latestUser ? [latestUser] : [],
@@ -8121,13 +8134,13 @@ Delegation rules:
     budget: { hardLimit: number; requestHeadroom: number },
   ): AgentMessage[][] | undefined {
     const reduced = reduceSummaryInput(preparation) ?? preparation;
-    const reserveTokens = Math.max(
-      Math.ceil((preparation.previousSummary?.length ?? 0) / ESTIMATED_TEXT_CHARS_PER_TOKEN),
-      compactionSummaryOutputBudget({
+    const reserveTokens = compactionSummaryReserveTokens({
+      previousSummary: preparation.previousSummary,
+      outputBudget: compactionSummaryOutputBudget({
         requestHeadroom: budget.requestHeadroom,
         modelMaxTokens: (this.compactionModel ?? this.model).maxTokens,
       }),
-    );
+    });
     return planSummaryChunks(reduced, {
       summaryInputLimit: this.summaryInputLimit(budget),
       reserveTokens,
