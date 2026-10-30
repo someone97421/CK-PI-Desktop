@@ -1071,6 +1071,24 @@ fn validate_settings_value(value: &Value) -> Result<(), JsonRpcError> {
     let Some(object) = value.as_object() else {
         return Ok(());
     };
+    if let Some(hosting) = object.get("fileHosting") {
+        let Some(hosting) = hosting.as_object() else {
+            return Err(rpc_err(1002, "fileHosting must be an object", "INVALID_PARAMS"));
+        };
+        if let Some(litterbox) = hosting.get("litterbox") {
+            let Some(litterbox) = litterbox.as_object() else {
+                return Err(rpc_err(1002, "fileHosting.litterbox must be an object", "INVALID_PARAMS"));
+            };
+            if litterbox.get("enabled").is_some_and(|value| !value.is_boolean()) {
+                return Err(rpc_err(1002, "fileHosting.litterbox.enabled must be a boolean", "INVALID_PARAMS"));
+            }
+            if litterbox.get("expiration").is_some_and(|value| {
+                !matches!(value.as_str(), Some("1h" | "12h" | "24h" | "72h"))
+            }) {
+                return Err(rpc_err(1002, "fileHosting.litterbox.expiration must be 1h, 12h, 24h or 72h", "INVALID_PARAMS"));
+            }
+        }
+    }
     if let Some(policy) = object.get("networkPolicy").filter(|v| !v.is_null()) {
         let Some(policy) = policy.as_object() else {
             return Err(rpc_err(

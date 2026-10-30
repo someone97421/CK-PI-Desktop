@@ -973,6 +973,9 @@ function bindingFromGenericModel(
       (maxTokens === undefined ? base.maxTokensSource : "user"),
     ...(typeof record?.supportsAudio === "boolean" ? { supportsAudio: record.supportsAudio } : {}),
     ...(typeof record?.supportsVideo === "boolean" ? { supportsVideo: record.supportsVideo } : {}),
+    ...(record?.videoTransport === "base64" || record?.videoTransport === "url" || record?.videoTransport === "provider-file"
+      ? { videoTransport: record.videoTransport }
+      : {}),
     ...(record?.nativeWebSearch === true || record?.native_web_search === true
       ? { nativeWebSearch: true }
       : {}),

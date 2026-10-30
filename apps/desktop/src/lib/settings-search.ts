@@ -208,6 +208,12 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.apiKey",
       "settings.baseUrl",
       "settings.apiStyle",
+      "settings.videoInput",
+      "settings.videoTransport",
+      "settings.videoTransportProviderFile",
+      "settings.fileHostingTitle",
+      "settings.litterboxEnable",
+      "settings.litterboxExpiration",
       // Subscription accounts share the service list (D625).
       "settings.vendorAccounts",
       "settings.vendorSubscription",

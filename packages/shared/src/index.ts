@@ -62,6 +62,7 @@ export * from "./github-feedback.js";
 export * from "./network-proxy.js";
 export * from "./attachment-limits.js";
 export * from "./media-input.js";
+export * from "./file-hosting.js";
 export * from "./attachment-formats.js";
 export * from "./image-dimensions.js";
 export * from "./speech.js";

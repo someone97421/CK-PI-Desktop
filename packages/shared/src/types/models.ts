@@ -1,4 +1,6 @@
 /** Shared public types grouped by the owning application domain. */
+import type { VideoTransport } from "../media-input.js";
+
 export const THINKING_LEVELS = [
   "off",
   "minimal",
@@ -241,9 +243,10 @@ export type ModelBinding = {
    * the capability the model actually has rather than switching the encoding.
    */
   supportsDocuments?: boolean | null;
-  /** Gemini 内联音视频输入，由用户显式启用。 */
+  /** 音视频输入能力，由用户显式启用。 */
   supportsAudio?: boolean | null;
   supportsVideo?: boolean | null;
+  videoTransport?: VideoTransport;
   /**
    * Whether this model is available for AI-driven subagent delegation.
    * When true, the model appears in the delegation model catalog so the

@@ -1,5 +1,5 @@
 import { resolveSessionWorkspace } from "./session-workspace";
-import { IPC, type AgentEventEnvelope, type UiMessage } from "@pi-desktop/shared";
+import { IPC, type AgentEventEnvelope, type UiMessage, type AppSettings } from "@pi-desktop/shared";
 import {
   findSubagentProviderSource,
   modelConfigWithBinding,
@@ -546,6 +546,7 @@ export function createSidecarRuntime({
       catalogModelConfig,
     );
 
+    const settings = await runtimeState.host!.call<AppSettings>("settings.get");
     return {
       id: provider.id,
       name: provider.name,
@@ -554,9 +555,11 @@ export function createSidecarRuntime({
       apiKey,
       ...(provider.authKind ? { authKind: provider.authKind } : {}),
       ...(apiStyle ? { apiStyle } : {}),
+      ...(provider.headers ? { headers: provider.headers } : {}),
       supportsReasoning: capabilities.supportsReasoning,
       supportedThinkingLevels: [...capabilities.supportedThinkingLevels],
       ...(modelConfig ? { modelConfig } : {}),
+      fileHosting: settings.fileHosting,
     };
   });
   // Agent-driven work panel preview (D100): open a workspace HTML file in

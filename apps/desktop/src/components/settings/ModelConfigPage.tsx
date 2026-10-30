@@ -62,6 +62,7 @@ import { VendorAccountDialog, type VendorAccountForm } from "./VendorAccountDial
 import { ModelConfigImportPanel } from "../../features/settings/imports/ModelConfigImportPanel";
 import { ImportToggleButton } from "../../features/settings/import-workbench";
 import { JevSettingsCard } from "./JevSettingsCard";
+import { FileHostingSettingsCard } from "./FileHostingSettingsCard";
 import { JEV_SERVICE } from "./service-catalog";
 import { isPluginCatalogSetupForProvider } from "./provider-setup-mode";
 
@@ -992,6 +993,8 @@ export function ModelConfigPage() {
           </div>
         </div>
       </section>
+
+      <FileHostingSettingsCard settings={settings} />
 
       <JevSettingsCard
         settings={settings}

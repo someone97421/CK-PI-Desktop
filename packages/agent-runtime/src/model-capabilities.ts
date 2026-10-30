@@ -103,6 +103,7 @@ export function modelConfigWithBinding(
         | "supportsDocuments"
         | "supportsAudio"
         | "supportsVideo"
+        | "videoTransport"
         | "nativeWebSearch"
       >
     | null,
@@ -190,6 +191,7 @@ export function modelConfigWithBinding(
     ...modalityOverride(model, binding),
     supportsAudio: binding.supportsAudio === true,
     supportsVideo: binding.supportsVideo === true,
+    videoTransport: binding.videoTransport ?? "base64",
     ...(binding.nativeWebSearch === true ? { webSearch: true } : {}),
   };
 }

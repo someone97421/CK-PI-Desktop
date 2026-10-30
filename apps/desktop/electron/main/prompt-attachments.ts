@@ -31,7 +31,8 @@ import {
   MAX_INLINE_IMAGE_BYTES,
   mediaMimeType,
   supportsMediaMime,
-  base64ByteLength,
+  mediaInlineBytes,
+  videoUploadByteLimit,
   GEMINI_INLINE_REQUEST_BYTES,
   type MediaInputCapabilities,
   type AgentPromptAttachment,
@@ -298,10 +299,14 @@ export async function preparePromptAttachments(
     // small; it takes the `@path` fallback instead of poisoning history (#1913).
     const pixelAllowed = !imageExceedsInlineDimensions(probeImageDimensions(read ?? Buffer.alloc(0)));
     const inline = ((isImage && supportsVision && size <= MAX_INLINE_IMAGE_BYTES && pixelAllowed) || mediaEnabled);
+    const uploadLimit = videoUploadByteLimit(mimeType, mediaCapabilities);
+    if (uploadLimit !== undefined && size > uploadLimit) {
+      throw new Error(`视频超过当前传输方式的 ${(uploadLimit / 1_000_000).toFixed(0)}MB 文件上限。`);
+    }
     if (inline) {
-      inlineBytes += base64ByteLength(size);
+      inlineBytes += mediaInlineBytes(size, mimeType, mediaCapabilities);
       if ((mediaCapabilities.supportsAudio || mediaCapabilities.supportsVideo) && inlineBytes >= GEMINI_INLINE_REQUEST_BYTES) {
-        throw new Error("附件的 Base64 合计已达到 Gemini 100MB 请求上限，请减少附件或缩小文件。");
+        throw new Error("附件的 Base64 合计已达到 100MB 请求上限，请减少附件、缩小文件或选择视频 URL 传输。");
       }
     }
     const stored = inline

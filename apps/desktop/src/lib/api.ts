@@ -1,4 +1,4 @@
-import { isAppearanceSettings, normalizeAppearance } from "@pi-desktop/shared";
+import { fileHostingWriteError, isAppearanceSettings, normalizeAppearance, normalizeFileHostingSettings } from "@pi-desktop/shared";
 import { resolveLocale } from "@pi-desktop/i18n";
 import { projectPlanHistory } from "./plan-history";
 import { guardRemoteInvocation } from "./remote-ipc-safety";
@@ -452,6 +452,7 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
       settings.temporaryWorkspaceContextMenu ??
       (window.piDesktop?.platform === "win32" || window.piDesktop?.platform === "darwin"),
     jevEnabled: (settings as { jevEnabled?: unknown }).jevEnabled === true,
+    fileHosting: normalizeFileHostingSettings(settings.fileHosting),
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
     )
@@ -474,6 +475,10 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
 }
 
 export function validateSettingsWrite(settings: AppSettings): AppSettings {
+  const fileHostingProblem = fileHostingWriteError(settings.fileHosting);
+  if (fileHostingProblem) {
+    throw Object.assign(new Error(fileHostingProblem), { errorCode: "INVALID_PARAMS" });
+  }
   if (settings.appearance !== undefined && !isAppearanceSettings(settings.appearance)) {
     throw Object.assign(new Error("appearance is invalid"), { errorCode: "INVALID_PARAMS" });
   }

@@ -14,7 +14,8 @@ import {
   SVG_MIME_TYPE,
   mediaMimeType,
   supportsMediaMime,
-  base64ByteLength,
+  mediaInlineBytes,
+  videoUploadByteLimit,
   GEMINI_INLINE_REQUEST_BYTES,
   type MediaInputCapabilities,
   type MessageAttachment,
@@ -150,11 +151,12 @@ export async function hydrateAttachmentHistory(
       }
       const size = (await stat(canonical)).size;
       const media = supportsMediaMime(attachment.mimeType, params);
+      const uploadLimit = videoUploadByteLimit(attachment.mimeType, params);
       const dimensions = supportsVision && attachment.kind === "image" && size <= MAX_INLINE_IMAGE_BYTES
         ? probeImageDimensions(await readImageHeader(canonical))
         : undefined;
       const canInline = media
-        ? base64ByteLength(size) < GEMINI_INLINE_REQUEST_BYTES
+        ? (uploadLimit === undefined ? mediaInlineBytes(size, attachment.mimeType, params) < GEMINI_INLINE_REQUEST_BYTES : size <= uploadLimit)
         : supportsVision && attachment.kind === "image" && size <= MAX_INLINE_IMAGE_BYTES
           && !imageExceedsInlineDimensions(dimensions);
       if (canInline) return { attachment, canonicalPath: canonical, size };
@@ -192,13 +194,13 @@ export async function hydrateAttachmentHistory(
       if (
         !item?.canonicalPath ||
         item.size === undefined ||
-        base64ByteLength(item.size) >= remainingMediaBytes ||
+        mediaInlineBytes(item.size, item.attachment.mimeType, params) >= remainingMediaBytes ||
         (!supportsMediaMime(item.attachment.mimeType, params) && item.size > remainingBytes)
       ) {
         continue;
       }
       if (!supportsMediaMime(item.attachment.mimeType, params)) remainingBytes -= item.size;
-      remainingMediaBytes -= base64ByteLength(item.size);
+      remainingMediaBytes -= mediaInlineBytes(item.size, item.attachment.mimeType, params);
       selectedForInlining.push(item);
     }
   }

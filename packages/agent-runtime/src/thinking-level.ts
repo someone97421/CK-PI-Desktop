@@ -10,6 +10,7 @@ import type {
   SessionThinkingLevel,
   ThinkingProtocol,
   ThinkingLevel,
+  VideoTransport,
 } from "@pi-desktop/shared";
 
 export type ThinkingCapabilitySet = {
@@ -36,6 +37,7 @@ export type ModelConfig = {
   attachment?: boolean;
   supportsAudio?: boolean;
   supportsVideo?: boolean;
+  videoTransport?: VideoTransport;
   reasoning: boolean;
   reasoningOptions?: ModelReasoningOption[];
   thinkingProtocol?: ThinkingProtocol;

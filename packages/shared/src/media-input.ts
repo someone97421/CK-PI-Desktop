@@ -1,10 +1,30 @@
-/** Gemini 音视频沿用普通文件持久化，发送时由 MIME 决定内联格式。 */
+export type VideoTransport = "base64" | "url" | "provider-file";
+export type LitterboxExpiration = "1h" | "12h" | "24h" | "72h";
+export type FileHostingSettings = {
+  litterbox?: { enabled: boolean; expiration: LitterboxExpiration };
+};
+
 export const GEMINI_INLINE_REQUEST_BYTES = 100_000_000;
+export const LITTERBOX_MAX_FILE_BYTES = 1_000_000_000;
+export const MOONSHOT_MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 export type MediaInputCapabilities = {
   supportsAudio?: boolean;
   supportsVideo?: boolean;
+  videoTransport?: VideoTransport;
+  maxVideoBytes?: number;
 };
+
+export function videoUploadByteLimit(mime: string | undefined, capabilities: MediaInputCapabilities): number | undefined {
+  if (!mime?.startsWith("video/") || !capabilities.supportsVideo ||
+      !capabilities.videoTransport || capabilities.videoTransport === "base64") return undefined;
+  return capabilities.maxVideoBytes ?? (capabilities.videoTransport === "provider-file"
+    ? MOONSHOT_MAX_FILE_BYTES : LITTERBOX_MAX_FILE_BYTES);
+}
+
+export function mediaInlineBytes(size: number, mime: string | undefined, capabilities: MediaInputCapabilities): number {
+  return videoUploadByteLimit(mime, capabilities) === undefined ? base64ByteLength(size) : 0;
+}
 
 export const MEDIA_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
   wav: "audio/wav", mp3: "audio/mpeg", aiff: "audio/aiff", aif: "audio/aiff",

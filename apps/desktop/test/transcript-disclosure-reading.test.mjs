@@ -101,11 +101,8 @@ test("holding a disclosure leaves follow without a delayed grab-back", () => {
   // on real input or an explicit re-pin, never by taking the bottom back later.
   assert.match(
     transcript,
-    /const leaveFollow = useCallback\(\(\) => \{\s*cancelReadingPosition\(\);\s*cancelFollowScroll\(\);\s*pinnedRef\.current = false;\s*setShowJump\(true\);/,
+    /const releaseFollow = useCallback\(\(\) => \{\s*stopSmoothScroll\(scrollRef\.current\);\s*cancelReadingPosition\(\);\s*cancelFollowScroll\(\);\s*pinnedRef\.current = false;\s*setShowJump\(true\);/,
   );
-  assert.match(transcript,
-    /const releaseFollow = useCallback\(\(\) => \{\s*stopSmoothScroll\(scrollRef\.current\);\s*leaveFollow\(\);/);
-  assert.match(transcript, /onAnchored: leaveFollow/);
   assert.match(
     transcript,
     /const enterDisclosureReading = useCallback\(\(\) => \{\s*releaseFollow\(\);/,

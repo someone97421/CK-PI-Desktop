@@ -6,6 +6,7 @@ import {
   mediaMimeType,
   supportsMediaMime,
   mediaReferenceBlock,
+  videoUploadByteLimit,
   type MediaInputCapabilities,
 } from "@pi-desktop/shared";
 import { mediaStore } from "./media-store.js";
@@ -38,9 +39,20 @@ export async function readMediaToolResult(
   }
   const meta = await stat(path);
   if (!meta.isFile()) return textResult(`Read 需要普通文件：${path}`, true);
+  const uploadLimit = videoUploadByteLimit(mimeType, capabilities);
+  if (uploadLimit !== undefined) {
+    if (meta.size > uploadLimit) return textResult(`媒体 ${path} 超过当前视频传输方式的 ${(uploadLimit / 1_000_000).toFixed(0)}MB 文件上限。`, true);
+    const ref = await mediaStore.putFile(path, mimeType, uploadLimit, signal);
+    signal?.throwIfAborted();
+    return {
+      content: [{ type: "text" as const, text: `已读取媒体 ${path}（${mimeType}），文件 ${ref.size} 字节，将按当前模型的视频传输方式发送。` }, mediaReferenceBlock(ref)],
+      details: { ...details, fileBytes: ref.size },
+      isError: false,
+    };
+  }
   const encodedBytes = base64ByteLength(meta.size);
   if (encodedBytes >= GEMINI_INLINE_REQUEST_BYTES) {
-    return textResult(`媒体 ${path} 编码后约 ${(encodedBytes / 1_000_000).toFixed(2)}MB，已无法放入 100MB 完整请求。请裁剪、转码或分段；单次完整请求目标约 50MB，历史媒体与其他内容也计入预算。`, true);
+    return textResult(`媒体 ${path} 编码后约 ${(encodedBytes / 1_000_000).toFixed(2)}MB，已无法放入 100MB 完整请求。请裁剪、转码、分段或选择 URL 传输；历史媒体与其他内容也计入预算。`, true);
   }
   const ref = await mediaStore.putFile(path, mimeType, Math.floor((GEMINI_INLINE_REQUEST_BYTES - 1) / 4) * 3, signal);
   signal?.throwIfAborted();

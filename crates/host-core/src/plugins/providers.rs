@@ -187,6 +187,7 @@ pub(crate) fn declared_providers(manifest: &PluginManifest) -> Vec<DeclaredPlugi
                                 supports_documents: None,
                                 supports_audio: None,
                                 supports_video: None,
+                                video_transport: None,
                                 available_for_subagents: None,
                                 native_web_search: None,
                                 fast_mode_allowed: None,

@@ -41,6 +41,10 @@ import {
   zhipuRequestCompat,
   type ThinkingLevel,
   type MediaInputCapabilities,
+  type FileHostingSettings,
+  GEMINI_INLINE_REQUEST_BYTES,
+  LITTERBOX_MAX_FILE_BYTES,
+  MOONSHOT_MAX_FILE_BYTES,
 } from "@pi-desktop/shared";
 import { genericModelConfig } from "./model-capabilities.js";
 import { sessionAffinityCompat } from "./session-affinity.js";
@@ -63,6 +67,7 @@ export type RuntimeProviderConfig = {
   supportedThinkingLevels: ThinkingLevel[];
   /** Effective Pi model metadata resolved by Electron main. */
   modelConfig?: ModelConfig;
+  fileHosting?: FileHostingSettings;
   /**
    * Optional outbound HTTP headers. Empty/absent keeps adapter defaults.
    * Injected last via a fetch wrapper so Codex/Anthropic cannot overwrite them.
@@ -227,10 +232,15 @@ export function apiBindingForProviderModel(provider: RuntimeProviderConfig): Api
 }
 
 export function mediaCapabilitiesForProvider(provider: RuntimeProviderConfig): MediaInputCapabilities {
-  const gemini = apiBindingForProviderModel(provider).api === "google-generative-ai";
+  const api = apiBindingForProviderModel(provider).api;
+  const gemini = api === "google-generative-ai";
+  const videoTransport = provider.modelConfig?.videoTransport ?? "base64";
   return {
     supportsAudio: gemini && provider.modelConfig?.supportsAudio === true,
-    supportsVideo: gemini && provider.modelConfig?.supportsVideo === true,
+    supportsVideo: (gemini || api === "openai-completions") && provider.modelConfig?.supportsVideo === true,
+    videoTransport,
+    maxVideoBytes: gemini ? GEMINI_INLINE_REQUEST_BYTES
+      : videoTransport === "provider-file" ? MOONSHOT_MAX_FILE_BYTES : LITTERBOX_MAX_FILE_BYTES,
   };
 }
 
@@ -523,7 +533,12 @@ export function createProviderModels(
   }, {
     ...operations,
     models: [model, ...(operations?.models ?? [])],
-    api: withMediaInput(apiBindingForProviderModel(provider).adapter(), mediaCapabilitiesForProvider(provider), requestLimitBytes),
+    api: withMediaInput(apiBindingForProviderModel(provider).adapter(), mediaCapabilitiesForProvider(provider), requestLimitBytes, undefined, {
+      fileHosting: provider.fileHosting,
+      providerId: provider.id,
+      authKind: provider.authKind,
+      headers: provider.headers,
+    }),
   });
 }
 /** Build a pi-ai model collection for a trusted extension-owned agent. */

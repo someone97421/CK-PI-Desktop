@@ -2816,6 +2816,7 @@ Delegation rules:
       this.provider.authKind === config.provider.authKind &&
       (this.provider.apiStyle ?? "") === (config.provider.apiStyle ?? "") &&
       providerHeadersEqual(this.provider.headers, config.provider.headers) &&
+      safeJson(this.provider.fileHosting ?? null) === safeJson(config.provider.fileHosting ?? null) &&
       this.provider.supportsReasoning === config.provider.supportsReasoning &&
       currentThinkingLevels === nextThinkingLevels &&
       safeJson(this.provider.modelConfig ?? null) === safeJson(config.provider.modelConfig ?? null)

@@ -760,6 +760,10 @@ export function createSessionLaunchRuntime({
         subagentModelKeys.push(key);
       }
     }
+    for (const binding of Object.values(subagentBindings.providers)) {
+      binding.fileHosting = settings.fileHosting;
+    }
+    if (compactionProvider) compactionProvider.fileHosting = settings.fileHosting;
 
     const subagentDiagnostics = [
       ...subagentCatalog.diagnostics,
@@ -874,6 +878,7 @@ export function createSessionLaunchRuntime({
           supportsVision: visionFromModelConfig(modelConfig),
           supportedThinkingLevels: [...thinkingCapabilities.supportedThinkingLevels],
           ...(modelConfig ? { modelConfig } : {}),
+          fileHosting: settings.fileHosting,
         },
         pluginTools: [
           ...plugins

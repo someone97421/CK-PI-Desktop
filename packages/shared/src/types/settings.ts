@@ -3,6 +3,7 @@ import type { CommandShellId } from "../command-shells.js";
 import type { KeybindingOverrides } from "../keyboard-shortcuts.js";
 import type { NetworkProxySettings } from "../network-proxy.js";
 import type { NetworkPolicySettings } from "../network-policy.js";
+import type { FileHostingSettings } from "../media-input.js";
 import type { ContextCompactionSettings } from "./sessions.js";
 import type { Mode } from "./common.js";
 import type { GlobalPermissionMode } from "./permissions.js";
@@ -58,6 +59,7 @@ export type CloseBehavior = "ask" | "tray" | "quit";
 export type TranscriptDisplayMode = "flat" | "command-first" | "fully-folded";
 
 export type AppSettings = {
+  fileHosting?: FileHostingSettings;
   imageGeneration?: import("../image-generation.js").ImageGenerationBinding | null;
   /** All models marked for image generation; absent falls back to imageGeneration. */
   imageGenerationModels?: import("../image-generation.js").ImageGenerationBinding[] | null;

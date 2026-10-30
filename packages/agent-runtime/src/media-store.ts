@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, openAsBlob } from "node:fs";
 import { mkdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -65,12 +65,27 @@ export class MediaStore {
     }
   }
 
-  async read(ref: MediaReference, signal?: AbortSignal): Promise<string> {
+  private async pathFor(ref: MediaReference): Promise<string> {
     if (!isMediaReference(ref)) throw new Error("无效的媒体文件引用");
     const root = await realpath(this.root);
     const path = await realpath(join(root, ref.ref.slice("attachments/".length)));
     if (dirname(path) !== root || !(await stat(path)).isFile()) throw new Error("媒体文件不在附件目录内");
     if ((await stat(path)).size !== ref.size) throw new Error(`媒体文件大小已变化：${ref.ref}`);
+    return path;
+  }
+
+  async blob(ref: MediaReference, signal?: AbortSignal): Promise<Blob> {
+    signal?.throwIfAborted();
+    const path = await this.pathFor(ref);
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(path, { signal })) hash.update(chunk);
+    if (hash.digest("hex") !== ref.ref.slice(12)) throw new Error(`媒体文件校验失败：${ref.ref}`);
+    signal?.throwIfAborted();
+    return openAsBlob(path, { type: ref.mimeType });
+  }
+
+  async read(ref: MediaReference, signal?: AbortSignal): Promise<string> {
+    const path = await this.pathFor(ref);
     const bytes = await readFile(path, { signal });
     if (bytes.length !== ref.size || createHash("sha256").update(bytes).digest("hex") !== ref.ref.slice(12)) {
       throw new Error(`媒体文件校验失败：${ref.ref}`);

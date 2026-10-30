@@ -29,6 +29,7 @@ import {
   type SessionThinkingLevel,
   type ThinkingLevel,
   type ThinkingProtocol,
+  type VideoTransport,
 } from "@pi-desktop/shared";
 import {
   CONTEXT_WINDOW_PRESETS,
@@ -991,25 +992,43 @@ export function ModelSelectionPanes({
                             updateBinding(binding.id, { supportsDocuments: next })
                           }
                         />
+                        {(!apiStyle || apiStyle === "chat_completions" || apiStyle === "google_generative_ai") ? (
+                          <CapabilityToggle
+                            label={t("settings.videoInput")}
+                            published={false}
+                            value={binding.supportsVideo}
+                            onChange={(next) => updateBinding(binding.id, { supportsVideo: next })}
+                          />
+                        ) : null}
+                        {binding.supportsVideo === true && (!apiStyle || apiStyle === "chat_completions" || apiStyle === "google_generative_ai") ? (
+                          <div className="provider-chosen-thinking-protocol">
+                            <span className="provider-chosen-thinking-label">
+                              {t("settings.videoTransport")}
+                              <HelpIcon label={t("settings.videoTransportHint")} />
+                            </span>
+                            <SettingsMenuSelect
+                              className="provider-chosen-thinking-select"
+                              label={t("settings.videoTransport")}
+                              value={binding.videoTransport ?? "base64"}
+                              disabled={busy}
+                              onChange={(value) => updateBinding(binding.id, { videoTransport: value as VideoTransport })}
+                              options={[
+                                { id: "base64", label: t("settings.videoTransportBase64") },
+                                { id: "url", label: t("settings.videoTransportUrl") },
+                                ...(apiStyle === "google_generative_ai" ? [] : [
+                                  { id: "provider-file", label: t("settings.videoTransportProviderFile") },
+                                ]),
+                              ]}
+                            />
+                          </div>
+                        ) : null}
                         {apiStyle === "google_generative_ai" ? (
-                          <>
-                            <CapabilityToggle
-                              label={t("settings.videoInput")}
-                              published={false}
-                              value={binding.supportsVideo}
-                              onChange={(next) =>
-                                updateBinding(binding.id, { supportsVideo: next })
-                              }
-                            />
-                            <CapabilityToggle
-                              label={t("settings.audioInput")}
-                              published={false}
-                              value={binding.supportsAudio}
-                              onChange={(next) =>
-                                updateBinding(binding.id, { supportsAudio: next })
-                              }
-                            />
-                          </>
+                          <CapabilityToggle
+                            label={t("settings.audioInput")}
+                            published={false}
+                            value={binding.supportsAudio}
+                            onChange={(next) => updateBinding(binding.id, { supportsAudio: next })}
+                          />
                         ) : null}
                         {onImageModelChange ? (
                           <label className="provider-chosen-capability">

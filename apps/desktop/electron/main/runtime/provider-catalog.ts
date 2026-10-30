@@ -4,6 +4,8 @@ import {
   defaultCommandShellForPlatform,
   isCommandShellId,
   isAppearanceSettings,
+  fileHostingWriteError,
+  normalizeFileHostingSettings,
   normalizeRadialMenuPreferences,
   normalizeRunStatusReminderMinutes,
   MAX_RUN_STATUS_REMINDER_MINUTES,
@@ -189,6 +191,7 @@ export function createProviderCatalogRuntime({
       keepAwakeWhileRunning: (value as T & { keepAwakeWhileRunning?: unknown })
         .keepAwakeWhileRunning !== false,
       jevEnabled: (value as T & { jevEnabled?: unknown }).jevEnabled === true,
+      fileHosting: normalizeFileHostingSettings((value as T & { fileHosting?: unknown }).fileHosting),
       transcriptDisplayMode:
         (value as T & { transcriptDisplayMode?: unknown }).transcriptDisplayMode === "flat" ||
         (value as T & { transcriptDisplayMode?: unknown }).transcriptDisplayMode === "command-first" ||
@@ -212,6 +215,7 @@ export function createProviderCatalogRuntime({
       runStatusReminderMinutes?: unknown;
       keepAwakeWhileRunning?: unknown;
       jevEnabled?: unknown;
+      fileHosting?: unknown;
       updatePreference?: unknown;
       lastNotifiedUpdateVersion?: unknown;
       networkProxy?: unknown;
@@ -221,6 +225,10 @@ export function createProviderCatalogRuntime({
       transcriptDisplayMode?: unknown;
       radialMenu?: unknown;
     };
+    const fileHostingProblem = fileHostingWriteError(value.fileHosting);
+    if (fileHostingProblem) {
+      throw Object.assign(new Error(fileHostingProblem), { errorCode: ErrorCodes.INVALID_PARAMS });
+    }
     if (value.appearance !== undefined && !isAppearanceSettings(value.appearance)) {
       throw Object.assign(new Error("appearance is invalid"), {
         errorCode: ErrorCodes.INVALID_ARGUMENT,

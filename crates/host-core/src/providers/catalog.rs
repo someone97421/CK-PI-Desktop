@@ -82,6 +82,11 @@ pub(crate) fn normalize_model_bindings(bindings: &[ModelBinding]) -> Vec<ModelBi
                 supports_documents: binding.supports_documents,
                 supports_audio: binding.supports_audio,
                 supports_video: binding.supports_video,
+                video_transport: binding
+                    .video_transport
+                    .as_deref()
+                    .filter(|transport| matches!(*transport, "base64" | "url" | "provider-file"))
+                    .map(str::to_string),
                 available_for_subagents: binding.available_for_subagents,
                 native_web_search: binding.native_web_search,
                 fast_mode_allowed: binding.fast_mode_allowed,
@@ -109,6 +114,7 @@ fn legacy_model_binding(model_id: Option<String>) -> Vec<ModelBinding> {
                 supports_documents: None,
                 supports_audio: None,
                 supports_video: None,
+                video_transport: None,
                 available_for_subagents: None,
                 native_web_search: None,
                 fast_mode_allowed: None,
@@ -533,6 +539,7 @@ mod tests {
             supports_documents: None,
             supports_audio: None,
             supports_video: None,
+            video_transport: None,
             available_for_subagents: None,
             native_web_search: None,
             fast_mode_allowed: None,
