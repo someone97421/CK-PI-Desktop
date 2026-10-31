@@ -72,6 +72,7 @@ import {
   type PluginProviderOAuthRequest,
   type PluginProviderContrib,
   type PluginRevealViewInput,
+  type PluginProjectInfo,
   type PluginServiceContrib,
   type PluginSettingContrib,
   type PluginComposerTransformInput,
@@ -324,6 +325,8 @@ export type PluginHostServices = {
    * it. Additive: `workspace.get` falls back to `getWorkspacePath` alone.
    */
   getWorkspaceInfo?: () => PluginWorkspaceInfo | null;
+  /** 已登记项目的只读元数据；宿主不可用时返回空列表。 */
+  listProjects?: () => Promise<PluginProjectInfo[]>;
   /** 工具所属会话的有效工作目录；支持宿主异步解析 isolated 和临时目录。 */
   getWorkspacePathForSession?: (sessionId: string) => string | null | Promise<string | null>;
   readRemoteWorkspaceFiles?: PluginRemoteFilesRead;
@@ -592,6 +595,7 @@ const HOST_API_ALLOWLIST = new Set([
   "desktop.unsubscribe",
   "desktop.getSessionSnapshot",
   "workspace.get",
+  "projects.list",
   "fs.readText",
   "fs.stat",
   "fs.readRange",
@@ -2697,6 +2701,8 @@ export class PluginRuntime {
         return { ok: true };
       case "workspace.get":
         return api.workspace.get();
+      case "projects.list":
+        return api.projects.list();
       case "models.list":
         this.assertPermission(loaded, "models.list");
         return this.dispatchHostCall(loaded, "models.list", []);
@@ -5907,6 +5913,9 @@ export class PluginRuntime {
           if (!path) return null;
           return { path, name: path.split(/[\\/]/).filter(Boolean).at(-1) || path };
         },
+      },
+      projects: {
+        list: async () => this.services.listProjects?.() ?? [],
       },
       desktop: {
         listOperations: async () => {

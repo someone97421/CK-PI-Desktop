@@ -66,6 +66,7 @@ import type { TurnEndedPayload } from "../runtime/session-coordination";
 import { resolveSessionWorkspace } from "../runtime/session-workspace";
 import type { HostProcess } from "../host-process";
 import { createPluginSessionContext } from "./plugin-session-context";
+import { createPluginProjectLister } from "./plugin-projects";
 import { createComposerSuggestionRelay } from "./composer-suggestion";
 import type { Logger } from "../logger";
 import type { PluginAppearance } from "../../shared/plugin-panel-chrome";
@@ -808,6 +809,11 @@ export function createPluginServices({
      * (ADR 0252) instead of the bare primary path.
      */
     getWorkspaceInfo: () => pluginWorkspaceInfo(getWorkspacePath()),
+    listProjects: createPluginProjectLister(getHost, (operation) => {
+      logger.app("plugin", "warn", "plugin.projects.unavailable", {
+        code: "HOST_UNAVAILABLE", data: { operation },
+      });
+    }),
     openInBrowser: openFileInBrowser,
     // 工具按所属会话解析有效目录；isolated 目录不可用时直接报告失败。
     getWorkspacePathForSession: async (sessionId) => {

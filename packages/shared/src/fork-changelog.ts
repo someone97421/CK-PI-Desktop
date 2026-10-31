@@ -5,6 +5,8 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "修复缓存 token 未计入上下文预算导致自动压缩偏晚的问题，主代理、子代理和恢复会话使用完整占用计算。",
+  "插件新增已登记项目列表接口，无活动项目时也可读取项目名称及多根目录，便于提供项目选择入口。",
   "修复 Windows/macOS 进入模型设置页时的 busyId 未定义崩溃，统一默认模型和压缩模型选择的忙碌状态。",
   "修复访达临时会话重复启动和目录传递；临时会话绑定目录后可用 @ 检索并引用文件，改善中文文件索引。",
   "升级 Pi 1.4，新增默认关闭、按模型显式允许的 /fast 优先服务档；修复配额重试、畸形工具调用和 DeepSeek 思考回放。",
@@ -108,6 +110,8 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Include cached tokens in context budgets so main agents, subagents, and restored sessions compact at the correct occupancy.",
+  "Plugins can list registered projects and their folder roots without an active workspace, enabling project pickers.",
   "Fixed the undefined busyId crash when opening model settings on Windows/macOS and aligned busy states for default and compaction model selection.",
   "Fix Finder temporary-session launches and folder handoff; @ now searches bound temporary workspaces, with correct UTF-8 filename indexing.",
   "Upgrade to Pi 1.4 and add opt-in /fast priority service; fix quota retries, malformed tool-call recovery, and DeepSeek reasoning replay.",
