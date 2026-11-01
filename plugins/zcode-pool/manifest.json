@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "local.zcode-pool",
+  "name": "ZCode Pool",
+  "version": "0.2.0",
+  "description": "复用本机 ZCode 登录，通过官方客户端桥接 Start Plan 模型。",
+  "author": "CK-PI-Desktop",
+  "license": "MIT",
+  "main": "main.js",
+  "categories": ["productivity"],
+  "permissions": ["ui.panel", "background.service", "provider.register"],
+  "ui": { "panel": "renderer/index.html", "title": "ZCode Pool", "width": 960, "height": 820 },
+  "engines": { "piDesktop": ">=0.15.0" },
+  "activationEvents": ["onStartup"],
+  "safetyNotes": "读取本机 ZCode 登录文件，在内存中解密。仅连接 ZCode Start Plan；不切换 API Key。官方 ZCode Agent 作为子进程运行，工具执行策略由面板设置；PI 原生工具和 MCP 不透传。",
+  "contributes": {
+    "services": [{ "id": "zcode-host", "label": "ZCode Pool 桥接服务" }],
+    "settings": [
+      { "key": "enabled", "type": "boolean", "title": "启动时启用桥接", "default": false, "scope": "plugin" },
+      { "key": "cliPath", "type": "string", "title": "ZCode CLI 路径（留空自动发现）", "default": "", "scope": "plugin" },
+      { "key": "nodePath", "type": "string", "title": "Node.js 可执行文件", "default": "node", "scope": "plugin" },
+      { "key": "dataBaseDir", "type": "string", "title": "ZCode 数据基目录（.zcode 的上级）", "default": "", "scope": "plugin" },
+      { "key": "allowTools", "type": "boolean", "title": "允许 ZCode 自动批准工具执行", "default": false, "scope": "plugin" }
+    ],
+    "providers": [{
+      "id": "zcode-start-plan",
+      "name": "ZCode Pool · Start Plan",
+      "baseUrl": "http://127.0.0.1:41971/v1",
+      "apiStyle": "chat_completions",
+      "authKind": "none",
+      "models": [
+        { "id": "GLM-5.3-Flash", "name": "GLM-5.3-Flash · ZCode", "contextWindow": 1000000, "maxTokens": 128000, "supportsImages": false, "thinkingLevels": ["low", "high", "max"], "defaultThinkingLevel": "low" },
+        { "id": "GLM-5.2", "name": "GLM-5.2 · ZCode", "contextWindow": 1000000, "maxTokens": 128000, "supportsImages": false, "thinkingLevels": ["low", "high", "max"], "defaultThinkingLevel": "low" },
+        { "id": "GLM-5-Turbo", "name": "GLM-5-Turbo · ZCode", "contextWindow": 200000, "maxTokens": 64000, "supportsImages": false, "thinkingLevels": ["low", "high", "max"], "defaultThinkingLevel": "low" }
+      ]
+    }]
+  }
+}

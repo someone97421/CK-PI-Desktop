@@ -94,6 +94,7 @@ import {
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { resolveCompactionProvider } from "./compaction-model.js";
+import { zcodeWorkspaceProvider, type ZcodeWorkspaceContext } from "./zcode-workspace.js";
 import {
   compactionSummaryWouldExceedBudget,
   compactionThinkingLevel,
@@ -200,6 +201,7 @@ export type SubagentRunOptions = {
   parentToolCallId: string;
   /** Session scratch workspace root for persistent spillover artifacts (ADR 0062). */
   scratchDir?: string;
+  resolveWorkspace?: () => ZcodeWorkspaceContext;
   /** The delegated instruction, written by the parent model. */
   task: string;
   /** Provider resolved by Electron main (the definition's pin, or the
@@ -834,6 +836,7 @@ export class SubagentRun {
       provider,
       thinkingLevel,
       sessionId: this.opts.sessionId,
+      resolveWorkspace: this.opts.resolveWorkspace,
       maxTokens: this.opts.definition.maxTokens,
       requestLimitBytes: ["native-media-analyst", "media-analyst"].includes(this.opts.definition.name) ? GEMINI_INLINE_REQUEST_BYTES : undefined,
       onUsage: usage => this.recordUsage(usage),
@@ -882,7 +885,7 @@ export class SubagentRun {
         : undefined) ?? this.provider;
     const model = buildProviderModel(provider);
     return {
-      provider,
+      provider: zcodeWorkspaceProvider(provider, this.opts.resolveWorkspace?.() ?? { sessionId: this.opts.sessionId }),
       model,
       models: createProviderModels(provider, model,
         ["native-media-analyst", "media-analyst"].includes(this.opts.definition.name) ? GEMINI_INLINE_REQUEST_BYTES : undefined),

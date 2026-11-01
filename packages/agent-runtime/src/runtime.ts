@@ -308,6 +308,7 @@ import {
   providerHeadersEqual,
   withProviderHeaders,
 } from "./provider-headers.js";
+import { zcodeWorkspaceProvider } from "./zcode-workspace.js";
 import {
   captureProviderResponse,
   classifyProviderError,
@@ -2196,7 +2197,11 @@ Delegation rules:
           ),
           mergeProviderHeaders(
             copilotRequestHeaders(this.provider, context),
-            this.provider.headers,
+            zcodeWorkspaceProvider(this.provider, {
+              sessionId: this.sessionId,
+              workspacePath: this.workspaceRoot ?? this.projectPath ?? this.scratchDir,
+              remote: Boolean(this.remoteWorkspace),
+            }).headers,
           ),
           m.api,
         );
@@ -4871,6 +4876,12 @@ Delegation rules:
           turnId: this.turnId,
           parentToolCallId: toolCallId,
           scratchDir: this.scratchDir,
+          resolveWorkspace: () => ({
+            sessionId: this.sessionId,
+            workspacePath: (worktreeKey ? this.delegateWorkspaceRoots.get(worktreeKey) : undefined)
+              ?? this.workspaceRoot ?? this.projectPath ?? this.scratchDir,
+            remote: Boolean(this.remoteWorkspace),
+          }),
           task,
           provider,
           infiniteProviderRetry: this.infiniteProviderRetry,
@@ -4986,7 +4997,7 @@ Delegation rules:
       applyInstructions,
       beforeToolCall: async (context: BeforeToolCallContext, signal?: AbortSignal) => {
         await this.preparePathToolCall(context, applyInstructions, builtinToolNames, record.worktreeKey, signal);
-        await this.registerBatchCall(context, builtinToolNames, record.delegationId);
+        await this.registerBatchCall(context, builtinToolNames, record.worktreeKey);
         return undefined;
       },
     };
@@ -6057,6 +6068,12 @@ Delegation rules:
               sessionId: this.sessionId,
               parentToolCallId: toolCallId,
               scratchDir: this.scratchDir,
+              resolveWorkspace: () => ({
+                sessionId: this.sessionId,
+                workspacePath: (record.worktreeKey ? this.delegateWorkspaceRoots.get(record.worktreeKey) : undefined)
+                  ?? this.workspaceRoot ?? this.projectPath ?? this.scratchDir,
+                remote: Boolean(this.remoteWorkspace),
+              }),
               turnId: this.turnId,
               definition,
               provider,
@@ -8393,7 +8410,11 @@ Delegation rules:
     const usageTurnId = this.turnId;
     return generateCompactionSummary({
       preparation,
-      provider: this.compactionProvider ?? this.provider,
+      provider: zcodeWorkspaceProvider(this.compactionProvider ?? this.provider, {
+        sessionId: this.sessionId,
+        workspacePath: this.workspaceRoot ?? this.projectPath ?? this.scratchDir,
+        remote: Boolean(this.remoteWorkspace),
+      }),
       model: this.thinkingLevel === "omit" ? omitThinkingModel(model) : model,
       models: this.compactionModels ?? this.models,
       sessionId: this.sessionId,

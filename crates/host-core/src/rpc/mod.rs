@@ -5278,6 +5278,15 @@ async fn handle_request(
                     },
                 )
                 .map_err(plugin_err)?;
+            if let Err(error) = crate::plugins::reconcile_plugin(
+                &st.db,
+                &st.secrets,
+                &st.plugins,
+                &result.plugin.id,
+                result.plugin.enabled,
+            ) {
+                tracing::warn!(plugin = %result.plugin.id, %error, "plugin provider sync failed");
+            }
             Ok(json!({ "result": result }))
         }
         "plugins.installFromPackage" => {
@@ -5312,6 +5321,15 @@ async fn handle_request(
                     },
                 )
                 .map_err(plugin_err)?;
+            if let Err(error) = crate::plugins::reconcile_plugin(
+                &st.db,
+                &st.secrets,
+                &st.plugins,
+                &result.plugin.id,
+                result.plugin.enabled,
+            ) {
+                tracing::warn!(plugin = %result.plugin.id, %error, "plugin provider sync failed");
+            }
             Ok(json!({ "result": result }))
         }
         "plugins.grantPermissions" => {

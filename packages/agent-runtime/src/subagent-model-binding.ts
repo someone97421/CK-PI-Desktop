@@ -14,6 +14,7 @@ import {
 } from "./opencode-session-headers.js";
 import { withSessionAffinityOptions } from "./session-affinity.js";
 import { mergeProviderHeaders, withProviderHeaders } from "./provider-headers.js";
+import { zcodeWorkspaceProvider, type ZcodeWorkspaceContext } from "./zcode-workspace.js";
 import { clampOutputToContext, requestTranscript } from "./output-cap.js";
 import {
   agentThinkingLevel as agentThinkingLevelFor,
@@ -37,6 +38,7 @@ export function subagentModelBinding(opts: {
   provider: RuntimeProviderConfig;
   thinkingLevel: SubagentThinkingLevel;
   sessionId: string;
+  resolveWorkspace?: () => ZcodeWorkspaceContext;
   maxTokens?: number;
   requestLimitBytes?: number;
   onUsage?: UsageObserver;
@@ -101,7 +103,7 @@ export function subagentModelBinding(opts: {
         ),
         mergeProviderHeaders(
           copilotRequestHeaders(opts.provider, context),
-          opts.provider.headers,
+          zcodeWorkspaceProvider(opts.provider, opts.resolveWorkspace?.() ?? { sessionId: opts.sessionId }).headers,
         ),
         m.api,
       );

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="pi-plugin-chrome" content="v2" />
+  <title>ZCode Pool</title>
+  <link rel="stylesheet" href="panel.css" />
+  <script src="panel.js" defer></script>
+</head>
+<body>
+  <div class="titlebar" aria-hidden="true"></div>
+  <header class="bar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">Z</span><div><h1>ZCode Pool</h1><span class="muted small">本机账号 · StartPlan</span></div></div>
+    <div class="actions"><button id="refresh" disabled title="重新检测本机客户端、账号与模型">刷新</button><button id="toggle" class="primary" disabled>启动</button></div>
+  </header>
+  <main>
+    <div class="status-line" role="status" aria-live="polite"><span id="phase" class="badge">加载中</span><span id="activity" class="muted small">正在读取本机状态…</span></div>
+    <p id="error" class="hint error" role="status" hidden></p>
+    <p id="notice" class="hint" role="status" hidden></p>
+    <section class="card" aria-labelledby="account-title">
+      <div class="section-heading"><h2 id="account-title">当前账号</h2><span id="account-state" class="muted small">检测中</span></div>
+      <div class="account"><span class="avatar" aria-hidden="true">ZC</span><div class="account-info"><strong id="account-label">正在读取登录信息…</strong><div id="expiry" class="muted small">—</div></div><span class="tag">单账号</span></div>
+      <dl class="metadata"><div><dt>客户端</dt><dd id="client">检测中</dd></div><div><dt>桥接地址</dt><dd id="endpoint" class="mono">—</dd></div></dl>
+      <p class="hint">工作目录自动跟随所属 PI 会话；PI 原生工具 / MCP 不透传。</p>
+    </section>
+    <section class="stats" aria-label="请求统计">
+      <div><span>总请求</span><strong id="requests">—</strong></div><div><span>成功 / 失败</span><strong id="outcomes">—</strong></div><div><span>输入 token</span><strong id="inputTokens">—</strong></div><div><span>输出 token</span><strong id="outputTokens">—</strong></div>
+    </section>
+    <section class="card" aria-labelledby="models-title">
+      <div class="section-heading"><h2 id="models-title">StartPlan 模型 <span id="model-count" class="muted small"></span></h2><span class="muted small">启用后供 PI 使用</span></div>
+      <p id="reload" class="hint" hidden>重载插件以更新 PI 模型清单。</p>
+      <div id="models" class="models" role="group" aria-label="模型列表"><div class="empty">正在读取模型…</div></div>
+      <div class="test-toolbar"><label for="test-model" class="small">连接测试</label><select id="test-model" disabled><option value="">暂无可测试模型</option></select><button id="test" disabled title="发送一条真实请求，将消耗当前 ZCode 账号额度">测试</button></div>
+      <div id="test-result" class="test-result" hidden><div class="section-heading"><strong id="test-state" class="small" role="status"></strong><span id="test-metrics" class="muted small"></span></div><pre id="test-text"></pre></div>
+    </section>
+    <details class="card" id="settings-section">
+      <summary><span>路径与工具设置</span><span class="muted small">本机</span></summary>
+      <form id="settings-form">
+        <fieldset id="settings-fields" disabled>
+          <label class="field" for="cliPath">ZCode CLI 路径<input id="cliPath" name="cliPath" autocomplete="off" spellcheck="false" placeholder="自动检测" /></label>
+          <label class="field" for="nodePath">Node.js 路径<input id="nodePath" name="nodePath" autocomplete="off" spellcheck="false" placeholder="自动检测" /></label>
+          <label class="field" for="dataBaseDir">ZCode 数据目录<input id="dataBaseDir" name="dataBaseDir" autocomplete="off" spellcheck="false" placeholder="默认目录" /></label>
+          <label class="tool-setting" for="allowTools"><span>ZCode 侧工具自动执行<span class="hint">默认关闭；开启后由 ZCode 执行工具。</span></span><input id="allowTools" name="allowTools" type="checkbox" role="switch" /></label>
+        </fieldset>
+        <div class="settings-footer"><span id="settings-hint" class="hint">停止桥接后可修改设置。</span><button id="save" type="submit" disabled>保存设置</button></div>
+      </form>
+    </details>
+    <details class="card" id="logs-section">
+      <summary><span>运行日志 <span id="log-count" class="muted small">0</span></span><span class="muted small">最近记录</span></summary>
+      <div class="log-toolbar"><button id="clear-logs" disabled>清空日志</button></div><ol id="logs" class="logs"><li class="empty">暂无日志</li></ol>
+    </details>
+    <footer class="muted small">ZCode Pool <span>本地 Agent 桥接</span></footer>
+  </main>
+</body>
+</html>
