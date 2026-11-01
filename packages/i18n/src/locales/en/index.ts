@@ -1785,6 +1785,8 @@ sklm: {
     inlineVisualizationsDesc: "Generate and display interactive charts in local chats. Off by default. Turning this off hides existing charts without deleting them. Generation changes take effect on your next message.",
     preventScreenSleep: "Prevent screen sleep",
     preventScreenSleepDesc: "Keep the display awake while the app is running.",
+    scheduledTasks: "Scheduled tasks",
+    scheduledTasksDesc: "Turning this off hides scheduled tasks and stops new runs. Existing tasks and history are kept.",
     windowTranslucency: "Translucent window",
     windowTranslucencyDesc: "Keep the macOS window translucent over the desktop blur, which is the default. It costs more GPU while the window is visible; turn it off for an opaque window with the lowest idle load. A change applies after a restart.",
     windowTranslucencyRestart: "Restart to apply",

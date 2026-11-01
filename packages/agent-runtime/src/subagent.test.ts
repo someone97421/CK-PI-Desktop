@@ -35,14 +35,14 @@ describe("delegate execution policy", () => {
     expect(run.agent.identity).toEqual(DESKTOP_AGENT_IDENTITY);
   });
 
-  it("preserves sequential policy for a same-name dynamic Read", () => {
+  it.each(["Read", "Write", "Edit"])("preserves sequential policy for a same-name dynamic %s", (name) => {
     const { run } = createRun({ tools: [{
-      name: "Read", label: "extension", description: "dynamic", parameters: Type.Object({}),
+      name, label: "extension", description: "dynamic", parameters: Type.Object({}),
       executionMode: "sequential", execute: async () => ({ content: [], details: {} }),
     }] });
     expect(run.agent.state.tools[0].executionMode).toBe("sequential");
   });
-  it("fails closed for mutations and unknown tools even when supplied a parallel hint", () => {
+  it("runs file tools in parallel batches but fails closed for Bash and unknown tools", () => {
     const { run } = createRun({ tools: ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "plugin_unknown"].map((name) => ({
       name, label: name, description: name, parameters: Type.Object({}),
       executionMode: "parallel", execute: async () => ({ content: [], details: {} }),
@@ -445,6 +445,17 @@ describe("SubagentRun event forwarding", () => {
 
     expect(events).toEqual([]);
     expect(run.turns).toBe(1);
+  });
+
+  it("hands each finished turn's assistant message to onTurnEnd", () => {
+    const onTurnEnd = vi.fn();
+    const { run, events } = createRun({ onTurnEnd });
+    const message = assistantMessage({ content: [] });
+
+    run.handleEvent({ type: "turn_end", message, toolResults: [] });
+
+    expect(onTurnEnd).toHaveBeenCalledExactlyOnceWith(message);
+    expect(events).toEqual([]);
   });
 });
 

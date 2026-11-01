@@ -1763,6 +1763,8 @@ sklm: {
     inlineVisualizationsDesc: "在本地聊天中生成和显示交互图表，默认关闭。关闭后隐藏已有图表但不删除文件，重新开启可查看；生成能力从下一次发送起生效。",
     preventScreenSleep: "阻止屏幕休眠",
     preventScreenSleepDesc: "应用运行时保持屏幕常亮。",
+    scheduledTasks: "定时任务",
+    scheduledTasksDesc: "关闭后隐藏定时任务入口并停止启动新任务，已有任务和历史记录保留。",
     windowTranslucency: "窗口透明效果",
     windowTranslucencyDesc: "让 macOS 窗口保持透明并显示桌面模糊背景（默认开启）。窗口可见时会占用更多 GPU；关闭后使用不透明窗口，空闲占用最低。修改后需重启生效。",
     windowTranslucencyRestart: "重启后生效",

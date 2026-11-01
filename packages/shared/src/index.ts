@@ -1,6 +1,7 @@
 export * from "./activation.js";
 export * from "./protocol.js";
 export * from "./app-version.js";
+export * from "./file-batches.js";
 export * from "./errors.js";
 export * from "./rpc-error.js";
 export * from "./certificate-errors.js";

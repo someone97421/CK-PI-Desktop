@@ -5,7 +5,8 @@ import {
 } from "./mutation-recovery.js";
 import { DESKTOP_AGENT_IDENTITY } from "./agent-identity.js";
 import { resolveMcpToolSelection } from "./mcp-tool-selection.js";
-import { toolExecutionMode, withDynamicTaskExecutionMode } from "./tool-execution-policy.js";
+import { BatchPlanner, withBatchTurn } from "./batch-planner.js";
+import { TOOL_EXECUTION_SPECS, resolveBatchExecutionMode, toolExecutionMode, withDynamicTaskExecutionMode } from "./tool-execution-policy.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TOOL_ACTIVATION_SECTION, toolDeclarationPolicy, toolActivationSection, restoredToolActivation, syncToolActivation, type ToolDeclarationPolicy } from "./fixed-tool-declarations.js";
 import { orderSystemRows, SystemTranscriptJournal } from "./system-transcript-journal.js";
@@ -160,6 +161,7 @@ import {
   usageFromPi,
   usageToPi,
 } from "./agent-messages.js";
+import { hostContentBlockText } from "./tool-result-content.js";
 import { withExplicitRequired } from "./tool-schema.js";
 import { buildSessionContext } from "./session-context.js";
 import {
@@ -1484,33 +1486,6 @@ function appendToolProgress(current: string, chunk: string): string {
 }
 
 /**
- * Model-visible text for one host tool content block. Besides plain `text`
- * blocks, MCP servers return file bodies as embedded text resources and large
- * payloads as resource links (github-mcp-server `get_file_contents` sends a
- * status line plus one of these), so dropping them next to a sibling text
- * block hides the actual result from the model. Binary resources and other
- * block kinds have no text to show and stay out of the text channel.
- */
-function hostContentBlockText(block: unknown): string | undefined {
-  if (!isRecord(block)) return undefined;
-  if (block.type === "text" && typeof block.text === "string") return block.text;
-  if (
-    block.type === "resource" &&
-    isRecord(block.resource) &&
-    typeof block.resource.text === "string"
-  ) {
-    return block.resource.text;
-  }
-  if (block.type === "resource_link" && typeof block.uri === "string") {
-    const name = typeof block.name === "string" && block.name.trim()
-      ? `${block.name.trim()}: `
-      : "";
-    return `[resource link] ${name}${block.uri}`;
-  }
-  return undefined;
-}
-
-/**
  * JSON text fallback for a host result that produced no text blocks. Image
  * `data` and resource `blob` bytes stay off the text channel; type, mimeType,
  * and uri remain so the model still sees what was attached.
@@ -1566,8 +1541,6 @@ export function toolResultFromUi(
       }
     }
   } else if (Array.isArray(raw)) {
-    // Plugin tools may return a bare content-block array; restore its text
-    // and image blocks so a restart does not flatten them into JSON (#1360).
     for (const b of raw) {
       if (!isRecord(b)) continue;
       const blockText = hostContentBlockText(b);
@@ -1584,9 +1557,6 @@ export function toolResultFromUi(
   } else if (typeof raw === "string" && raw.trim()) {
     blocks.push({ type: "text", text: raw });
   } else if (raw !== undefined && raw !== null) {
-    // A host Read of an image file returns a top-level `images` array rather
-    // than content blocks; restore those as real image content so the model
-    // sees the picture across a restart, not just the JSON text (#1073).
     const rawObject = isRecord(raw) ? raw : undefined;
     const images = rawObject?.images;
     if (rawObject && Array.isArray(images)) {
@@ -1825,6 +1795,8 @@ export class DesktopAgentRuntime {
   private delegateWorkspaceRoots = new Map<string, string>();
   /** Serializes same-path mutations across the parent and its delegates. */
   private writeLocks = new PathMutex();
+  /** Orders one parallel batch's calls by the resources they claim. */
+  private batchPlanner: BatchPlanner;
   /** Complete tool registry; only the active subset is sent to the provider. */
   private toolCatalog = new Map<string, AgentTool>();
   /** Tools intentionally omitted from the initial provider request. */
@@ -2043,6 +2015,7 @@ export class DesktopAgentRuntime {
     this.jevApiKey = opts.jevApiKey;
     this.host = opts.host;
     this.persistenceClient = new SubagentPersistenceClient(opts.host, opts.sessionId);
+    this.batchPlanner = new BatchPlanner(this.host, this.sessionId);
     this.hostCloseUnsubscribe = this.host.onClose?.(() => {
       this.cleanupActiveToolProgress();
     });
@@ -2758,6 +2731,7 @@ Delegation rules:
       const blocked = await this.extensionToolCall(context);
       if (blocked?.block) return blocked;
       await this.preparePathToolCall(context, undefined, undefined, undefined, signal);
+      await this.registerBatchCall(context);
       return undefined;
     }
     const submitKind = submitToolKind(context.toolCall.name);
@@ -2793,8 +2767,13 @@ Delegation rules:
     this.emit({ type: "planning_state", state, ...details });
   }
 
-  /** True when this runtime can be reused for a prompt with the given config. */
-  matches(config: RuntimeMatchConfig): boolean {
+  /**
+   * First reason this runtime cannot be reused for the given config, or null
+   * when it matches. Field names are diagnostics, not API: they name the
+   * comparison that failed so a rebuild can be attributed (#1948) instead of
+   * leaving "why did my cache reset" unanswerable.
+   */
+  firstMismatch(config: RuntimeMatchConfig): string | null {
     const requestedPluginTools = config.pluginTools ?? [];
     const current = safeJson([...this.pluginTools].sort((a, b) => a.name.localeCompare(b.name)));
     const next = safeJson([...requestedPluginTools].sort((a, b) => a.name.localeCompare(b.name)));
@@ -2812,58 +2791,62 @@ Delegation rules:
       Boolean(this.provider.extensionAgentKey) &&
       this.provider.extensionAgentKey === config.provider.extensionAgentKey &&
       this.provider.modelId === config.provider.modelId;
-    const providerMatches = extensionAgentMatches || (
-      this.provider.id === config.provider.id &&
-      this.provider.modelId === config.provider.modelId &&
-      (this.provider.baseUrl ?? "") === (config.provider.baseUrl ?? "") &&
-      this.provider.apiKey === config.provider.apiKey &&
-      this.provider.authKind === config.provider.authKind &&
-      (this.provider.apiStyle ?? "") === (config.provider.apiStyle ?? "") &&
-      providerHeadersEqual(this.provider.headers, config.provider.headers) &&
-      safeJson(this.provider.fileHosting ?? null) === safeJson(config.provider.fileHosting ?? null) &&
-      this.provider.supportsReasoning === config.provider.supportsReasoning &&
-      currentThinkingLevels === nextThinkingLevels &&
-      safeJson(this.provider.modelConfig ?? null) === safeJson(config.provider.modelConfig ?? null)
-    );
-    // A summary-model selection change (or a newly rejected/accepted
-    // candidate) retires the runtime so the next launch rebuilds the summary
-    // binding. Both sides are put through the same gate, so a candidate that
-    // merely restates the session model stays a no-op.
+    // An extension agent is identified by its key and model alone; the other
+    // provider fields belong to the plugin that declared it.
+    if (!extensionAgentMatches) {
+      const providerChecks: Array<[string, boolean]> = [
+        ["provider.id", this.provider.id === config.provider.id],
+        ["provider.modelId", this.provider.modelId === config.provider.modelId],
+        ["provider.baseUrl", (this.provider.baseUrl ?? "") === (config.provider.baseUrl ?? "")],
+        ["provider.apiKey", this.provider.apiKey === config.provider.apiKey],
+        ["provider.authKind", this.provider.authKind === config.provider.authKind],
+        ["provider.apiStyle", (this.provider.apiStyle ?? "") === (config.provider.apiStyle ?? "")],
+        ["provider.headers", providerHeadersEqual(this.provider.headers, config.provider.headers)],
+        ["provider.fileHosting", safeJson(this.provider.fileHosting ?? null) === safeJson(config.provider.fileHosting ?? null)],
+        ["provider.supportsReasoning", this.provider.supportsReasoning === config.provider.supportsReasoning],
+        ["provider.supportedThinkingLevels", currentThinkingLevels === nextThinkingLevels],
+        ["provider.modelConfig", safeJson(this.provider.modelConfig ?? null) === safeJson(config.provider.modelConfig ?? null)],
+      ];
+      for (const [field, ok] of providerChecks) {
+        if (!ok) return field;
+      }
+    }
+    // A summary-model selection change retires the runtime so the next launch
+    // rebuilds the summary binding.
     const nextCompactionProvider = resolveCompactionProvider(
       config.provider,
       config.compactionProvider,
     );
-    return (
-      !this.disposed &&
-      providerMatches &&
-      this.mode === config.mode &&
-      this.jevApiKey === config.jevApiKey &&
-      this.thinkingLevel ===
-        clampThinkingLevel(config.provider, config.thinkingLevel) &&
-      current === next &&
-      safeJson(this.commandShell) === safeJson(config.commandShell) &&
-      safeJson(this.baseProjectInstructions ?? null) ===
-        safeJson(config.projectInstructions ?? null) &&
-      safeJson(this.customSystemPrompt ?? null) ===
-        safeJson(config.customSystemPrompt ?? null) &&
-      (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "") &&
-      (this.projectPath ?? "") === (config.remoteWorkspace?.path ?? config.projectPath?.trim() ?? "") &&
-      safeJson(this.remoteWorkspace ?? null) === safeJson(config.remoteWorkspace ?? null) &&
-      this.configurationGuidePath === (config.remoteWorkspace ? undefined : config.configurationGuidePath) &&
-      (this.workspaceRoot ?? "") === (config.workspaceRoot?.trim() ?? "") &&
-      // Editing `~/.agents/subagents/*.md` must reach the next prompt. Definition
-      // bodies are part of the `Task` tool's behavior, so unlike skills they
-      // are compared in full.
-      safeJson(this.subagents) === safeJson(config.subagents ?? []) &&
-      safeJson(this.subagentProviders) === safeJson(config.subagentProviders ?? {}) &&
-      safeJson([...this.subagentModelKeys].sort()) ===
-        safeJson([...new Set(config.subagentModelKeys ?? [])].sort()) &&
-      // Enabling or disabling a trusted extension retires the runtime so the
-      // next prompt reloads the set (spec 16 §4.3).
-      trustedExtensionIds(this.trustedExtensionSpecs) ===
-        trustedExtensionIds(config.trustedExtensions ?? []) &&
-      compactionProvidersEqual(this.compactionProvider, nextCompactionProvider)
-    );
+    const checks: Array<[string, boolean]> = [
+      ["disposed", !this.disposed],
+      ["mode", this.mode === config.mode],
+      ["jevApiKey", this.jevApiKey === config.jevApiKey],
+      ["thinkingLevel", this.thinkingLevel === clampThinkingLevel(config.provider, config.thinkingLevel)],
+      ["pluginTools", current === next],
+      ["commandShell", safeJson(this.commandShell) === safeJson(config.commandShell)],
+      ["projectInstructions", safeJson(this.baseProjectInstructions ?? null) === safeJson(config.projectInstructions ?? null)],
+      ["customSystemPrompt", safeJson(this.customSystemPrompt ?? null) === safeJson(config.customSystemPrompt ?? null)],
+      ["projectMemory", (this.projectMemory ?? "") === (config.projectMemory?.trim() ?? "")],
+      ["projectPath", (this.projectPath ?? "") === (config.remoteWorkspace?.path ?? config.projectPath?.trim() ?? "")],
+      ["remoteWorkspace", safeJson(this.remoteWorkspace ?? null) === safeJson(config.remoteWorkspace ?? null)],
+      ["configurationGuidePath", this.configurationGuidePath === (config.remoteWorkspace ? undefined : config.configurationGuidePath)],
+      ["workspaceRoot", (this.workspaceRoot ?? "") === (config.workspaceRoot?.trim() ?? "")],
+      // Definition bodies are part of the Task tool's behavior.
+      ["subagents", safeJson(this.subagents) === safeJson(config.subagents ?? [])],
+      ["subagentProviders", safeJson(this.subagentProviders) === safeJson(config.subagentProviders ?? {})],
+      ["subagentModelKeys", safeJson([...this.subagentModelKeys].sort()) === safeJson([...new Set(config.subagentModelKeys ?? [])].sort())],
+      ["trustedExtensions", trustedExtensionIds(this.trustedExtensionSpecs) === trustedExtensionIds(config.trustedExtensions ?? [])],
+      ["compactionProvider", compactionProvidersEqual(this.compactionProvider, nextCompactionProvider)],
+    ];
+    for (const [field, ok] of checks) {
+      if (!ok) return field;
+    }
+    return null;
+  }
+
+  /** True when this runtime can be reused for a prompt with the given config. */
+  matches(config: RuntimeMatchConfig): boolean {
+    return this.firstMismatch(config) === null;
   }
 
   /**
@@ -3692,6 +3675,7 @@ Delegation rules:
               toolCallId,
               toolName,
               args: params,
+              ...(this.batchPlanner.ticket(toolCallId) ? { fileBatchTicket: this.batchPlanner.ticket(toolCallId) } : {}),
               mode: this.mode,
               ...(isBash
                 ? {
@@ -4017,7 +4001,7 @@ Delegation rules:
               () => run(toolCallId, params, signal, onUpdate),
             );
           }
-          if (toolName === "Read") {
+          if (!this.batchPlanner.supported && toolName === "Read") {
             return this.writeLocks.read(
               this.pathLockKey(toolCallId, params),
               () => run(toolCallId, params, signal, onUpdate),
@@ -4209,20 +4193,24 @@ Delegation rules:
       // The execution mode is decided here, in one place, so no tool can grow
       // an accidental parallel batch: unknown tools remain sequential.
       // pi runs a whole batch sequentially when it holds one sequential tool;
-      // the batch-level policy also keeps Task mixed with file reads behind
-      // the delegate completion boundary.
+      // the batch-level policy also keeps Task mixed with any file tool
+      // (Read/Glob/Grep/Write/Edit) sequential; only reads ordered after a
+      // writable Task wait for that delegate to settle.
       // The provider-facing schema is settled here too, at the single origin of
       // every tool, so the session agent and a delegated `Task` run send the
       // same declaration (#864).
       const builtin = this.builtinTools.has(tool);
+      const guarded = withModeExecutionGuard(
+        withExplicitRequired({
+          ...tool,
+          executionMode: builtin ? toolExecutionMode(tool.name, this.batchPlanner.supported) : "sequential",
+        }),
+        () => this.isToolAllowedInMode(tool.name) ? undefined : modeToolDenial(tool.name, this.mode),
+      );
+      // Batch ordering wraps the mode guard: a call the guard rejects must
+      // still release the calls ordered behind it in its batch.
       const catalogTool = withDynamicTaskExecutionMode(
-        withModeExecutionGuard(
-          withExplicitRequired({
-            ...tool,
-            executionMode: builtin ? toolExecutionMode(tool.name) : "sequential",
-          }),
-          () => this.isToolAllowedInMode(tool.name) ? undefined : modeToolDenial(tool.name, this.mode),
-        ),
+        builtin && TOOL_EXECUTION_SPECS[tool.name]?.file ? withBatchTurn(guarded, this.batchPlanner) : guarded,
         () => this.agent?.state.messages.at(-1),
       );
       if (builtin) this.builtinTools.add(catalogTool);
@@ -4998,6 +4986,7 @@ Delegation rules:
       applyInstructions,
       beforeToolCall: async (context: BeforeToolCallContext, signal?: AbortSignal) => {
         await this.preparePathToolCall(context, applyInstructions, builtinToolNames, record.worktreeKey, signal);
+        await this.registerBatchCall(context, builtinToolNames, record.delegationId);
         return undefined;
       },
     };
@@ -6884,6 +6873,37 @@ Delegation rules:
     }
   }
 
+  /**
+   * Records what a prepared builtin call will touch so the batch can order it
+   * (`withBatchTurn`). Runs after every check that can block the call. Tools
+   * without claims are sequential, or Task, whose mixed batches pi already
+   * runs sequentially.
+   */
+  private async registerBatchCall(
+    context: BeforeToolCallContext,
+    builtinToolNames?: ReadonlySet<string>,
+    delegationId?: string,
+  ): Promise<void> {
+    const name = context.toolCall.name;
+    if (!this.batchPlanner.supported || !TOOL_EXECUTION_SPECS[name]?.file) return;
+    // pi prepares/executes sequential batches one call at a time. They must
+    // not seal a partial registration and later try to append to it.
+    const calls = context.assistantMessage.content.filter((block) => block.type === "toolCall");
+    if (resolveBatchExecutionMode(context.assistantMessage) === "sequential"
+      || calls.some((call) => context.context?.tools?.find((tool) => tool.name === call.name)?.executionMode !== "parallel")) return;
+    const selected = context.context?.tools?.find((tool) => tool.name === name);
+    const builtin = builtinToolNames ? builtinToolNames.has(name) : selected && this.builtinTools.has(selected);
+    const batch: unknown = context.assistantMessage;
+    if (!builtin || !isRecord(context.args) || !isRecord(batch)) return;
+    await this.batchPlanner.register(
+      batch,
+      context.args,
+      { toolName: name, toolCallId: context.toolCall.id,
+        ordinal: context.assistantMessage.content.findIndex((block) => block.type === "toolCall" && block.id === context.toolCall.id),
+        args: normalizeToolParams(name, context.args), delegationId },
+    );
+  }
+
   private async preparePathToolCall(
     context: BeforeToolCallContext,
     apply?: (instructions: ProjectInstructions | undefined) => void,
@@ -8176,6 +8196,16 @@ Delegation rules:
     ) {
       return "oversized";
     }
+    // The composer would otherwise keep showing the last pre-compaction
+    // request's usage until another request reports one (#2015). The estimate
+    // rides in the opaque details so it survives a reload like the generation.
+    checkpoint = {
+      ...checkpoint,
+      details: {
+        ...(isRecord(checkpoint.details) ? checkpoint.details : {}),
+        contextTokens: compactedBudget.tokens,
+      },
+    };
     try {
       await this.host.call("session.appendCompaction", {
         sessionId: this.sessionId,
@@ -9269,6 +9299,7 @@ Delegation rules:
         }
         break;
       case "turn_end":
+        this.batchPlanner.settleBatch(event.message);
         if (
           this.suppressOverflowRunEnd ||
           this.suppressProviderRetryRunEnd ||
@@ -9553,9 +9584,10 @@ Delegation rules:
     if (this.disposed) throw new Error("runtime disposed");
     this.assertNotRunning();
     const turnId = durableTurnId?.trim() || randomUUID();
-    return this.trackTurnOperation(turnId, () =>
-      this.promptTurn(input, userMessageId, turnId),
-    );
+    return this.trackTurnOperation(turnId, async () => {
+      try { return await this.promptTurn(input, userMessageId, turnId); }
+      finally { await this.batchPlanner.drain(); }
+    });
   }
 
   private async promptTurn(
@@ -9576,11 +9608,6 @@ Delegation rules:
     this.turnSubagentUsage = undefined;
     // Capabilities and path-scoped instruction claims belong to one prompt.
     this.subagentOverrideProviders = {};
-    this.resetDeferredToolsForPrompt();
-    if (selectedTools.length) {
-      this.activateDeferredTools(selectedTools);
-      this.setAgentTools(this.activeTools());
-    }
     this.pathInstructionClaims.clear();
     this.pendingUserMessageId = userMessageId;
     this.resetRunRecoveryState();
@@ -9599,6 +9626,14 @@ Delegation rules:
     this.resetRunStatusReminder();
     this.setAgentActivity({ phase: "starting", since: Date.now() });
     try {
+      // Publish turn ownership before the first await. Status polling and Stop
+      // must include capability negotiation, not observe a falsely idle turn.
+      await this.batchPlanner.negotiate(Boolean(this.remoteWorkspace));
+      if (this.runCancelled || this.disposed) throw turnAbortedError("Turn aborted during Host capability negotiation");
+      this.rebuildToolCatalog();
+      this.resetDeferredToolsForPrompt();
+      if (selectedTools.length) this.activateDeferredTools(selectedTools);
+      this.setAgentTools(this.activeTools());
       const content = promptContent(modelInput, mediaCapabilitiesForProvider(this.provider));
       const incomingUserMessage: AgentMessage = {
         role: "user",

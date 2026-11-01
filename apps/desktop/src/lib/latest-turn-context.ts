@@ -19,6 +19,11 @@ export type LatestTurnContextInspector = {
   responseDurationMs?: number;
   responseOutputTokens?: number;
   responseOutputEstimated: boolean;
+  /**
+   * Estimated context after the newest compaction, present only while no
+   * request after that compaction has reported usage (#2015).
+   */
+  compactedContextTokens?: number;
 };
 
 const inspectors = new WeakMap<object, LatestTurnContextInspector>();
@@ -37,9 +42,16 @@ export function latestTurnContextInspector(
   providers: ProviderPublic[],
   compactions?: readonly (ContextCompactionMark & { contextUsageMessageId?: string })[],
 ): LatestTurnContextInspector | undefined {
+  const compaction = compactions?.at(-1);
   let latestUsageMessage: UiMessage | undefined;
+  // Walking back from the tail, meeting the checkpoint anchor before any
+  // usage means that usage predates the compaction.
+  let usagePredatesCompaction = false;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
+    if (compaction && message.id === compaction.throughMessageId) {
+      usagePredatesCompaction = true;
+    }
     if (!message.parentToolCallId && message.usage) {
       latestUsageMessage = message;
       break;
@@ -47,6 +59,9 @@ export function latestTurnContextInspector(
   }
   const latestUsage = latestUsageMessage?.usage;
   if (!latestUsage) return undefined;
+  const compactedContextTokens = usagePredatesCompaction
+    ? compaction?.contextTokens
+    : undefined;
 
   const { entries } = getTranscriptProjection(messages, compactions);
   let latestTurn: ReturnType<typeof getAssistantTurnSummary> | undefined;
@@ -87,12 +102,14 @@ export function latestTurnContextInspector(
     responseDurationMs: latestTurn?.responseDurationMs,
     responseOutputTokens: latestTurn?.responseOutputTokens,
     responseOutputEstimated: latestTurn?.responseOutputEstimated ?? false,
+    ...(compactedContextTokens !== undefined ? { compactedContextTokens } : {}),
   };
   const previous = inspectors.get(snapshot.owner);
   if (previous && previous.usage === result.usage &&
     previous.compactedContextTokens === result.compactedContextTokens &&
     sameUsage(previous.turnUsage, result.turnUsage) &&
     previous.contextWindow === result.contextWindow &&
+    previous.compactedContextTokens === result.compactedContextTokens &&
     previous.responseDurationMs === result.responseDurationMs &&
     previous.responseOutputTokens === result.responseOutputTokens &&
     previous.responseOutputEstimated === result.responseOutputEstimated &&

@@ -253,7 +253,7 @@ async function runtimeFor(
       errorCode: "AGENT_BUSY",
     });
   }
-  const reusable = existing?.matches({
+  const config = {
     mode,
     provider,
     thinkingLevel,
@@ -272,13 +272,14 @@ async function runtimeFor(
     workspaceRoot: params.workspaceRoot,
     configurationGuidePath: params.configurationGuidePath,
     commandShell: params.commandShell,
-    // A summary-model change retires the runtime: the next launch rebuilds the
-    // summary binding instead of reusing the previous one.
     compactionProvider,
-  })
-    ? existing
-    : undefined;
+  };
+  const mismatch = existing?.firstMismatch(config) ?? null;
+  const reusable = existing && mismatch === null ? existing : undefined;
   if (existing && !reusable) {
+    console.error(
+      `[runtime] rebuilding ${sessionId}: runtime config mismatch (${mismatch ?? "unknown"})`,
+    );
     await existing.dispose();
     runtimes.delete(sessionId);
   }

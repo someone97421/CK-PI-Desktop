@@ -97,6 +97,8 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.storage.backup",
       "settings.storage.removeBackup",
       "settings.storage.environmentManaged",
+      "settings.scheduledTasks",
+      "settings.scheduledTasksDesc",
       "settings.sidebar",
       "settings.sidebarRunningIndicators",
       "settings.sidebarRunningIndicatorsDesc",

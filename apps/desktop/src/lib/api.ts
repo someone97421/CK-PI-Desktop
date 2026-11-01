@@ -442,6 +442,11 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
   return {
     ...settings,
     language: !settings.language || settings.language === "auto" ? "auto" : resolveLocale(settings.language),
+    sidebarRunningIndicators: settings.sidebarRunningIndicators !== false,
+    sidebarRunningBadge: settings.sidebarRunningBadge !== false,
+    sidebarRunningRail: settings.sidebarRunningRail === true,
+    keepCommandsExpanded: settings.keepCommandsExpanded !== false,
+    scheduledTasksEnabled: settings.scheduledTasksEnabled !== false,
     transcriptDisplayMode: isTranscriptDisplayModeValue(settings.transcriptDisplayMode)
       ? settings.transcriptDisplayMode
       : "fully-folded",
@@ -577,6 +582,14 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     typeof value.temporaryWorkspaceContextMenu !== "boolean"
   ) {
     throw Object.assign(new Error("temporaryWorkspaceContextMenu is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(settings, "scheduledTasksEnabled") &&
+    typeof settings.scheduledTasksEnabled !== "boolean"
+  ) {
+    throw Object.assign(new Error("scheduledTasksEnabled is invalid"), {
       errorCode: "INVALID_PARAMS",
     });
   }

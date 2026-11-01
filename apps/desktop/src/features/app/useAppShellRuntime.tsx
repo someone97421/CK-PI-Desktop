@@ -64,6 +64,11 @@ export function useAppShellRuntime() {
   const settings = useAppStore((s) => s.settings);
   const subagentPanel = useAppStore((s) => s.subagentPanel);
   const closeSubagentPanel = useAppStore((s) => s.closeSubagentPanel);
+  useEffect(() => {
+    if (page === "scheduled" && settings?.scheduledTasksEnabled === false) {
+      useAppStore.getState().setPage("chat", { record: false });
+    }
+  }, [page, settings?.scheduledTasksEnabled]);
   const workPanelOpen = useAppStore((s) => s.workPanelOpen);
   const workPanelWidth = useAppStore((s) => s.workPanelWidth);
   const subagentPanelOpen = Boolean(

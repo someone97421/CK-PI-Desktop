@@ -104,6 +104,9 @@ export type AppSettings = {
   jevEnabled?: boolean;
   /** 应用运行期间阻止系统空闲休眠；缺省开启。 */
   keepAwakeWhileRunning?: boolean;
+  /** Enable scheduled task UI, tools and new runs. Absent means enabled. */
+  scheduledTasksEnabled?: boolean;
+  /** Configured command shell for the agent Bash protocol tool. */
   defaultCommandShell?: CommandShellId;
   /** @deprecated Retained for one-time migration into pi.prompt-enhancement. */
   promptEnhancementCustomTemplate?: boolean;
