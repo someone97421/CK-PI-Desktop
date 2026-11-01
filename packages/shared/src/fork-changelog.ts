@@ -5,6 +5,10 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "失败子代理保留完整上下文时支持显式 TaskResume 和快照冷恢复，保留失败结果与执行轮次，停止及中断任务不自动重跑。",
+  "支持具备视频输入能力的模型与可选 Litterbox 临时托管；文件读取由宿主协调批次，写入和编辑继续串行。",
+  "修复压缩后的上下文占用刷新、近期文件操作清单、模型签名回放与余额耗尽重试，改善技能/MCP 项目覆盖和插件命令归属。",
+  "定时任务新增总开关；改善中文输入法和环形菜单，保留完成后自动收起及底部跟随、主动阅读时的位置。",
   "修复缓存 token 未计入上下文预算导致自动压缩偏晚的问题，主代理、子代理和恢复会话使用完整占用计算。",
   "插件新增已登记项目列表接口，无活动项目时也可读取项目名称及多根目录，便于提供项目选择入口。",
   "修复 Windows/macOS 进入模型设置页时的 busyId 未定义崩溃，统一默认模型和压缩模型选择的忙碌状态。",
@@ -110,6 +114,10 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Failed delegates with intact context can explicitly resume in memory or from saved snapshots, preserving failure results and execution versions; stopped or interrupted tasks do not restart automatically.",
+  "Support video-capable models and optional Litterbox temporary hosting; the host coordinates file-read batches while writes and edits remain sequential.",
+  "Fix context usage after compaction, recent file-operation lists, provider signature replay, exhausted-credit retries, skill/MCP project overrides, and plugin command ownership.",
+  "Add a master switch for scheduled tasks; improve IME input and the radial menu while preserving automatic process folding, bottom following, and active reading position.",
   "Include cached tokens in context budgets so main agents, subagents, and restored sessions compact at the correct occupancy.",
   "Plugins can list registered projects and their folder roots without an active workspace, enabling project pickers.",
   "Fixed the undefined busyId crash when opening model settings on Windows/macOS and aligned busy states for default and compaction model selection.",

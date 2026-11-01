@@ -153,7 +153,7 @@ export interface SubagentBeginReceipt {
   isDuplicate?: boolean;
 }
 
-/** Request to atomically commit a completed execution snapshot */
+/** Request to atomically commit a completed or failed execution snapshot */
 export interface SubagentCommitRequest {
   sessionId: string;
   delegationId: string;
@@ -162,7 +162,9 @@ export interface SubagentCommitRequest {
   executionId: string;
   instanceGeneration: number;
   targetGeneration: number;
+  status?: "completed" | "failed";
   checkpoint: SubagentCheckpoint;
+  result?: SubagentDirectoryEntry["lastResult"];
   pendingDeliveries?: SubagentPendingEvent[];
 }
 
@@ -173,7 +175,7 @@ export interface SubagentCommitReceipt {
   execution: number;
   executionId: string;
   snapshotGeneration: number;
-  status: "completed";
+  status: "completed" | "failed";
   committedAt: number;
   durableReady: boolean;
 }
@@ -220,7 +222,7 @@ export interface SubagentRevokeReceipt {
   revokedAt: number;
 }
 
-/** Request to load a completed snapshot */
+/** Request to load a completed or failed snapshot */
 export interface SubagentLoadRequest {
   sessionId: string;
   delegationId: string;
@@ -308,7 +310,7 @@ export interface SubagentPersistencePort {
   /** Record execution after local admission; storage rejects stale owners and versions */
   beginExecution(req: SubagentBeginRequest): Promise<SubagentBeginReceipt>;
 
-  /** Commit immutable snapshot and update control to completed */
+  /** Commit immutable JSON snapshot and update control to completed or failed */
   commitSnapshot(req: SubagentCommitRequest): Promise<SubagentCommitReceipt>;
 
   /** Record execution failure or interruption without gating the live task */
@@ -317,7 +319,7 @@ export interface SubagentPersistencePort {
   /** Mark execution revoked across restarts */
   revokeExecution(req: SubagentRevokeRequest): Promise<SubagentRevokeReceipt>;
 
-  /** Load completed checkpoint and verify integrity */
+  /** Load completed or failed checkpoint and verify integrity */
   loadSnapshot(req: SubagentLoadRequest): Promise<SubagentLoadReceipt>;
 
   /** List lightweight metadata directory with bounded pagination */

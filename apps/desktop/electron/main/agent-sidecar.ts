@@ -44,10 +44,10 @@ function resolveSidecarEntry(): string {
  * the sidecar bundle this build ships.
  */
 export class AgentSidecar extends RuntimeAgentSidecar {
-  // Sessions bound for durable subagent persistence (TaskResume encrypted
-  // snapshots). A session joins only when main registers its project root —
-  // the same host-owned turn-start flow — so a stale runtime cannot reach a
-  // session this sidecar never owned.
+  // Sessions bound for durable subagent persistence (TaskResume snapshots).
+  // A session joins only when main registers its project root — the same
+  // host-owned turn-start flow — so a stale runtime cannot reach a session
+  // this sidecar never owned.
   private snapshotSessions = new Set<string>();
   private snapshotHandler?: (params: Record<string, unknown>) => Promise<unknown>;
 

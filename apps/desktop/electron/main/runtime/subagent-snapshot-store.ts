@@ -208,6 +208,9 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       Object.assign(control, { execution: req.nextExecution, executionId: req.executionId, instanceGeneration: req.instanceGeneration,
         status: "running", revision: control.revision + 1, parentTurnId: req.parentTurnId, parentToolCallId: req.parentToolCallId,
         commands: {}, pendingDeliveries: [], updatedAt: Date.now() });
+      delete control.lastResult;
+      delete control.lastReportSummary;
+      delete control.lastError;
       this.owner(req.sessionId, req.instanceGeneration);
       await this.writeControl(control);
       return { sessionId: req.sessionId, delegationId: req.delegationId, revision: control.revision,
@@ -223,6 +226,10 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       if (!control) throw new SubagentPersistenceError("SNAPSHOT_NOT_FOUND", "本轮尚未登记");
       if (this.revoked.has(`${req.sessionId}/${req.delegationId}`) || control.status === "revoked") throw new SubagentPersistenceError("TASK_REVOKED", "任务已停止");
       const checkpoint = validateCheckpoint(req.checkpoint);
+      const status = req.status ?? checkpoint.execution.lastStatus;
+      if (status !== checkpoint.execution.lastStatus || (req.result && req.result.status !== status)) {
+        throw new SubagentPersistenceError("EXECUTION_CONFLICT", "快照与执行结果状态不一致");
+      }
       const projectRealPath = checkpoint.header.projectRealPath ? await realpath(checkpoint.header.projectRealPath) : "";
       if (checkpoint.header.sessionId !== req.sessionId || checkpoint.header.delegationId !== req.delegationId ||
           !samePath(projectRealPath, session.projectRealPath) ||
@@ -234,7 +241,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       checkpoint.header.projectRealPath = projectRealPath;
       const bytes = this.files.encode(checkpoint, `${req.sessionId}/${req.delegationId}/generation-${req.targetGeneration}`);
       const digest = createHash("sha256").update(bytes).digest("hex");
-      if (control.status === "completed" && control.snapshotGeneration === req.targetGeneration) {
+      if (control.status === status && control.snapshotGeneration === req.targetGeneration) {
         if (control.commitDigest !== digest) throw new SubagentPersistenceError("EXECUTION_CONFLICT", "同一快照版本内容不一致");
       } else {
         if (control.status !== "running" || req.targetGeneration <= control.snapshotGeneration) throw new SubagentPersistenceError("EXECUTION_CONFLICT", "旧快照不能覆盖新状态");
@@ -244,11 +251,12 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
           this.owner(req.sessionId, req.instanceGeneration);
           await this.files.atomicWrite(this.files.path(req.sessionId, req.delegationId, `generation-${req.targetGeneration}.bin`), bytes);
           this.owner(req.sessionId, req.instanceGeneration);
-          Object.assign(control, { status: "completed", revision: control.revision + 1, snapshotGeneration: req.targetGeneration,
+          Object.assign(control, { status, revision: control.revision + 1, snapshotGeneration: req.targetGeneration,
             commitDigest: digest, updatedAt: Date.now(), appVersion: checkpoint.header.appVersion,
             modelId: checkpoint.modelBinding.provider.modelId, agentName: checkpoint.config.definition.name,
-            lastReportSummary: checkpoint.usage.lastReportText, pendingDeliveries: [],
-            lastResult: { status: "completed", report: checkpoint.usage.lastReportText, turns: checkpoint.usage.turns,
+            lastReportSummary: req.result?.report ?? checkpoint.usage.lastReportText, pendingDeliveries: [],
+            lastError: req.result?.error,
+            lastResult: req.result ?? { status, report: checkpoint.usage.lastReportText, turns: checkpoint.usage.turns,
               toolCalls: checkpoint.usage.toolCalls, contextCompactions: checkpoint.compaction.contextCompactions,
               usage: checkpoint.usage.usage, executionUsage: checkpoint.usage.executionUsage } });
           await this.writeControl(control);
@@ -262,7 +270,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       }
       return { sessionId: req.sessionId, delegationId: req.delegationId, revision: control.revision,
         execution: control.execution, executionId: control.executionId, snapshotGeneration: control.snapshotGeneration,
-        status: "completed", committedAt: control.updatedAt, durableReady: true };
+        status, committedAt: control.updatedAt, durableReady: true };
     });
   }
 
@@ -300,7 +308,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
     await this.ready();
     return this.enqueue<SubagentLoadReceipt>(`${req.sessionId}/${req.delegationId}`, async () => {
       const control = await this.control(req.sessionId, req.delegationId);
-      if (!control || control.status !== "completed" || this.revoked.has(`${req.sessionId}/${req.delegationId}`)) throw new SubagentPersistenceError("SNAPSHOT_NOT_FOUND", "本轮没有可恢复的完整快照");
+      if (!control || !["completed", "failed"].includes(control.status) || this.revoked.has(`${req.sessionId}/${req.delegationId}`)) throw new SubagentPersistenceError("SNAPSHOT_NOT_FOUND", "本轮没有可恢复的完整快照");
       const generation = req.generation ?? control.snapshotGeneration;
       if (generation < 1 || generation !== control.snapshotGeneration) throw new SubagentPersistenceError("SNAPSHOT_NOT_FOUND", "该快照版本已失效");
       const info = await lstat(this.files.path(req.sessionId, req.delegationId, `generation-${generation}.bin`));
@@ -311,7 +319,7 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
       const authority = await this.options.sessionAuthority(req.sessionId, "identity");
       if (!authority || !samePath(checkpoint.header.projectRealPath, authority.projectRealPath) ||
           checkpoint.header.sessionId !== req.sessionId || checkpoint.header.delegationId !== req.delegationId ||
-          checkpoint.execution.execution !== control.execution || checkpoint.execution.executionId !== control.executionId || checkpoint.execution.generation !== generation) {
+          checkpoint.execution.lastStatus !== control.status || checkpoint.execution.execution !== control.execution || checkpoint.execution.executionId !== control.executionId || checkpoint.execution.generation !== generation) {
         throw new SubagentPersistenceError("SNAPSHOT_CORRUPTED", "快照与当前会话、目录或执行轮次不一致");
       }
       return { sessionId: req.sessionId, delegationId: req.delegationId, control, checkpoint };
@@ -326,15 +334,18 @@ export class SubagentSnapshotStore implements SubagentPersistencePort {
         if (error.code === "ENOENT") return null;
         throw error;
       }) : null;
+    const resumable = (status === "completed" || status === "failed") && control.snapshotGeneration === control.execution;
     const exists = Boolean(info?.isFile() && !info.isSymbolicLink() && info.mtimeMs >= Date.now() - DEFAULT_RETENTION_DAYS * 86_400_000);
-    const persistenceState = status === "completed" ? exists ? "pending-validation" : "cleaned" : status === "running" ? "saving" : status;
-    return { sessionId: control.sessionId, delegationId: control.delegationId, revision: control.revision,
+    const persistenceState = status === "completed" || status === "failed" ? exists && resumable ? "pending-validation" : "cleaned" : status === "running" ? "saving" : status;
+    return {
+      sessionId: control.sessionId, delegationId: control.delegationId, revision: control.revision,
       execution: control.execution, executionId: control.executionId, snapshotGeneration: control.snapshotGeneration,
-      status, canResume: status === "completed" && exists, persistenceState, durableState: persistenceState, source: "disk",
+      status, canResume: resumable && exists, persistenceState, durableState: persistenceState, source: "disk",
       updatedAt: control.updatedAt, appVersion: control.appVersion, modelId: control.modelId, agentName: control.agentName,
       parentTurnId: control.parentTurnId, parentToolCallId: control.parentToolCallId,
       lastReportSummary: control.lastReportSummary, lastResult: control.lastResult,
-      ...(!exists && status === "completed" ? { reason: "完整上下文不可用，已有任务结果仍可读取" } : {}) };
+      ...(!exists && ["completed", "failed"].includes(status) ? { reason: "完整上下文不可用，已有任务结果仍可读取" } : {}),
+    };
   }
 
   async listEntries(req: SubagentListRequest): Promise<SubagentListReceipt> {

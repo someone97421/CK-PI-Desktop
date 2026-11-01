@@ -66,6 +66,7 @@ import {
   simplePromptFingerprint,
   SubagentCodecError,
   validateCheckpoint,
+  validatePairedToolCalls,
   type SubagentCheckpoint,
 } from "./subagent-checkpoint.js";
 import { classifyAgentError } from "./agent-errors.js";
@@ -433,7 +434,7 @@ export class SubagentRun {
       this.usage = cp.usage.usage ? { ...cp.usage.usage } : undefined;
       this.executionUsage = cp.usage.executionUsage ? { ...cp.usage.executionUsage } : undefined;
       this.lastReportText = cp.usage.lastReportText;
-      this.lastStatus = "completed";
+      this.lastStatus = cp.execution.lastStatus;
       this.executing = false;
       this.attemptedModels.add(`${opts.provider.id}/${opts.provider.modelId}`);
     } else {
@@ -512,21 +513,36 @@ export class SubagentRun {
 
 
   get canResume(): boolean {
-    return !this.executing && this.lastStatus === "completed" && !this.runSignal().aborted;
+    if (this.executing || (this.lastStatus !== "completed" && this.lastStatus !== "failed") ||
+        this.runSignal().aborted || this.observation.snapshot().stopSource !== undefined || this.observation.hasGuides) return false;
+    try {
+      validatePairedToolCalls(dedupeToolCallMessages(this.resumableMessages()).messages);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private resumableMessages(): AgentMessage[] {
+    return this.agent.state.messages.filter((message) => message.role !== "assistant" ||
+      (message.stopReason !== "error" && message.stopReason !== "aborted"));
   }
 
   run(): Promise<SubagentRunResult> {
-    if (this.executing || this.lastStatus) throw new Error("Subagent already started; use resume after normal completion.");
+    if (this.executing || this.lastStatus) throw new Error("Subagent already started; use resume after a completed or failed execution.");
     this.executing = true;
     return this.execute(this.opts.task);
   }
 
   resume(instruction: string, turnId: string | undefined, parentToolCallId: string): Promise<SubagentRunResult> {
-    if (!this.canResume) throw new Error("Subagent is busy, stopped, failed, or its context was released.");
+    if (!this.canResume) throw new Error("Subagent is busy, stopped, or its context was released.");
     // The TaskResume tool bounds user input. Runtime-owned recovery context is
     // prepended after that validation and must not reject an otherwise legal
     // maximum-length user instruction after the execution has been registered.
     if (!instruction.trim()) throw new Error("instruction must not be empty.");
+    this.setAgentMessages(this.resumableMessages());
+    this.mutationTermination = undefined;
+    this.turnAborted = false;
     this.executing = true;
     this.opts.turnId = turnId;
     this.opts.parentToolCallId = parentToolCallId;
@@ -566,15 +582,15 @@ export class SubagentRun {
     });
   }
 
-  /** Export current idle and completed state to an immutable checkpoint snapshot. */
+  /** Export current idle state after a completed or failed execution to an immutable checkpoint snapshot. */
   exportSnapshot(options: {
     projectRealPath: string;
     executionId: string;
     generation: number;
     appVersion?: string;
   }): SubagentCheckpoint {
-    if (this.executing || this.lastStatus !== "completed") {
-      throw new Error("Cannot export snapshot: subagent must be idle and completed.");
+    if (this.executing || (this.lastStatus !== "completed" && this.lastStatus !== "failed")) {
+      throw new Error("Cannot export snapshot: subagent must be idle after a completed or failed execution.");
     }
     if (this.runSignal().aborted) {
       throw new Error("Cannot export snapshot: subagent execution was aborted.");
@@ -586,7 +602,7 @@ export class SubagentRun {
       throw new Error("Cannot export snapshot: subagent has pending provider retries.");
     }
 
-    const snapshotMessages: AgentMessage[] = this.dedupeToolCalls(this.agent.state.messages).filter(
+    const snapshotMessages: AgentMessage[] = this.dedupeToolCalls(this.resumableMessages()).filter(
       (message) => message.role !== "system",
     );
     const encodedMessages = encodeAgentMessages(snapshotMessages);
@@ -617,7 +633,7 @@ export class SubagentRun {
         execution: this.observation.snapshot().execution ?? 1,
         executionId: options.executionId,
         generation: options.generation,
-        lastStatus: "completed",
+        lastStatus: this.lastStatus === "failed" ? "failed" : "completed",
         parentTurnId: this.opts.turnId,
         parentToolCallId: this.opts.parentToolCallId,
       },
@@ -1237,6 +1253,7 @@ export class SubagentRun {
   ): SubagentRunResult {
     this.executing = false;
     this.lastStatus = status;
+    if (status === "failed") this.pendingProviderRetry = undefined;
     // 本轮结束：队列里残留的未注入指导不得跨执行泄漏到下一次召回。
     this.agent.clearSteeringQueue();
     if (status === "aborted") this.observation.stop("session");

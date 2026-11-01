@@ -273,6 +273,20 @@ describe("历史任务快照状态查询", () => {
     } finally { await runtime.dispose(); }
   });
 
+  it("历史 failed 结果不覆盖同轮有效快照，缺失时仍返回结果材料", async () => {
+    const rows = history();
+    (rows[0].toolResult as any).details.status = "failed";
+    const runtime = createRuntime({ history: rows });
+    vi.spyOn(runtime.persistenceClient, "listEntries")
+      .mockResolvedValueOnce({ sessionId: "session-1", entries: [{ ...entry(), status: "failed" }], totalCount: 1 })
+      .mockResolvedValueOnce({ sessionId: "session-1", entries: [], totalCount: 0 });
+    try {
+      expect(await runtime.subagentRecallStatusAsync("saved-task")).toMatchObject({ status: "failed", canResume: true });
+      expect(await runtime.subagentRecallStatusAsync("saved-task")).toMatchObject({ status: "failed", canResume: false });
+      expect((runtime as any).delegations.get("saved-task").result.report).toBe("已有结果");
+    } finally { await runtime.dispose(); }
+  });
+
   it.each(["running", "stopped"])("迟到的目录结果不覆盖本地 %s 状态", async (status) => {
     const runtime = createRuntime({ history: history() });
     let finish!: (page: any) => void;
@@ -8996,7 +9010,6 @@ describe("DesktopAgentRuntime inline context compaction", () => {
           throughMessageId: "recent-user",
           generation: 1,
           summaryTokens: 7,
-          contextTokens: 40_000,
           summarized: true,
           contextTokens: expect.any(Number),
         }),
@@ -10521,6 +10534,48 @@ describe("DesktopAgentRuntime subagents", () => {
     await runtime.dispose();
   });
 
+  it("failed delegate saves a resumable JSON snapshot when its context is still valid", async () => {
+    const runtime = createRuntime({ subagents: [explorer] });
+    const internal = runtime as any;
+    const previousResult = subagentRuns.result;
+    subagentRuns.deferred = true;
+    subagentRuns.instances.length = 0;
+    subagentRuns.result = {
+      agentName: "explorer", status: "failed", report: "已完成部分检查", turns: 1, toolCalls: 2,
+      error: { code: "PROVIDER_ERROR", message: "temporary failure" },
+    };
+    const commit = vi.spyOn(internal.persistenceClient, "commitSnapshot").mockResolvedValue({
+      durableReady: true, snapshotGeneration: 1,
+    } as never);
+    const memory = vi.spyOn(internal.persistenceClient, "isMemoryOnly").mockReturnValue(false);
+    try {
+      const started = await taskTool(runtime).execute("task-failed-resumable", { agent: "explorer", task: "Find it." });
+      const record = internal.delegations.get(started.details.delegationId);
+      record.run.canResume = true;
+      record.run.exportSnapshot = () => ({});
+      subagentRuns.resolveRun!(subagentRuns.result);
+      await record.completion;
+      await vi.waitFor(() => expect(commit).toHaveBeenCalledTimes(1));
+      expect(commit.mock.calls[0][0]).toMatchObject({ status: "failed", targetGeneration: 1 });
+      expect(record.status).toBe("failed");
+      expect(internal.subagentRecallStatus(record.delegationId)).toMatchObject({ status: "failed", canResume: true });
+      const resume = vi.fn(async () => ({ agentName: "explorer", status: "completed", report: "继续完成", turns: 2, toolCalls: 2 }));
+      record.run.resume = resume;
+      const accepted = await runtimeTool(runtime, "TaskResume").execute("resume-failed", {
+        delegationId: record.delegationId, instruction: "继续检查", expectedExecution: 1,
+      });
+      expect(accepted.details).toMatchObject({ execution: 2, status: "running" });
+      await record.completion;
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(record.status).toBe("completed");
+    } finally {
+      subagentRuns.deferred = false;
+      await runtime.dispose();
+      commit.mockRestore();
+      memory.mockRestore();
+      subagentRuns.result = previousResult;
+    }
+  });
   it("快照宿主失败不阻止 Task 启动和结果交付", async () => {
     const runtime = createRuntime({ subagents: [explorer] });
     const internal = runtime as any;

@@ -233,7 +233,7 @@ export interface SubagentExecutionIdentity {
   execution: number;
   executionId: string;
   generation: number;
-  lastStatus: "completed";
+  lastStatus: "completed" | "failed";
   parentTurnId?: string;
   parentToolCallId: string;
 }
@@ -760,10 +760,10 @@ export function validateCheckpoint(checkpoint: unknown): SubagentCheckpoint {
   if (!cp.header.sessionId || !cp.header.delegationId || typeof cp.header.projectRealPath !== "string") {
     throw new SubagentCodecError("SUBAGENT_CODEC_INVALID_STRUCTURE", "Missing sessionId, delegationId, or projectRealPath in checkpoint header");
   }
-  if (!cp.execution || cp.execution.lastStatus !== "completed") {
+  if (!cp.execution || !["completed", "failed"].includes(cp.execution.lastStatus)) {
     throw new SubagentCodecError(
       "SUBAGENT_CODEC_NOT_COMPLETED",
-      `Checkpoint execution status must be 'completed', got '${cp.execution?.lastStatus}'`,
+      `Checkpoint execution status must be 'completed' or 'failed', got '${cp.execution?.lastStatus}'`,
     );
   }
   if (cp.execution.execution < 1 || cp.execution.generation < 1) {

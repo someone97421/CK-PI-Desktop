@@ -319,7 +319,7 @@ describe("parent supervision connectivity", () => {
     await fixture.runtime.dispose();
   });
 
-  it("refuses full capacity, stopped, failed, foreign and released contexts without starting work", async () => {
+  it("refuses full capacity, stopped, failed without context, foreign and released contexts without starting work", async () => {
     interceptChildren([]);
     const fixture = parent(1);
     const start = await fixture.internal.buildSubagentTool().execute("task", { agent: "explorer", task: "inspect" });
@@ -331,7 +331,9 @@ describe("parent supervision connectivity", () => {
     expect((await resume.execute("full", params)).details.error).toContain("concurrency");
     for (let i = 0; i < 20; i++) fixture.internal.delegations.delete(`busy-${i}`);
     record.status = "failed";
+    record.contextReleased = true;
     expect((await resume.execute("failed", params)).isError).toBe(true);
+    record.contextReleased = false;
     record.status = "completed";
     fixture.runtime.stopSubagent(record.delegationId, "user", 1);
     expect((await resume.execute("stopped", params)).isError).toBe(true);

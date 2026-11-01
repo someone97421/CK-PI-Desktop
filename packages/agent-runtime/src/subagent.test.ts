@@ -179,6 +179,68 @@ describe("子智能体快照模型绑定", () => {
     expect(restored.exportSnapshot({ projectRealPath, executionId: "execution-1", generation: 2 }).messages)
       .toEqual(snapshot.messages);
   });
+  it("保留 failed 执行的上下文并允许显式续接", () => {
+    const { run } = createRun();
+    run.agent.state.messages = [{
+      ...assistantMessage({ content: [{ type: "text", text: "部分结果" }] }),
+      provider: run.agent.state.model.provider,
+      model: run.agent.state.model.id,
+      api: run.agent.state.model.api,
+      durationMs: 100,
+    }];
+    run.lastStatus = "failed";
+
+    expect(run.canResume).toBe(true);
+    const snapshot = run.exportSnapshot({ projectRealPath: "/fixture", executionId: "execution-failed", generation: 1 });
+    expect(snapshot.execution.lastStatus).toBe("failed");
+
+    const restored = SubagentRun.restore(snapshot, run.opts);
+    expect(restored.canResume).toBe(true);
+    expect(restored.exportSnapshot({ projectRealPath: "/fixture", executionId: "execution-failed-2", generation: 2 }).execution.lastStatus)
+      .toBe("failed");
+  });
+  it("可恢复资格与快照导出共用工具去重后的配对规则", () => {
+    const { run } = createRun();
+    const call = assistantMessage({ content: [{ type: "toolCall", id: "read-1", name: "Read", arguments: {} }], stopReason: "toolUse" });
+    const result = { role: "toolResult", toolCallId: "read-1", toolName: "Read", content: [{ type: "text", text: "已有工具结果" }], isError: false, timestamp: 2 };
+    run.agent.state.messages = [call, call, result, result];
+    run.result("failed", "部分结果");
+    expect(run.canResume).toBe(true);
+    expect(run.exportSnapshot({ projectRealPath: "", executionId: "task-1", generation: 1 }).messages).toHaveLength(2);
+  });
+
+  it.each([false, true])("失败后续接只发送新指令并清除旧错误状态（冷恢复=$cold）", async (cold) => {
+    const { run } = createRun();
+    const prior = { role: "user", content: "原任务上下文", timestamp: 1 };
+    const failed = assistantMessage({ content: [], stopReason: "error" });
+    run.agent.state.messages = [prior, failed];
+    run.result("failed", "部分结果", { code: "PROVIDER_ERROR", message: "临时故障" });
+    run.mutationTermination = { code: "EDIT_LIMIT", message: "上一轮错误" };
+    const target = cold ? SubagentRun.restore(run.exportSnapshot({ projectRealPath: "", executionId: "task-1", generation: 1 }), run.opts) as any : run;
+    const prompt = vi.spyOn(target.agent, "prompt").mockImplementation(async (instruction: unknown) => {
+      expect(target.agent.state.messages).toContainEqual(prior);
+      expect(target.agent.state.messages.some((message: any) => message.stopReason === "error")).toBe(false);
+      expect(instruction).toBe("继续剩余检查");
+      const complete = assistantMessage({ content: [{ type: "text", text: "检查完成" }] });
+      target.handleEvent({ type: "message_start", message: complete });
+      target.handleEvent({ type: "message_end", message: complete });
+    });
+    vi.spyOn(target.agent, "waitForIdle").mockResolvedValue(undefined);
+    const result = await target.resume("继续剩余检查", "turn-2", "resume-1");
+    expect(result).toMatchObject({ status: "completed", report: "检查完成" });
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(target.observation.snapshot().execution).toBe(2);
+  });
+
+  it("失败上下文中有未配对工具调用或已停止时不可续接", () => {
+    const { run } = createRun();
+    run.lastStatus = "failed";
+    run.agent.state.messages = [assistantMessage({ content: [{ type: "toolCall", id: "unfinished", name: "Edit", arguments: {} }], stopReason: "toolUse" })];
+    expect(run.canResume).toBe(false);
+    run.agent.state.messages = [{ role: "user", content: "任务", timestamp: 1 }];
+    run.stop("user");
+    expect(run.canResume).toBe(false);
+  });
 });
 
 describe("composeSubagentSystemPrompt", () => {

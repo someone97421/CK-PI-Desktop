@@ -46,7 +46,6 @@ export function ContextUsageInspector({
   responseDurationMs,
   responseOutputTokens,
   responseOutputEstimated = false,
-  compactedContextTokens,
 }: {
   usage: MessageUsage;
   turnUsage: MessageUsage;
@@ -56,7 +55,6 @@ export function ContextUsageInspector({
   responseDurationMs?: number;
   responseOutputTokens?: number;
   responseOutputEstimated?: boolean;
-  compactedContextTokens?: number;
 }) {
   const { t } = useTranslation();
   const panelId = useId();

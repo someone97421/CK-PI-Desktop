@@ -37,7 +37,7 @@ describe("快照旁路客户端", () => {
     });
     const client = new SubagentPersistenceClient({ call } as unknown as RuntimeHost, "session");
     const commit = (id: string) => ({ sessionId: "session", delegationId: id, expectedExecution: 1,
-      executionId: `${id}:1`, expectedRevision: 1, instanceGeneration: 1, targetGeneration: 1, checkpoint: {} } as SubagentCommitRequest);
+      executionId: `${id}:1`, expectedRevision: 1, instanceGeneration: 1, targetGeneration: 1, status: "completed", checkpoint: {} } as SubagentCommitRequest);
     for (const id of ["broken", "healthy"]) {
       await client.beginExecution(begin(id));
       client.completeMemoryExecution(id, 1);

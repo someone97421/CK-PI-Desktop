@@ -103,3 +103,44 @@ test("卡片查询区分缺少快照与读取失败，并可重新发现有效�
   assert.equal(saved.snapshotVersion, 1);
   assert.equal(saved.canResume, true);
 }));
+
+test("失败执行以普通 JSON 保存，重启可加载且保留失败结果", async () => fixture(async ({ store, options, request, dir }) => {
+  const failed = await request(1);
+  failed.status = "failed";
+  failed.checkpoint.execution.lastStatus = "failed";
+  failed.result = { status: "failed", report: "请求异常，已完成部分检查", turns: 1, toolCalls: 0,
+    error: { code: "PROVIDER_ERROR", message: "临时故障" } };
+  assert.equal((await store.commitSnapshot(failed)).status, "failed");
+  const raw = JSON.parse(await readFile(join(dir, "subagent-contexts/v1/session/task/generation-1.bin"), "utf8"));
+  assert.equal(raw.value.execution.lastStatus, "failed");
+  const restarted = new SubagentSnapshotStore(options);
+  try {
+    await restarted.initialize();
+    const status = await restarted.readRecallStatus("session", "task");
+    assert.equal(status.status, "failed");
+    assert.equal(status.canResume, true);
+    const loaded = await restarted.loadSnapshot({ sessionId: "session", delegationId: "task" });
+    assert.equal(loaded.checkpoint.execution.lastStatus, "failed");
+    assert.deepEqual(loaded.control.lastResult, failed.result);
+  } finally { await restarted.closeOwner(); }
+}));
+
+test("本轮失败无快照时不复用上一轮；停止和中断不开放续接", async () => fixture(async ({ store, request }) => {
+  await store.commitSnapshot(await request(1));
+  const second = await request(2);
+  await store.failExecution({ ...second, status: "failed", error: { code: "BROKEN_CONTEXT", message: "无完整上下文" } });
+  assert.equal((await store.readRecallStatus("session", "task")).canResume, false);
+  const directory = (await store.listEntries({ sessionId: "session" })).entries[0];
+  assert.equal(directory.lastResult, undefined);
+  assert.equal(directory.lastReportSummary, undefined);
+  await assert.rejects(store.loadSnapshot({ sessionId: "session", delegationId: "task" }), /SNAPSHOT_CORRUPTED/);
+  const stopped = await request(1, "stopped");
+  await store.commitSnapshot(stopped);
+  await store.revokeExecution({ sessionId: "session", delegationId: "stopped", source: "user", reason: "stop" });
+  assert.equal((await store.readRecallStatus("session", "stopped")).canResume, false);
+  await assert.rejects(store.loadSnapshot({ sessionId: "session", delegationId: "stopped" }), /SNAPSHOT_NOT_FOUND/);
+  const interrupted = await request(1, "interrupted");
+  await store.failExecution({ ...interrupted, status: "interrupted", error: { code: "INTERRUPTED", message: "中断" } });
+  assert.equal((await store.readRecallStatus("session", "interrupted")).canResume, false);
+  await assert.rejects(store.loadSnapshot({ sessionId: "session", delegationId: "interrupted" }), /SNAPSHOT_NOT_FOUND/);
+}));

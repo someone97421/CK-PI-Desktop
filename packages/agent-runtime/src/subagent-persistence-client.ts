@@ -49,9 +49,9 @@ export class SubagentPersistenceClient implements SubagentPersistencePort {
   get isClaimed(): boolean { return this._claimed; }
   isMemoryOnly(_id: string): boolean { return this.settings?.enabled === false || !this._supported; }
 
-  completeMemoryExecution(id: string, execution: number): void {
+  completeMemoryExecution(id: string, execution: number, status: "completed" | "failed" = "completed"): void {
     const entry = this.executions.get(id);
-    if (entry?.execution === execution && entry.status === "running") entry.status = "completed";
+    if (entry?.execution === execution && entry.status === "running") entry.status = status;
   }
 
   private async call<T>(operation: string, request: object = {}): Promise<T> {
@@ -136,7 +136,7 @@ export class SubagentPersistenceClient implements SubagentPersistencePort {
 
   async beginExecution(req: SubagentBeginRequest): Promise<SubagentBeginReceipt> {
     const previous = this.executions.get(req.delegationId);
-    if (this.closing || this.stopped.has(req.delegationId) || (previous && (previous.status !== "completed" || previous.execution !== req.expectedExecution))) {
+    if (this.closing || this.stopped.has(req.delegationId) || (previous && ((previous.status !== "completed" && previous.status !== "failed") || previous.execution !== req.expectedExecution))) {
       throw new SubagentPersistenceError("EXECUTION_CONFLICT", "任务状态或执行轮次已变化");
     }
     const entry: Execution = { status: "running", execution: req.nextExecution,
@@ -154,8 +154,8 @@ export class SubagentPersistenceClient implements SubagentPersistencePort {
 
   async commitSnapshot(req: SubagentCommitRequest): Promise<SubagentCommitReceipt> {
     const entry = this.executions.get(req.delegationId);
-    if (!entry || entry.execution !== req.expectedExecution || entry.status !== "completed") {
-      throw new SubagentPersistenceError("EXECUTION_CONFLICT", "仅保存本轮已完成的上下文");
+    if (!entry || entry.execution !== req.expectedExecution || (entry.status !== "completed" && entry.status !== "failed") || (req.status !== undefined && req.status !== entry.status)) {
+      throw new SubagentPersistenceError("EXECUTION_CONFLICT", "仅保存本轮已完成或失败的上下文");
     }
     const frozen = structuredClone(req);
     return this.enqueue<SubagentCommitReceipt>(req.delegationId, async () => {
@@ -163,13 +163,13 @@ export class SubagentPersistenceClient implements SubagentPersistencePort {
       await this.checkCapabilities();
       if (this.isMemoryOnly(req.delegationId)) return { sessionId: req.sessionId, delegationId: req.delegationId,
         revision: entry.revision, execution: entry.execution, executionId: req.executionId,
-        snapshotGeneration: 0, status: "completed", committedAt: Date.now(), durableReady: false };
+        snapshotGeneration: 0, status: entry.status as "completed" | "failed", committedAt: Date.now(), durableReady: false };
       return this.retry(async () => {
         await this.register(entry);
         if (this.stopped.has(req.delegationId)) throw new SubagentPersistenceError("TASK_REVOKED", "任务已停止");
         return this.call<SubagentCommitReceipt>("commitSnapshot", { ...frozen,
           expectedRevision: entry.diskRevision, instanceGeneration: this.instanceGeneration, pendingDeliveries: [] });
-      }, () => entry.status === "completed" && !this.stopped.has(req.delegationId));
+      }, () => (entry.status === "completed" || entry.status === "failed") && !this.stopped.has(req.delegationId));
     });
   }
 
@@ -206,7 +206,7 @@ export class SubagentPersistenceClient implements SubagentPersistencePort {
   async loadSnapshot(req: SubagentLoadRequest): Promise<SubagentLoadReceipt> {
     const result = await this.call<SubagentLoadReceipt>("loadSnapshot", req);
     if (!this.executions.has(req.delegationId)) this.executions.set(req.delegationId, {
-      status: "completed", execution: result.control.execution, revision: result.control.revision,
+      status: result.control.status, execution: result.control.execution, revision: result.control.revision,
       registered: true, diskRevision: result.control.revision,
     });
     return result;

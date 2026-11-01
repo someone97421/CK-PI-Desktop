@@ -595,7 +595,7 @@ function delegationSummary(record: DelegationRecord): Record<string, unknown> {
     execution: record.execution ?? 1,
     statusRevision: record.statusRevision ?? 0,
     executionId: delegationExecutionId(record.delegationId, record.execution ?? 1),
-    canResume: (!record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested) &&
+    canResume: (!record.settling && !record.resumingLock && !record.interruptionReceipt && (record.status === "completed" || record.status === "failed") && !record.stopRequested) &&
       (record.run ? (!record.contextReleased && record.run.canResume === true) : (record.isColdDisk ? (record.durableGeneration ?? 0) > 0 && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "") : false)),
     persistenceState: record.persistenceState ?? (record.isColdDisk ? "durable-ready" : "memory-only"),
     ...(record.persistenceState === "persistence-error" && record.persistenceReason ? { reason: record.persistenceReason } : {}),
@@ -663,7 +663,7 @@ function formatDelegationHeartbeat(record: DelegationRecord): string {
   const parts = [
     `${record.agentName} (${record.delegationId})`,
     record.status,
-    `execution ${record.execution ?? 1}${record.status === "completed" && !record.stopRequested && record.run?.canResume ? "; context retained, use TaskResume for review fixes" : ""}`,
+    `execution ${record.execution ?? 1}${["completed", "failed"].includes(record.status) && !record.stopRequested && record.run?.canResume ? "; context retained, use TaskResume for review fixes" : ""}`,
     `${elapsedSeconds(record)}s`,
   ];
   const turns = record.result?.turns ?? record.turns;
@@ -2090,7 +2090,7 @@ Delegation rules:
 - Give each scope one owner and parallelize independent work within available capacity. Dispatch dependent work after its prerequisites are available. The main agent accepts results against the agreed criteria and inspects relevant changes or concrete gaps without repeating the delegate's investigation.
 - Task returns immediately; reports do not pause delegates. Ordinary progress reports call for continuing independent work or using TaskWait, not interim review or guidance. Intervene only for a clear delivery concern or the idle follow-up below; assess results after completion.
 - When idle after two distinct progress reports in a delegate's current execution, use TaskGuide once to briefly focus it on remaining deliverables and prompt completion. Consider taking over only when progress has clearly stalled, and confirm the delegate has stopped before editing its scope. Handle small follow-up fixes directly; use TaskResume with the same delegationId and current expectedExecution when retained context makes a bounded follow-up worthwhile.
-- TaskStop cancels only when intended; ending your response does not stop children. Respect explicit user stops and never automatically recreate stopped work. Stopped, failed, or released contexts cannot resume, including after restart.`,
+- TaskStop cancels only when intended; ending your response does not stop children. Respect explicit user stops and never automatically recreate stopped work. Stopped, interrupted, or released contexts cannot resume. Use TaskList to check whether a completed or failed execution retains resumable context.`,
             ...(this.subagentModelSummary()
               ? [this.subagentModelSummary()!]
               : []),
@@ -2355,7 +2355,7 @@ Delegation rules:
     return this.subagentDiscovery ??= (async () => {
       const deadline = Date.now() + 5_000;
       const before = new Map([...this.delegations].filter(([, record]) =>
-        record.isColdDisk && !record.run && !record.resumingLock && !record.stopRequested && record.status === "completed"));
+        record.isColdDisk && !record.run && !record.resumingLock && !record.stopRequested && ["completed", "failed"].includes(record.status)));
       const found = new Set<string>();
       let cursor: string | undefined;
       do {
@@ -2367,7 +2367,7 @@ Delegation rules:
         if (!page.nextCursor) {
           for (const [id, record] of before) {
             if (found.has(id) || this.delegations.get(id) !== record || !record.isColdDisk || record.run ||
-                record.resumingLock || record.stopRequested || record.status !== "completed") continue;
+                record.resumingLock || record.stopRequested || !["completed", "failed"].includes(record.status)) continue;
             record.persistenceState = "unavailable";
             record.persistenceReason = "未找到本轮可用的快照记录";
             record.durableGeneration = 0;
@@ -2388,7 +2388,7 @@ Delegation rules:
           existing.stopRequested || (existing.execution ?? 1) > diskEntry.execution))) continue;
       const history = this.savedDelegationResults.get(diskEntry.delegationId);
       const useHistory = history && (history.execution > diskEntry.execution ||
-        (history.execution === diskEntry.execution && (history.status !== "completed" || diskEntry.status !== "completed")));
+        (history.execution === diskEntry.execution && (history.status !== diskEntry.status || !["completed", "failed"].includes(diskEntry.status))));
       const entry = useHistory ? history : { ...diskEntry,
         taskInstruction: diskEntry.taskInstruction ?? history?.taskInstruction,
         ...(history?.execution === diskEntry.execution && history.lastReportSummary
@@ -5109,15 +5109,20 @@ Delegation rules:
       if (usage && record.startedEpoch === this.turnEpoch) {
         this.turnSubagentUsage = addUsage(this.turnSubagentUsage, usage);
       }
-      if (record.status === "completed") {
-        this.persistenceClient.completeMemoryExecution(record.delegationId, execution);
+      const snapshotStatus: "completed" | "failed" | undefined =
+        record.status === "completed"
+          ? "completed"
+          : record.status === "failed" && !record.stopRequested && !record.interruptionReceipt && record.run?.canResume === true
+            ? "failed"
+            : undefined;
+      if (snapshotStatus) {
+        this.persistenceClient.completeMemoryExecution(record.delegationId, execution, snapshotStatus);
         record.persistenceState = this.persistenceClient.isMemoryOnly(record.delegationId) ? "memory-only" : "saving";
         record.persistenceReason = undefined;
       } else if (record.status === "failed" && !record.stopRequested && !record.interruptionReceipt) {
         void this.persistenceClient.failExecution({
-          sessionId: this.sessionId, delegationId: record.delegationId,
-          expectedRevision: record.durableRevision ?? 0, expectedExecution: execution,
-          executionId: delegationExecutionId(record.delegationId, execution),
+          sessionId: this.sessionId, delegationId: record.delegationId, expectedRevision: record.durableRevision ?? 0,
+          expectedExecution: execution, executionId: delegationExecutionId(record.delegationId, execution),
           instanceGeneration: this.persistenceClient.instanceGeneration, status: "failed",
           error: { code: result.error?.code ?? "SUBAGENT_FAILED", message: result.error?.message ?? "Subagent failed" },
         }).catch(() => undefined);
@@ -5139,7 +5144,7 @@ Delegation rules:
       this.markSubagentCoordination(record);
       resolveExecution();
       // 冻结本轮上下文后后台写盘；TaskWait 和后续内存续跑不等待磁盘回执。
-      if (record.status === "completed" && record.persistenceState === "saving") {
+      if ((record.status === "completed" || record.status === "failed") && record.persistenceState === "saving") {
         void this.saveDelegationSnapshot(record, execution).catch(() => undefined);
       }
       this.clearMutationRecovery(record.delegationId);
@@ -5165,10 +5170,11 @@ Delegation rules:
         sessionId: this.sessionId, delegationId: record.delegationId,
         expectedRevision: record.durableRevision ?? 0, expectedExecution: execution,
         executionId: delegationExecutionId(record.delegationId, execution),
-        instanceGeneration: this.persistenceClient.instanceGeneration, targetGeneration: execution, checkpoint,
+        instanceGeneration: this.persistenceClient.instanceGeneration, targetGeneration: execution,
+        status: record.status === "failed" ? "failed" : "completed", checkpoint, result: record.result,
       });
       savedState = receipt.durableReady ? "durable-ready" : "memory-only";
-      if (!this.disposed && !record.stopRequested && record.execution === execution && record.status === "completed") {
+      if (!this.disposed && !record.stopRequested && record.execution === execution && ["completed", "failed"].includes(record.status)) {
         record.durableGeneration = receipt.durableReady ? receipt.snapshotGeneration : 0;
         record.persistenceState = savedState;
         record.persistenceReason = undefined;
@@ -5179,7 +5185,7 @@ Delegation rules:
       const label = typeof code === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : "UNKNOWN";
       const detail = error instanceof Error ? `：${error.message.replace(/^\[[A-Z_]+\]\s*/, "").replace(/\s+/g, " ").slice(0, 500)}` : "";
       savedReason = savedState === "memory-only" ? undefined : `${phase}失败（${label}）${detail}`;
-      if (!this.disposed && !record.stopRequested && record.execution === execution && record.status === "completed") {
+      if (!this.disposed && !record.stopRequested && record.execution === execution && ["completed", "failed"].includes(record.status)) {
         record.persistenceState = savedState;
         record.persistenceReason = savedReason;
       }
@@ -5853,15 +5859,15 @@ Delegation rules:
         reason: "Subagent not found in this session.",
       };
     }
-    const isCompleted = !this.disposed && !record.settling && !record.resumingLock && record.status === "completed" && !record.stopRequested;
+    const isResumableStatus = !this.disposed && !record.settling && !record.resumingLock && !record.interruptionReceipt && ["completed", "failed"].includes(record.status) && !record.stopRequested;
     let canResume = false;
     const source: "memory" | "disk" = record.isColdDisk ? "disk" : "memory";
     const persistenceState: SubagentPersistenceState = record.persistenceState ?? (this.persistenceClient.available ? "durable-ready" : "memory-only");
 
     if (record.isColdDisk) {
-      canResume = isCompleted && (record.durableGeneration ?? 0) > 0 && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "");
+      canResume = isResumableStatus && (record.durableGeneration ?? 0) > 0 && ["durable-ready", "pending-validation"].includes(record.persistenceState ?? "");
     } else {
-      canResume = !this.disposed && isCompleted && !record.contextReleased && record.run?.canResume === true;
+      canResume = isResumableStatus && !record.contextReleased && record.run?.canResume === true;
     }
 
     let reason: string | undefined;
@@ -5872,7 +5878,7 @@ Delegation rules:
       else if (record.status === "failed" || record.persistenceState === "failed") reason = "Subagent execution failed.";
       else if (record.isColdDisk && persistenceState === "pending-validation" && !record.durableGeneration) reason = "快照状态尚未查询";
       else if (record.contextReleased && !record.durableGeneration) reason = "Context released; persistent snapshot unavailable.";
-      else reason = "Only normally completed executions with valid snapshots can resume.";
+      else reason = "Only completed or failed executions with valid snapshots can resume.";
     }
 
     if (record.isColdDisk && !canResume && record.persistenceReason) {
@@ -5903,7 +5909,7 @@ Delegation rules:
     // 查询期间可能开始续跑或停止；始终以此刻的内存状态为准。
     const current = this.subagentRecallStatus(delegationId);
     if (isLive()) return current;
-    if (current.status !== "completed" && current.status !== "unavailable") return current;
+    if (current.status !== "completed" && current.status !== "failed" && current.status !== "unavailable") return current;
     if (!complete) return { ...current, persistenceState: "pending-validation", canResume: false,
       snapshotVersion: undefined, reason: "快照状态暂时查询失败，请稍后刷新" };
     if (current.status === "unavailable") return { ...current, persistenceState: "unavailable", reason: "未找到该任务的快照记录" };
@@ -5944,7 +5950,7 @@ Delegation rules:
   private buildSubagentResumeTool(): AgentTool {
     return {
       name: SUBAGENT_RESUME_TOOL_NAME, label: "Task Resume", executionMode: "sequential",
-      description: "Resume a normally completed subagent in this session with review feedback and its original context. TaskList shows canResume and execution; pass that execution as expectedExecution to reject stale or duplicate requests. Returns immediately. No new delegate is created. Stopped/failed/released contexts cannot resume. Use TaskGuide for a running child.",
+      description: "Resume a completed or failed subagent in this session with review feedback and its original context. TaskList shows canResume and execution; pass that execution as expectedExecution to reject stale or duplicate requests. Returns immediately. No new delegate is created. Stopped, interrupted, or released contexts cannot resume. Use TaskGuide for a running child.",
       parameters: Type.Object({ delegationId: Type.String(), instruction: Type.String({ minLength: 1, maxLength: 12_000 }),
         expectedExecution: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
       execute: async (toolCallId, params) => {
@@ -5980,7 +5986,7 @@ Delegation rules:
         }
 
         // 3. CanResume check
-        const coldCandidate = record.isColdDisk && record.status === "completed" && !record.stopRequested && (record.durableGeneration ?? 0) > 0 &&
+        const coldCandidate = record.isColdDisk && ["completed", "failed"].includes(record.status) && !record.stopRequested && (record.durableGeneration ?? 0) > 0 &&
           (record.persistenceState === "pending-validation" || record.persistenceState === "durable-ready");
         if (!coldCandidate && !this.subagentRecallStatus(record.delegationId).canResume) {
           return this.subagentRecoveryResult(toolCallId, record, params.instruction, "The original context is not available for this execution.");
@@ -6094,7 +6100,7 @@ Delegation rules:
             record.contextReleased = false;
             record.durableRevision = loadRes.control.revision;
             record.durableGeneration = loadRes.control.snapshotGeneration;
-            if (loadRes.control.status !== "completed") throw new Error("Snapshot is no longer completed.");
+            if (!["completed", "failed"].includes(loadRes.control.status)) throw new Error("Snapshot is no longer resumable.");
             record.persistenceState = "durable-ready";
           }
 
