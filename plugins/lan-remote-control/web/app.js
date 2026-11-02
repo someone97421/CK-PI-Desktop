@@ -214,15 +214,22 @@ function updateJump() {
   jumpLatest.hidden = !current || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
 }
 transcript.addEventListener("scroll", updateJump, { passive: true });
+let pageScale = 1;
+function applyPageScale(percent) {
+  pageScale = Number.isInteger(percent) && percent >= 75 && percent <= 150 ? percent / 100 : 1;
+  document.documentElement.style.zoom = String(pageScale);
+  updateViewport();
+  growInput();
+}
 function updateViewport() {
   const viewport = window.visualViewport;
   if (viewport && viewport.scale !== 1) return;
   const atBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 100;
-  document.documentElement.style.setProperty("--rc-visible-height", `${viewport?.height || window.innerHeight}px`);
-  document.documentElement.style.setProperty("--rc-visible-top", `${viewport?.offsetTop || 0}px`);
+  document.documentElement.style.setProperty("--rc-visible-height", `${(viewport?.height || window.innerHeight) / pageScale}px`);
+  document.documentElement.style.setProperty("--rc-visible-top", `${(viewport?.offsetTop || 0) / pageScale}px`);
   // 软键盘占位：底部面板与输入区据此避开键盘（iOS 不改变布局视口高度）。
   const keyboard = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
-  document.documentElement.style.setProperty("--rc-keyboard-inset", `${keyboard}px`);
+  document.documentElement.style.setProperty("--rc-keyboard-inset", `${keyboard / pageScale}px`);
   if (atBottom) requestAnimationFrame(() => { transcript.scrollTop = transcript.scrollHeight; });
 }
 window.visualViewport?.addEventListener("resize", updateViewport);
@@ -235,7 +242,7 @@ const input = el("textarea", {
 });
 // 输入框随内容自适应增高；程序化改写 value 后需手动调用一次。
 const growInput = autoGrow(input, {
-  maxHeight: () => Math.min(240, (window.visualViewport?.height || window.innerHeight) * 0.28),
+  maxHeight: () => Math.min(240, (window.visualViewport?.height || window.innerHeight) / pageScale * 0.28),
 });
 window.visualViewport?.addEventListener("resize", growInput);
 window.addEventListener("resize", growInput);
@@ -265,19 +272,36 @@ const modelChip = button("模型", {
 });
 const moreButton = iconButton("plus", { title: "更多操作", className: "composer-more", onClick: openComposerMore });
 const modelLabels = new Map();
+let modelCatalogRequest = null;
+function updateModelCatalog(models) {
+  modelLabels.clear();
+  for (const model of models) modelLabels.set(model.key, model.alias || model.label || model.modelId);
+  updateComposerState();
+}
+function loadModelCatalog() {
+  if (!modelCatalogRequest) {
+    modelCatalogRequest = api.read("models.list").then((result) => {
+      if (!Array.isArray(result?.items)) throw new Error("模型目录响应不完整");
+      updateModelCatalog(result.items);
+    }).finally(() => { modelCatalogRequest = null; });
+  }
+  return modelCatalogRequest;
+}
 let configurationReceipt = null;
 function currentModelLabel() {
   const key = snapshot?.session?.modelKey;
-  return (key && modelLabels.get(key)) || key || "";
+  return (key && modelLabels.get(key)) || snapshot?.session?.modelId || key?.slice(key.indexOf("/") + 1) || "";
 }
 function updateComposerState() {
   const running = !!(snapshot?.session?.running || snapshot?.status?.running);
   stopButton.hidden = !running;
   const label = currentModelLabel();
   const text = label ? `模型：${label}` : "模型";
-  modelChip.querySelector(".btn-label").textContent = text;
-  modelChip.title = label ? text : "模型设置";
-  modelChip.setAttribute("aria-label", modelChip.title);
+  for (const target of [modelChip, ...document.querySelectorAll(".composer-more-model")]) {
+    target.querySelector(".btn-label").textContent = text;
+    target.title = label ? text : "模型设置";
+    target.setAttribute("aria-label", target.title);
+  }
   if (configurationReceipt && notice.textContent === configurationReceipt.text) {
     if (configurationReceipt.sessionId !== current) {
       notice.textContent = "";
@@ -291,10 +315,11 @@ function updateComposerState() {
 }
 function openComposerMore() {
   if (!current) return;
+  if (!modelLabels.size) void loadModelCatalog().catch(() => {});
   const sheet = openSheetPanel({ title: "更多操作", subtitle: "命令、技能与待发队列" });
   const list = el("div", { className: "sheet-list" },
     button("添加附件", { preserveLabel: true, iconName: "attach", onClick: () => { sheet.close(); fileInput.click(); } }),
-    button(modelChip.title || "模型设置", { preserveLabel: true, iconName: "model", onClick: () => { sheet.close(); openSessionSettings(); } }),
+    button(modelChip.title || "模型设置", { preserveLabel: true, className: "composer-more-model", iconName: "model", onClick: () => { sheet.close(); openSessionSettings(); } }),
     button("命令/技能", { preserveLabel: true, iconName: "commands", onClick: () => { sheet.close(); action(commands); } }),
     button("队列", { preserveLabel: true, iconName: "queue", onClick: () => { sheet.close(); action(queue); } }));
   sheet.body.append(list);
@@ -320,20 +345,51 @@ async function action(fn) {
     return undefined;
   }
 }
+async function createRemoteSession(projectId, temporaryWorkspacePath) {
+  const version = navigationVersion;
+  let modelKey;
+  try {
+    modelKey = JSON.parse(localStorage.getItem("lan-remote-last-model") || "null")?.modelKey;
+  } catch {}
+  const result = await mutate("sessions.create", {
+    ...(projectId == null ? { temporary: true, temporaryWorkspacePath: temporaryWorkspacePath?.trim() || undefined } : { projectId }),
+    ...(typeof modelKey === "string" && modelKey ? { modelKey } : {}),
+  });
+  if (version === navigationVersion && !loginVisible) await openSession(result.session.id);
+}
+function openTemporarySession() {
+  const sheet = openSheetPanel({ title: "新建临时会话" });
+  const directory = el("input", { type: "text", attrs: {
+    "aria-label": "电脑工作目录", placeholder: "留空使用会话临时目录",
+    title: "填写电脑上已存在文件夹的绝对路径；此目录不会登记为项目。",
+    autocomplete: "off", spellcheck: "false",
+  } });
+  sheet.body.append(el("label", { className: "sheet-field" }, "电脑工作目录（可选）", directory));
+  let creating = false;
+  sheet.panel.append(el("div", { className: "sheet-foot" },
+    button("取消", { variant: "secondary", onClick: () => sheet.close() }),
+    button("开始对话", { variant: "primary", preserveLabel: true, onClick: async () => {
+      if (creating || !sheet.isOpen()) return;
+      creating = true;
+      sheet.setBusy(true);
+      try { await createRemoteSession(null, directory.value); }
+      catch (error) {
+        if (sheet.isOpen()) sheet.showError(describeError(error) || error.message);
+        else report(error);
+      }
+      finally { creating = false; sheet.setBusy(false); }
+    } }),
+  ));
+}
 const home = createProjectHome({
   read: (...args) => api.read(...args),
   openSession,
-  createSession: async (projectId) => {
-    const version = navigationVersion;
-    let modelKey;
-    try {
-      modelKey = JSON.parse(localStorage.getItem("lan-remote-last-model") || "null")?.modelKey;
-    } catch {}
-    const result = await mutate("sessions.create", {
-      projectId,
-      ...(typeof modelKey === "string" && modelKey ? { modelKey } : {}),
-    });
-    if (version === navigationVersion && !loginVisible) await openSession(result.session.id);
+  createSession: (projectId) => projectId == null ? openTemporarySession() : createRemoteSession(projectId),
+  discardSession: async (sessionId) => {
+    await mutate("sessions.discard", { sessionId });
+    drafts.delete(sessionId);
+    positions.delete(sessionId);
+    persistDrafts();
   },
   report,
 });
@@ -520,7 +576,6 @@ async function openSession(id, { navigate = true } = {}) {
   queuedAttachments = draft.queuedAttachments || [];
   omittedQueuedRefs = draft.omittedQueuedRefs || [];
   renderAttachments();
-  socket?.subscribe(id);
   await refresh();
   if (current === id) {
     transcript.scrollTop = positions.has(id) ? positions.get(id) : transcript.scrollHeight;
@@ -543,6 +598,7 @@ async function refresh() {
   const reset = resetHistory;
   const merged = mergeSnapshot(messages, r, { reset });
   snapshot = r;
+  if (socket && r.session && !r.session.draft && !socket.subscriptions.has(id)) socket.subscribe(id);
   snapshotRevision = r.snapshot?.revision ?? -1;
   messages = merged.messages;
   liveTools.clear();
@@ -803,13 +859,13 @@ async function drawChat() {
   const nearBottom = transcript.scrollHeight - scroll - transcript.clientHeight < 100;
   const focusedDisclosure = document.activeElement?.closest("details")?.dataset.disclosureKey;
   const title = snapshot?.session?.title || "对话";
-  const status = running ? "正在处理" : "就绪";
+  const status = running ? "正在处理" : snapshot?.session?.draft ? "临时草稿" : "就绪";
   const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
   const sidechatLink = parents.get(current);
   chatHeading.replaceChildren(
     el("div", { className: "remote-chat-titlebar" },
       el("span", { className: `remote-run-status${running ? " is-running" : ""}`, attrs: { title: status, "aria-label": status } }),
-      el("h2", { text: title, attrs: { title } }),
+      el("h2", { text: title, attrs: { title: snapshot?.session?.temporaryWorkspacePath ? `${title}\n${snapshot.session.temporaryWorkspacePath}` : title } }),
       ...(pendingCount ? [button(String(pendingCount), {
         iconName: "warning", preserveLabel: true, className: "remote-pending-chip", title: `待处理 ${pendingCount}`,
         onClick: () => transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" }),
@@ -1202,11 +1258,7 @@ function openSessionSettings() {
     save: mutate,
     openSheet: openSheetPanel,
     isCurrent: () => current === sessionId && navigationVersion === navigation && !loginVisible,
-    onCatalog: (models) => {
-      modelLabels.clear();
-      for (const model of models) modelLabels.set(model.key, model.alias || model.label);
-      updateComposerState();
-    },
+    onCatalog: updateModelCatalog,
     onSaved: (session, { queued } = {}) => {
       // 使已经在途的旧快照失效，当前显示以配置回执为准。
       refreshVersion++;
@@ -1433,6 +1485,7 @@ async function start() {
   if (!capabilities.events?.subscribe)
     notice.textContent = "宿主缺少实时订阅能力，请安装包含远程接口的版本。";
   if (loginVisible) return;
+  void loadModelCatalog().catch(() => {});
   history.replaceState({ remotePage: "home" }, "", location.pathname);
   showHome({ reload: false });
   await home.load();
@@ -1446,7 +1499,7 @@ async function start() {
     },
     onReady: () => {
       notice.textContent = "";
-      if (current) socket.subscribe(current);
+      if (current && snapshot?.session && !snapshot.session.draft) socket.subscribe(current);
     },
     onEvent,
     onError: report,
@@ -1460,5 +1513,6 @@ async function start() {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !loginVisible) action(() => current ? refresh() : home.load());
 });
+void api.health().then((health) => applyPageScale(health?.uiScale)).catch(() => {});
 if (token) action(start);
 else showLogin();

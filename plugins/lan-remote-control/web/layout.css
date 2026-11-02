@@ -85,10 +85,10 @@ dialog label select { width: 100%; margin-top: 6px; }
 .remote-jump { grid-row: 3; }
 .remote-composer { grid-row: 4; max-height: 45dvh; }
 .remote-task-process { border: 0; border-bottom: 1px solid var(--ds-border-default); border-radius: 0; background: transparent; }
-.remote-task-process > summary { padding: 8px 0; min-height: 36px; flex-wrap: wrap; }
+.remote-task-process > summary { padding: 8px 12px; min-height: 36px; flex-wrap: wrap; }
 .remote-task-process > summary .remote-process-label { font-weight: 400; font-size: 14px; }
 .remote-task-process > summary .remote-process-excerpt { font-size: 11px; color: var(--ds-text-muted); }
-.remote-task-process > .remote-process-body { padding: 0 0 8px; }
+.remote-task-process > .remote-process-body { padding: 0 12px 12px; }
 .remote-task-process .remote-message + .remote-message { border-top: 1px solid var(--ds-border-default); }
 /* 正文留出阅读间距，过程通过折叠减少占位。 */
 @media (max-width: 700px) {
@@ -101,7 +101,7 @@ dialog label select { width: 100%; margin-top: 6px; }
   .remote-message-heading > small { font-size: 12px; }
   .remote-process { margin: 4px auto; border-radius: 8px; }
   .remote-process > summary { min-height: 36px; padding: 5px 10px; gap: 6px; font-size: 12px; line-height: 20px; }
-  .remote-task-process > summary { flex-wrap: nowrap; padding: 5px 0; }
+  .remote-task-process > summary { flex-wrap: nowrap; padding: 5px 12px; }
   .remote-task-process > summary .remote-process-label { font-size: 13px; }
   .remote-task-process > summary .remote-process-excerpt { font-size: 12px; }
   .remote-process-body { padding: 0 8px 8px; }

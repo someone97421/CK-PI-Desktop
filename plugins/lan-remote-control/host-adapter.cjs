@@ -4,6 +4,7 @@ const fs = require("node:fs/promises");
 const crypto = require("node:crypto");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createModelSettings, THINKING_LEVELS } = require("./model-settings.cjs");
+const { createTemporarySessions, isTemporarySession } = require("./temporary-sessions.cjs");
 const definitions = {
   capabilities: [false],
   "projects.list": [false, "project/list"],
@@ -20,6 +21,7 @@ const definitions = {
   "attachments.read": [false, "fs/read"],
   "plans.list": [false, "plans/pending"],
   "sessions.create": [true, "session/create"],
+  "sessions.discard": [true],
   "sessions.fork": [true, "session/fork"],
   "chat.send": [true, "agent/prompt", true],
   "chat.edit": [true, "agent/prompt", true],
@@ -72,6 +74,8 @@ function session(s) {
       "projectId",
       "projectPath",
       "mode",
+      "temporaryWorkspacePath",
+      "draft",
       "permissionMode",
       "pendingConfiguration",
       "pendingConfigurationError",
@@ -144,10 +148,13 @@ function createHostAdapter(pi) {
       confirm: true,
     });
   }
+  const temporarySessions = createTemporarySessions({ host, createDefaults: createdSessionDefaults });
   const modelSettings = createModelSettings({
     listModels: () => { assertAuthorized(); return pi.models.list(); },
     getSession: (id) => rawSession(id, { limit: 1 }),
-    configureSession: (id, config) => host("session/configure", [id, { ...config, deferUntilIdle: true }]),
+    configureSession: (id, config) => temporarySessions.get(id)
+      ? temporarySessions.configure(id, config)
+      : host("session/configure", [id, { ...config, deferUntilIdle: true }]),
     serializeSession: session,
   });
   // 与桌面新建会话对齐：客户端显式选择优先，否则继承桌面设置的默认
@@ -273,6 +280,7 @@ function createHostAdapter(pi) {
       references.delete(references.keys().next().value);
   }
   async function rawSession(id, input = {}) {
+    if (temporarySessions.get(id)) return temporarySessions.get(id);
     const result = await host("session/get", [
       {
         id,
@@ -288,6 +296,7 @@ function createHostAdapter(pi) {
     return result.session;
   }
   async function live(id) {
+    if (temporarySessions.get(id)) return null;
     if (typeof pi.desktop.getSessionSnapshot !== "function") return null;
     try {
       return await pi.desktop.getSessionSnapshot({ sessionId: id });
@@ -297,6 +306,7 @@ function createHostAdapter(pi) {
     }
   }
   async function pending(id, snap) {
+    if (temporarySessions.get(id)) return { approvals: [], questions: [], plans: [], complete: true, notes: [] };
     const result = await host("plans/pending", [{ sessionId: id }]);
     return {
       approvals: (snap?.pendingApprovals || []).map((a) => ({
@@ -314,17 +324,19 @@ function createHostAdapter(pi) {
     };
   }
   async function status(id) {
+    if (temporarySessions.get(id)) return { running: false };
     const v = await host("agent/getStatus", [id]);
     const s = v?.status && typeof v.status === "object" ? v.status : v;
     return { ...s, running: !!(s?.running ?? s?.isRunning) };
   }
   async function entries(id) {
+    if (temporarySessions.get(id)) return [];
     const result = await host("queue/list", [{ sessionId: id }]);
     const rows = result?.entries || [];
     remember(id, rows);
     return rows;
   }
-  async function imported(id, input) {
+  async function prepareAttachments(input) {
     const list = input.__attachments || [];
     if (!Array.isArray(list) || list.length > 8)
       fail("INVALID_PARAMS", "附件数量超过限制");
@@ -338,6 +350,13 @@ function createHostAdapter(pi) {
       )
         fail("INVALID_PARAMS", "附件不可用");
       const bytes = await fs.readFile(item.path);
+      result.push({ item, bytes });
+    }
+    return result;
+  }
+  async function imported(id, input, prepared) {
+    const result = [];
+    for (const { item, bytes } of prepared ?? await prepareAttachments(input)) {
       const a = await host("attachments/import", [
         {
           sessionId: id,
@@ -380,13 +399,11 @@ function createHostAdapter(pi) {
         ? (await execute("projects.list")).items
         : [];
       const project = projects.find((p) => p.id === input.projectId);
-      let items = (r.sessions || [])
-        .filter(
-          (s) =>
-            !input.projectId ||
-            s.projectId === input.projectId ||
-            (project && s.projectPath === project.path),
-        )
+      const combined = [...new Map([...(r.sessions || []), ...temporarySessions.list()].map((s) => [s.id, s])).values()];
+      const items = combined.filter((s) => input.temporary === true
+        ? isTemporarySession(s)
+        : !input.projectId || s.projectId === input.projectId || (project && s.projectPath === project.path))
+        .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
         .map(session);
       const start = Math.max(0, Number(input.cursor) || 0),
         limit = Math.min(100, Math.max(1, Number(input.limit) || 50));
@@ -400,8 +417,10 @@ function createHostAdapter(pi) {
       return modelSettings.list(input.sessionId === undefined ? undefined : text(input.sessionId, "sessionId"));
     }
     if (op === "commands.list") {
-      const r = await host("composer/commands", [
-        { sessionId: text(input.sessionId, "sessionId") },
+      const draft = temporarySessions.get(input.sessionId);
+      const r = await host("composer/commands", [draft
+        ? { temporaryWorkspacePath: draft.temporaryWorkspacePath ?? null }
+        : { sessionId: text(input.sessionId, "sessionId") },
       ]);
       return {
         items: (Array.isArray(r) ? r : r.commands || []).map((command) => ({
@@ -412,6 +431,7 @@ function createHostAdapter(pi) {
       };
     }
     if (op === "subagents.list") {
+      if (temporarySessions.get(input.sessionId)) return { items: [] };
       const result = await host("subagent/catalog", [
         { sessionId: text(input.sessionId, "sessionId") },
       ]);
@@ -422,6 +442,10 @@ function createHostAdapter(pi) {
       };
     }
     if (op === "sessions.create") {
+      if (input.temporary === true || input.projectId == null) {
+        if (input.projectId != null) fail("INVALID_PARAMS", "临时会话不能关联项目");
+        return { session: session(await temporarySessions.create(input)) };
+      }
       const projects = (await execute("projects.list")).items;
       const project = projects.find((p) => p.id === input.projectId);
       if (!project) fail("INVALID_PARAMS", "请选择已有项目");
@@ -440,6 +464,7 @@ function createHostAdapter(pi) {
       return { session: session(r.session) };
     }
     const id = text(input.sessionId, "sessionId");
+    if (op === "sessions.discard") return temporarySessions.discard(id);
     if (op === "sessions.get" || op === "sessions.messages") {
       const s = await rawSession(id, input),
         rows = (s.messages || []).map(message);
@@ -463,6 +488,7 @@ function createHostAdapter(pi) {
     if (op === "queue.list")
       return { items: (await entries(id)).map(queueItem) };
     if (op === "plans.list") {
+      if (temporarySessions.get(id)) return { items: [] };
       const r = await host("plans/pending", [{ sessionId: id }]);
       return { items: r.plans || [] };
     }
@@ -525,9 +551,16 @@ function createHostAdapter(pi) {
       return { removed: true };
     }
     if (["chat.send", "chat.edit", "chat.retry", "queue.push"].includes(op)) {
-      let content = typeof input.text === "string" ? input.text : "",
-        attachments = await imported(id, input),
-        truncate;
+      let content = typeof input.text === "string" ? input.text : "";
+      let prepared;
+      if (temporarySessions.get(id)) {
+        if (!["chat.send", "queue.push"].includes(op)) fail("INVALID_PARAMS", "临时草稿尚无可编辑的消息");
+        if (!content.trim() && !input.__attachments?.length) fail("INVALID_PARAMS", "消息不能为空");
+        if (content.length > 120000) fail("INVALID_PARAMS", "消息过长");
+        prepared = await prepareAttachments(input);
+        await temporarySessions.materialize(id);
+      }
+      let attachments = await imported(id, input, prepared), truncate;
       if (input.queuedDraftId) {
         const d = drafts.get(input.queuedDraftId);
         if (!d || d.sessionId !== id || d.expires < Date.now())

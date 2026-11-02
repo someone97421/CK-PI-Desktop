@@ -1,5 +1,6 @@
 import { el, button, inlineSpinner } from "./dom.js";
 import { describeError } from "./protocol.js";
+import { enhanceSelect } from "./select.js";
 
 const THINKING_LABELS = { off: "关闭", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最高", omit: "跟随提供商" };
 const MODES = { agent: "执行", plan: "计划", goal: "目标" };
@@ -17,10 +18,12 @@ export function pendingConfigurationNotice(session) {
 /** 每次打开独立加载、独立草稿；只有宿主回执才能更新会话。 */
 export function openModelSettings({ sessionId, read, save, openSheet, isCurrent, onCatalog, onSaved }) {
   let controller, generation = 0, catalog = [], baseline, draft, saving = false, retryPending = false;
+  const fieldSelects = [];
+  function closeFieldMenus() { for (const picker of fieldSelects.splice(0)) picker.close(); }
   const sheet = openSheet({
     title: "模型与会话设置",
     subtitle: "运行中修改会先排队，当前任务结束后、下一轮开始前生效。",
-    onClose: () => { generation++; controller?.abort(); },
+    onClose: () => { generation++; controller?.abort(); closeFieldMenus(); },
   });
   sheet.panel.classList.add("model-settings");
   const status = el("p", { className: "sheet-hint", attrs: { role: "status", "aria-live": "polite" } });
@@ -71,7 +74,9 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
     if (value && !Object.hasOwn(values, value)) select.append(el("option", { value, text: `${value}（当前值）` }));
     select.value = value;
     select.addEventListener("change", () => { onChange(select.value); syncApply(); });
-    return el("label", { className: "sheet-field" }, label, select);
+    const picker = enhanceSelect(select);
+    fieldSelects.push(picker);
+    return el("div", { className: "sheet-field" }, el("span", { text: label }), picker.element);
   }
 
   function renderFields() {
@@ -79,6 +84,7 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
     selected.textContent = model
       ? `已选择：${model.alias || model.modelId} · ${model.providerName}`
       : draft.modelKey ? `当前模型：${draft.modelKey}（不在可用列表中，保留当前设置）` : "当前会话使用默认模型；请选择要使用的模型。";
+    closeFieldMenus();
     fields.replaceChildren();
     if (model) {
       const levels = Object.fromEntries(model.thinkingLevels.map(level => [level, THINKING_LABELS[level] || level]));
@@ -111,6 +117,7 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
     reload.disabled = true;
     search.disabled = true;
     list.replaceChildren(inlineSpinner("正在读取模型和会话设置…"));
+    closeFieldMenus();
     fields.replaceChildren();
     selected.textContent = "";
     status.textContent = "";

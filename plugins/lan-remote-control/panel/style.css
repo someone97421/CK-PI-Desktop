@@ -2,3 +2,5 @@
 
 .service-status::before{content:"";display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px;background:#d85858}.service-status.is-running::before{background:#53aa70}
 .access-link strong{display:block;margin:0 4px 6px}.access-link-actions{display:flex;align-items:center;gap:4px}.access-link-actions input{flex:1;min-width:0}.access-link-actions button{flex-shrink:0}@media(max-width:480px){main{padding:12px}section{padding:12px}.access-link-actions{flex-wrap:wrap}.access-link-actions input{flex-basis:100%}}
+#app .rc-select { display: inline-block; width: 160px; max-width: calc(100% - 8px); margin: 4px; vertical-align: middle; }
+#app .rc-select .rc-select-trigger { font-size: 16px; }

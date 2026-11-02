@@ -110,6 +110,7 @@ function createRemoteServer(options = {}) {
     getAdapter = () => null,
     getOperationTable = () => buildOperationTable(getAdapter()),
     getCapabilities = null,
+    getUiScale = () => 100,
     hooks = {},
     limits = {},
   } = options;
@@ -534,6 +535,7 @@ function createRemoteServer(options = {}) {
       protocolVersion: 1,
       authMode: "password",
       passwordConfigured: state.devices.passwordConfigured,
+      uiScale: getUiScale(),
     };
   }
 

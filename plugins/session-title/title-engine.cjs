@@ -1,11 +1,11 @@
 "use strict";
 
-const TITLE_PROMPT_TEMPLATE = `Create a short, descriptive title for this conversation. Return only the title, without quotes.
+const TITLE_PROMPT_TEMPLATE = `请为本次对话创建一个简短、描述性的标题。仅返回标题，无需引号，沿用用户的语言。
 
-User prompt:
+用户提示:
 {{userPrompt}}
 
-Assistant response (if available):
+助理回复（如有）:
 {{assistantReply}}`;
 const MAX_PROMPT_TEMPLATE_LENGTH = 20_000;
 

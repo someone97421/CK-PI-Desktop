@@ -1840,8 +1840,12 @@ pre {
 /* 会话模型选择：可搜索目录与设置草稿。 */
 .model-settings .sheet-body { display: flex; flex-direction: column; gap: 14px; }
 .model-search { display: flex; gap: 8px; align-items: center; }
-.model-search input { flex: 1; min-width: 0; }
-.model-search .btn { flex-shrink: 0; }
+.model-search input { flex: 1; box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; padding: 10px 14px; border: 1px solid var(--ds-border-strong); border-radius: 10px; background: var(--ds-bg-tertiary); color: var(--ds-text-primary); font: inherit; font-size: 16px; line-height: 22px; appearance: none; -webkit-appearance: none; }
+.model-search input::placeholder { color: var(--ds-text-muted); }
+.model-search input:focus-visible { outline: 2px solid var(--ds-text-secondary); outline-offset: 2px; }
+.model-search input:disabled { opacity: .45; }
+.model-search input::-webkit-search-decoration { -webkit-appearance: none; }
+.model-search .btn { flex-shrink: 0; min-height: 44px; padding-inline: 14px; border: 1px solid var(--ds-border-default); border-radius: 10px; background: var(--ds-bg-secondary); }
 .model-catalog { max-height: 34dvh; min-height: 80px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--ds-border-default); border-radius: var(--radius-md); padding: 8px; }
 .model-provider + .model-provider { margin-top: 14px; }
 .model-provider h3 { margin: 4px 8px 8px; color: var(--ds-text-muted); font-size: var(--text-sm); font-weight: 600; }
@@ -1857,5 +1861,5 @@ pre {
 .model-settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .model-settings-fields .sheet-field { min-width: 0; margin: 0; }
 .model-settings-fields .sheet-field:first-child { grid-column: 1 / -1; }
-.model-settings-fields select { width: 100%; min-width: 0; }
+.model-settings-fields .rc-select { width: 100%; min-width: 0; }
 .model-settings .sheet-hint { margin: 0; overflow-wrap: anywhere; }

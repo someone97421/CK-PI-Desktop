@@ -1,8 +1,10 @@
+import { enhanceSelect } from "../web/select.js";
+
 const root = document.querySelector("#app");
 function node(tag, text) { const n = document.createElement(tag); if (text) n.textContent = text; return n; }
 const title = node("h1", "局域网远程控制"), status = node("p"), error = node("p"), hint = node("p");
 error.role = "alert";
-const controls = node("section"), credentials = node("section"), linkArea = node("section"), devices = node("section");
+const controls = node("section"), credentials = node("section"), appearance = node("section"), linkArea = node("section"), devices = node("section");
 const port = node("input"), password = node("input"), confirmation = node("input");
 port.type = "number"; port.min = "1024"; port.max = "65535"; port.value = "7878";
 const PORT_MIN = 1024, PORT_MAX = 65535, PORT_FALLBACK = 7878;
@@ -13,7 +15,7 @@ for (const field of [password, confirmation]) { field.type = "password"; field.a
 password.placeholder = "设置访问密码（至少 8 个字符）"; password.setAttribute("aria-label", "访问密码");
 confirmation.placeholder = "再次输入密码"; confirmation.setAttribute("aria-label", "再次输入密码");
 const passwordStatus = node("p");
-root.append(title, node("p", "开启后，把访问链接发到手机，输入主机密码即可登录。开启意图会保存：主程序重开后自动恢复监听，直到你手动关闭。"), status, hint, error, credentials, controls, linkArea, devices,
+root.append(title, node("p", "开启后，把访问链接发到手机，输入主机密码即可登录。开启意图会保存：主程序重开后自动恢复监听，直到你手动关闭。"), status, hint, error, credentials, controls, appearance, linkArea, devices,
   node("p", "仅用于可信局域网：HTTP 不加密。关闭访问会断开连接；设备登录保留 30 天，可随时移除。修改密码会退出全部设备。"));
 async function call(channel, payload = {}) {
   const r = await window.pluginBridge.invoke(channel, payload);
@@ -56,6 +58,30 @@ controls.append(node("h2", "远程访问"), node("p", "开启后同时监听本�
     renderLinks(result.links || (result.url ? [{ url: result.url }] : []));
   }),
   button("移除全部设备", async () => { await call("remote.revokeAll"); await refresh(); }));
+const uiScale = node("select"), scaleStatus = node("span");
+uiScale.setAttribute("aria-label", "远控页面比例");
+uiScale.title = "调整远控网页的文字、按钮和间距；保存后刷新手机页面生效。";
+scaleStatus.role = "status";
+for (let percent = 75; percent <= 150; percent += 5) {
+  const option = node("option", `${percent}%${percent === 100 ? "（默认）" : ""}`);
+  option.value = String(percent);
+  uiScale.append(option);
+}
+uiScale.value = "100";
+let scaleEdited = false;
+uiScale.addEventListener("change", () => { scaleEdited = true; scaleStatus.textContent = ""; });
+const scalePicker = enhanceSelect(uiScale);
+async function saveUiScale(percent) {
+  const result = await call("remote.setUiScale", { uiScale: percent });
+  uiScale.value = String(result.status.settings.uiScale);
+  scalePicker.sync();
+  scaleEdited = false;
+  scaleStatus.textContent = result.warning ? "本次运行生效，尚未保存" : "已保存";
+  if (result.warning) error.textContent = result.warning.message;
+}
+appearance.append(node("h2", "页面比例"), scalePicker.element,
+  button("保存比例", async () => { await saveUiScale(Number(uiScale.value)); }),
+  button("恢复默认", async () => { await saveUiScale(100); }), scaleStatus);
 let linksSignature = "";
 function renderLinks(links) {
   const signature = JSON.stringify(links);
@@ -114,6 +140,10 @@ async function refresh() {
     if (!portEdited && document.activeElement !== port) {
       const savedPort = Number(s.settings?.port);
       port.value = String(Number.isInteger(savedPort) && savedPort >= PORT_MIN && savedPort <= PORT_MAX ? savedPort : PORT_FALLBACK);
+    }
+    if (!scaleEdited && !scalePicker.element.contains(document.activeElement)) {
+      uiScale.value = String(s.settings?.uiScale ?? 100);
+      scalePicker.sync();
     }
     if (s.error) error.textContent = s.error.message;
     devices.replaceChildren(node("h2", "已登录设备"));

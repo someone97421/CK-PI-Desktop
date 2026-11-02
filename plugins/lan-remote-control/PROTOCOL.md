@@ -6,9 +6,10 @@
 
 | 类别 | 操作 | 主要输入 |
 | --- | --- | --- |
-| 能力/导航 | capabilities、projects.list、workspace.get、sessions.list | projectId、cursor、limit |
+| 能力/导航 | capabilities、projects.list、workspace.get、sessions.list | projectId、temporary、cursor、limit；temporary:true 仅列本地无项目会话及当前插件草稿 |
 | 会话读取 | sessions.get、sessions.messages、sessions.pending | sessionId、before、limit |
-| 会话创建 | sessions.create、sessions.fork | projectId；sessionId、throughMessageId、title；sessions.create 还可选传 modelKey、mode、thinkingLevel，缺省时继承桌面设置的默认模型/模式/思考档位 |
+| 会话创建 | sessions.create、sessions.fork | projectId 或 temporary:true；临时会话可选 temporaryWorkspacePath；sessionId、throughMessageId、title；sessions.create 还可选传 modelKey、mode、thinkingLevel，缺省时继承桌面设置 |
+| 草稿清理 | sessions.discard | sessionId；仅放弃当前插件内尚未发送的临时草稿，不删除正式会话 |
 | 消息 | chat.send、chat.edit、chat.retry、chat.stop | sessionId、text、messageId、attachmentIds |
 | 队列 | queue.list、queue.push、queue.remove、queue.prioritize、queue.reorder、queue.edit | sessionId、turnId、direction |
 | 目录 | models.list、commands.list、subagents.list | 模型目录传 sessionId 时同时返回当前会话设置；命令和子智能体需要 sessionId |
@@ -25,6 +26,8 @@
 - 项目 ID 保留宿主数值类型；会话关联同时考虑 projectPath。
 - 历史返回 `{items,cursor,hasMoreBefore}`；cursor 来自宿主 messageStart。
 - `sessions.get` 返回 session、status、messages、pending、snapshot。
+- 临时会话详情保留 `temporaryWorkspacePath` 和 `draft`。新建临时会话只建立插件内存草稿，首条消息提交时以同一 UUID 作为 `draftId` 创建正式会话，再导入附件和发送消息；草稿本身不写数据库，插件进程重启后不保留。
+- 临时工作目录是电脑上已存在文件夹的绝对路径，不登记为项目；未指定时使用宿主会话 scratch。草稿命令目录按该路径读取，子智能体目录和宿主实时订阅在正式创建后提供。
 - 上传 ID 只能由所属设备在所属会话使用。服务端转换为内部 `__attachments`，浏览器不能提供该字段。
 - `attachments/import` 为 plugin-only 网关：验证字节后写入宿主返回的会话 scratch 目录，不改变数据库格式。
 - 附件读取 ref 必须已出现在该会话历史或队列的索引中。

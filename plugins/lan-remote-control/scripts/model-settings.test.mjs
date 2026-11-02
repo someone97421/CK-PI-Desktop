@@ -64,10 +64,15 @@ class Element extends EventTarget {
     this.value = ""; this.disabled = false; this.className = ""; this.dataset = {};
     this.classList = { add: name => { this.className += ` ${name}`; } };
   }
+  get options() { return this.children.filter(child => child.tagName === "OPTION"); }
+  get selectedOptions() { return this.options.filter(option => option.value === this.value); }
+  get selectedIndex() { return this.options.findIndex(option => option.value === this.value); }
+  set selectedIndex(index) { this.value = this.options[index]?.value ?? ""; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute(key, value) { this.attrs[key] = value; if (key === "disabled") this.disabled = true; }
   getAttribute(key) { return this.attrs[key]; }
+  removeAttribute(key) { delete this.attrs[key]; }
   querySelectorAll() { return []; }
   blur() {}
 }

@@ -1,7 +1,6 @@
 /* 两页导航的项目首页，沿用参考图的灰阶卡片和展开列表。 */
 .remote-home { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 20px max(12px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
 .remote-home > * { max-width: 820px; margin-left: auto; margin-right: auto; }
-.remote-home-intro { border: 1px solid var(--ds-border-strong); border-radius: 10px; padding: 16px; background: var(--ds-bg-secondary); color: var(--ds-text-muted); font-size: 14px; line-height: 1.7; margin-bottom: 20px; }
 .remote-home-heading { display: flex; align-items: center; gap: 6px; min-height: 44px; }
 .remote-home-heading h1 { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; }
 .remote-home-tools { display: flex; gap: 2px; flex: none; }
@@ -33,7 +32,6 @@
 .remote-home-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
 .remote-home-filters input { grid-column: 1 / -1; }
 .remote-home-filters input, .remote-home-filters select { min-width: 0; width: 100%; min-height: 40px; border-radius: 8px; border: 1px solid var(--ds-border-strong); padding: 8px 10px; background: var(--ds-bg-secondary); color: inherit; font-size: 16px; }
-.remote-home-filters small { grid-column: 1 / -1; color: var(--ds-text-muted); font-size: 11px; }
 .remote-message-menu { width: min(360px, 94vw); }
 .remote-message-menu-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .remote-message-menu > .row-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
@@ -53,3 +51,6 @@
   .remote-home-project-count { font-size: 11px; }
   .remote-home-session { padding-left: 48px; }
 }
+.remote-home-draft { display: flex; align-items: center; min-width: 0; }
+.remote-home-draft .remote-home-session { flex: 1; min-width: 0; }
+.remote-home .remote-home-discard { flex: none; margin-right: 12px; }

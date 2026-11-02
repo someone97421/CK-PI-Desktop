@@ -42,6 +42,7 @@ const SERVICE_ID = "lan-remote-control";
 const DEFAULT_SETTINGS = Object.freeze({
   bindAddress: "",
   port: 7878,
+  uiScale: 100,
   /** 用户意图：主程序重开后是否自动恢复监听；只有显式“关闭”会清除。 */
   autoStart: false,
 });
@@ -79,6 +80,7 @@ const PANEL_CHANNELS = Object.freeze([
   "remote.stop",
   "remote.link",
   "remote.setPassword",
+  "remote.setUiScale",
   "remote.indicator",
   "remote.revoke",
   "remote.revokeAll",
@@ -198,8 +200,18 @@ function normalizeSettings(raw) {
     }
   }
 
+  let uiScale = DEFAULT_SETTINGS.uiScale;
+  if (source.uiScale !== undefined) {
+    const parsed = Number(source.uiScale);
+    if (Number.isInteger(parsed) && parsed >= 75 && parsed <= 150 && parsed % 5 === 0) {
+      uiScale = parsed;
+    } else {
+      errors.push("页面比例须为 75%～150%，步长 5%，已回退为 100%");
+    }
+  }
+
   return {
-    settings: { bindAddress, port, autoStart: autoStartIntent },
+    settings: { bindAddress, port, autoStart: autoStartIntent, uiScale },
     error: errors.length ? errors.join("；") : null,
   };
 }
@@ -474,6 +486,7 @@ async function initializeRemote() {
       getAdapter: () => adapter,
       getOperationTable: () => buildOperationTable(adapterModule),
       getCapabilities,
+      getUiScale: () => settings.uiScale,
       hooks: {
         onSubscribe: handleAdapterSubscribe,
         onUnsubscribe: handleAdapterUnsubscribe,
@@ -832,6 +845,17 @@ async function onPanelInvoke(channel, payload) {
       return linkFromPanel();
     case "remote.indicator":
       return { running: remote?.getStatus().running === true };
+    case "remote.setUiScale": {
+      const uiScale = Number(input.uiScale);
+      if (!Number.isInteger(uiScale) || uiScale < 75 || uiScale > 150 || uiScale % 5 !== 0) {
+        return { ok: false, error: { code: "INVALID_PARAMS", message: "页面比例须为 75%～150%，步长 5%" } };
+      }
+      return serializeLifecycle(async () => {
+        await refreshSettings(true);
+        const persisted = await persistSettings({ uiScale });
+        return { ok: true, ...(persisted ? {} : { warning: persistenceWarning() }), status: await buildStatus() };
+      });
+    }
     case "remote.setPassword": {
       try {
         const instance = await ensureRemote();

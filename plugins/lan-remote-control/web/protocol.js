@@ -96,6 +96,7 @@ export const READ_OPERATIONS = [
 /** 变更操作（必须携带 mutationId）。 */
 export const MUTATION_OPERATIONS = [
   "sessions.create",
+  "sessions.discard",
   "sessions.fork",
   "chat.send",
   "chat.edit",
@@ -368,6 +369,8 @@ export function normalizeSession(raw) {
     title: asString(pick(raw, ["title", "name"])) || "未命名会话",
     projectId: asString(pick(raw, ["projectId"]), ""),
     projectPath: asString(pick(raw, ["projectPath"]), ""),
+    temporaryWorkspacePath: asString(pick(raw, ["temporaryWorkspacePath"]), ""),
+    draft: asBool(pick(raw, ["draft"]), false),
     mode: asString(pick(raw, ["mode"]), "agent"),
     permissionMode: asString(pick(raw, ["permissionMode"]), "inherit"),
     providerId: asString(pick(raw, ["providerId"])),
