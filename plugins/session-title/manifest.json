@@ -1,0 +1,64 @@
+{
+  "activationEvents": [
+    "onStartup"
+  ],
+  "author": "Lan",
+  "categories": [
+    "productivity"
+  ],
+  "changelog": "# Changelog\n\n## 0.1.0\n\n- Initial release of the configurable Session Titles plugin.\n- Generate a title after the first completed turn using the configured prompt,\n  model, and thinking level.\n- Preserve manually renamed session titles.\n",
+  "contributes": {
+    "commands": [
+      {
+        "category": "Session Titles",
+        "id": "session-title.configure",
+        "keywords": [
+          "title",
+          "prompt",
+          "model"
+        ],
+        "title": "Session Titles: Configure"
+      }
+    ]
+  },
+  "description": "Generate concise titles for new sessions with a configurable prompt, model, and thinking level.",
+  "enabledByDefault": false,
+  "engines": {
+    "piDesktop": ">=0.18.0"
+  },
+  "homepage": "https://github.com/vastsa/pi-session-title-plugin",
+  "i18n": {
+    "en": {
+      "name": "Session Titles",
+      "description": "Generate concise titles for new sessions with a configurable prompt, model, and thinking level.",
+      "safetyNotes": "After the first completed turn, the plugin sends bounded excerpts of the first user prompt and assistant reply to the selected model through PI-Desktop's plugin completion API. It requires the high-risk session.autoTitle and agent.complete permissions. It does not read full transcripts or provider credentials, and manual renames are preserved."
+    },
+    "zh-CN": {
+      "name": "会话标题",
+      "description": "使用可配置的提示词、模型和思考级别，为新会话生成简洁标题。",
+      "safetyNotes": "首轮对话完成后，插件会通过 PI-Desktop 插件补全 API 将首条用户提示词和助手回复的有限摘录发送给所选模型。它需要高风险的 session.autoTitle 和 agent.complete 权限，不读取完整 transcript 或服务商凭据，并会保留手动重命名。"
+    }
+  },
+  "id": "net.aiuo.session-title",
+  "license": "LGPL-3.0-or-later",
+  "main": "main.js",
+  "name": "Session Titles",
+  "permissions": [
+    "ui.panel",
+    "agent.complete",
+    "models.list",
+    "session.autoTitle"
+  ],
+  "safetyNotes": "After the first completed turn, the plugin sends bounded excerpts of the first user prompt and assistant reply to the selected model through PI-Desktop's plugin completion API. It requires the high-risk session.autoTitle and agent.complete permissions. It does not read full transcripts or provider credentials, and manual renames are preserved.",
+  "schemaVersion": 1,
+  "ui": {
+    "height": 620,
+    "panel": "panel/index.html",
+    "title": {
+      "en": "Session Titles",
+      "zh-CN": "会话标题"
+    },
+    "width": 560
+  },
+  "version": "0.1.0"
+}

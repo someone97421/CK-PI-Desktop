@@ -386,13 +386,10 @@ export function createSessionLaunchRuntime({
     return root;
   }
 
-  async function resolveAgentRuntimeLaunch(
-    sessionId: string,
+  async function resolveAgentModel(
     session: any,
     settings: any,
     overrides: {
-      mode?: Mode;
-      turnId?: string;
       providerId?: string;
       modelId?: string;
       thinkingLevel?: SessionThinkingLevel;
@@ -400,12 +397,6 @@ export function createSessionLaunchRuntime({
   ) {
     if (!runtimeState.host) throw new Error("host unavailable");
     await modelsDevCatalog.ensureLoaded();
-    const remoteWorkspace = session.remoteWorkspace as { hostKey: string; path: string } | undefined;
-    const remoteBoot = remoteWorkspace ? getActiveRemoteHostsBoot() : null;
-    if (remoteWorkspace && !remoteBoot) throw new Error("remote host unavailable");
-    const commandShell = remoteWorkspace
-      ? await remoteBoot!.workspaceCommandShell(remoteWorkspace.hostKey)
-      : (await resolveEffectiveCommandShell()).effective!;
     const providers = await runtimeState.host!.call<{ providers: RuntimeProvider[] }>(
       "providers.list",
       { includeDisabled: false },
@@ -510,6 +501,56 @@ export function createSessionLaunchRuntime({
           storedModel?.defaultThinkingLevel,
       ),
     );
+    return {
+      providerId: provider.id,
+      modelId,
+      thinkingLevel,
+      providers,
+      account: provider,
+      storedModel,
+      provider: {
+        id: provider.id,
+        name: provider.name,
+        vendorKey: provider.vendorKey,
+        baseUrl,
+        modelId,
+        apiKey: secret.value || "",
+        authKind: provider.authKind,
+        extensionAgentKey: provider.extensionAgentKey,
+        apiStyle,
+        ...optionalProviderHeaders(provider.headers),
+        supportsReasoning: thinkingCapabilities.supportsReasoning,
+        supportsVision: visionFromModelConfig(modelConfig),
+        supportedThinkingLevels: [...thinkingCapabilities.supportedThinkingLevels],
+        ...(modelConfig ? { modelConfig } : {}),
+        fileHosting: settings.fileHosting,
+      },
+    };
+  }
+
+  async function resolveAgentRuntimeLaunch(
+    sessionId: string,
+    session: any,
+    settings: any,
+    overrides: {
+      mode?: Mode;
+      turnId?: string;
+      providerId?: string;
+      modelId?: string;
+      thinkingLevel?: SessionThinkingLevel;
+    } = {},
+  ) {
+    if (!runtimeState.host) throw new Error("host unavailable");
+    const remoteWorkspace = session.remoteWorkspace as { hostKey: string; path: string } | undefined;
+    const remoteBoot = remoteWorkspace ? getActiveRemoteHostsBoot() : null;
+    if (remoteWorkspace && !remoteBoot) throw new Error("remote host unavailable");
+    const commandShell = remoteWorkspace
+      ? await remoteBoot!.workspaceCommandShell(remoteWorkspace.hostKey)
+      : (await resolveEffectiveCommandShell()).effective!;
+    const {
+      account: provider, providers, storedModel, thinkingLevel, modelId,
+      provider: runtimeProvider,
+    } = await resolveAgentModel(session, settings, overrides);
     const sessionCompactionModel = getSessionCompactionModel(dataDir, sessionId);
     const compactionProvider = sessionCompactionModel
       ? await resolveCompactionProvider(providers.providers, {
@@ -863,23 +904,7 @@ export function createSessionLaunchRuntime({
         projectInstructions,
         projectMemory,
         compactionProvider,
-        provider: {
-          id: provider.id,
-          name: provider.name,
-          vendorKey: provider.vendorKey,
-          baseUrl,
-          modelId,
-          apiKey: secret.value || "",
-          authKind: provider.authKind,
-          extensionAgentKey: provider.extensionAgentKey,
-          apiStyle,
-          ...optionalProviderHeaders(provider.headers),
-          supportsReasoning: thinkingCapabilities.supportsReasoning,
-          supportsVision: visionFromModelConfig(modelConfig),
-          supportedThinkingLevels: [...thinkingCapabilities.supportedThinkingLevels],
-          ...(modelConfig ? { modelConfig } : {}),
-          fileHosting: settings.fileHosting,
-        },
+        provider: runtimeProvider,
         pluginTools: [
           ...plugins
             .getTools()
@@ -935,6 +960,7 @@ export function createSessionLaunchRuntime({
     runtimeDisabledBuiltinSkills,
     loadUserSkillBody,
     resolveEffectiveCommandShell,
+    resolveAgentModel,
     resolveAgentRuntimeLaunch,
   };
 }

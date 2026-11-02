@@ -18,6 +18,9 @@ apps/desktop/release/
 packages/*/dist/
 packages/*/dist-bundle/
 apps/*/dist-bundle/
+apps/desktop/resources/plugins/net.aiuo.session-title/
+apps/desktop/resources/plugins/local.lan-remote-control/
+apps/desktop/resources/plugins/local.codex-pet/
 
 # Local design-source exports
 docs/image/pi_logo.png

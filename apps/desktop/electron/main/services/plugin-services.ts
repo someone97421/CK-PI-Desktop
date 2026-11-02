@@ -65,6 +65,7 @@ import type { ClipboardHistory } from "../clipboard-history";
 import type { TurnEndedPayload } from "../runtime/session-coordination";
 import { resolveSessionWorkspace } from "../runtime/session-workspace";
 import type { HostProcess } from "../host-process";
+import type { createSessionLaunchRuntime } from "../runtime/session-launch";
 import { createPluginSessionContext } from "./plugin-session-context";
 import { createPluginProjectLister } from "./plugin-projects";
 import { createComposerSuggestionRelay } from "./composer-suggestion";
@@ -89,7 +90,7 @@ export type PluginServicesDependencies = {
   getPluginPanelTheme: () => "light" | "dark";
   getAppearance: () => PluginAppearance;
   getWorkspacePath: () => string | null;
-  resolveAgentRuntimeLaunch: (...args: any[]) => Promise<any>;
+  resolveAgentModel: ReturnType<typeof createSessionLaunchRuntime>["resolveAgentModel"];
   vendorOAuth: VendorOAuth;
   /** The live turn of one session, read from the host's own turn map. */
   getActiveTurn: (sessionId: string) => string | null;
@@ -127,7 +128,7 @@ export function createPluginServices({
   getPluginPanelTheme,
   getAppearance,
   getWorkspacePath,
-  resolveAgentRuntimeLaunch,
+  resolveAgentModel,
   vendorOAuth,
   getActiveTurn,
   isPluginActiveInProject,
@@ -477,15 +478,14 @@ export function createPluginServices({
       const session = input.sessionId
         ? (await getHost()!.call<{ session?: any }>("session.get", { id: input.sessionId })).session
         : {};
-      const launch = await resolveAgentRuntimeLaunch(launchSessionId, session ?? {}, settings, {
-        mode: "agent",
+      const launch = await resolveAgentModel(session ?? {}, settings, {
         providerId: parsed.providerId,
         modelId: parsed.modelId,
         thinkingLevel,
       });
       const runtimeProvider = {
-        ...launch.sidecarParams.provider,
-        ...(launch.sidecarParams.provider.authKind === OAUTH_AUTH_KIND
+        ...launch.provider,
+        ...(launch.provider.authKind === OAUTH_AUTH_KIND
           ? { resolveAuth: () => vendorOAuth.resolveAuth(launch.providerId) }
           : {}),
       } as RuntimeProviderConfig;
@@ -507,7 +507,7 @@ export function createPluginServices({
       const result = await completeOneShot(
         runtimeProvider,
         context,
-        launch.sidecarParams.thinkingLevel,
+        launch.thinkingLevel,
         {
           signal: input.signal,
           sessionId: launchSessionId,
@@ -520,7 +520,7 @@ export function createPluginServices({
       return {
         text: result.text,
         modelKey: `${launch.providerId}/${launch.modelId}`,
-        thinkingLevel: launch.sidecarParams.thinkingLevel,
+        thinkingLevel: launch.thinkingLevel,
         usage: result.usage,
       };
     },

@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { prepareBuild } from "./prepare-build.mjs";
 import { isDesktopArtifact, isPiHostArtifact, retainArtifacts } from "./artifact-retention.mjs";
+import { prepareBuiltinPlugins } from "./prepare-builtin-plugins.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(root, "apps/desktop");
@@ -94,6 +95,7 @@ try {
     console.log(`本次 pi-host 产物：${completed}`);
   } else {
     await pnpm(["run", "build:deps"], desktop);
+    await prepareBuiltinPlugins(root);
     if (mode === "dev") {
       await run("cargo", ["build", "-p", "host-core"]);
       await run(process.execPath, [join(root, "scripts/dev-electron.mjs")], desktop);

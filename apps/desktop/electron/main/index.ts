@@ -328,15 +328,11 @@ const pluginServices = createPluginServices({
     return applicationLifecycle.resolveAppearance();
   },
   getWorkspacePath: currentWorkspacePath,
-  resolveAgentRuntimeLaunch: (...args) => {
+  resolveAgentModel: (session, settings, overrides) => {
     if (!sessionLaunchRuntime) {
       throw new Error("session launch runtime is not initialized");
     }
-    return (
-      sessionLaunchRuntime.resolveAgentRuntimeLaunch as (
-        ...args: any[]
-      ) => Promise<any>
-    )(...args);
+    return sessionLaunchRuntime.resolveAgentModel(session, settings, overrides);
   },
   /**
    * The live turn of one session, read through the one map that owns turn

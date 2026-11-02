@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title></title>
+    <style>
+      :root { color-scheme: light dark; font: 14px/1.45 system-ui, sans-serif; }
+      body { margin: 0; padding: 24px; color: CanvasText; background: Canvas; }
+      main { max-width: 680px; margin: 0 auto; }
+      h1 { margin: 0 0 6px; font-size: 21px; }
+      .intro { margin: 0 0 22px; color: color-mix(in srgb, CanvasText 70%, transparent); }
+      label { display: block; margin: 18px 0 6px; font-weight: 600; }
+      input[type="checkbox"] { margin-right: 8px; }
+      select, textarea { box-sizing: border-box; width: 100%; padding: 9px 10px; color: inherit; background: Canvas; border: 1px solid color-mix(in srgb, CanvasText 24%, transparent); border-radius: 8px; }
+      textarea { min-height: 240px; resize: vertical; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      .hint { margin: 5px 0 0; color: color-mix(in srgb, CanvasText 65%, transparent); font-size: 12px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .actions { display: flex; align-items: center; gap: 12px; margin-top: 22px; }
+      button { border: 0; border-radius: 8px; padding: 9px 16px; color: white; background: #2563eb; font: inherit; font-weight: 600; cursor: pointer; }
+      button:disabled { opacity: .55; cursor: default; }
+      #status { min-height: 1.4em; color: color-mix(in srgb, CanvasText 70%, transparent); }
+      #status[data-error="true"] { color: #dc2626; }
+      @media (max-width: 520px) { body { padding: 16px; } .row { grid-template-columns: 1fr; gap: 0; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="heading"></h1>
+      <p id="intro" class="intro"></p>
+      <label><input id="enabled" type="checkbox" /> <span id="enabled-label"></span></label>
+      <div class="row">
+        <div>
+          <label id="model-label" for="model"></label>
+          <select id="model"></select>
+          <p id="model-hint" class="hint"></p>
+        </div>
+        <div>
+          <label id="thinking-label" for="thinking"></label>
+          <select id="thinking"></select>
+          <p id="thinking-hint" class="hint"></p>
+        </div>
+      </div>
+      <label id="prompt-label" for="prompt"></label>
+      <textarea id="prompt" maxlength="20000" spellcheck="false"></textarea>
+      <p id="prompt-hint" class="hint"></p>
+      <p id="prompt-error" class="hint" role="alert" hidden></p>
+      <div class="actions">
+        <button id="save" type="button"></button>
+        <span id="status" role="status" aria-live="polite"></span>
+      </div>
+    </main>
+    <script>
+      const bridge = window.pluginBridge;
+      const copy = {
+        en: {
+          heading: "Session Titles",
+          intro: "Configure how new sessions receive a title after their first completed turn.",
+          enabled: "Generate titles automatically",
+          model: "Model",
+          followSession: "Follow session model (then default ready model)",
+          modelHint: "Follow the session model when available; otherwise use your default ready model.",
+          thinking: "Thinking level",
+          thinkingHint: "Unsupported levels fall back to off for the selected model.",
+          prompt: "Prompt template",
+          promptHint: "Available placeholders: {{userPrompt}} and {{assistantReply}}. Conversation text is sent to the selected model through the plugin completion API.",
+          promptError: "Include {{userPrompt}} in the prompt template (maximum 20,000 characters).",
+          save: "Save",
+          loading: "Loading settings…",
+          saved: "Settings saved.",
+          loadError: "Could not load plugin settings.",
+          saveError: "Could not save settings.",
+          thinkingLevels: ["Off", "Minimal", "Low", "Medium", "High", "Extra high", "Max"],
+          unavailable: "(unavailable; fallback will be used)",
+        },
+        zh: {
+          heading: "会话标题",
+          intro: "设置首轮对话完成后如何为新会话生成标题。",
+          enabled: "自动生成标题",
+          model: "模型",
+          followSession: "跟随会话模型（不可用时用默认可用模型）",
+          modelHint: "优先使用会话模型；不可用时使用默认的已就绪模型。",
+          thinking: "思考级别",
+          thinkingHint: "模型不支持所选级别时会回退为关闭。",
+          prompt: "提示词模板",
+          promptHint: "可用占位符：{{userPrompt}} 和 {{assistantReply}}。对话文本会通过插件补全 API 发送给所选模型。",
+          promptError: "提示词模板必须包含 {{userPrompt}}，且不超过 20,000 个字符。",
+          save: "保存",
+          loading: "正在加载设置…",
+          saved: "设置已保存。",
+          loadError: "无法加载插件设置。",
+          saveError: "无法保存设置。",
+          thinkingLevels: ["关闭", "最少", "低", "中", "高", "超高", "最大"],
+          unavailable: "（不可用；将使用回退模型）",
+        },
+      };
+      const fields = {
+        heading: document.getElementById("heading"),
+        intro: document.getElementById("intro"),
+        enabledLabel: document.getElementById("enabled-label"),
+        modelLabel: document.getElementById("model-label"),
+        modelHint: document.getElementById("model-hint"),
+        thinkingLabel: document.getElementById("thinking-label"),
+        thinkingHint: document.getElementById("thinking-hint"),
+        promptLabel: document.getElementById("prompt-label"),
+        promptHint: document.getElementById("prompt-hint"),
+        promptError: document.getElementById("prompt-error"),
+        save: document.getElementById("save"),
+        model: document.getElementById("model"),
+        thinking: document.getElementById("thinking"),
+        prompt: document.getElementById("prompt"),
+        enabled: document.getElementById("enabled"),
+        status: document.getElementById("status"),
+      };
+      let locale = copy.en;
+      let modelKeys = new Set();
+
+      function setLocale(value) {
+        const code = String(value || "en").toLowerCase();
+        locale = code.startsWith("zh") ? copy.zh : copy.en;
+        document.documentElement.lang = locale === copy.zh ? "zh-CN" : "en";
+        fields.heading.textContent = locale.heading;
+        fields.intro.textContent = locale.intro;
+        fields.enabledLabel.textContent = locale.enabled;
+        fields.modelLabel.textContent = locale.model;
+        fields.modelHint.textContent = locale.modelHint;
+        fields.thinkingLabel.textContent = locale.thinking;
+        fields.thinkingHint.textContent = locale.thinkingHint;
+        fields.promptLabel.textContent = locale.prompt;
+        fields.promptHint.textContent = locale.promptHint;
+        fields.save.textContent = locale.save;
+        updatePromptValidation();
+      }
+
+      function fillThinkingLevels(selected) {
+        const values = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+        fields.thinking.replaceChildren();
+        values.forEach((value, index) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = locale.thinkingLevels[index];
+          fields.thinking.append(option);
+        });
+        fields.thinking.value = values.includes(selected) ? selected : "off";
+      }
+
+      function fillModels(models, selected) {
+        fields.model.replaceChildren();
+        const follow = document.createElement("option");
+        follow.value = "";
+        follow.textContent = locale.followSession;
+        fields.model.append(follow);
+        modelKeys = new Set();
+        (Array.isArray(models) ? models : []).forEach((model) => {
+          if (!model || typeof model.key !== "string") return;
+          const option = document.createElement("option");
+          option.value = model.key;
+          option.textContent = String(model.label || model.key);
+          fields.model.append(option);
+          modelKeys.add(model.key);
+        });
+        if (selected && !modelKeys.has(selected)) {
+          const option = document.createElement("option");
+          option.value = selected;
+          option.textContent = `${selected} ${locale.unavailable}`;
+          fields.model.append(option);
+        }
+        fields.model.value = selected || "";
+      }
+
+      function showStatus(message, isError = false) {
+        fields.status.textContent = message;
+        fields.status.dataset.error = String(isError);
+      }
+
+      function updatePromptValidation() {
+        const valid = fields.prompt.value.trim().length > 0 && fields.prompt.value.includes("{{userPrompt}}");
+        fields.promptError.textContent = valid ? "" : locale.promptError;
+        fields.promptError.hidden = valid;
+        fields.save.disabled = !valid;
+      }
+
+      async function load() {
+        showStatus(locale.loading);
+        try {
+          const result = await bridge.invoke("settings.load");
+          const settings = result?.settings || {};
+          fields.enabled.checked = settings.enabled !== false;
+          fillModels(result?.models, settings.modelKey || "");
+          fillThinkingLevels(settings.thinkingLevel || "off");
+          fields.prompt.value = String(settings.promptTemplate || "");
+          updatePromptValidation();
+          showStatus("");
+        } catch {
+          showStatus(locale.loadError, true);
+        }
+      }
+
+      fields.prompt.addEventListener("input", updatePromptValidation);
+      fields.save.addEventListener("click", async () => {
+        if (!fields.prompt.value.includes("{{userPrompt}}")) {
+          updatePromptValidation();
+          return;
+        }
+        fields.save.disabled = true;
+        showStatus("");
+        try {
+          const result = await bridge.invoke("settings.save", {
+            enabled: fields.enabled.checked,
+            modelKey: fields.model.value,
+            thinkingLevel: fields.thinking.value,
+            promptTemplate: fields.prompt.value,
+          });
+          fields.prompt.value = result?.settings?.promptTemplate || fields.prompt.value;
+          showStatus(locale.saved);
+        } catch {
+          showStatus(locale.saveError, true);
+        } finally {
+          updatePromptValidation();
+        }
+      });
+
+      bridge.on("appearance:changed", (appearance) => setLocale(appearance?.language));
+      bridge.invoke("app.getAppearance").then((appearance) => setLocale(appearance?.language)).catch(() => {});
+      setLocale("en");
+      void load();
+    </script>
+  </body>
+</html>

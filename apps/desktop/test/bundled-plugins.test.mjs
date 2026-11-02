@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
+import { BUILTIN_PLUGIN_SOURCES } from "../../../scripts/prepare-builtin-plugins.mjs";
 
 /** 内置第三方插件通过公共扩展接口运行，来源与本地适配由 UPSTREAM.md 记录。 */
 
@@ -180,4 +181,24 @@ test("bundled plugins are packaged and located at runtime", () => {
   assert.match(hostProcessSource, /function resolveBuiltinPluginsDir\(\)/);
   assert.match(hostProcessSource, /PI_DESKTOP_BUILTIN_PLUGINS_DIR/);
   assert.match(hostProcessSource, /join\(process\.resourcesPath \|\| "", "plugins"\)/);
+});
+
+test("三个内置可选插件保留原 ID、完整资源且缺省关闭", () => {
+  assert.deepEqual(BUILTIN_PLUGIN_SOURCES.map((plugin) => plugin.id), [
+    "net.aiuo.session-title", "local.lan-remote-control", "local.codex-pet",
+  ]);
+  for (const plugin of BUILTIN_PLUGIN_SOURCES) {
+    const source = resolve("../../plugins", plugin.directory);
+    const manifest = JSON.parse(read(`${source}/manifest.json`));
+    assert.equal(manifest.id, plugin.id);
+    assert.equal(manifest.enabledByDefault, false);
+    for (const file of [manifest.main, ...plugin.assets, ...plugin.browserEntries]) {
+      assert.ok(existsSync(resolve(source, file)), `${plugin.id} 缺少 ${file}`);
+    }
+  }
+  const build = read("../../scripts/build.mjs");
+  const preparation = build.indexOf("await prepareBuiltinPlugins(root)");
+  assert.ok(preparation > 0);
+  assert.ok(preparation < build.indexOf('if (mode === "dev")'));
+  assert.ok(preparation < build.indexOf("await vite()"));
 });
