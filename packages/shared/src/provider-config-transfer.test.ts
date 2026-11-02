@@ -40,6 +40,7 @@ describe("providerExportEntryFrom", () => {
       apiStyle: "chat_completions",
       baseUrl: "https://api.acme.io/v1",
       authKind: "api_key",
+      enabled: true,
       headers: { "x-vendor": "1" },
       models: [binding],
       defaultModelId: "acme-large",
@@ -48,13 +49,13 @@ describe("providerExportEntryFrom", () => {
       temperature: 0.2,
       supportsReasoning: true,
       supportedThinkingLevels: ["off", "high"],
+      oauthAccountLabel: "",
       apiKey: "sk-acme",
     });
-    // A disabled row is worth recording; an enabled one is the default.
-    expect(entry.enabled).toBeUndefined();
+    expect(entry.enabled).toBe(true);
   });
 
-  it("omits blanks and never exports an OAuth grant", () => {
+  it("保留空配置以便覆盖清空，OAuth 授权仍不导出", () => {
     const entry = providerExportEntryFrom({
       name: "Anthropic",
       type: "native",
@@ -66,6 +67,9 @@ describe("providerExportEntryFrom", () => {
     expect(entry).toEqual({
       name: "Anthropic",
       type: "native",
+      enabled: true, apiStyle: "", baseUrl: "", headers: {}, models: [], defaultModelId: "",
+      contextWindow: 0, maxOutputTokens: 0, temperature: -1,
+      supportsReasoning: false, supportedThinkingLevels: [],
       oauthAccountLabel: "user@example.com",
     });
     expect(entry.apiKey).toBeUndefined();
@@ -77,6 +81,11 @@ describe("providerExportEntryFrom", () => {
   });
 });
 
+it("新备份明确记录无 API 密钥，OAuth 备份省略授权字段", () => {
+  expect(providerExportEntryFrom({ name: "No key" }).apiKey).toBe("");
+  expect(providerExportEntryFrom({ name: "OAuth", hasOauth: true }).apiKey).toBeUndefined();
+});
+
 describe("buildProviderExportFile", () => {
   it("writes a versioned envelope", () => {
     const file = buildProviderExportFile([{ name: "Acme" }], {
@@ -85,7 +94,7 @@ describe("buildProviderExportFile", () => {
     });
     expect(file).toEqual({
       kind: PROVIDER_EXPORT_KIND,
-      version: 1,
+      version: 2,
       exportedAt: "2026-09-15T00:00:00.000Z",
       app: "这是一个助手",
       providers: [{ name: "Acme" }],
@@ -145,6 +154,11 @@ describe("parseProviderExportFile", () => {
       error: expect.stringContaining("no usable providers"),
     });
   });
+
+  it("接受空提供商备份，并继续兼容版本 1", () => {
+    expect(parseProviderExportFile({ ...valid, providers: [] })).toMatchObject({ ok: true, file: { providers: [] } });
+    expect(parseProviderExportFile(buildProviderExportFile([]))).toMatchObject({ ok: true, file: { version: 2, providers: [] } });
+  });
 });
 
 describe("planProviderImport", () => {
@@ -185,5 +199,11 @@ describe("providerImportPayload", () => {
       models: [binding],
     });
     expect("apiKey" in payload).toBe(false);
+  });
+
+  it("显式空值和禁用状态会传给宿主，旧文件缺失字段不补默认", () => {
+    expect(providerImportPayload({ name: "Acme", enabled: false, baseUrl: "", headers: {}, models: [], supportedThinkingLevels: [] }))
+      .toEqual({ name: "Acme", enabled: false, baseUrl: "", headers: {}, models: [], supportedThinkingLevels: [] });
+    expect(providerImportPayload({ name: "Acme" })).toEqual({ name: "Acme" });
   });
 });

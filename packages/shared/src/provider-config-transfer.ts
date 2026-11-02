@@ -15,7 +15,7 @@
 import type { ModelBinding, ThinkingLevel } from "./types.js";
 
 export const PROVIDER_EXPORT_KIND = "pi-desktop.providers";
-export const PROVIDER_EXPORT_VERSION = 1;
+export const PROVIDER_EXPORT_VERSION = 2;
 
 export type ProviderExportEntry = {
   name: string;
@@ -86,14 +86,11 @@ function optionalNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-/** Drop blanks so an export never carries `undefined`-shaped noise. */
+/** 省略未提供的字段，保留显式空值和关闭状态。 */
 function compact<T extends Record<string, unknown>>(input: T): T {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(input)) {
     if (value === undefined || value === null) continue;
-    if (typeof value === "string" && value === "") continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    if (isRecord(value) && Object.keys(value).length === 0) continue;
     out[key] = value;
   }
   return out as T;
@@ -115,20 +112,20 @@ export function providerExportEntryFrom(
     vendorKey: optionalString(provider.vendorKey)?.toLowerCase(),
     type,
     protocol: optionalString(provider.protocol),
-    apiStyle: optionalString(provider.apiStyle),
-    baseUrl: optionalString(provider.baseUrl),
+    apiStyle: provider.apiStyle ?? "",
+    baseUrl: provider.baseUrl ?? "",
     authKind: optionalString(provider.authKind),
-    enabled: provider.enabled === false ? false : undefined,
-    headers: provider.headers ?? undefined,
-    models: provider.models ?? undefined,
-    defaultModelId: optionalString(provider.defaultModelId),
-    contextWindow: optionalNumber(provider.contextWindow),
-    maxOutputTokens: optionalNumber(provider.maxOutputTokens),
-    temperature: optionalNumber(provider.temperature),
-    supportsReasoning: provider.supportsReasoning === true ? true : undefined,
-    supportedThinkingLevels: provider.supportedThinkingLevels ?? undefined,
-    oauthAccountLabel: optionalString(provider.oauthAccountLabel),
-    apiKey: optionalString(apiKey),
+    enabled: provider.enabled !== false,
+    headers: provider.headers ?? {},
+    models: provider.models ?? [],
+    defaultModelId: provider.models?.[0]?.id ?? provider.defaultModelId ?? "",
+    contextWindow: optionalNumber(provider.contextWindow) ?? 0,
+    maxOutputTokens: optionalNumber(provider.maxOutputTokens) ?? 0,
+    temperature: optionalNumber(provider.temperature) ?? -1,
+    supportsReasoning: provider.supportsReasoning === true,
+    supportedThinkingLevels: provider.supportedThinkingLevels ?? [],
+    oauthAccountLabel: provider.oauthAccountLabel ?? "",
+    apiKey: provider.hasOauth ? undefined : optionalString(apiKey) ?? "",
   }) as ProviderExportEntry;
 }
 
@@ -169,8 +166,8 @@ export function parseProviderExportFile(input: unknown): ProviderParseResult {
     };
   }
   const version = optionalNumber(document.version);
-  if (version === undefined) {
-    return { ok: false, error: "PROVIDER_IMPORT_INVALID: missing version" };
+  if (version === undefined || !Number.isInteger(version) || version < 1) {
+    return { ok: false, error: "PROVIDER_IMPORT_INVALID: missing version or invalid version" };
   }
   if (version > PROVIDER_EXPORT_VERSION) {
     return {
@@ -191,7 +188,7 @@ export function parseProviderExportFile(input: unknown): ProviderParseResult {
     }
     providers.push(raw as ProviderExportEntry);
   });
-  if (providers.length === 0) {
+  if (providers.length === 0 && document.providers.length > 0) {
     return { ok: false, error: "PROVIDER_IMPORT_INVALID: no usable providers" };
   }
 
@@ -266,6 +263,7 @@ export function providerImportPayload(entry: ProviderExportEntry): Record<string
     apiStyle: entry.apiStyle,
     baseUrl: entry.baseUrl,
     authKind: entry.authKind,
+    enabled: entry.enabled,
     headers: entry.headers,
     models: entry.models,
     defaultModelId: entry.defaultModelId,

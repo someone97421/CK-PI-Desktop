@@ -2144,3 +2144,31 @@ fn reasoning_effort_override_survives_provider_create_update_and_read() {
         );
     }
 }
+
+#[test]
+fn empty_model_replacement_clears_legacy_defaults_but_sparse_updates_preserve_them() {
+    let (_dir, db, secrets) = test_context();
+    let provider = create_provider(&db, &secrets, serde_json::from_value(json!({
+        "name": "Empty model import", "vendorKey": "custom", "type": "custom",
+        "apiStyle": "chat_completions", "defaultModelId": "legacy-model"
+    })).unwrap()).unwrap();
+    db.conn().execute(
+        "UPDATE providers SET config_json = ?1 WHERE id = ?2",
+        params![r#"{"modelId":"legacy-model"}"#, provider.id],
+    ).unwrap();
+    let renamed = update_provider(&db, &secrets, serde_json::from_value(json!({
+        "id": provider.id, "name": "Renamed import"
+    })).unwrap()).unwrap().unwrap();
+    assert_eq!(renamed.models[0].id, "legacy-model");
+    let cleared = update_provider(&db, &secrets, serde_json::from_value(json!({
+        "id": provider.id, "models": [], "defaultModelId": "legacy-model"
+    })).unwrap()).unwrap().unwrap();
+    assert!(cleared.models.is_empty());
+    assert!(get_provider(&db, &secrets, &provider.id).unwrap().unwrap().models.is_empty());
+    let (legacy, raw): (Option<String>, String) = db.conn().query_row(
+        "SELECT default_model_id, config_json FROM providers WHERE id = ?1",
+        params![provider.id], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+    assert!(legacy.is_none());
+    assert!(serde_json::from_str::<serde_json::Value>(&raw).unwrap().get("modelId").is_none());
+}

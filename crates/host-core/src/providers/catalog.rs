@@ -273,6 +273,9 @@ pub(crate) fn ensure_model_bindings_update_safe(raw: &str) -> Result<()> {
 
 pub(crate) fn config_with_model_bindings(raw: &str, bindings: &[ModelBinding]) -> Result<String> {
     let mut config = ensure_config_object(raw)?;
+    if let Some(object) = config.as_object_mut() {
+        object.remove("modelId");
+    }
     config["models"] = serde_json::to_value(normalize_model_bindings(bindings))?;
     Ok(config.to_string())
 }

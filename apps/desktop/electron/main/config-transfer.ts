@@ -1,42 +1,46 @@
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { dialog } from "electron";
+import { app, dialog } from "electron";
 import { globalInstructionPath } from "@pi-desktop/agent-runtime";
-import { resolveLocale } from "@pi-desktop/i18n";
 import {
-  APPEARANCE_KEYS, CONFIG_SCOPES, KEYBOARD_SHORTCUTS, SUBAGENT_THINKING_LEVELS,
-  isAllowedKeybinding, isReservedKeybinding, isAppearanceSettings, isReportIntervalSteps,
-  buildProviderExportFile, parseProviderExportFile, planProviderImport, providerImportPayload,
+  APPEARANCE_KEYS, CONFIG_SCOPES, CONFIG_SCOPE_LABELS, KEYBOARD_SHORTCUTS, SUBAGENT_THINKING_LEVELS,
+  PORTABLE_SETTING_SCOPES, exportPortableSettings, parsePortableSettings, portableSettingLabel,
+  defaultCommandShellForPlatform, isAllowedKeybinding, isReservedKeybinding, isReportIntervalSteps,
+  parseProviderExportFile, planProviderImport,
   type AppSettings, type ConfigExportFile, type ConfigScope, type ConfigTransferResult,
-  type UserSubagentRecord, type ShortcutPlatform,
+  type UserSubagentRecord, type ShortcutPlatform, type PortableSettings, type CommandShellCatalog,
 } from "@pi-desktop/shared";
 import { collectProviderConfig, type ProviderRow } from "./provider-config-transfer";
 import type { HostProcess } from "./host-process";
 import type { AppearanceMediaStore } from "./appearance-media";
+import { chooseConfigImportMode } from "./config-import-mode";
+import { appearanceOf, appearanceLabels, parseAppearance } from "./config-transfer-appearance";
+import { planOwnedProviderImport, removeImportedProviders, restoreImportedProviderOrder, saveImportedProvider } from "./provider-import";
+import { resolveDefaultUpdatePreference } from "./update-policy";
 
 type Dependencies = {
   host: HostProcess;
   saveSettings: (patch: Partial<AppSettings>) => Promise<unknown>;
   appearanceMedia: AppearanceMediaStore;
-};
-const labels: Record<ConfigScope, string> = {
-  appearance: "外观", shortcuts: "快捷键", instructions: "指令", models: "模型", subagents: "子智能体",
+  validateSettings?: (settings: Partial<AppSettings>) => unknown;
 };
 const filters = [{ name: "JSON 配置文件", extensions: ["json"] }];
-const appearanceLabels = { theme: "主题", language: "语言", fontFamily: "字体", fontScale: "字号", appearance: "分区字体与配色", homeMediaSize: "主页图大小" };
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 function invalid(message: string): never { throw new Error(`配置文件无效：${message}`); }
-const appearanceOf = (s: AppSettings): NonNullable<ConfigExportFile["appearance"]> => ({
-  theme: s.theme,
-  language: !s.language || s.language === "auto" ? "auto" : resolveLocale(s.language),
-  fontFamily: s.fontFamily ?? "",
-  fontScale: s.fontScale ?? 1, appearance: s.appearance ?? {},
-  homeMediaSize: s.homeMediaSize ?? 256,
-});
 async function readInstructions() {
   try { return await fs.readFile(globalInstructionPath(), "utf8"); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""; throw error; }
+}
+
+function remapMediaProviders(values: PortableSettings, resolveProvider: (id: string) => string): PortableSettings {
+  const mapped = { ...values };
+  const binding = <T extends { providerId: string }>(entry: T): T => ({ ...entry, providerId: resolveProvider(entry.providerId) });
+  if (mapped.imageGeneration) mapped.imageGeneration = binding(mapped.imageGeneration);
+  if (mapped.imageGenerationModels) mapped.imageGenerationModels = mapped.imageGenerationModels.map(binding);
+  if (mapped.speech) mapped.speech = Object.fromEntries(Object.entries(mapped.speech)
+    .map(([role, entry]) => [role, entry ? binding(entry) : entry]));
+  return mapped;
 }
 
 /** 在任何写入之前检查所有范围；未知字段不能进入设置或子智能体写入接口。 */
@@ -51,25 +55,12 @@ function parseFile(raw: string): ConfigExportFile {
     return { kind: "this-is-a-agent.config", version: 1, exportedAt: parsed.file.exportedAt,
       models: { providers: parsed.file, defaults: {} } };
   }
-  if (!record(value) || value.kind !== "this-is-a-agent.config" || value.version !== 1) invalid("不支持的文件类型或版本");
+  if (!record(value) || value.kind !== "this-is-a-agent.config" || ![1, 2].includes(value.version as number)) invalid("不支持的文件类型或版本");
   const file = value as unknown as ConfigExportFile;
   if (!CONFIG_SCOPES.some((scope) => file[scope] !== undefined)) invalid("没有可导入的范围");
-  if (file.appearance !== undefined) {
-    const a = file.appearance;
-    if (!record(a)) {
-      delete file.appearance;
-    } else {
-      for (const key of Object.keys(a)) {
-        if (!(APPEARANCE_KEYS as readonly string[]).includes(key) && key !== "media") delete a[key];
-      }
-      if (a.theme !== undefined && (typeof a.theme !== "string" || !["system", "light", "dark"].includes(a.theme) && !a.theme.startsWith("plugin:"))) delete a.theme;
-      if (a.language !== undefined && !["auto", "zh-CN", "en"].includes(a.language)) delete a.language;
-      if (a.fontFamily !== undefined && typeof a.fontFamily !== "string") delete a.fontFamily;
-      if (a.fontScale !== undefined && (typeof a.fontScale !== "number" || !Number.isFinite(a.fontScale) || a.fontScale < 0.8 || a.fontScale > 1.5)) delete a.fontScale;
-      if (a.appearance !== undefined && !isAppearanceSettings(a.appearance)) delete a.appearance;
-      if (a.homeMediaSize !== undefined && (typeof a.homeMediaSize !== "number" || !Number.isInteger(a.homeMediaSize) || a.homeMediaSize < 64 || a.homeMediaSize > 500)) delete a.homeMediaSize;
-      if (a.media !== undefined && !record(a.media)) delete a.media;
-    }
+  if (file.appearance !== undefined) file.appearance = parseAppearance(file.appearance);
+  for (const scope of PORTABLE_SETTING_SCOPES) {
+    if (file[scope] !== undefined) file[scope] = parsePortableSettings(file[scope], scope);
   }
   if (file.shortcuts !== undefined) {
     if (!record(file.shortcuts)) invalid("快捷键不正确");
@@ -83,10 +74,7 @@ function parseFile(raw: string): ConfigExportFile {
     !record(r) || typeof r.id !== "string" || typeof r.name !== "string" || r.ownerPluginId != null && typeof r.ownerPluginId !== "string"))) invalid("提供商映射不正确");
   if (file.models !== undefined) {
     if (!record(file.models) || !record(file.models.defaults)) invalid("模型配置不正确");
-    // 共用的旧模型入口不接受空提供商列表；完整备份允许只含默认选项。
-    const source = file.models.providers;
-    const emptyProviders = record(source) && source.kind === "pi-desktop.providers" && source.version === 1 && Array.isArray(source.providers) && source.providers.length === 0;
-    const parsed = emptyProviders ? { ok: true as const, file: buildProviderExportFile([]), warnings: [] as string[] } : parseProviderExportFile(source);
+    const parsed = parseProviderExportFile(file.models.providers);
     if (!parsed.ok) invalid("模型文件格式或版本不正确");
     if (parsed.warnings.length) invalid(parsed.warnings.join("；"));
     file.models.providers = parsed.file;
@@ -126,7 +114,15 @@ export async function exportConfig({ host, appearanceMedia }: Dependencies, scop
   const result: ConfigTransferResult = { applied: 0, skipped: 0, failed: 0, warnings: [] };
   if (picked.canceled || !picked.filePath) return { ...result, canceled: true };
   const settings = await host.call<AppSettings>("settings.get");
-  const file: ConfigExportFile = { kind: "this-is-a-agent.config", version: 1, exportedAt: new Date().toISOString() };
+  const file: ConfigExportFile = { kind: "this-is-a-agent.config", version: 2, exportedAt: new Date().toISOString() };
+  const portableSettings = { ...settings,
+    defaultCommandShell: settings.defaultCommandShell ?? defaultCommandShellForPlatform(process.platform),
+    temporaryWorkspaceContextMenu: settings.temporaryWorkspaceContextMenu ?? true,
+    updatePreference: settings.updatePreference ?? resolveDefaultUpdatePreference(process.platform, app.isPackaged),
+  };
+  for (const scope of PORTABLE_SETTING_SCOPES) {
+    if (scopes.includes(scope)) file[scope] = exportPortableSettings(portableSettings, scope);
+  }
   if (scopes.includes("appearance")) file.appearance = {
     ...appearanceOf(settings),
     media: await appearanceMedia.exportMedia(),
@@ -140,6 +136,10 @@ export async function exportConfig({ host, appearanceMedia }: Dependencies, scop
       compactionProviderId: settings.compactionProviderId ?? "", compactionModelId: settings.compactionModelId ?? "",
     } };
     file.providerRefs = collected.providers.map(({ id, name, ownerPluginId }) => ({ id, name, ownerPluginId }));
+  }
+  if (scopes.includes("media") && !file.providerRefs) {
+    const { providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", { includeDisabled: true });
+    file.providerRefs = providers.map(({ id, name, ownerPluginId }) => ({ id, name, ownerPluginId }));
   }
   if (scopes.includes("subagents")) {
     if (!file.providerRefs) {
@@ -155,14 +155,14 @@ export async function exportConfig({ host, appearanceMedia }: Dependencies, scop
         tools: agent.tools, model: agent.model ?? "", fallbackModels: agent.fallbackModels ?? [],
         fallbackThinkingLevels: agent.fallbackThinkingLevels ?? {},
         thinkingLevel: agent.thinkingLevel ?? "", maxTokens: agent.maxTokens ?? 0,
-        ...(agent.reportIntervalSteps !== undefined ? { reportIntervalSteps: agent.reportIntervalSteps } : {}), enabled: agent.enabled });
+        reportIntervalSteps: agent.reportIntervalSteps ?? null, enabled: agent.enabled });
     }
   }
   await fs.writeFile(picked.filePath, `${JSON.stringify(file, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   return { ...result, applied: new Set(scopes).size };
 }
 
-export async function importConfig({ host, saveSettings, appearanceMedia }: Dependencies): Promise<ConfigTransferResult> {
+export async function importConfig({ host, saveSettings, appearanceMedia, validateSettings }: Dependencies): Promise<ConfigTransferResult> {
   const result: ConfigTransferResult = { applied: 0, skipped: 0, failed: 0, warnings: [] };
   const picked = await dialog.showOpenDialog({ title: "导入配置", properties: ["openFile"], filters });
   if (picked.canceled || !picked.filePaths[0]) return { ...result, canceled: true };
@@ -171,8 +171,27 @@ export async function importConfig({ host, saveSettings, appearanceMedia }: Depe
   // 外观导出内嵌原始媒体，不对它施加文件大小上限；其他范围沿用原限制。
   if (file.appearance === undefined && Buffer.byteLength(raw) > 20 * 1024 * 1024) throw new Error("配置文件不能超过 20 MB");
   const settings = await host.call<AppSettings>("settings.get");
+  const importedShell = file.general?.defaultCommandShell;
+  if (importedShell !== undefined) {
+    let available = false;
+    try {
+      const catalog = await host.call<CommandShellCatalog>("commandShells.list");
+      available = catalog.choices.some((choice) => choice.id === importedShell && choice.available);
+    } catch { }
+    if (!available) {
+      delete file.general!.defaultCommandShell;
+      result.skipped++;
+      result.warnings.push(`默认 Shell ${importedShell} 在目标机器不可用或无法确认，已保留本机设置。`);
+    }
+  }
   type Operation = { label: string; conflict: boolean; apply: () => Promise<unknown> };
   const operations: Operation[] = [];
+  const removals: { label: string; apply: () => Promise<unknown> }[] = [];
+  if (validateSettings) {
+    const { media: _media, ...appearance } = file.appearance ?? {};
+    validateSettings(appearance);
+    for (const scope of PORTABLE_SETTING_SCOPES) if (file[scope]) validateSettings(file[scope]!);
+  }
   const add = (label: string, conflict: boolean, apply: Operation["apply"]) => operations.push({ label, conflict, apply });
   if (file.appearance) {
     const current = appearanceOf(settings);
@@ -205,7 +224,7 @@ export async function importConfig({ host, saveSettings, appearanceMedia }: Depe
     });
   }
   let providers: ProviderRow[] = [];
-  if (file.models || file.subagents) ({ providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", { includeDisabled: true }));
+  if (file.models || file.subagents || file.media) ({ providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", { includeDisabled: true }));
   const refs = new Map((file.providerRefs ?? []).map((ref) => [ref.id, ref]));
   const resolveProvider = (id: string): string => {
     if (!id) return "";
@@ -217,26 +236,15 @@ export async function importConfig({ host, saveSettings, appearanceMedia }: Depe
     return matches[0].id;
   };
   if (file.models) {
-    const owned = providers.filter((p) => !p.ownerPluginId);
-    for (const entry of file.models.providers.providers) {
-      if (owned.filter((p) => p.name.trim().toLowerCase() === entry.name.trim().toLowerCase()).length > 1) {
-        throw new Error("本机存在同名提供商，无法确定覆盖目标。请先在模型设置中区分名称。");
-      }
-    }
-    const plan = planProviderImport(owned, file.models.providers.providers);
+    const plan = planOwnedProviderImport(providers, file.models.providers.providers);
     for (const step of plan.steps) add(`模型 · ${step.entry.name}`, step.action === "update", async () => {
-      const payload = { ...providerImportPayload(step.entry), enabled: step.entry.enabled !== false,
-        headers: step.entry.headers ?? {}, models: step.entry.models ?? [],
-        supportsReasoning: step.entry.supportsReasoning ?? false,
-        contextWindow: step.entry.contextWindow ?? 0, maxOutputTokens: step.entry.maxOutputTokens ?? 0,
-        temperature: step.entry.temperature ?? -1,
-        ...(step.entry.apiKey?.trim() ? { secretValue: step.entry.apiKey.trim() } : {}) };
-      const { provider } = await host.call<{ provider: ProviderRow }>(`providers.${step.action}`, { ...payload, ...(step.id ? { id: step.id } : {}) });
-      if (!provider) throw new Error("提供商保存失败");
-      providers = [...providers.filter((p) => p.id !== provider.id), provider];
-      // create 接口不接收 enabled；新建后单独恢复禁用状态。
-      if (step.action === "create" && step.entry.enabled === false) await host.call("providers.update", { id: provider.id, enabled: false });
+      const provider = await saveImportedProvider(host, step);
+      providers = [...providers.filter((row) => row.id !== provider.id), provider];
     });
+    for (const provider of plan.removals) removals.push({ label: `提供商 · ${provider.name}`, apply: async () => {
+      await removeImportedProviders(host, [provider], providers, saveSettings);
+      providers = providers.filter((row) => row.id !== provider.id);
+    } });
     for (const [pk, mk] of [["defaultProviderId", "defaultModelId"], ["compactionProviderId", "compactionModelId"]] as const) {
       const defaults = file.models.defaults;
       if (defaults[pk] === undefined || defaults[mk] === undefined) continue;
@@ -248,6 +256,17 @@ export async function importConfig({ host, saveSettings, appearanceMedia }: Depe
   if (file.subagents) {
     const { subagents } = await host.call<{ subagents: UserSubagentRecord[] }>("agents.list");
     const existing = new Set(subagents.map((a) => a.id));
+    const addedCount = file.subagents.owned.filter((agent) => !existing.has(agent.id)).length;
+    if (existing.size + addedCount > 64) {
+      throw new Error(`当前有 ${existing.size} 个自定义子智能体，导入需新增 ${addedCount} 个，保存阶段会超过宿主的 64 个上限。请先移除不再需要的子智能体后重试；本次尚未写入配置。`);
+    }
+    const incoming = new Set(file.subagents.owned.map((agent) => agent.id));
+    for (const agent of subagents.filter((row) => !incoming.has(row.id))) removals.push({
+      label: `子智能体 · ${agent.id}`, apply: async () => {
+        const removed = await host.call<{ ok: boolean }>("agents.remove", { id: agent.id });
+        if (!removed.ok) throw new Error("子智能体移除失败");
+      },
+    });
     const pin = (value: string) => {
       if (!value) return "";
       const slash = value.indexOf("/");
@@ -275,18 +294,42 @@ export async function importConfig({ host, saveSettings, appearanceMedia }: Depe
       if (disabled.includes(id) !== next.has(id)) add(`内置子智能体开关 · ${id}`, true, () => host.call("agents.setBuiltinEnabled", { id, enabled: !next.has(id) }));
     }
   }
-  const conflicts = operations.filter((op) => op.conflict);
-  const scopes = CONFIG_SCOPES.filter((s) => file[s] !== undefined).map((s) => labels[s]);
-  const confirmation = await dialog.showMessageBox({ type: conflicts.length ? "warning" : "question", title: "导入配置",
-    message: conflicts.length ? `发现 ${conflicts.length} 项配置冲突，是否覆盖？` : "确认导入配置？",
-    detail: `范围：${scopes.join("、")}\n待处理 ${operations.length} 项。${conflicts.length ? `\n\n冲突项目：\n${conflicts.map((op) => op.label).join("\n")}\n\n覆盖只替换这些配置；跳过则保留本机冲突项。` : ""}`,
-    buttons: conflicts.length ? ["覆盖冲突并导入", "跳过冲突并导入", "取消"] : ["导入", "取消"],
-    defaultId: conflicts.length ? 2 : 0, cancelId: conflicts.length ? 2 : 1, noLink: true });
-  if (confirmation.response === (conflicts.length ? 2 : 1)) return { ...result, canceled: true };
+  for (const scope of PORTABLE_SETTING_SCOPES) {
+    const values = file[scope];
+    if (!values) continue;
+    for (const key of Object.keys(values) as (keyof AppSettings)[]) {
+      const value = values[key];
+      if (isDeepStrictEqual(settings[key], value)) continue;
+      add(`${CONFIG_SCOPE_LABELS[scope]} · ${portableSettingLabel(key)}`, settings[key] !== undefined, () => {
+        const patch = remapMediaProviders({ [key]: value }, resolveProvider);
+        return saveSettings(patch);
+      });
+    }
+  }
+  const mode = await chooseConfigImportMode({
+    scopes: CONFIG_SCOPES.filter((scope) => file[scope] !== undefined).map((scope) => CONFIG_SCOPE_LABELS[scope]),
+    conflicts: operations.filter((op) => op.conflict).map((op) => op.label),
+    removals: removals.map((op) => op.label), count: operations.length,
+  });
+  if (!mode) return { ...result, canceled: true };
   for (const op of operations) {
-    if (op.conflict && confirmation.response === 1) { result.skipped++; continue; }
+    if (op.conflict && mode === "skip") { result.skipped++; continue; }
     try { await op.apply(); result.applied++; }
     catch { result.failed++; result.warnings.push(`${op.label}：写入失败，请检查配置内容和依赖的模型提供商后重试。`); }
+  }
+  if (mode === "replace" && result.failed === 0) {
+    if (file.models) {
+      try { await restoreImportedProviderOrder(host, file.models.providers.providers, providers); }
+      catch { result.failed++; result.warnings.push("提供商顺序恢复失败，未执行后续移除。"); }
+    }
+    for (const op of removals) {
+      if (result.failed) { result.skipped++; continue; }
+      try { await op.apply(); result.applied++; }
+      catch { result.failed++; result.warnings.push(`${op.label}：移除未完成，其余条目已保留。`); }
+    }
+  } else if (mode === "replace" && removals.length) {
+    result.skipped += removals.length;
+    result.warnings.push("部分配置保存失败，未移除本机其他提供商或子智能体。");
   }
   return result;
 }

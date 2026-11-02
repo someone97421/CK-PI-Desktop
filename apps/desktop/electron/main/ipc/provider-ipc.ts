@@ -10,7 +10,7 @@ import {
 } from "@pi-desktop/shared";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
 import { probeProviderEndpoint } from "../model-discovery";
-import { exportProviderConfig, importProviderConfig } from "../provider-config-transfer";
+import { exportProviderConfig } from "../provider-config-transfer";
 import {
   probeDiscoveryCandidates,
   type DiscoveryAttempt,
@@ -219,11 +219,6 @@ export function registerProviderIpc({
   });
   handle(IPC.invoke.providersExportConfig, async () => {
     return exportProviderConfig({ getHost, logger });
-  });
-  handle(IPC.invoke.providersImportConfig, async () => {
-    const result = await importProviderConfig({ getHost, logger });
-    await modelsDevCatalog.ensureLoaded();
-    return result;
   });
   handle(IPC.invoke.providersTest, async (id: string) => {
     if (!host) throw new Error("host unavailable");

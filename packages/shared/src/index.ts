@@ -45,6 +45,7 @@ export * from "./model-config-import.js";
 export * from "./pi-config-sync.js";
 export * from "./provider-config-transfer.js";
 export * from "./config-transfer.js";
+export * from "./config-transfer-settings.js";
 export * from "./theme.js";
 export * from "./thinking-levels.js";
 export * from "./command-shells.js";

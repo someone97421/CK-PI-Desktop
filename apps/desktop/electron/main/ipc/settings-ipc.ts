@@ -8,6 +8,7 @@ import {
   type UpdatePreference,
 } from "@pi-desktop/shared";
 import { exportConfig, importConfig } from "../config-transfer";
+import { importProviderConfig } from "../provider-config-transfer";
 import { AppearanceMediaStore, readAppearanceIconPath } from "../appearance-media";
 import { changeDataDirectory, getDataDirectoryState, openDataDirectory } from "../data-directory";
 import { WindowsAppearanceIcons } from "../windows-appearance-icons";
@@ -203,7 +204,7 @@ export function registerSettingsIpc({
 
   // 文件操作和冲突确认留在主进程；不向渲染进程返回密钥。
   let transferring = false;
-  const transfer = async (scopes?: ConfigScope[]) => {
+  const transfer = async (scopes?: ConfigScope[], providerOnly = false) => {
     if (transferring) throw new Error("正在处理配置，请稍候");
     const transferHost = getHost();
     if (!transferHost) throw new Error("host unavailable");
@@ -211,13 +212,21 @@ export function registerSettingsIpc({
     try {
       const deps = {
         host: transferHost,
-        saveSettings: async (patch: Partial<AppSettings>) => {
-          const current = await transferHost.call<Record<string, unknown>>("settings.get");
-          return saveSettings({ ...current, ...patch });
-        },
+        saveSettings: (patch: Partial<AppSettings>) => saveSettings(patch),
+        validateSettings: validateSettingsWrite,
         appearanceMedia,
       };
-      return scopes === undefined ? await importConfig(deps) : await exportConfig(deps, scopes);
+      const result = providerOnly
+        ? await importProviderConfig({ getHost: () => transferHost, saveSettings: deps.saveSettings })
+        : scopes === undefined ? await importConfig(deps) : await exportConfig(deps, scopes);
+      if (scopes === undefined && !result.canceled) {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+            window.webContents.send(IPC.event.pluginChanged, { reason: "subagent" });
+          }
+        }
+      }
+      return result;
     } finally {
       transferring = false;
     }
@@ -227,6 +236,7 @@ export function registerSettingsIpc({
     return transfer(scopes);
   });
   handle(IPC.invoke.settingsImportConfig, () => transfer());
+  handle(IPC.invoke.providersImportConfig, () => transfer(undefined, true));
 
   handle(IPC.invoke.commandShellList, async () => resolveEffectiveCommandShell());
 }

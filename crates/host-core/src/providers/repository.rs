@@ -407,6 +407,11 @@ pub fn update_provider(
             .execute(params![api_key_ref])?;
     }
 
+    let replace_default_model = input.models.is_some() || input.default_model_id.is_some();
+    let default_model_id = match input.models.as_ref() {
+        Some(models) => models.first().map(|model| model.id.clone()),
+        None => input.default_model_id.clone(),
+    };
     db.conn()
         .prepare_cached(
             "UPDATE providers SET
@@ -416,7 +421,7 @@ pub fn update_provider(
                 protocol = COALESCE(?4, protocol),
                 base_url = COALESCE(?5, base_url),
                 auth_kind = COALESCE(?6, auth_kind),
-                default_model_id = COALESCE(?7, default_model_id),
+                default_model_id = CASE WHEN ?15 THEN ?7 ELSE default_model_id END,
                 api_style = COALESCE(?8, api_style),
                 enabled = COALESCE(?9, enabled),
                 secret_ref = CASE WHEN ?14 THEN NULL ELSE COALESCE(?10, secret_ref) END,
@@ -431,19 +436,15 @@ pub fn update_provider(
             input.protocol,
             input.base_url,
             input.auth_kind,
-            input.default_model_id.or_else(|| {
-                input
-                    .models
-                    .as_ref()
-                    .and_then(|models| models.first().map(|model| model.id.clone()))
-            }),
+            default_model_id,
             input.api_style,
             input.enabled.map(|b| if b { 1 } else { 0 }),
             secret_ref,
             config_json,
             now_ms(),
             input.id,
-            clear_api_key
+            clear_api_key,
+            replace_default_model
         ])?;
     // A save that drops bindings also forgets their cached rows. The cache is
     // the service's answer, and a model the user removed is no longer part of

@@ -346,9 +346,9 @@ export function createProviderCatalogRuntime({
       value.networkProxy = proxy.value;
     }
     if (Object.prototype.hasOwnProperty.call(value, "speech")) {
-      (value as T & { speech?: unknown }).speech = validateSpeechSettings(
-        (value as { speech?: unknown }).speech,
-      );
+      const speech = (value as { speech?: unknown }).speech;
+      (value as T & { speech?: unknown }).speech = validateSpeechSettings(speech) ??
+        (speech === undefined ? undefined : {});
     }
     return settings;
   };

@@ -15,10 +15,9 @@ import {
   APP_NAME,
   buildProviderExportFile,
   parseProviderExportFile,
-  planProviderImport,
   providerExportEntryFrom,
-  providerImportPayload,
   type ModelBinding,
+  type AppSettings,
   type ProviderExportEntry,
   type ProviderExportResult,
   type ProviderImportResult,
@@ -26,6 +25,8 @@ import {
 } from "@pi-desktop/shared";
 import { dialog } from "electron";
 import type { HostProcess } from "./host-process";
+import { chooseConfigImportMode } from "./config-import-mode";
+import { planOwnedProviderImport, removeImportedProviders, restoreImportedProviderOrder, saveImportedProvider } from "./provider-import";
 
 export type ProviderRow = {
   id: string;
@@ -118,93 +119,50 @@ export async function exportProviderConfig(
   return { ok: true, count: entries.length, withCredentials, path: picked.filePath };
 }
 
-/** Apply an import document: matching names are updated in place. */
+/** 模型专用入口与综合配置入口共用保存和覆盖语义。 */
 export async function importProviderConfig(
-  deps: ProviderTransferDependencies,
+  deps: ProviderTransferDependencies & { saveSettings: (patch: Partial<AppSettings>) => Promise<unknown> },
 ): Promise<ProviderImportResult> {
-  const empty: ProviderImportResult = {
-    ok: false,
-    created: 0,
-    updated: 0,
-    failed: 0,
-    warnings: [],
-    errors: [],
-  };
+  const result: ProviderImportResult = { ok: false, created: 0, updated: 0, failed: 0, warnings: [], errors: [] };
   const host = deps.getHost();
-  if (!host) return { ...empty, errors: ["host-unavailable"] };
-
-  const picked = await dialog.showOpenDialog({
-    title: "Import provider settings",
-    properties: ["openFile"],
-    filters: FILE_FILTER,
-  });
-  if (picked.canceled || !picked.filePaths[0]) return { ...empty, canceled: true };
-
-  let raw: string;
+  if (!host) return { ...result, errors: ["host-unavailable"] };
+  const picked = await dialog.showOpenDialog({ title: "导入模型配置", properties: ["openFile"], filters: FILE_FILTER });
+  if (picked.canceled || !picked.filePaths[0]) return { ...result, canceled: true };
   try {
-    raw = await fs.readFile(picked.filePaths[0], "utf8");
-  } catch (error) {
-    return {
-      ...empty,
-      errors: [error instanceof Error ? error.message : String(error)],
-    };
-  }
-
-  const parsed = parseProviderExportFile(raw);
-  if (!parsed.ok) return { ...empty, errors: [parsed.error] };
-
-  const { providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", {
-    includeDisabled: true,
-  });
-  const plan = planProviderImport(
-    (providers ?? [])
-      .filter((provider) => !provider.ownerPluginId)
-      .map((provider) => ({ id: provider.id, name: provider.name })),
-    parsed.file.providers,
-  );
-  const steps = plan.steps;
-
-  let created = 0;
-  let updated = 0;
-  const errors: string[] = [
-    ...parsed.warnings,
-    ...plan.duplicates.map((name) => `${name}: duplicate entry in the file, only the first was applied`),
-  ];
-  for (const step of steps) {
-    const payload = providerImportPayload(step.entry);
-    const secretValue = step.entry.apiKey?.trim();
-    try {
-      if (step.action === "update" && step.id) {
-        await host.call("providers.update", {
-          ...payload,
-          id: step.id,
-          ...(secretValue ? { secretValue } : {}),
-        });
-        updated += 1;
-      } else {
-        await host.call("providers.create", {
-          ...payload,
-          ...(secretValue ? { secretValue } : {}),
-        });
-        created += 1;
+    const parsed = parseProviderExportFile(await fs.readFile(picked.filePaths[0], "utf8"));
+    if (!parsed.ok) return { ...result, errors: [parsed.error] };
+    if (parsed.warnings.length) return { ...result, errors: ["文件包含无效提供商，请修正后重新导入。"] };
+    let { providers } = await host.call<{ providers: ProviderRow[] }>("providers.list", { includeDisabled: true });
+    const plan = planOwnedProviderImport(providers, parsed.file.providers);
+    const mode = await chooseConfigImportMode({ scopes: ["模型"], count: plan.steps.length,
+      conflicts: plan.steps.filter((step) => step.action === "update").map((step) => step.entry.name),
+      removals: plan.removals.map((provider) => `提供商 · ${provider.name}`),
+    });
+    if (!mode) return { ...result, canceled: true };
+    for (const step of plan.steps) {
+      if (mode === "skip" && step.action === "update") continue;
+      try {
+        const provider = await saveImportedProvider(host, step);
+        providers = [...providers.filter((row) => row.id !== provider.id), provider];
+        if (step.action === "create") result.created++; else result.updated++;
+      } catch {
+        result.failed++;
+        result.errors.push(`${step.entry.name}：保存失败，请检查提供商配置。`);
       }
-    } catch (error) {
-      errors.push(
-        `${step.entry.name}: ${error instanceof Error ? error.message : String(error)}`,
-      );
     }
+    if (mode === "replace" && result.failed === 0) {
+      await restoreImportedProviderOrder(host, parsed.file.providers, providers);
+      await removeImportedProviders(host, plan.removals, providers, deps.saveSettings);
+    } else if (mode === "replace" && plan.removals.length) {
+      result.warnings.push("部分配置保存失败，未移除本机其他提供商。");
+    }
+    result.ok = result.failed === 0;
+    deps.logger?.app("provider", "info", "provider config imported", {
+      data: { created: result.created, updated: result.updated, failed: result.failed, mode },
+    });
+  } catch {
+    result.failed++;
+    result.errors.push("模型配置导入未完成；已保存条目会保留，请检查文件与模型引用后重试。");
   }
-
-  const failed = steps.length - created - updated;
-  deps.logger?.app("provider", "info", "provider config imported", {
-    data: { created, updated, failed },
-  });
-  return {
-    ok: failed === 0,
-    created,
-    updated,
-    failed,
-    warnings: parsed.warnings,
-    errors,
-  };
+  return result;
 }

@@ -23,7 +23,7 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
-import { saveSettingsPatch } from "../../lib/settings-save";
+import { flushSettingsWrites, saveSettingsPatch } from "../../lib/settings-save";
 import { providerDisplayName, providerSearchText } from "../../lib/provider-display";
 import { useRowBusy } from "../../hooks/use-row-busy";
 import { Button, Input, cx } from "../ui";
@@ -154,14 +154,15 @@ export function ModelConfigPage() {
     }
   };
 
-  /** Apply a previously exported file; matching names overwrite in place. */
   const importProviders = async () => {
     if (transferBusy) return;
     setTransferBusy("import");
     try {
+      await flushSettingsWrites();
       const result = await api.importProviderConfig();
       if (result.canceled) return;
       await refreshProviders();
+      useAppStore.setState({ settings: await api.getSettings() });
       showToast(
         t("settings.importProvidersDone", {
           created: result.created,
@@ -173,6 +174,7 @@ export function ModelConfigPage() {
       if (result.errors.length > 0) {
         showToast(result.errors.slice(0, 3).join("; "), { variant: "error" });
       }
+      if (result.warnings.length > 0) showToast(result.warnings.slice(0, 3).join("；"), { variant: "info" });
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
     } finally {
