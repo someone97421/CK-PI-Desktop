@@ -1,14 +1,20 @@
 import { lstat, readdir, rmdir, unlink, writeFile } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import type { SessionScratchCleanupResult, SessionStorageUsage } from "@pi-desktop/shared";
 
 export const SCRATCH_RETENTION_MS = 72 * 60 * 60 * 1000;
+export const LARGE_SCRATCH_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const LARGE_SCRATCH_BYTES = 1024 ** 3;
 const ACTIVITY_FILE = ".pi-scratch-activity";
 const RETAINED_NAMES = new Set(["pasted", "tool-output", "delegations", ACTIVITY_FILE]);
 const activityWrites = new Map<string, Promise<void>>();
 const activityTimes = new Map<string, number>();
 const USAGE_CACHE_MS = 30_000;
 const USAGE_CACHE_LIMIT = 64;
+
+function retentionFor(bytes: number): number {
+  return bytes > LARGE_SCRATCH_BYTES ? LARGE_SCRATCH_RETENTION_MS : SCRATCH_RETENTION_MS;
+}
 
 function validId(id: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(id);
@@ -53,19 +59,24 @@ async function ownedPath(dataDir: string, path: string): Promise<boolean> {
 }
 
 type FileEntry = { path: string; bytes: number; mtime: number; ctime: number; ino: number; dev: number };
-type Tree = { bytes: number; latest: number; partial: boolean; files: FileEntry[]; directories: string[] };
+type LinkEntry = { path: string; ino: number; dev: number };
+type Tree = { bytes: number; latest: number; partial: boolean; files: FileEntry[]; links: LinkEntry[]; directories: string[] };
 
+// 树内链接只计入口、不跟随；目标内容不属于会话，清理时只移除链接本身。
 async function scanTree(
   dataDir: string, root: string, skip?: (name: string) => boolean,
   options: { signal?: AbortSignal; collectEntries?: boolean } = {},
 ): Promise<Tree> {
-  const tree: Tree = { bytes: 0, latest: 0, partial: false, files: [], directories: [] };
+  const tree: Tree = { bytes: 0, latest: 0, partial: false, files: [], links: [], directories: [] };
   const visit = async (path: string, top: boolean): Promise<void> => {
     options.signal?.throwIfAborted();
     try {
       const stat = await lstat(path);
       options.signal?.throwIfAborted();
-      if (stat.isSymbolicLink()) { tree.partial = true; return; }
+      if (stat.isSymbolicLink()) {
+        if (options.collectEntries !== false) tree.links.push({ path, ino: stat.ino, dev: stat.dev });
+        return;
+      }
       tree.latest = Math.max(tree.latest, stat.mtimeMs, stat.birthtimeMs);
       if (stat.isDirectory()) {
         if (options.collectEntries !== false) tree.directories.push(path);
@@ -87,11 +98,25 @@ async function scanTree(
   return tree;
 }
 
+async function removeLink(dataDir: string, link: LinkEntry): Promise<boolean> {
+  if (!await ownedPath(dataDir, dirname(link.path))) return false;
+  const current = await lstat(link.path);
+  if (!current.isSymbolicLink() || current.ino !== link.ino || current.dev !== link.dev) return false;
+  try {
+    await unlink(link.path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "EISDIR") throw error;
+    await rmdir(link.path);
+  }
+  return true;
+}
+
 function recentlyActive(session: StorageSession): boolean {
   const now = Date.now();
   return [session.updatedAt, session.lastUserMessageAt].some((timestamp) => {
     const value = Date.parse(timestamp ?? "");
-    return Number.isFinite(value) && now - value < SCRATCH_RETENTION_MS;
+    return Number.isFinite(value) && now - value < LARGE_SCRATCH_RETENTION_MS;
   });
 }
 
@@ -272,7 +297,7 @@ export class SessionStorageService {
         const marker = await lstat(join(root, ACTIVITY_FILE));
         lastActivity = Math.max(lastActivity, marker.mtimeMs);
       } catch (error) { if (!missing(error)) throw error; }
-      if (automatic && (tree.partial || !lastActivity || Date.now() - lastActivity < SCRATCH_RETENTION_MS)) return null;
+      if (automatic && (tree.partial || !lastActivity || Date.now() - lastActivity < retentionFor(tree.bytes))) return null;
       // 文件树扫描期间可能收到运行状态变化；真正删除前再次核对。
       if (await this.busy(id)) {
         if (automatic) return null;
@@ -292,6 +317,12 @@ export class SessionStorageService {
           }
           await unlink(file.path);
           freedBytes += file.bytes;
+        } catch (error) { if (!missing(error)) failedEntries++; }
+      }
+      for (const link of tree.links) {
+        if (this.stopped || !this.deps.available()) { failedEntries++; break; }
+        try {
+          if (!await removeLink(this.deps.dataDir, link)) failedEntries++;
         } catch (error) { if (!missing(error)) failedEntries++; }
       }
       for (const directory of tree.directories.reverse()) {
