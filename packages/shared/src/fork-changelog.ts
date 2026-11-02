@@ -5,6 +5,11 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "完善配置备份内容，统一完整覆盖与合并导入，兼容旧备份并继续隔离插件托管配置。",
+  "内置默认关闭的局域网远程控制、会话标题和 Codex 宠物插件，沿用已有启停选择与设置；修复标题生成的模型补全初始化。",
+  "远控支持临时会话分组和指定电脑工作目录的新草稿，首次发送时才建立正式会话并导入附件。",
+  "远控自动加载模型名称，新增可保存的页面缩放比例，统一下拉菜单和搜索框样式，改善工作过程展开留白。",
+  "会话标题默认提示词改为中文，明确沿用用户语言，并保留用户提示和助理回复上下文。",
   "失败子代理保留完整上下文时支持显式 TaskResume 和快照冷恢复，保留失败结果与执行轮次，停止及中断任务不自动重跑。",
   "支持具备视频输入能力的模型与可选 Litterbox 临时托管；文件读取由宿主协调批次，写入和编辑继续串行。",
   "修复压缩后的上下文占用刷新、近期文件操作清单、模型签名回放与余额耗尽重试，改善技能/MCP 项目覆盖和插件命令归属。",
@@ -114,6 +119,11 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Expand configuration backups and unify replace-all and merge imports, keeping older backups compatible and plugin-managed configuration isolated.",
+  "Bundle opt-in LAN remote control, session titles and Codex Pet, retaining saved enablement and settings; fix model completion initialization for generated titles.",
+  "Remote control supports temporary sessions and drafts with a computer workspace, creating the session and importing attachments on the first send.",
+  "Load remote model names automatically, save page scaling, unify dropdowns and search styling, and improve spacing in expanded work processes.",
+  "Use a Chinese default title prompt that explicitly follows the user's language and includes the user prompt and assistant reply.",
   "Failed delegates with intact context can explicitly resume in memory or from saved snapshots, preserving failure results and execution versions; stopped or interrupted tasks do not restart automatically.",
   "Support video-capable models and optional Litterbox temporary hosting; the host coordinates file-read batches while writes and edits remain sequential.",
   "Fix context usage after compaction, recent file-operation lists, provider signature replay, exhausted-credit retries, skill/MCP project overrides, and plugin command ownership.",
