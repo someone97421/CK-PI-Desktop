@@ -24,6 +24,7 @@ describe("SUBAGENT_PRESETS", () => {
       "fixer",
       "ui-designer",
       "native-media-analyst",
+      "advisor",
     ]);
   });
 

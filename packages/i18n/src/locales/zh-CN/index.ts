@@ -3228,6 +3228,8 @@ sklm: {
       presetUiDesignerDesc: "按需求稿设计并实现界面，浏览器预览验收。",
       presetMediaAnalystName: "Native Media Analyst",
       presetMediaAnalystDesc: "默认关闭，需配置 Gemini 原生音视频模型。在输入限制内一次性理解完整视频与音频，返回结论与关键时间点。",
+      presetAdvisorName: "顾问",
+      presetAdvisorDesc: "默认关闭，建议绑定与主代理不同的模型。在复杂且方向未定的决策上提供独立的第二意见，只读不改。",
       presetBlank: "空白开始",
       presetBlankDesc: "默认工具，自行撰写指令。",
       presetApply: "套用",

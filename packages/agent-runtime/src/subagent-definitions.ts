@@ -193,7 +193,7 @@ Report in this shape:
 - Browser: [what was opened and checked, issues fixed, issues remaining]
 - Build: [passed / failed / skipped: reason]
 </verification>`,
-  ...SUBAGENT_PRESETS.filter((preset) => preset.id === "native-media-analyst").map((preset) =>
+  ...SUBAGENT_PRESETS.filter((preset) => preset.id === "native-media-analyst" || preset.id === "advisor").map((preset) =>
     `---\nname: ${preset.id}\ndescription: ${preset.description}\ntools: [${preset.tools.join(", ")}]\nreportIntervalSteps: ${BUILTIN_SUBAGENT_REPORT_INTERVALS[preset.id]}\n---\n\n${preset.body}`,
   ),
 ];

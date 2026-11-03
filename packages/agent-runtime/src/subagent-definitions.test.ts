@@ -35,6 +35,7 @@ describe("builtin subagent documents", () => {
       "fixer",
       "ui-designer",
       "native-media-analyst",
+      "advisor",
     ]);
     expect(definitions).toHaveLength(BUILTIN_SUBAGENT_DOCUMENTS.length);
     // The turn cap is gone (ADR 0253): no builtin document declares one.
@@ -66,7 +67,7 @@ describe("builtin subagent documents", () => {
     expect("maxTurns" in designer).toBe(false);
     expect(designer.description).toBe(findSubagentPreset("ui-designer")?.description);
     expect(designer.prompt).toBe(findSubagentPreset("ui-designer")?.body.trim());
-    for (const name of ["worker", "fixer", "native-media-analyst"]) {
+    for (const name of ["worker", "fixer", "native-media-analyst", "advisor"]) {
       const definition = definitions.find((item) => item.name === name)!;
       const preset = findSubagentPreset(name)!;
       expect(definition.description).toBe(preset.description);

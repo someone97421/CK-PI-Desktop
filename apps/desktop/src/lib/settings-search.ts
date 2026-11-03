@@ -298,6 +298,7 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "extensions.subagents.presetWorkerName",
       "extensions.subagents.presetFixerName",
       "extensions.subagents.presetUiDesignerName",
+      "extensions.subagents.presetAdvisorName",
       "extensions.subagents.tools",
     ],
   },

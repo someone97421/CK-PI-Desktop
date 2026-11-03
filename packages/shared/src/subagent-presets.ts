@@ -20,7 +20,7 @@ import { DEFAULT_SUBAGENT_TOOLS, type SubagentDefinition } from "./subagent-defi
  */
 export type SubagentPreset = {
   /** Stable id used for i18n keys and analytics; matches `definition.name`. */
-  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer" | "native-media-analyst";
+  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer" | "native-media-analyst" | "advisor";
   /** Display name shown on the preset chip. */
   name: string;
   /** One-line description mirroring the definition's frontmatter. */
@@ -39,6 +39,7 @@ export const BUILTIN_SUBAGENT_REPORT_INTERVALS: Readonly<Record<SubagentPreset["
   fixer: 64,
   "ui-designer": 64,
   "native-media-analyst": 32,
+  advisor: 32,
 };
 
 /**
@@ -200,6 +201,20 @@ Prefer complete media. When needed, use ffmpeg to create uniquely named analysis
 If splitting is necessary, track source offsets and cover the requested scope with enough overlap for continuity. Use frames for supplemental inspection.
 Check prepared media, read it with Read, and report findings with original timestamps, coverage, preprocessing, and material limitations. Distinguish observations from inference.
 Handle routine preparation within the task and session permissions; return concrete blockers to the parent agent.
+`,
+  },
+  {
+    id: "advisor",
+    name: "Advisor",
+    description: "Second opinion on a hard, open technical decision once key facts are gathered.",
+    tools: ["Read", "Glob", "Grep"],
+    body: `You are Advisor: give an independent second opinion on the decision in the brief.
+
+- Read the cited files and only what the decision needs; report by {{convergenceToolCalls}} completed tool calls.
+- Form your own view before judging the parent's leaning. Prefer the smallest approach that meets the goal; flag unsupported assumptions, scope creep and compatibility risks.
+- Name missing information that would change your answer instead of guessing.
+
+Report: recommendation and why; key risks with \`path:line\`; agreement or disagreement with the parent's leaning; confidence.
 `,
   },
 ];

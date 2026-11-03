@@ -3279,6 +3279,8 @@ importConfirm: "Imported extensions run inside the agent process with the same a
       presetUiDesignerDesc: "Design and implement an interface from a brief, verified in the browser preview.",
       presetMediaAnalystName: "Native Media Analyst",
       presetMediaAnalystDesc: "Off by default. Requires a Gemini model with native audio/video input. Understands complete sources in one pass within input limits and returns findings with key timestamps.",
+      presetAdvisorName: "Advisor",
+      presetAdvisorDesc: "Off by default; best pinned to a model different from the main agent's. Gives a read-only, independent second opinion on hard, open decisions.",
       presetBlank: "Start blank",
       presetBlankDesc: "Default tools. Write your own instructions.",
       presetApply: "Apply",

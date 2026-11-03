@@ -54,7 +54,7 @@ export async function fetchSubagentPageData(): Promise<SubagentPageData> {
     return {
       owned,
       builtins: fallbackBuiltinDefinitions()
-        .map((item) => ({ ...item, enabled: item.name !== "native-media-analyst" }))
+        .map((item) => ({ ...item, enabled: item.name !== "native-media-analyst" && item.name !== "advisor" }))
         .filter((item) => !enabledHandles.has(item.name)),
     };
   }
