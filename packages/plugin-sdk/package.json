@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/plugin-sdk",
-  "version": "2611.315.2413",
+  "version": "2611.315.5425",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
