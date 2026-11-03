@@ -15,6 +15,7 @@ import type { UserMcpRuntime } from "../user-mcp";
 import type { McpControlServer } from "../mcp-control";
 import type { McpOAuthManager } from "../mcp-oauth";
 import { getActiveRemoteHostsBoot, setActiveRemoteHostsBoot } from "./remote-hosts";
+import { runConfirmedQuitTeardown } from "./confirmed-quit";
 import type { LiveCallService } from "../live-voice/call-service";
 import { isRestartingForAppearanceIcon } from "../windows-appearance-icons";
 import { finishDataDirectoryRestart, isRestartingForDataDirectory } from "../data-directory";
@@ -150,6 +151,9 @@ export function registerShutdownHandlers({
     // Persist the confirmed shutdown before any awaited cleanup so a forced
     // process termination still leaves an observable lifecycle boundary.
     logger.app("lifecycle", "info", "app shutdown");
+    // The quit can no longer be cancelled; services that must survive a
+    // cancelled confirmation stop only from here (issue #2048).
+    runConfirmedQuitTeardown(logger);
     disposePowerSaveBlockers();
     state.tray?.destroy();
     state.tray = null;

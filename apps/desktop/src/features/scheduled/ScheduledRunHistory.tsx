@@ -7,6 +7,7 @@ import {
   IconCircleCheck,
   IconDot,
   IconExternal,
+  IconInfo,
   IconStop,
 } from "../../components/icons";
 import { formatDuration, formatMoment } from "./scheduled-format";
@@ -50,60 +51,65 @@ export function ScheduledRunHistory({
         <h3 className="scheduled-card-title" id="scheduled-run-history">
           {t("scheduled.runs")}
         </h3>
+        <TooltipButton
+          type="button"
+          tooltip={t("scheduled.historyHint")}
+          ariaLabel={t("scheduled.runs")}
+          className="scheduled-icon-btn"
+        >
+          <IconInfo size={14} aria-hidden />
+        </TooltipButton>
         <span className="scheduled-card-count">{runs.length}</span>
       </div>
       {runs.length === 0 ? (
         <p className="scheduled-hint">{t("scheduled.emptyRuns")}</p>
       ) : (
-        <>
-          <p className="scheduled-hint">{t("scheduled.historyHint")}</p>
-          <ol className="scheduled-runs">
-            {runs.map((run) => {
-              const selected = run.id === selectedRunId;
-              const duration = runDurationMs(run);
-              const sessionId = run.sessionId;
-              const meta = [
-                formatMoment(run.startedAt, locale),
-                duration === null ? "" : formatDuration(duration),
-                run.errorCode ?? "",
-              ].filter(Boolean);
-              return (
-                <li key={run.id} className={cx("scheduled-run", selected && "is-selected")}>
-                  <button
-                    type="button"
-                    className="scheduled-run-main"
-                    aria-current={selected ? "true" : undefined}
-                    onClick={() => onSelectRun(run.id)}
+        <ol className="scheduled-runs">
+          {runs.map((run) => {
+            const selected = run.id === selectedRunId;
+            const duration = runDurationMs(run);
+            const sessionId = run.sessionId;
+            const meta = [
+              formatMoment(run.startedAt, locale),
+              duration === null ? "" : formatDuration(duration),
+              run.errorCode ?? "",
+            ].filter(Boolean);
+            return (
+              <li key={run.id} className={cx("scheduled-run", selected && "is-selected")}>
+                <button
+                  type="button"
+                  className="scheduled-run-main"
+                  aria-current={selected ? "true" : undefined}
+                  onClick={() => onSelectRun(run.id)}
+                >
+                  <span className={cx("scheduled-run-glyph", `is-${run.status}`)} aria-hidden>
+                    <RunStatusGlyph status={run.status} />
+                  </span>
+                  <span className="scheduled-run-body">
+                    <span className="scheduled-run-state">{t(RUN_STATUS_I18N_KEYS[run.status])}</span>
+                    <span className="scheduled-run-meta">{meta.join(" · ")}</span>
+                  </span>
+                  <IconChevronDown
+                    size={14}
+                    className={cx("scheduled-run-chevron", selected && "is-open")}
+                    aria-hidden
+                  />
+                </button>
+                {sessionId && (
+                  <TooltipButton
+                    tooltip={t("scheduled.openResult")}
+                    ariaLabel={t("scheduled.openResult")}
+                    className="scheduled-icon-btn"
+                    disabled={busy}
+                    onClick={() => onOpenSession(sessionId, run.id)}
                   >
-                    <span className={cx("scheduled-run-glyph", `is-${run.status}`)} aria-hidden>
-                      <RunStatusGlyph status={run.status} />
-                    </span>
-                    <span className="scheduled-run-body">
-                      <span className="scheduled-run-state">{t(RUN_STATUS_I18N_KEYS[run.status])}</span>
-                      <span className="scheduled-run-meta">{meta.join(" · ")}</span>
-                    </span>
-                    <IconChevronDown
-                      size={14}
-                      className={cx("scheduled-run-chevron", selected && "is-open")}
-                      aria-hidden
-                    />
-                  </button>
-                  {sessionId && (
-                    <TooltipButton
-                      tooltip={t("scheduled.openResult")}
-                      ariaLabel={t("scheduled.openResult")}
-                      className="scheduled-icon-btn"
-                      disabled={busy}
-                      onClick={() => onOpenSession(sessionId, run.id)}
-                    >
-                      <IconExternal size={14} aria-hidden />
-                    </TooltipButton>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        </>
+                    <IconExternal size={14} aria-hidden />
+                  </TooltipButton>
+                )}
+              </li>
+            );
+          })}
+        </ol>
       )}
     </section>
   );
