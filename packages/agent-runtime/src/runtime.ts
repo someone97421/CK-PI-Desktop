@@ -2389,7 +2389,9 @@ Delegation rules:
   private importSubagentEntries(entries: SubagentDirectoryEntry[]): void {
     for (const diskEntry of entries) {
       const existing = this.delegations.get(diskEntry.delegationId);
-      if (this.disposed || (existing && (!existing.isColdDisk || existing.run || existing.resumingLock ||
+      // 快照按会话保存；只导入当前对话分支引用过的任务，编辑重发丢弃的分支不进入上下文。
+      if (this.disposed || (!existing && !this.savedDelegationResults.has(diskEntry.delegationId)) ||
+          (existing && (!existing.isColdDisk || existing.run || existing.resumingLock ||
           existing.stopRequested || (existing.execution ?? 1) > diskEntry.execution))) continue;
       const history = this.savedDelegationResults.get(diskEntry.delegationId);
       const useHistory = history && (history.execution > diskEntry.execution ||
@@ -2413,7 +2415,7 @@ Delegation rules:
           executionUsage: entry.lastResult.executionUsage, error: entry.lastResult.error,
         } : undefined,
         completion: Promise.resolve(), resolveCompletion: () => {}, abort: () => {},
-        stopRequested: entry.status === "revoked", startedEpoch: this.turnEpoch, reportDelivered: true,
+        stopRequested: entry.status === "revoked", startedEpoch: -1, reportDelivered: true,
         parentToolCallId: entry.parentToolCallId, taskTurnId: entry.parentTurnId,
         persistenceState: entry.persistenceState, persistenceReason: entry.reason, durableRevision: entry.revision,
         durableGeneration: entry.snapshotGeneration, source: "disk", isColdDisk: true,

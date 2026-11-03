@@ -273,6 +273,20 @@ describe("历史任务快照状态查询", () => {
     } finally { await runtime.dispose(); }
   });
 
+  it("只导入当前分支历史引用过的快照，冷记录不计入本轮协调状态", async () => {
+    const runtime = createRuntime({ history: history() });
+    vi.spyOn(runtime.persistenceClient, "listEntries").mockResolvedValue({ sessionId: "session-1",
+      entries: [entry(), { ...entry(), delegationId: "discarded-branch-task", executionId: "discarded-branch-task", status: "failed" as const }],
+      totalCount: 2 });
+    try {
+      await runtime.initSubagentPersistence();
+      const delegations = (runtime as any).delegations as Map<string, { startedEpoch: number }>;
+      expect(delegations.has("saved-task")).toBe(true);
+      expect(delegations.has("discarded-branch-task")).toBe(false);
+      expect(delegations.get("saved-task")!.startedEpoch).not.toBe((runtime as any).turnEpoch);
+    } finally { await runtime.dispose(); }
+  });
+
   it("历史 failed 结果不覆盖同轮有效快照，缺失时仍返回结果材料", async () => {
     const rows = history();
     (rows[0].toolResult as any).details.status = "failed";
