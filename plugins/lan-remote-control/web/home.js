@@ -1,6 +1,8 @@
 import { el, button, icon, iconButton, formatRelative } from "./dom.js";
 
 const TEMPORARY_GROUP = "temporary";
+const INITIAL_SESSION_LIMIT = 3;
+const SESSION_PAGE_SIZE = 5;
 
 export function createProjectHome({ read, openSession, createSession, discardSession, report }) {
   const root = el("main", { className: "remote-home", attrs: { "aria-label": "项目与对话" } });
@@ -23,7 +25,7 @@ export function createProjectHome({ read, openSession, createSession, discardSes
   filterButton.setAttribute("aria-expanded", "false");
   const collapse = iconButton("down", { title: "展开全部分组", onClick: () => {
     const allOpen = entries.length && entries.every(({ project }) => expanded.has(project.id));
-    for (const { project } of entries) allOpen ? expanded.delete(project.id) : expanded.add(project.id);
+    for (const entry of entries) setExpanded(entry, !allOpen);
     render();
   } });
   const refresh = iconButton("refresh", { title: "刷新项目与对话", onClick: () => void load() });
@@ -37,6 +39,13 @@ export function createProjectHome({ read, openSession, createSession, discardSes
   const latest = (entry) => Math.max(0, ...(entry.items || []).map((s) => timestamp(s.updatedAt)));
   const relative = (value) => value && timestamp(value) ? formatRelative(value) : "暂无更新";
   const scope = (entry) => entry.temporary ? { temporary: true } : { projectId: entry.project.id };
+  function setExpanded(entry, open) {
+    if (open) expanded.add(entry.project.id);
+    else {
+      expanded.delete(entry.project.id);
+      entry.visibleLimit = INITIAL_SESSION_LIMIT;
+    }
+  }
 
   function render() {
     const scroll = root.scrollTop;
@@ -69,7 +78,7 @@ export function createProjectHome({ read, openSession, createSession, discardSes
         icon(open ? "down" : "chevron", { size: 16 }));
       toggle.addEventListener("click", () => {
         if (needle || filter.value !== "all") { search.value = ""; filter.value = "all"; }
-        open ? expanded.delete(project.id) : expanded.add(project.id);
+        setExpanded(entry, !open);
         render();
       });
       const add = iconButton("plus", { title: entry.temporary ? "新建临时会话" : `在${project.name}新建对话`, className: "remote-home-add", onClick: async () => {
@@ -79,8 +88,9 @@ export function createProjectHome({ read, openSession, createSession, discardSes
       } });
       card.append(el("div", { className: "remote-home-project-header" }, toggle, add));
       if (open) {
+        const visibleLimit = entry.visibleLimit ?? INITIAL_SESSION_LIMIT;
         const rows = el("div", { className: "remote-home-sessions" });
-        for (const session of sessions) {
+        for (const session of sessions.slice(0, visibleLimit)) {
           const row = el("button", { className: "remote-home-session", dataset: { sessionId: session.id }, attrs: { type: "button" } },
             el("span", { className: "remote-home-session-main" }, el("span", { text: session.title || "新对话" }),
               el("small", { text: relative(session.updatedAt) }),
@@ -103,19 +113,33 @@ export function createProjectHome({ read, openSession, createSession, discardSes
         }
         if (!sessions.length) rows.append(el("p", { className: "remote-home-empty", text: entry.error ? "对话加载失败" : needle || filter.value !== "all" ? "没有匹配的对话" : "暂无对话" }));
         if (entry.error) rows.append(el("p", { className: "remote-home-empty", text: entry.error.message || "请刷新重试" }));
-        if (entry.nextCursor || entry.error) {
+        if (sessions.length > visibleLimit || entry.nextCursor || entry.error) {
           const more = button(entry.error ? "重新加载" : "加载更多对话", { preserveLabel: true, className: "remote-home-more", onClick: async () => {
+            if (entry.loadingMore) return;
+            const retry = !!entry.error;
+            const nextLimit = retry ? INITIAL_SESSION_LIMIT : visibleLimit + SESSION_PAGE_SIZE;
+            entry.visibleLimit = nextLimit;
+            if (!retry && (sessions.length >= nextLimit || !entry.nextCursor)) { render(); return; }
+            entry.loadingMore = true;
             more.disabled = true;
             const version = generation;
             try {
-              const page = await read("sessions.list", { ...scope(entry), limit: 100, ...(entry.error ? {} : { cursor: entry.nextCursor }) });
+              const page = await read("sessions.list", { ...scope(entry), limit: retry ? INITIAL_SESSION_LIMIT : SESSION_PAGE_SIZE, ...(retry ? {} : { cursor: entry.nextCursor }) });
               if (version !== generation) return;
-              entry.items = entry.error ? page.items || [] : [...new Map([...entry.items, ...(page.items || [])].map((s) => [s.id, s])).values()];
+              entry.items = retry ? page.items || [] : [...new Map([...entry.items, ...(page.items || [])].map((s) => [s.id, s])).values()];
               entry.nextCursor = page.nextCursor;
               entry.error = null;
-              render();
-            } catch (error) { report(error); } finally { more.disabled = false; }
+            } catch (error) {
+              if (version === generation) {
+                if (entry.visibleLimit === nextLimit) entry.visibleLimit = visibleLimit;
+                report(error);
+              }
+            } finally {
+              entry.loadingMore = false;
+              if (version === generation) render();
+            }
           } });
+          more.disabled = !!entry.loadingMore;
           rows.append(more);
         }
         card.append(rows);
@@ -132,7 +156,7 @@ export function createProjectHome({ read, openSession, createSession, discardSes
     render();
     try {
       const [projects, temporary] = await Promise.allSettled([
-        read("projects.list"), read("sessions.list", { temporary: true, limit: 100 }),
+        read("projects.list"), read("sessions.list", { temporary: true, limit: INITIAL_SESSION_LIMIT }),
       ]);
       if (version !== generation) return;
       const next = [{
@@ -144,7 +168,7 @@ export function createProjectHome({ read, openSession, createSession, discardSes
       if (projects.status === "rejected") report(projects.reason);
       for (const project of projects.status === "fulfilled" ? projects.value.items || [] : []) {
         try {
-          const page = await read("sessions.list", { projectId: project.id, limit: 100 });
+          const page = await read("sessions.list", { projectId: project.id, limit: INITIAL_SESSION_LIMIT });
           next.push({ project, items: page.items || [], nextCursor: page.nextCursor });
         } catch (error) { next.push({ project, items: [], error }); }
         if (version !== generation) return;
