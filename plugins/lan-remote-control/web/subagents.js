@@ -352,15 +352,17 @@ function collectSubagents(messages, tools) {
   list.forEach((message, index) => {
     if (!asRecord(message)) return;
     const parent = asString(message.parentToolCallId);
-    if ((message.role === "tool" || asString(message.toolName)) && messageToolCallId(message)) {
-      persistedToolCalls.add(messageToolCallId(message));
+    const callId = messageToolCallId(message);
+    const isTool = message.role === "tool" || messageToolName(message);
+    if (isTool && callId) {
+      persistedToolCalls.add(callId);
     }
     if (!parent) return;
     addChild(parent, {
       kind: "message",
       message,
       order: index,
-      id: `message:${firstString(message.id, String(index))}`,
+      id: isTool && callId ? `tool:${callId}` : `message:${firstString(message.id, String(index))}`,
     });
   });
   live.forEach((tool, index) => {
@@ -638,6 +640,7 @@ export function createSubagentObserver() {
   let entries = [];
   let alias = new Map();
   let selectedId = "";
+  let selectionKey = "";
   let dialogEl = null;
   let panel = null;
   let tabsNode = null;
@@ -649,6 +652,7 @@ export function createSubagentObserver() {
   let previousFocus = null;
   let renderToken = 0;
   let renderQueue = [];
+  let freshView = true;
   const expanded = new Set();
   const mobileQuery =
     typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -704,8 +708,7 @@ export function createSubagentObserver() {
       bodyNode,
     );
     jumpButton = button("回到最新", { preserveLabel: true, className: "subagent-jump", onClick: () => {
-      if (scroller) scroller.scrollTop = scroller.scrollHeight;
-      if (jumpButton) jumpButton.hidden = true;
+      restoreScroll({ top: 0, follow: true });
     } });
     jumpButton.hidden = true;
     panel = el(
@@ -777,14 +780,32 @@ export function createSubagentObserver() {
   function rememberScroll() {
     if (!scroller) return { top: 0, follow: true };
     const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    return { top: scroller.scrollTop, follow: distance <= FOLLOW_THRESHOLD };
+    const view = { top: scroller.scrollTop, follow: distance <= FOLLOW_THRESHOLD };
+    if (!view.follow) {
+      const viewport = scroller.getBoundingClientRect();
+      for (const node of bodyNode.querySelectorAll("[data-scroll-key]")) {
+        const rect = node.getBoundingClientRect();
+        if (rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom) {
+          view.anchor = node.dataset.scrollKey;
+          view.offset = rect.top - viewport.top;
+          break;
+        }
+      }
+    }
+    return view;
   }
 
   function restoreScroll(view) {
     if (!scroller) return;
-    if (view.follow) scroller.scrollTop = scroller.scrollHeight;
-    else scroller.scrollTop = view.top;
     if (jumpButton) jumpButton.hidden = view.follow;
+    let top = view.follow ? scroller.scrollHeight - scroller.clientHeight : view.top;
+    if (!view.follow && view.anchor) {
+      const anchor = [...bodyNode.querySelectorAll("[data-scroll-key]")]
+        .find((node) => node.dataset.scrollKey === view.anchor);
+      if (anchor) top = scroller.scrollTop + anchor.getBoundingClientRect().top
+        - scroller.getBoundingClientRect().top - view.offset;
+    }
+    if (Math.abs(scroller.scrollTop - top) > 0.5) scroller.scrollTop = top;
   }
 
   // ---- 渲染 ----
@@ -800,7 +821,7 @@ export function createSubagentObserver() {
     renderQueue.push(
       renderMarkdown(value)
         .then((node) => {
-          if (token === renderToken && holder.isConnected) holder.replaceChildren(node);
+          if (token === renderToken) holder.replaceChildren(node);
         })
         .catch(() => {}),
     );
@@ -812,7 +833,7 @@ export function createSubagentObserver() {
   }
 
   function disclosure(key, label, excerpt, tone, ...children) {
-    const details = el("details", { className: "subagent-process" });
+    const details = el("details", { className: "subagent-process", dataset: { disclosureKey: key } });
     details.open = expanded.has(key);
     details.dataset.tone = tone || "idle";
     details.append(
@@ -825,6 +846,7 @@ export function createSubagentObserver() {
       el("div", { className: "subagent-process-body" }, ...children),
     );
     details.addEventListener("toggle", () => {
+      if (!details.isConnected) return;
       if (details.open) expanded.add(key);
       else expanded.delete(key);
     });
@@ -861,7 +883,7 @@ export function createSubagentObserver() {
       guide.reason ? el("p", { className: "subagent-guidance-note", text: guide.reason }) : null);
   }
 
-  function itemNode(entry, row) {
+  function itemNode(row) {
     const wrap = el("div", { className: "subagent-item" });
     if (row.kind === "tool") {
       const tool = row.tool;
@@ -872,7 +894,7 @@ export function createSubagentObserver() {
       wrap.dataset.tone = isError ? "error" : liveToolStatus(tool) === "running" ? "running" : "ok";
       wrap.append(
         disclosure(
-          `${entry.id}|${row.id}`,
+          `${row.id}|tool`,
           `⌘ ${name}`,
           `${statusLabel(normalizeStatus(liveToolStatus(tool))) || liveToolStatus(tool) || "执行中"} · ${textOf(tool?.args)}`,
           wrap.dataset.tone,
@@ -891,7 +913,7 @@ export function createSubagentObserver() {
     const guidance = guidanceNode(toolName, messageToolResult(message));
     if (guidance) return guidance;
     if (thinking) {
-      wrap.append(disclosure(`${entry.id}|${row.id}|thinking`, "思考", thinking, "thinking", plainBlock(thinking)));
+      wrap.append(disclosure(`${row.id}|thinking`, "思考", thinking, "thinking", plainBlock(thinking)));
     }
     if (role === "tool" || toolName) {
       const status = normalizeStatus(messageToolStatus(message));
@@ -899,7 +921,7 @@ export function createSubagentObserver() {
       wrap.dataset.tone = isError ? "error" : status === "running" ? "running" : "ok";
       wrap.append(
         disclosure(
-          `${entry.id}|${row.id}|tool`,
+          `${row.id}|tool`,
           `⌘ ${toolName || "工具"}`,
           `${statusLabel(status || "completed")} · ${textOf(messageToolArgs(message))}`,
           wrap.dataset.tone,
@@ -916,8 +938,8 @@ export function createSubagentObserver() {
     return wrap;
   }
 
-  function executionNode(entry, call) {
-    const key = `${entry.id}|call|${call.callId}`;
+  function executionNode(call) {
+    const key = `call|${call.callId}`;
     const label = call.execution > 1 ? `第 ${call.execution} 次执行（续跑）` : "任务派发";
     const details = disclosure(
       key,
@@ -927,6 +949,7 @@ export function createSubagentObserver() {
       plainBlock(call.argsText, "subagent-pre subagent-pre-args"),
       plainBlock(textOf(toolResultPayload(call.payload)) || "无输出", "subagent-pre subagent-pre-result"),
     );
+    details.dataset.scrollKey = `call:${call.callId}`;
     const summary = details.querySelector("summary");
     if (summary) {
       summary.append(
@@ -941,11 +964,11 @@ export function createSubagentObserver() {
   }
 
   function detailNode(entry) {
-    const wrapper = el("div", { className: "subagent-detail" });
+    const wrapper = el("div", { className: "subagent-detail", dataset: { renderKey: `${sessionId}:${selectionKey}` } });
     wrapper.append(
       el(
         "div",
-        { className: "subagent-headline" },
+        { className: "subagent-headline", dataset: { scrollKey: "headline" } },
         el("span", {
           className: "subagent-status",
           dataset: { tone: statusTone(entry.status) },
@@ -955,7 +978,7 @@ export function createSubagentObserver() {
       ),
     );
 
-    const meta = el("dl", { className: "subagent-meta" });
+    const meta = el("dl", { className: "subagent-meta", dataset: { scrollKey: "meta" } });
     metaRow(meta, "模型", entry.model || "未提供");
     metaRow(meta, "代理", entry.name || "未提供");
     metaRow(meta, "说明", entry.description);
@@ -976,7 +999,7 @@ export function createSubagentObserver() {
     wrapper.append(
       el(
         "section",
-        { className: "subagent-section" },
+        { className: "subagent-section", dataset: { renderKey: "task", scrollKey: "task" } },
         el("h3", { className: "subagent-section-title", text: "任务" }),
         entry.task
           ? markdownBlock(entry.task, "subagent-task")
@@ -988,20 +1011,24 @@ export function createSubagentObserver() {
       wrapper.append(
         el(
           "section",
-          { className: "subagent-section" },
+          { className: "subagent-section", dataset: { renderKey: "calls" } },
           el("h3", { className: "subagent-section-title", text: "派发记录" }),
-          ...entry.calls.map((call) => executionNode(entry, call)),
+          ...entry.calls.map(executionNode),
         ),
       );
     }
 
     const process = el(
       "section",
-      { className: "subagent-section" },
+      { className: "subagent-section", dataset: { renderKey: "process" } },
       el("h3", { className: "subagent-section-title", text: "子代理过程" }),
     );
     if (entry.children.length) {
-      for (const row of entry.children) process.append(itemNode(entry, row));
+      for (const row of entry.children) {
+        const node = itemNode(row);
+        node.dataset.scrollKey = row.id;
+        process.append(node);
+      }
     } else {
       process.append(
         el("p", {
@@ -1017,7 +1044,7 @@ export function createSubagentObserver() {
       wrapper.append(
         el(
           "section",
-          { className: "subagent-section" },
+          { className: "subagent-section", dataset: { renderKey: "error", scrollKey: "error" } },
           el("h3", { className: "subagent-section-title", text: "错误" }),
           el("p", { className: "subagent-error", text: text || "子代理报告了错误。" }),
         ),
@@ -1038,6 +1065,74 @@ export function createSubagentObserver() {
     );
   }
 
+  function preNodes(root) {
+    const counts = new Map();
+    return new Map([...root.querySelectorAll("pre")].map((pre) => {
+      const owner = pre.closest("details[data-disclosure-key]")?.dataset.disclosureKey || "markdown";
+      const key = `${owner}|${pre.className}`;
+      const index = counts.get(key) || 0;
+      counts.set(key, index + 1);
+      return [`${key}|${index}`, pre];
+    }));
+  }
+
+  // 只协调详情的块级节点；未变化的正文和内部滚动容器留在原位。
+  function reconcileChildren(parent, children, restoredScroll = []) {
+    const keyOf = (node, index) => node.dataset.renderKey || node.dataset.scrollKey || `index:${index}`;
+    const previous = new Map([...parent.children].map((node, index) => [keyOf(node, index), node]));
+    const keys = new Set(children.map(keyOf));
+    for (const [key, node] of previous) if (!keys.has(key)) node.remove();
+    let cursor = parent.firstElementChild;
+    children.forEach((next, index) => {
+      const current = previous.get(keyOf(next, index));
+      let node = next;
+      if (current && current.tagName === next.tagName && current.className === next.className) {
+        if (next.matches(".subagent-detail, .subagent-section")) {
+          reconcileChildren(current, [...next.children], restoredScroll);
+          node = current;
+        } else {
+          const details = new Map([current, ...current.querySelectorAll("details")]
+            .filter((item) => item.tagName === "DETAILS")
+            .map((item) => [item.dataset.disclosureKey, item.open]));
+          for (const item of [next, ...next.querySelectorAll("details")]) {
+            if (item.tagName === "DETAILS" && details.has(item.dataset.disclosureKey)) {
+              item.open = details.get(item.dataset.disclosureKey);
+            }
+          }
+          const codeBlocks = [...current.querySelectorAll(".md-code")];
+          [...next.querySelectorAll(".md-code")].forEach((block, i) => {
+            const wrapped = codeBlocks[i]?.classList.contains("md-code-wrapped") === true;
+            block.classList.toggle("md-code-wrapped", wrapped);
+            const pressed = codeBlocks[i]?.querySelector('button[title="自动换行"]')?.getAttribute("aria-pressed");
+            if (pressed != null) block.querySelector('button[title="自动换行"]')?.setAttribute("aria-pressed", pressed);
+          });
+          if (current.isEqualNode(next)) node = current;
+          else {
+            const oldPre = preNodes(current);
+            for (const [key, pre] of preNodes(next)) {
+              const previousPre = oldPre.get(key);
+              if (previousPre) restoredScroll.push({ node: pre, top: previousPre.scrollTop, left: previousPre.scrollLeft });
+            }
+          }
+        }
+      }
+      if (node === cursor) cursor = cursor.nextElementSibling;
+      else if (current === cursor) {
+        parent.replaceChild(node, current);
+        cursor = node.nextElementSibling;
+      } else {
+        parent.insertBefore(node, cursor);
+        if (current && current !== node) current.remove();
+      }
+    });
+    while (cursor) {
+      const next = cursor.nextElementSibling;
+      cursor.remove();
+      cursor = next;
+    }
+    return restoredScroll;
+  }
+
   function renderTabs() {
     if (!tabsNode) return;
     if (!entries.length) {
@@ -1046,8 +1141,8 @@ export function createSubagentObserver() {
       return;
     }
     tabsNode.hidden = false;
-    tabsNode.replaceChildren(
-      ...entries.map((entry, index) => {
+    reconcileChildren(tabsNode,
+      entries.map((entry, index) => {
         const selected = entry.id === selectedId;
         const tab = button(entry.name || `子代理 ${index + 1}`, {
           variant: "ghost",
@@ -1056,6 +1151,7 @@ export function createSubagentObserver() {
           title: `${entry.name || `子代理 ${index + 1}`} · ${statusLabel(entry.status)}`,
           onClick: () => select(entry.id),
         });
+        tab.dataset.renderKey = entry.id;
         tab.dataset.tone = statusTone(entry.status);
         tab.setAttribute("role", "tab");
         tab.setAttribute("aria-selected", String(selected));
@@ -1081,21 +1177,43 @@ export function createSubagentObserver() {
 
   async function render(options) {
     if (!panel || !visible) return;
-    const fresh = options?.fresh === true;
-    const view = rememberScroll();
-    renderToken += 1;
+    if (options?.fresh === true) freshView = true;
+    const token = ++renderToken;
     renderQueue = [];
-    if (!entries.length) selectedId = "";
-    if (selectedId && !entries.some((entry) => entry.id === selectedId)) selectedId = "";
-    if (!selectedId && entries.length) selectedId = entries[0].id;
+    const resolvedId = resolveSelection(selectedId);
+    if (resolvedId) selectedId = resolvedId;
+    else {
+      selectedId = entries[0]?.id ?? "";
+      freshView = true;
+    }
+    if (freshView) selectionKey = selectedId;
     const selected = entries.find((entry) => entry.id === selectedId);
-    renderTabs();
-    updateSummary();
-    bodyNode.replaceChildren(selected ? detailNode(selected) : emptyNode());
-    restoreScroll(fresh || !selected ? { top: 0, follow: true } : view);
+    const content = selected ? detailNode(selected) : emptyNode();
     const queue = renderQueue;
     renderQueue = [];
     await Promise.all(queue);
+    if (token !== renderToken || !visible) return;
+
+    // 正文准备好之后才读取位置，保留等待期间用户的滚动与展开操作。
+    const view = freshView || !selected ? { top: 0, follow: true } : rememberScroll();
+    const focused = document.activeElement;
+    const focusedDisclosure = focused?.tagName === "SUMMARY" ? focused.parentElement?.dataset.disclosureKey : "";
+    const focusedTab = focused?.matches(".subagent-tab") ? resolveSelection(focused.dataset.renderKey) : "";
+    renderTabs();
+    updateSummary();
+    const restoredScroll = reconcileChildren(bodyNode, [content]);
+    for (const { node, top, left } of restoredScroll) {
+      if (node.scrollTop !== top) node.scrollTop = top;
+      if (node.scrollLeft !== left) node.scrollLeft = left;
+    }
+    if (focused && !focused.isConnected) {
+      const replacement = focusedDisclosure
+        ? [...bodyNode.querySelectorAll("details")].find((node) => node.dataset.disclosureKey === focusedDisclosure)?.querySelector("summary")
+        : [...tabsNode.children].find((node) => node.dataset.renderKey === focusedTab);
+      replacement?.focus({ preventScroll: true });
+    }
+    restoreScroll(view);
+    freshView = false;
   }
 
   function select(id) {
@@ -1153,8 +1271,7 @@ export function createSubagentObserver() {
     ensureStyle();
     ensurePanel();
     const wanted = resolveSelection(id);
-    if (wanted) selectedId = wanted;
-    else if (!entries.some((entry) => entry.id === selectedId)) selectedId = entries[0]?.id ?? "";
+    selectedId = wanted || resolveSelection(selectedId) || entries[0]?.id || "";
     if (!visible) {
       visible = true;
       previousFocus = document.activeElement;
@@ -1181,6 +1298,7 @@ export function createSubagentObserver() {
     if (nextId !== sessionId) {
       sessionId = nextId;
       selectedId = "";
+      freshView = true;
       expanded.clear();
     }
     const collected = collectSubagents(messages, tools);
