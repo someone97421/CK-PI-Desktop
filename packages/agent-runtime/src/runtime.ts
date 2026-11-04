@@ -660,6 +660,13 @@ function waitingSubagentsActivity(
   };
 }
 
+function guideStatusLine(delegationId: string, guide: SubagentGuideReceipt): string {
+  const status = `${guide.status}${guide.reason ? `: ${guide.reason}` : ""}`;
+  return guide.source === "user"
+    ? `Delegation ${delegationId}: the user sent guidance (${guide.commandId}) directly to this subagent; status ${status}. It is addressed to the subagent, not to you; read it with TaskInspect only if coordination needs it.`
+    : `Delegation ${delegationId}: your TaskGuide ${guide.commandId} is ${status}.`;
+}
+
 function formatDelegationHeartbeat(record: DelegationRecord): string {
   const parts = [
     `${record.agentName} (${record.delegationId})`,
@@ -1755,7 +1762,7 @@ export class DesktopAgentRuntime {
   readonly persistenceClient: SubagentPersistenceClient;
   private readonly savedDelegationResults: Map<string, SubagentDirectoryEntry>;
   private subagentDiscovery?: Promise<boolean>;
-  private supervisionInbox = new Map<string, { delegationId: string; epoch: number; text: string; priority: number;
+  private supervisionInbox = new Map<string, { delegationId: string; epoch: number; text: string; priority: number; passive?: boolean;
     reportRange?: { first: number; last: number; fromStep: number; toStep: number } }>();
   private supervisionWaiters = new Set<() => void>();
   private supervisionMessages = new Map<AgentMessage, string>();
@@ -6159,7 +6166,7 @@ Delegation rules:
             };
           }
 
-          this.takeSupervision([record]);
+          this.takeSupervision([record], true);
           record.durableRevision = beginReceipt.revision;
           record.execution = nextExecution;
           record.durableGeneration = 0;
@@ -6353,8 +6360,10 @@ Delegation rules:
     if (this.disposed || this.runCancelled || this.turnHadError || record.startedEpoch !== this.turnEpoch) return;
     const text = event.kind === "stop"
       ? `Delegation ${record.delegationId}: cancellation requested by ${event.source}. Existing effects remain; in-flight cancellation may still be pending.${event.source === "user" ? " The user explicitly stopped this work. Do not recreate it or treat this as a retryable failure." : ""}`
+      : event.kind === "guide" ? guideStatusLine(record.delegationId, event.guide)
       : content.length > 5000 ? `${content.slice(0, 4800)}\n[truncated; query TaskInspect for delegation ${record.delegationId}]` : content;
     this.supervisionInbox.set(id, { delegationId: record.delegationId, epoch: record.startedEpoch, text, priority: event.kind === "stop" ? 0 : event.kind === "guide" ? 1 : 2,
+      passive: event.kind === "guide",
       ...(event.kind === "report" ? { reportRange: { first: event.report.reportSeq, last: event.report.reportSeq, fromStep: event.report.fromStep, toStep: event.report.toStep } } : {}),
     });
     // 单个子任务刷屏时合并旧报告为可查询的引用，不让父上下文和队列无限膨胀。
@@ -6373,19 +6382,21 @@ Delegation rules:
     if (guideKeys.length > 8) {
       this.supervisionInbox.delete(guideKeys[0][0]);
       this.supervisionInbox.set(`subagent-guides-coalesced:${record.delegationId}`, { delegationId: record.delegationId, epoch: record.startedEpoch,
-        text: `Older guidance receipts for ${record.delegationId} are in persisted TaskGuidance records (TaskInspect history). Recent receipts follow.`, priority: 1 });
+        text: `Older guidance receipts for ${record.delegationId} are in persisted TaskGuidance records (TaskInspect history). Recent receipts follow.`, priority: 1, passive: true });
     }
     if (event.kind === "report" || event.kind === "stop") this.markSubagentCoordination(record);
-    for (const wake of this.supervisionWaiters) wake();
+    if (event.kind !== "guide") for (const wake of this.supervisionWaiters) wake();
   }
 
   private hasSupervision(targets?: DelegationRecord[]): boolean {
-    return [...this.supervisionInbox.values()].some((entry) => entry.epoch === this.turnEpoch &&
+    return [...this.supervisionInbox.values()].some((entry) => !entry.passive && entry.epoch === this.turnEpoch &&
       (!targets || targets.some((record) => record.delegationId === entry.delegationId)));
   }
 
-  private takeSupervision(targets?: DelegationRecord[]): string {
+  /** 引导回执是被动状态，只随报告、停止等主动事件顺带送达；drain 用于召回前清空旧执行的收件箱。 */
+  private takeSupervision(targets?: DelegationRecord[], drain = false): string {
     if (this.disposed || this.runCancelled || this.turnHadError) return "";
+    if (!drain && !this.hasSupervision(targets)) return "";
     const lines: string[] = [];
     let chars = 0;
     for (const [id, entry] of [...this.supervisionInbox].sort((a, b) => a[1].priority - b[1].priority)) {
