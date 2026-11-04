@@ -54,6 +54,41 @@ describe("Host file batch bindings", () => {
     expect(planner.supported).toBe(false);
   });
 
+  it("retries capability negotiation after a transient Host failure", async () => {
+    const { planner, host } = fixture();
+    host.call = vi.fn()
+      .mockRejectedValueOnce(new Error("connection lost"))
+      .mockResolvedValue({ version: 1, supported: true });
+    await expect(planner.negotiate(false)).rejects.toThrow("connection lost");
+    await planner.negotiate(false);
+    expect(planner.supported).toBe(true);
+    expect(host.call).toHaveBeenCalledTimes(2);
+    expect(toolExecutionMode("Write", planner.supported)).toBe("parallel");
+    expect(toolExecutionMode("Edit", planner.supported)).toBe("parallel");
+  });
+
+  it.each([false, true])("preserves the executor outcome when cleanup fails (executor failure: %s)", async (fails) => {
+    const { planner, host, register } = fixture();
+    await planner.negotiate(false);
+    const args = {};
+    await register({}, args);
+    const originalCall = host.call;
+    host.call = async <T>(method: string, params?: unknown) => {
+      if (method === "tools.fileBatchAbandon") throw new Error("cleanup disconnected");
+      return originalCall<T>(method, params);
+    };
+    const result = { content: [], details: { saved: true } };
+    const tool: AgentTool = { name: "Write", label: "Write", description: "test", parameters: Type.Object({}),
+      execute: async () => { if (fails) throw new Error("write failed"); return result; } };
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const pending = withBatchTurn(tool, planner).execute("call-0", args);
+      if (fails) await expect(pending).rejects.toThrow("write failed");
+      else await expect(pending).resolves.toBe(result);
+      expect(warning).toHaveBeenCalled();
+    } finally { warning.mockRestore(); }
+  });
+
   it("closes failed registrations and blocks the rest of preparation without dispatch", async () => {
     const { planner, host, register } = fixture(); await planner.negotiate(false);
     const calls: string[] = [];

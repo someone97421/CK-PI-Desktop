@@ -78,6 +78,12 @@ export type PluginServicesDependencies = {
   getMainWindow: () => BrowserWindow | null;
   getHost: () => HostProcess | null;
   sendToRenderer: (channel: string, payload: unknown) => void;
+  runPluginSessionMutation: (
+    sessionId: string,
+    method: string,
+    host: HostProcess,
+    run: () => Promise<unknown>,
+  ) => Promise<unknown>;
   safeOpenExternal: (rawUrl: unknown) => Promise<void>;
   stripWinLongPrefix: (path: string) => string;
   clipboardHistory: ClipboardHistory;
@@ -117,6 +123,7 @@ export function createPluginServices({
   logger,
   getMainWindow,
   getHost,
+  runPluginSessionMutation,
   sendToRenderer,
   safeOpenExternal,
   stripWinLongPrefix,
@@ -205,29 +212,42 @@ export function createPluginServices({
     pluginId: string,
     input: Record<string, unknown>,
   ): Promise<unknown> => {
-    if (!getHost()) {
+    const host = getHost();
+    if (!host) {
       throw Object.assign(new Error("host unavailable"), { code: "UNSUPPORTED" });
     }
-    const result = await getHost()!.call(method, { ...input, pluginId });
+    const invoke = () => host.call(method, { ...input, pluginId });
+    const mutatesTranscript = [
+      "plugin.session.appendMessage",
+      "plugin.session.replaceMessages",
+      "plugin.session.deleteMessage",
+      "plugin.session.truncateFrom",
+      "plugin.session.delete",
+    ].includes(method);
+    if (mutatesTranscript) {
+      await host.call("plugin.session.get", { pluginId, sessionId: input.sessionId, scope: input.scope });
+    }
+    const result = mutatesTranscript
+      ? await runPluginSessionMutation(String(input.sessionId ?? ""), method, host, invoke)
+      : await invoke();
+    const body = (result ?? {}) as Record<string, unknown>;
     const changed =
-      (method === "plugin.session.import" &&
-        (result as { imported?: unknown })?.imported === true) ||
-      (method === "plugin.session.importBatch" &&
-        Number((result as { imported?: unknown })?.imported ?? 0) > 0) ||
-      (method === "plugin.session.rename" &&
-        (result as { updated?: unknown })?.updated === true) ||
-      (method === "plugin.session.setAutoTitle" &&
-        (result as { updated?: unknown })?.updated === true) ||
-      (method === "plugin.session.delete" &&
-        (result as { deleted?: unknown })?.deleted === true);
+      (method === "plugin.session.import" && body.imported === true) ||
+      (method === "plugin.session.importBatch" && Number(body.imported ?? 0) > 0) ||
+      (method === "plugin.session.rename" && body.updated === true) ||
+      (method === "plugin.session.setAutoTitle" && body.updated === true) ||
+      (method === "plugin.session.delete" && body.deleted === true) ||
+      // Message-level writes (ADR 0339) also change what the user sees in the
+      // open transcript, so they announce themselves like the session writes.
+      (method === "plugin.session.appendMessage" && typeof body.messageId === "string") ||
+      (method === "plugin.session.replaceMessages" && typeof body.messageCount === "number") ||
+      (method === "plugin.session.deleteMessage" && typeof body.deletedCount === "number") ||
+      (method === "plugin.session.truncateFrom" && typeof body.keptCount === "number");
     if (changed) {
-      sendToRenderer(IPC.event.sessionsChanged, { reason: method, pluginId });
-      // Session list changes this plugin just caused, so its own subscriptions
-      // (and any other subscriber of the plugin) learn to re-list.
-      plugins.publishDesktopEvent({
-        kind: "session.changed",
-        payload: { reason: method, pluginId },
-      });
+      const sessionId = typeof input.sessionId === "string" ? input.sessionId : undefined;
+      const payload = { reason: method, pluginId, ...(sessionId ? { sessionId } : {}) };
+      sendToRenderer(IPC.event.sessionsChanged, payload);
+      plugins.publishDesktopEvent({ kind: "session.changed", payload });
     }
     return result;
   };
@@ -451,6 +471,14 @@ export function createPluginServices({
         callPluginSessionHost("plugin.session.importBatch", pluginId, input),
       rename: (pluginId, input) => callPluginSessionHost("plugin.session.rename", pluginId, input),
       delete: (pluginId, input) => callPluginSessionHost("plugin.session.delete", pluginId, input),
+      appendMessage: (pluginId, input) =>
+        callPluginSessionHost("plugin.session.appendMessage", pluginId, input),
+      replaceMessages: (pluginId, input) =>
+        callPluginSessionHost("plugin.session.replaceMessages", pluginId, input),
+      deleteMessage: (pluginId, input) =>
+        callPluginSessionHost("plugin.session.deleteMessage", pluginId, input),
+      truncateFrom: (pluginId, input) =>
+        callPluginSessionHost("plugin.session.truncateFrom", pluginId, input),
     },
     project: {
       create: (pluginId, input) => callPluginProjectHost(pluginId, input),

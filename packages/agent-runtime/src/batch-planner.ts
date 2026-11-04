@@ -25,7 +25,10 @@ export class BatchPlanner {
   async negotiate(remote: boolean): Promise<void> {
     // A runtime is bound to one Host connection/configuration. Background
     // delegates must not switch lock protocols when a later prompt starts.
-    this.negotiation ??= this.loadCapabilities(remote);
+    this.negotiation ??= this.loadCapabilities(remote).catch((error: unknown) => {
+      this.negotiation = undefined;
+      throw error;
+    });
     await this.negotiation;
   }
 
@@ -66,7 +69,8 @@ export class BatchPlanner {
       // No executor can have started during ordered preparation. Cancel the
       // whole metadata batch instead of stranding successors behind an unknown
       // ticket from a lost registration response. Never retry a write.
-      await this.host.call("tools.fileBatchClose", { sessionId: this.sessionId, batchId: batch.id });
+      await this.host.call("tools.fileBatchClose", { sessionId: this.sessionId, batchId: batch.id })
+        .catch((cleanupError: unknown) => console.warn("[agent-runtime] Host file batch cleanup failed", cleanupError));
       throw batch.failure;
     }
     const prepared = { batch, id: call.toolCallId, ticket: response.ticket };
@@ -124,7 +128,7 @@ export class BatchPlanner {
     }).finally(() => this.pendingCleanup.delete(cleanup));
   }
 
-  async drain(): Promise<void> { await Promise.all(this.pendingCleanup); }
+  async drain(): Promise<void> { await Promise.allSettled(this.pendingCleanup); }
 }
 
 /** Wrap validation and mode guards so pre-Host failures abandon their ticket. */
@@ -133,6 +137,10 @@ export function withBatchTurn(tool: AgentTool, planner: BatchPlanner): AgentTool
     try {
       await planner.waitForTurn(args as object, signal);
       return await planner.execute(args as object, () => tool.execute(id, args, signal, update));
-    } finally { await planner.settle(args as object); }
+    } finally {
+      await planner.settle(args as object).catch((error: unknown) => {
+        console.warn("[agent-runtime] Host file call cleanup failed", error instanceof Error ? error.message : String(error));
+      });
+    }
   } };
 }

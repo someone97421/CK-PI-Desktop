@@ -26,6 +26,7 @@ import {
   PLUGIN_WIDGET_ID_PATTERN,
   PLUGIN_WIDGET_INVOKE_CHANNEL,
   PLUGIN_WIDGET_OPENED_EVENT,
+  PLUGIN_PANEL_LAUNCH_EVENT,
   type PluginPanelTheme,
   type PluginPanelWindowControlAction,
   type PluginWidgetAction,
@@ -70,6 +71,13 @@ export type PluginPanelOpenRequest = {
   allowMicrophone?: boolean;
   /** Adds a development-only reminder for the non-clickable drag band. */
   development?: boolean;
+  /**
+   * Input that summoned this panel from the launcher (issue #2085). Delivered
+   * after the page loads and readable once through
+   * `pluginBridge.consumeLauncherPayload()`; the page never receives a payload
+   * the user did not type for it.
+   */
+  launch?: { triggerId: string; payload: string };
 };
 
 /**
@@ -683,7 +691,12 @@ export class PluginPanelHost {
   async open(request: PluginPanelOpenRequest): Promise<void> {
     const pending = this.pendingOpens.get(request.pluginId);
     // 同一轮打开共享结果；权限策略由创建者负责，旧等待者不能重新应用旧授权。
-    if (pending) return pending.promise;
+    if (pending) {
+      await pending.promise;
+      const window = this.windows.get(request.pluginId);
+      if (!pending.token.canceled && window) this.deliverLaunch(request, window);
+      return;
+    }
 
     const token = { canceled: false };
     const promise = this.serializer.run(request.pluginId, async () => {
@@ -700,6 +713,7 @@ export class PluginPanelHost {
           if (existing.isMinimized()) existing.restore();
           existing.show();
           existing.focus();
+          this.deliverLaunch(request, existing);
           return;
         }
         // The microphone prompt is asynchronous: the panel can be closed while
@@ -838,6 +852,7 @@ export class PluginPanelHost {
         return;
       }
       if (!win.isDestroyed()) {
+        this.deliverLaunch(request, win);
         win.show();
       }
     });
@@ -950,6 +965,7 @@ export class PluginPanelHost {
    * Receivers that do not subscribe are inert; the event names are fixed by the
    * host (e.g. `appearance:changed`).
    */
+
   broadcast(event: string, payload: unknown): void {
     const pluginIds = new Set([
       ...this.windows.keys(),
@@ -1270,5 +1286,23 @@ export class PluginPanelHost {
     if (!record || record.win.isDestroyed()) return { ok: true, closed: false };
     record.win.close();
     return { ok: true, closed: true };
+  }
+  /** 复用面板时也刷新载荷；普通打开清除上次尚未消费的输入。 */
+  private deliverLaunch(
+    request: PluginPanelOpenRequest,
+    win: BrowserWindow,
+  ): void {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) {
+      return;
+    }
+    try {
+      win.webContents.send(
+        `pi-plugin-panel-event:${PLUGIN_PANEL_LAUNCH_EVENT}`,
+        request.launch ?? null,
+      );
+    } catch {
+      // A payload that cannot be delivered leaves the panel open and empty
+      // rather than failing the open the user already committed to.
+    }
   }
 }

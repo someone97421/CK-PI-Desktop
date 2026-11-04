@@ -409,7 +409,6 @@ export const AssistantTurn = memo(function AssistantTurn({
             <TurnProcess
               turnId={entry.id} processParts={process} turnParts={entry.parts}
               visibleSteps={visibleSteps} isActive={turnProcessActive}
-              delegationStatuses={turnDelegationStatuses}
               failed={summary.hasError} activity={runtimeActivity}
             >
               {segments.map((segment) => segment.kind === "run" ? (

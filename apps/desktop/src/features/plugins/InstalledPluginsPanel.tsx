@@ -95,14 +95,9 @@ export function InstalledPluginsPanel({
                   >
                     {group.rows.map((plugin) => {
                       const broken = group.id === "attention";
+                      const canOpenPanel = plugin.enabled && Boolean(plugin.ui?.panel);
                       const menuOpen = rowMenu === plugin.id;
                       const update = plugin.updateAvailable;
-                      /**
-                       * The card's one call to action: an available update, or
-                       * opening the plugin's own panel. A disabled plugin has
-                       * neither, so it never carries a primary button.
-                       */
-                      const canOpenPanel = plugin.enabled && !!plugin.ui?.panel;
                       return (
                         <article
                           key={plugin.id}
@@ -205,9 +200,7 @@ export function InstalledPluginsPanel({
                               <Button
                                 variant="secondary"
                                 size="sm"
-                                onClick={() =>
-                                  void run(() => api.openPluginPanel(plugin.id))
-                                }
+                                onClick={() => void run(() => api.openPluginPanel(plugin.id))}
                               >
                                 <IconPanel size={14} />
                                 {t("plugins.openPanel")}

@@ -10,6 +10,11 @@ import { getStorageBootstrap } from "./storage/bootstrap";
 import { SubagentSnapshotStore } from "./runtime/subagent-snapshot-store";
 import { createSubagentSessionAuthority } from "./runtime/subagent-session-authority";
 import {
+  createDefaultLocalAppDeps,
+  createLocalAppCatalog,
+  type LocalAppCatalog,
+} from "./local-apps";
+import {
   applyNetworkProxyFromAppSettings,
   currentNetworkProxy,
   disposeSystemProxyRelay,
@@ -313,6 +318,54 @@ const pluginServices = createPluginServices({
   getMainWindow,
   getHost,
   sendToRenderer,
+  runPluginSessionMutation: async (sessionId, method, host, run) => {
+    const release = await acquireSessionOperation(sessionId);
+    let fence: ReturnType<typeof eventPersistence.beginTranscriptRewrite> | undefined;
+    try {
+      const appending = method === "plugin.session.appendMessage";
+      const deleting = method === "plugin.session.delete";
+      const busy = isSessionBusy(sessionId) || sessionConfiguration.hasPending(sessionId);
+      if (!appending && busy) {
+        throw Object.assign(new Error("Cannot rewrite the transcript of a running session"), {
+          code: "TURN_RUNNING", errorCode: "TURN_RUNNING",
+        });
+      }
+      if (appending && busy) {
+        return await persistenceOutbox.prepareSessionReplacement(sessionId, () => host, run);
+      }
+      fence = eventPersistence.beginTranscriptRewrite(sessionId);
+      const result = await persistenceOutbox.prepareSessionReplacement(sessionId, () => host, async () => {
+        if (deleting) await subagentSnapshots.closeSession(sessionId);
+        const sidecar = getSidecar();
+        if (sidecar) {
+          sidecar.clearProjectInstructionRoot(sessionId);
+          sidecar.clearVendorAuthBindings(sessionId);
+          await sidecar.call("agent.disposeSession", { sessionId });
+        }
+        return run();
+      });
+      const body = (result ?? {}) as Record<string, unknown>;
+      const changed = deleting ? body.deleted === true
+        : method === "plugin.session.deleteMessage" ? Number(body.deletedCount) > 0
+        : method === "plugin.session.truncateFrom" ? Number(body.discardedCount) > 0
+        : true;
+      if (changed) fence.commit();
+      else fence.rollback();
+      if (deleting && changed) {
+        await persistenceOutbox.dropSession(sessionId);
+        sessionCoordination.forgetTranscriptRewriteHistory(sessionId);
+        await subagentSnapshots.deleteSession(sessionId);
+        sessionProjects.delete(sessionId);
+        await sessionConfiguration.clear(sessionId);
+      }
+      return result;
+    } catch (error) {
+      fence?.rollback();
+      throw error;
+    } finally {
+      release();
+    }
+  },
   safeOpenExternal,
   stripWinLongPrefix,
   clipboardHistory,
@@ -598,6 +651,7 @@ const createdLauncher = createLauncher({
   logger,
   safeOpenExternal,
   toggleMainWindow,
+  dataDir,
 });
 launcherRuntime = createdLauncher;
 const {
@@ -888,6 +942,21 @@ runtimeLifecycle = createRuntimeLifecycle({
 });
 const { bootHostStatus, bootBackends } = runtimeLifecycle;
 
+let localAppsCatalog: LocalAppCatalog | null = null;
+const localAppsReady = createDefaultLocalAppDeps().then((deps) => {
+  const catalog = createLocalAppCatalog(deps);
+  localAppsCatalog = catalog;
+  void catalog.refresh().catch(() => undefined);
+  return catalog;
+});
+const localApps: LocalAppCatalog = {
+  list: async () => (await localAppsReady).list(),
+  refresh: async () => (await localAppsReady).refresh(),
+  launch: async (appId) => (await localAppsReady).launch(appId),
+  isScanning: () => localAppsCatalog?.isScanning() ?? true,
+  diagnostics: () => localAppsCatalog?.diagnostics() ?? [],
+};
+
 function registerIpc() {
   return registerIpcHandlers({
     traySessions: applicationLifecycle!.traySessions,
@@ -910,6 +979,9 @@ function registerIpc() {
       pluginServices.composerSuggestion.settle(answer),
     getPluginLauncherWindow: () => mainState.pluginLauncherWindow,
     togglePluginLauncher,
+    /** Same delivery path as the application menu, so readiness and focus are
+     * handled once instead of by the launcher IPC. */
+    openPluginMarket: () => dispatchApplicationMenuCommand("openPluginMarket"),
     safeOpenExternal,
     updater,
     dataDir,
@@ -923,6 +995,7 @@ function registerIpc() {
     queuedSteeringJournal,
     logger,
     plugins,
+    localApps,
     speech,
     sessionCapabilityContext,
     enrichSession,

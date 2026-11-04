@@ -5,8 +5,10 @@ import type {
   FsChatRefMatchKind,
   FsChatRefProjectRoot,
   FsChatRefRoot,
+  FsChatRefResolveResult,
 } from "@pi-desktop/shared";
 import { isAttachmentBlobRef, isIgnoredName, resolveRealPathWithinRoot } from "./workspace-files.js";
+import { resolveExternalFile } from "./external-files.js";
 import { getWorkspaceFileIndex } from "./fs-index.js";
 
 /**
@@ -250,6 +252,33 @@ export async function isChatRefOutsideRoots(ref: string, roots: ChatRefRoots): P
   );
 }
 
+/**
+ * Complete an absolute reference that `isChatRefOutsideRoots` placed outside
+ * every managed root (ADR 0339). It names that exact file or nothing: a path
+ * with no regular file behind it reports a miss, and no same-name file is ever
+ * looked up anywhere else. A reference that is not an exact absolute path keeps
+ * reporting the access limit, since shorthand never searches outside the roots.
+ */
+export async function resolveExternalChatRef(ref: string): Promise<FsChatRefResolveResult> {
+  const parsed = parseChatRef(ref);
+  const cleaned = cleanRef(ref);
+  if (!parsed?.absolute || !isAbsolute(cleaned)) {
+    return { match: null, reason: "outside-allowed-roots" };
+  }
+  const external = await resolveExternalFile(cleaned);
+  if (external.kind === "file") {
+    return {
+      match: {
+        root: "external",
+        relativePath: basename(external.path),
+        absolutePath: external.path,
+        matchedBy: "exact-absolute",
+      },
+    };
+  }
+  return { match: null };
+}
+
 function segmentsOf(path: string): string[] {
   return toPosix(path).split("/").filter(Boolean);
 }
@@ -356,11 +385,13 @@ export async function resolveChatFileRef(
   const parsed = parseChatRef(ref);
   if (!parsed) return null;
   const rootList = orderedRoots(roots);
+  if (rootList.length === 0 && !(roots.containment ?? []).length) return null;
 
   const cleanedPosixRef = toPosix(cleanRef(ref));
   const isAttachmentRef = /^attachments(?:\/|$)/i.test(cleanedPosixRef);
 
-  // 绝对引用只匹配指定文件，允许打开工作目录以外的显式引用。
+  // Absolute references name one exact file inside the managed roots; outside
+  // them `resolveExternalChatRef` owns the exact-path open (ADR 0339).
   if (parsed.absolute) {
     const cleaned = cleanRef(ref);
     if (!isAbsolute(cleaned)) return null;
@@ -369,6 +400,7 @@ export async function resolveChatFileRef(
       ...rootList,
       ...containmentEntries(roots),
     ]);
+    if (!couldShareVolume(absolutePath, canonicalRootList)) return null;
     let targetPath: string;
     try {
       targetPath = await realpath(absolutePath);
@@ -388,9 +420,8 @@ export async function resolveChatFileRef(
         ...(root.projectRoot ? { projectRoot: root.projectRoot } : {}),
       };
     }
-    return { root: "external", relativePath: basename(absolutePath), absolutePath, matchedBy: "exact-absolute" };
+    return null;
   }
-  if (rootList.length === 0) return null;
 
   // 2. A content-addressed attachment blob (`attachments/<sha256>`) is not a
   //    filesystem path: it names a stored blob by hash, and the files-tab

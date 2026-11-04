@@ -1728,6 +1728,7 @@ export class DesktopAgentRuntime {
   private model: Model<Api>;
   private turnId?: string;
   private disposed = false;
+  private aborting?: Promise<void>;
   readonly sessionId: string;
   private mode: Mode;
   private provider: RuntimeProviderConfig;
@@ -4009,7 +4010,7 @@ Delegation rules:
           // Direct/internal invocations retain preflight. pi invocations have
           // already committed instructions in the ordered preparation phase.
           if (!prepared) await this.loadPathInstructions(toolName, params, this.delegateWorktrees.get(toolCallId), this.instructionExecution.getStore());
-          if (PATH_MUTATING_TOOLS.has(toolName)) {
+          if (PATH_MUTATING_TOOLS.has(toolName) && !this.batchPlanner.ticket(toolCallId)) {
             return this.writeLocks.run(
               this.pathLockKey(toolCallId, params),
               () => run(toolCallId, params, signal, onUpdate),
@@ -4922,6 +4923,7 @@ Delegation rules:
           }),
           tools: scopedTools,
           beforeToolCall: preparation.beforeToolCall,
+          onTurnEnd: (message) => this.batchPlanner.settleBatch(message),
           onEvent: (envelope) => {
             this.noteDelegationActivity(record, envelope);
             this.onEvent(envelope);
@@ -6879,7 +6881,7 @@ Delegation rules:
       const precedingTaskIds = new Set(
         toolCalls
           .slice(0, currentIndex)
-          .filter((call) => call.name === SUBAGENT_TOOL_NAME)
+          .filter((call) => call.name === SUBAGENT_TOOL_NAME || call.name === SUBAGENT_RESUME_TOOL_NAME)
           .map((call) => call.id),
       );
       if (precedingTaskIds.size === 0) return;
@@ -6926,7 +6928,7 @@ Delegation rules:
     // not seal a partial registration and later try to append to it.
     const calls = context.assistantMessage.content.filter((block) => block.type === "toolCall");
     if (resolveBatchExecutionMode(context.assistantMessage) === "sequential"
-      || calls.some((call) => context.context?.tools?.find((tool) => tool.name === call.name)?.executionMode !== "parallel")) return;
+      || calls.some((call) => context.context?.tools?.find((tool) => tool.name === call.name)?.executionMode === "sequential")) return;
     const selected = context.context?.tools?.find((tool) => tool.name === name);
     const builtin = builtinToolNames ? builtinToolNames.has(name) : selected && this.builtinTools.has(selected);
     const batch: unknown = context.assistantMessage;
@@ -9922,12 +9924,17 @@ Delegation rules:
     }
   }
 
-  async abort(): Promise<void> {
+  abort(): Promise<void> {
+    return this.aborting ??= this.abortTurn().finally(() => { this.aborting = undefined; });
+  }
+
+  private async abortTurn(): Promise<void> {
     this.finishRunClock();
     const turnId = this.turnId;
     const settlement = turnId
       ? this.activeTurnSettlements.get(turnId)
       : undefined;
+    const delegates = this.runningDelegations().map((record) => record.completion);
     this.acceptingSteering = false;
     this.gracefulStopRequested = false;
     this.runCancelled = true;
@@ -9948,7 +9955,7 @@ Delegation rules:
     // the whole session until it finished on its own (#1767). Drive the tools
     // from here as well, so a stop always releases them.
     for (const abortTool of [...this.activeToolAborts]) abortTool();
-    await settlement;
+    await Promise.allSettled([...(settlement ? [settlement] : []), ...delegates]);
   }
 
   private trackTurnOperation<T>(
@@ -9999,6 +10006,7 @@ Delegation rules:
     return {
       sessionId: this.sessionId,
       isRunning:
+        this.aborting !== undefined ||
         this.agent.state.isStreaming ||
         this.compactionInProgress ||
         this.agentActivity !== undefined ||

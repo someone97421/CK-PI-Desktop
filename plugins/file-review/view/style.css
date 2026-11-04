@@ -35,8 +35,6 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--fr-accent
 .title-row { justify-content: space-between; margin-bottom: 11px; }
 h1 { font-size: var(--text-base, 14px); margin: 0; font-weight: var(--font-weight-strong, 600); }
 .scope-row { flex-wrap: wrap; }
-.scope-row button { border-color: transparent; color: var(--fr-muted); padding: 4px 9px; }
-.scope-row button[aria-pressed="true"] { background: var(--fr-surface); border-color: var(--fr-border); color: var(--fr-fg); }
 .totals { margin-left: auto; gap: 8px; font-size: var(--text-sm, 12px); }
 .add { color: var(--fr-add); }
 .del { color: var(--fr-del); }

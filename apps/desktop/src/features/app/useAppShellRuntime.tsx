@@ -14,6 +14,7 @@ import {
   type ShortcutPlatform,
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
+import { StartupAnimation } from "../../components/StartupAnimation";
 import { api } from "../../lib/api";
 import { isRemoteSession } from "../../lib/remote-session-safety";
 import { accentInkTokens, applyAppearance, resolveAppearance } from "../../lib/appearance";
@@ -26,6 +27,7 @@ import {
   workPanelWidthForSidebarReopen,
 } from "../../lib/work-panel-resize";
 import { composerSuggestion } from "../chat/composer/plugins/suggestion-bridge";
+import { usePluginBrowseState } from "../plugins/browse-state";
 import { subscribeRemoteInteractions } from "../../lib/remote-interactions";
 import { playNotificationChime } from "../../lib/notification-sound";
 import {
@@ -34,6 +36,7 @@ import {
   saveSidebarWidth,
 } from "../../lib/sidebar-preferences";
 import { StartupSplash } from "../../components/StartupSplash";
+import { useStartupAnimation } from "./useStartupAnimation";
 import { useStartupWatchdog } from "./useStartupWatchdog";
 import { useTraySessions } from "./useTraySessions";
 
@@ -424,6 +427,12 @@ export function useAppShellRuntime() {
             break;
           case "openLogs":
             await api.openLogs();
+            break;
+          case "openPluginMarket":
+            // Sent by the launcher's empty state: land on the marketplace tab
+            // of the plugins page instead of the installed list.
+            store.setPage("plugins");
+            usePluginBrowseState.getState().setTab("market");
             break;
           case "checkForUpdates": {
             const updateState = await api.updatesCheck();
@@ -850,6 +859,17 @@ export function useAppShellRuntime() {
           }
           if (event.selectSessionId) {
             await useAppStore.getState().selectSession(event.selectSessionId);
+          } else if (event.sessionId) {
+            // A plugin message write named the session it changed. The sidebar
+            // refresh above cannot repaint an open transcript, so re-read it —
+            // but only when the user is looking at it and no turn owns it.
+            const current = useAppStore.getState();
+            if (
+              current.activeSessionId === event.sessionId &&
+              current.runningSessions[event.sessionId] !== true
+            ) {
+              await current.selectSession(event.sessionId, { record: false });
+            }
           }
         })
         .catch(() => undefined);
@@ -1052,14 +1072,36 @@ export function useAppShellRuntime() {
     retry: retryStartup,
     retrying: startupRetrying,
   } = useStartupWatchdog(ready);
-  const showSplash = splashPhase !== "done";
-  // The splash and the recovery surface answer the same question ("nothing to
-  // show yet"), and on macOS the shell hides every child except the splash while
-  // it animates. Exactly one of them is mounted, so neither has to fight the
-  // other's layering.
-  const splash = showSplash && startupPhase === "starting" ? (
-    <StartupSplash exiting={splashPhase === "exiting"} />
-  ) : null;
+  const startupAnimation = useStartupAnimation(ready);
+  // Whether a boot surface still stands between the user and the shell. The
+  // reveal is deliberately outside it: the mask is already transparent to input
+  // by then, so the window controls and the shell chrome come back for the
+  // whole fade rather than snapping in at the end of it.
+  const showSplash = startupAnimation.active
+    ? startupAnimation.phase !== "reveal"
+    : splashPhase !== "done";
+  // Three surfaces answer the same question ("nothing to show yet") and exactly
+  // one is ever mounted, so none has to fight the others' layering. The
+  // recovery surface outranks both boot surfaces — a stalled launch must not be
+  // left behind an opaque animation — and a user's animation outranks the brand
+  // splash, which is what it was dropped in to replace.
+  const splash =
+    startupPhase !== "starting"
+      ? null
+      : startupAnimation.active
+        ? (
+            <StartupAnimation
+              playing={startupAnimation.playing}
+              videoRef={startupAnimation.videoRef}
+              revealing={startupAnimation.phase === "reveal"}
+              holdingLong={startupAnimation.holdingLong}
+              onFirstFrame={startupAnimation.onFirstFrame}
+              onAnimationEnd={startupAnimation.onAnimationEnd}
+            />
+          )
+        : splashPhase !== "done"
+          ? <StartupSplash exiting={splashPhase === "exiting"} />
+          : null;
 
   const shortcutPlatform = platform as ShortcutPlatform;
   const toggleSidebarShortcut = KEYBOARD_SHORTCUTS.find(

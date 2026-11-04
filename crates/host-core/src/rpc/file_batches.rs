@@ -57,7 +57,7 @@ pub(super) async fn handle(
         let call: BatchCall = serde_json::from_value(params)
             .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
         let st = state.lock().await;
-        if remote_tools::session_remote_workspace(&st, &call.session_id)?.is_some() {
+        if remote_tools::session_remote_workspace_optional(&st, &call.session_id)?.is_some() {
             return Err(rpc_err(
                 1002,
                 "remote Host file batches are unavailable",
@@ -74,7 +74,10 @@ pub(super) async fn handle(
         .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
     let st = state.lock().await;
     if method == "tools.fileBatchCapabilities" {
-        let local = remote_tools::session_remote_workspace(&st, &action.session_id)?.is_none();
+        // Temporary drafts and subagent sessions may not be stored yet; like
+        // tools.execute they stay on the local path.
+        let local =
+            remote_tools::session_remote_workspace_optional(&st, &action.session_id)?.is_none();
         return Ok(json!({"version":1,"supported":local}));
     }
     let result = match method {

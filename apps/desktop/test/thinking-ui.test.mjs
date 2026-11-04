@@ -273,7 +273,7 @@ test("expanded assistant activity rails collapse their disclosures", () => {
   assert.match(stylesSource, /\.disclosure-collapse-rail:focus-visible\s*\{/);
 });
 
-test("末条工具的自动展开与思考可见性独立", () => {
+test("末条工具自动展开，思考行遵循自己的折叠开关", () => {
   assert.match(transcriptDisclosureSource, /export function useAutomaticDisclosure\(/);
   assert.match(transcriptDisclosureSource, /revealRequest\?: number/);
   assert.match(transcriptDisclosureSource, /const currentOpen = useRef\(open\)/);
@@ -281,15 +281,12 @@ test("末条工具的自动展开与思考可见性独立", () => {
   assert.match(transcriptActivityGroupSource, /useAutomaticDisclosure\(\s*automaticallyOpen/);
   assert.match(
     transcriptSource,
-    /<ThinkingRow[\s\S]*?autoOpen\s+onUserInteraction=\{onUserInteraction\}/,
+    /const automaticallyOpen = activityGroupStartsOpen\(\{\s*subagentTopology: hasSubagentTopology,\s*turnActive,\s*groupActive: live,\s*collapseSettled: collapseSettledGroups,\s*\}\);/,
   );
+  assert.match(transcriptSource, /const autoOpenLatest =\s*isLast && item === lastItem/);
   assert.match(
     transcriptSource,
-    /const automaticallyOpen = activityGroupStartsOpen\(visibleItems, \{\s*subagentTopology: hasSubagentTopology,\s*turnActive,\s*groupActive: live,\s*\}\);/,
-  );
-  assert.match(
-    transcriptSource,
-    /const autoOpenLatest =\s*isLast && item === lastItem/,
+    /<ThinkingRow[\s\S]*?\n\s*autoOpen=\{thinkingRowStartsOpen\(/,
   );
   assert.match(transcriptSource, /<ToolRow[\s\S]*?autoOpen=\{autoOpenLatest\}/);
   assert.match(transcriptToolRowSource, /const disclosure = useAutomaticDisclosure\(\s*autoOpen && !failed && status !== "denied",\s*revealRequest/);

@@ -3,9 +3,10 @@ import { GEN_UI_SCHEME_PRIVILEGES } from "./gen-ui-protocol";
 import { PLUGIN_ASSET_SCHEME_PRIVILEGES } from "./plugin-asset-protocol";
 import { PLUGIN_RENDERER_SCHEME_PRIVILEGES } from "./plugin-renderer-protocol";
 import { APPEARANCE_MEDIA_SCHEME_PRIVILEGES } from "./appearance-media-protocol";
+import { STARTUP_ANIMATION_SCHEME_PRIVILEGES } from "./startup-animation-protocol";
 
 /**
- * 在应用就绪前，一次性注册插件、外观资源和可视化协议权限。
+ * 在应用就绪前，一次性注册插件、外观资源、可视化和启动动画协议权限。
  *
  * Electron accepts `registerSchemesAsPrivileged` once per process: a second
  * call replaces the secure/fetch/CORS scheme lists that child processes
@@ -19,5 +20,6 @@ export function registerPluginSchemes(): void {
     PLUGIN_RENDERER_SCHEME_PRIVILEGES,
     APPEARANCE_MEDIA_SCHEME_PRIVILEGES,
     GEN_UI_SCHEME_PRIVILEGES,
+    STARTUP_ANIMATION_SCHEME_PRIVILEGES,
   ]);
 }

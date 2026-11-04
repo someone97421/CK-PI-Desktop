@@ -6,7 +6,6 @@ const themeStyle = document.createElement('style');
 document.head.append(themeStyle);
 let locale = 'zh-CN';
 let context = {};
-let showAll = true;
 let data = null;
 let loading = false;
 let notice = null;
@@ -37,7 +36,7 @@ function counts(additions, deletions) {
   return node;
 }
 function errorText(error) {
-  return error?.code === 'SCOPE_EXPIRED' ? t('scopeExpired') : String(error?.message || error);
+  return String(error?.message || error);
 }
 function diffBody(change) {
   const body = el('div', 'change-body');
@@ -101,15 +100,7 @@ function render() {
   const heading = el('div', 'title-row');
   heading.append(el('h1', '', t('title')), button(t('refresh'), () => void load(true), loading));
   const scope = el('div', 'scope-row');
-  scope.setAttribute('role', 'group');
-  scope.setAttribute('aria-label', t('scope'));
-  if (context.scopeKey) {
-    for (const [key, all] of [['task', false], ['session', true]]) {
-      const node = button(t(key), () => { showAll = all; data = null; notice = null; void load(); });
-      node.setAttribute('aria-pressed', String(showAll === all));
-      scope.append(node);
-    }
-  } else scope.append(el('span', 'state', t('session')));
+  scope.append(el('span', 'state', t('session')));
   if (data?.summary) {
     const summary = data.summary;
     const totals = el('div', 'totals');
@@ -132,7 +123,7 @@ function render() {
   else if (data?.local === false) content.append(el('div', 'empty', t('localOnly')));
   else if (data && !data.entries?.length) {
     const empty = el('div', 'empty');
-    empty.append(el('span', 'empty-symbol', '±'), el('span', '', t(showAll ? 'empty' : 'taskEmpty')));
+    empty.append(el('span', 'empty-symbol', '±'), el('span', '', t('empty')));
     content.append(empty);
   } else if (data?.entries) {
     const grouped = new Map();
@@ -163,7 +154,7 @@ async function load(refresh = false) {
   render();
   try {
     if (!bridge) throw new Error(t('bridgeMissing'));
-    const result = await bridge.invoke('review.read', { ...context, showAll, refresh });
+    const result = await bridge.invoke('review.read', { ...context, refresh });
     if (version !== sequence || destroyed) return;
     data = result;
     if (result.sessionId) context.sessionId = result.sessionId;
@@ -226,8 +217,7 @@ function openLocation(value) {
     const location = typeof value === 'string' ? value : value?.location;
     if (!location) return;
     const next = JSON.parse(location);
-    context = { sessionId: next.sessionId, ...(next.scopeKey ? { scopeKey: next.scopeKey } : {}) };
-    showAll = !next.scopeKey;
+    context = { sessionId: next.sessionId };
     data = null;
     notice = null;
     expanded.clear();

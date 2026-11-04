@@ -10,6 +10,8 @@ const localOnly = new Set<string>([
   IPC.invoke.sessionStorage, IPC.invoke.sessionCleanScratch,
   IPC.invoke.agentSteer, IPC.invoke.agentQueuePush, IPC.invoke.agentQueueList,
   IPC.invoke.agentStopSubagents, IPC.invoke.workspaceReviewRollback,
+  IPC.invoke.workspaceReviewTurns, IPC.invoke.workspaceReviewChanges, IPC.invoke.workspaceReviewContext,
+  IPC.invoke.workspaceReviewOpenFile, IPC.invoke.workspaceReviewRollbackFile,
   IPC.invoke.extensionsCommandRun, IPC.invoke.browserNavigate,
   IPC.invoke.fsResolveRef,
 ]);

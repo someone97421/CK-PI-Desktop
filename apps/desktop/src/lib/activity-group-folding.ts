@@ -1,36 +1,42 @@
-import type { AssistantActivityItem } from "./assistant-turns";
-
-/** A settled ordinary group stays open up to this many visible rows. */
-export const ACTIVITY_GROUP_AUTO_OPEN_MAX_ITEMS = 4;
-
-/**
- * Whether a rendered activity group starts open.
+/*
+ * Folding defaults for the two nested levels of a turn's process.
  *
- * Folding is decided once per state, not per row: work the turn still owns stays
- * visible, reader-requested reasoning stays visible, and only a settled group of
- * plain tool rows falls back to the small-group rule. Explicit user choices are
- * applied on top of this default and are never derived from it.
+ * A turn's process disclosure is one level; the activity groups and the
+ * Thinking rows inside it are the two levels below. Each level answers only its
+ * own question here; the disclosure machinery combines this default with the
+ * reader's explicit choice, the parent's visibility, and transient reading
+ * protection (see `disclosure.tsx`).
+ *
+ * Live work always stays visible. Task fan-out is its own topology card and
+ * keeps its open default. Everything else is settled, and the reader's
+ * preference decides; size is not part of either rule.
  */
-export function activityGroupStartsOpen(
-  visibleItems: readonly AssistantActivityItem[],
-  state: {
-    /** Task fan-out is its own topology and keeps its released open default. */
-    subagentTopology: boolean;
-    /** The assistant turn is still running. */
-    turnActive: boolean;
-    /** This group still owns live work, including running delegations. */
-    groupActive: boolean;
-  },
-): boolean {
-  // `visibleItems` already excludes reasoning hidden by the preference, so a
-  // remaining Thinking row is content the reader asked to see. Folding it away
-  // would make `Show thinking` look broken.
-  const visibleReasoning = visibleItems.some((item) => item.kind === "thinking");
+
+/** Whether a rendered activity group starts open. */
+export function activityGroupStartsOpen(state: {
+  /** Task fan-out is its own topology and keeps its released open default. */
+  subagentTopology: boolean;
+  /** The assistant turn this group belongs to is still running. */
+  turnActive: boolean;
+  /** This group still owns live work, including running delegations. */
+  groupActive: boolean;
+  /** `resolveAutoCollapseSettledGroups` for the current settings. */
+  collapseSettled: boolean;
+}): boolean {
   return (
     state.subagentTopology ||
     state.turnActive ||
     state.groupActive ||
-    visibleReasoning ||
-    visibleItems.length <= ACTIVITY_GROUP_AUTO_OPEN_MAX_ITEMS
+    !state.collapseSettled
   );
+}
+
+/** Whether a rendered Thinking row starts open. */
+export function thinkingRowStartsOpen(state: {
+  /** The live turn is still producing this row's reasoning. */
+  streaming: boolean;
+  /** `resolveAutoCollapseThinking` for the current settings. */
+  collapseSettled: boolean;
+}): boolean {
+  return state.streaming || !state.collapseSettled;
 }

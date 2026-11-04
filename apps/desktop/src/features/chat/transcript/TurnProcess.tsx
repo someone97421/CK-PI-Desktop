@@ -1,4 +1,3 @@
-import type { SubagentOutcome } from "../../../lib/subagent-topology";
 import { useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentActivity } from "@pi-desktop/shared";
@@ -58,7 +57,6 @@ export function TurnProcess({
   processParts,
   turnParts,
   visibleSteps,
-  delegationStatuses,
   isActive,
   failed,
   activity,
@@ -74,7 +72,6 @@ export function TurnProcess({
   failed: boolean;
   /** Live runtime stage, when the runtime reports one. */
   activity?: AgentActivity;
-  delegationStatuses?: ReadonlyMap<string, SubagentOutcome>;
   children: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -82,8 +79,8 @@ export function TurnProcess({
   const revealRequest = useMemo(() => search && processContainsMessage(processParts, search.messageId)
     ? search.requestId : undefined, [processParts, search]);
   const summary = useMemo(() => cachedActivitySummary(
-    processParts.flatMap((part) => part.kind === "activity" ? part.items : []), delegationStatuses,
-  ), [processParts, delegationStatuses]);
+    processParts.flatMap((part) => part.kind === "activity" ? part.items : []),
+  ), [processParts]);
   const thinkingNow = useMemo(() => isTurnThinking(turnParts, isActive), [turnParts, isActive]);
   // 显示模式和思考可见性不改变用户已选择的展开状态。
   const disclosure = useAutomaticDisclosure(

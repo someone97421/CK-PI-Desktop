@@ -5,6 +5,9 @@ export type TranscriptReadingPosition = {
   pinned: boolean;
   messageId?: string;
   offset: number;
+  /** Outermost entry row, which stays mounted while its process drawer is folded. */
+  anchorId?: string;
+  anchorOffset?: number;
   scrollTop: number;
   windowSize: number;
   /** Tail fingerprint captured with the bookmark; activity after it makes the bookmark stale. */
@@ -85,6 +88,14 @@ export function transcriptReadingPositionIsStale(
 
 const READING_ANCHOR_SELECTOR = "[data-reading-anchor]";
 
+function firstVisibleRow(content: HTMLElement, selector: string, viewport: DOMRect) {
+  for (const row of content.querySelectorAll<HTMLElement>(selector)) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom <= viewport.top || rect.top >= viewport.bottom || rect.height === 0) continue;
+    return { row, offset: rect.top - viewport.top };
+  }
+}
+
 /** Sample only a visible layout; hidden panes must never replace a bookmark. */
 export function captureTranscriptReadingPosition(
   scroller: HTMLElement,
@@ -98,19 +109,24 @@ export function captureTranscriptReadingPosition(
   const transcriptRevision = historical ? undefined : transcriptReadingRevision(messages);
   if (pinned) return { pinned, offset: 0, scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
   const viewport = scroller.getBoundingClientRect();
-  // 只锚定每个条目最外层的行：过程抽屉折叠后内层行会卸载，锚定它们会让恢复落空。
-  for (const row of content.querySelectorAll<HTMLElement>(READING_ANCHOR_SELECTOR)) {
-    const rect = row.getBoundingClientRect();
-    if (rect.bottom <= viewport.top || rect.top >= viewport.bottom || rect.height === 0) continue;
-    const messageId = row.dataset.readingAnchor;
-    if (messageId) return { pinned, messageId, offset: rect.top - viewport.top,
+  // 优先锚定可见消息本身：翻页前插时回答组的首条消息会变，消息自身的身份与偏移不变。
+  // 同时记录条目最外层行：过程抽屉折叠后内层行会卸载，书签恢复回退到外层行。
+  const outer = firstVisibleRow(content, READING_ANCHOR_SELECTOR, viewport);
+  const anchorId = outer?.row.dataset.readingAnchor;
+  const anchor = outer && anchorId ? { anchorId, anchorOffset: outer.offset } : {};
+  for (const selector of ["[data-message-id]", "[data-minimap-id]"]) {
+    const visible = firstVisibleRow(content, selector, viewport);
+    const messageId = visible?.row.dataset.messageId ?? visible?.row.dataset.minimapId;
+    if (visible && messageId) return { pinned, messageId, offset: visible.offset, ...anchor,
       scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
   }
+  if (outer && anchorId) return { pinned, messageId: anchorId, offset: outer.offset, ...anchor,
+    scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
 }
 
 export type TranscriptReadingRestore = "aligned" | "missing" | "unavailable";
 
-/** `unavailable` means no layout yet; `missing` means the anchored row is not mounted. */
+/** `unavailable` means no layout yet; `missing` means no anchored row is mounted. */
 export function restoreTranscriptReadingPosition(
   scroller: HTMLElement,
   content: HTMLElement,
@@ -123,10 +139,20 @@ export function restoreTranscriptReadingPosition(
     return "aligned";
   }
   const id = CSS.escape(position.messageId);
-  const row = content.querySelector<HTMLElement>(`[data-reading-anchor="${id}"]`);
-  if (!row) return "missing";
-  const rect = row.getBoundingClientRect();
-  if (rect.height === 0) return "unavailable";
-  scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - position.offset;
-  return "aligned";
+  const anchorId = CSS.escape(position.anchorId ?? position.messageId);
+  const candidates: Array<[string, number]> = [
+    [`[data-message-id="${id}"]`, position.offset],
+    [`[data-minimap-id="${id}"]`, position.offset],
+    [`[data-reading-anchor="${anchorId}"]`, position.anchorOffset ?? position.offset],
+  ];
+  let waiting = false;
+  for (const [selector, offset] of candidates) {
+    const row = content.querySelector<HTMLElement>(selector);
+    if (!row) continue;
+    const rect = row.getBoundingClientRect();
+    if (rect.height === 0) { waiting = true; continue; }
+    scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - offset;
+    return "aligned";
+  }
+  return waiting ? "unavailable" : "missing";
 }

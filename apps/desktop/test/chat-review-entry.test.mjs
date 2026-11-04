@@ -141,12 +141,12 @@ test("review evidence is read from the successful message, not Git", () => {
   });
 });
 
-test("failed and scratch tool rows cannot manufacture review evidence", () => {
+test("failed and unknown-root tool rows cannot manufacture review evidence", () => {
   assert.equal(reviewChangeFromMessage(message({ toolStatus: "error" })), null);
   assert.equal(
     reviewChangeFromMessage(
       message({
-        toolResult: { details: { root: "scratch", review: baseReview } },
+        toolResult: { details: { root: "unknown", review: baseReview } },
       }),
     ),
     null,
@@ -159,6 +159,14 @@ test("failed and scratch tool rows cannot manufacture review evidence", () => {
   );
 });
 
+test("successful Write/Edit review evidence accepts every supported execution root", () => {
+  for (const root of ["workspace", "scratch", "external", "visualization"]) {
+    const path = root === "workspace" ? "src/a.ts" : "/outside/a.ts";
+    const row = message({ toolResult: { details: { root, review: { ...baseReview, path } } } });
+    assert.equal(reviewChangeFromMessage(row)?.path, path);
+  }
+});
+
 test("chat renders one message-owned card immediately after its tool row", () => {
   assert.equal(transcriptSource.includes("<WorkspaceChangesEntry />"), false);
   assert.equal(transcriptSource.includes("review-changes-entry"), false);
@@ -169,7 +177,7 @@ test("chat renders one message-owned card immediately after its tool row", () =>
   assert.doesNotMatch(transcriptSource, /workspaceDiff|findWorkspaceChange/);
   assert.match(cardSource, /aria-expanded=\{open\}/);
   assert.match(cardSource, /chat\.reviewChangeShow/);
-  assert.match(cardSource, /change\.hunks\.map/);
+  assert.match(cardSource, /numberedReviewHunks\(displayChange\.hunks\)/);
   assert.match(cardSource, /workspaceReviewRollback|rollbackWorkspaceChange/);
   assert.match(
     storeSource,

@@ -58,6 +58,25 @@ export type CloseBehavior = "ask" | "tray" | "quit";
 
 export type TranscriptDisplayMode = "flat" | "command-first" | "fully-folded";
 
+/**
+ * Preferences for the user-supplied boot animation (D679 / ADR 0338).
+ *
+ * The file itself is never named here — it is discovered in
+ * `<dataDir>/startup/` — so these are only the two choices discovery cannot
+ * make: whether to play what it found, and whether a fast boot may cut the
+ * playback short.
+ */
+export type StartupAnimationSettings = {
+  /** `false` ignores a present file. Absent means play it. */
+  enabled?: boolean;
+  /**
+   * End the animation as soon as the shell has its initial state, instead of
+   * letting the video reach its last frame. Absent and `false` play it out,
+   * which is the shipped behavior.
+   */
+  skipWhenReady?: boolean;
+};
+
 export type AppSettings = {
   fileHosting?: FileHostingSettings;
   imageGeneration?: import("../image-generation.js").ImageGenerationBinding | null;
@@ -133,6 +152,14 @@ export type AppSettings = {
    * launch.
    */
   macosWindowTranslucency?: boolean;
+  /**
+   * User-supplied boot animation played from `<dataDir>/startup/` (D679).
+   *
+   * Absent means the feature is on but dormant: with no file in that directory
+   * the boot surface stays the brand splash, which is why no field here has to
+   * be written for an existing installation to behave as it always did.
+   */
+  startupAnimation?: StartupAnimationSettings;
   /** UI language; `auto` (and absent) follows the OS locale. */
   language?: "auto" | "en" | "zh-CN";
   /**
@@ -154,6 +181,10 @@ export type AppSettings = {
   showThinking?: boolean;
   /** 普通轮次的过程展示方式；缺省全部折叠，任务级抽屉保持独立。 */
   transcriptDisplayMode?: TranscriptDisplayMode;
+  /** 已完成的普通过程分组自动折叠；缺省开启，任务拓扑与展示模式保持独立。 */
+  autoCollapseSettledGroups?: boolean;
+  /** 已停止生成的思考自动折叠；缺省开启，仅影响展示。 */
+  autoCollapseThinking?: boolean;
   /** @deprecated 保留旧客户端设置兼容；当前展示使用 transcriptDisplayMode。 */
   keepCommandsExpanded?: boolean;
   /** 保留旧配置读取兼容；compact 隐藏思考，其他值显示。 */

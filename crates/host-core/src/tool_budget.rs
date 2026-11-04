@@ -11,13 +11,15 @@ pub const MAX_IN_FLIGHT_SHELL: usize = 4;
 pub const MAX_IN_FLIGHT_READS: usize = 8;
 pub const MAX_IN_FLIGHT_MUTATIONS: usize = 2;
 pub const MAX_IN_FLIGHT_MUTATIONS_PER_SESSION: usize = 1;
+const MAX_IN_FLIGHT_COORDINATED_MUTATIONS_PER_SESSION: usize = 2;
 pub const MAX_IN_FLIGHT_PLUGINS: usize = 4;
 pub const MAX_IN_FLIGHT_PER_SESSION: usize = 4;
 pub const MAX_QUEUED_TOOLS: usize = 64;
 /// How long a call waits for execution capacity before admission fails. A call
 /// waits here after the permission gate and before it runs, so the transport
-/// deadline has to carry it too. Mirrored by `TOOL_QUEUE_WAIT_MS` in
-/// `packages/shared/src/rpc-timeouts.ts`.
+/// deadline has to carry it too. Time spent behind an earlier call of the same
+/// file batch is source order, not capacity, and is not counted. Mirrored by
+/// `TOOL_QUEUE_WAIT_MS` in `packages/shared/src/rpc-timeouts.ts`.
 pub const TOOL_QUEUE_WAIT_MS: u64 = 30_000;
 const QUEUE_WAIT: Duration = Duration::from_millis(TOOL_QUEUE_WAIT_MS);
 
@@ -80,6 +82,49 @@ impl Drop for ToolPermit {
         state.dispatch();
         drop(state);
         self.budget.released.notify_waiters();
+    }
+}
+
+impl ToolPermit {
+    /// Rebinds a granted file permit to the object now at its address, after an
+    /// earlier write of the same batch replaced it. Refused when the new claims
+    /// conflict with any other holder or source-order predecessor, or would
+    /// change the session mutation accounting fixed at reservation.
+    pub fn rebind_files(&mut self, resources: Arc<FileResources>) -> bool {
+        let Some(old) = self.request.resources.clone() else {
+            return false;
+        };
+        if old.is_identified_write() != resources.is_identified_write() {
+            return false;
+        }
+        let mut state = self.budget.lock();
+        let Some(index) = state
+            .file_holders
+            .iter()
+            .position(|held| Arc::ptr_eq(held, &old))
+        else {
+            return false;
+        };
+        if state
+            .file_holders
+            .iter()
+            .enumerate()
+            .any(|(i, held)| i != index && held.conflicts(&resources))
+            || self
+                .request
+                .ticket
+                .as_deref()
+                .is_some_and(|ticket| !state.batches.can_run(ticket, &resources))
+        {
+            return false;
+        }
+        state.file_holders[index] = resources.clone();
+        if let Some(ticket) = &self.request.ticket {
+            state.batches.classify(ticket, resources.clone());
+        }
+        self.request.resources = Some(resources);
+        state.dispatch();
+        true
     }
 }
 
@@ -172,10 +217,24 @@ struct Request {
     ticket: Option<String>,
 }
 
+impl Request {
+    // Eligibility stays immutable through release, including after batches.finish.
+    // Admission separately checks the ticket's validated, submitted source order.
+    fn coordinated_mutation(&self) -> bool {
+        self.class == ToolClass::Mutation
+            && self.ticket.is_some()
+            && self
+                .resources
+                .as_ref()
+                .is_some_and(|r| r.is_identified_write())
+    }
+}
+
 #[derive(Default)]
 struct SessionUsage {
     active: usize,
     mutations: usize,
+    conservative_mutations: usize,
     /// Of `active`, calls rooted in a subagent's own worktree.
     own_worktree: usize,
 }
@@ -187,6 +246,9 @@ struct WaitingRequest {
     granted: bool,
     queued_at: Instant,
     initial_wait_reason: &'static str,
+    /// When source-order predecessors stopped holding the call back; the
+    /// capacity wait is measured from here.
+    ready_since: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -218,13 +280,18 @@ impl ToolClass {
 }
 
 impl BudgetState {
+    /// Source order only: the call waits for an earlier, conflicting call of its
+    /// own file batch, which is not a capacity shortage.
+    fn awaiting_predecessor(&self, request: &Request) -> bool {
+        match (&request.ticket, &request.resources) {
+            (Some(ticket), Some(resources)) => !self.batches.can_run(ticket, resources),
+            _ => false,
+        }
+    }
+
     fn wait_reason(&self, request: &Request) -> &'static str {
         if let Some(resources) = &request.resources {
-            if request
-                .ticket
-                .as_deref()
-                .is_some_and(|t| !self.batches.can_run(t, resources))
-            {
+            if self.awaiting_predecessor(request) {
                 return "source_order";
             }
             if self.file_holders.iter().any(|r| r.conflicts(resources))
@@ -263,7 +330,12 @@ impl BudgetState {
         self.sessions.get(&request.session_id).is_none_or(|usage| {
             usage.active < MAX_IN_FLIGHT_PER_SESSION
                 && (request.class != ToolClass::Mutation
-                    || usage.mutations < MAX_IN_FLIGHT_MUTATIONS_PER_SESSION)
+                    || if request.coordinated_mutation() {
+                        usage.conservative_mutations == 0
+                            && usage.mutations < MAX_IN_FLIGHT_COORDINATED_MUTATIONS_PER_SESSION
+                    } else {
+                        usage.mutations < MAX_IN_FLIGHT_MUTATIONS_PER_SESSION
+                    })
         })
     }
 
@@ -280,6 +352,9 @@ impl BudgetState {
         usage.active += 1;
         if request.class == ToolClass::Mutation {
             usage.mutations += 1;
+            if !request.coordinated_mutation() {
+                usage.conservative_mutations += 1;
+            }
         }
         if request.own_worktree {
             usage.own_worktree += 1;
@@ -308,6 +383,9 @@ impl BudgetState {
         usage.active -= 1;
         if request.class == ToolClass::Mutation {
             usage.mutations -= 1;
+            if !request.coordinated_mutation() {
+                usage.conservative_mutations -= 1;
+            }
         }
         if request.own_worktree {
             usage.own_worktree -= 1;
@@ -318,14 +396,18 @@ impl BudgetState {
     }
 
     fn dispatch(&mut self) {
+        let now = Instant::now();
         // Scan the bounded queue in arrival order. A blocked class/session
         // must not prevent unrelated runnable work from using spare capacity.
         for index in 0..self.waiting.len() {
             let entry = &self.waiting[index];
-            if entry.granted
-                || !self.can_admit(&entry.request)
-                || !self.can_pass_waiters(&entry.request, index)
-            {
+            if entry.granted {
+                continue;
+            }
+            if !self.can_admit(&entry.request) || !self.can_pass_waiters(&entry.request, index) {
+                if entry.ready_since.is_none() && !self.awaiting_predecessor(&entry.request) {
+                    self.waiting[index].ready_since = Some(now);
+                }
                 continue;
             }
             let request = entry.request.clone();
@@ -343,30 +425,35 @@ impl BudgetState {
             return true;
         };
         self.waiting.iter().take(before).all(|entry| {
-            entry.granted
-                || match &entry.request.resources {
-                    Some(prior) => {
-                        // An unready DAG successor cannot become a fairness
-                        // barrier for another batch: that batch could otherwise
-                        // block the successor's own predecessor and form a cycle.
-                        if entry
-                            .request
-                            .ticket
-                            .as_deref()
-                            .is_some_and(|ticket| !self.batches.can_run(ticket, prior))
-                        {
-                            return true;
-                        }
-                        // Source-order predecessors must pass a later call that arrived
-                        // first; otherwise RPC arrival fairness would deadlock the DAG.
-                        let source_predecessor = match (&request.ticket, &entry.request.ticket) {
-                            (Some(ours), Some(theirs)) => self.batches.precedes(ours, theirs),
-                            _ => false,
-                        };
-                        source_predecessor || !resources.conflicts(prior)
-                    }
-                    None => true,
+            if entry.granted {
+                return true;
+            }
+            let prior = &entry.request;
+            // An unready successor must not fence another batch that could be
+            // needed by its own predecessor. Preserve this before capacity fairness.
+            if let (Some(ticket), Some(claims)) = (&prior.ticket, &prior.resources) {
+                if !self.batches.can_run(ticket, claims) {
+                    return true;
                 }
+            }
+            if let (Some(ours), Some(theirs)) = (&request.ticket, &prior.ticket) {
+                if self.batches.precedes(ours, theirs) {
+                    return true;
+                }
+            }
+            // Let an older conservative mutation drain its session. Otherwise
+            // independent coordinated writes could keep refilling its second slot.
+            if request.coordinated_mutation()
+                && prior.session_id == request.session_id
+                && prior.class == ToolClass::Mutation
+                && !prior.coordinated_mutation()
+            {
+                return false;
+            }
+            prior
+                .resources
+                .as_ref()
+                .is_none_or(|claims| !resources.conflicts(claims))
         })
     }
 }
@@ -506,6 +593,15 @@ impl ToolBudget {
         .await
     }
 
+    /// Whether an unfinished earlier write of this ticket's batch may still
+    /// replace the object at an address classified before admission.
+    pub fn follows_batch_write(&self, ticket: &str) -> bool {
+        !self
+            .lock()
+            .batches
+            .can_run(ticket, &FileResources::fence(false))
+    }
+
     fn lock(&self) -> MutexGuard<'_, BudgetState> {
         // Only bounded in-memory bookkeeping runs under this synchronous lock.
         // No filesystem operation, callback, or await is allowed here.
@@ -576,22 +672,56 @@ impl ToolBudget {
             state.next_id = state.next_id.wrapping_add(1);
             state.queued += 1;
             let initial_wait_reason = state.wait_reason(&request);
+            let queued_at = Instant::now();
+            let ready_since = (!state.awaiting_predecessor(&request)).then_some(queued_at);
             state.waiting.push_back(WaitingRequest {
                 id,
                 request,
                 ready: ready.clone(),
                 granted: false,
-                queued_at: Instant::now(),
+                queued_at,
                 initial_wait_reason,
+                ready_since,
             });
             QueueGuard {
                 budget: self.clone(),
                 id: Some(id),
             }
         };
-        match tokio::time::timeout(wait, ready.notified()).await {
-            Ok(()) => Ok(guard.into_permit()),
-            Err(_) => Err(AdmissionError::QueueWaitTimeout),
+        let id = guard.id.expect("waiting request has a queue id");
+        let mut deadline = tokio::time::Instant::now() + wait;
+        loop {
+            if tokio::time::timeout_at(deadline, ready.notified())
+                .await
+                .is_ok()
+            {
+                return Ok(guard.into_permit());
+            }
+            let now = Instant::now();
+            let since = {
+                let mut state = self.lock();
+                let index = state
+                    .waiting
+                    .iter()
+                    .position(|entry| entry.id == id)
+                    .expect("waiting request remains registered until claimed");
+                if state.waiting[index].granted {
+                    None
+                } else if state.awaiting_predecessor(&state.waiting[index].request) {
+                    state.waiting[index].ready_since = None;
+                    Some(now)
+                } else {
+                    Some(*state.waiting[index].ready_since.get_or_insert(now))
+                }
+            };
+            let Some(since) = since else {
+                return Ok(guard.into_permit());
+            };
+            let until = since + wait;
+            if until <= now {
+                return Err(AdmissionError::QueueWaitTimeout);
+            }
+            deadline = tokio::time::Instant::from_std(until);
         }
     }
 

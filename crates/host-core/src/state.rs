@@ -25,6 +25,7 @@ const PLUGIN_IMPORT_RATE_WINDOW: Duration = Duration::from_secs(60);
 const PLUGIN_IMPORT_RATE_LIMIT: usize = 10;
 const PLUGIN_BATCH_IMPORT_RATE_LIMIT: usize = 5;
 const PLUGIN_DELETE_RATE_LIMIT: usize = 20;
+const PLUGIN_MESSAGE_WRITE_RATE_LIMIT: usize = 60;
 
 pub struct AppState {
     pub data_dir: std::path::PathBuf,
@@ -61,6 +62,7 @@ pub struct AppState {
     pub plugin_import_rates: HashMap<String, Vec<Instant>>,
     pub plugin_batch_import_rates: HashMap<String, Vec<Instant>>,
     pub plugin_delete_rates: HashMap<String, Vec<Instant>>,
+    pub plugin_message_write_rates: HashMap<String, Vec<Instant>>,
     pub tool_budget: ToolBudget,
     /// (session_id, tool_call_id) -> cancellation signal for an active Bash
     /// process. The signal is removed by the execution owner in all outcomes.
@@ -158,6 +160,7 @@ impl AppState {
             plugin_import_rates: HashMap::new(),
             plugin_batch_import_rates: HashMap::new(),
             plugin_delete_rates: HashMap::new(),
+            plugin_message_write_rates: HashMap::new(),
             tool_budget: ToolBudget::new(),
             active_bash_cancellations: HashMap::new(),
             active_tool_cancellations: HashMap::new(),
@@ -204,6 +207,16 @@ impl AppState {
             &mut self.plugin_delete_rates,
             plugin_id,
             PLUGIN_DELETE_RATE_LIMIT,
+        )
+    }
+
+    /// One budget for every plugin message-level rewrite: append, replace,
+    /// delete, and truncate each cost one slot.
+    pub fn allow_plugin_message_write(&mut self, plugin_id: &str) -> bool {
+        Self::rate_allowed(
+            &mut self.plugin_message_write_rates,
+            plugin_id,
+            PLUGIN_MESSAGE_WRITE_RATE_LIMIT,
         )
     }
 

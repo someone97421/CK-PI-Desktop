@@ -101,6 +101,9 @@ export type FsChatRefProjectRoot = {
  * file is expressed to the work panel as a path relative to the project's
  * **primary** folder, while any other project folder — and every scratch or
  * attachment or external file — can only be addressed by its absolute path.
+ *
+ * `external` names an existing regular file referenced by its exact absolute
+ * path outside every managed root; shorthand never searches these locations.
  */
 export type FsChatRefRoot = "workspace" | "scratch" | "attachments" | "external";
 
@@ -130,6 +133,10 @@ export type FsChatRefMatch = {
 
 export type FsChatRefResolveResult = {
   match: FsChatRefMatch | null;
-  /** The supplied absolute path is not inside a project, scratch, or attachment root. */
+  /**
+   * The reference lies outside the managed roots and is not an exact absolute
+   * path, so it cannot be opened from there. An exact absolute path to an
+   * existing file outside the roots opens instead (ADR 0339).
+   */
   reason?: "outside-allowed-roots";
 };

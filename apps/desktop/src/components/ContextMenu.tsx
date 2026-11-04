@@ -29,9 +29,11 @@ import {
   type ReactNode,
 } from "react";
 import { portalToBody } from "../lib/portal-visibility";
-import { IconChevronRight } from "./icons";
+import { IconCheck, IconChevronRight } from "./icons";
 import {
   placeContextMenu,
+  placeControlContextMenu,
+  type ContextMenuAnchor,
   type ContextMenuPlacement,
   type ContextMenuPoint,
 } from "../lib/context-menu";
@@ -42,6 +44,8 @@ type ContextMenuAction = {
   id: string;
   label: string;
   icon?: ReactNode;
+  /** Opt-in toggle state, rendered as a trailing check. */
+  checked?: boolean;
   disabled?: boolean;
   /** Destructive item: error ink, and never adjacent to what it undoes. */
   danger?: boolean;
@@ -64,12 +68,16 @@ export type ContextMenuRequest = {
    * correctly unnamed; an unnamed *and* ambiguous menu is the caller's bug.
    */
   label?: string;
+  density?: "compact";
+  /** Opt-in ellipsis/action button alignment; right-click menus remain pointer-based. */
+  anchor?: "bottom-end";
   items: ContextMenuItem[];
 };
 
 export type ContextMenuState = ContextMenuRequest & {
   /** Where the pointer asked for the surface. */
   point: ContextMenuPoint;
+  anchorRect?: ContextMenuAnchor;
   /** Live selection at open time; empty when the caret was collapsed. */
   selection: string;
   origin?: HTMLElement;
@@ -181,7 +189,9 @@ export function useContextMenu() {
         target, is stored as empty so Copy still falls back.
       */
       const selection = snapshotSelection(event.currentTarget);
-      setState({ ...request, point: pointForEvent(event), selection, origin: event.currentTarget });
+      const rect = request.anchor ? event.currentTarget.getBoundingClientRect() : undefined;
+      const anchorRect = rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom } : undefined;
+      setState({ ...request, point: pointForEvent(event), anchorRect, selection, origin: event.currentTarget });
     },
     [],
   );
@@ -213,11 +223,11 @@ export function ContextMenu({
       const menu = menuRef.current;
       if (!menu) return;
       const rect = menu.getBoundingClientRect();
-      const next = placeContextMenu(
-        request.point,
-        { width: rect.width, height: rect.height },
-        { width: window.innerWidth, height: window.innerHeight },
-      );
+      const surface = { width: rect.width, height: rect.height };
+      const viewport = { width: window.innerWidth, height: window.innerHeight };
+      const next = request.anchorRect
+        ? placeControlContextMenu(request.anchorRect, surface, viewport)
+        : placeContextMenu(request.point, surface, viewport);
       setPlacement((previous) =>
         previous && previous.top === next.top && previous.left === next.left
           ? previous
@@ -329,7 +339,7 @@ export function ContextMenu({
     const frame = requestAnimationFrame(() => {
       menuRef.current
         ?.querySelector<HTMLButtonElement>(
-          '[role="menuitem"]:not(:disabled)',
+          '[data-context-menu-root-item]:not(:disabled)',
         )
         ?.focus({ preventScroll: true });
     });
@@ -366,7 +376,7 @@ export function ContextMenu({
   return portalToBody(
     <div
       ref={menuRef}
-      className={`context-menu${placement ? " is-open" : ""}`}
+      className={`context-menu${state.density === "compact" ? " is-compact" : ""}${placement ? " is-open" : ""}`}
       role="menu"
       aria-label={state.label}
       onKeyDown={onMenuKeyDown}
@@ -391,7 +401,8 @@ export function ContextMenu({
             <button
               ref={submenuOpen ? submenuTriggerRef : undefined}
               type="button"
-              role="menuitem"
+              role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+              aria-checked={item.checked}
               aria-haspopup={hasSubmenu ? "menu" : undefined}
               aria-expanded={hasSubmenu ? submenuOpen : undefined}
               className={`context-menu-item${item.danger ? " danger" : ""}${hasSubmenu ? " has-submenu" : ""}`}
@@ -429,6 +440,7 @@ export function ContextMenu({
                 </span>
               ) : null}
               <span className="context-menu-label">{item.label}</span>
+              {item.checked !== undefined && <span className="context-menu-check" aria-hidden>{item.checked && <IconCheck size={14} />}</span>}
               {hasSubmenu ? (
                 <span className="context-menu-submenu-chevron" aria-hidden>
                   <IconChevronRight size={14} />
@@ -437,6 +449,7 @@ export function ContextMenu({
             </button>
             {submenuOpen && item.submenu ? (
               <ContextMenuSubmenu
+                compact={state.density === "compact"}
                 anchorRef={submenuTriggerRef}
                 menuRef={submenuRef}
                 label={item.label}
@@ -461,6 +474,7 @@ function ContextMenuSubmenu({
   selection,
   onClose,
   onCloseSubmenu,
+  compact,
 }: {
   anchorRef: RefObject<HTMLButtonElement | null>;
   menuRef: RefObject<HTMLDivElement | null>;
@@ -469,9 +483,9 @@ function ContextMenuSubmenu({
   selection: string;
   onClose: () => void;
   onCloseSubmenu: () => void;
+  compact: boolean;
 }) {
   const [placement, setPlacement] = useState<ContextMenuPlacement | null>(null);
-
   const measure = useCallback(() => {
     const anchor = anchorRef.current?.getBoundingClientRect();
     const menu = menuRef.current;
@@ -536,7 +550,7 @@ function ContextMenuSubmenu({
   return portalToBody(
     <div
       ref={menuRef}
-      className={`context-menu context-menu-submenu${placement ? " is-open" : ""}`}
+      className={`context-menu context-menu-submenu${compact ? " is-compact" : ""}${placement ? " is-open" : ""}`}
       role="menu"
       aria-label={label}
       onKeyDown={onMenuKeyDown}
@@ -555,7 +569,8 @@ function ContextMenuSubmenu({
           ) : null}
           <button
             type="button"
-            role="menuitem"
+            role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+            aria-checked={item.checked}
             className={`context-menu-item${item.danger ? " danger" : ""}`}
             data-context-menu-item={item.id}
             data-context-menu-submenu-item
@@ -571,6 +586,7 @@ function ContextMenuSubmenu({
               </span>
             ) : null}
             <span className="context-menu-label">{item.label}</span>
+            {item.checked !== undefined && <span className="context-menu-check" aria-hidden>{item.checked && <IconCheck size={14} />}</span>}
           </button>
         </Fragment>
       ))}

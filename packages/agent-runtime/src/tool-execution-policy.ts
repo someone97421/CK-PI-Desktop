@@ -6,20 +6,19 @@ export const TOOL_EXECUTION_SPECS: Readonly<Record<string, ToolExecutionSpec>> =
   Read: { mode: "parallel", file: true },
   Glob: { mode: "parallel", file: true },
   Grep: { mode: "parallel", file: true },
-  // File batch admission can prove independence, but the fork keeps writes
-  // serial so Edit/Write remain compatible with current steering and worktree semantics.
-  Write: { mode: "sequential", file: true },
-  Edit: { mode: "sequential", file: true },
+  Write: { mode: "parallel", file: true },
+  Edit: { mode: "parallel", file: true },
   Task: { mode: "parallel" },
 };
 
-export function toolExecutionMode(name: string, _hostFileBatches = false): "parallel" | "sequential" {
+export function toolExecutionMode(name: string, hostFileBatches = false): "parallel" | "sequential" {
+  if (!hostFileBatches && (name === "Write" || name === "Edit")) return "sequential";
   return TOOL_EXECUTION_SPECS[name]?.mode ?? "sequential";
 }
 
 export function resolveBatchExecutionMode(message: AssistantMessage): "parallel" | "sequential" | undefined {
   const names = message.content.filter((b) => b.type === "toolCall").map((b) => b.name);
-  return names.includes("Task") && names.some((name) => TOOL_EXECUTION_SPECS[name]?.file)
+  return names.some((name) => name === "Task" || name === "TaskResume") && names.some((name) => TOOL_EXECUTION_SPECS[name]?.file)
     ? "sequential" : undefined;
 }
 

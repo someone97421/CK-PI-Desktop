@@ -17,6 +17,11 @@ import { installApplicationMenu } from "../application-menu";
 import { installGenUiProtocol } from "../gen-ui-protocol";
 import { installPluginAssetProtocol } from "../plugin-asset-protocol";
 import { installPluginRendererProtocol } from "../plugin-renderer-protocol";
+import {
+  resolveStartupAnimation,
+  type ResolvedStartupAnimation,
+} from "../startup-animation";
+import { installStartupAnimationProtocol } from "../startup-animation-protocol";
 import { applyNetworkProxyFromAppSettings } from "../network-proxy";
 import {
   installAppearanceMediaProtocol,
@@ -69,6 +74,11 @@ function formatRemoteLogData(data: unknown): string | undefined {
 export type StartupState = {
   applicationBooted: boolean;
   closeBehavior: CloseBehavior;
+  /**
+   * Boot animation this launch resolved, which the `pi-startup:` handler reads
+   * per request. Null — the default and every failure — keeps the brand splash.
+   */
+  startupAnimation: ResolvedStartupAnimation | null;
   agentHostBridge: AgentHostBridge | null;
   backendRouter: BackendRouter | null;
   desktopControl: McpControlController | null;
@@ -214,6 +224,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       plugins.resolveRendererSource(pluginId, generation, requestPath),
     );
     installGenUiProtocol({ getHost });
+    installStartupAnimationProtocol(() => state.startupAnimation);
     // 在创建窗口前恢复已保存的关闭行为。
     const storedBehavior = readCloseBehavior(dataDir);
     if (storedBehavior) state.closeBehavior = storedBehavior;
@@ -390,6 +401,10 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       });
     }
     const host = getHost();
+    // Preferences for the boot animation, when settings were readable. An
+    // unreadable backend leaves this null and discovery falls back to the
+    // defaults, so a launch with no host still plays what the user dropped in.
+    let storedStartupAnimationSettings: { startupAnimation?: unknown } | null = null;
     if (host) {
       try {
         const stored = (await host.call("settings.get")) as {
@@ -399,6 +414,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
           developerMode?: unknown;
           fontScale?: unknown;
           macosWindowTranslucency?: unknown;
+          startupAnimation?: unknown;
           preventScreenSleep?: unknown;
           keepAwakeWhileRunning?: unknown;
           temporaryWorkspaceContextMenu?: unknown;
@@ -409,6 +425,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
         applyPreventScreenSleep(stored);
         applyKeepAwakeWhileRunning(stored);
         await applyTemporaryWorkspaceContextMenu(stored);
+        storedStartupAnimationSettings = stored;
         await applyNetworkProxyFromAppSettings(stored);
       } catch {
         await applyTemporaryWorkspaceContextMenu();
@@ -423,6 +440,26 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       // If the backend never started, retain the default focused/global path.
       applyPluginLauncherShortcut();
       applyToggleWindowShortcut();
+    }
+    // Resolve the boot animation before the window exists: the descriptor is a
+    // renderer creation argument, so it has to be known by `new BrowserWindow`.
+    // The capture rig compares deterministic frames, so a user's animation in
+    // front of them would break every scene; it is skipped outright. The E2E
+    // harnesses need no guard — each runs against a throwaway
+    // `PI_DESKTOP_DATA_DIR`, which has no `startup/` directory to find.
+    if (process.env.PI_DESKTOP_CAPTURE !== "1") {
+      state.startupAnimation = await resolveStartupAnimation({
+        dataDir,
+        settings: storedStartupAnimationSettings,
+      });
+      if (state.startupAnimation) {
+        logger.app("lifecycle", "info", "startup animation resolved", {
+          data: JSON.stringify({
+            fileName: state.startupAnimation.descriptor.fileName,
+            byteLength: state.startupAnimation.descriptor.byteLength,
+          }),
+        });
+      }
     }
     await ensureWindow();
     if (process.env.PI_DESKTOP_MCP_CONTROL === "1") {

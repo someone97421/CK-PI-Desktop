@@ -1006,3 +1006,24 @@ test("文档相对链接只锚定一次，目录外的绝对路径仍交给宿�
     assert.equal(prevented, false);
   }
 });
+
+test("an absolute Markdown link to an extensionless file still reaches the file opener", () => {
+  for (const [source, root, expected] of [
+    ["[config](</Users/me/.ssh/config>)", null, ["/Users/me/.ssh/config", undefined, undefined, undefined]],
+    ["[Makefile](</tmp/build dir/Makefile>)", "/Users/me/project", ["/tmp/build dir/Makefile", undefined, undefined, undefined]],
+    ["[LICENSE](<D:/vendor/LICENSE>)", "D:/person", ["D:/vendor/LICENSE", undefined, undefined, undefined]],
+    ["[notes](</tmp/notes:4>)", null, ["/tmp/notes", undefined, undefined, { line: 4 }]],
+  ]) {
+    const markup = renderSanitizedMarkdown(source);
+    const href = markup.match(/<a href="([^"]+)"/)?.[1];
+    assert.ok(href, source);
+    const calls = [];
+    let prevented = false;
+    const handled = handleMarkdownFileLinkClick(
+      { preventDefault: () => { prevented = true; } }, href, root, undefined,
+      (...args) => calls.push(args));
+    assert.equal(handled, true, source);
+    assert.equal(prevented, true, source);
+    assert.deepEqual(calls, [expected], source);
+  }
+});

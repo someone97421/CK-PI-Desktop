@@ -38,10 +38,13 @@ import {
   listDir,
   readOpenableFile,
   readOpenableImage,
+  readUserOpenableFile,
   resolveRealOpenablePath,
+  resolveUserOpenablePath,
 } from "@pi-desktop/host-runtime";
+import { openReviewedFile } from "../reviewed-file-open";
 import { openableMp4Path } from "../open-attachment-video";
-import { resolveChatFileRef } from "../chat-ref-resolve";
+import { isChatRefOutsideRoots, resolveChatFileRef, resolveExternalChatRef } from "../chat-ref-resolve";
 import { rebaseWorktreeRef } from "../worktree-ref";
 import { getWorkspaceFileIndex, searchWorkspaceFiles } from "../fs-index";
 import {
@@ -683,6 +686,16 @@ export function registerWorkspaceIpc({
     }
     return collectWorkspaceDiff(cwd);
   });
+  for (const [channel, method] of [
+    [IPC.invoke.workspaceReviewTurns, "review.turns"],
+    [IPC.invoke.workspaceReviewChanges, "review.changes"],
+    [IPC.invoke.workspaceReviewContext, "review.context"],
+  ] as const) {
+    handle(channel, async (input: unknown) => {
+      if (!host) throw new Error("host unavailable");
+      return host.call(method, input);
+    });
+  }
   handle(
     IPC.invoke.workspaceReviewRollback,
     async (input: { sessionId: string; snapshotId: string }) => {
@@ -690,6 +703,23 @@ export function registerWorkspaceIpc({
       return host.call("review.rollback", input);
     },
   );
+
+  handle(IPC.invoke.workspaceReviewRollbackFile, async (input: unknown) => {
+    if (!host) throw new Error("host unavailable");
+    return host.call("review.rollbackFile", input);
+  });
+  handleWithEvent(IPC.invoke.workspaceReviewOpenFile, async (event, input: unknown) => {
+    assertMainWindowSender(event);
+    const owner = getHost();
+    if (!owner) throw new Error("host unavailable");
+    return openReviewedFile(input, {
+      target: (sessionId, snapshotId) => owner.call<{ path: string }>("review.fileTarget", { sessionId, snapshotId }),
+      isCurrent: () => getHost() === owner,
+      stripPrefix: stripWinLongPrefix,
+      openPath: path => shell.openPath(path),
+      reveal: path => shell.showItemInFolder(path),
+    });
+  });
 
   handle(
     IPC.invoke.statsGetTokenUsageHistory,
@@ -905,7 +935,7 @@ export function registerWorkspaceIpc({
       if (!workspaceRoot && !isAbsolute(requested) && !isAttachmentBlobRef(requested)) {
         throw new Error("workspace required");
       }
-      return readOpenableFile(
+      return readUserOpenableFile(
         requested,
         workspaceRoot,
         await fsExtraRoots(workspaceRoot, requested, project),
@@ -940,7 +970,7 @@ export function registerWorkspaceIpc({
     if (!workspaceRoot && !isAbsolute(requested) && !isAttachmentBlobRef(requested)) {
       throw new Error("workspace required");
     }
-    const target = await resolveRealOpenablePath(
+    const target = await resolveUserOpenablePath(
       requested,
       workspaceRoot,
       await fsExtraRoots(workspaceRoot, requested, project),
@@ -959,7 +989,7 @@ export function registerWorkspaceIpc({
     if (remote && !(await isLocalStoredFile(String(input.path ?? "")))) throw Object.assign(new Error("remote paths cannot be opened on this computer"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
     const { path: workspaceRoot, project } = await fileWorkspace(input);
     const requested = String(input.path ?? "").trim();
-    const target = await resolveRealOpenablePath(
+    const target = await resolveUserOpenablePath(
       requested,
       workspaceRoot,
       await fsExtraRoots(workspaceRoot, requested, project),
@@ -1033,6 +1063,11 @@ export function registerWorkspaceIpc({
         containment: [{ kind: "scratch" as const, path: join(dataDir, "scratch") }],
         attachments: join(dataDir, "attachments"),
       };
+      if (await isChatRefOutsideRoots(ref, roots)) {
+        // An exact absolute path outside the managed roots opens when it names
+        // an existing regular file (ADR 0339).
+        return resolveExternalChatRef(ref);
+      }
       return { match: await resolveChatFileRef(ref, roots) };
     },
   );

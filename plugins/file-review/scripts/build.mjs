@@ -35,11 +35,6 @@ try {
     entryPoints: [join(root, 'main.cjs')], outfile: join(staging, 'main.cjs'),
     bundle: true, platform: 'node', target: 'node22', format: 'cjs', sourcemap: false,
   });
-  await build({
-    entryPoints: [join(root, 'renderer/index.mjs')], outfile: join(staging, 'renderer/index.mjs'),
-    bundle: true, platform: 'browser', target: 'chrome110', format: 'esm',
-    external: ['react'], sourcemap: false,
-  });
   const devkitPath = join(temporary, 'devkit.mjs');
   await build({
     entryPoints: [join(repository, 'packages/plugin-devkit/src/index.ts')],

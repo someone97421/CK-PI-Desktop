@@ -59,6 +59,10 @@ import {
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
 import { useAppStore } from "../../../stores/app-store";
 import { resolveShowThinking } from "../../../lib/thinking-visibility";
+import {
+  resolveAutoCollapseSettledGroups,
+  resolveAutoCollapseThinking,
+} from "../../../lib/transcript-folding";
 import { resolveTranscriptDisplayMode } from "../../../lib/transcript-display-mode";
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -228,6 +232,8 @@ export const ActivityGroup = memo(function ActivityGroup({
   const showThinking = useAppStore((state) => resolveShowThinking(state.settings));
   const hideThinking = !showThinking;
   const displayMode = useAppStore((state) => resolveTranscriptDisplayMode(state.settings));
+  const collapseSettledGroups = useAppStore((state) => resolveAutoCollapseSettledGroups(state.settings));
+  const collapseThinking = useAppStore((state) => resolveAutoCollapseThinking(state.settings));
   const { t } = useTranslation();
   const detailsId = useId();
   const rawDelegateItems = useMemo(() => items.filter(isDelegationActivityItem), [items]);
@@ -279,11 +285,13 @@ export const ActivityGroup = memo(function ActivityGroup({
     ? searchTarget.requestId : undefined, [items, searchTarget]);
   const visibleItems = useMemo(() => cachedVisibleActivityItems(items, hideThinking, isActive), [items, hideThinking, isActive]);
   const first = items[0];
-  // 自动规则只决定默认值；子任务回执不覆盖用户的展开选择或外层显示模式。
-  const automaticallyOpen = activityGroupStartsOpen(visibleItems, {
+  // 自动规则只决定默认值；子任务拓扑保持展开，回执不覆盖用户的展开选择或外层显示模式。
+  // 其余已完成的活动组遵循 `autoCollapseSettledGroups`。
+  const automaticallyOpen = activityGroupStartsOpen({
     subagentTopology: hasSubagentTopology,
     turnActive,
     groupActive: live,
+    collapseSettled: collapseSettledGroups,
   });
   const disclosure = useAutomaticDisclosure(
     automaticallyOpen,
@@ -367,6 +375,7 @@ export const ActivityGroup = memo(function ActivityGroup({
     delegateItems={delegateItems}
     delegationStatuses={delegationStatuses}
     delegationTimings={delegationTimings}
+    collapseThinking={collapseThinking}
     onUserInteraction={claimDisclosure}
   />;
 

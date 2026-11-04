@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdirSync, mkdtempSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { register } from "node:module";
@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 register(pathToFileURL(join(here, "helpers/ts-import-hooks.mjs")));
-const { isChatRefOutsideRoots, parseChatRef, resolveChatFileRef } = await import(
+const { isChatRefOutsideRoots, parseChatRef, resolveChatFileRef, resolveExternalChatRef } = await import(
   "../../../packages/host-runtime/src/chat-ref-resolve.ts"
 );
 
@@ -141,9 +141,10 @@ test("an explicit absolute symlink resolves an external file", async () => {
   symlinkSync(outside, join(workspace, "linked"), process.platform === "win32" ? "junction" : "dir");
   const ref = join(workspace, "linked", "page.md");
   assert.equal(await isChatRefOutsideRoots(ref, roots({ workspace })), true);
-  const match = await resolve(ref, { workspace });
+  assert.equal(await resolve(ref, { workspace }), null);
+  const { match } = await resolveExternalChatRef(ref);
   assert.equal(match?.root, "external");
-  assert.equal(match?.absolutePath, ref);
+  assert.equal(match?.absolutePath, realpathSync(join(outside, "page.md")));
   assert.equal(match?.matchedBy, "exact-absolute");
   assert.equal(await isChatRefOutsideRoots(join(workspace, "linked", "missing.md"), roots({ workspace })), true);
 });
@@ -493,8 +494,9 @@ test("an absolute path outside roots resolves with explicit external attribution
   const image = join(outside, "generated-1.png");
   const options = roots({ scratch: null, containment: [{ kind: "scratch", path: store }] });
   assert.equal(await isChatRefOutsideRoots(image, options), true);
-  const match = await resolveChatFileRef(image, options);
+  assert.equal(await resolveChatFileRef(image, options), null);
+  const { match } = await resolveExternalChatRef(image);
   assert.equal(match?.root, "external");
-  assert.equal(match?.absolutePath, image);
+  assert.equal(match?.absolutePath, realpathSync(image));
   assert.equal(match?.matchedBy, "exact-absolute");
 });

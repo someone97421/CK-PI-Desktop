@@ -3,13 +3,14 @@
 const isRecord = (value) => value && typeof value === 'object' && !Array.isArray(value);
 const nonempty = (value) => typeof value === 'string' && value.trim();
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
+const ROOTS = ['workspace', 'scratch', 'external', 'visualization'];
 
 function reviewFromMessage(message) {
   if (message.role !== 'tool' || message.toolStatus !== 'success'
     || !['Write', 'Edit'].includes(message.toolName)) return null;
   const details = message.toolResult?.details;
   const review = details?.review;
-  if (details?.root !== 'workspace' || !isRecord(review) || review.version !== 1
+  if (!ROOTS.includes(details?.root) || !isRecord(review) || review.version !== 1
     || !['snapshotId', 'messageId', 'path'].every((key) => nonempty(review[key]))
     || !['write', 'edit', 'delete'].includes(review.operation)
     || !['added', 'modified', 'deleted'].includes(review.status)
@@ -40,28 +41,16 @@ function collect(messages, entries, missing) {
   }
 }
 
-function select(data, ids) {
-  const selected = ids ? new Set(ids) : null;
-  const entries = data.entries.filter((entry) => !selected || selected.has(entry.sourceMessageId));
-  return { entries, missingEvidence: data.missing.some((id) => !selected || selected.has(id)) };
-}
-
-function summarize(data) {
-  const grouped = new Map();
+function summarize(entries) {
+  const files = new Set();
   let additions = 0;
   let deletions = 0;
-  let rolledBackCount = 0;
-  for (const entry of data.entries) {
-    grouped.set(entry.path, (grouped.get(entry.path) || 0) + 1);
+  for (const entry of entries) {
+    files.add(entry.path);
     additions += entry.additions;
     deletions += entry.deletions;
-    if (entry.state === 'rolledBack') rolledBackCount += 1;
   }
-  return {
-    fileCount: grouped.size, changeCount: data.entries.length, additions, deletions,
-    rolledBackCount, missingEvidence: data.missingEvidence,
-    files: [...grouped].slice(0, 12).map(([path, changes]) => ({ path: path.slice(0, 320), changes })),
-  };
+  return { fileCount: files.size, changeCount: entries.length, additions, deletions };
 }
 
-module.exports = { collect, select, summarize };
+module.exports = { collect, summarize };

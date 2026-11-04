@@ -11,6 +11,7 @@ import { readNpmPath, writeNpmPath } from "../npm-preferences";
 import { registerAgentIpc } from "./agent-ipc";
 import { registerAppIpc } from "./app-ipc";
 import { registerDiagnosticsIpc } from "./diagnostics-ipc";
+import { registerStartupAnimationIpc } from "./startup-animation-ipc";
 import { registerMarketIpc } from "./market-ipc";
 import { registerMcpIpc } from "./mcp-ipc";
 import type { McpOAuthManager } from "../mcp-oauth";
@@ -18,6 +19,7 @@ import { searchMcpMarket } from "../mcp-registry-catalog";
 import { registerNotificationIpc } from "./notification-ipc";
 import { registerPluginIpc } from "./plugin-ipc";
 import { registerPluginUiIpc } from "./plugin-ui-ipc";
+import { registerPluginLauncherIpc } from "./plugin-launcher-ipc";
 import { registerJevIpc } from "./jev-ipc";
 import { registerProviderIpc } from "./provider-ipc";
 import { registerPiSyncIpc } from "./pi-sync-ipc";
@@ -110,6 +112,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     settleComposerSuggestion,
     getPluginLauncherWindow,
     togglePluginLauncher,
+    openPluginMarket,
     safeOpenExternal,
     updater,
     dataDir,
@@ -121,6 +124,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     queuedSteeringJournal,
     logger,
     plugins,
+    localApps,
     speech,
     sessionCapabilityContext,
     enrichSession,
@@ -547,6 +551,15 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     setActivePluginSession,
     settleComposerSuggestion,
   });
+  registerPluginLauncherIpc({
+    registrar,
+    getHost,
+    getPluginLauncherWindow,
+    plugins,
+    localApps,
+    getLocale: getUpdaterLocale,
+    openPluginMarket,
+  });
   registerSpeechIpc({ registrar, speech });
 
   if (liveCallService) {
@@ -573,6 +586,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     isDeveloperMode,
     getMainWindow,
   });
+
+  registerStartupAnimationIpc({ registrar, dataDir, stripWinLongPrefix });
 
 
   return async (channel: string, args: readonly unknown[] = []) => {
