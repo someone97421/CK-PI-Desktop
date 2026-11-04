@@ -83,9 +83,12 @@ function SkillInvocationText({ message }: { message: UiMessage }) {
 export const MessageRow = memo(function MessageRow({
   message,
   isRunning,
+  readingAnchor = false,
 }: {
   message: UiMessage;
   isRunning: boolean;
+  /** Top-level transcript rows anchor the reading position. */
+  readingAnchor?: boolean;
 }) {
   const { t } = useTranslation();
   const openTranscriptMenu = useTranscriptMenu();
@@ -299,6 +302,7 @@ export const MessageRow = memo(function MessageRow({
       className={`message-row ${isSessionMessage ? "session-message" : isUser ? "user" : message.role}`}
       data-minimap-id={message.id}
       data-message-id={message.id}
+      data-reading-anchor={readingAnchor ? message.id : undefined}
       data-row-role={isSessionMessage ? undefined : "user"}
       onContextMenu={onContextMenu}
       role="article"

@@ -299,7 +299,7 @@ test("first-commit hydration expands without moving the transcript", () => {
 });
 
 test("minimap separates resize checks from message-position measurement", () => {
-  assert.match(minimap, /buildConversationMinimapMarkers\(messages\)/);
+  assert.match(minimap, /buildConversationMinimapMarkers\(entries\)/);
   assert.match(minimap, /const markerIdentity = useMemo/);
   assert.match(minimap, /new ResizeObserver\(scheduleResize\)/);
   assert.match(minimap, /resizeRaf = requestAnimationFrame\(\(\) => \{/);

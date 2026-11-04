@@ -13,11 +13,11 @@ import type {
   UiMessage,
 } from "@pi-desktop/shared";
 import type { PendingPermission } from "../../../../lib/pending-permissions";
-import { transcriptEntryMessages } from "../../../../lib/assistant-turns";
 import { getTranscriptProjection } from "../../../../lib/transcript-projection";
 import {
   createTranscriptSettleState,
   reduceTranscriptSettle,
+  TRANSCRIPT_RESTORE_VEIL_MAX_MS,
   TRANSCRIPT_VEIL_FADE_MS,
 } from "../../../../lib/transcript-settle";
 import {
@@ -153,9 +153,10 @@ export function useTranscriptScroll({
     pendingRef: readingPositionPendingRef,
     remember: rememberReadingPosition,
     cancel: cancelReadingPosition,
+    isRestoring: isReadingPositionRestoring,
   } = useTranscriptReadingPosition({
     sessionId, scrollRef, contentRef, pinnedRef, visible: paneVisible,
-    windowSize, contentVersion: messages, onPosition: recordScrollPosition,
+    windowSize, contentVersion: messages, historical: readingWindow, onPosition: recordScrollPosition,
     onRestore: onRestoreReading, onMissing: readingPositionMissing, onStale: onStaleReading,
   });
 
@@ -284,6 +285,13 @@ export function useTranscriptScroll({
       if (bookmark?.pinned === false) {
         pinnedRef.current = false;
         setShowJump(true);
+      }
+      // 恢复是异步的；先回到离开时的位置，避免揭示的首帧停在顶部。
+      const retained = retainedScrollTopRef.current;
+      if (retained !== null) {
+        el.scrollTop = retained;
+        lastScrollTopRef.current = retained;
+        lastLaidOutScrollTopRef.current = retained;
       }
       return;
     }
@@ -539,7 +547,7 @@ export function useTranscriptScroll({
   const deferredProjection = useDeferredValue(projection);
   const renderedProjection =
     readingWindow || firstCommit || paneRevealed ? projection : deferredProjection;
-  const { entries, visible, history: allHistoryEntries } = renderedProjection;
+  const { entries, history: allHistoryEntries } = renderedProjection;
   const tailEntry = entries.at(-1);
   // Published for `reachTop`, which is declared above this projection but only
   // runs from a scroll event, long after this render committed.
@@ -603,7 +611,7 @@ export function useTranscriptScroll({
   // initialised from the first render's own gate so the veil is in the commit
   // that reveals the pane, not one frame later.
   const [veilPhase, setVeilPhase] = useState<"covering" | "leaving" | "off">(
-    () => (hydrationBounded ? "covering" : "off"),
+    () => (hydrationBounded || readingPositionPendingRef.current ? "covering" : "off"),
   );
   const veilCovering = veilPhase === "covering";
 
@@ -667,15 +675,23 @@ export function useTranscriptScroll({
     if (!veilCovering || hydrationBounded || !paneVisible) return;
     const el = scrollRef.current;
     if (!el) return;
-    let state = createTranscriptSettleState(performance.now());
+    const startedAt = performance.now();
+    let state = createTranscriptSettleState(startedAt);
     let frame = 0;
     const sample = () => {
       frame = 0;
+      const now = performance.now();
+      // 重新挂载时恢复阅读位置：对齐完成前持续遮盖，不露出顶部首帧与校正过程。
+      if (isReadingPositionRestoring() && now - startedAt < TRANSCRIPT_RESTORE_VEIL_MAX_MS) {
+        state = createTranscriptSettleState(now);
+        frame = requestAnimationFrame(sample);
+        return;
+      }
       if (pinnedRef.current) scrollToBottom();
       const step = reduceTranscriptSettle(
         state,
         { scrollHeight: el.scrollHeight, clientHeight: el.clientHeight },
-        performance.now(),
+        now,
       );
       state = step.state;
       if (step.settled) {
@@ -686,7 +702,7 @@ export function useTranscriptScroll({
     };
     frame = requestAnimationFrame(sample);
     return () => cancelAnimationFrame(frame);
-  }, [hydrationBounded, paneVisible, scrollToBottom, veilCovering]);
+  }, [hydrationBounded, isReadingPositionRestoring, paneVisible, scrollToBottom, veilCovering]);
 
   useEffect(() => {
     if (veilPhase !== "leaving") return;
@@ -700,14 +716,9 @@ export function useTranscriptScroll({
   // The minimap must describe the mounted rows, not every loaded message: it
   // resolves a click by looking up the marker's node in the scroller, so a dash
   // for a withheld row would jump nowhere (D261).
-  const minimapMessages = useMemo(
-    () =>
-      transcriptWindow.bounded
-        ? transcriptEntryMessages(
-            tailEntry ? [...historyEntries, tailEntry] : historyEntries,
-          )
-        : visible,
-    [historyEntries, tailEntry, transcriptWindow.bounded, visible],
+  const minimapEntries = useMemo(
+    () => (tailEntry ? [...historyEntries, tailEntry] : historyEntries),
+    [historyEntries, tailEntry],
   );
   const hasEarlierHistory = transcriptWindow.hiddenAbove > 0 || hasMoreBefore;
 
@@ -878,7 +889,7 @@ export function useTranscriptScroll({
     showJump,
     historyEntries,
     tailEntry,
-    minimapMessages,
+    minimapEntries,
     hasEarlierHistory,
     hydrationBounded,
     veilCovering,

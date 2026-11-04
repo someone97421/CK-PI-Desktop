@@ -55,12 +55,11 @@ export function forgetTranscriptReadingState(sessionId: string) {
   readingStates.delete(sessionId);
 }
 
-/** A cheap tail marker: appends, completion and streaming growth all change it. */
+/** Tail marker of real activity; paging and window reshaping must not change it. */
 export function transcriptReadingRevision(messages: readonly UiMessage[]): string | undefined {
   const tail = messages.at(-1);
   if (!tail) return undefined;
   return [
-    messages.length,
     tail.id,
     tail.createdAt,
     tail.status ?? "",
@@ -71,16 +70,20 @@ export function transcriptReadingRevision(messages: readonly UiMessage[]): strin
   ].join(":");
 }
 
-/** Empty/loading transcripts cannot disprove a bookmark; a changed tail can. */
+/** Empty transcripts and historical windows cannot disprove a bookmark; a changed live tail can. */
 export function transcriptReadingPositionIsStale(
   position: TranscriptReadingPosition | undefined,
   messages: readonly UiMessage[],
+  historical = false,
 ): boolean {
+  if (historical) return false;
   const revision = transcriptReadingRevision(messages);
   return Boolean(
     position?.transcriptRevision && revision && position.transcriptRevision !== revision,
   );
 }
+
+const READING_ANCHOR_SELECTOR = "[data-reading-anchor]";
 
 /** Sample only a visible layout; hidden panes must never replace a bookmark. */
 export function captureTranscriptReadingPosition(
@@ -89,50 +92,41 @@ export function captureTranscriptReadingPosition(
   pinned: boolean,
   windowSize: number,
   messages: readonly UiMessage[] = [],
+  historical = false,
 ): TranscriptReadingPosition | undefined {
   if (!transcriptHasLayout(scroller)) return;
-  const transcriptRevision = transcriptReadingRevision(messages);
+  const transcriptRevision = historical ? undefined : transcriptReadingRevision(messages);
   if (pinned) return { pinned, offset: 0, scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
   const viewport = scroller.getBoundingClientRect();
-  // Prefer the outer message/turn: its offset also describes reading inside an
-  // expanded tool body, whose explicit disclosure choices survive eviction.
-  for (const row of content.querySelectorAll<HTMLElement>("[data-minimap-id], [data-message-id]")) {
+  // 只锚定每个条目最外层的行：过程抽屉折叠后内层行会卸载，锚定它们会让恢复落空。
+  for (const row of content.querySelectorAll<HTMLElement>(READING_ANCHOR_SELECTOR)) {
     const rect = row.getBoundingClientRect();
     if (rect.bottom <= viewport.top || rect.top >= viewport.bottom || rect.height === 0) continue;
-    const messageId = row.dataset.minimapId ?? row.dataset.messageId;
+    const messageId = row.dataset.readingAnchor;
     if (messageId) return { pinned, messageId, offset: rect.top - viewport.top,
       scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
   }
 }
 
-/** Returns false until the bookmarked row is actually mounted. */
+export type TranscriptReadingRestore = "aligned" | "missing" | "unavailable";
+
+/** `unavailable` means no layout yet; `missing` means the anchored row is not mounted. */
 export function restoreTranscriptReadingPosition(
   scroller: HTMLElement,
   content: HTMLElement,
   position: TranscriptReadingPosition,
-): boolean {
-  if (!transcriptHasLayout(scroller)) return false;
-  if (position.messageId) {
-    const id = CSS.escape(position.messageId);
-    const row = content.querySelector<HTMLElement>(`[data-minimap-id="${id}"], [data-message-id="${id}"]`);
-    if (row) {
-      const rect = row.getBoundingClientRect();
-      if (rect.height > 0) {
-        scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - position.offset;
-        return true;
-      }
-    }
+): TranscriptReadingRestore {
+  if (!transcriptHasLayout(scroller)) return "unavailable";
+  if (!position.messageId) {
+    if (!Number.isFinite(position.scrollTop) || position.scrollTop < 0) return "missing";
+    scroller.scrollTop = position.scrollTop;
+    return "aligned";
   }
-  // The anchored row is not mounted. A reveal mounts only a trailing slice of
-  // history (lib/transcript-window.ts:23-28), so an older bookmark can point
-  // at a row that is not in the DOM yet. The restore hook waits for the history
-  // lookup to finish before applying this fallback; otherwise its alignment
-  // deadline could abort a slow lookup.
-  //
-  // The bookmark already recorded the absolute offset it was taken at, so fall
-  // back to it for an approximate position. `false` is reserved for a bookmark
-  // with no usable offset at all, which only a never-laid-out pane produces.
-  if (!Number.isFinite(position.scrollTop) || position.scrollTop < 0) return false;
-  scroller.scrollTop = position.scrollTop;
-  return true;
+  const id = CSS.escape(position.messageId);
+  const row = content.querySelector<HTMLElement>(`[data-reading-anchor="${id}"]`);
+  if (!row) return "missing";
+  const rect = row.getBoundingClientRect();
+  if (rect.height === 0) return "unavailable";
+  scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - position.offset;
+  return "aligned";
 }

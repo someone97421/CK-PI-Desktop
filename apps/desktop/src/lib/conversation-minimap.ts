@@ -1,4 +1,4 @@
-import type { UiMessage } from "@pi-desktop/shared";
+import { assistantTurnMessages, type TranscriptEntry } from "./assistant-turns";
 import { messageContentFacts } from "./transcript-summary";
 
 export type ConversationMinimapMarker = {
@@ -31,46 +31,35 @@ function appendPreview(current: string, next: string): string {
   );
 }
 
-/** Build one user marker and one assistant marker per conversational turn. */
+/**
+ * One marker per mounted user message and assistant turn. Assistant markers use
+ * the turn's own `data-minimap-id`, which stays mounted when its process drawer
+ * is folded and follows the turn's final answer once a task completes.
+ */
 export function buildConversationMinimapMarkers(
-  messages: UiMessage[],
+  entries: readonly TranscriptEntry[],
 ): ConversationMinimapMarker[] {
   const markers: ConversationMinimapMarker[] = [];
-  let assistantMarkerIndex: number | null = null;
-
-  for (const message of messages) {
-    if (message.role === "user") {
-      markers.push({
-        id: message.id,
-        role: "user",
-        preview: messageContentFacts(message).trimmedContent.slice(
-          0, CONVERSATION_MINIMAP_PREVIEW_MAX_CHARS,
-        ),
-      });
-      assistantMarkerIndex = null;
+  for (const entry of entries) {
+    if (entry.kind === "message") {
+      const { message } = entry;
+      if (message.role !== "user" && message.role !== "assistant") continue;
+      const preview = messageContentFacts(message).trimmedContent.slice(
+        0, CONVERSATION_MINIMAP_PREVIEW_MAX_CHARS,
+      );
+      if (message.role === "assistant" && !preview) continue;
+      markers.push({ id: message.id, role: message.role, preview });
       continue;
     }
-    if (message.role !== "assistant") continue;
-
-    // Later fragments cannot change a saturated preview or its first anchor.
-    if (assistantMarkerIndex !== null &&
-      markers[assistantMarkerIndex].preview.length >= CONVERSATION_MINIMAP_PREVIEW_MAX_CHARS
-    ) continue;
-    const content = messageContentFacts(message).trimmedContent;
-    if (!content) continue;
-    if (assistantMarkerIndex === null) {
-      markers.push({
-        id: message.id,
-        role: "assistant",
-        preview: content.slice(0, CONVERSATION_MINIMAP_PREVIEW_MAX_CHARS),
-      });
-      assistantMarkerIndex = markers.length - 1;
-      continue;
+    if (entry.kind !== "assistant-turn" || !entry.anchorId) continue;
+    const messages = assistantTurnMessages(entry);
+    const anchor = messages.find((message) => message.id === entry.anchorId);
+    let preview = "";
+    for (const message of anchor ? [anchor, ...messages.filter((item) => item !== anchor)] : messages) {
+      if (preview.length >= CONVERSATION_MINIMAP_PREVIEW_MAX_CHARS) break;
+      preview = appendPreview(preview, messageContentFacts(message).trimmedContent);
     }
-
-    const marker = markers[assistantMarkerIndex];
-    marker.preview = appendPreview(marker.preview, content);
+    markers.push({ id: entry.anchorId, role: "assistant", preview });
   }
-
   return markers;
 }

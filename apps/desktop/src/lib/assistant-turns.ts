@@ -540,6 +540,18 @@ export function transcriptEntryMessages(
   });
 }
 
+/** 条目最外层行的阅读锚点；过程抽屉折叠时这一行也始终挂载。 */
+export function transcriptEntryReadingId(entry: TranscriptEntry): string | undefined {
+  if (entry.kind === "compaction") return undefined;
+  if (entry.kind === "message") return entry.message.id;
+  if (entry.anchorId) return entry.anchorId;
+  for (const part of entry.parts) {
+    if (part.kind === "message") return part.message.id;
+    if (part.kind === "activity" && part.items[0]) return part.items[0].message.id;
+  }
+  return undefined;
+}
+
 export function assistantTurnTools(entry: AssistantTurnEntry): UiMessage[] {
   return entry.parts.flatMap((part) =>
     part.kind === "activity"

@@ -245,16 +245,16 @@ test("the window is owned per session pane, so no switch can inherit a budget", 
   assert.match(surface, /<SessionPane\s*key=\{id\}/);
 });
 
-test("the minimap keeps message dashes reachable and represents withheld history explicitly", () => {
-  // Message dashes still resolve to mounted DOM nodes. Older loaded/unloaded
-  // history is one honest continuation control, never a phantom message dash.
+test("the minimap keeps turn dashes reachable and represents withheld history explicitly", () => {
+  // Dashes are built from the mounted entries and resolve to each entry's outer
+  // row. Older loaded/unloaded history is one honest continuation control.
   assert.match(minimap, /querySelectorAll<HTMLElement>\("\[data-minimap-id\]"\)/);
-  assert.match(transcript, /messages=\{minimapMessages\}/);
+  assert.match(transcript, /entries=\{minimapEntries\}/);
   assert.match(transcript, /hasEarlier=\{hasEarlierHistory\}/);
   assert.match(transcript, /onRevealEarlier=\{revealEarlierHistory\}/);
   assert.match(
     transcript,
-    /transcriptWindow\.bounded\s*\?\s*transcriptEntryMessages\(/,
+    /tailEntry \? \[\.\.\.historyEntries, tailEntry\] : historyEntries/,
   );
   assert.match(
     transcript,

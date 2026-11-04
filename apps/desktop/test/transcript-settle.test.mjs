@@ -86,25 +86,31 @@ test("the skeleton reads as a conversation tail", () => {
 
 test("a long transcript mounts under the settle veil and lifts it from measured geometry", () => {
   // The veil is decided in the same render as the bounded first commit, so it is
-  // in the frame that reveals the pane rather than one frame later.
+  // in the frame that reveals the pane rather than one frame later. A remount
+  // restoring a reading position starts covered for the same reason.
   assert.match(
     transcript,
-    /useState<"covering" \| "leaving" \| "off">\(\s*\(\) => \(hydrationBounded \? "covering" : "off"\),?\s*\)/,
+    /useState<"covering" \| "leaving" \| "off">\(\s*\(\) => \(hydrationBounded \|\| readingPositionPendingRef\.current \? "covering" : "off"\),?\s*\)/,
   );
   // Sampling starts only after the expansion commit and pauses for hidden panes.
   assert.match(
     transcript,
     /if \(!veilCovering \|\| hydrationBounded \|\| !paneVisible\) return;/,
   );
-  assert.match(transcript, /createTranscriptSettleState\(performance\.now\(\)\)/);
+  assert.match(transcript, /const startedAt = performance\.now\(\);\s*let state = createTranscriptSettleState\(startedAt\);/);
   assert.match(
     transcript,
     /reduceTranscriptSettle\(\s*state,\s*\{ scrollHeight: el\.scrollHeight, clientHeight: el\.clientHeight \},/,
   );
+  // The veil holds until a restoring reading position has aligned (bounded).
+  assert.match(
+    transcript,
+    /if \(isReadingPositionRestoring\(\) && now - startedAt < TRANSCRIPT_RESTORE_VEIL_MAX_MS\) \{/,
+  );
   // Every sample re-pins a pinned transcript, so the reveal frame is at the tail.
   assert.match(
     transcript,
-    /const sample = \(\) => \{\s*frame = 0;\s*if \(pinnedRef\.current\) scrollToBottom\(\);/,
+    /return;\s*\}\s*if \(pinnedRef\.current\) scrollToBottom\(\);\s*const step = reduceTranscriptSettle/,
   );
   assert.match(transcript, /if \(step\.settled\) \{\s*setVeilPhase\("leaving"\);/);
   assert.match(transcript, /setVeilPhase\("off"\),\s*TRANSCRIPT_VEIL_FADE_MS/);

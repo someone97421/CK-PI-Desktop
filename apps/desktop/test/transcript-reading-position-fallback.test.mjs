@@ -12,17 +12,10 @@ const { restoreTranscriptReadingPosition } = await import(
 );
 
 /*
-  #1771, the path #1783 does not cover.
-
-  A reveal mounts only a trailing slice of history
-  (lib/transcript-window.ts:23-28: TRANSCRIPT_INITIAL_MOUNT 15, then
-  TRANSCRIPT_WINDOW_MIN 60), so an older bookmark routinely names a row that is
-  not in the DOM. Without a fallback, the restore loop did not move to the
-  saved position. Real scroll gestures can cancel the pending restore, but
-  without such a gesture the session returned at its initial position.
-
-  The bookmark already carries the absolute offset it was taken at, so a
-  missing row now falls back to that offset instead of reporting failure.
+  Bookmarks anchor the outer row of a transcript entry, which stays mounted
+  while its process drawer is folded. A missing row is reported as missing so
+  the caller can fall back to the newest turn; reapplying the absolute offset
+  landed near the top once folded rows shortened the transcript.
 */
 
 /** Minimal stand-ins for the two DOM objects the function touches. */
@@ -36,9 +29,12 @@ function fakeScroller({ scrollTop = 0, top = 0 } = {}) {
     offsetHeight: 600,
   };
 }
-function fakeContent({ row = null } = {}) {
+function fakeContent({ row = null, selectors = [] } = {}) {
   return {
-    querySelector: () => row,
+    querySelector: (selector) => {
+      selectors.push(selector);
+      return row;
+    },
     getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
     offsetHeight: 1200,
   };
@@ -53,32 +49,32 @@ const bookmark = (overrides = {}) => ({
   ...overrides,
 });
 
-test("an anchored row that is mounted still restores by its rect", () => {
+test("an anchored outer row restores by its rect", () => {
   const scroller = fakeScroller({ scrollTop: 100, top: 0 });
+  const selectors = [];
   const row = {
     getBoundingClientRect: () => ({ top: 140, bottom: 200, height: 60, left: 0, right: 800 }),
     offsetHeight: 60,
   };
   assert.equal(
-    restoreTranscriptReadingPosition(scroller, fakeContent({ row }), bookmark()),
-    true,
+    restoreTranscriptReadingPosition(scroller, fakeContent({ row, selectors }), bookmark()),
+    "aligned",
   );
   // 100 + (140 - 0) - 24 = 216
   assert.equal(scroller.scrollTop, 216);
+  assert.deepEqual(selectors, ['[data-reading-anchor="m-late"]']);
 });
 
-test("a bookmark whose row is above the mounted window falls back to its offset", () => {
+test("a missing anchored row is reported instead of reapplying the absolute offset", () => {
   const scroller = fakeScroller({ scrollTop: 0, top: 0 });
-  const content = fakeContent({ row: null });
   assert.equal(
-    restoreTranscriptReadingPosition(scroller, content, bookmark({ scrollTop: 480 })),
-    true,
-    "a missing row with a usable offset must still restore",
+    restoreTranscriptReadingPosition(scroller, fakeContent({ row: null }), bookmark({ scrollTop: 480 })),
+    "missing",
   );
-  assert.equal(scroller.scrollTop, 480);
+  assert.equal(scroller.scrollTop, 0);
 });
 
-test("a row that is mounted but has no height is treated as missing", () => {
+test("a mounted row without height waits for layout", () => {
   const scroller = fakeScroller({ scrollTop: 0, top: 0 });
   const collapsed = {
     getBoundingClientRect: () => ({ top: 0, bottom: 0, height: 0, left: 0, right: 800 }),
@@ -86,29 +82,33 @@ test("a row that is mounted but has no height is treated as missing", () => {
   };
   assert.equal(
     restoreTranscriptReadingPosition(scroller, fakeContent({ row: collapsed }), bookmark({ scrollTop: 300 })),
-    true,
+    "unavailable",
   );
-  assert.equal(scroller.scrollTop, 300);
+  assert.equal(scroller.scrollTop, 0);
 });
 
-test("a bookmark without a usable offset still reports failure", () => {
+test("a bookmark without an anchor uses its offset only when it is usable", () => {
   const scroller = fakeScroller();
-  const content = fakeContent({ row: null });
+  assert.equal(
+    restoreTranscriptReadingPosition(scroller, fakeContent(), bookmark({ messageId: undefined, scrollTop: 320 })),
+    "aligned",
+  );
+  assert.equal(scroller.scrollTop, 320);
   for (const scrollTop of [Number.NaN, -1, Number.POSITIVE_INFINITY]) {
     assert.equal(
-      restoreTranscriptReadingPosition(scroller, content, bookmark({ scrollTop })),
-      false,
+      restoreTranscriptReadingPosition(fakeScroller(), fakeContent(), bookmark({ messageId: undefined, scrollTop })),
+      "missing",
       `scrollTop ${scrollTop} must not be applied`,
     );
   }
 });
 
-test("a pane with no layout is still refused outright", () => {
+test("a pane with no layout is refused outright", () => {
   // A hidden pane reports no box; applying any offset there would corrupt the
   // bookmark it is supposed to protect.
   const scroller = { scrollTop: 0, clientHeight: 0, scrollHeight: 0, offsetHeight: 0, getBoundingClientRect: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
   assert.equal(
     restoreTranscriptReadingPosition(scroller, fakeContent({ row: null }), bookmark()),
-    false,
+    "unavailable",
   );
 });

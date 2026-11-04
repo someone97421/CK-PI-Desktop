@@ -701,6 +701,8 @@ test("a reading bookmark is stale only after the transcript tail actually change
   assert.equal(transcriptReadingPositionIsStale(position, []), false, "an empty loading read cannot disprove the bookmark");
   assert.equal(transcriptReadingPositionIsStale(position, [streaming, message("next")]), true);
   assert.equal(transcriptReadingPositionIsStale(position, [{ ...streaming, content: "final", status: "complete" }]), true);
+  assert.equal(transcriptReadingPositionIsStale(position, [message("older"), streaming]), false, "paging older history is not activity");
+  assert.equal(transcriptReadingPositionIsStale(position, [message("other")], true), false, "a historical window's tail is not the session tail");
 });
 
 test("a restored range joins live output only after paging closes the gap", async () => {

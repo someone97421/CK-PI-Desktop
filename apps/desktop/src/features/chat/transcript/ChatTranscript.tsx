@@ -180,7 +180,7 @@ function TranscriptBody({
     showJump,
     historyEntries,
     tailEntry,
-    minimapMessages,
+    minimapEntries,
     hasEarlierHistory,
     hydrationBounded,
     veilCovering,
@@ -451,7 +451,7 @@ function TranscriptBody({
       {paneVisible && !veilCovering ? (
         <ConversationMinimap
           scrollRef={scrollRef}
-          messages={minimapMessages}
+          entries={minimapEntries}
           hasEarlier={hasEarlierHistory}
           loadingEarlier={loadingOlder}
           onRevealEarlier={revealEarlierHistory}

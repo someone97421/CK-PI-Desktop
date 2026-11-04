@@ -8,6 +8,7 @@ const {
   buildConversationMinimapMarkers,
   shouldRenderConversationMinimap,
 } = await import("../src/lib/conversation-minimap.ts");
+const { getTranscriptProjection } = await import("../src/lib/transcript-projection.ts");
 
 function message(id, role, content) {
   return {
@@ -17,6 +18,8 @@ function message(id, role, content) {
     createdAt: "2026-07-28T00:00:00.000Z",
   };
 }
+
+const entries = (messages) => getTranscriptProjection(messages).entries;
 
 test("keeps the outline available while earlier history is outside the mounted window", () => {
   assert.equal(
@@ -60,14 +63,14 @@ test("shows a completed outline only with enough markers and overflow", () => {
 });
 
 test("uses one assistant marker for all response fragments in a user turn", () => {
-  const markers = buildConversationMinimapMarkers([
+  const markers = buildConversationMinimapMarkers(entries([
     message("user-1", "user", "First question"),
     message("assistant-1a", "assistant", "First sentence."),
     message("tool-1", "tool", "tool output"),
     message("assistant-1b", "assistant", "Second sentence."),
     message("user-2", "user", "Second question"),
     message("assistant-2", "assistant", "Second response."),
-  ]);
+  ]));
 
   assert.deepEqual(
     markers.map(({ id, role }) => ({ id, role })),
@@ -82,25 +85,46 @@ test("uses one assistant marker for all response fragments in a user turn", () =
 });
 
 test("starts the assistant marker at the first contentful response fragment", () => {
-  const markers = buildConversationMinimapMarkers([
+  const markers = buildConversationMinimapMarkers(entries([
     message("user-1", "user", "Question"),
     { ...message("thinking", "assistant", ""), thinking: "Reasoning" },
     message("tool-1", "tool", "tool output"),
     message("answer", "assistant", "Final answer"),
-  ]);
+  ]));
 
   assert.deepEqual(markers.map((marker) => marker.id), ["user-1", "answer"]);
 });
 
 test("caps the combined assistant preview", () => {
-  const markers = buildConversationMinimapMarkers([
+  const markers = buildConversationMinimapMarkers(entries([
     message("user-1", "user", "Question"),
     message("assistant-1a", "assistant", "a".repeat(200)),
     message("assistant-1b", "assistant", "b".repeat(200)),
-  ]);
+  ]));
 
   assert.equal(
     markers[1].preview.length,
     CONVERSATION_MINIMAP_PREVIEW_MAX_CHARS,
   );
+});
+
+test("anchors a turn on the row the transcript renders, even when its narration is folded away", () => {
+  const narration = message("narration", "assistant", "Working on it.");
+  const final = message("final", "assistant", "Done.");
+  const markers = buildConversationMinimapMarkers([
+    { kind: "message", message: message("user-1", "user", "Question") },
+    {
+      kind: "assistant-turn",
+      id: "task:t1",
+      anchorId: "final",
+      parts: [{ kind: "message", message: narration }, { kind: "message", message: final }],
+    },
+    { kind: "assistant-turn", id: "tools-only", parts: [] },
+  ]);
+
+  assert.deepEqual(markers.map(({ id, role }) => ({ id, role })), [
+    { id: "user-1", role: "user" },
+    { id: "final", role: "assistant" },
+  ]);
+  assert.equal(markers[1].preview, "Done.\n\nWorking on it.");
 });

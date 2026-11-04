@@ -21,6 +21,9 @@ export const TRANSCRIPT_SETTLE_STABLE_FRAMES = 3;
 /** Upper bound on how long the veil may cover a transcript, in milliseconds. */
 export const TRANSCRIPT_SETTLE_MAX_MS = 600;
 
+/** Upper bound on covering a remounted pane while its reading position restores. */
+export const TRANSCRIPT_RESTORE_VEIL_MAX_MS = 1500;
+
 /** Duration of the veil's fade-out, matched by the stylesheet transition. */
 export const TRANSCRIPT_VEIL_FADE_MS = 160;
 

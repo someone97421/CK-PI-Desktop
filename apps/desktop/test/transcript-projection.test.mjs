@@ -82,12 +82,12 @@ for (const count of [100, 1_000, 10_784]) {
     messages.push(message("tail", "assistant", "Live", { status: "streaming" }));
     const before = getTranscriptProjection(messages);
     const inspector = latestTurnContextInspector(messages, {}, []);
-    buildConversationMinimapMarkers(before.visible);
+    buildConversationMinimapMarkers(before.entries);
     messages = upsertLiveSessionMessage(messages, { ...messages.at(-1), content: "Live delta" });
     reads = 0;
     const after = getTranscriptProjection(messages);
     const nextInspector = latestTurnContextInspector(messages, {}, []);
-    buildConversationMinimapMarkers(after.visible);
+    buildConversationMinimapMarkers(after.entries);
     assert.equal(reads, 0, "completed content must stay out of the update path");
     assert.equal(after.history, before.history);
     assert.equal(nextInspector, inspector, "unchanged context statistics retain their identity");
@@ -207,14 +207,20 @@ test("deterministic replacement sequences match grouping after each update", () 
   }
 });
 
-test("a saturated minimap preview ignores later huge fragments but keeps user boundaries", () => {
+test("a saturated minimap preview ignores later huge fragments", () => {
   let reads = 0;
   const later = message("later", "assistant", "");
   Object.defineProperty(later, "content", { get() { reads++; return "x".repeat(100_000); } });
+  const turn = (rows) => ({
+    kind: "assistant-turn", id: rows[0].id, anchorId: rows[0].id,
+    parts: rows.map((row) => ({ kind: "message", message: row })),
+  });
   const markers = buildConversationMinimapMarkers([
-    message("u", "user", "Question"), message("first", "assistant", "a".repeat(280)),
-    later, message("system", "system", "Boundary"), message("after-system", "assistant", "Same marker"),
-    message("u2", "user", "Next"), message("a2", "assistant", "Second answer"),
+    { kind: "message", message: message("u", "user", "Question") },
+    turn([message("first", "assistant", "a".repeat(280)), later]),
+    { kind: "message", message: message("system", "system", "Boundary") },
+    { kind: "message", message: message("u2", "user", "Next") },
+    turn([message("a2", "assistant", "Second answer")]),
   ]);
   assert.equal(reads, 0);
   assert.deepEqual(markers.map(({ id }) => id), ["u", "first", "u2", "a2"]);

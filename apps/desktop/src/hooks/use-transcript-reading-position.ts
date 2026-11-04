@@ -16,13 +16,15 @@ export type RestoreTranscriptReading = (
 ) => Promise<boolean>;
 
 const NO_MESSAGES: readonly UiMessage[] = [];
+const ALIGN_WINDOW_MS = 1500;
+const MISSING_GRACE_MS = 300;
 const transcriptMessages = (value: unknown): readonly UiMessage[] =>
   Array.isArray(value) ? value as readonly UiMessage[] : NO_MESSAGES;
 
 /** A bounded initial alignment, cancelled by real input/navigation/new turns. */
 export function useTranscriptReadingPosition({
   sessionId, scrollRef, contentRef, pinnedRef, visible, windowSize,
-  contentVersion, onPosition, onRestore, onMissing, onStale,
+  contentVersion, historical = false, onPosition, onRestore, onMissing, onStale,
 }: {
   sessionId: string | undefined;
   scrollRef: RefObject<HTMLDivElement | null>;
@@ -31,6 +33,8 @@ export function useTranscriptReadingPosition({
   visible: boolean;
   windowSize: number;
   contentVersion: unknown;
+  /** The transcript shows a historical window, whose tail is not the session tail. */
+  historical?: boolean;
   onPosition: (top: number) => void;
   onRestore?: RestoreTranscriptReading;
   onMissing: () => void;
@@ -39,13 +43,14 @@ export function useTranscriptReadingPosition({
 }) {
   const [initialPosition] = useState(() => {
     const position = getTranscriptReadingPosition(sessionId);
-    return transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion))
+    return transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion), historical)
       ? undefined
       : position;
   });
   const pendingRef = useRef(initialPosition?.pinned === false ? initialPosition : undefined);
   const requestRef = useRef<AbortController | null>(null);
   const completedRestoreRef = useRef<TranscriptReadingPosition | null>(null);
+  const alignedRef = useRef<TranscriptReadingPosition | null>(null);
   const restoreReadyRef = useRef(!onRestore);
   const [restoreRevision, setRestoreRevision] = useState(0);
   const alignmentUntilRef = useRef(0);
@@ -64,9 +69,14 @@ export function useTranscriptReadingPosition({
       pinnedRef.current,
       windowSize,
       transcriptMessages(contentVersion),
+      historical,
     );
     if (position) sessionReadingState(sessionId).position = position;
-  }, [contentRef, contentVersion, pinnedRef, scrollRef, sessionId, visible, windowSize]);
+  }, [contentRef, contentVersion, historical, pinnedRef, scrollRef, sessionId, visible, windowSize]);
+  const isRestoring = useCallback(
+    () => Boolean(pendingRef.current) && alignedRef.current !== pendingRef.current,
+    [],
+  );
   const callbacks = useRef({ remember, onMissing, onStale });
   callbacks.current = { remember, onMissing, onStale };
 
@@ -84,17 +94,18 @@ export function useTranscriptReadingPosition({
         pendingRef.current = bookmark;
       }
       alignmentUntilRef.current = 0;
+      alignedRef.current = null;
     }
     if (pinnedRef.current) return;
     const position = pendingRef.current;
-    if (!transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion))) return;
+    if (!transcriptReadingPositionIsStale(position, transcriptMessages(contentVersion), historical)) return;
     clearTranscriptReadingPosition(sessionId);
     cancel();
     alignmentUntilRef.current = 0;
     pinnedRef.current = true;
     callbacks.current.onStale?.();
     callbacks.current.onMissing();
-  }, [cancel, contentVersion, onMissing, pinnedRef, sessionId, visible]);
+  }, [cancel, contentVersion, historical, onMissing, pinnedRef, sessionId, visible]);
 
   // Fetch only if the row is outside the current range. Abort also invalidates
   // completion when a pane hides/unmounts, or the reader takes over during IO.
@@ -131,24 +142,34 @@ export function useTranscriptReadingPosition({
     if (!pendingRef.current || !scroller || !content) return;
     if (!restoreReadyRef.current) return;
     let timer = 0;
+    const finish = () => {
+      const position = pendingRef.current;
+      if (!position) return;
+      const aligned = alignedRef.current === position;
+      cancel();
+      if (!aligned) callbacks.current.onMissing();
+      callbacks.current.remember();
+    };
     const align = () => {
       const position = pendingRef.current;
       if (!position || !restoreReadyRef.current) return;
-      if (alignmentUntilRef.current && performance.now() >= alignmentUntilRef.current) {
-        cancel();
-        callbacks.current.remember();
+      const now = performance.now();
+      if (alignmentUntilRef.current && now >= alignmentUntilRef.current) {
+        finish();
         return;
       }
-      if (!restoreTranscriptReadingPosition(scroller, content, position)) return;
-      onPosition(scroller.scrollTop);
-      if (!alignmentUntilRef.current) {
-        alignmentUntilRef.current = performance.now() + 1500;
+      const result = restoreTranscriptReadingPosition(scroller, content, position);
+      if (result === "unavailable") return;
+      if (result === "aligned") {
+        if (alignedRef.current !== position) alignmentUntilRef.current = now + ALIGN_WINDOW_MS;
+        alignedRef.current = position;
+        onPosition(scroller.scrollTop);
+      } else if (!alignmentUntilRef.current) {
+        // 锚点行可能还差一次提交才挂载；宽限期内仍未出现则视为缺失并回到底部。
+        alignmentUntilRef.current = now + MISSING_GRACE_MS;
       }
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        cancel();
-        callbacks.current.remember();
-      }, Math.max(0, alignmentUntilRef.current - performance.now()));
+      timer = window.setTimeout(finish, Math.max(0, alignmentUntilRef.current - performance.now()));
     };
     align();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(align);
@@ -169,5 +190,5 @@ export function useTranscriptReadingPosition({
     return () => observer?.disconnect();
   }, [contentRef, remember, visible]);
 
-  return { initialPosition, pendingRef, remember, cancel };
+  return { initialPosition, pendingRef, remember, cancel, isRestoring };
 }

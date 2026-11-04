@@ -9,7 +9,7 @@ import {
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
-import type { UiMessage } from "@pi-desktop/shared";
+import type { TranscriptEntry } from "../lib/assistant-turns";
 import {
   buildConversationMinimapMarkers,
   shouldRenderConversationMinimap,
@@ -35,14 +35,14 @@ const EARLIER_HISTORY_MARKER_ID = "__earlier-history__";
 
 export const ConversationMinimap = memo(function ConversationMinimap({
   scrollRef,
-  messages,
+  entries,
   hasEarlier = false,
   loadingEarlier = false,
   onRevealEarlier,
   onReleaseFollow,
 }: {
   scrollRef: RefObject<HTMLDivElement | null>;
-  messages: UiMessage[];
+  entries: readonly TranscriptEntry[];
   hasEarlier?: boolean;
   loadingEarlier?: boolean;
   onRevealEarlier?: () => void;
@@ -71,8 +71,8 @@ export const ConversationMinimap = memo(function ConversationMinimap({
   const overflowsRef = useRef(false);
 
   const markers = useMemo(
-    () => buildConversationMinimapMarkers(messages),
-    [messages],
+    () => buildConversationMinimapMarkers(entries),
+    [entries],
   );
   const markerIdentity = useMemo(
     () =>

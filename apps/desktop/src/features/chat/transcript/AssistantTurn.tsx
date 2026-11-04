@@ -13,6 +13,7 @@ import type {
 import { formatCompactTokenCount } from "@pi-desktop/shared";
 import {
   reuseReadonlyMap,
+  transcriptEntryReadingId,
   type AssistantTurnEntry,
   type TranscriptEntry,
 } from "../../../lib/assistant-turns";
@@ -171,7 +172,7 @@ export function TranscriptEntryView({
   if (entry.kind === "compaction") {
     return <CompactionRow mark={entry.mark} />;
   }
-  return <MessageRow message={entry.message} isRunning={isRunning} />;
+  return <MessageRow message={entry.message} isRunning={isRunning} readingAnchor />;
 }
 
 function transcriptEntryKey(entry: TranscriptEntry): string {
@@ -389,6 +390,7 @@ export const AssistantTurn = memo(function AssistantTurn({
     <div
       className={`message-row assistant assistant-turn${streaming ? " streaming" : ""}`}
       data-minimap-id={entry.anchorId}
+      data-reading-anchor={transcriptEntryReadingId(entry)}
       data-row-role="assistant"
       onContextMenu={onContextMenu}
       role="article"
