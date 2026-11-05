@@ -1322,6 +1322,7 @@ function commandShellToolDescription(
     shellSyntaxGuidance(shell),
     `The session scratch directory variable is ${shellScratchVariable(shell)}.`,
     `An optional timeout from 1 to ${MAX_COMMAND_TIMEOUT_SECONDS} seconds may be supplied; without it, the command defaults to a 60-second timeout.`,
+    "Set visible to true when the command needs a visible Windows console window or must continue independently with user-visible progress; leave it unset for ordinary captured output.",
     ...(formattedScratch ? [`The session scratch directory is ${formattedScratch}.`] : []),
   ].join(" ");
 }
@@ -3518,6 +3519,12 @@ Delegation rules:
       },
       Bash: {
         command: Type.String(),
+        visible: Type.Optional(
+          Type.Boolean({
+            description:
+              "Open a visible Windows console for this command when user-visible progress or an independent long-running process is needed; omit for the default hidden captured execution.",
+          }),
+        ),
         timeout: Type.Optional(
           Type.Number({
             minimum: MIN_COMMAND_TIMEOUT_SECONDS,
