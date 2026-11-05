@@ -30,6 +30,8 @@ pub mod ignore_rules;
 mod image_dimensions;
 pub mod shell;
 #[cfg(windows)]
+mod windows_console;
+#[cfg(windows)]
 mod windows_process_tree;
 
 pub use hashline::{HashlineContext, HashlineStore};
@@ -292,9 +294,6 @@ struct ToolRunnerStartConfig {
     /// (ADR 0329). Empty for every other call.
     #[serde(default)]
     extra_env: Vec<(String, String)>,
-    /// When true, launch the shell in a user-visible Windows console and let it outlive this tool call.
-    #[serde(default)]
-    visible: bool,
 }
 
 fn path_has_nul(path: &Path) -> bool {
@@ -464,48 +463,12 @@ pub async fn run_internal_tool_runner() -> Result<i32> {
         .await
         .map_err(|error| anyhow!(error))?;
 
-    let mut command = {
-        #[cfg(windows)]
-        {
-            if config.visible {
-                use base64::Engine as _;
-                let launch_spec = serde_json::json!({
-                    "program": config.program.to_string_lossy(),
-                    "args": config.args.clone(),
-                    "workspace": config.workspace.to_string_lossy(),
-                });
-                let encoded = base64::engine::general_purpose::STANDARD
-                    .encode(serde_json::to_vec(&launch_spec).map_err(|error| anyhow!(error))?);
-                let script = format!(
-                    "$spec = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}')) | ConvertFrom-Json; $process = Start-Process -FilePath $spec.program -ArgumentList ([string[]]$spec.args) -WorkingDirectory $spec.workspace -PassThru; [Console]::Out.WriteLine(('visible process started: {{0}}' -f $process.Id))"
-                );
-                let mut launcher = Command::new("powershell.exe");
-                launcher.args([
-                    "-NoLogo",
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    &script,
-                ]);
-                launcher
-            } else {
-                Command::new(&config.program)
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            Command::new(&config.program)
-        }
-    };
-    if !(cfg!(windows) && config.visible) {
-        command.args(&config.args);
-    }
+    let mut command = Command::new(&config.program);
     command
+        .args(&config.args)
+        .current_dir(&config.workspace)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
-        .current_dir(&config.workspace)
         .stderr(Stdio::inherit())
         .kill_on_drop(true);
     if let Some(scratch_dir) = config.scratch_dir.as_deref() {
@@ -2893,22 +2856,15 @@ async fn spawn_tool_runner(
     let mut child = spawn_with_retries(&mut command).await?;
     let pid = child.id().unwrap_or_default();
     #[allow(unused_mut)]
-    let mut ownership = if config.visible {
-        // The visible launcher returns after Start-Process hands off to the
-        // user-facing process. It must stay outside the runner job so the
-        // download is not killed when this tool call ends.
-        ProcessOwnership::default()
-    } else {
-        match ProcessOwnership::assign(&child) {
-            Ok(ownership) => ownership,
-            Err(error) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                return Err((
-                    "TOOL_FAILED".into(),
-                    format!("shell runner process ownership failed: {error}"),
-                ));
-            }
+    let mut ownership = match ProcessOwnership::assign(&child) {
+        Ok(ownership) => ownership,
+        Err(error) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err((
+                "TOOL_FAILED".into(),
+                format!("shell runner process ownership failed: {error}"),
+            ));
         }
     };
 
@@ -3051,7 +3007,21 @@ async fn tool_bash(
         .get("command")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ("INVALID_ARGUMENT".into(), "command required".into()))?;
-    let visible = args.get("visible").and_then(Value::as_bool).unwrap_or(false);
+    let visible = match args.get("visible") {
+        None | Some(Value::Bool(false)) => false,
+        Some(Value::Bool(true)) => true,
+        _ => return Err(("INVALID_ARGUMENT".into(), "visible must be a boolean".into())),
+    };
+    if visible {
+        #[cfg(windows)]
+        {
+            return windows_console::launch(root, scratch, command, &options);
+        }
+        #[cfg(not(windows))]
+        {
+            return Err(("INVALID_ARGUMENT".into(), "visible console execution is only available on Windows".into()));
+        }
+    }
 
     let resolved = shell::resolve_shell(&options.command_shell_id)
         .map_err(|message| ("SHELL_NOT_FOUND".to_string(), message))?;
@@ -3082,7 +3052,6 @@ async fn tool_bash(
         }),
         env_path: shell::user_login_path().map(str::to_string),
         extra_env: options.extra_env.clone(),
-        visible,
     };
     let SpawnedToolRunner {
         pid,
@@ -3395,7 +3364,13 @@ pub fn builtin_tool_defs() -> Value {
             "risk": "high",
             "parameters": {
                 "type": "object",
-                "properties": { "command": { "type": "string" } },
+                "properties": {
+                    "command": { "type": "string" },
+                    "visible": {
+                        "type": "boolean",
+                        "description": "Open a visible Windows console for this command when user-visible progress or an independent long-running process is needed; omit for the default hidden captured execution."
+                    }
+                },
                 "required": ["command"]
             }
         }
