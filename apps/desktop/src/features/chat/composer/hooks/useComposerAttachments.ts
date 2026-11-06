@@ -1,3 +1,4 @@
+import { readComposerDraft, readComposerDraftRevision } from "../../../../lib/composer-draft-cache";
 import {
   useState,
   useRef,
@@ -238,23 +239,33 @@ export function useComposerAttachments({
     if (isInputBlocked) return;
     const text = event.clipboardData.getData("text/plain");
     const pastedFiles = clipboardFiles(event.clipboardData);
-    const files = preferClipboardText(text, pastedFiles, api.getDroppedFilePath)
+    const preferText = preferClipboardText(text, pastedFiles, api.getDroppedFilePath);
+    const files = preferText
       ? []
       : pastedFiles;
+    const hasNativeFileTypes = event.clipboardData.types?.includes("Files");
+    const nativeFilePaste = !preferText && (hasNativeFileTypes || !text);
     const textLength = Array.from(text).length;
     const isLargeTextPaste = !files.length && textLength > largePasteThreshold;
-    if (isLargeTextPaste || files.length) {
+    if (isLargeTextPaste || files.length || nativeFilePaste) {
       event.preventDefault();
       const editor = event.currentTarget;
-      const { start: selectionStart, end: selectionEnd } = editorSelectionRange(editor);
-      const sourceValue = readEditorValue(editor);
+      let { start: selectionStart, end: selectionEnd } = editorSelectionRange(editor);
+      let sourceValue = readEditorValue(editor);
       const sourceSessionId = activeSessionId;
       const sourceDraftKey = draftKey;
-      const previousReferences = snapshotReferences(sourceSessionId ?? "");
+      const sourceWorkspacePath = useAppStore.getState().workspace?.path ?? "";
+      const sourceDraftId = useAppStore.getState().draftSessionId ?? null;
+      let previousReferences = snapshotReferences(sourceSessionId ?? "");
+      const sourceRevision = readComposerDraftRevision(sourceDraftKey);
       setPasting(true);
       try {
-        const { sessionId: targetSessionId, draftId } = await resolveAttachmentOwner(sourceSessionId);
-        const payload = files.length
+        const native = !isLargeTextPaste ? await api.readClipboardDirectories() : null;
+        if (!native && !files.length && !isLargeTextPaste) {
+          if (hasNativeFileTypes) throw new Error(t("chat.directoryPasteUnavailable"));
+          return;
+        }
+        const payload = native ? [] : files.length
           ? await Promise.all(
               files.map(async (file) => ({
                 name: file.name || undefined,
@@ -276,9 +287,45 @@ export function useComposerAttachments({
                 },
               ];
             })();
+        if (!sourceSessionId) {
+          const current = useAppStore.getState();
+          if (current.activeSessionId || (current.workspace?.path ?? "") !== sourceWorkspacePath) return;
+          if (sourceDraftId && current.draftSessionId !== sourceDraftId) return;
+        }
+        // Folder cards stay prompt text; only copied bytes need a durable owner.
+        const { sessionId: targetSessionId, draftId } = !native || native.token
+          ? await resolveAttachmentOwner(sourceSessionId)
+          : { sessionId: sourceSessionId || undefined, draftId: undefined };
         const referenceSessionId = targetSessionId ?? "";
-        const result = await api.pasteFiles(targetSessionId, payload, draftId);
+
+        let result;
+        if (native) {
+          const imported = native.token
+            ? await api.importFiles(targetSessionId, native.token, draftId)
+            : { files: [] };
+          let index = 0;
+          result = { files: native.items.map(item => item.kind === "directory"
+            ? { path: item.path, name: item.name, kind: "directory" as const, mimeType: undefined }
+            : imported.files[index++]) };
+        } else {
+          result = await api.pasteFiles(targetSessionId, payload, draftId);
+        }
         if (draftId && useAppStore.getState().draftSessionId !== draftId) return;
+        if (native && readComposerDraftRevision(sourceDraftKey) !== sourceRevision) {
+          if (useAppStore.getState().activeSessionId === sourceSessionId) {
+            sourceValue = readEditorValue(editor);
+            const selection = editorSelectionRange(editor);
+            selectionStart = selection.start;
+            selectionEnd = selection.end;
+            previousReferences = snapshotReferences(sourceSessionId ?? "");
+          } else {
+            const latest = readComposerDraft(sourceDraftKey);
+            sourceValue = latest?.text ?? sourceValue;
+            selectionStart = selectionEnd = sourceValue.length;
+            previousReferences = latest?.fileReferences ?? previousReferences;
+          }
+        }
+        if (native && sourceSessionId && !useAppStore.getState().sessions.some(session => session.id === sourceSessionId)) return;
         const chips = result.files.map((file) => {
           const token = nextChipToken();
           return {
@@ -308,13 +355,13 @@ export function useComposerAttachments({
             ...chips.map((chip) => draftFileReference(chip.reference)),
           ],
         });
-        const currentSessionId = useAppStore.getState().activeSessionId;
+        const currentSessionId = useAppStore.getState().activeSessionId || undefined;
         if (currentSessionId === targetSessionId) {
           draft.applyEditorDraft(nextText, nextReferences, selectionStart + inserted.length);
         } else if (sourceDraftKey === HOME_DRAFT_KEY) {
           deleteComposerDraft(HOME_DRAFT_KEY);
         }
-        showToast(
+        if (!native) showToast(
           t,
           files.length ? "chat.filesPasted" : "chat.largeTextPasted",
           files.length

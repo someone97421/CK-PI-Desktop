@@ -7,7 +7,7 @@ register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 // `restoreTranscriptReadingPosition` escapes the id with the browser-only
 // `CSS.escape`; this suite runs the function directly in Node.
 globalThis.CSS ??= { escape: (value) => String(value).replace(/["\\]/g, "\\$&") };
-const { captureTranscriptReadingPosition, restoreTranscriptReadingPosition } = await import(
+const { captureTranscriptReadingPosition, restoreTranscriptReadingPosition, isTranscriptReadingAnchorVisible } = await import(
   "../src/lib/transcript-reading-position.ts"
 );
 
@@ -196,4 +196,30 @@ test("capture also records the outer entry row as a folded-drawer fallback", () 
     [position.messageId, position.offset, position.anchorId, position.anchorOffset],
     ["tool", 40, "turn", -300],
   );
+});
+
+test("anchor visibility uses its intended offset, not displacement from a lazy predecessor", () => {
+  const scroller = fakeScroller();
+  const row = { getBoundingClientRect: () => ({ top: 900, height: 800 }) };
+  assert.equal(isTranscriptReadingAnchorVisible(scroller, fakeContent({ row }), bookmark({ offset: 77 })), true);
+});
+
+test("an anchor changes only after its full row leaves the intended viewport", () => {
+  const scroller = fakeScroller();
+  const row = { getBoundingClientRect: () => ({ top: 0, height: 800 }) };
+  const content = fakeContent({ row });
+  for (const [offset, visible] of [[599, true], [600, false], [-799, true], [-800, false]]) {
+    assert.equal(isTranscriptReadingAnchorVisible(scroller, content, bookmark({ offset })), visible);
+  }
+  assert.equal(isTranscriptReadingAnchorVisible(scroller, fakeContent(), bookmark()), false);
+  assert.equal(isTranscriptReadingAnchorVisible(scroller, content, bookmark({ messageId: undefined })), false);
+  assert.equal(isTranscriptReadingAnchorVisible({ ...scroller, clientHeight: 0 }, content, bookmark()), false);
+});
+
+test("anchor visibility falls back to the folded drawer's outer row", () => {
+  const scroller = fakeScroller();
+  const row = { getBoundingClientRect: () => ({ top: 900, height: 800 }) };
+  const content = { querySelector: selector => selector.startsWith("[data-reading-anchor=") ? row : null };
+  assert.equal(isTranscriptReadingAnchorVisible(scroller, content, bookmark({ anchorId: "turn", anchorOffset: -300 })), true);
+  assert.equal(isTranscriptReadingAnchorVisible(scroller, content, bookmark({ anchorId: "turn", anchorOffset: -800 })), false);
 });

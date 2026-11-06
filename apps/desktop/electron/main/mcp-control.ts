@@ -478,6 +478,7 @@ export const MCP_CONTROL_BLOCKED_CHANNEL_KEYS = [
   "composerPickPhotos",
   "composerImportFiles",
   "composerPasteFiles",
+  "composerReadClipboardDirectories",
   "clipboardRecordPaste",
   "menuRendererReady",
   "traySetSessionPreferences",

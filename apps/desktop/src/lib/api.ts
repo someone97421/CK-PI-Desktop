@@ -1,6 +1,10 @@
 import { fileHostingWriteError, isAppearanceSettings, normalizeAppearance, normalizeFileHostingSettings } from "@pi-desktop/shared";
 import { resolveLocale } from "@pi-desktop/i18n";
 import type { ReviewContextLines, ReviewContextResult, ReviewTurnsPage, ReviewChangesPage } from "@pi-desktop/shared";
+type ClipboardDirectoryPaste = {
+  items: Array<{ kind: "directory"; path: string; name: string } | { kind: "file"; name: string }>;
+  token: string | null;
+};
 import { projectPlanHistory } from "./plan-history";
 import { guardRemoteInvocation } from "./remote-ipc-safety";
 import { isRemoteSession, safeSessionSummary } from "./remote-session-safety";
@@ -1192,6 +1196,7 @@ export const api = {
     }),
   pickFiles: () =>
     invoke<{ token: string | null; canceled?: boolean }>(IPC.invoke.composerPickFiles),
+  readClipboardDirectories: () => invoke<ClipboardDirectoryPaste | null>(IPC.invoke.composerReadClipboardDirectories),
   getDroppedFilePath: (file: File) =>
     window.piDesktop?.getDroppedFilePath?.(file) ?? null,
   pickPhotos: () =>

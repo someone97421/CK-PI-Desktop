@@ -477,6 +477,8 @@ export const zhCN = {
     fileMenu: "引用文件",
     fileReferences: "此草稿引用的文件",
     removeFileReference: "移除文件引用 {{name}}",
+    directoryReference: "文件夹",
+    directoryPasteUnavailable: "无法获取所复制文件夹的完整路径，请将文件夹拖入输入框。",
     removePluginMark: "移除 {{name}}",
     pluginTriggerMenu: "插件建议",
     messageAttachments: "此消息中的附件",

@@ -124,6 +124,30 @@ export function captureTranscriptReadingPosition(
     scrollTop: scroller.scrollTop, windowSize, transcriptRevision };
 }
 
+function readingPositionCandidates(position: TranscriptReadingPosition): Array<[string, number]> {
+  if (!position.messageId) return [];
+  const id = CSS.escape(position.messageId);
+  const anchorId = CSS.escape(position.anchorId ?? position.messageId);
+  return [
+    [`[data-message-id="${id}"]`, position.offset],
+    [`[data-minimap-id="${id}"]`, position.offset],
+    [`[data-reading-anchor="${anchorId}"]`, position.anchorOffset ?? position.offset],
+  ];
+}
+
+export function isTranscriptReadingAnchorVisible(
+  scroller: HTMLElement,
+  content: HTMLElement,
+  position: TranscriptReadingPosition,
+): boolean {
+  if (!transcriptHasLayout(scroller)) return false;
+  for (const [selector, offset] of readingPositionCandidates(position)) {
+    const height = content.querySelector<HTMLElement>(selector)?.getBoundingClientRect().height ?? 0;
+    if (height > 0) return offset < scroller.clientHeight && offset + height > 0;
+  }
+  return false;
+}
+
 export type TranscriptReadingRestore = "aligned" | "missing" | "unavailable";
 
 /** `unavailable` means no layout yet; `missing` means no anchored row is mounted. */
@@ -138,13 +162,7 @@ export function restoreTranscriptReadingPosition(
     scroller.scrollTop = position.scrollTop;
     return "aligned";
   }
-  const id = CSS.escape(position.messageId);
-  const anchorId = CSS.escape(position.anchorId ?? position.messageId);
-  const candidates: Array<[string, number]> = [
-    [`[data-message-id="${id}"]`, position.offset],
-    [`[data-minimap-id="${id}"]`, position.offset],
-    [`[data-reading-anchor="${anchorId}"]`, position.anchorOffset ?? position.offset],
-  ];
+  const candidates = readingPositionCandidates(position);
   let waiting = false;
   for (const [selector, offset] of candidates) {
     const row = content.querySelector<HTMLElement>(selector);

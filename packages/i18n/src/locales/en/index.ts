@@ -482,6 +482,8 @@ export const en = {
     fileMenu: "File references",
     fileReferences: "Files referenced by this draft",
     removeFileReference: "Remove file reference {{name}}",
+    directoryReference: "Folder",
+    directoryPasteUnavailable: "The copied folder's full path is unavailable. Drag the folder into the composer instead.",
     removePluginMark: "Remove {{name}}",
     pluginTriggerMenu: "Plugin suggestions",
     messageAttachments: "Attachments in this message",

@@ -573,7 +573,7 @@ export function createSessionSlice({
         if (requestedProjectPath === null) {
           if (get().workspace) {
             await get().clearProject({ navigationIntent: intent });
-            if (!runtime.navigationIntentIsCurrent(intent)) return;
+            if (!runtime.navigationIntentIsCurrent(intent)) return null;
           }
           set((state) => {
             const stack = state.navStack.slice(0, state.navIndex + 1);
@@ -606,7 +606,7 @@ export function createSessionSlice({
               navIndex: options?.record === false ? state.navIndex : nextStack.length - 1,
             };
           });
-          return;
+          return null;
         }
 
         if (
@@ -619,7 +619,7 @@ export function createSessionSlice({
           const workspace = await get().activateProject(requestedProjectPath, {
             navigationIntent: intent,
           });
-          if (!runtime.navigationIntentIsCurrent(intent)) return;
+          if (!runtime.navigationIntentIsCurrent(intent)) return null;
           if (!workspace) throw new Error(i18n.t("errors.workspaceActivationFailed"));
         }
 
@@ -637,12 +637,12 @@ export function createSessionSlice({
             submitted: runtime.submittedComposerDrafts.has(latest.id),
           })
         ) {
-          if (get().activeSessionId === latest.id && get().page === "chat") return;
+          if (get().activeSessionId === latest.id && get().page === "chat") return latest.id;
           await get().selectSession(latest.id, { navigationIntent: intent });
-          return;
+          return runtime.navigationIntentIsCurrent(intent) ? latest.id : null;
         }
 
-        await persistSessionAndSelect({
+        return await persistSessionAndSelect({
           intent,
           projectPath: requestedProjectPath,
           draftConfiguration: null,

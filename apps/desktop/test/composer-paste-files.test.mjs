@@ -33,12 +33,12 @@ test("composer converts oversized text paste and materializes clipboard files", 
   // @token that later edits could corrupt or silently drop.
   assert.doesNotMatch(composer, /const token = `@\$\{displayName\}`/);
   assert.match(composer, /sourceValue\.slice\(0, selectionStart\) \+/);
-  assert.match(composer, /writeComposerDraft\(sessionId, \{/);
-  assert.match(composer, /if \(isLargeTextPaste \|\| files\.length\) \{/);
+  assert.match(composer, /writeComposerDraft\(targetSessionId \?\? sourceDraftKey, \{/);
+  assert.match(composer, /if \(isLargeTextPaste \|\| files\.length \|\| nativeFilePaste\) \{/);
   assert.match(composer, /file\.arrayBuffer\(\)/);
   assert.match(
     composer,
-    /createFileReference\(file\.path, file\.name, sessionId, \{[\s\S]*kind: file\.kind/,
+    /createFileReference\(file\.path, file\.name, referenceSessionId, \{[\s\S]*kind: file\.kind/,
   );
   assert.match(composer, /serializeComposerFileReferences\(rawText, activeFileReferences\)/);
   assert.match(
@@ -52,7 +52,7 @@ test("composer converts oversized text paste and materializes clipboard files", 
   assert.match(composer, /function setEditorCaret\(/);
   assert.doesNotMatch(composer, /<textarea/);
   assert.doesNotMatch(composer, /setSelectionRange\(/);
-  assert.match(composer, /await materializeDraftSession\(\)/);
+  assert.match(composer, /await resolveAttachmentOwner\(sourceSessionId\)/);
 });
 
 test("expanding a pasted text chip preserves it when the bounded read fails", () => {

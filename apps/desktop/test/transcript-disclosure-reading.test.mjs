@@ -101,8 +101,10 @@ test("holding a disclosure leaves follow without a delayed grab-back", () => {
   // on real input or an explicit re-pin, never by taking the bottom back later.
   assert.match(
     transcript,
-    /const releaseFollow = useCallback\(\(\) => \{\s*stopSmoothScroll\(scrollRef\.current\);\s*cancelReadingPosition\(\);\s*cancelFollowScroll\(\);\s*pinnedRef\.current = false;\s*setShowJump\(true\);/,
+    /const leaveFollow = useCallback\(\(\) => \{\s*cancelReadingPosition\(\);\s*cancelFollowScroll\(\);\s*pinnedRef\.current = false;\s*setShowJump\(true\);/,
   );
+  assert.match(transcript,
+    /const releaseFollow = useCallback\(\(\) => \{\s*latestNavigation\.cancel\(\);\s*stopSmoothScroll\(scrollRef\.current\);\s*leaveFollow\(\);/);
   assert.match(
     transcript,
     /const enterDisclosureReading = useCallback\(\(\) => \{\s*releaseFollow\(\);/,
@@ -127,7 +129,7 @@ test("real input, a new turn and every navigation drop the held position", () =>
   );
   assert.match(
     transcript,
-    /const jumpToLatest = useCallback\(\(\) => \{\s*(?:\/\/[^\n]*\n\s*)*lastScrollGestureAtRef\.current = -Infinity;\s*cancelReadingPosition\(\);\s*cancelHistoryPaging\(\);\s*releaseDisclosureAnchor\(\);\s*pinnedRef\.current = true;/,
+    /const jumpToLatest = useCallback\(\(arrive\?: \(\) => void\) => \{\s*(?:\/\/[^\n]*\n\s*)*lastScrollGestureAtRef\.current = -Infinity;\s*setPendingAnnotation\(null\);\s*cancelReadingPosition\(\);\s*cancelHistoryPaging\(\);\s*cancelFollowScroll\(\);\s*releaseDisclosureAnchor\(\);\s*pinnedRef\.current = true;/,
   );
   assert.match(
     transcript,

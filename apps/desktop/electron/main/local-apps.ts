@@ -508,10 +508,7 @@ export async function createDefaultLocalAppDeps(): Promise<LocalAppDeps> {
     },
     async getFileIcon(target) {
       try {
-        // macOS 的 normal 为 32px；large 会触发 IconLoader 的原生断言，无法由 catch 捕获。
-        // 其他平台沿用 large，超出字节预算的结果仍由目录扫描丢弃。
-        const size = process.platform === "darwin" ? "normal" : "large";
-        const icon = await app.getFileIcon(target, { size });
+        const icon = await app.getFileIcon(target, { size: "small" });
         return icon ?? null;
       } catch {
         return null;

@@ -389,15 +389,28 @@ export function createSessionCoordination({
       set({ draftSessionId: crypto.randomUUID() });
       state = get();
     }
-    const scopeKey = runtime.newSessionScopeKey(!state.workspace?.path && state.draftSessionId
+    const draftScoped = !state.workspace?.path && !!state.draftSessionId;
+    const scopeKey = runtime.newSessionScopeKey(draftScoped
       ? `draft:${state.draftSessionId}` : state.workspace?.path ?? null);
     const pending = runtime.pendingNewSessionRequests.get(scopeKey);
     if (pending) {
-      await pending;
-      const activeId = get().activeSessionId;
-      if (activeId) return activeId;
+      const pendingId = await pending;
+      // Opening a temporary draft shares this scope but never creates a row;
+      // the first input still owns the draft's materialization.
+      if (pendingId || !draftScoped) return pendingId;
+      const shared = runtime.pendingNewSessionRequests.get(scopeKey);
+      if (shared && shared !== pending) return await shared;
+      if (get().activeSessionId) return get().activeSessionId ?? null;
     }
-    return persistSessionAndSelect({ intent });
+    const request = persistSessionAndSelect({ intent });
+    runtime.pendingNewSessionRequests.set(scopeKey, request);
+    try {
+      return await request;
+    } finally {
+      if (runtime.pendingNewSessionRequests.get(scopeKey) === request) {
+        runtime.pendingNewSessionRequests.delete(scopeKey);
+      }
+    }
   }
 
   return {
