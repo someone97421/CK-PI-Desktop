@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 11 as const;
-export const SCHEMA_VERSION = 27 as const;
+export const SCHEMA_VERSION = 28 as const;
 export { APP_ID, APP_NAME, APP_SLUG, APP_REPOSITORY, APP_VERSION, APP_DISPLAY_VERSION,
   APP_BUILD_TIME, APP_BUILD_TIMEZONE, APP_LEGACY_LOCK_NAME } from "./app-build.js";
 
@@ -203,6 +203,9 @@ export const IPC = {
     appearanceSystemIconGet: "pi-desktop/appearanceMedia/systemIconGet",
     appearanceSystemIconApply: "pi-desktop/appearanceMedia/systemIconApply",
     configSyncGetState: "pi-desktop/configSync/getState",
+    backgroundTasksList: "pi-desktop/backgroundTasks/list",
+    backgroundTasksOutput: "pi-desktop/backgroundTasks/output",
+    backgroundTasksStop: "pi-desktop/backgroundTasks/stop",
     configSyncConfigure: "pi-desktop/configSync/configure",
     configSyncTest: "pi-desktop/configSync/test",
     configSyncSyncNow: "pi-desktop/configSync/syncNow",
@@ -499,6 +502,7 @@ export const IPC = {
     settingsChanged: "pi-desktop/app/event/settingsChanged",
     appearanceMediaChanged: "pi-desktop/app/event/appearanceMediaChanged",
     configSyncChanged: "pi-desktop/configSync/event/changed",
+    backgroundTasksChanged: "pi-desktop/backgroundTasks/event/changed",
     /** What a running sync is doing, while it is still running. */
     configSyncProgress: "pi-desktop/configSync/event/progress",
     extensionsUiPrompt: "pi-desktop/extensions/event/uiPrompt",

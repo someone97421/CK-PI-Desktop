@@ -151,6 +151,7 @@ export async function startPiHost(config: PiHostConfig, options: { log?: HostLog
   };
   const startSidecar = async () => {
     const sidecar = new AgentSidecar({
+      rejectBackgroundBash: true,
       launch: { command: config.nodeBinary, args: [config.sidecarEntry], env: { ...process.env, PI_DESKTOP_DATA_DIR: config.dataDir } },
       onStderr: log.child("agent"),
     });

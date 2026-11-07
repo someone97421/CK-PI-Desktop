@@ -1,3 +1,4 @@
+import { buildJobTools } from "./background-job-tools.js";
 import {
   MAX_MUTATION_RECOVERY_FAILURES, BASH_PATCH_FAILURE_KEY,
   RECOVERABLE_MUTATION_ERROR_CODES, mutationFailureKey, isPatchCommand,
@@ -5,6 +6,7 @@ import {
 } from "./mutation-recovery.js";
 import { DESKTOP_AGENT_IDENTITY } from "./agent-identity.js";
 import { resolveMcpToolSelection } from "./mcp-tool-selection.js";
+import { concreteResponseModel } from "./response-model.js";
 import { BatchPlanner, withBatchTurn } from "./batch-planner.js";
 import { TOOL_EXECUTION_SPECS, resolveBatchExecutionMode, toolExecutionMode, withDynamicTaskExecutionMode } from "./tool-execution-policy.js";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -18,6 +20,7 @@ import { restoreHostedSearchReplay } from "./hosted-search-replay.js";
 import { requestExtensionUi } from "./extensions/ui-request.js";
 import { readLocalRequestErrorDetails } from "./local-request-errors.js";
 import { isValidToolCall, recoverMalformedToolCalls } from "./tool-call-recovery.js";
+import { textToolCallDiagnostic } from "./text-tool-call.js";
 import { imageGenerationDescription, imageGenerationParameters } from "./image-generation/tool.js";
 import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
 import { createJevClassifierTool } from "./jev-classifier-tool.js";
@@ -49,7 +52,6 @@ import {
   getCurrentTools,
   getToolStateChanges,
   toToolDeclaration,
-  Type,
   type Api,
   type AssistantMessage,
   type ImageContent,
@@ -60,6 +62,7 @@ import {
   type Usage,
   type UserMessage,
 } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import {
   APP_VERSION,
   toolResultText,
@@ -1314,6 +1317,7 @@ export function commandShellGuidance(
 function commandShellToolDescription(
   shell: CommandShellOption,
   scratchDir?: string,
+  background = false,
 ): string {
   const formattedScratch = formatScratchDirForShell(shell, scratchDir);
   return [
@@ -1323,6 +1327,9 @@ function commandShellToolDescription(
     `The session scratch directory variable is ${shellScratchVariable(shell)}.`,
     `An optional timeout from 1 to ${MAX_COMMAND_TIMEOUT_SECONDS} seconds may be supplied; without it, the command defaults to a 60-second timeout.`,
     "Set visible to true when the command needs a visible Windows console window or must continue independently with user-visible progress; leave it unset for ordinary captured output.",
+    ...(background
+      ? ["Set runInBackground: true to keep a local command running after the turn ends; control it with TaskList, TaskWait, or TaskStop using its job reference. Background completion does not resume the model. It cannot be combined with visible."]
+      : []),
     ...(formattedScratch ? [`The session scratch directory is ${formattedScratch}.`] : []),
   ].join(" ");
 }
@@ -1968,6 +1975,7 @@ export class DesktopAgentRuntime {
   private acceptingSteering = false;
   private steeringContinuation = false;
   private readonly delegationWaitWakeups = new Set<(reason: "steered" | "aborted") => void>();
+  private steeringWaitAbort?: AbortController;
   /** 已接收的引导保留指纹，重试不得重复投递或复用不同输入。 */
   private readonly acceptedSteering = new Map<string, { turnId: string; fingerprint: string }>();
   private pendingSteering = new Map<AgentMessage, { id: string; toolNames: string[] }>();
@@ -3427,7 +3435,7 @@ Delegation rules:
         case "Edit":
           return `Replace, insert, or delete lines in an existing file. Names positions and supplies new content only — never old_string. Required: path, tag (4 hex from the latest Read/Grep/Write/Edit), ops. Ops: PUT N.=M: replace inclusive lines N–M; PUT <N: insert before N; PUT >N: insert after N; PUT >$: append; CUT N.=M delete; REM delete the file; MV DEST rename after other ops. Body rows are + plus the final line text. Every PUT with body rows must include the trailing colon, for example PUT 48.=48:; PUT 48.=48 followed by + rows is invalid. A colonless PUT is only for a register paste such as PUT <1 @name. No -old or context rows. Ranges name only the lines being changed. Re-ground on the tag returned by every successful write. After one failed Edit, classify the error: Read the live file for a stale tag or unseen lines (or retry unchanged on a complete EDIT_LINES_UNSEEN reveal), but correct syntax or range errors directly; do not guess. Do not edit the same path concurrently.${scratchPathHint}${externalPathHint}`;
         case "Bash":
-          return `${commandShellToolDescription(this.commandShell, this.scratchDir)} Use Edit or Write instead of apply_patch, git apply, or patch; do not retry a failed shell patch command repeatedly.`;
+          return `${commandShellToolDescription(this.commandShell, this.scratchDir, !this.remoteWorkspace)} Use Edit or Write instead of apply_patch, git apply, or patch; do not retry a failed shell patch command repeatedly.`;
         case "TodoWrite":
           return todoWriteDescription;
         case ASK_TOOL_NAME:
@@ -3535,6 +3543,16 @@ Delegation rules:
               `Optional command timeout in seconds from 1 to ${MAX_COMMAND_TIMEOUT_SECONDS}; defaults to 60 seconds.`,
           }),
         ),
+        ...(this.remoteWorkspace
+          ? {}
+          : {
+              runInBackground: Type.Optional(
+                Type.Boolean({
+                  description:
+                    "Keep this local command running after the turn ends and return its job reference immediately. Cannot be combined with visible; timeout does not apply.",
+                }),
+              ),
+            }),
       },
       PluginScaffold: {
         template: Type.String(),
@@ -3563,6 +3581,13 @@ Delegation rules:
               )
           : undefined;
         const isBash = toolName === "Bash";
+        const runInBackground = isBash && isRecord(params) && params.runInBackground === true;
+        if (runInBackground && this.remoteWorkspace) {
+          throw Object.assign(new Error("runInBackground is not supported on a remote workspace. Run the command in the foreground or use a local workspace."), { errorCode: "INVALID_ARGUMENT" });
+        }
+        if (runInBackground && isRecord(params) && params.visible === true) {
+          throw Object.assign(new Error("runInBackground cannot be combined with visible. Choose one: visible opens a console window; runInBackground keeps a managed job."), { errorCode: "INVALID_ARGUMENT" });
+        }
         const timeoutMs = isBash ? commandTimeoutMs(params) : undefined;
         let progress = "";
         let progressDirty = false;
@@ -3704,6 +3729,7 @@ Delegation rules:
                     expectedCommandShellId: this.commandShell.id,
                     expectedCommandShellDialect: this.commandShell.dialect,
                     timeoutMs,
+                    ...(runInBackground ? { runInBackground: true } : {}),
                   }
                 : {}),
               ...(toolName.startsWith("plugin_")
@@ -4168,21 +4194,33 @@ Delegation rules:
       this.mode === "agent"
         ? []
         : [this.buildSubmitTool(this.mode)];
-    // Keep configured delegation declarations stable across mode changes.
-    // Contract modes reject execution before handlers can spawn/control a
-    // delegate; publishing a schema never grants delegation permission.
-    const subagentTools =
-      this.subagents.length
+    // Job controls stay available without subagents on local workspaces.
+    // Contract modes retain declarations but reject execution before handlers.
+    const jobTools = this.subagents.length || !this.remoteWorkspace
+      ? buildJobTools({
+          wait: this.buildSubagentWaitTool(),
+          list: this.buildSubagentListTool(),
+          stop: this.buildSubagentStopTool(),
+        }, {
+          host: this.host,
+          sessionId: this.sessionId,
+          remote: Boolean(this.remoteWorkspace),
+          defaultTimeoutSeconds: TASKWAIT_DEFAULT_TIMEOUT_SECONDS,
+          maxTimeoutSeconds: TASKWAIT_MAX_TIMEOUT_SECONDS,
+          wait: (run, signal) => this.runSteerableJobWait(run, signal),
+        })
+      : [];
+    const subagentTools = [
+      ...(this.subagents.length ? [this.buildSubagentTool()] : []),
+      ...jobTools,
+      ...(this.subagents.length
         ? [
-            this.buildSubagentTool(),
-            this.buildSubagentWaitTool(),
-            this.buildSubagentListTool(),
-            this.buildSubagentStopTool(),
             this.buildSubagentGuideTool(),
             this.buildSubagentInspectTool(),
             this.buildSubagentResumeTool(),
           ]
-        : [];
+        : []),
+    ];
     for (const tool of subagentTools) this.builtinTools.add(tool);
     const contextTools = this.compactionEnabled
       ? [this.buildContextCompactionTool()]
@@ -4957,8 +4995,8 @@ Delegation rules:
             ? params.description.trim()
             : "";
         return {
-          content: [{ type: "text", text: `Delegation ${delegationId} started: ${definition.name} works in the background${label ? ` (${label})` : ""}. Reports every ${reportIntervalSteps} completed tool calls without pausing. Use TaskGuide while running, TaskResume after completion for review fixes, TaskWait for progress/results, TaskStop to cancel.` }],
-          details: delegationSummary(record),
+          content: [{ type: "text", text: `Delegation ${delegationId} started: ${definition.name} works in the background${label ? ` (${label})` : ""}. Reports every ${reportIntervalSteps} completed tool calls without pausing. Use TaskGuide while running, TaskResume after completion for review fixes, TaskWait for progress/results, TaskStop to cancel. Job reference: ${JSON.stringify({ kind: "delegation", id: delegationId })}.` }],
+          details: { ...delegationSummary(record), job: { kind: "delegation", id: delegationId } },
         };
       },
     };
@@ -5489,6 +5527,30 @@ Delegation rules:
     }
   }
 
+  /** Background-job TaskWait: user steering ends the wait, never the process. */
+  private async runSteerableJobWait(
+    run: (signal: AbortSignal) => Promise<AgentToolResult<unknown>>,
+    signal?: AbortSignal,
+  ): Promise<AgentToolResult<unknown>> {
+    const steeringAbort = new AbortController();
+    this.steeringWaitAbort = steeringAbort;
+    if (this.pendingSteering.size) steeringAbort.abort();
+    try {
+      return await run(signal ? AbortSignal.any([signal, steeringAbort.signal]) : steeringAbort.signal);
+    } catch (error) {
+      const interruptedByInput = isRecord(error) && error.errorCode === "TOOL_ABORTED" &&
+        steeringAbort.signal.aborted && !signal?.aborted &&
+        !this.runCancelled && !this.disposed && !this.turnHadError;
+      if (!interruptedByInput) throw error;
+      return {
+        content: [{ type: "text", text: "Interrupted by new user input. The background command keeps running; handle the user's message before waiting again." }],
+        details: { status: "interrupted" },
+      };
+    } finally {
+      if (this.steeringWaitAbort === steeringAbort) this.steeringWaitAbort = undefined;
+    }
+  }
+
   /** `TaskWait`: converge on running delegations (ADR 0089). */
   private buildSubagentWaitTool(): AgentTool {
     return {
@@ -5720,12 +5782,15 @@ Delegation rules:
           delegations.length === 0
             ? "No subagents have been started in this session."
             : delegations
-                .map((record) => `- ${formatDelegationHeartbeat(record)}`)
+                .map((record) => `- ${formatDelegationHeartbeat(record)}; job=${JSON.stringify({ kind: "delegation", id: record.delegationId })}`)
                 .join("\n");
         return {
           content: [{ type: "text", text }],
-          details: { delegations: delegations.map(delegationSummary), total: all.length,
-            ...(offset + limit < all.length ? { nextOffset: offset + limit } : {}) },
+          details: {
+            delegations: delegations.map((record) => ({ ...delegationSummary(record), job: { kind: "delegation", id: record.delegationId } })),
+            total: all.length,
+            ...(offset + limit < all.length ? { nextOffset: offset + limit } : {}),
+          },
         };
       },
     };
@@ -8983,6 +9048,10 @@ Delegation rules:
           // inspect only the response that just ended, or a silent retry after
           // progress text would look non-silent forever.
           const responseText = content.hasText ? content.text : "";
+          // Annotate literal calls without aborting valid structured siblings.
+          const textCallDiagnostic = !failed && !aborted
+            ? textToolCallDiagnostic(responseText, this.toolCatalog)
+            : undefined;
           if (looksLikePseudoToolCall(nextText)) {
             // The visible text is a lost tool batch, not an answer. Logging it
             // separates "the model went quiet" from "the model tried to act and
@@ -9205,6 +9274,8 @@ Delegation rules:
                   thinking: nextThinking,
                 })
               : undefined;
+          // This message annotation does not become a terminal run error.
+          classifiedError ??= textCallDiagnostic;
           this.currentAssistant = {
             ...this.currentAssistant,
             content: nextText,
@@ -9213,13 +9284,14 @@ Delegation rules:
               : content.hasThinking
                 ? { thinking: undefined }
                 : {}),
-            status: failed || emptyResponse
+            status: failed || emptyResponse || textCallDiagnostic
               ? "error"
               : aborted
                 ? "aborted"
                 : "complete",
             modelId: this.provider.modelId,
             providerId: this.provider.id,
+            responseModelId: concreteResponseModel(event.message, this.provider.modelId),
             ...(usage ? { usage } : {}),
             ...(responseDurationMs !== undefined ? { responseDurationMs } : {}),
             ...(streamMs !== undefined ? { modelStreamDurationMs } : {}),
@@ -9242,6 +9314,7 @@ Delegation rules:
                 ),
           };
           if (!this.currentAssistant.providerReplay) delete this.currentAssistant.providerReplay;
+          if (!this.currentAssistant.responseModelId) delete this.currentAssistant.responseModelId;
           this.emit({ type: "message_end", message: this.currentAssistant });
           this.activeProviderRetryAttempt = 0;
           this.streamStartedAt = undefined;
@@ -9879,9 +9952,10 @@ Delegation rules:
     this.pendingSteering.set(queued, { id: message.id, toolNames });
     this.agent.steer(queued);
     this.acceptedSteering.set(message.id, { turnId: expectedTurnId, fingerprint });
-    // A subagent wait wakes up and hands control back, but the delegates keep
-    // running: steering must never cancel a subagent.
+    // A subagent or background-job wait wakes up and hands control back, but
+    // the delegates and processes keep running: steering never cancels them.
     for (const wake of this.delegationWaitWakeups) wake("steered");
+    this.steeringWaitAbort?.abort();
     // Main persists this echo through the same outbox as assistant messages.
     this.emit({ type: "message_start", message });
     this.emit({

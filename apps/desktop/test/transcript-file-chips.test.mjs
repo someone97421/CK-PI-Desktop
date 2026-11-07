@@ -59,11 +59,11 @@ test("a file chip is routed by where the reference resolved, never optimisticall
   // Project and scratch HTML run at the exact path resolved by main.
   assert.match(hook, /resolved\.inProject \|\| resolved\.scratch/);
   assert.match(hook, /isHtmlFilePath\(resolved\.absolutePath\)/);
-  assert.match(hook, /openUrl\(resolved\.absolutePath\)/);
+  assert.match(hook, /openUrl\(resolved\.absolutePath, ownerSessionId\)/);
   // Plain project files prefer the bundled file view. A path:line reference
   // uses the host file tab because the bundled view has no line-navigation API.
   assert.match(hook, /FILE_MANAGER_PLUGIN_TAB/);
-  const resolvedRefIndex = hook.indexOf("const resolved = await resolveRef(path, baseDir)");
+  const resolvedRefIndex = hook.indexOf("const resolved = await resolveRef(path, baseDir, options)");
   const livePluginViewIndex = hook.indexOf("ensureFileManagerView(workspacePath, sessionId)", resolvedRefIndex);
   assert.ok(
     livePluginViewIndex > resolvedRefIndex,

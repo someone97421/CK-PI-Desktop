@@ -111,6 +111,9 @@ pub(super) async fn execute_remote_tool(
     mut cancellation: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> tools::ToolsExecuteResult {
     let started = std::time::Instant::now();
+    if p.run_in_background || p.args.get("runInBackground").and_then(Value::as_bool) == Some(true) {
+        return failure(p, "CAPABILITY_UNAVAILABLE", "background Bash is unavailable for remote workspaces", started);
+    }
     if !matches!(
         p.tool_name.as_str(),
         "Read" | "Glob" | "Grep" | "Write" | "Edit" | "Bash"
@@ -279,6 +282,10 @@ pub(super) async fn handle(
     let p: ToolsExecuteParams = serde_json::from_value(input)
         .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
     let started = std::time::Instant::now();
+    if p.run_in_background || p.args.get("runInBackground").and_then(Value::as_bool) == Some(true) {
+        return serde_json::to_value(failure(&p, "CAPABILITY_UNAVAILABLE", "background Bash is unavailable for remote workspaces", started))
+            .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"));
+    }
     if !matches!(
         p.tool_name.as_str(),
         "Read" | "Glob" | "Grep" | "Write" | "Edit" | "Bash"
@@ -342,6 +349,8 @@ pub(super) async fn handle(
                 output_tx: Some(tx),
                 // Remote workspaces are never isolated (ADR 0329).
                 extra_env: Vec::new(),
+                run_in_background: false,
+                app_state: None,
             })
         } else {
             None

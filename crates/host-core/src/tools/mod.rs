@@ -94,7 +94,7 @@ fn windows_breakaway_allowed() -> bool {
     queried != 0 && limits.LimitFlags & JOB_OBJECT_LIMIT_BREAKAWAY_OK != 0
 }
 
-const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
+pub(crate) const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
 const PROCESS_TERMINATION_TIMEOUT: Duration = Duration::from_millis(2_000);
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 const OUTPUT_NOTIFICATION_INTERVAL: Duration = Duration::from_millis(100);
@@ -115,12 +115,12 @@ use windows_sys::Win32::System::JobObjects::{
 
 #[cfg(windows)]
 #[derive(Debug, Default)]
-struct ProcessOwnership {
+pub(crate) struct ProcessOwnership {
     job: Option<HANDLE>,
 }
 #[cfg(not(windows))]
 #[derive(Debug, Default)]
-struct ProcessOwnership;
+pub(crate) struct ProcessOwnership;
 
 impl ProcessOwnership {
     #[cfg(windows)]
@@ -247,7 +247,7 @@ impl ProcessOwnership {
     #[cfg(not(windows))]
     fn close_now(&mut self) {}
 
-    fn terminate_fail_closed(&mut self, pid: u32) -> Result<(), String> {
+    pub(crate) fn terminate_fail_closed(&mut self, pid: u32) -> Result<(), String> {
         match self.terminate(pid) {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -282,18 +282,16 @@ fn terminate_windows_process_tree(root_pid: u32) -> Result<(), String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ToolRunnerStartConfig {
-    program: PathBuf,
-    args: Vec<String>,
-    workspace: PathBuf,
+pub(crate) struct ToolRunnerStartConfig {
+    pub(crate) program: PathBuf,
+    pub(crate) args: Vec<String>,
+    pub(crate) workspace: PathBuf,
     #[serde(default)]
-    scratch_dir: Option<PathBuf>,
+    pub(crate) scratch_dir: Option<PathBuf>,
     #[serde(default)]
-    env_path: Option<String>,
-    /// Session-scoped variables such as `PI_PORT` for an isolated worktree
-    /// (ADR 0329). Empty for every other call.
+    pub(crate) env_path: Option<String>,
     #[serde(default)]
-    extra_env: Vec<(String, String)>,
+    pub(crate) extra_env: Vec<(String, String)>,
 }
 
 fn path_has_nul(path: &Path) -> bool {
@@ -659,6 +657,8 @@ pub struct ToolsExecuteParams {
     #[serde(default)]
     pub expected_command_shell_dialect: Option<String>,
     pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub run_in_background: bool,
     /// Action names that may run in Plan or Goal mode (ADR 0211). When
     /// set and non-empty, host-core admits this `plugin_*` tool in
     /// contract modes even though plugins are otherwise Plan-denied; the
@@ -843,7 +843,6 @@ fn spill_output(scratch: Option<&Path>, label: &str, text: &str) -> Option<PathB
     }
 }
 
-#[derive(Debug)]
 pub struct BashExecutionOptions {
     pub session_id: String,
     pub tool_call_id: String,
@@ -853,6 +852,20 @@ pub struct BashExecutionOptions {
     pub output_tx: Option<mpsc::UnboundedSender<String>>,
     /// Extra environment for the command, e.g. `PI_PORT` (ADR 0329).
     pub extra_env: Vec<(String, String)>,
+    pub run_in_background: bool,
+    pub app_state: Option<Arc<tokio::sync::Mutex<crate::state::AppState>>>,
+}
+
+impl std::fmt::Debug for BashExecutionOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BashExecutionOptions")
+            .field("session_id", &self.session_id)
+            .field("tool_call_id", &self.tool_call_id)
+            .field("command_shell_id", &self.command_shell_id)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("run_in_background", &self.run_in_background)
+            .finish_non_exhaustive()
+    }
 }
 
 impl BashExecutionOptions {
@@ -865,6 +878,8 @@ impl BashExecutionOptions {
             cancellation: None,
             output_tx: None,
             extra_env: Vec::new(),
+            run_in_background: false,
+            app_state: None,
         }
     }
 }
@@ -2480,12 +2495,12 @@ struct OutputChunk {
 }
 
 #[derive(Debug, Default)]
-struct Utf8Decoder {
+pub(crate) struct Utf8Decoder {
     pending: Vec<u8>,
 }
 
 impl Utf8Decoder {
-    fn push(&mut self, bytes: &[u8]) -> String {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
         self.pending.extend_from_slice(bytes);
         let mut output = String::new();
         loop {
@@ -2519,7 +2534,7 @@ impl Utf8Decoder {
         output
     }
 
-    fn finish(&mut self) -> String {
+    pub(crate) fn finish(&mut self) -> String {
         if self.pending.is_empty() {
             return String::new();
         }
@@ -2789,16 +2804,16 @@ async fn wait_for_cancellation(receiver: &mut Option<watch::Receiver<bool>>) -> 
     }
 }
 
-struct SpawnedToolRunner {
-    pid: u32,
-    ownership: ProcessOwnership,
-    control: Option<ChildStdin>,
-    stdout: Option<ChildStdout>,
-    stderr: Option<ChildStderr>,
-    wait_task: tokio::task::JoinHandle<std::io::Result<ExitStatus>>,
+pub(crate) struct SpawnedToolRunner {
+    pub(crate) pid: u32,
+    pub(crate) ownership: ProcessOwnership,
+    pub(crate) control: Option<ChildStdin>,
+    pub(crate) stdout: Option<ChildStdout>,
+    pub(crate) stderr: Option<ChildStderr>,
+    pub(crate) wait_task: tokio::task::JoinHandle<std::io::Result<ExitStatus>>,
 }
 
-async fn spawn_tool_runner(
+pub(crate) async fn spawn_tool_runner(
     config: &ToolRunnerStartConfig,
 ) -> Result<SpawnedToolRunner, (String, String)> {
     #[cfg(not(test))]
@@ -3012,6 +3027,9 @@ async fn tool_bash(
         Some(Value::Bool(true)) => true,
         _ => return Err(("INVALID_ARGUMENT".into(), "visible must be a boolean".into())),
     };
+    if visible && options.run_in_background {
+        return Err(("INVALID_ARGUMENT".into(), "visible and runInBackground cannot be combined".into()));
+    }
     if visible {
         #[cfg(windows)]
         {
@@ -3021,6 +3039,26 @@ async fn tool_bash(
         {
             return Err(("INVALID_ARGUMENT".into(), "visible console execution is only available on Windows".into()));
         }
+    }
+    if options.run_in_background {
+        let Some(app_state) = options.app_state.as_ref() else {
+            return Err(("INVALID_ARGUMENT".into(), "background execution requires host state".into()));
+        };
+        let started = crate::background_tasks::spawn_background_task_with_env(
+            app_state,
+            &options.session_id,
+            command,
+            &options.command_shell_id,
+            root,
+            scratch,
+            &options.extra_env,
+        ).await?;
+        return Ok(serde_json::json!({
+            "backgroundTaskId": started,
+            "job": { "kind": "bash", "id": started },
+            "command": command,
+            "commandShellId": options.command_shell_id,
+        }));
     }
 
     let resolved = shell::resolve_shell(&options.command_shell_id)
@@ -5110,6 +5148,8 @@ mod tests {
                 cancellation: None,
                 output_tx: None,
                 extra_env: Vec::new(),
+                run_in_background: false,
+                app_state: None,
             }),
         )
         .await;
@@ -5152,6 +5192,8 @@ mod tests {
                 cancellation: None,
                 output_tx: None,
                 extra_env: Vec::new(),
+                run_in_background: false,
+                app_state: None,
             }),
         )
         .await;
@@ -5189,6 +5231,8 @@ mod tests {
                 cancellation: None,
                 output_tx: None,
                 extra_env: Vec::new(),
+                run_in_background: false,
+                app_state: None,
             }),
         )
         .await;
@@ -5259,6 +5303,8 @@ mod tests {
             cancellation: None,
             output_tx: Some(tx),
             extra_env: Vec::new(),
+            run_in_background: false,
+            app_state: None,
         };
         let mut notifier = OutputNotifier::new(&options);
         for _ in 0..(MAX_OUTPUT_NOTIFICATIONS + 100) {
@@ -5285,6 +5331,8 @@ mod tests {
             cancellation: None,
             output_tx: None,
             extra_env: Vec::new(),
+            run_in_background: false,
+            app_state: None,
         };
 
         let output = execute_tool_with_options(
@@ -5373,6 +5421,8 @@ mod tests {
             cancellation: None,
             output_tx: None,
             extra_env: Vec::new(),
+            run_in_background: false,
+            app_state: None,
         };
         execute_tool_with_options(
             Some(workspace),

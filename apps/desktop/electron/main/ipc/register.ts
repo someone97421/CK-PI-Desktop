@@ -9,6 +9,7 @@ import { ROUTE_LOCAL, type BackendRouter } from "../remote/backend-router";
 import { registerAgentExtensionIpc } from "../agent-extensions-ipc";
 import { readNpmPath, writeNpmPath } from "../npm-preferences";
 import { registerAgentIpc } from "./agent-ipc";
+import { registerBackgroundTasksIpc } from "./background-tasks-ipc";
 import { registerAppIpc } from "./app-ipc";
 import { registerDiagnosticsIpc } from "./diagnostics-ipc";
 import { registerStartupAnimationIpc } from "./startup-animation-ipc";
@@ -289,6 +290,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     setViewingSessionId: setNotificationViewingSessionId,
     sendToRenderer,
   });
+  registerBackgroundTasksIpc({ registrar, getHost });
   registerSessionIpc({
     subagentSnapshots: dependencies.subagentSnapshots,
     registrar,

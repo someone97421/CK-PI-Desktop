@@ -411,6 +411,25 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 }
 
 /** `session.create` input: summary fields plus the isolation switch. */
+export type BackgroundTaskSummary = {
+  id: string;
+  sessionId: string;
+  command: string;
+  commandShellId: string;
+  state: "running" | "exited" | "failed" | "stopped";
+  elapsedMs: number;
+  exitCode?: number;
+};
+export type BackgroundTasksListResult = { tasks: BackgroundTaskSummary[]; version: number };
+export type BackgroundTaskOutput = {
+  id: string;
+  state: "running" | "exited" | "failed" | "stopped";
+  exitCode?: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+};
+
 export type CreateSessionInput = Partial<SessionSummary> & {
   draftId?: string;
   /** Run the session in its own git worktree (ADR 0329). */
@@ -775,6 +794,13 @@ const fileWorkspaceScope = (scope?: string | FileWorkspaceScope): FileWorkspaceS
   typeof scope === "string" ? { sessionId: scope } : scope ?? {};
 
 export const api = {
+  backgroundTasksList: () => invoke<BackgroundTasksListResult>(IPC.invoke.backgroundTasksList),
+  backgroundTasksOutput: (id: string) => invoke<BackgroundTaskOutput>(IPC.invoke.backgroundTasksOutput, { id }),
+  backgroundTasksStop: (id: string) => invoke<{ ok: boolean; found: boolean }>(IPC.invoke.backgroundTasksStop, { id }),
+  onBackgroundTasksChanged: (listener: (payload: { version?: number }) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.backgroundTasksChanged, (payload) => listener((payload ?? {}) as { version?: number }));
+  },
   getVersion: () => invoke<AppVersionInfo>(IPC.invoke.appGetVersion),
   health: () => invoke<HostHealth>(IPC.invoke.appHealth),
   getOnboarding: () => invoke<OnboardingState>(IPC.invoke.appGetOnboarding),
@@ -1850,15 +1876,24 @@ export const api = {
     invoke<FsIndexResult>(IPC.invoke.fsIndex, fileWorkspaceScope(scope)),
   fsSearch: (scope: string | FileWorkspaceScope | undefined, query: string) =>
     invoke<FsIndexResult>(IPC.invoke.fsSearch, { ...fileWorkspaceScope(scope), query }),
+  fsRevealDirectory: (path: string, sessionId: string) =>
+    invoke(IPC.invoke.fsReveal, { path, sessionId, directory: true }),
   /**
    * Complete a file reference from chat text to a real file (D320 follow-up).
    * The main process owns the root order — project, session scratch,
-   * attachments — because only it can see the scratch store.
+   * attachments — because only it can see the scratch store. `allowDirectory`
+   * lets an exact reference name a real directory (issue #2113); shorthand
+   * resolution keeps answering files only.
    */
-  fsResolveRef: (ref: string, sessionId?: string) =>
+  fsResolveRef: (
+    ref: string,
+    sessionId?: string,
+    options?: { allowDirectory?: boolean },
+  ) =>
     invoke<FsChatRefResolveResult>(IPC.invoke.fsResolveRef, {
       ref,
       ...(sessionId ? { sessionId } : {}),
+      ...(options?.allowDirectory ? { allowDirectory: true } : {}),
     }),
   composerCommands: (scope?: { sessionId?: string; temporaryWorkspacePath?: string | null }) =>
     invoke<{ commands: ComposerCommand[] }>(IPC.invoke.composerCommands, scope ?? {}),

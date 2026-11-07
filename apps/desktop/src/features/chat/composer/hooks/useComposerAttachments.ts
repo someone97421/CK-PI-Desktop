@@ -338,10 +338,7 @@ export function useComposerAttachments({
           };
         });
         const inserted = chips.map((chip) => chip.token).join("");
-        const nextText =
-          sourceValue.slice(0, selectionStart) +
-          inserted +
-          sourceValue.slice(selectionEnd);
+        const nextText = sourceValue.slice(0, selectionStart) + inserted + sourceValue.slice(selectionEnd);
         const nextReferences = [
           ...previousReferences.map((reference) =>
             createFileReference(reference.path, reference.name, referenceSessionId, reference),

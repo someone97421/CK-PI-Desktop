@@ -14,11 +14,6 @@ import { join } from "node:path";
 
 export const PLUGIN_LAUNCHER_STATE_FILE = "plugin-launcher-state.json";
 
-/**
- * The launcher must fit eight columns without squeezing: below this width the
- * grid drops to six columns, which is the one thing the user cannot undo by
- * dragging.
- */
 export const PLUGIN_LAUNCHER_MIN_WIDTH = 560;
 /**
  * Height is not a user preference any more: the renderer measures what it

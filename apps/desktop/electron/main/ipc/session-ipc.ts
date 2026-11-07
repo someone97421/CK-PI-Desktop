@@ -169,9 +169,14 @@ export function registerSessionIpc({
     isBusy: async (id) => {
       if (isSessionBusy(id)) return true;
       const currentSidecar = getSidecar();
-      if (!currentSidecar) throw new Error("sidecar unavailable");
-      const result = await currentSidecar.call<{ scratchBusy?: boolean; status: { isRunning: boolean; pendingToolConfirmations?: number } }>("agent.getStatus", { sessionId: id });
-      return isSessionBusy(id) || result.scratchBusy !== false || result.status.isRunning || (result.status.pendingToolConfirmations ?? 0) > 0;
+      const currentHost = getHost();
+      if (!currentSidecar || !currentHost) throw new Error("session runtime unavailable");
+      const [result, background] = await Promise.all([
+        currentSidecar.call<{ scratchBusy?: boolean; status: { isRunning: boolean; pendingToolConfirmations?: number } }>("agent.getStatus", { sessionId: id }),
+        currentHost.call<{ tasks: { sessionId: string; state: string }[] }>("backgroundTasks.list", { sessionId: id }),
+      ]);
+      return isSessionBusy(id) || result.scratchBusy !== false || result.status.isRunning || (result.status.pendingToolConfirmations ?? 0) > 0
+        || background.tasks.some((task) => task.sessionId === id && task.state === "running");
     },
     log: (message, data) => logger.app("session", "info", message, { data }),
   });

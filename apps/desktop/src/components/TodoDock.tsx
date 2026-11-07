@@ -6,6 +6,36 @@ import { IconCheck, IconChevronDown, IconChevronUp } from "./icons";
 import { useSessionTodosRecovery } from "../features/chat/todos/useSessionTodosRecovery";
 import { useAppStore } from "../stores/app-store";
 
+export type TodoProgress = { label: string; symbol: string; current: SessionTodo | undefined };
+
+export function todoProgress(todos: readonly SessionTodo[], t: (key: string, options?: Record<string, unknown>) => string): TodoProgress {
+  const completed = todos.filter((todo) => todo.status === "completed").length;
+  const cancelled = todos.filter((todo) => todo.status === "cancelled").length;
+  const denominator = todos.length - cancelled;
+  const current = todos.find((todo) => todo.status === "in_progress");
+  const allCancelled = todos.length > 0 && cancelled === todos.length;
+  const finished = todos.every((todo) => todo.status === "completed" || todo.status === "cancelled");
+  return {
+    label: allCancelled ? t("chat.todo.status.cancelled") : finished
+      ? t("chat.todo.completed", { completed, total: denominator })
+      : t("chat.todo.progress", { completed, total: denominator }),
+    symbol: allCancelled ? "⊘" : finished ? "✓" : "◐",
+    current,
+  };
+}
+
+export function TodoPanel({ todos, listId, interactive, labelledBy }: {
+  todos: readonly SessionTodo[]; listId: string; interactive: boolean; labelledBy?: string;
+}) {
+  return (
+    <div id={listId} className="dock-panel" role="tabpanel" aria-labelledby={labelledBy} hidden={!interactive}>
+      <div className="todo-dock-list" role="list" tabIndex={interactive ? 0 : -1}>
+        {todos.map((todo, index) => <TodoRow key={`${index}:${todo.content}`} todo={todo} shimmer={interactive} />)}
+      </div>
+    </div>
+  );
+}
+
 function statusSymbol(status: TodoStatus): string {
   switch (status) {
     case "in_progress":
@@ -29,28 +59,17 @@ export function TodoDock({ sessionId }: { sessionId: string }) {
 
   useSessionTodosRecovery(sessionId);
   if (!snapshot || snapshot.todos.length === 0) return null;
-  const completed = snapshot.todos.filter((todo) => todo.status === "completed").length;
-  const cancelled = snapshot.todos.filter((todo) => todo.status === "cancelled").length;
-  const denominator = snapshot.todos.length - cancelled;
-  const current = snapshot.todos.find((todo) => todo.status === "in_progress");
-  const allCancelled = cancelled === snapshot.todos.length;
-  const finished = snapshot.todos.every(
-    (todo) => todo.status === "completed" || todo.status === "cancelled",
-  );
-  const progressLabel = allCancelled
-    ? t("chat.todo.status.cancelled")
-    : finished
-      ? t("chat.todo.completed", { completed, total: denominator })
-      : t("chat.todo.progress", { completed, total: denominator });
+  const progress = todoProgress(snapshot.todos, t);
+  const current = progress.current;
   const currentShimmers = !expanded && current !== undefined;
   return (
     <div className={`todo-dock${expanded ? " is-expanded" : ""}`}>
       <div className="todo-dock-header">
         <span className="todo-dock-header-symbol" aria-hidden>
-          {allCancelled ? "⊘" : finished ? "✓" : "◐"}
+          {progress.symbol}
         </span>
         <div className="todo-dock-header-copy">
-          <span className="todo-dock-header-text">{progressLabel}</span>
+          <span className="todo-dock-header-text">{progress.label}</span>
           {current ? (
             <span
               className={`todo-dock-header-current${currentShimmers ? " todo-dock-shimmer" : ""}`}

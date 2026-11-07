@@ -9,7 +9,8 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
-import { splitInlineContent } from "@pi-desktop/shared";
+import { splitComposerDirectoryPrompt, splitInlineContent } from "@pi-desktop/shared";
+import { DirectoryReferenceCard } from "../DirectoryReferenceCard";
 import { useOpenChatFileRef } from "../../../hooks/use-preview-target";
 import { sessionWorkspacePath } from "../../../lib/session-workspace";
 import { sessionAllows } from "../../../lib/remote-session-safety";
@@ -45,10 +46,15 @@ import {
 } from "./TranscriptMenu";
 import { getExtraMessageAttachments } from "./extra-attachments";
 
-function skillInvocationParts(message: UiMessage): { text: string; skillId?: string }[] {
+type InvocationPart = { text: string; skillId?: string; agentName?: string };
+
+function skillInvocationParts(message: UiMessage): InvocationPart[] {
   const command = message.command ?? "";
-  const mentions = message.skillMentions ?? [];
-  const parts: { text: string; skillId?: string }[] = [];
+  const mentions = [
+    ...(message.skillMentions ?? []).map((mention) => ({ ...mention, sigil: "/", skillId: mention.id, agentName: undefined })),
+    ...(message.agentMentions ?? []).map((mention) => ({ ...mention, sigil: "@", skillId: undefined, agentName: mention.name })),
+  ].sort((a, b) => a.start - b.start);
+  const parts: InvocationPart[] = [];
   let cursor = 0;
   for (const mention of mentions) {
     if (
@@ -56,14 +62,14 @@ function skillInvocationParts(message: UiMessage): { text: string; skillId?: str
       !Number.isInteger(mention.end) ||
       mention.start < cursor ||
       mention.end > command.length ||
-      !command.slice(mention.start, mention.end).startsWith("/")
+      !command.slice(mention.start, mention.end).startsWith(mention.sigil)
     ) {
       return [{ text: command }];
     }
     if (mention.start > cursor) {
       parts.push({ text: command.slice(cursor, mention.start) });
     }
-    parts.push({ text: command.slice(mention.start, mention.end), skillId: mention.id });
+    parts.push({ text: command.slice(mention.start, mention.end), skillId: mention.skillId, agentName: mention.agentName });
     cursor = mention.end;
   }
   if (cursor < command.length) {
@@ -72,9 +78,10 @@ function skillInvocationParts(message: UiMessage): { text: string; skillId?: str
   return parts;
 }
 
-function SkillInvocationText({ message }: { message: UiMessage }) {
-  return <>{skillInvocationParts(message).map((part, index) => part.skillId !== undefined ? (
-    <code key={index} className="chat-command-chip" title={part.skillId}>{part.text}</code>
+function MentionInvocationText({ message }: { message: UiMessage }) {
+  return <>{skillInvocationParts(message).map((part, index) => part.skillId !== undefined || part.agentName !== undefined ? (
+    <code key={index} className="chat-command-chip" title={part.agentName ? `@${part.agentName}` : part.skillId}
+      {...(part.agentName ? { "data-agent-mention": "" } : {})}>{part.text}</code>
   ) : (
     <LinkifiedText key={index} text={part.text} attachments={message.attachments} />
   ))}</>;
@@ -129,6 +136,12 @@ export const MessageRow = memo(function MessageRow({
   // Runtime chunks are already progressive. Rendering that source directly
   // avoids a second per-frame state loop while Markdown memoizes stable blocks.
   const displayed = message.content || "";
+  const directories = useMemo(
+    () => isUser ? splitComposerDirectoryPrompt(displayed) : { text: displayed, paths: [] },
+    [isUser, displayed],
+  );
+  const folderSessionId = sessionAllows(session ?? { id: paneSessionId }, "canUseLocalTools")
+    ? paneSessionId : undefined;
   const hasAnswer = Boolean((message.content || "").trim());
   const revisionCount = message.revisionCount ?? 0;
   const activeRevision = message.activeRevision ?? revisionCount;
@@ -152,7 +165,7 @@ export const MessageRow = memo(function MessageRow({
     ).filter((attachment) => !userContentParts.some(
       (part) => part.kind === "attachment" && part.attachment === attachment,
     ));
-  }, [message.attachments, message.command, message.skillMentions, editableUserMessage, visibleUserText, workspaceRoot, userContentParts]);
+  }, [message.attachments, message.command, message.skillMentions, message.agentMentions, editableUserMessage, visibleUserText, workspaceRoot, userContentParts]);
   const renderContentPart = (
     part: (typeof userContentParts)[number],
     index: number,
@@ -162,14 +175,27 @@ export const MessageRow = memo(function MessageRow({
       "data-source-start": userSourceOffset + part.start,
       "data-source-end": userSourceOffset + part.end,
     };
-    return part.kind === "text" ? (
-      <LinkifiedText
-        key={`${keyPrefix}-${index}`}
-        text={part.text}
-        attachments={message.attachments}
-        sourceOffset={userSourceOffset + part.start}
-      />
-    ) : part.attachment.kind === "image" ? (
+    if (part.kind === "text") {
+      const pieces = [];
+      let cursor = 0;
+      for (const match of part.text.matchAll(/<dir>[^<>]+<\/dir>/g)) {
+        const path = splitComposerDirectoryPrompt(match[0]).paths[0];
+        if (!path) continue;
+        const start = match.index;
+        if (start > cursor) pieces.push(
+          <LinkifiedText key={`text-${cursor}`} text={part.text.slice(cursor, start)}
+            attachments={message.attachments} sourceOffset={userSourceOffset + part.start + cursor} />,
+        );
+        pieces.push(<DirectoryReferenceCard key={`directory-${start}`} path={path} sessionId={folderSessionId} />);
+        cursor = start + match[0].length;
+      }
+      if (cursor < part.text.length) pieces.push(
+        <LinkifiedText key={`text-${cursor}`} text={part.text.slice(cursor)}
+          attachments={message.attachments} sourceOffset={userSourceOffset + part.start + cursor} />,
+      );
+      return <span key={`${keyPrefix}-${index}`}>{pieces}</span>;
+    }
+    return part.attachment.kind === "image" ? (
       <MessageAttachmentImage
         key={`${keyPrefix}-${index}`}
         attachment={part.attachment}
@@ -362,19 +388,19 @@ export const MessageRow = memo(function MessageRow({
               </form>
             ) : isUser ? (
               <>
-                {message.content ? (
+                {visibleUserText || message.command ? (
                   <div className="message-user-text selectable">
                     {editableUserMessage && message.command ? (
                       <>
-                        {message.skillMentions?.length ? (
-                          <SkillInvocationText message={message} />
+                        {message.skillMentions?.length || message.agentMentions?.length ? (
+                          <MentionInvocationText message={message} />
                         ) : (
                           // Templates retain the existing whole-invocation chip.
                           <code
                             className="chat-command-chip"
                             data-source-start={0}
                             data-source-end={message.content.length}
-                            title={String(message.content || "")}
+                            title={directories.text}
                           >
                             {message.command}
                           </code>

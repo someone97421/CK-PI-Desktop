@@ -4,7 +4,7 @@ import test from "node:test";
 import * as React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
 import { renderToStaticMarkup } from "react-dom/server";
-import { splitInlineContent } from "@pi-desktop/shared";
+import { splitComposerDirectoryPrompt, splitInlineContent } from "@pi-desktop/shared";
 import ts from "typescript";
 import { requestTextWithoutAnnotations, responseAnnotationPrompt } from "../src/lib/response-annotations.ts";
 import { getExtraMessageAttachments } from "../src/features/chat/transcript/extra-attachments.ts";
@@ -52,6 +52,7 @@ function loadComponent(name, extras = {}) {
     "../../../components/Markdown": { Markdown: ({ source: text }) => text },
     "../../../components/icons": new Proxy({}, { get: () => Icon }),
     "../../../components/ui": { TooltipButton },
+    "../DirectoryReferenceCard": { DirectoryReferenceCard: () => null },
     "./shared": shared,
     "./context": { TranscriptReadOnlyContext: React.createContext(false), useActiveSessionTitle: () => "Title" },
     "../../../lib/selection-quote": { selectionMarkdownWithinRow: () => "" },
@@ -63,7 +64,7 @@ function loadComponent(name, extras = {}) {
     },
     "./ActionBarSlots": { ActionSlotSide: () => null },
     "../../../plugins/renderer-slots/slot-message": { slotMessage: () => undefined },
-    "@pi-desktop/shared": { splitInlineContent },
+    "@pi-desktop/shared": { splitComposerDirectoryPrompt, splitInlineContent },
     ...extras,
   };
   const module = { exports: {} };
@@ -180,4 +181,36 @@ test("an image without a recorded position still follows the body", () => {
   const media = { kind: "file", name: "voice.mp3", ref: "attachments/audio", mimeType: "audio/mpeg" };
   const session = { kind: "session", name: "Context", ref: "context-session" };
   assert.deepEqual(getExtraMessageAttachments("look at this", [media, session]), [media, session]);
+});
+
+test("an @agent turn shows the typed text with the named delegate chipped (ADR 0346)", () => {
+  const html = render({
+    ...userMessage,
+    content: "The user explicitly delegated this request with @mentions. Call the `Task` tool…",
+    command: "look @explorer where /skill:review runs",
+    agentMentions: [{ start: 5, end: 14, name: "explorer" }],
+    skillMentions: [{ start: 21, end: 34, id: "review" }],
+  });
+  assert.match(html, /look <code class="chat-command-chip" title="@explorer" data-agent-mention="">@explorer<\/code> where <code class="chat-command-chip" title="review">\/skill:review<\/code> runs/);
+  assert.doesNotMatch(html, /Call the `Task` tool/);
+
+  // Offsets that do not point at an @token fall back to plain text.
+  const forged = render({
+    ...userMessage,
+    command: "look explorer here",
+    agentMentions: [{ start: 5, end: 13, name: "explorer" }],
+  });
+  assert.doesNotMatch(forged, /chat-command-chip/);
+  assert.match(forged, /look explorer here/);
+});
+
+test("目录标记后的文字保留原始引用偏移", () => {
+  const content = "before <dir>/tmp/folder &amp; data</dir> after";
+  const markup = renderToStaticMarkup(React.createElement(MessageRow, {
+    message: { ...userMessage, content }, isRunning: false,
+  }));
+  const offset = content.indexOf(" after");
+  assert.ok(markup.includes(`data-source-start="${offset}"`));
+  assert.ok(markup.includes(" after"));
+  assert.doesNotMatch(markup, /&lt;dir&gt;/);
 });

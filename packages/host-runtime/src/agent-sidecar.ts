@@ -52,6 +52,10 @@ export type VendorAuthResolver = (input: {
 // session, so it cannot reach a credential the session was not launched with.
 const HOST_PROXY_ALLOWED = new Set([
   "tools.execute",
+  "backgroundJobs.capabilities",
+  "backgroundJobs.list",
+  "backgroundJobs.wait",
+  "backgroundJobs.stop",
   "tools.fileBatchCapabilities",
   "tools.fileBatchRegister",
   "tools.fileBatchSeal",
@@ -131,6 +135,8 @@ export type AgentSidecarOptions = {
   launch: SidecarLaunch;
   /** Receives raw stderr text as it arrives; the embedding host owns redaction and logging. */
   onStderr: StderrHandler;
+  /** Hosts without managed background jobs refuse them instead of running in the foreground. */
+  rejectBackgroundBash?: boolean;
 };
 
 /**
@@ -176,6 +182,7 @@ export class AgentSidecar {
   // everything else still fails closed.
   private proxyMethods = new Map<string, SidecarProxyMethodHandler>();
   private trustedExtensionBridge: TrustedExtensionSidecarBridge | null = null;
+  private readonly rejectBackgroundBash: boolean;
 
   /**
    * Register a handler for one sidecar proxy method outside the shared
@@ -195,6 +202,7 @@ export class AgentSidecar {
 
   constructor(options: AgentSidecarOptions) {
     const { launch, onStderr } = options;
+    this.rejectBackgroundBash = options.rejectBackgroundBash === true;
     this.child = spawn(launch.command, launch.args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: launch.env ?? process.env,
@@ -517,6 +525,26 @@ export class AgentSidecar {
           );
         }
         const params = (msg.params?.params ?? {}) as Record<string, unknown>;
+        if (this.rejectBackgroundBash) {
+          if (method === "backgroundJobs.capabilities") {
+            this.writeToChild(
+              JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { version: 1, supported: false } }) + "\n",
+            );
+            return;
+          }
+          const args = params.args;
+          if (
+            method.startsWith("backgroundJobs.") ||
+            (method === "tools.execute" && params.toolName === "Bash" &&
+              (params.runInBackground === true ||
+                (typeof args === "object" && args !== null && (args as Record<string, unknown>).runInBackground === true)))
+          ) {
+            throw Object.assign(
+              new Error("Background Bash is not available on this Host. Run the command in the foreground instead."),
+              { code: -32000, data: { errorCode: "INVALID_ARGUMENT" } },
+            );
+          }
+        }
         if (proxyHandler) {
           // A registered embedding-host method answers before the shared
           // allowlist path; the handler owns all session binding checks.

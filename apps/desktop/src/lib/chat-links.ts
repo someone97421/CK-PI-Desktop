@@ -306,12 +306,8 @@ export function handleMarkdownFileLinkClick(
   href: string,
   root: string | null | undefined,
   baseDir: string | undefined,
-  openFileRef: (
-    path: string,
-    baseDir?: string,
-    mimeType?: string,
-    position?: { line?: number; column?: number },
-  ) => void,
+  openFileRef: (path: string, baseDir?: string, mimeType?: string,
+    options?: { line?: number; column?: number; allowDirectory?: boolean }) => void,
 ): boolean {
   if (!isLocalFileHref(href)) return false;
   let decoded = safeDecodeUri(href).trim();
@@ -324,7 +320,10 @@ export function handleMarkdownFileLinkClick(
   const relative = /^\.{1,2}[/\\]/.test(path);
   const anchored = relative ? toWorkspaceRel(path, root, baseDir) : null;
   event.preventDefault();
-  openFileRef(anchored ?? path, relative && !anchored ? baseDir : undefined, undefined, position);
+  openFileRef(anchored ?? path, relative && !anchored ? baseDir : undefined, undefined, {
+    ...position,
+    allowDirectory: true,
+  });
   return true;
 }
 

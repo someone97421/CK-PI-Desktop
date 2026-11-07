@@ -1,3 +1,4 @@
+mod background_jobs;
 mod config_sync_rpc;
 mod file_batches;
 mod gen_ui;
@@ -33,6 +34,7 @@ use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
 use crate::agent_capabilities::CapabilityLevel;
 use crate::artifacts;
 use crate::audit;
+use crate::background_tasks;
 use crate::notifications;
 use crate::permissions::{PermissionDecision, PermissionEvaluationParams, PermissionManager};
 use crate::plans;
@@ -460,6 +462,23 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
         }
     });
 
+    let background_notifier = tokio::spawn({
+        let tx = tx.clone();
+        async move {
+            let mut previous = background_tasks::change_counter();
+            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                let current = background_tasks::change_counter();
+                if current != previous {
+                    previous = current;
+                    send_notification(&tx, "backgroundTasks.changed", json!({}));
+                }
+            }
+        }
+    });
+
     let mut input_error = None;
     let mut writer_done = false;
     'serve: loop {
@@ -585,11 +604,18 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
     }
     direct_config.shutting_down.store(true, Ordering::Release);
 
+    background_notifier.abort();
+    let _ = background_notifier.await;
     config_sync_scheduler.abort();
     let _ = config_sync_scheduler.await;
-    {
+    let background = {
         let mut st = state.lock().await;
+        let tasks = st.background_tasks.running_tasks();
         st.shutdown();
+        tasks
+    };
+    if !background_tasks::wait_until_settled(&background, Duration::from_secs(3)).await {
+        tracing::warn!("background tasks did not settle before host shutdown");
     }
     while let Some(result) = request_tasks.join_next().await {
         if let Err(error) = result {
@@ -864,10 +890,35 @@ fn permission_parent_param(params: &Value) -> Result<Option<String>, JsonRpcErro
 /// `session.delete` and `projects.remove` so removing a project cleans up
 /// exactly the same side data as deleting one session.
 fn drop_session_side_data(st: &AppState, id: &str) {
+    st.background_tasks.stop_session_running(id);
     scratch::remove_session_dir(&st.data_dir, id);
     visualizations::remove_session_dir(&st.data_dir, id);
     review::remove_session(&st.data_dir, id);
     st.hashline.drop_session(id);
+}
+
+async fn stop_backgrounds_before_delete(
+    state: &Arc<Mutex<AppState>>,
+    session_ids: &[String],
+) -> Result<(), JsonRpcError> {
+    let tasks = {
+        let st = state.lock().await;
+        for id in session_ids {
+            if sessions::session_has_running_turn(&st.db, id)
+                .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))? {
+                return Err(rpc_err(1008, "session is running", "CONFLICT"));
+            }
+        }
+        for id in session_ids {
+            st.background_tasks.stop_session_running(id);
+        }
+        st.background_tasks.running_tasks().into_iter()
+            .filter(|task| session_ids.contains(&task.session_id)).collect::<Vec<_>>()
+    };
+    if !background_tasks::wait_until_settled(&tasks, Duration::from_secs(3)).await {
+        return Err(rpc_err(1008, "background tasks are still stopping; retry after they exit", "CONFLICT"));
+    }
+    Ok(())
 }
 
 const DEFAULT_LARGE_PASTE_THRESHOLD: i64 = 600;
@@ -2048,6 +2099,10 @@ async fn handle_request(
             .map_err(config_sync_rpc_err);
     }
 
+    if method.starts_with("backgroundJobs.") {
+        return background_jobs::handle(state, method, params).await;
+    }
+
     if method.starts_with("tools.fileBatch") {
         return file_batches::handle(state, method, params).await;
     }
@@ -2325,9 +2380,12 @@ async fn handle_request(
                 .get("path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| rpc_err(1002, "path required", "INVALID_PARAMS"))?;
-            let path = crate::db::canonical_project_path(path)
-                .ok_or_else(|| rpc_err(1002, "path required", "INVALID_PARAMS"))?;
             let st = state.lock().await;
+            let path = st
+                .db
+                .stored_project_path(path)
+                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?
+                .ok_or_else(|| rpc_err(1002, "path required", "INVALID_PARAMS"))?;
             if crate::scheduled::project::has_running_tasks(&st.db, &path)
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?
             {
@@ -2349,6 +2407,24 @@ async fn handle_request(
                     .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?
                 {
                     return Err(rpc_err(1008, "project has running sessions", "CONFLICT"));
+                }
+            }
+            drop(st);
+            stop_backgrounds_before_delete(&state, &session_ids).await?;
+            let st = state.lock().await;
+            if crate::scheduled::project::has_running_tasks(&st.db, &path)
+                .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))? {
+                return Err(rpc_err(1008, "project has running scheduled tasks", "CONFLICT"));
+            }
+            if st.db.project_session_ids(&path)
+                .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))? != session_ids {
+                return Err(rpc_err(1008, "project sessions changed; retry removing the project", "CONFLICT"));
+            }
+            for id in &session_ids {
+                if sessions::session_has_running_turn(&st.db, id)
+                    .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?
+                    || st.background_tasks.running_count_for(id) > 0 {
+                    return Err(rpc_err(1008, "project has running sessions or background tasks", "CONFLICT"));
                 }
             }
             crate::scheduled::project::pause(&st.db, &path)
@@ -2381,6 +2457,8 @@ async fn handle_request(
                         .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
                 }
             }
+            drop(st);
+            worktree_rpc::spawn_orphan_cleanup(&state);
             Ok(json!({ "removed": removed, "sessionsRemoved": sessions_removed }))
         }
         "project.memory.get" => {
@@ -3044,10 +3122,26 @@ async fn handle_request(
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| rpc_err(1002, "id required", "INVALID_PARAMS"))?;
+            let budget = {
+                let st = state.lock().await;
+                if sessions::session_has_running_turn(&st.db, id)
+                    .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))? {
+                    return Err(rpc_err(1008, "session is running", "CONFLICT"));
+                }
+                st.tool_budget.clone()
+            };
+            let _hold = budget.acquire_session_exclusive(id, Duration::from_secs(5)).await
+                .ok_or_else(|| rpc_err(1008, "session tools are still running", "CONFLICT"))?;
+            stop_backgrounds_before_delete(&state, &[id.to_string()]).await?;
             // Delete = discard for isolated sessions (ADR 0329); a git failure
             // keeps the session.
             worktree_rpc::remove_before_delete(&state, id).await?;
             let st = state.lock().await;
+            if sessions::session_has_running_turn(&st.db, id)
+                .map_err(|error| rpc_err(1000, error.to_string(), "INTERNAL"))?
+                || st.background_tasks.running_count_for(id) > 0 {
+                return Err(rpc_err(1008, "session or background tasks are running", "CONFLICT"));
+            }
             let ok = sessions::delete_session(&st.db, id)
                 .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             if ok {
@@ -4151,6 +4245,30 @@ async fn handle_request(
             }
             Ok(json!({ "tools": definitions }))
         }
+        "backgroundTasks.list" => {
+            let st = state.lock().await;
+            let session_id = params.get("sessionId").and_then(Value::as_str);
+            let tasks: Vec<_> = st.background_tasks.summaries().into_iter()
+                .filter(|task| session_id.is_none_or(|id| task.session_id == id))
+                .collect();
+            Ok(json!({ "tasks": tasks }))
+        }
+        "backgroundTasks.output" => {
+            let id = params.get("id").and_then(Value::as_str)
+                .ok_or_else(|| rpc_err(1002, "id required", "INVALID_PARAMS"))?;
+            let st = state.lock().await;
+            background_tasks::task_output(&st.background_tasks, id).await
+                .map_err(|error| rpc_err(1000, error, "INTERNAL"))?
+                .ok_or_else(|| rpc_err(1007, "background task not found", "NOT_FOUND"))
+        }
+        "backgroundTasks.stop" => {
+            let id = params.get("id").and_then(Value::as_str)
+                .ok_or_else(|| rpc_err(1002, "id required", "INVALID_PARAMS"))?;
+            let st = state.lock().await;
+            let stopped = background_tasks::stop_task(&st.background_tasks, id).await
+                .map_err(|error| rpc_err(1000, error, "INTERNAL"))?;
+            Ok(json!({ "ok": stopped }))
+        }
         "tools.execute" => {
             let call_started = std::time::Instant::now();
             let p: ToolsExecuteParams = serde_json::from_value(params.clone())
@@ -4813,6 +4931,8 @@ async fn handle_request(
                         cancellation,
                         output_tx: Some(tx.clone()),
                         extra_env: worktree_env.clone(),
+                        run_in_background: p.run_in_background,
+                        app_state: Some(state.clone()),
                     });
                 }
 

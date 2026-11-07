@@ -93,6 +93,7 @@ app.setPath("userData", path.join(__dirname, "profile"));
 const saved = [];
 const history = [];
 const opened = [];
+const revealedFolders = [];
 let completeOpens;
 const opensDone = new Promise(resolve => { completeOpens = resolve; });
 let directoryPastePending = true;
@@ -157,6 +158,10 @@ ipcMain.handle("pi-desktop/fs/open", async (_event, input) => {
   const openPath = await openableMp4Path(__dirname, target, input.mimeType);
   opened.push(openPath);
   if (opened.length === 3) completeOpens();
+  return { ok: true, data: { ok: true } };
+});
+ipcMain.handle("pi-desktop/fs/reveal", async (_event, input) => {
+  revealedFolders.push(input);
   return { ok: true, data: { ok: true } };
 });
 ipcMain.handle("pi-desktop/clipboard/recordPaste", (_event, input) => {
@@ -301,6 +306,7 @@ app.whenReady().then(async () => {
     const result = await window.webContents.executeJavaScript("globalThis.composerPasteProbe()");
     assert.equal(result.ok, true, JSON.stringify(result));
     await opensDone;
+    assert.deepEqual(revealedFolders, [{ path: path.join(__dirname, "copied folder"), sessionId: "paste-a", directory: true }]);
     assert.deepEqual(opened.map(path.extname), [".mp4", ".mp4", ".mp4"]);
     for (const [index, hash] of ["a", "b"].entries()) {
       const stored = path.join(__dirname, "attachments", hash.repeat(64));

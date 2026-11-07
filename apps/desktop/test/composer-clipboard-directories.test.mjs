@@ -79,7 +79,7 @@ test("both send serializers preserve directory paths as escaped data markers", (
   }
 });
 
-test("the real editor paints an atomic folder card with a localized type, full path and remove action", t => {
+test("内联目录卡片保留完整路径、本地化类型和移除操作", t => {
   const originalDocument = globalThis.document, originalNode = globalThis.Node;
   t.after(() => { globalThis.document = originalDocument; globalThis.Node = originalNode; });
   function element(tag) {
@@ -114,5 +114,5 @@ test("the real editor paints an atomic folder card with a localized type, full p
   assert.equal(remove.attributes["aria-label"], "Remove folder");
   remove.listeners.click({ stopPropagation() {} });
   assert.equal(removed, "\ue001");
-  assert.equal(editor.isEditableTextReference(reference), false, "a directory named .txt must not expand as a text file");
+  assert.equal(editor.isEditableTextReference(reference), false);
 });

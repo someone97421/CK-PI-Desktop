@@ -150,6 +150,12 @@ async fn checkpoint_session(
         }
     };
     let root = Path::new(&session.path);
+    if state.lock().await.background_tasks.has_running_in_workspace(root) {
+        return Err(WorktreeError::new(
+            "WORKTREE_BUSY",
+            "a background task is running in the session worktree; stop it first",
+        ));
+    }
     if merge_in_progress(git, root).await? {
         return Err(WorktreeError::new(
             "WORKTREE_BUSY",
@@ -368,6 +374,16 @@ pub async fn settle_delegate_worktree(
     };
     let _guard = repo_lock::lock(Path::new(&row.common_dir)).await;
     let worktree = Path::new(&row.path);
+    let background = state.lock().await.background_tasks.stop_workspace_running(session_id, worktree);
+    if !crate::background_tasks::wait_until_settled(&background, SESSION_QUIET_WAIT).await {
+        return Ok(if merge {
+            DelegateSettlement::NotMerged {
+                reason: "a background task is still stopping in the subagent worktree; retry after it exits".into(),
+            }
+        } else {
+            DelegateSettlement::Kept
+        });
+    }
     if !is_real_dir(worktree) {
         // The folder vanished; its branch may still hold committed work,
         // which a resume re-attaches instead of deleting.

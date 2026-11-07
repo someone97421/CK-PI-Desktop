@@ -3742,6 +3742,9 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
       "Grep",
       "asktool",
       "Skill",
+      "TaskWait",
+      "TaskList",
+      "TaskStop",
       "new_context",
       "ToolSearch",
     ]);
@@ -7318,6 +7321,31 @@ describe("DesktopAgentRuntime response duration", () => {
     }
   });
 
+  it.each([
+    ["router/auto", "vendor/served-model", "vendor/served-model"],
+    ["router/auto", undefined, undefined],
+  ])("records the concrete served model on the finished turn (%s -> %s)", async (requested, served, expected) => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const internals = runtime as unknown as {
+      handleAgentEvent(event: unknown): Promise<void>;
+      provider: { modelId: string };
+    };
+    internals.provider = { ...internals.provider, modelId: requested };
+    await internals.handleAgentEvent({ type: "message_start", message: { role: "assistant", content: [] } });
+    await internals.handleAgentEvent({
+      type: "message_end",
+      message: { ...assistantMessage({ content: [{ type: "text", text: "answer" }] }), ...(served ? { responseModel: served } : {}) },
+    });
+    const terminal = onEvent.mock.calls
+      .map(([envelope]) => envelope as any)
+      .find(({ event }) => event.type === "message_end")?.event.message;
+    expect(terminal).toMatchObject({ modelId: requested, status: "complete" });
+    if (expected) expect(terminal.responseModelId).toBe(expected);
+    else expect(terminal).not.toHaveProperty("responseModelId");
+    await runtime.dispose();
+  });
+
   it("accumulates request and stream timing across a provider retry", async () => {
     vi.useFakeTimers();
     try {
@@ -10140,6 +10168,54 @@ describe("DesktopAgentRuntime subagents", () => {
       }
     },
   );
+
+  it("delivers steering after a background Bash call returns without aborting it", async () => {
+    let finish!: (value: unknown) => void;
+    const host = { call: vi.fn((method: string) => method === "tools.execute"
+      ? new Promise((resolve) => { finish = resolve; }) : Promise.resolve({ ok: true })) };
+    const requests: AgentMessage[][] = [];
+    const runtime = createRuntime({ host });
+    (runtime as any).models = { streamSimple: scriptedStream([[
+      { type: "toolCall", id: "keep-running", name: "Bash", arguments: { command: "sleep 600", runInBackground: true } },
+    ]], requests) };
+    const running = runtime.prompt("Run command", "initial-user", "active-turn");
+    try {
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      expect(host.call).toHaveBeenCalledWith("tools.execute", expect.objectContaining({ runInBackground: true }));
+      runtime.steer({ text: "Change direction" }, "active-turn", {
+        id: "steer-user", role: "user", content: "Change direction", createdAt: new Date().toISOString(), steering: true,
+      });
+      expect(host.call.mock.calls.some(([method]) => method === "tools.abort")).toBe(false);
+      expect(requests).toHaveLength(1);
+      finish({ ok: true, content: "started" });
+      await running;
+      expect(JSON.stringify(requests[1])).toContain("Change direction");
+    } finally {
+      finish?.({ ok: false, content: "Stopped" });
+      await runtime.abort();
+      await running;
+      await runtime.dispose();
+    }
+  });
+
+  it.each([
+    ["remote", { command: "sleep 600", runInBackground: true }, "remote workspace"],
+    ["visible", { command: "sleep 600", runInBackground: true, visible: true }, "cannot be combined with visible"],
+  ] as const)("rejects a %s background Bash request before dispatch", async (kind, args, message) => {
+    const host = { call: vi.fn(async () => ({ ok: true })) };
+    const requests: AgentMessage[][] = [];
+    const runtime = createRuntime({ host, ...(kind === "remote" ? { remoteWorkspace: { hostKey: "ssh", path: "/remote" } } : {}) });
+    (runtime as any).models = { streamSimple: scriptedStream([[
+      { type: "toolCall", id: "background", name: "Bash", arguments: args },
+    ]], requests) };
+    try {
+      await runtime.prompt("Run command", "initial-user", "active-turn");
+      expect(host.call.mock.calls.some(([method]) => method === "tools.execute")).toBe(false);
+      expect(JSON.stringify(requests[1])).toContain(message);
+    } finally {
+      await runtime.dispose();
+    }
+  });
 
   it.each(["during", "before"] as const)("handles steering %s TaskWait while its delegate continues running", async (timing) => {
     subagentRuns.calls.length = 0;
@@ -13585,5 +13661,65 @@ describe("parallel policy tool provenance", () => {
       expect(host.call.mock.calls.some(([method]) =>
         method === "project.instructions.resolve")).toBe(false);
     } finally { internal.extensionRunner = undefined; await runtime.dispose(); }
+  });
+});
+
+
+describe("background Bash job waits in the production runtime", () => {
+  it.each(["steer", "abort"] as const)("releases a wait on %s without stopping the process", async action => {
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    let finish!: (value: unknown) => void;
+    const host = { call: vi.fn(async (method: string) => {
+      if (method === "backgroundJobs.capabilities") return { version: 1, supported: true };
+      if (method === "backgroundJobs.wait") {
+        entered();
+        return new Promise(resolve => { finish = resolve; });
+      }
+      return {};
+    }) };
+    const runtime = createRuntime({ host, subagents: [] });
+    const requests: AgentMessage[][] = [];
+    const internals = runtime as unknown as {
+      models: { streamSimple: (model: unknown, context: { messages: AgentMessage[] }) => ReturnType<typeof createAssistantMessageEventStream> };
+    };
+    internals.models = { streamSimple: (_model, context) => {
+      requests.push([...context.messages]);
+      const first = requests.length === 1;
+      const message = assistantMessage({
+        content: first
+          ? [{ type: "toolCall", id: "wait-bash", name: "TaskWait", arguments: { job: { kind: "bash", id: "process" } } }]
+          : [{ type: "text", text: "Handled new input." }],
+        stopReason: first ? "toolUse" : "stop",
+      }) as unknown as AssistantMessage;
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({ type: "start", partial: message });
+        stream.push({ type: "done", reason: first ? "toolUse" : "stop", message });
+        stream.end(message);
+      });
+      return stream;
+    } };
+    const running = runtime.prompt("Wait for the background test.", "user", "job-turn");
+    try {
+      await waiting;
+      if (action === "steer") {
+        runtime.steer({ text: "Handle this correction." }, "job-turn", {
+          id: "new-user", role: "user", content: "Handle this correction.",
+          createdAt: "2026-11-05T00:00:00.000Z", steering: true,
+        });
+      } else {
+        await runtime.abort();
+      }
+      await running;
+      if (action === "steer") {
+        expect(JSON.stringify(requests.at(-1))).toContain("Interrupted by new user input");
+        expect(JSON.stringify(requests.at(-1))).toContain("Handle this correction.");
+      }
+      expect(host.call.mock.calls.some(([method]) => method === "backgroundJobs.stop")).toBe(false);
+      finish({ state: "running" });
+    } finally {
+      await runtime.dispose();
+    }
   });
 });

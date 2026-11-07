@@ -161,12 +161,15 @@ export function CopyButton({
 }
 export function MessageMeta({
   modelId,
+  responseModelId,
   usage,
   responseDurationMs,
   responseOutputTokens,
   responseOutputEstimated,
 }: {
   modelId?: string;
+  /** Concrete model the provider reported serving the turn, when it differs. */
+  responseModelId?: string;
   usage?: MessageUsage;
   responseDurationMs?: number;
   responseOutputTokens?: number;
@@ -188,9 +191,19 @@ export function MessageMeta({
   return (
     <div className="message-meta">
       {modelId ? (
-        <span className="message-meta-chip model" title={modelId}>
-          {modelId}
-        </span>
+        responseModelId ? (
+          <span
+            className="message-meta-chip model"
+            title={t("chat.servedByModel", { requested: modelId, served: responseModelId })}
+            aria-label={t("chat.servedByModel", { requested: modelId, served: responseModelId })}
+          >
+            {responseModelId}
+          </span>
+        ) : (
+          <span className="message-meta-chip model" title={modelId}>
+            {modelId}
+          </span>
+        )
       ) : null}
       {usage && showTurnUsage ? (
         <TurnUsageCapsule
@@ -331,7 +344,11 @@ export function AssistantErrorMessage({ message }: { message: UiMessage }) {
           {message.modelId ? (
             <>
               <dt>{t("chat.errorModel")}</dt>
-              <dd>{message.modelId}</dd>
+              <dd>
+                {message.responseModelId
+                  ? t("chat.servedByModel", { requested: message.modelId, served: message.responseModelId })
+                  : message.modelId}
+              </dd>
             </>
           ) : null}
         </dl>

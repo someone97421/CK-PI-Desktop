@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 
 export const todoWriteDescription =
   "Replace the current session's task checklist in display order. Use it to track multi-step implementation work. Keep items concise and statuses accurate, with at most one item in_progress. The host truncates content beyond 500 Unicode characters with a warning.";

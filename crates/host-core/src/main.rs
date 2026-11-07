@@ -1,6 +1,7 @@
 mod activation;
 mod agent_capabilities;
 mod artifacts;
+mod background_tasks;
 mod audit;
 mod config_sync;
 mod data_relocation;

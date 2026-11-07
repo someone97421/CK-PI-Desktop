@@ -39,6 +39,10 @@ export function useOpenPreviewTarget() {
         return openFileRef(target.path, undefined, undefined, {
           line: target.line,
           column: target.column,
+          // A tool names its paths deliberately, the way a Markdown link does,
+          // so a directory argument opens in the file manager instead of
+          // reporting a missing file (issue #2113).
+          allowDirectory: true,
         });
       }
       if (target.kind === "session") {
@@ -83,6 +87,8 @@ export type ResolvedChatFileRef = {
   primary: boolean;
   /** Session-owned generated artifacts, rather than imported attachments. */
   scratch: boolean;
+  /** Present when the reference names a directory, not a regular file. */
+  target?: "file" | "directory";
 };
 
 export type ChatFileOpenDestination =
@@ -94,6 +100,8 @@ export type ChatFileOpenOptions = {
   line?: number;
   column?: number;
   destination?: ChatFileOpenDestination;
+  /** Let an exact path resolve to a directory; the open flow browses it. */
+  allowDirectory?: boolean;
 };
 
 /**
@@ -182,6 +190,7 @@ function useResolveChatFileRef() {
     async (
       path: string,
       baseDir?: string,
+      options?: { allowDirectory?: boolean },
     ): Promise<ResolvedChatFileRef | null> => {
       const state = useAppStore.getState();
       const ownerId = paneSessionId || state.activeSessionId;
@@ -195,7 +204,7 @@ function useResolveChatFileRef() {
       const anchored = relative ? toWorkspaceRel(raw, ownerWorkspacePath, baseDir) : null;
       let result;
       try {
-        result = await api.fsResolveRef(anchored ?? raw, ownerId);
+        result = await api.fsResolveRef(anchored ?? raw, ownerId, options);
       } catch {
         if (!matchesFileContext(workspacePath, sessionId)) return null;
         showToast(t("chat.fileRefLookupFailed"), { variant: "error" });
@@ -220,6 +229,7 @@ function useResolveChatFileRef() {
           inProject: false,
           primary: false,
           scratch: match.sessionScratch === true,
+          ...(match.target ? { target: match.target } : {}),
         };
       }
       // A project group can hold several folders, and a relative path always
@@ -233,6 +243,7 @@ function useResolveChatFileRef() {
         inProject: true,
         primary,
         scratch: false,
+        ...(match.target ? { target: match.target } : {}),
       };
     },
     [paneSessionId, sessionId, showToast, t, workspacePath],
@@ -277,12 +288,26 @@ export function useOpenChatFileRef() {
       const column = options?.column;
       const destination = options?.destination;
       void (async () => {
-        const resolved = await resolveRef(path, baseDir);
+        const resolved = await resolveRef(path, baseDir, options);
         if (!resolved) return;
         if (!matchesFileContext(workspacePath, sessionId)) return;
         const current = useAppStore.getState();
         const remote = current.sessions.find((session) => session.id === ownerSessionId)?.remoteWorkspace
           ?? (!ownerSessionId ? current.workspace?.remote : undefined);
+        if (resolved.target === "directory" && !destination) {
+          if (remote) {
+            showToast(t("chat.fileManagerOpenFailed"), { variant: "error" });
+            return;
+          }
+          const ready = await ensureFileManagerView(workspacePath, sessionId);
+          if (!matchesFileContext(workspacePath, sessionId)) return;
+          if (ready) {
+            openTab(fileManagerPluginTab(resolved.absolutePath.replaceAll("\\", "/")));
+            return;
+          }
+          showToast(t("chat.fileManagerUnavailable"), { variant: "error" });
+          return;
+        }
         if (destination === "file-manager") {
           if (remote) {
             showToast(t("chat.fileManagerOpenFailed"), { variant: "error" });

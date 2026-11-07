@@ -11,7 +11,7 @@ import {
   type SessionThinkingLevel,
   type PluginComposerTransformMeta,
 } from "@pi-desktop/shared";
-import type { AppState } from "../../../stores/app-store";
+import { type AppState, useAppStore } from "../../../stores/app-store";
 import { ComposerModePicker } from "./ComposerModePicker";
 import { ComposerPermissionPicker } from "./ComposerPermissionPicker";
 import { ContextUsageInspector } from "../../../components/ContextUsageInspector";
@@ -252,6 +252,7 @@ export function ComposerToolbar({
             setPermissionOpen(false);
             setModeOpen(false);
           }}
+          onOpenModelSettings={() => useAppStore.getState().setSettingsTab("agent")}
         />
         {composerTransforms.map((transform) => {
           const key = `${transform.pluginId}/${transform.id}`;

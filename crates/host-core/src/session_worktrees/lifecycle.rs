@@ -437,6 +437,8 @@ pub(super) async fn run_setup(
                 cancellation: None,
                 output_tx: None,
                 extra_env: env_for(&row, Some(&project_path)),
+                run_in_background: false,
+                app_state: None,
             }),
             allow_external_paths: false,
             hashline: None,
@@ -544,7 +546,14 @@ async fn hold_session(
         })?;
     // A turn may have started while this waited; its tools now queue, but a
     // running session is still not merged.
-    ensure_idle(&state.lock().await.db, session_id)?;
+    let st = state.lock().await;
+    ensure_idle(&st.db, session_id)?;
+    if st.background_tasks.running_count_for(session_id) > 0 {
+        return Err(WorktreeError::new(
+            "WORKTREE_BUSY",
+            "a background task is running in the session; stop it before merging or syncing",
+        ));
+    }
     Ok(permit)
 }
 
@@ -839,6 +848,9 @@ pub async fn remove_session_worktrees(
     let rows = {
         let st = state.lock().await;
         ensure_idle(&st.db, session_id)?;
+        if st.background_tasks.running_count_for(session_id) > 0 {
+            return Err(WorktreeError::new("WORKTREE_BUSY", "a background task is still running in the session"));
+        }
         registry::for_session(&st.db, session_id)?
     };
     for row in rows.iter().rev() {
@@ -853,6 +865,9 @@ async fn remove_row(
     row: &WorktreeRow,
 ) -> Result<(), WorktreeError> {
     let _guard = repo_lock::lock(Path::new(&row.common_dir)).await;
+    if state.lock().await.background_tasks.has_running_in_workspace(Path::new(&row.path)) {
+        return Err(WorktreeError::new("WORKTREE_BUSY", "a background task is still using the worktree"));
+    }
     remove_worktree(git, row).await?;
     let st = state.lock().await;
     registry::remove(&st.db, &row.id)?;

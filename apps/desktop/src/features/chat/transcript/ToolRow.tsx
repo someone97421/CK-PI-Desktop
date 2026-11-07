@@ -51,7 +51,7 @@ import {
   delegationRoster,
   delegationRosterOutcome,
   delegationRosterSummary,
-  lifecycleKindOf,
+  lifecycleKindOf, backgroundJobRowOf,
   subagentOutcome,
   type SubagentOutcome,
   type SubagentTiming,
@@ -243,6 +243,7 @@ function HostToolRow({
   // the agent names it reports on replace the bare delegation ids it was
   // called with, and its badge rolls up their statuses (D268).
   const lifecycle = action === "delegate" ? lifecycleKindOf(message) : null;
+  const jobRow = lifecycle ? backgroundJobRowOf(message) : null;
   const roster = lifecycle ? delegationRoster(message) : [];
   const rosterSummary = lifecycle ? delegationRosterSummary(roster) : "";
   const rosterOutcome = lifecycle ? delegationRosterOutcome(roster) : null;
@@ -299,7 +300,13 @@ function HostToolRow({
   // A lifecycle row never falls back to its arguments: while it is still
   // running it has no roster yet, and `delegationIds` would otherwise reach the
   // head as a JSON blob of UUIDs (D268).
-  const summary = lifecycle ? rosterSummary : argSummary;
+  const summary = jobRow
+    ? [
+        rosterSummary, jobRow.command,
+        jobRow.count !== undefined && t("backgroundTasks.headerCount", { count: jobRow.count }),
+        jobRow.state && t(`backgroundTasks.${jobRow.state}`),
+      ].filter(Boolean).join(" · ")
+    : lifecycle ? rosterSummary : argSummary;
   const childExecution = useSubagentExecution(message);
   const statusLabel = outcome === "running" && !childExecution.live ? t("chat.subagentHistorical")
     : outcome === "running" && childExecution.phase === "stopping" ? t("chat.subagentStoppingNow")
@@ -487,14 +494,14 @@ function HostToolRow({
             onClick={() => hasDetails && toggleRow()}
           >
             <span
-              className={`tool-row-icon${lifecycle ? " is-subagent" : ""}`}
+              className={`tool-row-icon${lifecycle && !jobRow ? " is-subagent" : ""}`}
             >
-              <ToolActionIcon action={action} />
+              <ToolActionIcon action={jobRow ? (jobRow.kind === "list" ? "list" : "run") : action} />
             </span>
             <span
               className={`tool-row-name ${status === "running" ? "running" : ""}`}
             >
-              {lifecycle
+              {jobRow ? rawName : lifecycle
                 ? t(
                     (status === "running"
                       ? LIFECYCLE_RUNNING_KEYS

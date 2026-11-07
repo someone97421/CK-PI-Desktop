@@ -32,7 +32,7 @@ import {
 import { ComposerAutocomplete } from "./ComposerAutocomplete";
 import { AskToolCard } from "./AskToolCard";
 import { PlanApprovalBar } from "./PlanApprovalBar";
-import { TodoDock } from "./TodoDock";
+import { TaskDock } from "./TaskDock";
 import {
   PLACEHOLDER_KEYS,
   isPermissionMode,
@@ -444,6 +444,7 @@ export function Composer({
     cursor,
     composing,
     enabled: !inputBlocked && localToolsAllowed,
+    agentsEnabled: mode === "agent",
     referenceSessionId,
     fileReferencesRef,
     applyEditorDraft,
@@ -488,7 +489,7 @@ export function Composer({
       data-composer-dock={variant}
     >
       <div className="composer-stack">
-        {activeSessionId && localToolsAllowed ? <TodoDock sessionId={activeSessionId} /> : null}
+        {activeSessionId && localToolsAllowed ? <TaskDock sessionId={activeSessionId} /> : null}
         {planCheckpoint?.status === "pending" ? (
           <PlanApprovalBar proposal={planCheckpoint} />
         ) : null}

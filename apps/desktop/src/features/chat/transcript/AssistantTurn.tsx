@@ -288,7 +288,9 @@ export const AssistantTurn = memo(function AssistantTurn({
   const messages = summary.messages;
   const hasError = summary.hasError;
   const { actionMessage, metaMessage, latestUsageMessage, usage, responseDurationMs, responseOutputTokens } = summary;
-  const modelId = metaMessage?.modelId ?? latestUsageMessage?.modelId;
+  const modelSource = metaMessage?.modelId ? metaMessage : latestUsageMessage;
+  const modelId = modelSource?.modelId;
+  const responseModelId = modelSource?.responseModelId;
   const complete = task
     ? task.status === "completed" && summary.hasContent && Boolean(actionMessage)
     : !isActive && !summary.hasError && summary.hasContent && Boolean(actionMessage);
@@ -434,6 +436,7 @@ export const AssistantTurn = memo(function AssistantTurn({
         {!task && !isActive && metaMessage ? (
           <MessageMeta
             modelId={modelId}
+            responseModelId={responseModelId}
             usage={usage}
             responseDurationMs={responseDurationMs}
             responseOutputTokens={responseOutputTokens}

@@ -32,8 +32,17 @@ export type ProjectRunSession = { id: string };
 
 /** 两种运行标记由总开关控制；总开关与子开关均缺省开启。 */
 export type SidebarRunningAffordances = {
+  /** Count capsules after the project name. */
   badge: boolean;
+  /** Activity track down the group's left edge. */
   rail: boolean;
+  /**
+   * The figures that accompany the rail. They restate the badge, so they only
+   * render while the badge is off: with both sub-switches on the header would
+   * otherwise print the same counts twice (`.project-run-count` is documented
+   * as the badge's stand-in, not an addition to it).
+   */
+  railCount: boolean;
 };
 
 export function resolveSidebarRunningAffordances(
@@ -46,10 +55,9 @@ export function resolveSidebarRunningAffordances(
     | null,
 ): SidebarRunningAffordances {
   const master = settings?.sidebarRunningIndicators !== false;
-  return {
-    badge: master && settings?.sidebarRunningBadge !== false,
-    rail: master && settings?.sidebarRunningRail !== false,
-  };
+  const badge = master && settings?.sidebarRunningBadge !== false;
+  const rail = master && settings?.sidebarRunningRail !== false;
+  return { badge, rail, railCount: rail && !badge };
 }
 
 /**

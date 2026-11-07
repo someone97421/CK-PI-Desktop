@@ -95,6 +95,7 @@ test("paste uses native directory paths even when Chromium exposes no File", asy
   assert.equal(run.drafts[0].references[0].kind, "directory");
   assert.equal(run.drafts[0].references[0].path, folder.path);
   assert.equal(run.drafts[0].text, "before \ue001after");
+  assert.equal(run.drafts[0].references[0].token, "\ue001");
   assert.equal(run.imported.length, 0);
   assert.equal(run.transfers.length, 0);
   assert.deepEqual(run.errors, []);
@@ -105,6 +106,7 @@ test("mixed native folders and files preserve their order and use the existing i
   await run.paste();
   assert.equal(run.drafts.length, 1);
   assert.deepEqual(Array.from(run.drafts[0].references, reference => reference.kind), ["directory", "file"]);
+  assert.equal(run.drafts[0].text, "before \ue001\ue002after");
   assert.deepEqual(run.imported, [{ session: "source", token: "native-selection" }]);
 });
 
