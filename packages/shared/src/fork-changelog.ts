@@ -5,6 +5,15 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "升级 Pi 1.5，改善供应商兼容与错误识别，显示实际响应模型和费用来源。",
+  "模型选择采用双栏菜单和分段思考档位，支持 @agent 指定子代理，保留模型绑定和 TaskResume。",
+  "接入本地后台 Bash 和统一任务面板，支持查看输出、等待和停止，补齐工作区环境、进程收尾与临时文件保护。",
+  "Windows 命令可按需打开独立可见控制台，修复引号和进度输出，并保留原有后台任务操作。",
+  "完善 Google 原生搜索、来源展示与历史回放，适配 Google 思考档位并保留已保存配置。",
+  "改善目录粘贴、链接及文件管理器定位，保留输入框内目录卡片、临时草稿和隔离工作目录。",
+  "修复长会话历史加载与回到最新的阅读定位、审查摘要、启动恢复和侧栏重复运行计数。",
+  "远控项目会话首屏显示 3 条、每次增加 5 条；统一启动器磁贴并保留原有面板宽度。",
+  "数据库升级至 schema 28，迁移前备份并归并真实项目目录别名；旧版回退须恢复升级前整份业务目录。",
   "完善配置备份内容，统一完整覆盖与合并导入，兼容旧备份并继续隔离插件托管配置。",
   "内置默认关闭的局域网远程控制、会话标题和 Codex 宠物插件，沿用已有启停选择与设置；修复标题生成的模型补全初始化。",
   "远控支持临时会话分组和指定电脑工作目录的新草稿，首次发送时才建立正式会话并导入附件。",
@@ -119,6 +128,15 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Upgrade to Pi 1.5, improve provider compatibility and error handling, and show the actual response model and cost source.",
+  "Use a two-pane model picker and segmented thinking levels, with @agent mentions retaining model bindings and TaskResume.",
+  "Add local background Bash and a unified task dock for output, waits and stops, with workspace environment, process cleanup and temporary-file protection.",
+  "Open Windows commands in a separate visible console on request, preserving quotes and progress output alongside existing background task controls.",
+  "Improve native Google Search, source display and history replay, with Google thinking-level support and saved configuration preserved.",
+  "Improve pasted directories, links and file-manager navigation while retaining inline directory chips, temporary drafts and isolated workspaces.",
+  "Fix long-chat history loading, return-to-latest navigation, review summaries, startup recovery and duplicate sidebar running counts.",
+  "Show three remote project sessions initially and five more per page; unify launcher tiles while retaining the existing panel width.",
+  "Upgrade to schema 28 with a backup before reconciling project directory aliases; downgrades require restoring the full pre-upgrade data directory.",
   "Expand configuration backups and unify replace-all and merge imports, keeping older backups compatible and plugin-managed configuration isolated.",
   "Bundle opt-in LAN remote control, session titles and Codex Pet, retaining saved enablement and settings; fix model completion initialization for generated titles.",
   "Remote control supports temporary sessions and drafts with a computer workspace, creating the session and importing attachments on the first send.",
