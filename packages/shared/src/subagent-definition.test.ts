@@ -34,6 +34,11 @@ function definition(
   };
 }
 
+it("does not inherit GoogleSearch bound to the parent provider", () => {
+  expect(resolveSubagentToolNames({ tools: ["Read"], inheritTools: true }, ["Read", "GoogleSearch"]))
+    .toEqual(["Read"]);
+});
+
 describe("parseSubagentDefinition", () => {
   it("preserves an optional reporting interval and rejects invalid fixed intervals", () => {
     const document = (interval: string) => `---\nname: worker\ndescription: work\n${interval}\n---\nWork.`;

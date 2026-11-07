@@ -316,6 +316,7 @@ export function ModelSelectionPanes({
   // Use the same published endpoint routing as the runtime. A disabled control
   // means this connection is not integrated, not that the vendor cannot search.
   const nativeWebSearchWireCapable = nativeWebSearchSupportedOn(apiStyle, lookupContext?.baseUrl);
+  const googleGenerativeAi = apiStyle === "google_generative_ai";
   // Fast mode rides the Responses `service_tier` field; the hint names what
   // the priority tier costs on this wire (ADR 0334).
   const fastModeBilling = fastModeBillingOn(apiStyle);
@@ -876,28 +877,35 @@ export function ModelSelectionPanes({
                             <span className="provider-chosen-thinking-label">
                               {t("settings.thinkingProtocol")}
                             </span>
-                            <SettingsMenuSelect
-                              className="provider-chosen-thinking-select"
-                              label={t("settings.thinkingProtocol")}
-                              value={
-                                binding.thinkingProtocol ?? info?.thinkingProtocol ?? "legacy"
-                              }
-                              onChange={(id) =>
-                                updateBinding(binding.id, {
-                                  thinkingProtocol: id as ThinkingProtocol,
-                                })
-                              }
-                              options={[
-                                {
-                                  id: "legacy",
-                                  label: t("settings.thinkingProtocolLegacy"),
-                                },
-                                {
-                                  id: "adaptive",
-                                  label: t("settings.thinkingProtocolAdaptive"),
-                                },
-                              ]}
-                            />
+                            {googleGenerativeAi ? (
+                              <span className="provider-chosen-thinking-label">
+                                {t("settings.googleThinking")}
+                                <HelpIcon label={t("settings.googleThinkingHint")} />
+                              </span>
+                            ) : (
+                              <SettingsMenuSelect
+                                className="provider-chosen-thinking-select"
+                                label={t("settings.thinkingProtocol")}
+                                value={
+                                  binding.thinkingProtocol ?? info?.thinkingProtocol ?? "legacy"
+                                }
+                                onChange={(id) =>
+                                  updateBinding(binding.id, {
+                                    thinkingProtocol: id as ThinkingProtocol,
+                                  })
+                                }
+                                options={[
+                                  {
+                                    id: "legacy",
+                                    label: t("settings.thinkingProtocolLegacy"),
+                                  },
+                                  {
+                                    id: "adaptive",
+                                    label: t("settings.thinkingProtocolAdaptive"),
+                                  },
+                                ]}
+                              />
+                            )}
                           </div>
                           {bindingDefaultThinkingMenuLevels(enabledLevels).length > 1 ? (
                             <div className="provider-chosen-thinking-default">
@@ -1094,12 +1102,16 @@ export function ModelSelectionPanes({
                             className="provider-chosen-delegation-help"
                             label={t(
                               nativeWebSearchWireCapable
-                                ? "settings.nativeWebSearchHint"
+                                ? googleGenerativeAi
+                                  ? "settings.nativeWebSearchGoogleHint"
+                                  : "settings.nativeWebSearchHint"
                                 : "settings.nativeWebSearchUnsupported",
                             )}
                             ariaLabel={t(
                               nativeWebSearchWireCapable
-                                ? "settings.nativeWebSearchHint"
+                                ? googleGenerativeAi
+                                  ? "settings.nativeWebSearchGoogleHint"
+                                  : "settings.nativeWebSearchHint"
                                 : "settings.nativeWebSearchUnsupported",
                             )}
                           >

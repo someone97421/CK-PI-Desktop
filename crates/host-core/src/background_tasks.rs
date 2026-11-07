@@ -274,8 +274,9 @@ pub(crate) async fn spawn_background_task_with_env(
     let mut st = state.lock().await;
     // A task started for a session that no longer exists would belong to no
     // visible container and outlive the thing it was started from, so refuse it
-    let session_alive = crate::sessions::session_exists(&st.db, session_id)
-        .map_err(|error| ("INTERNAL".to_string(), error.to_string()))?;
+    let session_alive = crate::sessions::session_mode(&st.db, session_id)
+        .map_err(|error| ("INTERNAL".to_string(), error.to_string()))?
+        .is_some();
     if !session_alive || st.shutting_down {
         return Err((
             "TOOL_FAILED".into(),

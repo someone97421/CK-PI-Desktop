@@ -24,6 +24,7 @@ import { textToolCallDiagnostic } from "./text-tool-call.js";
 import { imageGenerationDescription, imageGenerationParameters } from "./image-generation/tool.js";
 import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
 import { createJevClassifierTool } from "./jev-classifier-tool.js";
+import { createGoogleSearchTool, GOOGLE_SEARCH_TOOL_NAME } from "./google-search-tool.js";
 import { scheduledToolParameters, scheduledToolDescriptions } from "./scheduled-tools.js";
 import { createHash, randomUUID } from "node:crypto";
 import { remoteMutationIdentity } from "./remote-workspace.js";
@@ -2937,6 +2938,8 @@ Delegation rules:
     // against the one actually in use — an extension agent's catalog-free
     // model cannot be verified, so the summary follows it.
     this.applyCompactionBinding();
+    this.rebuildToolCatalog();
+    this.setAgentTools(this.activeTools());
   }
 
   async activateTrustedExtensionAgent(agentKey: string, modelId: string): Promise<boolean> {
@@ -4138,6 +4141,7 @@ Delegation rules:
       this.mode === "agent" && this.jevApiKey
         ? [createJevClassifierTool(this.jevApiKey)]
         : [];
+    const googleSearchTool = createGoogleSearchTool(this.provider);
 
     // Plugins contribute Agent tools by default. Plan/Goal modes only
     // expose plugins that declare plan-safe actions (ADR 0211); the
@@ -4231,6 +4235,7 @@ Delegation rules:
     return [
       ...builtins,
       ...jevTools,
+      ...(googleSearchTool ? [googleSearchTool] : []),
       askTool,
       ...pluginTools,
       ...skillTools,
@@ -4338,6 +4343,7 @@ Delegation rules:
       "Grep",
       "BrowserPreview",
       "Bash",
+      GOOGLE_SEARCH_TOOL_NAME,
       ASK_TOOL_NAME,
       CONTEXT_COMPACTION_TOOL_NAME,
       SUBMIT_TOOL_NAMES[kind],
@@ -4347,6 +4353,7 @@ Delegation rules:
   private isCoreTool(name: string): boolean {
     return (
       name === CONTEXT_COMPACTION_TOOL_NAME ||
+      name === GOOGLE_SEARCH_TOOL_NAME ||
       retainModeToolDeclaration(name) ||
       MODE_TRANSITION_TOOL_NAMES.has(name) ||
       // The whole delegation lifecycle stays in the core set rather than the

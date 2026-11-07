@@ -1,6 +1,6 @@
 import { memo, useCallback, useId } from "react";
 import { useTranslation } from "react-i18next";
-import type { HostedSearchRound } from "@pi-desktop/shared";
+import type { HostedSearchReplayBlock, HostedSearchRound } from "@pi-desktop/shared";
 import {
   IconChevronRight,
   IconCircleAlert,
@@ -35,12 +35,14 @@ export const HostedSearchRow = memo(function HostedSearchRow({
   messageId,
   round,
   streaming,
+  replay,
   autoOpen = false,
   onUserInteraction,
 }: {
   messageId: string;
   round: HostedSearchRound;
   streaming: boolean;
+  replay?: HostedSearchReplayBlock[];
   autoOpen?: boolean;
   onUserInteraction?: () => void;
 }) {
@@ -61,6 +63,10 @@ export const HostedSearchRow = memo(function HostedSearchRow({
     collapseDisclosure();
   }, [collapseDisclosure, onUserInteraction]);
 
+  const searchWire = replay?.find(block => block.blockId === round.id)?.wire as Record<string, unknown> | undefined;
+  const entryPoint = searchWire?.provider === "google" && typeof searchWire.searchEntryPoint === "string"
+    ? searchWire.searchEntryPoint : undefined;
+  const searchDocument = entryPoint ? `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; base-uri 'none'; form-action 'none'"><style>body{margin:0}</style></head><body>${entryPoint}</body></html>` : undefined;
   const sources = round.sources ?? [];
   // The opened page leads the body list; dedupe against extracted sources.
   const links = [
@@ -113,6 +119,13 @@ export const HostedSearchRow = memo(function HostedSearchRow({
           </span>
         ) : null}
       </button>
+      {searchDocument ? <iframe
+        title={`Google ${t("chat.webSearch")}`}
+        srcDoc={searchDocument}
+        sandbox="allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+        style={{ width: "100%", height: 100, border: 0 }}
+      /> : null}
       {open && expandable ? (
         <div className="tool-row-body" id={detailsId} ref={disclosure.bodyRef} {...disclosure.bodyEvents}>
           <DisclosureCollapseRail
@@ -154,6 +167,7 @@ export const HostedSearchRow = memo(function HostedSearchRow({
   previous.messageId === next.messageId &&
   previous.round === next.round &&
   previous.streaming === next.streaming &&
+  previous.replay === next.replay &&
   previous.autoOpen === next.autoOpen &&
   previous.onUserInteraction === next.onUserInteraction,
 );

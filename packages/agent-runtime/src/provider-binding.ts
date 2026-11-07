@@ -50,6 +50,7 @@ import { genericModelConfig } from "./model-capabilities.js";
 import { sessionAffinityCompat } from "./session-affinity.js";
 import type { ModelConfig } from "./thinking-level.js";
 import { withMediaInput } from "./media-provider.js";
+import { googleThinkingModel, withGoogleNativeFeatures } from "./google-native-features.js";
 
 export type RuntimeProviderConfig = {
   id: string;
@@ -465,7 +466,7 @@ export function buildProviderModel(
         : thinkingProtocolCompat
           ? { ...(catalogModel.compat ?? {}), ...thinkingProtocolCompat }
           : catalogModel.compat;
-  return {
+  return googleThinkingModel({
     ...catalogModel,
     id: provider.modelId,
     api: binding.api,
@@ -486,7 +487,7 @@ export function buildProviderModel(
       ...transcriptCompat(catalog, provider.modelId, binding.api, baseUrl),
     },
     ...(Object.keys(modelHeaders).length > 0 ? { headers: modelHeaders } : {}),
-  } as Model<Api>;
+  } as Model<Api>);
 }
 
 /** Account-local operation registry. Vendor identity stays internal; auth stays row-scoped. */
@@ -533,7 +534,7 @@ export function createProviderModels(
   }, {
     ...operations,
     models: [model, ...(operations?.models ?? [])],
-    api: withMediaInput(apiBindingForProviderModel(provider).adapter(), mediaCapabilitiesForProvider(provider), requestLimitBytes, undefined, {
+    api: withMediaInput(withGoogleNativeFeatures(apiBindingForProviderModel(provider).adapter()), mediaCapabilitiesForProvider(provider), requestLimitBytes, undefined, {
       fileHosting: provider.fileHosting,
       providerId: provider.id,
       authKind: provider.authKind,

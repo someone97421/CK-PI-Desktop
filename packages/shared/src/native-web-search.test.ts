@@ -16,10 +16,11 @@ describe("resolveNativeWebSearch", () => {
     expect(resolveNativeWebSearch({ wireApi: "openai-responses", modelWebSearch: true })).toBe("on");
     expect(resolveNativeWebSearch({ wireApi: "azure-openai-responses", modelWebSearch: true })).toBe("on");
     expect(resolveNativeWebSearch({ wireApi: "openai-codex-responses", modelWebSearch: true })).toBe("on");
+    expect(resolveNativeWebSearch({ wireApi: "google-generative-ai", modelWebSearch: true })).toBe("on");
   });
 
   it("stays off for wires without a hosted search tool", () => {
-    for (const wire of ["openai-completions", "google-generative-ai", "pi-messages", ""]) {
+    for (const wire of ["openai-completions", "google-vertex", "pi-messages", ""]) {
       expect(resolveNativeWebSearch({ wireApi: wire, modelWebSearch: true })).toBe("off");
     }
   });
@@ -28,6 +29,7 @@ describe("resolveNativeWebSearch", () => {
     expect(resolveNativeWebSearch({ wireApi: "openai-responses" })).toBe("off");
     expect(resolveNativeWebSearch({ wireApi: "openai-responses", modelWebSearch: false })).toBe("off");
     expect(resolveNativeWebSearch({ wireApi: "openai-responses", modelWebSearch: undefined })).toBe("off");
+    expect(resolveNativeWebSearch({ wireApi: "google-generative-ai" })).toBe("off");
   });
 
   it("normalizes wire spelling before matching", () => {
@@ -45,6 +47,7 @@ describe("nativeWebSearchToolFor", () => {
     expect(nativeWebSearchToolFor("openai-responses")).toEqual({ type: "web_search" });
     expect(nativeWebSearchToolFor("azure-openai-responses")).toEqual({ type: "web_search" });
     expect(nativeWebSearchToolFor("openai-codex-responses")).toEqual({ type: "web_search" });
+    expect(nativeWebSearchToolFor("google-generative-ai")).toEqual({ googleSearch: {} });
   });
 
   it("returns undefined for wires without a tool shape", () => {
@@ -451,6 +454,8 @@ describe("nativeWebSearchSupportedOn", () => {
     expect(nativeWebSearchSupportedOn("anthropic-messages")).toBe(true);
     expect(nativeWebSearchSupportedOn("openai_codex_responses")).toBe(true);
     expect(nativeWebSearchSupportedOn("openai-codex-responses")).toBe(true);
+    expect(nativeWebSearchSupportedOn("google_generative_ai")).toBe(true);
+    expect(nativeWebSearchSupportedOn("google-generative-ai")).toBe(true);
   });
 
   it("rejects wires without a hosted search tool", () => {

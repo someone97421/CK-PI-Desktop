@@ -1672,3 +1672,13 @@ README 改为以本 fork 与上游的差异为主，展开阶段报告、TaskGui
 正式合并为 `980a0f7c790e6ad7add06fba4cc15e0f53d25788`，双父与目标祖先关系已验证。合并提交包含 182 个文件，合并完成后、还原前工作区干净；随后还原全部 34 个原有未提交文件，27 个 SHA-256 与备份一致，其余 7 个为叠加上游更新的清单、runtime 和双语资源，原增量新增行均保留。同步文档的重复应用冲突已用包含原评估和实施结果的版本解决；原有功能与版本改动继续保持未提交，本轮未推送。
 
 还原后补查：20 个原有 TS／TSX 文件语法解析通过，原 package 版本值均与备份一致；按语法树层级核对中英文各 3418 个文案叶子键，无重复或缺失，`git diff --check` 通过。临时 stash 在核对恢复后移除，scratch 文件副本与 SHA-256 清单继续保留。
+
+## 本地 macOS 构建与提交（2026-11-07）
+
+用户要求构建新版 DMG，并提交、推送全部有效改动。通过 `pnpm install --frozen-lockfile` 安装 Pi 1.5 依赖，沿统一入口 `pnpm --filter @pi-desktop/desktop dist:mac` 构建，复用构建时间 `2026-11-07T03:11:35.410Z`；用户可见版本 `20261107-111135`，内部版本 `2611.711.1135`。
+
+构建中修正两处实际编译错误：后台 Bash 拒绝用例的 mock 显式声明 RPC method 参数，避免空参数元组推断；后台任务会话检查复用 fork 已有 `session_mode` 查询，以 `Option::is_some` 判断会话存在，不调用缺失的 `session_exists`。同时提交此前保留的 Google 原生搜索、搜索历史回放／来源展示、Google 思考档位适配及其用例源码，保留原有功能增量。
+
+工作区依赖 TypeScript 编译、Rust release、运行时 bundle、Electron 主进程／preload／界面及 electron-builder 打包成功。生成 ARM64 DMG、配套 ZIP、blockmap、`latest-mac.yml` 和解包应用，成功后自动清理上次产物。DMG 完整性与应用签名验证通过，主程序和 host 均为 arm64，bundle ID／版本一致，更新描述中的两份文件 SHA-512 与大小均匹配。
+
+产物位于 `apps/desktop/release/20261107-111135-tWDOzg/`，DMG 为 `this-is-a-agent-20261107-111135-arm64.dmg`（约 132.78 MiB），SHA-256 为 `c0c677003924caf0ea739dee786f9a442e3fdd95a1e10a82b192ebfd6b5926c8`。使用既有 ad-hoc 签名，未做 Apple 公证；未启动应用、未运行单元／E2E 用例或真实提供商调用。此次只构建本机 ARM64 产物，不代表其他平台验证完成；安装包不入 Git，不创建 GitHub Release。

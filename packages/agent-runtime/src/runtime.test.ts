@@ -3636,6 +3636,33 @@ describe("DesktopAgentRuntime live activity", () => {
 });
 
 describe("DesktopAgentRuntime deferred tool catalog", () => {
+  it.each(["agent", "plan", "goal"] as const)("exposes GoogleSearch only for an enabled Gemini model in %s", async mode => {
+    for (const [apiStyle, enabled, expected] of [
+      ["google_generative_ai", true, true],
+      ["google_generative_ai", false, false],
+      ["responses", true, false],
+    ] as const) {
+      const runtime = createRuntime({ mode, provider: {
+        ...provider, apiStyle, modelId: "gemini-3.8-flash-medium-g",
+        modelConfig: { ...provider.modelConfig!, webSearch: enabled },
+      } });
+      try {
+        const view = runtime as any;
+        expect(view.agent.state.tools.some((tool: { name: string }) => tool.name === "GoogleSearch")).toBe(expected);
+        expect(view.toolCatalog.has("GoogleSearch")).toBe(expected);
+        if (!expected) expect(view.agent.state.systemPrompt).not.toContain("GoogleSearch");
+        if (expected) {
+          view.applyExtensionAgent({ providerId: "extension-provider", name: "Extension", key: "extension-test", stream: vi.fn() },
+            { ...view.model, provider: "extension-provider", api: "openai-completions", id: "extension-model" });
+          expect(view.toolCatalog.has("GoogleSearch")).toBe(false);
+          expect(view.agent.state.tools.some((tool: { name: string }) => tool.name === "GoogleSearch")).toBe(false);
+          expect(view.agent.state.systemPrompt).not.toContain("GoogleSearch");
+        }
+      } finally {
+        await runtime.dispose();
+      }
+    }
+  });
   it("offers Jev only in Agent mode when an API key is supplied", async () => {
     type ToolResult = {
       content: Array<{ type: "text"; text: string }>;
@@ -10202,7 +10229,7 @@ describe("DesktopAgentRuntime subagents", () => {
     ["remote", { command: "sleep 600", runInBackground: true }, "remote workspace"],
     ["visible", { command: "sleep 600", runInBackground: true, visible: true }, "cannot be combined with visible"],
   ] as const)("rejects a %s background Bash request before dispatch", async (kind, args, message) => {
-    const host = { call: vi.fn(async () => ({ ok: true })) };
+    const host = { call: vi.fn(async (_method: string) => ({ ok: true })) };
     const requests: AgentMessage[][] = [];
     const runtime = createRuntime({ host, ...(kind === "remote" ? { remoteWorkspace: { hostKey: "ssh", path: "/remote" } } : {}) });
     (runtime as any).models = { streamSimple: scriptedStream([[

@@ -4,9 +4,7 @@ import { nativeWebSearchTransport } from "./native-web-search-transport.js";
  * Evaluation helpers for the provider-hosted web search tool.
  *
  * - `nativeWebSearchSupportedOn` gates the settings checkbox. It accepts
- *   stored apiStyle (`responses`, `openai_codex_responses`, `anthropic_messages`)
- *   and resolved wire APIs (`openai-responses`, `openai-codex-responses`,
- *   `azure-openai-responses`, `anthropic-messages`).
+ *   stored apiStyle and resolved wire APIs, including Google Generative AI.
  * - `resolveNativeWebSearch` is the runtime decision: capable wire AND the
  *   binding opt-in. Adapters then key on `model.webSearch`, which
  *   `modelConfigWithBinding` copies from that opt-in.
@@ -23,6 +21,7 @@ export const NATIVE_WEB_SEARCH_WIRE_APIS = new Set([
   "openai-responses",
   "azure-openai-responses",
   "openai-codex-responses",
+  "google-generative-ai",
 ]);
 
 /** Tool definition attached to an anthropic-messages request. */
@@ -53,9 +52,11 @@ export function nativeWebSearchToolFor(
 ):
   | { type: "web_search_20250305"; name: "web_search" }
   | { type: "web_search" }
+  | { googleSearch: Record<string, never> }
   | undefined {
   const wire = wireApi.trim().toLowerCase();
   if (wire === "anthropic-messages") return { ...ANTHROPIC_WEB_SEARCH_TOOL };
+  if (wire === "google-generative-ai") return { googleSearch: {} };
   if (
     wire === "openai-responses" ||
     wire === "azure-openai-responses" ||
@@ -66,7 +67,7 @@ export function nativeWebSearchToolFor(
   return undefined;
 }
 
-const NATIVE_WEB_SEARCH_API_STYLES = new Set(["responses", "anthropic_messages", "openai_codex_responses"]);
+const NATIVE_WEB_SEARCH_API_STYLES = new Set(["responses", "anthropic_messages", "openai_codex_responses", "google_generative_ai"]);
 
 /**
  * Whether a stored apiStyle or a resolved wire API can carry the hosted

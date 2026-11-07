@@ -74,6 +74,7 @@ const ActivityItemBlock = memo(function ActivityItemBlock({
       key={`hosted-search-${item.message.id}-${item.round.id}`}
       messageId={item.message.id}
       round={item.round}
+      replay={item.message.hostedSearch?.replay}
       streaming={isActive && item.message.status === "streaming"}
       autoOpen={autoOpenLatest}
       onUserInteraction={onUserInteraction}

@@ -42,6 +42,6 @@ describe("official native search request routing", () => {
       expect(nativeWebSearchTransport(input)).toEqual({ apiStyle, baseUrl: input.baseUrl });
     }
     expect(nativeWebSearchSupportedOn("responses", "https://relay.example/v1")).toBe(true);
-    expect(nativeWebSearchSupportedOn("google_generative_ai", "https://generativelanguage.googleapis.com/v1beta")).toBe(false);
+    expect(nativeWebSearchSupportedOn("google_generative_ai", "https://generativelanguage.googleapis.com/v1beta")).toBe(true);
   });
 });

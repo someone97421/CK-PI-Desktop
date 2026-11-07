@@ -105,6 +105,8 @@ export function agentThinkingLevel(level: SessionThinkingLevel): ThinkingLevel {
   return level === "omit" ? "off" : level;
 }
 
+const THINKING_OMITTED = Symbol("pi-desktop.thinkingOmitted");
+
 /** Null the Responses/simple-stream `off` fallback so omit sends no thinking field. */
 export function omitThinkingModel<T extends { thinkingLevelMap?: Partial<Record<string, string | null>> }>(
   model: T,
@@ -112,7 +114,13 @@ export function omitThinkingModel<T extends { thinkingLevelMap?: Partial<Record<
   return {
     ...model,
     thinkingLevelMap: { ...model.thinkingLevelMap, off: null },
+    [THINKING_OMITTED]: true,
   };
+}
+
+/** Omit survives model copies but never reaches the request body. */
+export function isThinkingOmitted(model: object): boolean {
+  return (model as Record<symbol, unknown>)[THINKING_OMITTED] === true;
 }
 
 /** Normalize only after resolving the physical request model; never mutate preferences. */
