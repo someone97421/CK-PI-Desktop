@@ -5,6 +5,14 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "新增提问超时自动选择：可设置等待分钟数，0 为关闭，倒计时结束自动提交推荐项或第一项。",
+  "接入可自定义的分阶段工作模式与 Goal 多轮推进，支持预算和阶段完成检查，保留旧历史并修复普通模式启动校验。",
+  "局域网远控升级至 0.2.37，支持动态模式选择、阶段与预算展示、暂停、继续、停止和阶段确认。",
+  "修复折叠消息上滚与历史补载反复跳动，跳过隐藏正文锚点、预布局附近消息，并保留任务抽屉展开状态。",
+  "改善长会话阅读、分页与有状态 Markdown，新增单轮和会话费用，保留小地图用户与助手双标记。",
+  "完善侧栏布局恢复、定时任务编辑状态、文件审查焦点、上下文与输出预算及供应商错误识别。",
+  "修复插件会话工作目录、MCP 编辑项目、文件管理器超时与名称校验，清理临时文件时保留历史模式产物。",
+  "数据库升级至 schema 29，保存模式快照与阶段运行，转录格式 2、protocol 11 保持不变；旧版回退须恢复升级前整份业务目录。",
   "升级 Pi 1.5，改善供应商兼容与错误识别，显示实际响应模型和费用来源。",
   "模型选择采用双栏菜单和分段思考档位，支持 @agent 指定子代理，保留模型绑定和 TaskResume。",
   "接入本地后台 Bash 和统一任务面板，支持查看输出、等待和停止，补齐工作区环境、进程收尾与临时文件保护。",
@@ -128,6 +136,14 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Add question timeouts in minutes, with 0 disabling automatic submission; select the recommended or first option when the countdown ends.",
+  "Add custom staged modes and multi-turn Goal execution with budgets and stage completion checks, preserving legacy history and fixing ordinary-mode launch validation.",
+  "Upgrade LAN remote control to 0.2.37 with dynamic modes, stage and budget status, pause, resume, stop and stage confirmation.",
+  "Fix folded-history scrolling and pagination jumping by skipping hidden anchors, laying out nearby messages early and retaining task drawer state.",
+  "Improve long-chat reading, pagination and stateful Markdown; show turn and session cost while retaining both user and assistant minimap markers.",
+  "Improve sidebar recovery, scheduled-task editor state, review focus, context and output budgets, and provider error classification.",
+  "Fix plugin session workspaces, MCP target projects, file-manager timeouts and name validation; retain historical mode artifacts during temporary-file cleanup.",
+  "Upgrade to schema 29 for mode snapshots and staged runs, retaining transcript format 2 and protocol 11; downgrades require the full pre-upgrade data directory.",
   "Upgrade to Pi 1.5, improve provider compatibility and error handling, and show the actual response model and cost source.",
   "Use a two-pane model picker and segmented thinking levels, with @agent mentions retaining model bindings and TaskResume.",
   "Add local background Bash and a unified task dock for output, waits and stops, with workspace environment, process cleanup and temporary-file protection.",
