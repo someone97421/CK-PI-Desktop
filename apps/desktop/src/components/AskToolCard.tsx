@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   askToolOptionDescription,
@@ -12,11 +12,44 @@ import {
   type PendingAsk,
 } from "../lib/pending-asks";
 import { useAppStore } from "../stores/app-store";
-import { Button } from "./ui";
+import { Button, Tooltip } from "./ui";
 
 type DraftAnswer = AskDraftAnswer;
 
 const CUSTOM_OPTION = "__asktool_custom__";
+
+function AskToolCountdown({ startedAt, deadlineAt }: NonNullable<PendingAsk["autoSelect"]>) {
+  const { t } = useTranslation();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const tick = () => {
+      const time = Date.now();
+      setNow(time);
+      if (time >= deadlineAt) window.clearInterval(timer);
+    };
+    const timer = window.setInterval(tick, 250);
+    tick();
+    return () => window.clearInterval(timer);
+  }, [deadlineAt]);
+  const remaining = Math.max(0, deadlineAt - now);
+  const duration = Math.max(1, deadlineAt - startedAt);
+  const progress = Math.min(1, remaining / duration);
+  const label = t("askTool.autoSelectCountdown", { seconds: Math.ceil(remaining / 1000) });
+  return (
+    <Tooltip className="asktool-countdown" label={label}>
+      <span
+        className="asktool-countdown-track"
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress * 100)}
+      >
+        <span className="asktool-countdown-fill" style={{ transform: `scaleX(${progress})` }} />
+      </span>
+    </Tooltip>
+  );
+}
 
 export function AskToolCard({ request, queued = 0 }: { request: PendingAsk; queued?: number }) {
   const { t } = useTranslation();
@@ -145,6 +178,9 @@ export function AskToolCard({ request, queued = 0 }: { request: PendingAsk; queu
 
   return (
     <section className="asktool-card" role="region" aria-label={t("askTool.title")}>
+      {request.autoSelect ? (
+        <AskToolCountdown key={request.requestId} {...request.autoSelect} />
+      ) : null}
       <div className="asktool-card-header">
         <div className="asktool-card-header-main">
           <span className="asktool-card-title" role="status" aria-live="polite">

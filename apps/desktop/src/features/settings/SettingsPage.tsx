@@ -71,6 +71,7 @@ import { AgentSubagentsPage } from "../../components/settings/AgentSubagentsPage
 import { RemoteHostsPage } from "../../components/settings/RemoteHostsPage";
 import {
   AppDisplayNameRow,
+  AskToolTimeoutRow,
   CommandShellRow,
   ContextUsageDisplayRow,
   LargePasteThresholdRow,
@@ -651,6 +652,10 @@ export function SettingsPage() {
                   />
                 </SettingsRow>
                 <RunStatusReminderRow
+                  settings={settings}
+                  saveSettings={saveSettings}
+                />
+                <AskToolTimeoutRow
                   settings={settings}
                   saveSettings={saveSettings}
                 />

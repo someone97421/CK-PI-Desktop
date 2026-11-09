@@ -1849,6 +1849,9 @@ sklm: {
     runStatusReminder: "Run status reminder",
     runStatusReminderDesc: "Reminder interval in minutes; 0 turns it off. Each time a run reaches the interval, the agent is told in the next model request how long it has been running and its cumulative token usage. The note is not written into the conversation and disappears after compaction.",
     runStatusReminderSaveError: "Couldn't save the run status reminder interval.",
+    askToolTimeout: "Auto-select timeout (minutes)",
+    askToolTimeoutDesc: "0 turns this off (default). Set a whole number from 1 to 1440 minutes to start a countdown when the agent asks. When time runs out, select the recommended option for every question in the prompt, or the first option if none is recommended, and submit all answers automatically.",
+    askToolTimeoutSaveError: "Couldn't save the auto-select timeout.",
     smoothStreaming: "Smooth streaming",
     smoothStreamingDesc: "Release streamed text character by character. Automatically disabled when the system prefers reduced motion.",
     inlineVisualizations: "Inline visualizations",
@@ -2645,6 +2648,7 @@ sklm: {
     skip: "Skip",
     decline: "Decline all",
     queued: "{{count}} more prompt is waiting",
+    autoSelectCountdown: "{{seconds}} seconds left; auto-select and submit when time runs out",
     status: {
       answered: "Question {{number}} answered",
       unanswered: "Question {{number}} not answered",

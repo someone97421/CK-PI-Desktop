@@ -119,6 +119,8 @@ export type AppSettings = {
    * 通知不写入持久化对话。0 或缺省表示关闭，最大 1440。
    */
   runStatusReminderMinutes?: number;
+  /** 提问超时自动选择的等待分钟数；0 或缺省关闭。 */
+  askToolTimeoutMinutes?: number;
   /** Allow Agent mode to call TypeSafe Jev for explicit structured classifications. */
   jevEnabled?: boolean;
   /** 应用运行期间阻止系统空闲休眠；缺省开启。 */

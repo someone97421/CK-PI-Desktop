@@ -3845,6 +3845,7 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
         { question: "Targets?", options: ["Web", "Desktop"], multiSelect: true },
       ],
     });
+    expect(request).not.toHaveProperty("autoSelect");
     expect(
       runtime.resolveAskTool({
         requestId: request.requestId,
@@ -3857,6 +3858,86 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
       details: { answers: [["**Blue**"], null] },
     });
     await runtime.dispose();
+  });
+
+  it("提问超时由运行时自动回答整组问题，无需面板提交", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const runtime = createRuntime();
+    const internal = runtime as any;
+    runtime.setAskToolTimeoutMinutes(1);
+    try {
+      const pending = internal.waitForAskTool({
+        requestId: "auto-ask", sessionId: "session-1", toolCallId: "auto-call",
+        questions: [
+          { question: "方案？", options: ["方案 A", "方案 B（推荐）"] },
+          { question: "平台？", options: ["Web", "Desktop"], multiSelect: true },
+        ],
+      });
+      expect(internal.pendingAskTools.get("auto-ask").request.autoSelect)
+        .toEqual({ startedAt: 1_000, deadlineAt: 61_000 });
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(internal.pendingAskTools.has("auto-ask")).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual([["方案 B（推荐）"], ["Web"]]);
+      expect(internal.pendingAskTools.size).toBe(0);
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["manual", "abort", "dispose"] as const)("%s 结束提问后取消自动选择计时", async (action) => {
+    vi.useFakeTimers();
+    const runtime = createRuntime();
+    const internal = runtime as any;
+    const controller = new AbortController();
+    runtime.setAskToolTimeoutMinutes(2);
+    try {
+      const pending = internal.waitForAskTool({
+        requestId: "cancel-ask", sessionId: "session-1", toolCallId: "cancel-call",
+        questions: [{ question: "继续？", options: ["继续", "稍后"] }],
+      }, controller.signal);
+      await vi.advanceTimersByTimeAsync(0);
+      if (action === "manual") {
+        runtime.resolveAskTool({ requestId: "cancel-ask", sessionId: "session-1", answers: [["稍后"]] });
+      } else if (action === "abort") {
+        controller.abort();
+      } else {
+        await runtime.dispose();
+      }
+      await expect(pending).resolves.toEqual(action === "manual" ? [["稍后"]] : [null]);
+      expect(internal.pendingAskTools.size).toBe(0);
+      await runtime.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(internal.pendingAskTools.size).toBe(0);
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("关闭超时后持续等待用户回答", async () => {
+    vi.useFakeTimers();
+    const runtime = createRuntime();
+    const internal = runtime as any;
+    runtime.setAskToolTimeoutMinutes(1);
+    runtime.setAskToolTimeoutMinutes(0);
+    try {
+      const pending = internal.waitForAskTool({
+        requestId: "no-timeout", sessionId: "session-1", toolCallId: "no-timeout-call",
+        questions: [{ question: "继续？", options: ["继续"] }],
+      });
+      expect(internal.pendingAskTools.get("no-timeout").request.autoSelect).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(3_600_000);
+      expect(internal.pendingAskTools.has("no-timeout")).toBe(true);
+      runtime.resolveAskTool({ requestId: "no-timeout", sessionId: "session-1", answers: [["继续"]] });
+      await expect(pending).resolves.toEqual([["继续"]]);
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("运行状态提醒缺省关闭，按设定分钟数提醒", async () => {

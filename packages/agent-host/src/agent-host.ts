@@ -77,6 +77,7 @@ export type AgentHostOptions = {
   snapshotItems?: number;
   /** Called after any change to a session's queue, with the new entries. */
   onQueueChange?: (sessionId: string, entries: QueueEntryView[]) => void;
+  onInputResolved?: (event: { sessionId: string; inputId: string }) => void;
 };
 
 /** A queued turn together with the prompt it will send. */
@@ -194,6 +195,7 @@ export class AgentHost {
   private readonly allowRemoteSessionGrants: boolean;
   private readonly snapshotItems: number;
   private readonly onQueueChange?: (sessionId: string, entries: QueueEntryView[]) => void;
+  private readonly onInputResolved?: AgentHostOptions["onInputResolved"];
   private readonly states = new Map<string, SessionState>();
   private readonly turnIndex = new Map<string, string>();
   private readonly runtimeAliases = new Map<string, string>();
@@ -216,6 +218,7 @@ export class AgentHost {
     this.allowRemoteSessionGrants = options.allowRemoteSessionGrants ?? false;
     this.snapshotItems = options.snapshotItems ?? 50;
     this.onQueueChange = options.onQueueChange;
+    this.onInputResolved = options.onInputResolved;
     this.hub = new EventHub({ clock: this.clock, ids: this.ids, limits: this.limits });
     this.queue = new TurnQueue(options.queueStore ?? new MemoryQueueStore(), this.limits.maxQueuedTurnsPerSession);
     this.approvals = new ApprovalBroker(options.approvals, this.clock);
@@ -318,6 +321,15 @@ export class AgentHost {
         const item = this.itemFromEvent(event, envelope, turnId, "completed", mapping.itemType!);
         state.activeItems.delete(item.id);
         this.emit(state, mapping.kind, { itemType: mapping.itemType, itemId: item.id, event }, meta2);
+        if (event.type === "tool_end") {
+          for (const [inputId, entry] of state.pendingInputs) {
+            if (entry.original.toolCallId !== event.toolCallId) continue;
+            this.settleInputExternally(state.id, inputId, "runtime");
+            try {
+              this.onInputResolved?.({ sessionId: state.id, inputId });
+            } catch { /* Subscribers cannot hold a completed tool open. */ }
+          }
+        }
         // A manual compaction occupies the runtime without a turn; let the
         // queue run once it ends.
         if (event.type === "compaction_end") void this.drain(state.id);
@@ -958,14 +970,14 @@ export class AgentHost {
     return { inputId: response.inputId, status: "resolved" };
   }
 
-  settleInputExternally(sessionId: string, inputId: string): void {
+  settleInputExternally(sessionId: string, inputId: string, by = "desktop"): void {
     const state = this.states.get(sessionId);
     const entry = state?.pendingInputs.get(inputId);
     if (!state || !entry) return;
     state.pendingInputs.delete(inputId);
     const turn = state.turns.get(entry.request.turnId);
     if (turn?.status === "waiting_input") turn.status = "running";
-    this.emit(state, "input.resolved", { inputId, status: "resolved", by: "desktop" }, { turnId: entry.request.turnId });
+    this.emit(state, "input.resolved", { inputId, status: "resolved", by }, { turnId: entry.request.turnId });
   }
 
   async history(

@@ -53,6 +53,7 @@ describe("可迁移应用设置", () => {
     expect(exportPortableSettings(settings, "ai")).toEqual({
       infiniteProviderRetry: false,
       runStatusReminderMinutes: 0,
+      askToolTimeoutMinutes: 0,
       jevEnabled: false,
     });
     expect(exportPortableSettings(settings, "network")).toEqual({
@@ -61,6 +62,14 @@ describe("可迁移应用设置", () => {
       pluginMarketSource: "official",
       pluginMarketCustomUrl: "",
     });
+  });
+
+  it("提问超时设置能导入导出，旧文件仍不补默认值", () => {
+    expect(parsePortableSettings({ askToolTimeoutMinutes: 3 }, "ai"))
+      .toEqual({ askToolTimeoutMinutes: 3 });
+    expect(exportPortableSettings({ ...settings, askToolTimeoutMinutes: 3 }, "ai"))
+      .toMatchObject({ askToolTimeoutMinutes: 3 });
+    expect(parsePortableSettings({}, "ai")).not.toHaveProperty("askToolTimeoutMinutes");
   });
 
   it("空媒体配置能清除目标配置，生图旧绑定能展开为候选列表", () => {
@@ -147,6 +156,10 @@ describe("可迁移应用设置", () => {
     ["general", { updatePreference: null }],
     ["ai", { runStatusReminderMinutes: 1441 }],
     ["ai", { runStatusReminderMinutes: Infinity }],
+    ["ai", { askToolTimeoutMinutes: -1 }],
+    ["ai", { askToolTimeoutMinutes: 1.5 }],
+    ["ai", { askToolTimeoutMinutes: 1441 }],
+    ["ai", { askToolTimeoutMinutes: Infinity }],
     ["ai", { jevEnabled: null }],
     ["media", { imageGeneration: {} }],
     ["media", { imageGenerationModels: [null] }],

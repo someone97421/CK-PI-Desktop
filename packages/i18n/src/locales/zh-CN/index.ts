@@ -1827,6 +1827,9 @@ sklm: {
     runStatusReminder: "运行状态提醒",
     runStatusReminderDesc: "提醒间隔（分钟），0 为关闭。主代理运行每满该间隔，在下一次模型请求中告知其已运行时长与累计 token 用量；消息不写入对话记录，压缩后自然消失。",
     runStatusReminderSaveError: "无法保存运行状态提醒间隔。",
+    askToolTimeout: "超时自动选择（分钟）",
+    askToolTimeoutDesc: "0 为关闭（默认）。设置 1～1440 的整数分钟后，从智能体开始提问时倒计时；到期为本次提问的所有题目优先选择推荐项，没有推荐项则选择第一项，并自动提交全部答案。",
+    askToolTimeoutSaveError: "无法保存超时自动选择时间。",
     smoothStreaming: "平滑流式显示",
     smoothStreamingDesc: "将流式文本逐字释放；系统开启减少动态效果时自动禁用。",
     inlineVisualizations: "聊天内嵌可视化",
@@ -2617,6 +2620,7 @@ sklm: {
     skip: "跳过",
     decline: "全部拒绝",
     queued: "还有 {{count}} 个提问在等待",
+    autoSelectCountdown: "剩余 {{seconds}} 秒，到期自动选择并提交",
     status: {
       answered: "第 {{number}} 题已回答",
       unanswered: "第 {{number}} 题未回答",

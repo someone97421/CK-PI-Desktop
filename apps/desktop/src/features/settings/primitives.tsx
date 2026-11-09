@@ -9,6 +9,8 @@ import {
   MAX_LARGE_PASTE_THRESHOLD,
   MIN_LARGE_PASTE_THRESHOLD,
   normalizeLargePasteThreshold,
+  MAX_ASK_TOOL_TIMEOUT_MINUTES,
+  normalizeAskToolTimeoutMinutes,
   MAX_RUN_STATUS_REMINDER_MINUTES,
   normalizeRunStatusReminderMinutes,
 } from "@pi-desktop/shared";
@@ -442,6 +444,69 @@ export function RunStatusReminderRow({
           inputMode="numeric"
           value={draft}
           aria-label={t("settings.runStatusReminder")}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => void commit()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+        />
+      </div>
+    </SettingsRow>
+  );
+}
+
+export function AskToolTimeoutRow({
+  settings,
+  saveSettings,
+}: {
+  settings: AppSettings;
+  saveSettings: (patch: Partial<AppSettings>) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const current = normalizeAskToolTimeoutMinutes(settings.askToolTimeoutMinutes);
+  const [draft, setDraft] = useState(String(current));
+  const showToast = useAppStore((state) => state.showToast);
+
+  useEffect(() => {
+    setDraft(String(current));
+  }, [current]);
+
+  const commit = async () => {
+    const parsed = Number(draft.trim());
+    const next =
+      draft.trim() !== "" &&
+      Number.isInteger(parsed) &&
+      parsed >= 0 &&
+      parsed <= MAX_ASK_TOOL_TIMEOUT_MINUTES
+        ? parsed
+        : current;
+    setDraft(String(next));
+    if (next === current) return;
+    try {
+      await saveSettings({ askToolTimeoutMinutes: next });
+    } catch {
+      setDraft(String(current));
+      showToast(t("settings.askToolTimeoutSaveError"), { variant: "error" });
+    }
+  };
+
+  return (
+    <SettingsRow
+      title={t("settings.askToolTimeout")}
+      description={t("settings.askToolTimeoutDesc")}
+    >
+      <div className="settings-number-control">
+        <Input
+          type="number"
+          min={0}
+          max={MAX_ASK_TOOL_TIMEOUT_MINUTES}
+          step={1}
+          inputMode="numeric"
+          value={draft}
+          aria-label={t("settings.askToolTimeout")}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => void commit()}
           onKeyDown={(event) => {

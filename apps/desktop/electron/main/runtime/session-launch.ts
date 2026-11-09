@@ -20,6 +20,7 @@ import {
   type UserSkillRecord,
   type UserSubagentRecord,
   normalizeRunStatusReminderMinutes,
+  normalizeAskToolTimeoutMinutes,
 } from "@pi-desktop/shared";
 import {
   capabilitiesFromModelConfig,
@@ -882,6 +883,7 @@ export function createSessionLaunchRuntime({
         thinkingLevel,
         infiniteProviderRetry: settings.infiniteProviderRetry === true,
         runStatusReminderMinutes: normalizeRunStatusReminderMinutes(settings.runStatusReminderMinutes),
+        askToolTimeoutMinutes: normalizeAskToolTimeoutMinutes(settings.askToolTimeoutMinutes),
         // The session `/fast` switch only reaches a model the user allowed it
         // for in model settings (ADR 0334).
         fastMode: session.fastMode === true && storedModel?.fastModeAllowed === true,

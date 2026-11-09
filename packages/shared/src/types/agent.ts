@@ -221,11 +221,24 @@ export type AskToolQuestion = {
   multiSelect?: boolean;
 };
 
+export function defaultAskToolAnswers(questions: AskToolQuestion[]): Array<string[] | null> {
+  return questions.map(({ options }) => {
+    const recommended = options.find((option) => {
+      const label = askToolOptionLabel(option).replace(/[*_`]/g, "").trim();
+      return /[（(\[【]\s*(?:推荐(?:选项|方案)?|recommended)\s*[）)\]】]/i.test(label)
+        || /^(?:推荐(?:选项|方案)?|recommended)\s*(?:[:：]|$)/i.test(label);
+    });
+    const option = recommended ?? options[0];
+    return option === undefined ? null : [askToolOptionLabel(option)];
+  });
+}
+
 export type AskToolRequest = {
   requestId: string;
   sessionId: string;
   toolCallId: string;
   questions: AskToolQuestion[];
+  autoSelect?: { startedAt: number; deadlineAt: number };
 };
 
 /** `null` means the user skipped that question or declined the whole prompt. */

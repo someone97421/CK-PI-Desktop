@@ -107,6 +107,7 @@ type RuntimeParams = {
   infiniteProviderRetry?: boolean;
   /** 运行状态提醒间隔（分钟）；0 或缺省关闭。 */
   runStatusReminderMinutes?: number;
+  askToolTimeoutMinutes?: number;
   /** Session `/fast` switch AND the model's opt-in, resolved by main (ADR 0334). */
   fastMode?: boolean;
   /** Opt-in TypeSafe classifier credential resolved by Electron main. */
@@ -289,6 +290,7 @@ async function runtimeFor(
     reusable.setCompactionSettings(params.compactionSettings);
     reusable.setInfiniteProviderRetry(params.infiniteProviderRetry === true);
     reusable.setRunStatusReminderMinutes(params.runStatusReminderMinutes ?? 0);
+    reusable.setAskToolTimeoutMinutes(params.askToolTimeoutMinutes ?? 0);
     reusable.setFastMode(params.fastMode === true);
     reusable.setMode(mode);
     return reusable;
@@ -346,6 +348,7 @@ async function runtimeFor(
     thinkingLevel,
     infiniteProviderRetry: params.infiniteProviderRetry === true,
     runStatusReminderMinutes: params.runStatusReminderMinutes ?? 0,
+    askToolTimeoutMinutes: params.askToolTimeoutMinutes ?? 0,
     fastMode: params.fastMode === true,
     jevApiKey: params.jevApiKey,
     history,

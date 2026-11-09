@@ -1,9 +1,11 @@
 import type { AppSettings } from "./types/settings.js";
 import type { SpeechBinding, SpeechSettings } from "./types/speech.js";
 import {
+  MAX_ASK_TOOL_TIMEOUT_MINUTES,
   MAX_LARGE_PASTE_THRESHOLD,
   MAX_RUN_STATUS_REMINDER_MINUTES,
   MIN_LARGE_PASTE_THRESHOLD,
+  normalizeAskToolTimeoutMinutes,
   normalizeLargePasteThreshold,
   normalizeRunStatusReminderMinutes,
 } from "./composer-trigger.js";
@@ -42,7 +44,7 @@ export const PORTABLE_SETTING_KEYS: Record<
     "scheduledTasksEnabled",
     "updatePreference",
   ],
-  ai: ["infiniteProviderRetry", "runStatusReminderMinutes", "jevEnabled"],
+  ai: ["infiniteProviderRetry", "runStatusReminderMinutes", "askToolTimeoutMinutes", "jevEnabled"],
   media: ["imageGeneration", "imageGenerationModels", "fileHosting", "speech"],
   network: [
     "networkProxy",
@@ -65,6 +67,7 @@ const LABELS: Partial<Record<keyof AppSettings, string>> = {
   updatePreference: "更新偏好",
   infiniteProviderRetry: "无限重试",
   runStatusReminderMinutes: "运行状态提醒间隔",
+  askToolTimeoutMinutes: "超时自动选择时间",
   jevEnabled: "Jev 分类服务",
   imageGeneration: "默认生图模型",
   imageGenerationModels: "生图模型列表",
@@ -165,6 +168,12 @@ function parseSetting(key: keyof AppSettings, value: unknown): unknown {
       if (typeof value !== "number" || !Number.isInteger(value) ||
           value < 0 || value > MAX_RUN_STATUS_REMINDER_MINUTES) {
         invalid(label, `必须是 0～${MAX_RUN_STATUS_REMINDER_MINUTES} 的整数分钟`);
+      }
+      return value;
+    case "askToolTimeoutMinutes":
+      if (typeof value !== "number" || !Number.isInteger(value) ||
+          value < 0 || value > MAX_ASK_TOOL_TIMEOUT_MINUTES) {
+        invalid(label, `必须是 0～${MAX_ASK_TOOL_TIMEOUT_MINUTES} 的整数分钟`);
       }
       return value;
     case "imageGeneration":
@@ -290,6 +299,7 @@ export function exportPortableSettings(
       source = {
         infiniteProviderRetry: settings.infiniteProviderRetry === true,
         runStatusReminderMinutes: normalizeRunStatusReminderMinutes(settings.runStatusReminderMinutes),
+        askToolTimeoutMinutes: normalizeAskToolTimeoutMinutes(settings.askToolTimeoutMinutes),
         jevEnabled: settings.jevEnabled === true,
       };
       break;

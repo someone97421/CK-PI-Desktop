@@ -193,7 +193,7 @@ export type AppState = {
   pluginViews: PluginViewMeta[];
   /** Per-session permission queue, oldest first. */
   pendingPermissions: PermissionQueues;
-  /** Inline asktool requests, queued per session without an expiry. */
+  /** Inline asktool requests, queued per session. */
   pendingAsks: AskQueues;
   /** In-progress AskTool answers keyed by requestId, so a remount keeps them. */
   askDrafts: AskDrafts;

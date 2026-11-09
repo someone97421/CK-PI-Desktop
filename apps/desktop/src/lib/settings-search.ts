@@ -165,6 +165,8 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.infiniteProviderRetryDesc",
       "settings.runStatusReminder",
       "settings.runStatusReminderDesc",
+      "settings.askToolTimeout",
+      "settings.askToolTimeoutDesc",
       "settings.smoothStreaming",
       "settings.inlineVisualizations",
       "settings.inlineVisualizationsDesc",

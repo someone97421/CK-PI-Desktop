@@ -126,6 +126,7 @@ import {
   cumulativeDelta,
   DEFAULT_SUBAGENT_PERMISSION,
   askToolOptionLabel,
+  defaultAskToolAnswers,
   formatAskToolOutput,
   formatSessionMessage,
   hostedSearchFromMessage,
@@ -134,6 +135,7 @@ import {
   isReportIntervalSteps,
   MAX_SUBAGENT_CONCURRENCY,
   normalizeAskToolOption,
+  normalizeAskToolTimeoutMinutes,
   normalizeSubagentName,
   proposalKindForMode,
   resolveSubagentToolNames,
@@ -983,6 +985,7 @@ export type AgentRuntimeOptions = {
   infiniteProviderRetry?: boolean;
   /** 运行状态提醒间隔（分钟）；0 或缺省关闭。 */
   runStatusReminderMinutes?: number;
+  askToolTimeoutMinutes?: number;
   /**
    * Fast mode for main turns, already resolved by the launcher from the
    * session `/fast` switch and the model binding's opt-in (ADR 0334).
@@ -2014,6 +2017,7 @@ export class DesktopAgentRuntime {
   private turnSubagentUsage?: MessageUsage;
   /** 运行状态提醒间隔（毫秒，fork 定制）；0 表示关闭。 */
   private runStatusReminderIntervalMs: number;
+  private askToolTimeoutMs: number;
 
   /** 上次提醒时累计的实际运行毫秒数，以及本轮主代理累计用量。 */
   private runStatusRemindedElapsedMs = 0;
@@ -2030,6 +2034,7 @@ export class DesktopAgentRuntime {
     this.thinkingLevel = clampThinkingLevel(opts.provider, opts.thinkingLevel);
     this.infiniteProviderRetry = opts.infiniteProviderRetry === true;
     this.runStatusReminderIntervalMs = runStatusReminderIntervalMs(opts.runStatusReminderMinutes);
+    this.askToolTimeoutMs = normalizeAskToolTimeoutMinutes(opts.askToolTimeoutMinutes) * 60_000;
     this.fastMode = opts.fastMode === true;
     this.jevApiKey = opts.jevApiKey;
     this.host = opts.host;
@@ -2462,6 +2467,11 @@ Delegation rules:
   setRunStatusReminderMinutes(minutes: number): void {
     if (this.disposed) throw new Error("runtime disposed");
     this.runStatusReminderIntervalMs = runStatusReminderIntervalMs(minutes);
+  }
+
+  setAskToolTimeoutMinutes(minutes: number): void {
+    if (this.disposed) throw new Error("runtime disposed");
+    this.askToolTimeoutMs = normalizeAskToolTimeoutMinutes(minutes) * 60_000;
   }
 
   setFastMode(enabled: boolean): void {
@@ -6862,11 +6872,20 @@ Delegation rules:
     request: AskToolRequest,
     signal?: AbortSignal,
   ): Promise<Array<string[] | null>> {
+    const startedAt = Date.now();
+    if (this.askToolTimeoutMs > 0) {
+      request = {
+        ...request,
+        autoSelect: { startedAt, deadlineAt: startedAt + this.askToolTimeoutMs },
+      };
+    }
     return new Promise((resolve) => {
       let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const finish = (answers: Array<string[] | null>) => {
         if (settled) return;
         settled = true;
+        if (timer !== undefined) clearTimeout(timer);
         signal?.removeEventListener("abort", abort);
         this.pendingAskTools.delete(request.requestId);
         this.setUserToolWait(request.toolCallId, false);
@@ -6875,9 +6894,21 @@ Delegation rules:
       const abort = () => finish(request.questions.map(() => null));
       this.pendingAskTools.set(request.requestId, { request, resolve: finish });
       this.setUserToolWait(request.toolCallId, true);
+      if (signal?.aborted) {
+        abort();
+        return;
+      }
+      signal?.addEventListener("abort", abort, { once: true });
+      if (request.autoSelect) {
+        const deadlineAt = request.autoSelect.deadlineAt;
+        const expire = () => {
+          const remaining = deadlineAt - Date.now();
+          if (remaining > 0) timer = setTimeout(expire, Math.min(remaining, 60_000));
+          else finish(defaultAskToolAnswers(request.questions));
+        };
+        timer = setTimeout(expire, Math.min(Math.max(0, deadlineAt - Date.now()), 60_000));
+      }
       this.emit({ type: "asktool_request", request });
-      if (signal?.aborted) abort();
-      else signal?.addEventListener("abort", abort, { once: true });
     });
   }
 

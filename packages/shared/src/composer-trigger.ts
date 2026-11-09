@@ -52,6 +52,14 @@ export function normalizeRunStatusReminderMinutes(value: unknown): number {
     : 0;
 }
 
+export const MAX_ASK_TOOL_TIMEOUT_MINUTES = 1440;
+
+export function normalizeAskToolTimeoutMinutes(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_ASK_TOOL_TIMEOUT_MINUTES
+    ? value
+    : 0;
+}
+
 const WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
 /** Characters that end the token scan-back, per pi's autocomplete. */
 const DELIMITERS = new Set([" ", "\t", "\n", "\r", '"', "'", "="]);

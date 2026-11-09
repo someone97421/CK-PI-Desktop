@@ -118,6 +118,29 @@
   background: var(--ds-tile);
 }
 
+.asktool-countdown {
+  display: block;
+  padding: 3px 0;
+  margin-bottom: 5px;
+}
+.asktool-countdown-track {
+  display: block;
+  height: 2px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--ds-tile-deep);
+}
+.asktool-countdown-fill {
+  display: block;
+  height: 100%;
+  background: var(--ds-accent);
+  transform-origin: left;
+  transition: transform 250ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .asktool-countdown-fill { transition: none; }
+}
+
 .asktool-card-header,
 .asktool-card-header-actions {
   display: flex;

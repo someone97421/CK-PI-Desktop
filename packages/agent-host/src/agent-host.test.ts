@@ -129,7 +129,7 @@ function envelope(sessionId: string, turnId: string | undefined, event: AgentEve
   return { sessionId, ...(turnId ? { turnId } : {}), ts: Date.parse("2026-09-10T00:00:01.000Z"), event };
 }
 
-function build(options: { permissionMode?: SessionSummary["permissionMode"]; queueStore?: MemoryQueueStore; allowRemoteSessionGrants?: boolean } = {}) {
+function build(options: { permissionMode?: SessionSummary["permissionMode"]; queueStore?: MemoryQueueStore; allowRemoteSessionGrants?: boolean; onInputResolved?: (event: { sessionId: string; inputId: string }) => void } = {}) {
   const runtime = new FakeRuntime();
   const sessions = new FakeSessions();
   sessions.summaries.set("s1", summary("s1", options.permissionMode));
@@ -144,6 +144,7 @@ function build(options: { permissionMode?: SessionSummary["permissionMode"]; que
     queueStore: options.queueStore,
     limits: { maxQueuedTurnsPerSession: 2 },
     allowRemoteSessionGrants: options.allowRemoteSessionGrants,
+    onInputResolved: options.onInputResolved,
   });
   const received: RacpEventEnvelope[] = [];
   const sub = host.subscribe(viewer, { scope: "session", sessionId: "s1" }, { deliver: (event) => received.push(event), close: () => {} });
@@ -767,6 +768,30 @@ describe("AgentHost approvals and inputs", () => {
     expect(runtime.inputs).toEqual([{ requestId: "ask_1", sessionId: "s1", answers: [["a", "b"], null] }]);
     expect(host.getTurn("rt_1").status).toBe("running");
     expect(received.at(-1)?.kind).toBe("input.resolved");
+  });
+
+  it("运行时完成提问工具后立即清理宿主待答项并通知客户端", async () => {
+    const resolved: Array<{ sessionId: string; inputId: string }> = [];
+    const { host, received } = build({ onInputResolved: (event) => resolved.push(event) });
+    host.ingest(envelope("s1", "rt_1", { type: "agent_start" }));
+    host.ingest(envelope("s1", "rt_1", {
+      type: "asktool_request",
+      request: {
+        requestId: "auto-ask", sessionId: "s1", toolCallId: "auto-call",
+        questions: [{ question: "继续？", options: ["继续"] }],
+        autoSelect: { startedAt: 1_000, deadlineAt: 61_000 },
+      },
+    }));
+    expect((await host.workSnapshot("s1")).state).toBe("waiting-input");
+    host.ingest(envelope("s1", "rt_1", { type: "tool_end", toolCallId: "other-call", result: {} }));
+    expect((await host.snapshot("s1")).pendingInputs).toHaveLength(1);
+    const end = envelope("s1", "rt_1", { type: "tool_end", toolCallId: "auto-call", result: {} });
+    host.ingest(end);
+    host.ingest(end);
+    expect((await host.workSnapshot("s1")).state).toBe("running");
+    expect((await host.snapshot("s1")).pendingInputs).toEqual([]);
+    expect(resolved).toEqual([{ sessionId: "s1", inputId: "auto-ask" }]);
+    expect(received.filter((event) => event.kind === "input.resolved")).toHaveLength(1);
   });
 });
 

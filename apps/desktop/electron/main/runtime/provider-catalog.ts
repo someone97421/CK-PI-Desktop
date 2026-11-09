@@ -9,6 +9,8 @@ import {
   normalizeRadialMenuPreferences,
   normalizeRunStatusReminderMinutes,
   MAX_RUN_STATUS_REMINDER_MINUTES,
+  normalizeAskToolTimeoutMinutes,
+  MAX_ASK_TOOL_TIMEOUT_MINUTES,
   radialMenuWriteError,
   validateNetworkProxy,
   validateSpeechSettings,
@@ -188,6 +190,9 @@ export function createProviderCatalogRuntime({
       runStatusReminderMinutes: normalizeRunStatusReminderMinutes(
         (value as T & { runStatusReminderMinutes?: unknown }).runStatusReminderMinutes,
       ),
+      askToolTimeoutMinutes: normalizeAskToolTimeoutMinutes(
+        (value as T & { askToolTimeoutMinutes?: unknown }).askToolTimeoutMinutes,
+      ),
       keepAwakeWhileRunning: (value as T & { keepAwakeWhileRunning?: unknown })
         .keepAwakeWhileRunning !== false,
       scheduledTasksEnabled: (value as T & { scheduledTasksEnabled?: unknown })
@@ -219,6 +224,7 @@ export function createProviderCatalogRuntime({
       defaultCommandShell?: unknown;
       infiniteProviderRetry?: unknown;
       runStatusReminderMinutes?: unknown;
+      askToolTimeoutMinutes?: unknown;
       keepAwakeWhileRunning?: unknown;
       scheduledTasksEnabled?: unknown;
       jevEnabled?: unknown;
@@ -265,6 +271,14 @@ export function createProviderCatalogRuntime({
       typeof value.infiniteProviderRetry !== "boolean"
     ) {
       throw Object.assign(new Error("infiniteProviderRetry is invalid"), {
+        errorCode: ErrorCodes.INVALID_PARAMS,
+      });
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value, "askToolTimeoutMinutes") &&
+      normalizeAskToolTimeoutMinutes(value.askToolTimeoutMinutes) !== value.askToolTimeoutMinutes
+    ) {
+      throw Object.assign(new Error(`askToolTimeoutMinutes must be an integer between 0 and ${MAX_ASK_TOOL_TIMEOUT_MINUTES}`), {
         errorCode: ErrorCodes.INVALID_PARAMS,
       });
     }

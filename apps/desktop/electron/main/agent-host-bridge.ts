@@ -273,6 +273,7 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
     sessions,
     approvals,
     queueStore,
+    onInputResolved: options.onInputResolved,
     onQueueChange: (sessionId, entries) => {
       options.onQueueChange?.({ sessionId, entries: entries.map(toQueueSummary) });
     },
