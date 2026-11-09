@@ -260,6 +260,10 @@ const CONTROL_OPERATION_SPECS: OperationSpec[] = [
   spec("askToolResolve", "agent/askTool/resolve", "Answer an Agent question.", "dangerous", ["resolution"]),
   spec("plansPending", "plans/pending", "List pending Plan or Goal approvals.", "read", ["input"]),
   spec("plansResolve", "plans/resolve", "Approve or reject a Plan or Goal checkpoint.", "dangerous", ["resolution"]),
+  spec("modesCatalog", "modes/catalog", "读取宿主工作模式目录。", "read", []),
+  spec("modesRunGet", "modes/run/get", "读取会话当前模式运行。", "read", ["sessionId"]),
+  spec("modesRunControl", "modes/run/control", "暂停、继续或停止模式运行。", "dangerous", ["{sessionId,runId,expectedRevision,action}"]),
+  spec("modesRunResolve", "modes/run/resolve", "批准或拒绝模式阶段。", "dangerous", ["{sessionId,runId,expectedRevision,action}"]),
   spec("pluginList", "plugin/list", "List installed plugins.", "read", []),
   spec("pluginSettingsGet", "plugin/settings/get", "Read plugin setting definitions.", "read", ["input"]),
   spec("pluginViews", "plugin/views", "List plugin-contributed views.", "read", []),
@@ -717,7 +721,7 @@ export function createMcpControlOperations(
       description: entry.description,
       risk: entry.risk,
       argumentShape: entry.argumentShape,
-      ...(entry.id.startsWith("queue/") || entry.id === "session/collaboration/get" ? { pluginOnly: true } : {}),
+      ...(entry.id.startsWith("queue/") || entry.id.startsWith("modes/") || entry.id === "session/collaboration/get" ? { pluginOnly: true } : {}),
     }];
   });
 }
@@ -829,6 +833,10 @@ export function createMcpControlController(options: {
         throw Object.assign(new Error(`confirm=true is required for ${operation.id}`), {
           code: "CONFIRMATION_REQUIRED",
         });
+      }
+      if (operation.id.startsWith("modes/")) {
+        const expected = operation.id === "modes/catalog" ? 0 : 1;
+        if (args.length !== expected) throw Object.assign(new Error("模式操作参数数量无效"), { code: "INVALID_PARAMS" });
       }
       const sanitized = args.map((value) => stripSecretMaterial(value)) as unknown[];
       const result = operation.channel === "internal:session-collaboration"

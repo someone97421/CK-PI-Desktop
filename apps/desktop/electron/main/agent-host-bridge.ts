@@ -1,6 +1,8 @@
 import {
   AgentHost,
   RacpError,
+  TRUSTED_MODE_ORIGIN,
+  type TrustedModeOrigin,
   type ApprovalPort,
   type Principal,
   type QueueEntryView,
@@ -27,6 +29,7 @@ import type {
 } from "@pi-desktop/shared";
 import { IPC, isGlobalPermissionMode } from "@pi-desktop/shared";
 import type { QueuedSteeringJournal } from "./queued-steering-receipts";
+import { modeContinuationRequest } from "./runtime/mode-runs";
 
 type IpcInvoke = (channel: string, args: readonly unknown[]) => Promise<unknown>;
 
@@ -95,20 +98,14 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
       try {
         await options.prepareSessionForTurn?.(request.sessionId);
         const summary = await sessions.get(request.sessionId);
-        // A per-turn ceiling that differs from the session's stored mode is
-        // refused. `agent.prompt`'s `permissionMode` override is not yet
-        // enforced — the sidecar records nothing and host-core `session.beginTurn`
-        // has no per-turn override — so a narrower ceiling would silently run at
-        // the session's stored mode (e.g. a remote viewer capped at `ask`
-        // starting a turn in an `auto` session). Until the enforcement gate
-        // exists, any mismatch fails closed.
+        const modeOrigin = request[TRUSTED_MODE_ORIGIN];
         if (
           summary &&
           summary.permissionMode !== request.effectivePermissionMode
         ) {
           throw new RacpError(
             "FORBIDDEN",
-            "the local runtime cannot apply a per-turn permission ceiling yet; confirm the session settings and resubmit this message",
+            "会话权限已变化，请确认设置后重新提交消息",
             {
               details: {
                 sessionPermissionMode: summary.permissionMode,
@@ -117,15 +114,16 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
             },
           );
         }
+        const promptRequest = {
+          sessionId: request.sessionId,
+          content: request.content,
+          ...(request.sessionMessageId ? { sessionMessageId: request.sessionMessageId } : {}),
+          ...(request.userMessageId ? { messageId: request.userMessageId } : {}),
+          ...(request.voiceOrigin ? { voiceOrigin: request.voiceOrigin } : {}),
+          ...(request.attachments ? { attachments: request.attachments } : {}),
+        };
         const result = (await options.invoke(options.channels.agentPrompt, [
-          {
-            sessionId: request.sessionId,
-            content: request.content,
-            ...(request.sessionMessageId ? { sessionMessageId: request.sessionMessageId } : {}),
-            ...(request.userMessageId ? { messageId: request.userMessageId } : {}),
-            ...(request.voiceOrigin ? { voiceOrigin: request.voiceOrigin } : {}),
-            ...(request.attachments ? { attachments: request.attachments } : {}),
-          },
+          modeOrigin ? modeContinuationRequest(promptRequest, modeOrigin) : promptRequest,
           request.submittedAt,
           request.effectivePermissionMode,
         ])) as { accepted?: boolean; turnId: string };
@@ -363,6 +361,15 @@ export function createAgentHostBridge(options: AgentHostBridgeOptions) {
 
   return {
     agentHost,
+    startModeContinuation(sessionId: string, origin: TrustedModeOrigin, content: string) {
+      return forIpc(() => agentHost.startTurn(DESKTOP_PRINCIPAL, {
+        [TRUSTED_MODE_ORIGIN]: origin,
+        sessionId,
+        admission: "reject_if_busy",
+        input: { text: content },
+        context: { requestId: `mode-continuation-${Date.now()}` },
+      }));
+    },
     queue,
     async steerWorkSession(input: { sessionId: string; expectedTurnId: string; content: string; userMessageId: string; voiceOrigin: import("@pi-desktop/shared").VoiceOrigin }): Promise<boolean> {
       const result = await options.invoke(options.channels.agentSteer, [{

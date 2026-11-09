@@ -31,6 +31,8 @@ function RunStatusGlyph({ status }: { status: ScheduledTaskRun["status"] }) {
  * page; opening its conversation stays a separate, explicit action. */
 export function ScheduledRunHistory({
   runs,
+  loaded = true,
+  error = "",
   selectedRunId,
   busy,
   locale,
@@ -38,6 +40,8 @@ export function ScheduledRunHistory({
   onOpenSession,
 }: {
   runs: ScheduledTaskRun[];
+  loaded?: boolean;
+  error?: string;
   selectedRunId: string | null;
   busy: boolean;
   locale: string;
@@ -59,10 +63,12 @@ export function ScheduledRunHistory({
         >
           <IconInfo size={14} aria-hidden />
         </TooltipButton>
-        <span className="scheduled-card-count">{runs.length}</span>
+        {loaded && <span className="scheduled-card-count">{runs.length}</span>}
       </div>
       {runs.length === 0 ? (
-        <p className="scheduled-hint">{t("scheduled.emptyRuns")}</p>
+        <p className="scheduled-hint" role={error ? "alert" : !loaded ? "status" : undefined}>
+          {error || t(loaded ? "scheduled.emptyRuns" : "common.loading")}
+        </p>
       ) : (
         <ol className="scheduled-runs">
           {runs.map((run) => {

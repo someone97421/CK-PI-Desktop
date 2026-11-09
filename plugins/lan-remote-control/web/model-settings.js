@@ -17,7 +17,7 @@ export function pendingConfigurationNotice(session) {
 
 /** 每次打开独立加载、独立草稿；只有宿主回执才能更新会话。 */
 export function openModelSettings({ sessionId, read, save, openSheet, isCurrent, onCatalog, onSaved }) {
-  let controller, generation = 0, catalog = [], baseline, draft, saving = false, retryPending = false;
+  let controller, generation = 0, catalog = [], modeCatalog = { modes: Object.entries(MODES).map(([id, label]) => ({ id, label, available: true })), configurable: true }, baseline, draft, saving = false, retryPending = false;
   const fieldSelects = [];
   function closeFieldMenus() { for (const picker of fieldSelects.splice(0)) picker.close(); }
   const sheet = openSheet({
@@ -68,10 +68,10 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
     if (!visible.length) list.append(el("p", { className: "sheet-hint", text: catalog.length ? "没有匹配的模型" : "暂无可用模型，请在电脑端配置并启用提供商后刷新。" }));
   }
 
-  function choice(label, values, value, onChange) {
-    const select = el("select", { attrs: { "aria-label": label } });
-    for (const [key, name] of Object.entries(values)) select.append(el("option", { value: key, text: name }));
-    if (value && !Object.hasOwn(values, value)) select.append(el("option", { value, text: `${value}（当前值）` }));
+  function choice(label, values, value, onChange, { disabled = false, hint = "", unavailable = [] } = {}) {
+    const select = el("select", { disabled, attrs: { "aria-label": label, title: hint } });
+    for (const [key, name] of Object.entries(values)) select.append(el("option", { value: key, text: name, disabled: unavailable.includes(key) }));
+    if (value && !Object.hasOwn(values, value)) select.append(el("option", { value, text: `${value}（当前值）`, disabled: true }));
     select.value = value;
     select.addEventListener("change", () => { onChange(select.value); syncApply(); });
     const picker = enhanceSelect(select);
@@ -91,7 +91,11 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
       fields.append(choice("思考强度", levels, draft.thinkingLevel, value => { draft.thinkingLevel = value; }));
     }
     fields.append(
-      choice("工作模式", MODES, draft.mode, value => { draft.mode = value; }),
+      choice("工作模式", Object.fromEntries(modeCatalog.modes.map(mode => [mode.id, `${MODES[mode.id] || mode.label || mode.id}${mode.available ? "" : "（不可用）"}`])), draft.mode, value => { draft.mode = value; }, {
+        disabled: modeCatalog.configurable === false,
+        hint: modeCatalog.reason || "模式目录来自电脑端",
+        unavailable: modeCatalog.modes.filter(mode => !mode.available).map(mode => mode.id),
+      }),
       choice("权限模式", PERMISSIONS, draft.permissionMode, value => { draft.permissionMode = value; }),
     );
     syncApply();
@@ -126,6 +130,7 @@ export function openModelSettings({ sessionId, read, save, openSheet, isCurrent,
       if (!active() || version !== generation) return;
       if (!Array.isArray(result?.items) || !result.session || result.session.id !== sessionId) throw new Error("模型目录响应不完整，请更新电脑端远控插件后重试。");
       catalog = result.items;
+      modeCatalog = result.modes || { modes: Object.entries(MODES).map(([id, label]) => ({ id, label, available: true })), configurable: true };
       const session = result.session;
       retryPending = !!(session.pendingConfiguration && session.pendingConfigurationError);
       const effective = { ...session, ...session.pendingConfiguration };

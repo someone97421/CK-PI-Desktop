@@ -43,6 +43,7 @@ import {
   IconSparkles,
   IconCloudDown,
   IconMic,
+  IconWorkflow,
 } from "../../components/icons";
 import { Badge, Button, cx, SegmentedControl, SettingsToggle } from "../../components/ui";
 import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
@@ -90,6 +91,7 @@ import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginScenicThemesDestination } from "../../components/settings/PluginScenicThemesDestination";
 import { ConfigSyncPage } from "../../components/settings/ConfigSyncPage";
 import { StorageSettingsSection } from "./StorageSettingsSection";
+import { ModesSettingsPage } from "../modes/ModesSettingsPage";
 
 type SettingsTab = ReturnType<typeof useAppStore.getState>["settingsTab"];
 
@@ -266,6 +268,7 @@ export function SettingsPage() {
       mcp: <IconServer size={14} />,
       subagents: <IconBot size={14} />,
       import: <IconDownload size={14} />,
+      modes: <IconWorkflow size={14} />,
       projects: <IconArchive size={14} />,
       sync: <IconCloudDown size={14} />,
       remoteHosts: <IconGlobe size={14} />,
@@ -708,6 +711,8 @@ export function SettingsPage() {
           {tab === "mcp" && <AgentMcpPage />}
 
           {tab === "subagents" && <AgentSubagentsPage />}
+
+          {tab === "modes" && <ModesSettingsPage />}
 
           {tab === "instructions" && <AgentInstructionsSection />}
 

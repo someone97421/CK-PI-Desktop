@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const { AsyncLocalStorage } = require("node:async_hooks");
 const { createModelSettings, THINKING_LEVELS } = require("./model-settings.cjs");
 const { createTemporarySessions, isTemporarySession } = require("./temporary-sessions.cjs");
+const { createModes } = require("./modes.cjs");
 const definitions = {
   capabilities: [false],
   "projects.list": [false, "project/list"],
@@ -14,6 +15,10 @@ const definitions = {
   "sessions.messages": [false, "session/get"],
   "sessions.pending": [false, "plans/pending"],
   "models.list": [false],
+  "modes.catalog": [false],
+  "modes.run.get": [false, "modes/run/get"],
+  "modes.run.control": [true, "modes/run/control"],
+  "modes.run.resolve": [true, "modes/run/resolve"],
   "commands.list": [false, "composer/commands"],
   "subagents.list": [false, "subagent/catalog"],
   "queue.list": [false, "queue/list"],
@@ -149,6 +154,7 @@ function createHostAdapter(pi) {
     });
   }
   const temporarySessions = createTemporarySessions({ host, createDefaults: createdSessionDefaults });
+  const modes = createModes({ host, operations: ops, getSession: (id) => rawSession(id, { limit: 1 }), isDraft: (id) => !!temporarySessions.get(id) });
   const modelSettings = createModelSettings({
     listModels: () => { assertAuthorized(); return pi.models.list(); },
     getSession: (id) => rawSession(id, { limit: 1 }),
@@ -156,23 +162,22 @@ function createHostAdapter(pi) {
       ? temporarySessions.configure(id, config)
       : host("session/configure", [id, { ...config, deferUntilIdle: true }]),
     serializeSession: session,
+    modeCatalog: (id) => modes.catalog(id),
+    validateMode: (value, current) => modes.validateMode(value, current),
   });
   // 与桌面新建会话对齐：客户端显式选择优先，否则继承桌面设置的默认
   // 模型、默认模式和初始思考档位，让远程建的会话创建即固定。
-  const SESSION_MODES = new Set(["agent", "plan", "goal"]);
   const THINKING_LADDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
   function normalizeSessionMode(value) {
     if (typeof value !== "string") return null;
-    const mode = value.trim();
-    if (mode === "chat") return "plan";
-    return SESSION_MODES.has(mode) ? mode : null;
+    return value.trim() === "chat" ? "plan" : value.trim() || null;
   }
   async function createdSessionDefaults(input) {
     const config = {};
     const requestedMode = normalizeSessionMode(input.mode);
     if (typeof input.mode === "string" && input.mode.trim() && !requestedMode)
       fail("INVALID_PARAMS", "工作模式无效");
-    if (requestedMode) config.mode = requestedMode;
+    if (requestedMode) config.mode = await modes.validateMode(requestedMode);
     const items = await modelSettings.catalog();
     const keyOf = (item) => `${item.providerId}/${item.modelId}`;
     let model;
@@ -203,7 +208,10 @@ function createHostAdapter(pi) {
         null;
       if (!config.mode) {
         const defaultMode = normalizeSessionMode(settings?.defaultMode);
-        if (defaultMode) config.mode = defaultMode;
+        if (defaultMode) {
+          const directory = await modes.catalog();
+          if (directory.modes.some(mode => mode.id === defaultMode && mode.available)) config.mode = defaultMode;
+        }
       }
     }
     if (!model) {
@@ -413,6 +421,7 @@ function createHostAdapter(pi) {
           start + limit < items.length ? String(start + limit) : undefined,
       };
     }
+    if (op === "modes.catalog") return modes.catalog(input.sessionId === undefined ? undefined : text(input.sessionId, "sessionId"));
     if (op === "models.list") {
       return modelSettings.list(input.sessionId === undefined ? undefined : text(input.sessionId, "sessionId"));
     }
@@ -465,6 +474,9 @@ function createHostAdapter(pi) {
     }
     const id = text(input.sessionId, "sessionId");
     if (op === "sessions.discard") return temporarySessions.discard(id);
+    if (op === "modes.run.get") return modes.get(id);
+    if (op === "modes.run.control") return modes.control(id, input);
+    if (op === "modes.run.resolve") return modes.resolve(id, input);
     if (op === "sessions.get" || op === "sessions.messages") {
       const s = await rawSession(id, input),
         rows = (s.messages || []).map(message);
@@ -482,6 +494,7 @@ function createHostAdapter(pi) {
         messages: page,
         snapshot: snap ? { ...snap, available: true } : { available: false },
         collaboration: null,
+        modeRun: await modes.get(id, s).catch(error => ({ supported: false, run: null, error: error.message || "模式状态读取失败" })),
       };
     }
     if (op === "sessions.pending") return pending(id, await live(id));
@@ -707,6 +720,9 @@ function createHostAdapter(pi) {
   }
   return {
     capabilities,
+    observeEvent(event) {
+      if (event?.kind === "modes.changed" && event.payload?.run?.sessionId === event.sessionId) modes.observe(event.payload.run);
+    },
     invoke: (op, input, context) =>
       requests.run(context, () => invokeAuthorized(op, input)),
     async subscribe(sessionId) {

@@ -68,6 +68,7 @@ import { createHostRuntime } from "./runtime/host";
 import { createSidecarRuntime } from "./runtime/sidecar";
 import { createEventPersistence } from "./runtime/event-persistence";
 import { createPlanRuntime } from "./runtime/plans";
+import { createModeServices } from "./runtime/mode-services";
 import { createRuntimeLifecycle } from "./runtime/lifecycle";
 import {
   createProviderCatalogRuntime,
@@ -437,6 +438,7 @@ const createdSessionLaunchRuntime = createSessionLaunchRuntime({
   vendorOAuth,
   modelsDevCatalog,
   getWorkspacePath: currentWorkspacePath,
+  resolveModeDefinition: (mode) => modeServices.catalog.definition(mode),
   pluginActiveInProject,
   bindingForModel,
   effectiveSubagentModelConfig,
@@ -739,6 +741,7 @@ const {
 const sessionConfiguration = createSessionConfigurationQueue({
   getHost,
   isTurnActive: (sessionId) => activeTurns.has(sessionId),
+  resolveModeSnapshot: (mode) => modeServices.catalog.snapshotFor(mode),
   onChanged: (sessionId, session, applied) => {
     if (session && applied && (applied.providerId !== undefined || applied.modelId !== undefined || applied.thinkingLevel !== undefined)) {
       plugins.broadcastEvent("session:modelChanged", [{
@@ -790,6 +793,14 @@ const sessionCollaboration = createSessionCollaborationService({
   log: (message, data) => logger.app("runtime", "warn", message, { data }),
 });
 
+const modeServices = createModeServices({
+  getHost,
+  getAgentHostBridge: () => mainState.agentHostBridge,
+  sendToRenderer,
+  logger,
+  isQuitting: () => mainState.quitting,
+});
+
 const planRuntime = createPlanRuntime({
   runtimeState,
   planState: planRuntimeState,
@@ -814,6 +825,7 @@ const planRuntime = createPlanRuntime({
   isQuitting: () => mainState.quitting,
   onTurnSettled: sessionCollaboration.settle,
   sessionConfiguration,
+  onTurnEnded: (sessionId, turnId, end) => modeServices.runs.settleTurn(sessionId, turnId, end),
 });
 const {
   finishTurn,
@@ -959,6 +971,7 @@ const localApps: LocalAppCatalog = {
 
 function registerIpc() {
   return registerIpcHandlers({
+    modeServices,
     traySessions: applicationLifecycle!.traySessions,
     taskbarUnreadBadge: applicationLifecycle!.taskbarUnreadBadge,
     ipcMain,

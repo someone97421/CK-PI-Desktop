@@ -416,6 +416,7 @@ function onDesktopEvent(...args) {
   const payload = args.length === 1 ? args[0] : args[1] ?? args[0];
   const normalized = normalizeDesktopEvent(payload);
   if (!normalized) return;
+  adapter?.observeEvent?.(normalized.event);
   remote?.broadcast(normalized);
 }
 

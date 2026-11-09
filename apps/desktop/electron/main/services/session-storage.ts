@@ -125,6 +125,7 @@ type Dependencies = {
   dataDir: string;
   listSessions: () => Promise<StorageSession[]>;
   getSession: (id: string) => Promise<StorageSession>;
+  retainedPaths?: (id: string) => Promise<string[]>;
   isBusy: (id: string) => Promise<boolean>;
   acquire: (id: string) => Promise<() => void>;
   available: () => boolean;
@@ -173,8 +174,18 @@ export class SessionStorageService {
     return join(this.deps.dataDir, "scratch", id);
   }
 
+  private async retainedNames(id: string): Promise<Set<string>> {
+    const names = new Set(RETAINED_NAMES);
+    for (const path of await this.deps.retainedPaths?.(id) ?? []) {
+      const root = path.replace(/\\/g, "/").split("/").find((part) => part && part !== ".");
+      if (root && root !== "..") names.add(root);
+    }
+    return names;
+  }
+
   private async temporary(id: string): Promise<Tree> {
-    return scanTree(this.deps.dataDir, this.scratch(id), (name) => RETAINED_NAMES.has(name));
+    const retained = new Set([...await this.retainedNames(id)].map((name) => name.toLowerCase()));
+    return scanTree(this.deps.dataDir, this.scratch(id), (name) => retained.has(name));
   }
 
   private async busy(id: string): Promise<boolean> {
@@ -246,9 +257,12 @@ export class SessionStorageService {
     // 占用统计只累计数字，删除时才需要保留逐文件身份和目录列表。
     const scan = (path: string, skip?: (name: string) => boolean) =>
       scanTree(this.deps.dataDir, path, skip, { signal, collectEntries: false });
-    const temporary = await scan(this.scratch(id), (name) => RETAINED_NAMES.has(name));
+    const retainedNames = await this.retainedNames(id);
+    signal.throwIfAborted();
+    const retainedKeys = new Set([...retainedNames].map((name) => name.toLowerCase()));
+    const temporary = await scan(this.scratch(id), (name) => retainedKeys.has(name));
     const retained: Tree[] = [];
-    for (const name of RETAINED_NAMES) {
+    for (const name of retainedNames) {
       retained.push(await scan(join(this.scratch(id), name)));
     }
     for (const path of [

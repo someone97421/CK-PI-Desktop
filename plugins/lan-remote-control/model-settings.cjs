@@ -4,7 +4,7 @@ const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhi
 function invalid(message) { throw Object.assign(new Error(message), { code: "INVALID_PARAMS" }); }
 
 /** 模型目录和配置共用同一个身份契约，不向浏览器暴露提供商配置或凭据。 */
-function createModelSettings({ listModels, getSession, configureSession, serializeSession }) {
+function createModelSettings({ listModels, getSession, configureSession, serializeSession, modeCatalog, validateMode }) {
   async function catalog() {
     const models = await listModels();
     if (!Array.isArray(models)) throw new Error("宿主模型目录格式无效");
@@ -28,8 +28,8 @@ function createModelSettings({ listModels, getSession, configureSession, seriali
   }
 
   async function list(sessionId) {
-    const [items, current] = await Promise.all([catalog(), sessionId ? getSession(sessionId) : null]);
-    return { items, ...(current ? { session: serializeSession(current) } : {}) };
+    const [items, current, modes] = await Promise.all([catalog(), sessionId ? getSession(sessionId) : null, modeCatalog?.(sessionId)]);
+    return { items, modes, ...(current ? { session: serializeSession(current) } : {}) };
   }
 
   async function configure(sessionId, input) {
@@ -39,8 +39,11 @@ function createModelSettings({ listModels, getSession, configureSession, seriali
     // 宿主的配置接口要求 mode；未编辑的值取当前会话，不取打开面板时的快照。
     const config = { mode: effective.mode || "agent" };
     if (input.mode !== undefined) {
-      if (!["agent", "plan", "goal"].includes(input.mode)) invalid("工作模式无效");
-      config.mode = input.mode;
+      if (validateMode) config.mode = await validateMode(input.mode, current);
+      else {
+        if (!["agent", "plan", "goal"].includes(input.mode)) invalid("工作模式无效");
+        config.mode = input.mode;
+      }
     }
     if (input.permissionMode !== undefined) {
       if (!["inherit", "ask", "accept-edits", "auto"].includes(input.permissionMode)) invalid("权限模式无效");

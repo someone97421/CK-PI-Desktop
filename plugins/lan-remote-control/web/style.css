@@ -1063,6 +1063,16 @@ pre {
   background: var(--ds-bg-secondary);
 }
 
+.remote-mode-run {
+  overflow-wrap: anywhere;
+}
+
+.remote-mode-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .approval-kind {
   display: inline-flex;
   align-items: center;

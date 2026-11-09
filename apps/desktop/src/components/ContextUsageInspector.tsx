@@ -33,6 +33,7 @@ import {
   type ContextInspectorPlacement,
 } from "../lib/context-inspector-position";
 import { useSessionTiming } from "../features/chat/context-usage/useSessionTiming";
+import { ContextCostKpis } from "../features/chat/context-usage/ContextCostKpis";
 
 const CONTEXT_RING_RADIUS = 9;
 const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS;
@@ -42,6 +43,7 @@ export function ContextUsageInspector({
   turnUsage,
   compactedContextTokens,
   contextWindow,
+  contextWindowEstimated = false,
   tools,
   responseDurationMs,
   responseOutputTokens,
@@ -51,6 +53,7 @@ export function ContextUsageInspector({
   turnUsage: MessageUsage;
   contextWindow: number;
   compactedContextTokens?: number;
+  contextWindowEstimated?: boolean;
   tools: UiMessage[];
   responseDurationMs?: number;
   responseOutputTokens?: number;
@@ -385,7 +388,7 @@ export function ContextUsageInspector({
         <strong>
           {t("chat.usageContextTokens", {
             used: formatCompactTokenCount(context.usedTokens),
-            window: formatCompactTokenCount(contextWindow),
+            window: `${contextWindowEstimated ? "≈ " : ""}${formatCompactTokenCount(contextWindow)}`,
           })}
         </strong>
         <span className="context-inspector-window-percent">
@@ -413,6 +416,12 @@ export function ContextUsageInspector({
           </strong>
         </div>
       </div>
+      <ContextCostKpis
+        open={open}
+        sessionId={sessionId ?? undefined}
+        turnUsage={turnUsage}
+        refreshKey={`${session?.updatedAt ?? ""}:${isSessionRunning}:${turnUsage.totalTokens}:${turnUsage.cost?.total ?? ""}`}
+      />
       {sessionTiming.timing ? (
         <div className="context-inspector-kpis">
           <div>

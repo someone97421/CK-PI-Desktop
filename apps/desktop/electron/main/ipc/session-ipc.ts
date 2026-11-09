@@ -1,9 +1,11 @@
 import { app, shell } from "electron";
+import type { ModeCatalogService } from "../runtime/mode-catalog";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import {
   ErrorCodes,
   IPC,
+  isModeId,
   modelConfigImportKey,
   publicModelConfigCandidate,
   draftMatchesExisting,
@@ -112,6 +114,8 @@ export type SessionIpcDependencies = {
   };
   forgetTranscriptRewriteHistory: (sessionId: string) => void;
   stripWinLongPrefix: (path: string) => string;
+  /** Resolves the definition snapshot attached to a mode selection. */
+  modeCatalog: Pick<ModeCatalogService, "snapshotFor">;
 };
 
 export function registerSessionIpc({
@@ -134,6 +138,7 @@ export function registerSessionIpc({
   beginTranscriptRewrite,
   forgetTranscriptRewriteHistory,
   stripWinLongPrefix,
+  modeCatalog,
 }: SessionIpcDependencies): void {
   const enriched = (session: any, providers: any, defaults: any) => {
     const value = enrichSession(session, providers, defaults);
@@ -153,6 +158,12 @@ export function registerSessionIpc({
     dataDir,
     available: () => !isQuitting() && Boolean(getHost()) && Boolean(getSidecar()),
     acquire: acquireSessionOperation,
+    retainedPaths: async (id) => {
+      const currentHost = getHost();
+      if (!currentHost) throw new Error("host unavailable");
+      const result = await currentHost.call<{ paths: string[] }>("modes.artifacts", { sessionId: id });
+      return result.paths;
+    },
     listSessions: async () => {
       const currentHost = getHost();
       if (!currentHost) throw new Error("host unavailable");
@@ -284,16 +295,21 @@ export function registerSessionIpc({
       ].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt))),
     };
   });
-  handle(IPC.invoke.sessionCreate, async (input = {}) => {
+  handle(IPC.invoke.sessionCreate, async (input: Record<string, unknown> = {}) => {
     if (!host) throw new Error("host unavailable");
-    const capabilityPromise = sessionCapabilityContext();
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw Object.assign(new Error("会话创建参数无效"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+    }
+    const mode = input.mode === "chat" ? "plan" : input.mode ?? "agent";
+    if (!isModeId(mode)) throw Object.assign(new Error("工作模式无效"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+    const modeSnapshot = await modeCatalog.snapshotFor(mode);
+    const { providers, defaults } = await sessionCapabilityContext();
     const res = await host.call<{ session?: (RuntimeSession & { id?: string }) | null }>(
       "session.create",
-      input,
+      { ...input, mode, modeSnapshot },
     );
     logger.app("session", "info", "session created", { sessionId: res.session?.id });
     if (!res.session) return res;
-    const { providers, defaults } = await capabilityPromise;
     return { ...res, session: enrichSession(res.session, providers, defaults) };
   });
   handle(
@@ -423,6 +439,20 @@ export function registerSessionIpc({
       });
     }
     return readSessionCollaboration(host, sidecar, sessionId);
+  });
+  handle(IPC.invoke.sessionUsageCost, async (input?: { sessionId?: unknown }) => {
+    const sessionId = typeof input?.sessionId === "string" ? input.sessionId.trim() : "";
+    if (!sessionId || sessionId.length > 256) {
+      throw Object.assign(new Error("sessionId must be a non-empty string of at most 256 characters"), {
+        errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
+    // Imported native Pi sessions have no Desktop turn ledger to roll up.
+    if (sessionId.startsWith("native-pi:")) {
+      return { sessionId, turnCount: 0, requestCount: 0, providers: [] };
+    }
+    if (!host) throw new Error("host unavailable");
+    return host.call("session.usageCost", { sessionId });
   });
   handle(IPC.invoke.sessionOpen, async (rawSessionId: string) => {
     if (!host) throw new Error("host unavailable");
@@ -730,12 +760,13 @@ export function registerSessionIpc({
       if (!host) throw new Error("host unavailable");
       const release = await acquireSessionOperation(id);
       try {
-        // Resolve enrichment first: a catalog failure must not obscure a
-        // successfully accepted draft or an already committed host mutation.
         const { providers, defaults } = await sessionCapabilityContext();
+        const mode = config.mode === "chat" ? "plan" : config.mode;
+        if (!isModeId(mode)) throw Object.assign(new Error("工作模式无效"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+        const modeSnapshot = await modeCatalog.snapshotFor(mode);
         const result = sessionConfiguration
-          ? await sessionConfiguration.configure(id, config)
-          : await host.call<{ session?: RuntimeSession | null }>("session.configure", { id, ...config });
+          ? await sessionConfiguration.configure(id, { ...config, mode })
+          : await host.call<{ session?: RuntimeSession | null }>("session.configure", { id, ...config, mode, modeSnapshot });
         if (!result.session) return result;
         const session = enriched(result.session, providers, defaults);
         if (!sessionConfiguration) {

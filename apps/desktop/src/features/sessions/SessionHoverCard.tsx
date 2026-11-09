@@ -30,6 +30,8 @@ import {
 } from "./session-collaboration-view";
 import type { SessionHoverCardData } from "./useSessionHoverCard";
 import { useHoverCardSelection } from "./useHoverCardSelection";
+import { isBuiltinMode, modeDisplayLabel } from "../modes/mode-picker-model";
+import { useModesStore } from "../modes/modes-store";
 
 export function SessionHoverCard({
   card,
@@ -51,6 +53,7 @@ export function SessionHoverCard({
   registerDismissGuard: (guard: () => boolean) => () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const modeCatalog = useModesStore((state) => state.catalog);
   const elementRef = useRef<HTMLDivElement>(null);
   useHoverCardSelection(elementRef, keepVisible, scheduleHide, registerDismissGuard);
   const [position, setPosition] = useState<{ top: number; left: number }>();
@@ -186,7 +189,9 @@ export function SessionHoverCard({
             {t("sessionCollaboration.sessionTask")}
           </span>
         ) : null}
-        <span className="sidebar-session-hover-card-tag sidebar-session-hover-card-tag-accent">{t(modeKey)}</span>
+        <span className="sidebar-session-hover-card-tag sidebar-session-hover-card-tag-accent">
+          {isBuiltinMode(session.mode) ? t(modeKey) : modeDisplayLabel(t, session.mode, modeCatalog)}
+        </span>
         <span className="sidebar-session-hover-card-status" data-status={readState === "ready" ? summary?.status : readState}>
           {readState === "ready" && summary
             ? t(collaborationStatusKey(summary.status))

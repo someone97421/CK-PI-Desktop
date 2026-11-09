@@ -103,6 +103,8 @@ import type {
   ContextCompactionSettings,
   MessageUsage,
   Mode,
+  ModeDefinition,
+  ModeTurnContext,
   MessageAttachment,
   SessionMessageOrigin,
   PlanExecution,
@@ -253,6 +255,15 @@ import {
   composeModeSystemPrompt,
   DEFAULT_RUNTIME_SYSTEM_PROMPT,
 } from "./mode-prompts.js";
+import { RuntimeModeState } from "./modes/mode-state.js";
+import {
+  COMPLETE_STAGE_TOOL_NAME,
+  createCompleteStageTool,
+  type ModeGateCommand,
+  type ModeGateRunResult,
+} from "./modes/complete-stage-tool.js";
+import { createHostModeArtifactReader } from "./modes/mode-artifact-reader.js";
+import type { ModeArtifactReader } from "./modes/stage-brief.js";
 import { agentThinkingLevel, clampThinkingLevel, omitThinkingModel } from "./thinking-level.js";
 import {
   alignRetainedReasoningIdentity,
@@ -364,6 +375,11 @@ export type RuntimePrompt = {
   mcpToolNames?: string[];
   sessionMessage?: SessionMessageOrigin;
   attachments?: RuntimePromptAttachment[];
+  /**
+   * Trusted run context of a staged mode turn, validated by the sidecar
+   * against the session's mode definition (ADR mode-definitions).
+   */
+  modeTurn?: ModeTurnContext;
 };
 
 /** Append resolved conversation excerpts to the model's text input. */
@@ -748,7 +764,8 @@ const PATH_SCOPED_INSTRUCTION_TOOLS = new Set([
 /** Tools whose `path` argument is rewritten, and which therefore must not run
  * concurrently against the same file (see `PathMutex`). */
 const PATH_MUTATING_TOOLS = new Set(["Write", "Edit"]);
-const CHAT_CORE_TOOL_NAMES = new Set(["Read", "Glob", "Grep", ASK_TOOL_NAME]);
+/** Declared up front at the contract level (Plan and read-only modes). */
+const CONTRACT_CORE_TOOL_NAMES = new Set(["Read", "Glob", "Grep", "Bash", "BrowserPreview", ASK_TOOL_NAME]);
 const AGENT_CORE_TOOL_NAMES = new Set([
   "Read",
   "Glob",
@@ -904,6 +921,8 @@ function turnAbortedError(message: string): Error {
 }
 
 const CONTEXT_COMPACTION_TOOL_NAME = "new_context";
+/** Tools the read-only contract level may execute, besides plan-safe plugins. */
+const CONTRACT_ALLOWED_TOOL_NAMES = new Set([...CONTRACT_CORE_TOOL_NAMES, CONTEXT_COMPACTION_TOOL_NAME]);
 const CONTEXT_COMPACTION_TOOL_DESCRIPTION =
   "Start a new context window. Does not clear, reset, or otherwise affect environment state.";
 /** Codex's `NEW_CONTEXT_WINDOW_MESSAGE`, one per family. */
@@ -977,6 +996,11 @@ export type AgentRuntimeOptions = {
   host: RuntimeHost;
   sessionId: string;
   mode: Mode;
+  /**
+   * Definition of `mode` resolved by Electron main (ADR mode-definitions).
+   * Without one, the builtin mapping decides the tool policy.
+   */
+  modeDefinition?: ModeDefinition;
   /** Durable host turn ID for the current prompt, used by plan identity. */
   turnId?: string;
   provider: RuntimeProviderConfig;
@@ -1742,7 +1766,13 @@ export class DesktopAgentRuntime {
   private disposed = false;
   private aborting?: Promise<void>;
   readonly sessionId: string;
-  private mode: Mode;
+  /** Session mode, its definition and the claimed run turn (ADR mode-definitions). */
+  private readonly modeState: RuntimeModeState;
+  /** Gate commands CompleteStage runs through the Host Bash path, by tool-call id. */
+  private readonly modeGateCalls = new Map<string, ModeGateCommand["modeGate"]>();
+  private get mode(): Mode {
+    return this.modeState.modeId;
+  }
   private provider: RuntimeProviderConfig;
   private thinkingLevel: SessionThinkingLevel;
   private host: RuntimeHost;
@@ -2028,7 +2058,9 @@ export class DesktopAgentRuntime {
   constructor(opts: AgentRuntimeOptions) {
     this.sessionId = opts.sessionId;
     this.turnId = opts.turnId;
-    this.mode = opts.mode;
+    // A restored checkpoint already compacted the window: stage
+    // `on.compaction` injects apply from the first run turn.
+    this.modeState = new RuntimeModeState(opts.mode, opts.modeDefinition, { compacted: Boolean(opts.compaction) });
     this.planningState = proposalKindForMode(this.mode) ? "planning" : "inactive";
     this.provider = opts.provider;
     this.thinkingLevel = clampThinkingLevel(opts.provider, opts.thinkingLevel);
@@ -2133,12 +2165,11 @@ Delegation rules:
       // in the embedded browser with live reload on file changes.
       `For user-visible HTML pages, call the BrowserPreview tool once after creating the page or making the first meaningful visual edit, using its workspace-relative path (e.g. \`index.html\` or \`demo/index.html\`) to show it in PI-Desktop's built-in browser panel. Reuse that preview while iterating: it live-reloads as you edit, so no repeat call or manual refresh is needed. Skip generated, test-only, and non-visual HTML files. If BrowserPreview is not in the current tool list, load it first with ${TOOL_SEARCH_NAME}.`,
       // Shell dialect and scratch variable are selected by host-core.
-      commandShellGuidance(this.commandShell, this.scratchDir),
-      // Session scratch directory (D114): temp files must not dirty
-      // the user's workspace or its git status.
+      commandShellGuidance(this.commandShell),
+      // Session scratch directory (D114).
       ...(this.scratchDir
         ? [
-            `Your scratch directory for this session is \`${formatScratchDirForShell(this.commandShell, this.scratchDir)}\` (in Bash: ${shellScratchVariable(this.commandShell)}). Write ALL temporary and intermediate files there using absolute paths — one-off scripts, downloaded data, drafts, experiment output — never into the workspace. Only write into the workspace when the file is a deliverable the user asked for. Scratch files persist across turns of this session and are cleaned up automatically when the session is deleted.`,
+            `Write ALL temporary and intermediate files in the session scratch directory using ${shellScratchVariable(this.commandShell)} and absolute paths — one-off scripts, downloaded data, drafts, experiment output — never into the workspace. Only write into the workspace when the file is a deliverable the user asked for. Scratch files persist across turns of this session and are cleaned up automatically when the session is deleted.`,
           ]
         : []),
       // Isolated session (ADR 0329).
@@ -2493,19 +2524,20 @@ Delegation rules:
     this.setAgentSystemPrompt(this.composeSystemPrompt());
   }
 
-  /** Switch the planning state on this Agent without creating another Agent. */
-  setMode(mode: Mode): void {
+  /**
+   * Switch the mode (or its definition) on this Agent without creating
+   * another Agent. Only the builtin Plan negotiates a proposal (D198); every
+   * other mode's capabilities follow its tool policy level.
+   */
+  setMode(mode: Mode, definition?: ModeDefinition): void {
     if (this.disposed) throw new Error("runtime disposed");
-    // Plan and Goal are both contract-negotiating states (D198); only Agent
-    // executes freely.
     const kind = proposalKindForMode(mode);
     const planningState: PlanningState = kind ? "planning" : "inactive";
     const details = kind ? { kind } : {};
-    if (this.mode === mode) {
+    if (!this.modeState.setMode(mode, definition)) {
       this.setPlanningState(planningState, details);
       return;
     }
-    this.mode = mode;
     this.activeDeferredToolNames.clear();
     this.rebuildToolCatalog();
     this.restoreDeferredToolsFromContext();
@@ -2610,7 +2642,10 @@ Delegation rules:
         ...(optionalToolsPrompt ? [optionalToolsPrompt] : []),
         ...(projectPrompt ? [projectPrompt] : []),
         ...(memoryPrompt ? [memoryPrompt] : []),
-      ].join("\n\n")),
+        ...(this.scratchDir ? [
+          `Your scratch directory for this session is \`${formatScratchDirForShell(this.commandShell, this.scratchDir)}\` (in Bash: ${shellScratchVariable(this.commandShell)}).`,
+        ] : []),
+      ].join("\n\n"), this.modeState.instructions()),
     };
     const composed = Object.values(this.composedSections).filter(Boolean).join("\n\n");
     this.composedSystemPrompt = composed;
@@ -2770,6 +2805,12 @@ Delegation rules:
       return undefined;
     }
     const submitKind = submitToolKind(context.toolCall.name);
+    if (submitKind === "goal") {
+      return {
+        block: true,
+        reason: `${context.toolCall.name} is no longer available. Goal mode is selected by the user and runs as a staged mode; continue in the current mode.`,
+      };
+    }
     if (submitKind && this.mode !== submitKind) {
       return {
         block: true,
@@ -3737,6 +3778,12 @@ Delegation rules:
               args: params,
               ...(this.batchPlanner.ticket(toolCallId) ? { fileBatchTicket: this.batchPlanner.ticket(toolCallId) } : {}),
               mode: this.mode,
+              // A staged mode's `run` exit gate (ADR mode-definitions): the
+              // Host checks the command against the snapshot and records the
+              // exit code under this call id for `modes.gateResult`.
+              ...(isBash && this.modeGateCalls.has(toolCallId)
+                ? { modeGate: this.modeGateCalls.get(toolCallId) }
+                : {}),
               ...(isBash
                 ? {
                     expectedCommandShellId: this.commandShell.id,
@@ -4128,8 +4175,12 @@ Delegation rules:
     // the work panel browser), so it ships in every mode. PluginCheck only
     // reads a directory; PluginScaffold and PluginPack write and remain
     // Agent-only. Write/Edit keep guarded declarations in contract modes.
+    // The tool policy level, not the mode name, decides the set (ADR
+    // mode-definitions): an agent-level custom mode or stage gets the Agent
+    // tools, a contract-level one the Plan tools.
+    const agentLevel = this.modeState.isAgentLevel();
     const tools =
-      this.mode === "agent"
+      agentLevel
         ? [
             "Read",
             "Bash",
@@ -4142,13 +4193,14 @@ Delegation rules:
             "TodoWrite",
           ]
         : ["Read", "Glob", "Grep", "BrowserPreview", "Bash", "Write", "Edit"];
-    if (this.mode === "agent") {
-      tools.push("PluginScaffold", "PluginPack", "GenerateImages", ...Object.keys(scheduledToolParameters));
+    if (agentLevel) tools.push("PluginScaffold", "PluginPack", "GenerateImages");
+    if (agentLevel && this.modeState.offersAgentModeOnlyTools()) {
+      tools.push(...Object.keys(scheduledToolParameters));
     }
     const builtins = tools.map(exec);
     for (const tool of builtins) this.builtinTools.add(tool);
     const jevTools: AgentTool[] =
-      this.mode === "agent" && this.jevApiKey
+      agentLevel && this.jevApiKey
         ? [createJevClassifierTool(this.jevApiKey)]
         : [];
     const googleSearchTool = createGoogleSearchTool(this.provider);
@@ -4157,7 +4209,7 @@ Delegation rules:
     // expose plugins that declare plan-safe actions (ADR 0211); the
     // host still enforces the per-action restriction at execute time.
     const visiblePluginTools =
-      this.mode === "agent"
+      agentLevel
         ? this.pluginTools
         : this.pluginTools.filter(
             (def) =>
@@ -4170,7 +4222,7 @@ Delegation rules:
       const baseDescription =
         def.description || `${def.name} plugin tool`;
       const description =
-        this.mode !== "agent" &&
+        !agentLevel &&
         Array.isArray(def.planSafeActions) &&
         def.planSafeActions.length > 0
           ? `${baseDescription} (${this.mode} mode: only ${def.planSafeActions.join(", ")} actions)`
@@ -4188,7 +4240,7 @@ Delegation rules:
     // Only offered when a plugin actually taught a skill; Electron main serves
     // it locally (host-core never sees the skill documents).
     const skillTools: AgentTool[] =
-      this.mode === "agent" && this.pluginSkills.length
+      agentLevel && this.pluginSkills.length
       ? [
           {
             name: SKILL_TOOL_NAME,
@@ -4204,10 +4256,10 @@ Delegation rules:
           },
         ]
       : [];
-    const modeTools =
-      this.mode === "agent"
-        ? []
-        : [this.buildSubmitTool(this.mode)];
+    const modeTools = [
+      ...(this.mode === "plan" ? [this.buildSubmitTool("plan")] : []),
+      ...(this.modeState.modeTurn ? [this.buildCompleteStageTool()] : []),
+    ];
     // Job controls stay available without subagents on local workspaces.
     // Contract modes retain declarations but reject execution before handlers.
     const jobTools = this.subagents.length || !this.remoteWorkspace
@@ -4342,22 +4394,15 @@ Delegation rules:
   }
 
   private isToolAllowedInMode(name: string): boolean {
-    const kind = proposalKindForMode(this.mode);
-    if (!kind) return true;
-    // Contract modes are read-only: inspection tools, plan-safe plugin
-    // actions (ADR 0211), and the one submit tool that belongs to this kind.
+    if (this.modeState.isAgentLevel()) return true;
+    // The contract level is read-only (Plan's hard deny, ADR mode-definitions
+    // for every other contract mode or stage): inspection tools, plan-safe
+    // plugin actions (ADR 0211), Plan's own submit tool, and CompleteStage
+    // while this turn holds a run claim. Unknown modes fail closed here.
     if (this.isPlanSafePluginTool(name)) return true;
-    return new Set([
-      "Read",
-      "Glob",
-      "Grep",
-      "BrowserPreview",
-      "Bash",
-      GOOGLE_SEARCH_TOOL_NAME,
-      ASK_TOOL_NAME,
-      CONTEXT_COMPACTION_TOOL_NAME,
-      SUBMIT_TOOL_NAMES[kind],
-    ]).has(name);
+    if (name === SUBMIT_TOOL_NAMES.plan) return this.mode === "plan";
+    if (name === COMPLETE_STAGE_TOOL_NAME) return this.modeState.modeTurn !== undefined;
+    return name === GOOGLE_SEARCH_TOOL_NAME || CONTRACT_ALLOWED_TOOL_NAMES.has(name);
   }
 
   private isCoreTool(name: string): boolean {
@@ -4376,18 +4421,10 @@ Delegation rules:
       name === SUBAGENT_GUIDE_TOOL_NAME ||
       name === SUBAGENT_INSPECT_TOOL_NAME ||
       name === SUBAGENT_RESUME_TOOL_NAME ||
-      (this.mode === "agent"
+      name === COMPLETE_STAGE_TOOL_NAME ||
+      (this.modeState.isAgentLevel()
         ? AGENT_CORE_TOOL_NAMES.has(name)
-        : proposalKindForMode(this.mode)
-          ? new Set([
-              "Read",
-              "Glob",
-              "Grep",
-              "Bash",
-              "BrowserPreview",
-              ASK_TOOL_NAME,
-            ]).has(name) || this.isPlanSafePluginTool(name)
-          : CHAT_CORE_TOOL_NAMES.has(name))
+        : CONTRACT_CORE_TOOL_NAMES.has(name) || this.isPlanSafePluginTool(name))
     );
   }
 
@@ -4489,6 +4526,66 @@ Delegation rules:
     };
   }
 
+
+  /** `CompleteStage` for the run turn this prompt claimed (ADR mode-definitions). */
+  private buildCompleteStageTool(): AgentTool {
+    return createCompleteStageTool({
+      host: this.host,
+      sessionId: this.sessionId,
+      context: () => {
+        const modeTurn = this.modeState.activeTurn;
+        return modeTurn && this.turnId ? { turnId: this.turnId, modeTurn } : undefined;
+      },
+      runGateCommand: (request, signal, onUpdate) => this.runModeGateCommand(request, signal, onUpdate),
+      // A terminal outcome ends the turn at the next boundary, the same way
+      // a graceful Stop does.
+      endTurn: () => {
+        this.gracefulStopRequested = true;
+      },
+    });
+  }
+
+  /**
+   * A `run` exit gate goes through the same Host `tools.execute` Bash path as
+   * the model's own Bash calls, so permission prompting and the shell policy
+   * apply unchanged; `modeGate` lets the Host bind the exit code to the run.
+   */
+  private async runModeGateCommand(
+    request: ModeGateCommand,
+    signal: AbortSignal | undefined,
+    onUpdate: Parameters<AgentTool["execute"]>[3],
+  ): Promise<ModeGateRunResult> {
+    const bash = this.toolCatalog.get("Bash");
+    if (!bash) throw Object.assign(new Error("Bash is not available in this session"), { errorCode: "TOOL_NOT_FOUND" });
+    this.modeGateCalls.set(request.toolCallId, request.modeGate);
+    try {
+      const result = await bash.execute(
+        request.toolCallId,
+        { command: request.command, timeout: request.timeoutSeconds },
+        signal,
+        onUpdate,
+      );
+      const text = result.content
+        .map((block) => (block.type === "text" ? block.text : ""))
+        .filter(Boolean)
+        .join("\n");
+      return { isError: (result as { isError?: boolean }).isError === true, text };
+    } finally {
+      // Not a model tool call: no afterToolCall consumes its bookkeeping.
+      this.modeGateCalls.delete(request.toolCallId);
+      this.failedHostToolCalls.delete(request.toolCallId);
+      this.terminatingToolCalls.delete(request.toolCallId);
+    }
+  }
+
+  private modeArtifactReader(): ModeArtifactReader {
+    return createHostModeArtifactReader({
+      host: this.host,
+      sessionId: this.sessionId,
+      turnId: () => this.turnId,
+      mode: () => this.mode,
+    });
+  }
 
   /** Provider a delegate runs on: the definition's pin resolved by Electron
    * main, or the session's own provider when it pins nothing. */
@@ -6066,7 +6163,7 @@ Delegation rules:
         expectedExecution: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
       execute: async (toolCallId, params) => {
         const fail = (text: string) => ({ ...this.subagentToolError(toolCallId, text), isError: true });
-        if (this.disposed || this.runCancelled || this.turnHadError || this.mode !== "agent") return fail("This parent turn cannot resume subagents.");
+        if (this.disposed || this.runCancelled || this.turnHadError || !this.modeState.isAgentLevel()) return fail("This parent turn cannot resume subagents.");
         if (!isRecord(params) || typeof params.delegationId !== "string" || typeof params.instruction !== "string" ||
           !params.instruction.trim() || params.instruction.length > 12_000 || !Number.isSafeInteger(params.expectedExecution) || Number(params.expectedExecution) < 1) return fail("Provide delegationId, instruction (1–12000 characters) and a positive expectedExecution from TaskList.");
         let found = this.delegations.get(params.delegationId);
@@ -7976,6 +8073,11 @@ Delegation rules:
         if (decision?.cancel) return false;
       }
       const compacted = await this.performCompaction(reason, willRetry, retentionMode);
+      // A run stage re-reads its `on.compaction` context into the prompt of
+      // the new window (ADR mode-definitions).
+      if (compacted && await this.modeState.afterCompaction(this.modeArtifactReader())) {
+        this.setAgentSystemPrompt(this.composeSystemPrompt());
+      }
       if (runner) {
         void runner.emit(compacted ? "session_compact" : "session_compact_failed", {
           type: compacted ? "session_compact" : "session_compact_failed",
@@ -9665,6 +9767,7 @@ Delegation rules:
     this.currentAssistant = undefined;
     this.requestStartedAt = Date.now();
     this.resetRunStatusReminder();
+    this.modeState.clearTurn();
     this.setMode("agent");
     this.autonomousExecution = true;
 
@@ -9746,7 +9849,11 @@ Delegation rules:
     const turnId = durableTurnId?.trim() || randomUUID();
     return this.trackTurnOperation(turnId, async () => {
       try { return await this.promptTurn(input, userMessageId, turnId); }
-      finally { await this.batchPlanner.drain(); }
+      finally {
+        // The run claim belongs to this turn only.
+        this.modeState.endTurn();
+        await this.batchPlanner.drain();
+      }
     });
   }
 
@@ -9790,10 +9897,16 @@ Delegation rules:
       // must include capability negotiation, not observe a falsely idle turn.
       await this.batchPlanner.negotiate(Boolean(this.remoteWorkspace));
       if (this.runCancelled || this.disposed) throw turnAbortedError("Turn aborted during Host capability negotiation");
+      // The run context decides this turn's policy level, CompleteStage and
+      // the stage brief, so it is applied before the tools are rebuilt.
+      const modeTurn = typeof input === "string" ? undefined : input.modeTurn;
+      const modePromptChanged = await this.modeState.beginTurn(modeTurn, this.modeArtifactReader());
+      if (this.runCancelled || this.disposed) throw turnAbortedError("Turn aborted while reading the mode run context");
       this.rebuildToolCatalog();
       this.resetDeferredToolsForPrompt();
       if (selectedTools.length) this.activateDeferredTools(selectedTools);
       this.setAgentTools(this.activeTools());
+      if (modePromptChanged) this.setAgentSystemPrompt(this.composeSystemPrompt());
       const content = promptContent(modelInput, mediaCapabilitiesForProvider(this.provider));
       const incomingUserMessage: AgentMessage = {
         role: "user",

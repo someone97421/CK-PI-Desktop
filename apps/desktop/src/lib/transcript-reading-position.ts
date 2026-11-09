@@ -159,7 +159,7 @@ export function restoreTranscriptReadingPosition(
   if (!transcriptHasLayout(scroller)) return "unavailable";
   if (!position.messageId) {
     if (!Number.isFinite(position.scrollTop) || position.scrollTop < 0) return "missing";
-    scroller.scrollTop = position.scrollTop;
+    if (Math.abs(scroller.scrollTop - position.scrollTop) > 0.5) scroller.scrollTop = position.scrollTop;
     return "aligned";
   }
   const candidates = readingPositionCandidates(position);
@@ -169,7 +169,8 @@ export function restoreTranscriptReadingPosition(
     if (!row) continue;
     const rect = row.getBoundingClientRect();
     if (rect.height === 0) { waiting = true; continue; }
-    scroller.scrollTop += rect.top - scroller.getBoundingClientRect().top - offset;
+    const delta = rect.top - scroller.getBoundingClientRect().top - offset;
+    if (Math.abs(delta) > 0.5) scroller.scrollTop += delta;
     return "aligned";
   }
   return waiting ? "unavailable" : "missing";

@@ -1,4 +1,4 @@
-import { ErrorCodes, IPC, type AgentEventEnvelope, type AppNotification, type PlanExecution, type PlanExecutionFinishStatus, type UiMessage } from "@pi-desktop/shared";
+import { ErrorCodes, IPC, type AgentEventEnvelope, type AppNotification, type MessageUsage, type PlanExecution, type PlanExecutionFinishStatus, type UiMessage } from "@pi-desktop/shared";
 import { executionFromResponse, executionListFromResponse, planExecutionFromUnknown } from "@pi-desktop/host-runtime";
 import type { SessionConfigurationQueue } from "./session-configuration";
 import type { RuntimeState } from "./context";
@@ -68,6 +68,11 @@ export type PlanRuntimeDependencies = {
   isQuitting: () => boolean;
   sessionConfiguration?: SessionConfigurationQueue;
   onTurnSettled?: (sessionId: string, turnId: string) => Promise<void>;
+  /**
+   * Every finalized turn, whether or not its durable end persisted. Mode runs
+   * release their claim here so a failed persistence cannot strand a run.
+   */
+  onTurnEnded?: (sessionId: string, turnId: string, end: { reason: TurnEndReason; usage?: MessageUsage; errorCode?: string }) => Promise<void>;
 };
 
 export function createPlanRuntime({
@@ -94,6 +99,7 @@ export function createPlanRuntime({
   isQuitting,
   onTurnSettled,
   sessionConfiguration,
+  onTurnEnded,
 }: PlanRuntimeDependencies): {
   finishTurn: FinishTurn;
   finishApprovedExecution: (executionId: string, status: PlanExecutionFinishStatus, errorCode?: string) => Promise<void>;
@@ -279,6 +285,10 @@ function finishTurn(
       }, 5 * 60 * 1000).unref();
     }
 
+    if (!isQuitting() && onTurnEnded) {
+      await onTurnEnded(id, turnId, { reason, ...(turnUsage ? { usage: turnUsage } : {}), ...(errorCode ? { errorCode } : {}) })
+        .catch((error: unknown) => logger.app("session", "warn", "mode run settlement failed", { sessionId: id, data: String(error) }));
+    }
     // Apply the next-turn draft while finalization still holds Agent Host's
     // queue. The configuration lock is independent of admission/abort locks.
     await sessionConfiguration?.flush(id);

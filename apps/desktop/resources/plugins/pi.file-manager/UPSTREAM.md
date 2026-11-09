@@ -25,7 +25,7 @@
 
 | 文件 | 字节数 | SHA-256 |
 | --- | --- | --- |
-| `main.js` | 124102 | `bbfb9302249fdc18025f0865cfa0f8dd82f082f2930c58130d98ffe04e904ed6` |
+| `main.js` | 124220 | `420fb60e35dd89d071a903b4741281156feb8d3edf909404004670a86fc2e4db` |
 | `remote-workspace.js` | 3757 | `931a579801fd4b334c3d96231aafc7ff52e0c03e7baebbabaf00b4c5e17cc366` |
 | `README.md` | 38470 | `4ecf6e3afa2051b59b479907c485d156caca54ef6d1f4e3c410805807942a268` |
 | `CHANGELOG.md` | 34520 | `b7a3c06c07b2dbe5ce79577bbc6c6a53ffa00324bd64a27d0d5634493dec48b4` |
@@ -52,3 +52,5 @@
 1. 获取插件仓库标签与主分支，固定实际采用的完整提交 SHA，核对 manifest 版本与完整运行资源。
 2. 导入运行资源并逐项适配上述本地差异；已有完整上游构建资源时直接采用，不手改压缩 JavaScript。
 3. 更新本文件中的来源、校验值及 `apps/desktop/test/bundled-plugins.test.mjs` 的来源断言。
+
+本轮同步 PI-Desktop `6c81b7f29b77feb814b98cceb1d200a7ee8ef66f` 的 `aed1107f4` 与 `7f058a9d9`：保留已修复的名称校验和函数结构，补充控制字符及尾部句点检查；Git 超时立即结束等待并销毁输出流，避免子进程继承管道拖延完成。未更换视图或宣称插件仓库正式发布，未运行插件实测。

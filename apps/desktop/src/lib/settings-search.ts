@@ -16,6 +16,7 @@ export type SettingsTabId =
   | "mcp"
   | "subagents"
   | "import"
+  | "modes"
   | "projects"
   | "sync"
   | "remoteHosts"
@@ -324,6 +325,23 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.importSourceCodex",
       "settings.importSourcePi",
       "settings.importNoProject",
+    ],
+  },
+  {
+    id: "modes",
+    labelKey: "settings.nav.modes",
+    titleKey: "modes.settings.title",
+    subtitleKey: "modes.settings.subtitle",
+    group: "agent",
+    keywordKeys: [
+      "modes.settings.listTitle",
+      "modes.settings.directory",
+      "modes.settings.newMode",
+      "modes.settings.duplicate",
+      "modes.settings.source",
+      "modes.settings.builtin",
+      "modes.settings.user",
+      "modes.settings.staged",
     ],
   },
   {

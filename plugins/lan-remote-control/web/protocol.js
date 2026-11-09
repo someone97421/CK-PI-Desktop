@@ -86,6 +86,8 @@ export const READ_OPERATIONS = [
   "sessions.messages",
   "sessions.pending",
   "models.list",
+  "modes.catalog",
+  "modes.run.get",
   "commands.list",
   "queue.list",
   "collaboration.get",
@@ -111,6 +113,8 @@ export const MUTATION_OPERATIONS = [
   "approval.resolve",
   "ask.resolve",
   "plans.resolve",
+  "modes.run.control",
+  "modes.run.resolve",
 ];
 
 const MUTATION_SET = new Set(MUTATION_OPERATIONS);

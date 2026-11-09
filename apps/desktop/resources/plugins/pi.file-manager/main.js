@@ -810,7 +810,11 @@ function runGit(rootPath, binary, args, { maxBytes, timeoutMs = GIT_TIMEOUT_MS }
 
     const timer = setTimeout(() => {
       timedOut = true;
+      // close 可能被后代进程继承的管道拖住；截止时间必须直接结束等待。
+      finish(reject, fail("GIT_TIMEOUT", "git command timed out"));
       child.kill("SIGKILL");
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
     }, timeoutMs);
 
     child.stdout?.on("data", (chunk) => {
@@ -2497,10 +2501,9 @@ const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 function assertValidName(rawName) {
   if (typeof rawName !== "string") throw fail("INVALID_NAME", "name is required");
   const name = rawName.trim();
-  if (!name) throw fail("INVALID_NAME", "name is required");
-  if (name === "." || name === "..") throw fail("INVALID_NAME", "invalid name");
-  if (/[\\/:*?"<>|]/.test(name)) throw fail("INVALID_NAME", "name contains an illegal character");
-  if (WINDOWS_RESERVED.test(name)) throw fail("INVALID_NAME", "name is reserved by the system");
+  if (!name || name === "." || name === ".." || /[<>:"/\\|?*\x00-\x1f]/.test(name) || name.endsWith(".") || WINDOWS_RESERVED.test(name)) {
+    throw fail("INVALID_NAME", "name must be a valid file or directory name");
+  }
   if (name.length > 200) throw fail("INVALID_NAME", "name is too long");
   return name;
 }

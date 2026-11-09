@@ -92,6 +92,29 @@ test("an anchored message row restores by its rect", () => {
   assert.deepEqual(selectors, ['[data-message-id="m-late"]']);
 });
 
+test("unchanged/subpixel anchor alignment does not write scrollTop or stop native travel", () => {
+  const scroller = fakeScroller({ scrollTop: 480 });
+  let top = scroller.scrollTop;
+  let writes = 0;
+  Object.defineProperty(scroller, "scrollTop", {
+    get: () => top,
+    set: value => { writes++; top = value; },
+  });
+  let rowTop = 24;
+  const row = { getBoundingClientRect: () => ({ top: rowTop, height: 80 }) };
+  const content = fakeContent({ row });
+  assert.equal(restoreTranscriptReadingPosition(scroller, content, bookmark()), "aligned");
+  rowTop = 24.25;
+  assert.equal(restoreTranscriptReadingPosition(scroller, content, bookmark()), "aligned");
+  assert.equal(writes, 0);
+  rowTop = 144;
+  restoreTranscriptReadingPosition(scroller, content, bookmark());
+  assert.equal(writes, 1);
+  assert.equal(top, 600);
+  assert.equal(restoreTranscriptReadingPosition(scroller, fakeContent(), bookmark({ scrollTop: 600 })), "missing");
+  assert.equal(writes, 1, "a missing row leaves native travel alone");
+});
+
 test("a missing anchored row is reported instead of reapplying the absolute offset", () => {
   const scroller = fakeScroller({ scrollTop: 0, top: 0 });
   assert.equal(

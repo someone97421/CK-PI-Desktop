@@ -1,4 +1,5 @@
 import { clipboard } from "electron";
+import { registerSidebarPreferencesIpc } from "./sidebar-preferences-ipc";
 import { readComposerClipboardDirectories } from "../composer-clipboard-directories";
 import { BrowserWindow, dialog, shell, type OpenDialogOptions } from "electron";
 import { basename, dirname } from "node:path";
@@ -138,6 +139,7 @@ export function registerWorkspaceIpc({
     });
   };
   const assertMainWindowSender = registrar.assertMainWindowSender;
+  registerSidebarPreferencesIpc({ registrar, dataDir });
   let composerPickerActive = false;
   let projectPickerActive = false;
 

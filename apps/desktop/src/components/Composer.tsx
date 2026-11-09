@@ -33,6 +33,7 @@ import { ComposerAutocomplete } from "./ComposerAutocomplete";
 import { AskToolCard } from "./AskToolCard";
 import { PlanApprovalBar } from "./PlanApprovalBar";
 import { TaskDock } from "./TaskDock";
+import { ModeRunStatusBar } from "../features/modes/ModeRunStatusBar";
 import {
   PLACEHOLDER_KEYS,
   isPermissionMode,
@@ -135,8 +136,9 @@ export function Composer({
         providerModels,
         providers,
         sessionCompactions,
+        activeSessionSummary,
       ),
-    [liveMessages, providerModels, providers, sessionCompactions],
+    [liveMessages, providerModels, providers, sessionCompactions, activeSessionSummary],
   );
   const latestTask = useMemo(() => {
     for (let index = liveMessages.length - 1; index >= 0; index--) {
@@ -287,10 +289,9 @@ export function Composer({
   const mode: Mode = activeSession
     ? activeSession.mode
     : (draftConfiguration?.mode ?? settings?.defaultMode ?? "agent");
+  // Only the builtin Plan negotiates a proposal; Goal runs as a staged mode.
   const planningLive =
-    isRunning &&
-    planningState === "planning" &&
-    (mode === "plan" || mode === "goal");
+    isRunning && planningState === "planning" && mode === "plan";
   // Permission mode (D115/D132): inherited sessions still resolve through the
   // global setting, but the composer presents only the effective mode.
   const globalPermissionMode: PermissionMode =
@@ -490,6 +491,7 @@ export function Composer({
     >
       <div className="composer-stack">
         {activeSessionId && localToolsAllowed ? <TaskDock sessionId={activeSessionId} /> : null}
+        {activeSessionId ? <ModeRunStatusBar sessionId={activeSessionId} /> : null}
         {planCheckpoint?.status === "pending" ? (
           <PlanApprovalBar proposal={planCheckpoint} />
         ) : null}

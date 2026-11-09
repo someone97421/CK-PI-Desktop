@@ -15,6 +15,7 @@ import {
   type McpServerRecord,
   type ModelBinding,
   type Mode,
+  type ModeDefinition,
   type Risk,
   type SessionThinkingLevel,
   type UserSkillRecord,
@@ -71,6 +72,7 @@ export type SessionLaunchRuntimeDependencies = {
   vendorOAuth: VendorOAuth;
   modelsDevCatalog: ModelsDevCatalog;
   getWorkspacePath: () => string | null;
+  resolveModeDefinition?: (mode: Mode) => Promise<ModeDefinition | undefined>;
   pluginActiveInProject: (
     pluginId: string,
     projectPath: string | null | undefined,
@@ -100,6 +102,7 @@ export function createSessionLaunchRuntime({
   vendorOAuth,
   modelsDevCatalog,
   getWorkspacePath,
+  resolveModeDefinition,
   pluginActiveInProject,
   bindingForModel,
   effectiveSubagentModelConfig,
@@ -838,6 +841,10 @@ export function createSessionLaunchRuntime({
     const mode = normalizeMode(
       overrides.mode ?? session.mode ?? settings.defaultMode ?? "agent",
     );
+    const modeDefinition = await resolveModeDefinition?.(mode);
+    if (remoteWorkspace && modeDefinition?.stages.length) {
+      throw Object.assign(new Error("远程工作区不支持阶段模式"), { errorCode: "MODE_REMOTE_UNSUPPORTED" });
+    }
     let jevApiKey: string | undefined;
     if (mode === "agent" && settings.jevEnabled === true) {
       try {
@@ -879,6 +886,7 @@ export function createSessionLaunchRuntime({
       sidecarParams: {
         sessionId,
         mode,
+        ...(modeDefinition ? { modeDefinition } : {}),
         ...(overrides.turnId ? { turnId: overrides.turnId } : {}),
         thinkingLevel,
         infiniteProviderRetry: settings.infiniteProviderRetry === true,

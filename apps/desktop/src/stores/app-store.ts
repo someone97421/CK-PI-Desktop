@@ -6,7 +6,7 @@ import type {
 } from "@pi-desktop/shared";
 import {
   migrateKeybindingOverrides,
-  normalizeMode,
+  normalizeBuiltinMode,
   PROTOCOL_VERSION,
 } from "@pi-desktop/shared";
 import { api } from "../lib/api";
@@ -20,6 +20,8 @@ import {
 } from "../lib/sidebar-session-status";
 import {
   projectWorkspaceFromPath,
+  restoreSidebarPreferences,
+  sidebarPreferencesState,
   saveSidebarPreferences,
 } from "../lib/sidebar-preferences";
 import {
@@ -243,11 +245,16 @@ export const useAppStore = create<AppState>((set, get) => {
     const generation = ++bootstrapGeneration;
     let recoveredSettings: AppSettings | undefined;
     try {
+      const sidebar = await restoreSidebarPreferences({
+        read: api.getSidebarPreferences, write: api.setSidebarPreferences, listProjects: api.listProjects,
+      });
+      if (generation !== bootstrapGeneration) return;
+      if (sidebar) set(sidebarPreferencesState(sidebar));
       const settingsRequest = api.getSettings().then(async (settingsRaw) => {
         let settings = settingsRaw
           ? {
               ...settingsRaw,
-              defaultMode: normalizeMode(
+              defaultMode: normalizeBuiltinMode(
                 (settingsRaw as { defaultMode?: unknown }).defaultMode,
               ),
               // Persisted keybindings can still name the retired window ids

@@ -1,5 +1,5 @@
 export const PROTOCOL_VERSION = 11 as const;
-export const SCHEMA_VERSION = 28 as const;
+export const SCHEMA_VERSION = 29 as const;
 export { APP_ID, APP_NAME, APP_SLUG, APP_REPOSITORY, APP_VERSION, APP_DISPLAY_VERSION,
   APP_BUILD_TIME, APP_BUILD_TIMEZONE, APP_LEGACY_LOCK_NAME } from "./app-build.js";
 
@@ -150,6 +150,7 @@ export const IPC = {
     sessionCollaboration: "pi-desktop/session/collaboration",
     sessionStorage: "pi-desktop/session/storage",
     sessionCleanScratch: "pi-desktop/session/clean-scratch",
+    sessionUsageCost: "pi-desktop/session/usageCost",
     /** Validate and select a durable session from a reviewed host operation. */
     sessionOpen: "pi-desktop/session/open",
     sessionDelete: "pi-desktop/session/delete",
@@ -202,6 +203,8 @@ export const IPC = {
     appearanceMediaReset: "pi-desktop/appearanceMedia/reset",
     appearanceSystemIconGet: "pi-desktop/appearanceMedia/systemIconGet",
     appearanceSystemIconApply: "pi-desktop/appearanceMedia/systemIconApply",
+    sidebarPreferencesGet: "pi-desktop/sidebar/preferences/get",
+    sidebarPreferencesSet: "pi-desktop/sidebar/preferences/set",
     configSyncGetState: "pi-desktop/configSync/getState",
     backgroundTasksList: "pi-desktop/backgroundTasks/list",
     backgroundTasksOutput: "pi-desktop/backgroundTasks/output",
@@ -256,6 +259,14 @@ export const IPC = {
     askToolResolve: "pi-desktop/agent/askTool/resolve",
     plansPending: "pi-desktop/plans/pending",
     plansResolve: "pi-desktop/plans/resolve",
+    modesCatalog: "pi-desktop/modes/catalog",
+    modesRead: "pi-desktop/modes/read",
+    modesValidate: "pi-desktop/modes/validate",
+    modesWrite: "pi-desktop/modes/write",
+    modesDelete: "pi-desktop/modes/delete",
+    modesRunGet: "pi-desktop/modes/run/get",
+    modesRunControl: "pi-desktop/modes/run/control",
+    modesRunResolve: "pi-desktop/modes/run/resolve",
     /**
      * List every paired remote `pi-host` this desktop knows, redacted so no
      * device token reaches the renderer. See ADR 0286 (R2b pairing UX).
@@ -549,6 +560,8 @@ export const IPC = {
     notificationActivated: "pi-desktop/notification/event/activated",
     notificationSound: "pi-desktop/notification/event/sound",
     plansChanged: "pi-desktop/plans/event/changed",
+    modesChanged: "pi-desktop/modes/event/changed",
+    modesCatalogChanged: "pi-desktop/modes/event/catalogChanged",
     todosChanged: "pi-desktop/todos/event/changed",
     providersOauth: "pi-desktop/providers/oauth/event",
     mcpOauth: "pi-desktop/mcp/oauth/event",

@@ -21,8 +21,10 @@ import { createMutationRecovery } from "./mutation-recovery.js";
 import { buildProcessTimeline, processSummary } from "./process.js";
 import { createSubagentObserver } from "./subagents.js";
 import { openModelSettings, pendingConfigurationNotice } from "./model-settings.js";
+import { createModeRunCard } from "./modes.js";
 
 const subagentObserver = createSubagentObserver();
+const modeOperations = new Set();
 
 const liveTools = new Map();
 const recentEvents = [];
@@ -860,7 +862,7 @@ async function drawChat() {
   const focusedDisclosure = document.activeElement?.closest("details")?.dataset.disclosureKey;
   const title = snapshot?.session?.title || "对话";
   const status = running ? "正在处理" : snapshot?.session?.draft ? "临时草稿" : "就绪";
-  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
+  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), snapshot?.modeRun?.run?.state === "waiting" && snapshot.modeRun.run.waitReason === "approval" ? 1 : 0);
   const sidechatLink = parents.get(current);
   chatHeading.replaceChildren(
     el("div", { className: "remote-chat-titlebar" },
@@ -935,7 +937,7 @@ function openChatMore() {
   }
   section("会话");
   add("刷新", { iconName: "refresh", onClick: () => action(refresh) });
-  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), 0);
+  const pendingCount = ["plans", "approvals", "questions"].reduce((count, key) => count + (snapshot?.pending?.[key]?.length || 0), snapshot?.modeRun?.run?.state === "waiting" && snapshot.modeRun.run.waitReason === "approval" ? 1 : 0);
   if (pendingCount)
     add(`待处理 ${pendingCount}`, { iconName: "warning", onClick: () => {
       transcript.querySelector(".approval-card")?.scrollIntoView({ block: "start" });
@@ -996,6 +998,21 @@ function openEditSheet(m) {
     button("取消", { variant: "secondary", onClick: () => sheet.close() }), submit));
 }
 function renderPending() {
+  const sessionId = current, navigation = navigationVersion;
+  const modeCard = createModeRunCard({
+    info: snapshot?.modeRun, sessionId,
+    isCurrent: () => current === sessionId && navigation === navigationVersion && !loginVisible,
+    mutate, refresh, onError: report,
+    isBusy: () => modeOperations.has(sessionId),
+    setBusy: busy => {
+      if (busy) modeOperations.add(sessionId);
+      else {
+        modeOperations.delete(sessionId);
+        if (current === sessionId && navigation !== navigationVersion && !loginVisible) scheduleRefresh();
+      }
+    },
+  });
+  if (modeCard) transcript.append(modeCard);
   for (const plan of snapshot?.pending?.plans || []) {
     const box = el(
       "section",
@@ -1013,7 +1030,7 @@ function renderPending() {
           onClick: () =>
             action(async () => {
               await mutate("plans.resolve", {
-                sessionId: current,
+                sessionId,
                 proposalId: plan.id || plan.proposalId,
                 action: decision,
                 version: plan.version,
@@ -1022,7 +1039,7 @@ function renderPending() {
                     ? "ask"
                     : snapshot?.session?.permissionMode || "ask",
               });
-              await refresh();
+              if (current === sessionId && navigation === navigationVersion) await refresh();
             }),
         }),
       );

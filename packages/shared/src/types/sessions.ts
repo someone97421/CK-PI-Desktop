@@ -159,6 +159,9 @@ export type ContextCompactionMark = ContextCompactionStatus & {
   /** Estimated context tokens after this checkpoint was installed. */
   contextTokens?: number;
   id: string;
+  /** Model that rebuilt the compacted context, when recorded by the runtime. */
+  providerId?: string;
+  modelId?: string;
   /** Last message the checkpoint covers; the row renders right after it. */
   throughMessageId: string;
   /** False when the window rolled over without asking for a summary. */

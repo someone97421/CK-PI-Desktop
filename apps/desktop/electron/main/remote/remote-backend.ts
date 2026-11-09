@@ -286,6 +286,9 @@ export function createRemoteBackend(options: RemoteBackendOptions): RemoteBacken
         ) {
           throw capabilityUnavailable("remote sessions use the Host model configuration");
         }
+        if (config.mode !== undefined && config.mode !== "agent" && config.mode !== "plan") {
+          throw Object.assign(new Error("远程宿主不支持阶段或自定义模式"), { errorCode: "MODE_REMOTE_UNSUPPORTED" });
+        }
         const { session } = await client.request<{ session: RacpSession }>("session/configure", {
           sessionId: parseRemoteSessionId(remoteSessionId)!.hostSessionId,
           ...(config.mode ? { mode: config.mode } : {}),

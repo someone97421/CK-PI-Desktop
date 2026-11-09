@@ -1,4 +1,4 @@
-import type { Mode, SessionThinkingLevel } from "@pi-desktop/shared";
+import { isModeId, type Mode, type ModeDefinition, type SessionThinkingLevel } from "@pi-desktop/shared";
 
 type Session = { id?: string; mode?: string; [key: string]: unknown };
 export type SessionConfigurationPatch = {
@@ -19,6 +19,7 @@ const isBlocked = (error: unknown): boolean => codeOf(error) === "PLAN_CONFIGURA
 export function createSessionConfigurationQueue(options: {
   getHost: () => Host | null;
   isTurnActive: (sessionId: string) => boolean;
+  resolveModeSnapshot?: (mode: Mode) => Promise<ModeDefinition | undefined>;
   onChanged: (sessionId: string, session?: Session, applied?: SessionConfigurationPatch) => void;
   log: (message: string, data?: unknown) => void;
 }) {
@@ -70,7 +71,7 @@ export function createSessionConfigurationQueue(options: {
       const value = config[key];
       if (value === undefined) continue;
       if (typeof value !== "string") throw Object.assign(new Error(`${key} must be a string`), { errorCode: "INVALID_ARGUMENT" });
-      if (key === "mode" && !["agent", "plan", "goal", "chat"].includes(value) ||
+      if (key === "mode" && value !== "chat" && !isModeId(value) ||
           key === "thinkingLevel" && !["omit", "off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(value) ||
           key === "permissionMode" && !["inherit", "ask", "accept-edits", "auto"].includes(value)) {
         throw Object.assign(new Error(`Invalid ${key}`), { errorCode: "INVALID_ARGUMENT" });
@@ -86,8 +87,10 @@ export function createSessionConfigurationQueue(options: {
   }
 
   async function apply(id: string, session: Session, patch: SessionConfigurationPatch): Promise<Session> {
+    const mode = patch.mode ?? session.mode ?? "agent";
+    const modeSnapshot = await options.resolveModeSnapshot?.(mode);
     const result = await requireHost().call<{ session?: Session }>("session.configure", {
-      id, mode: session.mode, ...patch,
+      id, mode, ...patch, modeSnapshot,
     });
     if (!result.session) throw Object.assign(new Error("Session not found"), { errorCode: "NOT_FOUND" });
     pending.delete(id);
@@ -98,6 +101,7 @@ export function createSessionConfigurationQueue(options: {
   async function configure(id: string, config: SessionConfigurationPatch & { deferUntilIdle?: boolean }) {
     return serialized(id, async () => {
       const input = validate(config);
+      if (input.mode !== undefined) await options.resolveModeSnapshot?.(input.mode);
       const session = await read(id);
       const patch = differences(session, { ...pending.get(id)?.patch, ...input });
       if (!Object.keys(patch).length) {

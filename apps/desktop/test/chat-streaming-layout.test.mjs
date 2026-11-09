@@ -14,6 +14,10 @@ const cursorSource = await readFile(
   new URL("../src/hooks/use-streaming-cursor.ts", import.meta.url),
   "utf8",
 );
+const proseSource = await readFile(
+  new URL("../src/features/chat/transcript/TranscriptProse.tsx", import.meta.url),
+  "utf8",
+);
 
 test("streaming cursor remains steady throughout active streaming without flapping", () => {
   assert.match(assistantTurnPartsSource, /const showCursor = streaming && enabled && Boolean\(displayContent\);/);
@@ -25,8 +29,9 @@ test("streaming prose chat stabilizes line wrapping against orphan-rebalancing r
 });
 
 test("streaming cursor uses the measured leaf position without changing Markdown layout", () => {
-  assert.match(assistantTurnPartsSource, /useStreamingCursor\(displayContent, showCursor\)/);
-  assert.match(assistantTurnPartsSource, /ref=\{proseRef\}/);
+  assert.match(assistantTurnPartsSource, /showCursor=\{showCursor\}/);
+  assert.match(proseSource, /useStreamingCursor\(source, showCursor\)/);
+  assert.match(proseSource, /ref=\{elementRef\}/);
   assert.match(messagesCss, /\.assistant-turn-fragment\.smooth-cursor \.prose-chat\[data-cursor-ready\]::after/);
   assert.match(messagesCss, /left: var\(--stream-cursor-x\)/);
   assert.match(messagesCss, /top: var\(--stream-cursor-y\)/);

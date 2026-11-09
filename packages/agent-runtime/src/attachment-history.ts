@@ -180,48 +180,43 @@ export async function hydrateAttachmentHistory(
     }),
   );
 
-  // Allocate the byte budget in reverse transcript order, then reverse attachment
-  // order within a message. This preserves every image when the history fits while
-  // keeping the most recent visual context when the aggregate exceeds the cap.
+  // Newest transcript first, then newest attachment within a message. Charge
+  // the byte budget only after the pixel probe accepts the file. A tall
+  // screenshot keeps the path fallback (#1913) and must not starve an older
+  // image that still fits. Images past the remaining budget are not read.
   let remainingBytes = maxInlinedImageBytes;
   let remainingMediaBytes = GEMINI_INLINE_REQUEST_BYTES;
-  const selectedForInlining: ResolvedAttachment[] = [];
+  const inlineCandidates: ResolvedAttachment[] = [];
   for (let messageIndex = resolvedHistory.length - 1; messageIndex >= 0; messageIndex--) {
     const resolved = resolvedHistory[messageIndex];
     if (!resolved) continue;
     for (let attachmentIndex = resolved.length - 1; attachmentIndex >= 0; attachmentIndex--) {
       const item = resolved[attachmentIndex];
-      if (
-        !item?.canonicalPath ||
-        item.size === undefined ||
-        mediaInlineBytes(item.size, item.attachment.mimeType, params) >= remainingMediaBytes ||
-        (!supportsMediaMime(item.attachment.mimeType, params) && item.size > remainingBytes)
-      ) {
-        continue;
-      }
-      if (!supportsMediaMime(item.attachment.mimeType, params)) remainingBytes -= item.size;
-      remainingMediaBytes -= mediaInlineBytes(item.size, item.attachment.mimeType, params);
-      selectedForInlining.push(item);
+      if (!item?.canonicalPath || item.size === undefined) continue;
+      inlineCandidates.push(item);
     }
   }
 
   const store = new MediaStore(params.attachmentsDir);
-  for (const item of selectedForInlining) {
-      try {
-        if ((await stat(item.canonicalPath!)).size !== item.size) continue;
-        const mediaRef = await store.putFile(
-          item.canonicalPath!,
-          item.attachment.mimeType ?? "image/png",
-          item.size!,
-        );
-        item.attachment = {
-          ...item.attachment,
-          mediaRef,
-        };
-        item.inlined = true;
-      } catch {
-        // A failed transient read should not prevent the remaining history restoring.
-      }
+  for (const item of inlineCandidates) {
+    if (item.size === undefined) continue;
+    const media = supportsMediaMime(item.attachment.mimeType, params);
+    const inlineBytes = mediaInlineBytes(item.size, item.attachment.mimeType, params);
+    if (inlineBytes >= remainingMediaBytes || (!media && item.size > remainingBytes)) continue;
+    try {
+      if ((await stat(item.canonicalPath!)).size !== item.size) continue;
+      const mediaRef = await store.putFile(
+        item.canonicalPath!,
+        item.attachment.mimeType ?? "image/png",
+        item.size,
+      );
+      if (!media) remainingBytes -= item.size;
+      remainingMediaBytes -= inlineBytes;
+      item.attachment = { ...item.attachment, mediaRef };
+      item.inlined = true;
+    } catch {
+      // A failed transient read should not prevent the remaining history restoring.
+    }
   }
 
   const fallbackTasks: Promise<void>[] = [];

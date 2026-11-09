@@ -5,16 +5,16 @@ import type {
   ProviderPublic,
   UiMessage,
 } from "@pi-desktop/shared";
-import { resolveContextWindow } from "./context-usage";
+import { DEFAULT_CONTEXT_WINDOW, resolveKnownContextWindow } from "./context-usage";
 import { getSessionMessageSnapshot } from "./session-transcript-updates";
 import { getTranscriptProjection } from "./transcript-projection";
 import { getAssistantTurnSummary } from "./transcript-summary";
 
 export type LatestTurnContextInspector = {
   usage: MessageUsage;
-  compactedContextTokens?: number;
   turnUsage: MessageUsage;
   contextWindow: number;
+  contextWindowEstimated?: boolean;
   tools: UiMessage[];
   responseDurationMs?: number;
   responseOutputTokens?: number;
@@ -41,17 +41,12 @@ export function latestTurnContextInspector(
   providerModels: Record<string, ModelInfo[]>,
   providers: ProviderPublic[],
   compactions?: readonly (ContextCompactionMark & { contextUsageMessageId?: string })[],
+  currentModel?: { providerId?: string; modelId?: string },
 ): LatestTurnContextInspector | undefined {
   const compaction = compactions?.at(-1);
   let latestUsageMessage: UiMessage | undefined;
-  // Walking back from the tail, meeting the checkpoint anchor before any
-  // usage means that usage predates the compaction.
-  let usagePredatesCompaction = false;
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index];
-    if (compaction && message.id === compaction.throughMessageId) {
-      usagePredatesCompaction = true;
-    }
     if (!message.parentToolCallId && message.usage) {
       latestUsageMessage = message;
       break;
@@ -59,9 +54,27 @@ export function latestTurnContextInspector(
   }
   const latestUsage = latestUsageMessage?.usage;
   if (!latestUsage) return undefined;
-  const compactedContextTokens = usagePredatesCompaction
-    ? compaction?.contextTokens
-    : undefined;
+  const snapshot = getSessionMessageSnapshot(messages);
+  const compactionIndex = compaction
+    ? snapshot.positions.get(compaction.throughMessageId) ?? -1
+    : -1;
+  const latestUsageIndex = latestUsageMessage
+    ? snapshot.positions.get(latestUsageMessage.id) ?? -1
+    : -1;
+  const usesCompactedContext = compaction?.contextUsageMessageId !== undefined
+    ? compaction.contextUsageMessageId === latestUsageMessage?.id
+    : compactionIndex >= latestUsageIndex && latestUsageIndex >= 0;
+  const compactedContextTokens = usesCompactedContext ? compaction?.contextTokens : undefined;
+  const windowModel = compactedContextTokens !== undefined
+    ? compaction?.providerId && compaction.modelId
+      ? compaction
+      : currentModel?.providerId && currentModel.modelId
+        ? currentModel
+        : latestUsageMessage
+    : latestUsageMessage;
+  const knownContextWindow = resolveKnownContextWindow(
+    windowModel?.providerId, windowModel?.modelId, providerModels, providers,
+  );
 
   const { entries } = getTranscriptProjection(messages, compactions);
   let latestTurn: ReturnType<typeof getAssistantTurnSummary> | undefined;
@@ -75,29 +88,11 @@ export function latestTurnContextInspector(
       break;
     }
   }
-  const snapshot = getSessionMessageSnapshot(messages);
-  const latestCompaction = compactions?.at(-1);
-  const compactionIndex = latestCompaction
-    ? snapshot.positions.get(latestCompaction.throughMessageId) ?? -1
-    : -1;
-  const latestUsageIndex = latestUsageMessage
-    ? snapshot.positions.get(latestUsageMessage.id) ?? -1
-    : -1;
-  // A live estimate supersedes the usage visible when compaction finished,
-  // including an aborted response omitted from runtime history.
-  const usesCompactedContext = latestCompaction?.contextUsageMessageId !== undefined
-    ? latestCompaction.contextUsageMessageId === latestUsageMessage?.id
-    : compactionIndex >= latestUsageIndex && latestUsageIndex >= 0;
   const result: LatestTurnContextInspector = {
     usage: latestUsage,
-    compactedContextTokens: usesCompactedContext ? latestCompaction?.contextTokens : undefined,
     turnUsage: latestTurn?.usage ?? latestUsage,
-    contextWindow: resolveContextWindow(
-      latestUsageMessage?.providerId,
-      latestUsageMessage?.modelId,
-      providerModels,
-      providers,
-    ),
+    contextWindow: knownContextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    ...(knownContextWindow === undefined ? { contextWindowEstimated: true } : {}),
     tools: latestTurn?.tools ?? [],
     responseDurationMs: latestTurn?.responseDurationMs,
     responseOutputTokens: latestTurn?.responseOutputTokens,
@@ -106,9 +101,9 @@ export function latestTurnContextInspector(
   };
   const previous = inspectors.get(snapshot.owner);
   if (previous && previous.usage === result.usage &&
-    previous.compactedContextTokens === result.compactedContextTokens &&
     sameUsage(previous.turnUsage, result.turnUsage) &&
     previous.contextWindow === result.contextWindow &&
+    previous.contextWindowEstimated === result.contextWindowEstimated &&
     previous.compactedContextTokens === result.compactedContextTokens &&
     previous.responseDurationMs === result.responseDurationMs &&
     previous.responseOutputTokens === result.responseOutputTokens &&
