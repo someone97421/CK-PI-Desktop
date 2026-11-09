@@ -88,8 +88,20 @@ export function transcriptReadingPositionIsStale(
 
 const READING_ANCHOR_SELECTOR = "[data-reading-anchor]";
 
+/** 折叠的 details 后代仍可能有布局尺寸，不能仅凭 rect 判断可读性。 */
+export function isTranscriptElementShown(element: HTMLElement): boolean {
+  if (element.closest?.('[hidden], [inert], [aria-hidden="true"]')) return false;
+  let details = element.parentElement?.closest<HTMLDetailsElement>("details:not([open])");
+  while (details) {
+    if (!details.querySelector(":scope > summary")?.contains(element)) return false;
+    details = details.parentElement?.closest<HTMLDetailsElement>("details:not([open])");
+  }
+  return true;
+}
+
 function firstVisibleRow(content: HTMLElement, selector: string, viewport: DOMRect) {
   for (const row of content.querySelectorAll<HTMLElement>(selector)) {
+    if (!isTranscriptElementShown(row)) continue;
     const rect = row.getBoundingClientRect();
     if (rect.bottom <= viewport.top || rect.top >= viewport.bottom || rect.height === 0) continue;
     return { row, offset: rect.top - viewport.top };
@@ -142,7 +154,8 @@ export function isTranscriptReadingAnchorVisible(
 ): boolean {
   if (!transcriptHasLayout(scroller)) return false;
   for (const [selector, offset] of readingPositionCandidates(position)) {
-    const height = content.querySelector<HTMLElement>(selector)?.getBoundingClientRect().height ?? 0;
+    const row = content.querySelector<HTMLElement>(selector);
+    const height = row && isTranscriptElementShown(row) ? row.getBoundingClientRect().height : 0;
     if (height > 0) return offset < scroller.clientHeight && offset + height > 0;
   }
   return false;
@@ -166,7 +179,7 @@ export function restoreTranscriptReadingPosition(
   let waiting = false;
   for (const [selector, offset] of candidates) {
     const row = content.querySelector<HTMLElement>(selector);
-    if (!row) continue;
+    if (!row || !isTranscriptElementShown(row)) continue;
     const rect = row.getBoundingClientRect();
     if (rect.height === 0) { waiting = true; continue; }
     const delta = rect.top - scroller.getBoundingClientRect().top - offset;

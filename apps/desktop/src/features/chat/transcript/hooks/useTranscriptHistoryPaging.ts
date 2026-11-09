@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "
 import {
   captureTranscriptReadingPosition,
   isTranscriptReadingAnchorVisible,
+  isTranscriptElementShown,
   restoreTranscriptReadingPosition,
   type TranscriptReadingPosition,
 } from "../../../../lib/transcript-reading-position";
@@ -25,16 +26,25 @@ const layoutChanged = (held: Hold, sourceHead: string | undefined) =>
   held.height !== held.scroller.scrollHeight || held.viewport !== held.scroller.clientHeight ||
   held.alignedHead !== sourceHead;
 
+const isLayoutClamp = (held: Hold) => {
+  const maximum = Math.max(0, held.scroller.scrollHeight - held.scroller.clientHeight);
+  return held.top > maximum + 0.5 && Math.abs(held.scroller.scrollTop - maximum) <= 1;
+};
+
 function messageRow(content: HTMLElement, position: TranscriptReadingPosition) {
   const id = CSS.escape(position.messageId ?? "");
-  return content.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
-    ?? content.querySelector<HTMLElement>(`[data-minimap-id="${id}"]`);
+  for (const selector of [`[data-message-id="${id}"]`, `[data-minimap-id="${id}"]`,
+    `[data-reading-anchor="${CSS.escape(position.anchorId ?? position.messageId ?? "")}"]`]) {
+    const row = content.querySelector<HTMLElement>(selector);
+    if (row && isTranscriptElementShown(row) && row.getBoundingClientRect().height > 0) return row;
+  }
 }
 
 function contentPoint(scroller: HTMLElement, content: HTMLElement, position: TranscriptReadingPosition) {
   const viewport = scroller.getBoundingClientRect();
   const row = messageRow(content, position);
-  for (const element of row?.querySelectorAll<HTMLElement>(".prose-chat p, .prose-chat li, .prose-chat pre, .prose-chat h1, .prose-chat h2, .prose-chat h3, .message-user-text") ?? []) {
+  for (const element of row?.querySelectorAll<HTMLElement>(".task-process-summary, .tool-activity-header, .prose-chat p, .prose-chat li, .prose-chat pre, .prose-chat h1, .prose-chat h2, .prose-chat h3, .message-user-text") ?? []) {
+    if (!isTranscriptElementShown(element)) continue;
     const rect = element.getBoundingClientRect();
     if (rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom) {
       return { element, offset: rect.top - viewport.top };
@@ -111,6 +121,8 @@ export function useTranscriptHistoryPaging({ scrollRef, contentRef, visible, sou
     const scroller = scrollRef.current;
     const content = contentRef.current;
     if (!held || !scroller || !content) return;
+    // 只排除内容收缩引起的边界钳制；布局变化期间的真实滚动仍更新阅读目标。
+    if (isLayoutClamp(held)) return;
     // Retain the same readable message across a gesture. Switching immediately
     // to a newly exposed, estimated row lets its late layout move the text away.
     const delta = scroller.scrollTop - held.top;
@@ -141,12 +153,23 @@ export function useTranscriptHistoryPaging({ scrollRef, contentRef, visible, sou
     track();
     const before = scroller.scrollTop;
     const changed = layoutChanged(held, sourceHeadRef.current);
-    if (held.point?.element.isConnected) {
+    if (held.point?.element.isConnected && isTranscriptElementShown(held.point.element)
+      && held.point.element.getBoundingClientRect().height > 0) {
       const delta = held.point.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - held.point.offset;
-      if (Math.abs(delta) > 0.5) scroller.scrollTop += delta;
+      if (Math.abs(delta) > 0.5) {
+        const target = scroller.scrollTop + delta;
+        scroller.scrollTop = target;
+        // 无法越过滚动边界时接受实际位置，不在后续观察回调里反复追逐旧目标。
+        if (Math.abs(scroller.scrollTop - target) > 0.5) {
+          held.point.offset = held.point.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+        }
+      }
       const row = messageRow(content, held.position);
       if (row) held.position = { ...held.position, offset: row.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
-    } else restoreTranscriptReadingPosition(scroller, content, held.position);
+    } else {
+      restoreTranscriptReadingPosition(scroller, content, held.position);
+      held.point = contentPoint(scroller, content, held.position);
+    }
     held.height = scroller.scrollHeight;
     held.viewport = scroller.clientHeight;
     held.alignedHead = sourceHeadRef.current;

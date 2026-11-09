@@ -115,7 +115,7 @@ function installReadingHub() {
   window.addEventListener("pointerup", syncAll);
 }
 
-export function useAutomaticDisclosure(
+export function useAutomaticDisclosure<Title extends HTMLElement = HTMLButtonElement>(
   automaticOpen: boolean,
   revealRequest?: number,
   identity?: string,
@@ -130,7 +130,7 @@ export function useAutomaticDisclosure(
   const choice = useSyncExternalStore(subscribe, snapshot, snapshot);
   const scope = useContext(ScopeContext);
 
-  const titleRef = useRef<HTMLButtonElement | null>(null);
+  const titleRef = useRef<Title | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const notifyAnchor = useDisclosureAnchorNotifier();
 

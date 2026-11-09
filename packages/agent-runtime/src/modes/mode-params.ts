@@ -68,7 +68,6 @@ export function modeDefinitionProblem(value: unknown): string | undefined {
   }
   if (!isPermission(value.permission)) return "permission must be agent or contract";
   if (value.source !== "builtin" && value.source !== "user") return "source must be builtin or user";
-  if (!isModeIdString(value.returnTo) || value.returnTo === value.id) return "returnTo is invalid";
   const budget = value.budget;
   if (!isRecord(budget) || !onlyKeys(budget, new Set(["maxTurns", "maxTokens"]))
     || !(budget.maxTurns === null || isBoundedInteger(budget.maxTurns, 1, MODE_LIMITS.maxTurns))
@@ -89,6 +88,8 @@ export function modeDefinitionProblem(value: unknown): string | undefined {
     artifactIds.add(artifact.id);
   }
   if (!Array.isArray(value.stages) || value.stages.length > MODE_LIMITS.stages) return "stages are invalid";
+  // 只有阶段运行结束才使用返回目标；普通 Agent 的默认目标就是自身。
+  if (!isModeIdString(value.returnTo) || (value.stages.length > 0 && value.returnTo === value.id)) return "returnTo is invalid";
   const stageIds = new Set<string>();
   for (const stage of value.stages) {
     if (!isRecord(stage) || !isModeIdString(stage.id) || stageIds.has(stage.id)) return "stages are invalid";

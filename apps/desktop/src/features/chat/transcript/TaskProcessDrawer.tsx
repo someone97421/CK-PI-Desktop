@@ -1,8 +1,8 @@
-import { useContext, useId, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useContext, useId, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { formatCompactTokenCount, runElapsedMs } from "@pi-desktop/shared";
 import type { AssistantTurnEntry, AssistantTurnPart } from "../../../lib/assistant-turns";
-import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
+import { DisclosureScope, disclosureKey, useAutomaticDisclosure } from "./disclosure";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
 import { processContainsMessage } from "../../../lib/turn-process";
 import "./task-delivery.css";
@@ -15,14 +15,10 @@ export function TaskProcessDrawer({ task, processParts, children }: {
 }) {
   const { t } = useTranslation();
   const usageId = useId();
-  const holdDisclosurePosition = useDisclosureAnchorNotifier();
-  const drawerRef = useRef<HTMLDetailsElement>(null);
   const search = useContext(TranscriptSearchContext);
   const revealRequest = search && processContainsMessage(processParts, search.messageId)
     ? search.requestId : undefined;
-  useLayoutEffect(() => {
-    if (revealRequest !== undefined && drawerRef.current) drawerRef.current.open = true;
-  }, [revealRequest]);
+  const disclosure = useAutomaticDisclosure<HTMLElement>(false, revealRequest, disclosureKey("task", task.id));
   const start = task.startedAt ? Date.parse(task.startedAt) : NaN;
   const end = task.endedAt ? Date.parse(task.endedAt) : NaN;
   const elapsed = task.runTiming ? runElapsedMs(task.runTiming)
@@ -48,12 +44,13 @@ export function TaskProcessDrawer({ task, processParts, children }: {
   ].join(" · ");
 
   return (
-    <details ref={drawerRef} className="task-process-drawer">
+    <details open={disclosure.open} className="task-process-drawer">
       <summary
+        ref={disclosure.titleRef}
         className="task-process-summary"
         title={details}
         aria-describedby={usageId}
-        onClick={(event) => holdDisclosurePosition?.(event.currentTarget)}
+        onClick={(event) => { event.preventDefault(); disclosure.toggle(); }}
       >
         <span>
           {task.estimatedDuration ? "≈ " : ""}{duration}
@@ -64,7 +61,9 @@ export function TaskProcessDrawer({ task, processParts, children }: {
         </span>
       </summary>
       <p id={usageId} className="task-process-usage">{details}</p>
-      <div className="task-process-content">{children}</div>
+      <div ref={disclosure.bodyRef} className="task-process-content" {...disclosure.bodyEvents}>
+        <DisclosureScope disclosure={disclosure}>{children}</DisclosureScope>
+      </div>
     </details>
   );
 }

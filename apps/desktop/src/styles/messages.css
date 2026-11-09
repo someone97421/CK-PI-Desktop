@@ -24,6 +24,11 @@
   justify-content: flex-end;
 }
 
+/* 附近消息提前解析真实高度，避免滚入视野时才替换离屏估算。 */
+.message-row[data-transcript-nearby] {
+  content-visibility: visible;
+}
+
 .message-col {
   display: flex;
   min-width: 0;

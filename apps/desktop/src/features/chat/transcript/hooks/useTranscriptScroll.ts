@@ -47,6 +47,7 @@ import {
 } from "../../../../lib/transcript-reading-position";
 import { useTranscriptReadingPosition, type RestoreTranscriptReading } from "../../../../hooks/use-transcript-reading-position";
 import { useTranscriptHistoryPaging } from "./useTranscriptHistoryPaging";
+import { useTranscriptRowLayout } from "./useTranscriptRowLayout";
 import { useAppStore } from "../../../../stores/app-store";
 import type { ResponseAnnotation } from "../../../../lib/response-annotations";
 import { annotationRange, annotationRow } from "../../../../lib/response-annotation-anchor";
@@ -93,6 +94,7 @@ export function useTranscriptScroll({
   const wrapRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const historyBoundaryRef = useRef<HTMLDivElement>(null);
+  useTranscriptRowLayout(scrollRef, contentRef, paneVisible);
   const [savedReadingPosition] = useState(() => getTranscriptReadingPosition(sessionId));
   const pinnedRef = useRef(savedReadingPosition?.pinned ?? true);
   const lastScrollTopRef = useRef(0);

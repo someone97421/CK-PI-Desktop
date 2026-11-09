@@ -7,7 +7,7 @@ register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 // `restoreTranscriptReadingPosition` escapes the id with the browser-only
 // `CSS.escape`; this suite runs the function directly in Node.
 globalThis.CSS ??= { escape: (value) => String(value).replace(/["\\]/g, "\\$&") };
-const { captureTranscriptReadingPosition, restoreTranscriptReadingPosition, isTranscriptReadingAnchorVisible } = await import(
+const { captureTranscriptReadingPosition, restoreTranscriptReadingPosition, isTranscriptReadingAnchorVisible, isTranscriptElementShown } = await import(
   "../src/lib/transcript-reading-position.ts"
 );
 
@@ -48,6 +48,39 @@ const bookmark = (overrides = {}) => ({
   scrollTop: 480,
   windowSize: 60,
   ...overrides,
+});
+
+test("折叠抽屉内的非零尺寸正文不能抢占阅读锚点", () => {
+  const details = { querySelector: () => ({ contains: () => false }), parentElement: null };
+  const hidden = { dataset: { messageId: "hidden-process" }, closest: () => null,
+    parentElement: { closest: () => details },
+    getBoundingClientRect: () => assert.fail("不应唤醒隐藏正文的布局") };
+  const answer = { dataset: { messageId: "answer", readingAnchor: "answer" },
+    getBoundingClientRect: () => ({ top: 80, bottom: 280, height: 200 }) };
+  const content = { querySelectorAll: selector => selector === "[data-reading-anchor]" ? [answer] : [hidden, answer] };
+  assert.equal(captureTranscriptReadingPosition(fakeScroller(), content, false, 60).messageId, "answer");
+});
+
+test("恢复与可见性判断跳过隐藏正文并回退到折叠行", () => {
+  const details = { querySelector: () => ({ contains: () => false }), parentElement: null };
+  const hidden = { closest: () => null, parentElement: { closest: () => details },
+    getBoundingClientRect: () => assert.fail("不应使用隐藏正文的尺寸") };
+  const outer = { getBoundingClientRect: () => ({ top: 140, height: 80 }) };
+  const content = { querySelector: selector => selector.startsWith("[data-reading-anchor=") ? outer : hidden };
+  const position = bookmark({ anchorId: "outer", anchorOffset: 40 });
+  const scroller = fakeScroller({ scrollTop: 100 });
+  assert.equal(isTranscriptReadingAnchorVisible(scroller, content, position), true);
+  assert.equal(restoreTranscriptReadingPosition(scroller, content, position), "aligned");
+  assert.equal(scroller.scrollTop, 200);
+});
+
+test("关闭抽屉的 summary 可读，但仍受外层折叠状态约束", () => {
+  const title = { closest: () => null, parentElement: { closest: () => details } };
+  const details = { querySelector: () => ({ contains: element => element === title }), parentElement: null };
+  assert.equal(isTranscriptElementShown(title), true);
+  details.parentElement = { closest: () => ({ querySelector: () => ({ contains: () => false }), parentElement: null }) };
+  assert.equal(isTranscriptElementShown(title), false);
+  assert.equal(isTranscriptElementShown({ closest: () => ({ hidden: true }) }), false);
 });
 
 test("restore tries the message, the turn marker and then the outer entry row", () => {

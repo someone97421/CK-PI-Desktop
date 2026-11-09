@@ -46,6 +46,23 @@ describe("sidecar mode parameters", () => {
     }
   });
 
+  it.each(["agent", "plan", "goal"])("接受内置 %s 模式的完整启动参数", (mode) => {
+    const modeDefinition = builtinModeDefinition(mode);
+    expect(modeDefinition).toBeDefined();
+    expect(parseModeLaunchParams({ mode, modeDefinition })).toEqual({ mode, modeDefinition });
+  });
+
+  it.each(["agent", "plan", "goal"])("拒绝 %s 模式中格式无效的返回目标", (mode) => {
+    const definition = builtinModeDefinition(mode);
+    expect(rejection(() => parseModeDefinitionParam({ ...definition, returnTo: "Bad Id" }, mode)))
+      .toMatchObject({ errorCode: "MODE_DEFINITION_INVALID", message: "invalid modeDefinition: returnTo is invalid" });
+  });
+
+  it("仍拒绝阶段模式结束后返回自身", () => {
+    expect(rejection(() => parseModeDefinitionParam({ ...goal(), returnTo: "goal" }, "goal")))
+      .toMatchObject({ errorCode: "MODE_DEFINITION_INVALID", message: "invalid modeDefinition: returnTo is invalid" });
+  });
+
   it("accepts the definition of the session mode only", () => {
     expect(parseModeDefinitionParam(goal(), "goal")).toEqual(goal());
     expect(parseModeDefinitionParam(undefined, "goal")).toBeUndefined();

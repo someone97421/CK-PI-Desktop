@@ -2937,7 +2937,7 @@ async fn handle_request(
             .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             st.db.conn().execute(
                 "UPDATE sessions SET mode_snapshot_hash = ?1 WHERE id = ?2",
-                params![prepared_mode.snapshot_hash(), session.id],
+                rusqlite::params![prepared_mode.snapshot_hash(), session.id],
             ).map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             tx.commit().map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             let Some(project) = isolated_project else {

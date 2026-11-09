@@ -13,6 +13,7 @@ const { electronBinary } = resolveElectronBinary(root);
 const manual = process.argv.includes("--manual");
 const manualSmoke = process.argv.includes("--manual-smoke");
 const anchorOnly = process.argv.includes("--anchor-only");
+const foldedOnly = process.argv.includes("--folded-only");
 const temp = await mkdtemp(join(process.env.PI_SCRATCH_DIR ?? root, "history-loading-"));
 try {
   await build({ entryPoints: [join(root, "scripts/e2e/transcript-history-loading.tsx")],
@@ -31,7 +32,11 @@ try {
   const css = [...html.matchAll(/href="([^" ]+\.css)"/g)].map(m => m[1]);
   assert(css.length, "Build Desktop before running this test");
   await cp(join(renderer, "assets"), join(temp, "assets"), { recursive: true });
-  await writeFile(join(temp, "index.html"), `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:"><title>History loading scroll regression</title>${css.map(p => `<link rel="stylesheet" href="${p}">`).join("")}<script type="module" src="renderer.js"></script>`);
+  // 在已构建的基础样式上覆盖本次相关源码，验证不依赖重新构建整个应用。
+  await writeFile(join(temp, "transcript.css"), (await Promise.all([
+    "apps/desktop/src/styles/messages.css", "apps/desktop/src/features/chat/transcript/task-delivery.css",
+  ].map(path => readFile(join(root, path), "utf8")))).join("\n"));
+  await writeFile(join(temp, "index.html"), `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:"><title>History loading scroll regression</title>${css.map(p => `<link rel="stylesheet" href="${p}">`).join("")}<link rel="stylesheet" href="transcript.css"><script type="module" src="renderer.js"></script>`);
   await writeFile(join(temp, "main.cjs"), `
 const { app, BrowserWindow } = require('electron');
 const assert = require('node:assert/strict');
@@ -53,6 +58,11 @@ app.whenReady().then(async () => {
   await win.loadFile(require('node:path').join(__dirname, 'index.html'), { query: ${JSON.stringify(manual || manualSmoke ? { manual: "1" } : {})} });
   await js('new Promise((resolve,reject)=>{const end=performance.now()+10000;const check=()=>{if(globalThis.historyLoadingFixture)resolve();else if(performance.now()>end)reject(new Error("fixture did not initialize"));else requestAnimationFrame(check)};check()})');
   console.log('HISTORY_MOTION ' + await js('JSON.stringify({ reduced: matchMedia("(prefers-reduced-motion: reduce)").matches })'));
+  if (${foldedOnly}) {
+    const folded = await js('globalThis.foldedHistoryProbe()');
+    console.log('HISTORY_LOADING_PROBE ' + JSON.stringify(folded));
+    app.exit(0); return;
+  }
   if (${manual}) return;
   if (${manualSmoke}) {
     const click = label => { console.log('MANUAL_CLICK ' + label); return js('Array.from(document.querySelectorAll("nav button")).find(button => button.textContent === ' + JSON.stringify(label) + ').click()'); };
@@ -90,6 +100,7 @@ app.whenReady().then(async () => {
     console.log('HISTORY_LOADING_PROBE ' + JSON.stringify({ ok: true, manualControls: true, pages: 2 }));
     app.exit(0); return;
   }
+  console.log('HISTORY_FOLDED ' + JSON.stringify(await js('globalThis.foldedHistoryProbe()')));
   const settledResults = [];
   for (const kind of ['late', 'balanced', 'paragraph']) {
     const result = await call('settledLayout(' + JSON.stringify(kind) + ')');
