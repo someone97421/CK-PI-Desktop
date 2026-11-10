@@ -151,6 +151,7 @@ type SessionState = {
   planningState: RacpPlanningState;
   permissionMode: RacpPermissionMode;
   activeTurnId?: string;
+  compacting?: boolean;
   turns: Map<string, TurnRecord>;
   activeItems: Map<string, RacpItemSummary>;
   pendingInputs: Map<string, { request: RacpInputRequest; original: AskToolRequest }>;
@@ -375,8 +376,14 @@ export class AgentHost {
         return;
       }
       case "status": {
+        const wasCompacting = state.compacting;
+        if (!envelope.parentToolCallId) {
+          state.compacting = event.status.activity?.phase === "compacting";
+        }
         this.applyStatus(state, event.status);
         this.emit(state, "turn.activity", { event }, meta2);
+        // compaction_end precedes runtime cleanup; resume only after its status leaves compaction.
+        if (wasCompacting && !state.compacting) void this.drain(state.id);
         return;
       }
       case "usage":
@@ -1533,6 +1540,7 @@ export class AgentHost {
   private isOccupied(state: SessionState): boolean {
     return (
       this.hasActiveTurn(state) ||
+      state.compacting ||
       state.planningState === "awaiting_approval" ||
       (this.runtime.isBusy?.(state.id) ?? false)
     );

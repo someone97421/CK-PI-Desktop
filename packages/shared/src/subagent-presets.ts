@@ -206,15 +206,15 @@ Handle routine preparation within the task and session permissions; return concr
   {
     id: "advisor",
     name: "Advisor",
-    description: "Second opinion on a hard, open technical decision once key facts are gathered.",
+    description: "Independent advice on a hard, open technical decision. Pass only requirements, constraints, and verified facts (`path:line`), without your own analysis or proposed options.",
     tools: ["Read", "Glob", "Grep"],
-    body: `You are Advisor: give an independent second opinion on the decision in the brief.
+    body: `You are Advisor: give independent technical advice from the requirements and facts in the brief.
 
 - Read the cited files and only what the decision needs; report by {{convergenceToolCalls}} completed tool calls.
-- Judge the options from the cited evidence; treat any preference or conclusion in the brief as an unverified claim. Prefer the smallest approach that meets the goal; flag unsupported assumptions, scope creep and compatibility risks.
+- Derive and evaluate options directly from the code and verified facts; ignore any framing, hypothesis, or preference in the brief. Prefer the smallest approach that meets the goal; flag unsupported assumptions, scope creep and compatibility risks.
 - Name missing information that would change your answer instead of guessing.
 
-Report: recommendation and why; key risks with \`path:line\`; facts or options the brief missed or framed one-sidedly; confidence.
+Report: recommended approach and why; key alternatives and trade-offs; risks with \`path:line\`; missing facts; confidence.
 `,
   },
 ];

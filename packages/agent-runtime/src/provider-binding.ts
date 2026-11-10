@@ -95,12 +95,25 @@ export type ApiBinding = {
 };
 
 /**
- * pi-ai's Anthropic SDK client appends `/v1` to its configured base URL.
- * Provider discovery accepts both an Anthropic root and a URL that already
- * includes `/v1`, so canonicalize the latter before runtime requests to keep
- * both forms on the same `/v1/messages` endpoint.
+ * Google AI accepts a versioned base URL; normalize the official host root to
+ * `/v1beta` while leaving custom gateways untouched. Anthropic's SDK appends
+ * `/v1`, so canonicalize an existing suffix before runtime requests.
  */
 export function runtimeBaseUrlForApi(api: Api, baseUrl: string): string {
+  if (api === "google-generative-ai") {
+    const trimmed = baseUrl.replace(/\/+$/, "");
+    try {
+      const url = new URL(trimmed);
+      if (
+        url.hostname.toLowerCase() === "generativelanguage.googleapis.com" &&
+        (url.pathname === "" || url.pathname === "/")
+      ) {
+        return `${trimmed}/v1beta`;
+      }
+    } catch {
+      // Leave malformed or custom gateway URLs unchanged for their own adapter.
+    }
+  }
   if (api !== "anthropic-messages") return baseUrl;
   const withoutTrailingSlash = baseUrl.replace(/\/+$/, "");
   const withoutVersion = withoutTrailingSlash.replace(/\/v1$/i, "");

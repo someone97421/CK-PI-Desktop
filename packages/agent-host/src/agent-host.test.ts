@@ -450,6 +450,78 @@ describe("AgentHost turns", () => {
     expect(runtime.stops).toEqual(["s1"]);
   });
 
+  it.each([true, false])("holds manual-compaction input until runtime cleanup (ok=%s)", async (ok) => {
+    const { host, runtime, received } = build();
+    host.ingest(envelope("s1", undefined, {
+      type: "status",
+      status: {
+        sessionId: "s1", isRunning: true, modelId: "test", pendingToolConfirmations: 0,
+        activity: { phase: "compacting", since: Date.now(), reason: "manual" },
+      },
+    }));
+    host.ingest(envelope("s1", undefined, { type: "compaction_start", reason: "manual" }));
+    const first = await host.enqueueTurn(owner, {
+      sessionId: "s1", input: { text: "after compaction", userMessageId: "user-1" },
+      context: { requestId: "compact-1" },
+    });
+    const second = await host.startTurn(owner, {
+      sessionId: "s1", admission: "queue", input: { text: "next message" },
+      context: { requestId: "compact-2" },
+    });
+    host.kick("s1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.prompts).toHaveLength(0);
+    expect(host.queueEntries("s1").map((entry) => entry.content)).toEqual(["after compaction", "next message"]);
+
+    host.ingest(envelope("s1", undefined, {
+      type: "compaction_end", reason: "manual", ok, willRetry: false,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.prompts).toHaveLength(0);
+    expect(host.getTurn(first.turn.id).status).toBe("queued");
+
+    const idle: AgentEvent = {
+      type: "status",
+      status: { sessionId: "s1", isRunning: false, modelId: "test", pendingToolConfirmations: 0 },
+    };
+    host.ingest({ ...envelope("s1", undefined, idle), parentToolCallId: "delegate" });
+    host.kick("s1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(runtime.prompts).toHaveLength(0);
+
+    host.ingest(envelope("s1", undefined, idle));
+    host.ingest(envelope("s1", undefined, idle));
+    await vi.waitFor(() => expect(host.getTurn(first.turn.id).status).toBe("running"));
+    expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["after compaction"]);
+    expect(runtime.prompts[0]?.userMessageId).toBe("user-1");
+    expect(host.getTurn(second.turn.id).status).toBe("queued");
+
+    host.ingest(envelope("s1", "rt_1", { type: "agent_end", messageIds: [] }));
+    await vi.waitFor(() => expect(host.getTurn(second.turn.id).status).toBe("running"));
+    expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["after compaction", "next message"]);
+    expect(host.queueEntries("s1")).toEqual([]);
+    expect(received.filter((event) => event.kind === "turn.failed")).toEqual([]);
+  });
+
+  it("ignores delegate compaction when admitting a prompt in the parent session", async () => {
+    const { host, runtime } = build();
+    host.ingest({
+      ...envelope("s1", undefined, {
+        type: "status",
+        status: {
+          sessionId: "s1", isRunning: true, modelId: "test", pendingToolConfirmations: 0,
+          activity: { phase: "compacting", since: Date.now(), reason: "manual" },
+        },
+      }),
+      parentToolCallId: "delegate",
+    });
+    const started = await host.startTurn(owner, {
+      sessionId: "s1", input: { text: "parent prompt" }, context: { requestId: "parent-1" },
+    });
+    expect(started.turn.status).toBe("running");
+    expect(runtime.prompts.map((prompt) => prompt.content)).toEqual(["parent prompt"]);
+  });
+
   it("passes a trusted mode origin to the runtime and never queues a mode continuation", async () => {
     const { host, runtime } = build({ permissionMode: "auto" });
     const started = await host.startTurn(owner, {

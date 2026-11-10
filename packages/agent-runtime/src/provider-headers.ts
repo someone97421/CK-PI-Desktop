@@ -45,6 +45,7 @@ const FORBIDDEN_HEADER_KEYS = new Set([
   "upgrade",
   "keep-alive",
   "x-api-key",
+  "x-goog-api-key",
   "api-key",
   "chatgpt-account-id",
   "x-opencode-session",

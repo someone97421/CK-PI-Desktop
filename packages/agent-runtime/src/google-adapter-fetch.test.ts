@@ -133,6 +133,13 @@ describe("Google Generative AI requests", () => {
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
     );
     expect(result.captured[0].headers["x-team"]).toBe("platform");
+    expect(result.captured[0].body.contents).toEqual([
+      { role: "user", parts: [{ text: "hi" }] },
+    ]);
+    expect(result.captured[0].body.systemInstruction).toEqual({
+      role: "user",
+      parts: [{ text: "s" }],
+    });
   });
 
   it("streams a subagent turn through the native endpoint", async () => {

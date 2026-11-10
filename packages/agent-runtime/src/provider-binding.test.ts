@@ -137,6 +137,20 @@ describe("custom fetch injection", () => {
   });
 });
 
+describe("Google runtime endpoint", () => {
+  it("adds the official v1beta path only for the Google API host root", () => {
+    expect(runtimeBaseUrlForApi("google-generative-ai", "https://generativelanguage.googleapis.com")).toBe(
+      "https://generativelanguage.googleapis.com/v1beta",
+    );
+    expect(runtimeBaseUrlForApi("google-generative-ai", "https://generativelanguage.googleapis.com/v1beta/")).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/",
+    );
+    expect(runtimeBaseUrlForApi("google-generative-ai", "https://gemini-gateway.example/api")).toBe(
+      "https://gemini-gateway.example/api",
+    );
+  });
+});
+
 describe("Anthropic runtime endpoint", () => {
   it("removes a trailing /v1 before pi-ai appends its version path", () => {
     expect(runtimeBaseUrlForApi("anthropic-messages", "https://gw.example/v1/")).toBe(

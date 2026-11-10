@@ -26,6 +26,8 @@ describe("normalizeProviderHeaders", () => {
     expect(normalizeProviderHeaders({ Authorization: "Bearer secret" })).toBeUndefined();
     expect(normalizeProviderHeaders({ Host: "evil.example" })).toBeUndefined();
     expect(normalizeProviderHeaders({ "Content-Type": "text/plain" })).toBeUndefined();
+    expect(normalizeProviderHeaders({ "x-api-key": "secret" })).toBeUndefined();
+    expect(normalizeProviderHeaders({ "x-goog-api-key": "AIza-secret" })).toBeUndefined();
     expect(
       normalizeProviderHeaders({ "x-opencode-session": "hijack" }),
     ).toBeUndefined();
