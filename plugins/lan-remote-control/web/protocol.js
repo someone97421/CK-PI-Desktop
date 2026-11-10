@@ -114,6 +114,7 @@ export const MUTATION_OPERATIONS = [
   "ask.resolve",
   "plans.resolve",
   "modes.run.control",
+  "modes.run.update",
   "modes.run.resolve",
 ];
 

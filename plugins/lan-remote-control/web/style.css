@@ -1073,6 +1073,25 @@ pre {
   gap: 8px;
 }
 
+.remote-mode-budget {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.remote-mode-budget input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--ds-bg-tertiary);
+  color: var(--ds-text-primary);
+  font: inherit;
+  font-size: 16px;
+}
+
 .approval-kind {
   display: inline-flex;
   align-items: center;

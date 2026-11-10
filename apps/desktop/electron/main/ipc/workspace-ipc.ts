@@ -21,7 +21,7 @@ import {
   loadComposerTemplates,
   type ComposerTemplate,
 } from "@pi-desktop/agent-runtime";
-import { remoteWorkspaceForFiles } from "../remote/workspace-file-scope";
+import { remoteWorkspaceForFiles, sessionForFiles } from "../remote/workspace-file-scope";
 import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts";
 import { cloneGitRepository } from "../git-clone";
 import { resolveSessionWorkspace } from "../runtime/session-workspace";
@@ -671,7 +671,7 @@ export function registerWorkspaceIpc({
     },
   );
 
-  const remoteFileWorkspace = (sessionId?: string) => remoteWorkspaceForFiles(getHost, sessionId);
+  const remoteFileWorkspace = (sessionId?: string) => remoteWorkspaceForFiles(getHost, sessionId, getSidecar);
   const remoteScope = (scope: FileWorkspaceScope) =>
     !scope.sessionId && "temporaryWorkspacePath" in scope ? Promise.resolve(null) : remoteFileWorkspace(scope.sessionId);
   const readRemoteFiles = (remote: RemoteWorkspace, operation: WorkspaceFilesRequest["operation"], ref?: string, mimeType?: string) => {
@@ -814,7 +814,9 @@ export function registerWorkspaceIpc({
     const owner = getHost();
     if (!owner) throw new Error("host unavailable");
     const root = sessionId
-      ? (await resolveSessionWorkspace(owner, sessionId)).path
+      ? sessionId.startsWith("native-pi:")
+        ? (await sessionForFiles(getHost, sessionId, getSidecar)).projectPath?.trim()
+        : (await resolveSessionWorkspace(owner, sessionId)).path
       : (await owner.call<{ workspace?: { path: string } }>("workspace.get")).workspace?.path;
     if (getHost() !== owner) throw Object.assign(new Error("host replaced"), { errorCode: ErrorCodes.HOST_UNAVAILABLE });
     if (!root) throw Object.assign(new Error("workspace required"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
@@ -825,6 +827,10 @@ export function registerWorkspaceIpc({
     path: string | null; project: boolean; isolated?: boolean; parent?: string;
   }> => {
     if (scope.sessionId) {
+      if (scope.sessionId.startsWith("native-pi:")) {
+        const session = await sessionForFiles(getHost, scope.sessionId, getSidecar);
+        return { path: session.projectPath?.trim() || null, project: true };
+      }
       if (!host) throw new Error("host unavailable");
       return resolveSessionWorkspace(host, scope.sessionId);
     }
@@ -897,7 +903,7 @@ export function registerWorkspaceIpc({
     sessionId: string | undefined,
   ): Promise<string | null> => {
     const id = String(sessionId ?? "").trim();
-    if (!id || !host) return null;
+    if (!id || id.startsWith("native-pi:") || !host) return null;
     try {
       const result = await host.call<{ path: string }>("session.getScratchPath", {
         sessionId: id,

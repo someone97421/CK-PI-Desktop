@@ -54,6 +54,8 @@ const calls = {
   menus: [],
 };
 
+let revealFails = false;
+
 const state = {
   sessions: [],
   workspace: { path: "C:/project" },
@@ -114,7 +116,10 @@ const previewTarget = loadModule("../src/hooks/use-preview-target.ts", {
       listPlugins: async () => ({ plugins: [] }),
       fsOpen: async (path, mimeType, sessionId) =>
         calls.defaultBrowsers.push([path, mimeType, sessionId]),
-      fsReveal: async (path) => calls.reveals.push(path),
+      fsReveal: async (path, sessionId) => {
+        if (revealFails) throw new Error("reveal refused");
+        calls.reveals.push([path, sessionId]);
+      },
       fsResolveRef: async (ref) => {
         calls.resolved.push(ref);
         return { match: nextMatch };
@@ -172,6 +177,7 @@ function reset(match) {
   Object.values(calls).forEach((list) => list.splice(0, list.length));
   nextMatch = match;
   clipboardFails = false;
+  revealFails = false;
 }
 
 /** The match the main process reports for a file of the project's main folder. */
@@ -223,7 +229,7 @@ test("a project file opens and reveals the same resolved address", async () => {
   await clickAndReveal("src/dir/a.ts");
   assert.deepEqual(calls.resolved, ["src/dir/a.ts", "src/dir/a.ts"]);
   assert.equal(calls.tabs[0].location, "C:/project/src/dir/a.ts");
-  assert.deepEqual(calls.reveals, ["C:/project/src/dir/a.ts"]);
+  assert.deepEqual(calls.reveals, [["C:/project/src/dir/a.ts", "session-1"]]);
   assert.deepEqual(calls.toasts, []);
 });
 
@@ -235,7 +241,7 @@ test("a sibling folder file is revealed by absolute path, as it is opened", asyn
   }));
   await clickAndReveal("lib/only-here.ts");
   assert.equal(calls.tabs[0].location, "C:/project-second/lib/only-here.ts");
-  assert.deepEqual(calls.reveals, ["C:/project-second/lib/only-here.ts"]);
+  assert.deepEqual(calls.reveals, [["C:/project-second/lib/only-here.ts", "session-1"]]);
 });
 
 test("a scratch or attachment file is revealed by absolute path", async () => {
@@ -247,7 +253,7 @@ test("a scratch or attachment file is revealed by absolute path", async () => {
   });
   await clickAndReveal("notes.md");
   assert.equal(calls.files[0][0], "C:/data/scratch/session-1/notes.md");
-  assert.deepEqual(calls.reveals, ["C:/data/scratch/session-1/notes.md"]);
+  assert.deepEqual(calls.reveals, [["C:/data/scratch/session-1/notes.md", "session-1"]]);
 });
 
 test("a reference nothing answers reports itself and reveals nothing", async () => {
@@ -270,6 +276,7 @@ test("the HTML menu exposes three open destinations as one submenu", () => {
   const menu = calls.menus[0].items;
   assert.deepEqual(menu.map((item) => item.id), [
     "open-with",
+    "reveal-in-folder",
     "copy-full-path",
     "copy-relative-path",
   ]);
@@ -282,7 +289,6 @@ test("the HTML menu exposes three open destinations as one submenu", () => {
       ["open-with-default-browser", "chat.openWithDefaultBrowser:"],
     ],
   );
-  assert.equal(menu.some((item) => item.id === "reveal-in-folder"), false);
 });
 
 test("non-HTML references keep reveal and copy actions without an open-with submenu", () => {
@@ -337,6 +343,55 @@ test("an unresolved HTML reference is reported and opened nowhere", async () => 
   assert.deepEqual(calls.defaultBrowsers, []);
   assert.deepEqual(calls.toasts.map(([message]) => message), [
     "chat.fileRefMissing:missing.html",
+  ]);
+});
+
+/** Select the Show in folder item the right-click offers for a reference. */
+async function revealRef(path) {
+  let items = null;
+  function Harness() {
+    items = useChatFileMenuItems()({ path });
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+  const item = items.find((entry) => entry.id === "reveal-in-folder");
+  assert.ok(item, "the reference offers Show in folder");
+  assert.equal(item.label, "chat.revealFileInFolder:");
+  item.onSelect();
+  await flush();
+}
+
+test("Show in folder reveals the resolved absolute path", async () => {
+  reset(projectMatch());
+  await revealRef("a.ts");
+  assert.deepEqual(calls.resolved, ["a.ts"]);
+  assert.deepEqual(calls.reveals, [["C:/project/src/dir/a.ts", "session-1"]]);
+  assert.deepEqual(calls.toasts, []);
+
+  reset({
+    root: "scratch",
+    relativePath: "notes.md",
+    absolutePath: "C:/data/scratch/session-1/notes.md",
+    matchedBy: "exact-relative",
+  });
+  await revealRef("notes.md");
+  assert.deepEqual(calls.reveals, [["C:/data/scratch/session-1/notes.md", "session-1"]]);
+});
+
+test("Show in folder reports a missing reference or a refused reveal", async () => {
+  reset(null);
+  await revealRef("missing.ts");
+  assert.deepEqual(calls.reveals, []);
+  assert.deepEqual(calls.toasts.map(([message]) => message), [
+    "chat.fileRefMissing:missing.ts",
+  ]);
+
+  reset(projectMatch());
+  revealFails = true;
+  await revealRef("a.ts");
+  assert.deepEqual(calls.reveals, []);
+  assert.deepEqual(calls.toasts.map(([message]) => message), [
+    "chat.fileRevealFailed:",
   ]);
 });
 
@@ -472,6 +527,7 @@ test("HTTP URLs keep their own menu instead of the file open submenu", () => {
   // An HTTP link is not a file on disk, so it never grows this item; it keeps
   // the menu it already has.
   assert.ok(markdown.includes('if (!href || !/^https?:\\/\\//i.test(href)) return;'));
+  assert.match(menu, /isHtmlFilePath\(path\)/);
 });
 
 test("the reference labels ship in the catalogs the menu reads", () => {
@@ -483,6 +539,8 @@ test("the reference labels ship in the catalogs the menu reads", () => {
   assert.match(en, /openWithDefaultBrowser: "Default browser"/);
   assert.match(en, /defaultBrowserOpenFailed:/);
   assert.match(en, /copyFullPath: "Copy full path"/);
+  assert.match(en, /revealFileInFolder: "Show in folder"/);
+  assert.match(zhCN, /revealFileInFolder: "在文件夹中打开"/);
   assert.match(en, /copyRelativePath: "Copy relative path"/);
   assert.match(zhCN, /openWith: "打开方式"/);
   assert.match(zhCN, /openWithFileManager: "文件管理器"/);
@@ -493,7 +551,7 @@ test("the reference labels ship in the catalogs the menu reads", () => {
   assert.match(zhCN, /copyRelativePath: "复制相对地址"/);
 });
 
-test("remote workspace references retain copy actions but never offer local open actions", () => {
+test("remote workspace references retain copy actions but never offer local open or reveal actions", () => {
   const before = state.sessions;
   state.sessions = [{ id: state.activeSessionId, remoteWorkspace: { hostKey: "ssh", path: "/work/app" } }];
   let items;
@@ -556,4 +614,16 @@ test("a directory reference without a loadable file manager reports and never op
   } finally {
     state.pluginViews = viewsBefore;
   }
+});
+
+test("定位文件沿侧边对话所属会话与隔离工作目录解析", () => {
+  const source = read("../src/hooks/use-preview-target.ts");
+  const resolver = source.slice(source.indexOf("function useResolveChatFileRef"), source.indexOf("export function useOpenChatFileRef"));
+  assert.match(resolver, /ownerId = paneSessionId \|\| state\.activeSessionId/);
+  assert.match(resolver, /sessionWorkspacePath\(session, state\.workspace\?\.path\)/);
+  assert.match(resolver, /api\.fsResolveRef\(anchored \?\? raw, ownerId, options\)/);
+  assert.match(resolver, /Boolean\(session\?\.worktree\)/);
+  const reveal = source.slice(source.indexOf("export function useRevealChatFileRef"), source.indexOf("export function useCopyChatFileRef"));
+  assert.match(reveal, /paneSessionId \|\| s\.activeSessionId/);
+  assert.match(reveal, /api\.fsReveal\(resolved\.absolutePath, sessionId\)/);
 });

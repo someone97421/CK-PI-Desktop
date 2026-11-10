@@ -37,6 +37,7 @@ import type { SubagentDirectoryEntry, SubagentListReceipt } from "./subagent-per
 import {
   parseModeLaunchParams,
   parseModePromptTurn,
+  parseModeTurnNotice,
 } from "./modes/mode-params.js";
 import {
   isCommandShellOption,
@@ -731,6 +732,10 @@ async function handle(method: string, params: any): Promise<unknown> {
         String(params.name ?? ""),
         String(params.args ?? ""),
       );
+    }
+    case "agent.modeTurnNotice": {
+      const runtime = runtimes.get(String(params.sessionId ?? ""));
+      return runtime?.modeTurnNotice(parseModeTurnNotice(params)) ?? { applied: false };
     }
     case "agent.getStatus": {
       const sessionId = String(params.sessionId);

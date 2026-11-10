@@ -57,6 +57,7 @@ async function withDockRender(run) {
   try {
     const { TaskDock } = await server.ssrLoadModule("/src/components/TaskDock.tsx");
     const { useAppStore } = await server.ssrLoadModule("/src/stores/app-store.ts");
+    const { useModesStore } = await server.ssrLoadModule("/src/features/modes/modes-store.ts");
     const i18n = createInstance();
     await i18n.init({ lng: "en", resources: { en: { translation: catalogs.en } } });
     const render = (fixture) => {
@@ -67,6 +68,9 @@ async function withDockRender(run) {
         : undefined;
       Object.assign(useAppStore.getInitialState(), {
         sessionTodos: snapshot ? { [sessionId]: snapshot } : {},
+      });
+      Object.assign(useModesStore.getInitialState(), {
+        runs: fixture.run ? { [sessionId]: { sessionId, ...fixture.run } } : {},
       });
       globalThis.__piDockFixture = fixture;
       return renderToStaticMarkup(
@@ -129,6 +133,26 @@ test("a finished row inside its grace window still counts", async () => {
     assert.match(html, /1 background tasks/);
     assert.doesNotMatch(html, /running/, "a finished row raises no live count");
     assert.match(html, /pnpm dev t-grace/);
+  });
+});
+
+test("Goal 运行与暂停期间保留待办和后台任务入口", async () => {
+  await withDockRender(({ render }) => {
+    const running = task("t-running", "running");
+    const fixture = {
+      tasks: [running],
+      sessionTasks: [running],
+      todos: [{ content: "ship the dock fix", status: "in_progress", priority: "high" }],
+    };
+    for (const state of ["running", "paused", "waiting", "budget_exhausted", "finished"]) {
+      const run = { id: "run-1", modeId: "goal", state };
+      assert.match(render({ ...fixture, run, activeTab: "todo" }), /ship the dock fix/);
+      const html = render({ ...fixture, run, activeTab: "tasks" });
+      assert.match(html, /pnpm dev t-running/);
+      assert.match(html, /1 running/);
+      assert.match(html, /role="tablist"/);
+    }
+    assert.match(render({ ...fixture, run: { id: "run-2", modeId: "review", state: "running" } }), /ship the dock fix/);
   });
 });
 

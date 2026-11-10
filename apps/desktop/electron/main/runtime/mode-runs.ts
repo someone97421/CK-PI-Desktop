@@ -19,10 +19,15 @@ import type {
   ModeSettleResult,
   ModeTurnContext,
   ModeTurnOrigin,
+  ModeUpdateRequest,
 } from "@pi-desktop/shared";
 import type { ModeCatalogService } from "./mode-catalog";
 
 type HostCaller = { call<T = unknown>(method: string, params?: unknown): Promise<T> };
+
+/** `modes.settleReturn` answer: the return mode still pending, or the one applied. */
+type ModeSettleReturnResult = { pending: string | null; applied: string | null };
+
 
 /** Model-facing content of a Host-started turn. It is never persisted as a
  * user message; the stage brief in the system prompt carries the details. */
@@ -50,6 +55,11 @@ function totalTokens(usage: MessageUsage | undefined): number {
   return Number.isSafeInteger(total) && total > 0 ? total : 0;
 }
 
+/** Sidecar `agent.modeTurnNotice` payload (without session and turn ids). */
+export type ModeTurnNotice =
+  | { runId: string; action: "closeout" }
+  | { runId: string; action: "release"; mode: string; modeDefinition?: ModeDefinition };
+
 export type ModeRunCoordinator = ReturnType<typeof createModeRunCoordinator>;
 
 export function createModeRunCoordinator(deps: {
@@ -59,12 +69,15 @@ export function createModeRunCoordinator(deps: {
   startContinuation: (sessionId: string, origin: Exclude<ModeTurnOrigin, "user">, content: string) => Promise<unknown>;
   /** Interrupts the session's active turn (run Stop). */
   abortTurn: (sessionId: string, turnId: string) => Promise<void>;
+  /** Notify the exact turn when its mode run pauses or releases it. */
+  notifyTurn: (sessionId: string, turnId: string, input: ModeTurnNotice) => Promise<void>;
   logger: { app: (...args: any[]) => void };
   isQuitting: () => boolean;
 }) {
   /** Durable turn id → the run it holds a claim on. */
   const turnRuns = new Map<string, { sessionId: string; runId: string }>();
   const pendingContinuations = new Set<string>();
+  const pendingReturns = new Map<string, Promise<boolean>>();
 
   function host(): HostCaller {
     const current = deps.getHost();
@@ -211,16 +224,41 @@ export function createModeRunCoordinator(deps: {
       await assertLocalSession(request.sessionId);
       const active = [...turnRuns.entries()].find(([, entry]) => entry.sessionId === request.sessionId && entry.runId === request.runId);
       const result = await host().call<ModeSettleResult>("modes.control", request);
-      if (request.action === "stop" && active) {
-        await deps.abortTurn(request.sessionId, active[0]).catch((error: unknown) => {
-          deps.logger.app("session", "warn", "mode run stop could not abort the turn", {
-            sessionId: request.sessionId,
-            data: String(error),
-          });
-        });
+      const warn = (message: string) => (error: unknown) => {
+        deps.logger.app("session", "warn", message, { sessionId: request.sessionId, data: String(error) });
+      };
+      if (active) {
+        const [turnId] = active;
+        if (request.action === "stop") {
+          await deps.abortTurn(request.sessionId, turnId).catch(warn("mode run stop could not abort the turn"));
+        } else if (request.action === "pause" && result.run?.state === "paused" && result.run.revision !== request.expectedRevision) {
+          await deps.notifyTurn(request.sessionId, turnId, { runId: request.runId, action: "closeout" })
+            .catch(warn("mode run pause could not close out the turn"));
+        } else if (request.action === "remove" && result.run) {
+          await (async () => {
+            await this.settleReturn(request.sessionId, result.run!);
+            const { session } = await host().call<{ session?: { mode: string } }>("session.get", {
+              id: request.sessionId, messageLimit: 1,
+            });
+            if (!session) throw Object.assign(new Error("会话不存在"), { errorCode: "NOT_FOUND" });
+            const modeDefinition = await deps.catalog.definition(session.mode);
+            await deps.notifyTurn(request.sessionId, turnId, {
+              runId: request.runId,
+              action: "release",
+              mode: session.mode,
+              ...(modeDefinition ? { modeDefinition } : {}),
+            });
+          })().catch(warn("mode run remove could not release the turn"));
+        }
       }
       if (result.continue) scheduleContinuation(request.sessionId, "approval");
       return result;
+    },
+
+    /** Edit the objective or budget of an open run; applies from the next claim. */
+    async update(request: ModeUpdateRequest): Promise<ModeSettleResult> {
+      await assertLocalSession(request.sessionId);
+      return host().call<ModeSettleResult>("modes.update", request);
     },
 
     async resolve(request: ModeResolveRequest): Promise<ModeSettleResult> {
@@ -228,6 +266,44 @@ export function createModeRunCoordinator(deps: {
       const result = await host().call<ModeSettleResult>("modes.resolve", request);
       if (result.continue) scheduleContinuation(request.sessionId, "approval");
       return result;
+    },
+
+    /**
+     * After a run closed, the Host left the session on the run's `returnTo`
+     * without a snapshot (#2204). Hand it that mode's current definition, or
+     * let it fall back to Agent when the mode no longer exists. Returns
+     * whether the session's mode row changed.
+     */
+    async settleReturn(sessionId: string, run: { id: string; state: string }): Promise<boolean> {
+      if (run.state !== "finished" && run.state !== "stopped") return false;
+      const key = JSON.stringify([sessionId, run.id]);
+      const existing = pendingReturns.get(key);
+      if (existing) return existing;
+      const settling = (async () => {
+        const hostCaller = host();
+        const { pending } = await hostCaller.call<ModeSettleReturnResult>("modes.settleReturn", { sessionId, runId: run.id });
+        if (!pending) return false;
+        const modeSnapshot = await deps.catalog.definition(pending);
+        const { applied } = await hostCaller.call<ModeSettleReturnResult>("modes.settleReturn", {
+          sessionId,
+          runId: run.id,
+          mode: pending,
+          ...(modeSnapshot ? { modeSnapshot } : {}),
+        });
+        if (applied && applied !== pending) {
+          deps.logger.app("session", "warn", "mode run return mode no longer exists; session uses agent", {
+            sessionId,
+            data: pending,
+          });
+        }
+        return Boolean(applied);
+      })();
+      pendingReturns.set(key, settling);
+      try {
+        return await settling;
+      } finally {
+        pendingReturns.delete(key);
+      }
     },
 
     /** Test seam and diagnostics. */

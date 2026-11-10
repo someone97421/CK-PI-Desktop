@@ -18,6 +18,7 @@ const definitions = {
   "modes.catalog": [false],
   "modes.run.get": [false, "modes/run/get"],
   "modes.run.control": [true, "modes/run/control"],
+  "modes.run.update": [true, "modes/run/update"],
   "modes.run.resolve": [true, "modes/run/resolve"],
   "commands.list": [false, "composer/commands"],
   "subagents.list": [false, "subagent/catalog"],
@@ -476,6 +477,7 @@ function createHostAdapter(pi) {
     if (op === "sessions.discard") return temporarySessions.discard(id);
     if (op === "modes.run.get") return modes.get(id);
     if (op === "modes.run.control") return modes.control(id, input);
+    if (op === "modes.run.update") return modes.update(id, input);
     if (op === "modes.run.resolve") return modes.resolve(id, input);
     if (op === "sessions.get" || op === "sessions.messages") {
       const s = await rawSession(id, input),

@@ -13,6 +13,7 @@ export type ModeServices = { catalog: ModeCatalogService; runs: ModeRunCoordinat
 export function createModeServices(deps: {
   getHost: () => HostProcess | null;
   getAgentHostBridge: () => AgentHostBridge | null;
+  getSidecar: () => { call<T = unknown>(method: string, params?: unknown): Promise<T> } | null;
   sendToRenderer: (channel: string, payload: unknown) => void;
   logger: { app: (...args: any[]) => void };
   isQuitting: () => boolean;
@@ -36,6 +37,11 @@ export function createModeServices(deps: {
       if (activeTurnId && bridge.agentHost.runtimeTurnId(sessionId, activeTurnId) === turnId) {
         await bridge.agentHost.interruptTurn(DESKTOP_PRINCIPAL, activeTurnId);
       }
+    },
+    notifyTurn: async (sessionId, turnId, notice) => {
+      const sidecar = deps.getSidecar();
+      if (!sidecar) return;
+      await sidecar.call("agent.modeTurnNotice", { sessionId, turnId, ...notice });
     },
     logger: deps.logger,
     isQuitting: deps.isQuitting,

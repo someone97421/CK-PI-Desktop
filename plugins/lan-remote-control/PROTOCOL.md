@@ -17,8 +17,9 @@
 | 决议 | approval.resolve、ask.resolve、plans.resolve | 会话及待处理记录 ID、决议/回答 |
 | 其他 | attachments.read、collaboration.get、plans.list | sessionId；附件 ref |
 | 模式目录 | modes.catalog | 可选 sessionId；返回 modes、configurable、reason，models.list 同时返回 modes 目录 |
-| 阶段运行 | modes.run.get | sessionId；返回宿主当前 run 及 supported、controls、approvals |
-| 阶段操作 | modes.run.control、modes.run.resolve | sessionId、runId、expectedRevision、action；控制为 pause/resume/stop，审批为 approve/reject |
+| 阶段运行 | modes.run.get | sessionId；返回宿主当前 run 及 supported、controls、updates、approvals |
+| 阶段操作 | modes.run.control、modes.run.resolve | sessionId、runId、expectedRevision、action；控制为 pause/resume/stop/remove，审批为 approve/reject |
+| 阶段编辑 | modes.run.update | sessionId、runId、expectedRevision、input?、budget?；budget 同时含 maxTurns、maxTokens，null 表示不限 |
 
 `OPERATION_META` 是网络操作白名单的代码来源。浏览器没有通用宿主调用入口。目录按目标会话项目读取；技能与模板可插入消息，桌面专属命令禁用。子智能体选择插入委派请求，不保证模型一定调用指定子智能体。
 
@@ -26,7 +27,7 @@
 
 模式目录通过宿主 `modes/catalog` 获取，保留 agent/plan/goal 兼容入口和未知当前值；不可用目录项不能重新选择，保存时重新读取目录。缺少新目录 API 的旧宿主仅回退内置三种模式。远程宿主保留 RACP 已有的 Agent/Plan 配置，不展示本地自定义模式；远程工作目录禁用阶段模式，原生 Pi 禁用模式配置，限制以 tooltip 说明。两者当前都没有阶段运行桥接。
 
-`sessions.get.modeRun` 直接承载宿主 `ModeRun`：阶段、等待原因、轮次/token 预算、修订及结束状态。读取失败仅使阶段卡显示错误与刷新入口，不阻断聊天历史。操作映射到 `modes/run/control`、`modes/run/resolve`，沿用宿主 CAS 修订检查、远控登录授权、会话串行和 mutation 结果恢复；失败后刷新状态，不自动重放。新 Goal 从普通发送进入宿主阶段运行，不创建 SubmitGoal 提案；历史 Plan/Goal 记录继续走 plans.pending/resolve。
+`sessions.get.modeRun` 直接承载宿主 `ModeRun`：阶段、等待原因、轮次/token 预算、修订及结束状态。读取失败仅使阶段卡显示错误与刷新入口，不阻断聊天历史。操作映射到 `modes/run/control`、`modes/run/update`、`modes/run/resolve`，沿用宿主 CAS 修订检查、远控登录授权、会话串行和 mutation 结果恢复；失败后刷新状态，不自动重放。编辑目标与预算从下次领取轮次生效；预算轮次为 1–10000，Token 为至少 1000 的安全整数，各项可用 null 表示不限。暂停由桌面 IPC 通知当前轮收尾，停止中断当前轮，移除仅结束后续调度、当前轮按返回模式继续。新 Goal 从普通发送进入宿主阶段运行，不创建 SubmitGoal 提案；历史 Plan/Goal 记录继续走 plans.pending/resolve。
 
 宿主 `modes.get` 仅返回未结束运行。插件在内存保留最近 64 个会话由宿主事件或操作回执确认的快照，同一运行按 revision 防止倒退，以展示已结束/已停止；插件重启后不恢复结束快照，也不将消失的运行自行推断成结束。
 
@@ -45,7 +46,7 @@
 
 ## 事件
 
-宿主 `desktop:event`：`{subscriptionId,sessionId,kind,at,payload}`。kind 为 agent.event、agent.turnEnded、agent.queueChanged、session.changed 或 modes.changed。modes.changed 的 payload 保留宿主 `{sessionId,run}`；agent.event 的 payload 是原始 AgentEventEnvelope。插件按会话订阅转发；浏览器复用 shared/message-stream.ts 合并消息增量，并在重连、订阅和状态变更时重新读取快照。
+宿主 `desktop:event`：`{subscriptionId,sessionId,kind,at,payload}`。kind 为 agent.event、agent.turnEnded、agent.queueChanged、session.changed 或 modes.changed。modes.changed 的 payload 保留宿主 `{sessionId,run}`；agent.event 的 payload 是原始 AgentEventEnvelope。插件按会话订阅转发；浏览器复用 shared/message-stream.ts 合并消息增量，并在重连、订阅和状态变更时重新读取快照。宿主在返回模式落盘后补发的 modes.changed 同样触发完整会话刷新，并使先前在途配置读取失效；相同运行修订的事件也不得跳过此刷新。
 
 普通宿主消息事件携带 Agent Host 的 hostRevision，快照携带 revision；浏览器按快照水位过滤并重放较新消息增量。原生会话没有该宿主水位，退回事件计数保护。此衔接尚未进行运行验证，历史读取与持久化的并发一致性仍需核实，不能据此宣称完整多端验收通过。
 

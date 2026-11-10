@@ -255,7 +255,7 @@ import {
   composeModeSystemPrompt,
   DEFAULT_RUNTIME_SYSTEM_PROMPT,
 } from "./mode-prompts.js";
-import { RuntimeModeState } from "./modes/mode-state.js";
+import { RuntimeModeState, type ModeTurnNoticeParams } from "./modes/mode-state.js";
 import {
   COMPLETE_STAGE_TOOL_NAME,
   createCompleteStageTool,
@@ -2382,7 +2382,8 @@ Delegation rules:
       // must leave supervision and the graceful-stop request untouched.
       finishTurn: async ({ message }) => {
         if (message.stopReason === "error" || message.stopReason === "aborted") return;
-        if (!this.gracefulStopRequested) this.queueSupervisionAtBoundary();
+        if (this.modeState.closeoutExhausted()) return { action: "end" };
+        if (!this.gracefulStopRequested && !this.modeState.closingOut) this.queueSupervisionAtBoundary();
         if (!this.gracefulStopRequested) return;
         this.gracefulStopRequested = false;
         return { action: "end" };
@@ -2584,6 +2585,7 @@ Delegation rules:
 
   /** Steering is consumed after next-turn preparation; sync before dispatch. */
   private prepareToolDeclarations(context: AgentContext): AgentLoopTurnUpdate {
+    this.modeState.noteModelRequest();
     const tools = this.declaredTools();
     let messages = context.messages;
     const changes = getToolStateChanges(getCurrentTools(messages), tools.map(toToolDeclaration));
@@ -3086,6 +3088,7 @@ Delegation rules:
       getThinkingLevel: () => agentThinkingLevel(runtime.thinkingLevel),
       setThinkingLevel: (level) => {
         runtime.thinkingLevel = clampThinkingLevel(runtime.provider, level as SessionThinkingLevel);
+        runtime.agent.state.thinkingLevel = agentThinkingLevel(runtime.thinkingLevel);
       },
       isIdle: () => !runtime.agent.state.isStreaming,
       abort: () => {
@@ -5487,7 +5490,8 @@ Delegation rules:
       (this.runningDelegations().length > 0 ||
         this.pendingCurrentTurnDelegations().length > 0) &&
       !this.runCancelled &&
-      !this.turnHadError
+      !this.turnHadError &&
+      !this.modeState.closeoutExhausted()
     );
   }
 
@@ -5582,7 +5586,7 @@ Delegation rules:
    * aborts leftover delegates and returns without a resume prompt (D352).
    */
   private async resumeAfterDelegations(): Promise<void> {
-    if (this.disposed || this.runCancelled || this.turnHadError) {
+    if (this.disposed || this.runCancelled || this.turnHadError || this.modeState.closeoutExhausted()) {
       if (this.turnHadError) this.terminateParentTurn();
       return;
     }
@@ -5591,6 +5595,7 @@ Delegation rules:
       !this.disposed &&
       !this.runCancelled &&
       !this.turnHadError &&
+      !this.modeState.closeoutExhausted() &&
       epoch === this.turnEpoch &&
       this.pendingCurrentTurnDelegations().length > 0
     ) {
@@ -5610,7 +5615,8 @@ Delegation rules:
         this.disposed ||
         this.runCancelled ||
         this.turnHadError ||
-        epoch !== this.turnEpoch
+        epoch !== this.turnEpoch ||
+        this.modeState.closeoutExhausted()
       ) {
         if (this.turnHadError) this.terminateParentTurn();
         return;
@@ -9124,6 +9130,14 @@ Delegation rules:
           const steering = this.pendingSteering.get(event.message);
           const id = steering?.id ?? this.pendingUserMessageId ?? randomUUID();
           if (steering) {
+            // 后续回复必须位于已接收的用户补充之后，恢复重试也不能复用前一气泡。
+            if (this.currentAssistant?.status === "streaming") {
+              this.emit({ type: "message_end", message: {
+                ...this.currentAssistant,
+                status: this.currentAssistant.error ? "error" : "complete",
+              } });
+            }
+            this.currentAssistant = undefined;
             if (steering.toolNames.length) {
               this.activateDeferredTools(steering.toolNames);
               this.setAgentTools(this.activeTools());
@@ -10215,6 +10229,29 @@ Delegation rules:
       }
       settle();
     });
+  }
+
+  /**
+   * Electron main reports that the run this turn works on changed (ADR
+   * mode-definitions): `closeout` after the user paused it, `release` after
+   * the user removed it. A notice for another turn or run is ignored.
+   */
+  modeTurnNotice(notice: ModeTurnNoticeParams): { applied: boolean } {
+    if (this.disposed || !this.turnId || notice.turnId !== this.turnId) return { applied: false };
+    if (this.modeState.activeTurn?.runId !== notice.runId) return { applied: false };
+    if (notice.action === "closeout") {
+      if (!this.modeState.beginCloseout(notice.runId)) return { applied: false };
+      this.setAgentSystemPrompt(this.composeSystemPrompt());
+      return { applied: true };
+    }
+    // The turn finishes as an ordinary turn of the mode the session returned
+    // to; CompleteStage and the stage brief leave with the run context.
+    this.modeState.clearTurn();
+    this.setMode(notice.mode, notice.modeDefinition);
+    this.rebuildToolCatalog();
+    this.setAgentSystemPrompt(this.composeSystemPrompt());
+    this.setAgentTools(this.activeTools());
+    return { applied: true };
   }
 
   /** Ask pi-agent-core to stop after the current assistant/tool turn. */

@@ -796,6 +796,7 @@ const sessionCollaboration = createSessionCollaborationService({
 const modeServices = createModeServices({
   getHost,
   getAgentHostBridge: () => mainState.agentHostBridge,
+  getSidecar,
   sendToRenderer,
   logger,
   isQuitting: () => mainState.quitting,
@@ -922,6 +923,7 @@ const { startHost } = createHostRuntime({
   userMcp,
   pluginActiveInProject,
   sendToRenderer,
+  settleModeReturn: (sessionId, run) => modeServices.runs.settleReturn(sessionId, run),
   emitAgentEvent,
   togglePluginLauncher,
   finishTurn,

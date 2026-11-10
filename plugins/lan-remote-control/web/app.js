@@ -45,7 +45,9 @@ function onEvent(frame) {
   if (wrapper.sessionId !== current) return;
   const event = wrapper.event || wrapper;
   const revision = event.payload?.hostRevision;
-  if (Number.isFinite(revision) && revision <= snapshotRevision) return;
+  const configurationChanged = event.kind === "modes.changed" || event.kind === "session.changed";
+  if (configurationChanged) refreshVersion++;
+  if (!configurationChanged && Number.isFinite(revision) && revision <= snapshotRevision) return;
   recentEvents.push(wrapper);
   if (recentEvents.length > 2000) recentEvents.shift();
   eventVersion++;
@@ -1002,7 +1004,7 @@ function renderPending() {
   const modeCard = createModeRunCard({
     info: snapshot?.modeRun, sessionId,
     isCurrent: () => current === sessionId && navigation === navigationVersion && !loginVisible,
-    mutate, refresh, onError: report,
+    mutate, refresh, onError: report, openSheet: openSheetPanel,
     isBusy: () => modeOperations.has(sessionId),
     setBusy: busy => {
       if (busy) modeOperations.add(sessionId);

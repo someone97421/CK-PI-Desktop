@@ -109,6 +109,12 @@ export type AppSettings = {
    * Absent and false use the bounded ten-retry policy.
    */
   /**
+   * Budget a new builtin Goal run starts with. Absent or null keeps the
+   * builtin default (20 turns, unlimited tokens); a null field is unlimited.
+   * A running run keeps its own budget.
+   */
+  goalBudget?: import("./mode-runs.js").ModeRunBudget | null;
+  /**
    * Keep retryable provider/network failures retrying until the request succeeds.
    * Absent and false use the bounded ten-retry policy.
    */

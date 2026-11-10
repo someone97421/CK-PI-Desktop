@@ -65,20 +65,47 @@ function createModes({ host, operations, getSession, isDraft }) {
     const latest = snapshots.get(sessionId);
     const run = result.run ? latest : latest && ["finished", "stopped"].includes(latest.state) ? latest : null;
     return { supported: true, run,
-      controls: available.has("modes/run/control"), approvals: available.has("modes/run/resolve") };
+      controls: available.has("modes/run/control"), updates: available.has("modes/run/update"), approvals: available.has("modes/run/resolve") };
   }
-  async function mutate(sessionId, input, resolve) {
+  async function mutate(sessionId, input, kind) {
+    if (typeof input.runId !== "string" || !input.runId.trim() || input.runId.length > 200
+      || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1)
+      fail("INVALID_PARAMS", "模式运行标识或修订无效");
+    const payload = { sessionId, runId: input.runId, expectedRevision: input.expectedRevision };
+    if (kind === "update") {
+      if (Object.hasOwn(input, "input")) {
+        if (typeof input.input !== "string" || !input.input.trim() || Buffer.byteLength(input.input, "utf8") > 100_000)
+          fail("INVALID_PARAMS", "运行目标不能为空且不能超过 100000 字节");
+        payload.input = input.input;
+      }
+      if (Object.hasOwn(input, "budget")) {
+        const budget = input.budget;
+        if (!budget || typeof budget !== "object" || Array.isArray(budget)
+          || Object.keys(budget).length !== 2 || !Object.hasOwn(budget, "maxTurns") || !Object.hasOwn(budget, "maxTokens")
+          || !(budget.maxTurns === null || Number.isSafeInteger(budget.maxTurns) && budget.maxTurns >= 1 && budget.maxTurns <= 10_000)
+          || !(budget.maxTokens === null || Number.isSafeInteger(budget.maxTokens) && budget.maxTokens >= 1_000))
+          fail("INVALID_PARAMS", "预算需含 maxTurns（1–10000）和 maxTokens（至少 1000）的安全整数，null 表示不限");
+        payload.budget = { maxTurns: budget.maxTurns, maxTokens: budget.maxTokens };
+      }
+      if (!Object.hasOwn(payload, "input") && !Object.hasOwn(payload, "budget"))
+        fail("INVALID_PARAMS", "请提供要更新的目标或预算");
+    } else {
+      if (!(kind === "resolve" ? ["approve", "reject"] : ["pause", "resume", "stop", "remove"]).includes(input.action))
+        fail("INVALID_PARAMS", "模式操作无效");
+      payload.action = input.action;
+    }
     const current = await get(sessionId);
-    if (!current.supported || !(resolve ? current.approvals : current.controls)) fail("UNSUPPORTED", current.reason || "宿主不支持此模式操作");
+    const capability = kind === "update" ? current.updates : kind === "resolve" ? current.approvals : current.controls;
+    if (!current.supported || !capability) fail("UNSUPPORTED", current.reason || "宿主不支持此模式操作");
     if (!current.run || current.run.id !== input.runId || current.run.revision !== input.expectedRevision)
       fail("MODE_REVISION_CONFLICT", "模式运行已变化，请刷新后重试");
-    if (!(resolve ? ["approve", "reject"] : ["pause", "resume", "stop"]).includes(input.action)) fail("INVALID_PARAMS", "模式操作无效");
-    const result = await host(resolve ? "modes/run/resolve" : "modes/run/control", [{
-      sessionId, runId: input.runId, expectedRevision: input.expectedRevision, action: input.action,
-    }]);
+    const result = await host(`modes/run/${kind}`, [payload]);
     if (result?.run?.sessionId === sessionId) observe(result.run);
     return result;
   }
-  return { catalog, validateMode, get, observe, control: (id, input) => mutate(id, input, false), resolve: (id, input) => mutate(id, input, true) };
+  return { catalog, validateMode, get, observe,
+    control: (id, input) => mutate(id, input, "control"),
+    update: (id, input) => mutate(id, input, "update"),
+    resolve: (id, input) => mutate(id, input, "resolve") };
 }
 module.exports = { createModes };
