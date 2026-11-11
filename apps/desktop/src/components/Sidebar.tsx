@@ -52,6 +52,7 @@ import {
   sidebarSessionStatus,
   type SidebarSessionStatus,
 } from "../lib/sidebar-session-status";
+import { SidebarSessionStatusSlot } from "../plugins/renderer-slots/sidebar-session-status";
 import {
   projectRunSummaryIsLive,
   resolveSidebarRunningAffordances,
@@ -967,7 +968,7 @@ export function Sidebar({
     if (changed) setSelectedIds(next);
   }, [sessionIdSet]); // intentionally not including selectedIds to avoid loop
 
-  const renderSessionStatus = (status: SidebarSessionStatus) => {
+  const renderSessionStatus = (session: SessionSummary, status: SidebarSessionStatus) => {
     const labelKey =
       status === "running"
         ? "nav.sessionRunning"
@@ -989,11 +990,20 @@ export function Sidebar({
               ? "Failed"
               : "Permission required";
     const label = t(labelKey, { defaultValue: fallback });
-    return (
+    const indicator = (
       <span className={`thread-item-status ${status}`} aria-label={label} title={label}>
         {status === "completed" ? <IconCheck size={10} aria-hidden /> : null}
         {status === "failed" ? <IconCircleAlert size={11} aria-hidden /> : null}
       </span>
+    );
+    return (
+      <SidebarSessionStatusSlot
+        sessionId={session.id}
+        status={status}
+        label={label}
+        enabled={!isRemoteSession(session)}
+        fallback={indicator}
+      />
     );
   };
 
@@ -2134,7 +2144,7 @@ export function Sidebar({
           );
         }}
       >
-        {status ? renderSessionStatus(status) : null}
+        {status ? renderSessionStatus(session, status) : null}
         <button
           type="button"
           className="thread-item-main"

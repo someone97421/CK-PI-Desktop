@@ -319,6 +319,19 @@
   transform: translateY(-50%);
 }
 
+.thread-item-status-slot {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  transform: translateY(-50%);
+}
+
+.thread-item-status-slot > .pi-plugin-slot {
+  display: contents;
+}
+
 .thread-item-status.running::before {
   width: 7px;
   height: 7px;

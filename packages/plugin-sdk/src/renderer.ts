@@ -19,6 +19,7 @@
  * - `composerTrigger` — the item list behind one of the composer's trigger
  *   symbols; not a component, the host draws the list
  *   (`./renderer-composer.ts`).
+ * - `sidebarSessionStatus` — one replacement for a sidebar status indicator.
  *
  * Self-dialogs are not a slot: a component draws them itself
  * (`docs/plugin-plan/ui/self-dialog/`), into a layer `pi.ui.openLayer` hands
@@ -55,6 +56,7 @@ export const PLUGIN_RENDERER_SLOTS = [
   "blockRenderer",
   "composerControl",
   "composerTrigger",
+  "sidebarSessionStatus",
 ] as const;
 
 export type PluginRendererSlot = (typeof PLUGIN_RENDERER_SLOTS)[number];
@@ -134,6 +136,13 @@ export type PluginComposerControlSlotProps = {
   readonly position: PluginSlotPosition;
 };
 
+/** Return `fallback` while assets are unavailable. The host owns the status label. */
+export type PluginSidebarSessionStatusSlotProps = {
+  readonly sessionId: string;
+  readonly status: "permission" | "running" | "selected" | "completed" | "failed";
+  readonly fallback: unknown;
+};
+
 /**
  * A slot component: a React function component, rendered with the React the
  * host shares through its import map (`import React from "react"`).
@@ -173,6 +182,12 @@ export type PluginComposerControlSlotRegistration = {
   readonly positions?: readonly PluginSlotPosition[];
 };
 
+/** Only one plugin may own the sidebar status indicator at a time. */
+export type PluginSidebarSessionStatusSlotRegistration = {
+  readonly slot: "sidebarSessionStatus";
+  readonly component: PluginSlotComponent<PluginSidebarSessionStatusSlotProps>;
+};
+
 /** What `pi.slots.register` accepts, discriminated by `slot`. */
 export type PluginSlotRegistration =
   | PluginActionSlotRegistration
@@ -180,6 +195,7 @@ export type PluginSlotRegistration =
   | PluginToolCardSlotRegistration
   | PluginBlockRendererSlotRegistration
   | PluginComposerControlSlotRegistration
+  | PluginSidebarSessionStatusSlotRegistration
   | PluginComposerTriggerRegistration;
 
 /**

@@ -62,6 +62,17 @@ try {
     sourcemap: false,
     legalComments: 'eof',
   });
+  await build({
+    entryPoints: [join(root, 'renderer/index.js')],
+    outfile: join(staging, 'renderer.js'),
+    bundle: true,
+    platform: 'browser',
+    target: 'es2022',
+    format: 'esm',
+    external: ['react'],
+    sourcemap: false,
+    legalComments: 'eof',
+  });
   const devkitPath = join(temporary, 'devkit.mjs');
   await build({
     entryPoints: [join(repository, 'packages/plugin-devkit/src/index.ts')],

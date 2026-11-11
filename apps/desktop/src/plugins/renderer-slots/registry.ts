@@ -93,6 +93,9 @@ function keyOf(
       toolName: registration.toolName,
     };
   }
+  if (registration.slot === "sidebarSessionStatus") {
+    return { key: "sidebarSessionStatus" };
+  }
   if (registration.slot === "blockRenderer") {
     return { key: blockRendererLanguageKey(registration.language) };
   }

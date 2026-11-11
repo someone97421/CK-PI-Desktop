@@ -24,6 +24,7 @@ describe("renderer vocabulary", () => {
       "blockRenderer",
       "composerControl",
       "composerTrigger",
+      "sidebarSessionStatus",
     ]);
     expect(PLUGIN_RENDERER_ACTIONS).toEqual([
       "plugin.call",
@@ -47,6 +48,7 @@ describe("slotRegistrationRefusal", () => {
     expect(codeOf({ slot: "toolCard", toolName: "query_db", component }, ["query_db"])).toBeNull();
     expect(codeOf({ slot: "blockRenderer", language: "demo.lab:chart", component })).toBeNull();
     expect(codeOf({ slot: "composerTrigger", trigger: "#", items: () => [] })).toBeNull();
+    expect(codeOf({ slot: "sidebarSessionStatus", component })).toBeNull();
   });
 
   it("refuses a slot outside the vocabulary", () => {

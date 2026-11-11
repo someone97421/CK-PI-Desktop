@@ -69,6 +69,7 @@ class PetLibrary {
     this.rows = [];
     this.errors = [];
     this.mutations = Promise.resolve();
+    this.revision = 0;
   }
   folder(id) { return path.join(this.directory, crypto.createHash('sha256').update(String(id)).digest('hex').slice(0, 24)); }
   serialize(fn) {
@@ -113,6 +114,7 @@ class PetLibrary {
     }
     this.rows = rows.sort((a, b) => a.displayName.localeCompare(b.displayName));
     this.errors = errors;
+    this.revision += 1;
     return this.list();
   }
   list() { return this.rows.map((row) => ({ ...row })); }

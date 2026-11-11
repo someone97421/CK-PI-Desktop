@@ -438,7 +438,7 @@
   width: 2px;
   overflow: hidden;
   border-radius: var(--radius-full);
-  background: color-mix(in oklab, var(--ds-warning) 28%, transparent);
+  background: color-mix(in oklab, var(--ds-accent) 28%, transparent);
   pointer-events: none;
 }
 
@@ -451,8 +451,8 @@
   background: linear-gradient(
     180deg,
     transparent 0%,
-    color-mix(in oklab, var(--ds-warning) 85%, transparent) 45%,
-    var(--ds-warning) 60%,
+    color-mix(in oklab, var(--ds-accent) 85%, transparent) 45%,
+    var(--ds-accent) 60%,
     transparent 100%
   );
   animation: project-run-comet 2.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;

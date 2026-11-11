@@ -6,6 +6,7 @@ const { PetLibrary, fail } = require('./lib/pet-library.cjs');
 const { QuickChat } = require('./lib/quick-chat.cjs');
 const { ActivityMonitor } = require('./lib/activity.cjs');
 const { importInstallLink } = require('./lib/install-link.cjs');
+const { SidebarSprite } = require('./lib/sidebar-sprite.cjs');
 
 const SERVICE = 'codex-pet-activity';
 const SHORTCUT = 'show-pet';
@@ -17,6 +18,7 @@ function createPlugin(providedHost) {
   let shortcutRegistered = false, registeredCommands = [], serviceRegistered = false;
   let settingsQueue = Promise.resolve();
   let openTimer;
+  let sidebarSprite;
   const intent = { settings: 0, focus: 0 };
   function state() {
     return { locale, settings: { ...settings }, pets: library?.list() || [], activity: monitor?.getState() || { rows: [], state: null, stale: false, updatedAt: null, error: null }, models, commands, draft: chat?.getDraft() || { text: '', attachments: [], skills: [], modelKey: '' }, warnings: [...warnings], libraryErrors: library?.errors || [], intent: { ...intent } };
@@ -79,6 +81,7 @@ function createPlugin(providedHost) {
     settings = { ...DEFAULTS, ...(await host.plugin.getSettings()) };
     const dataPath = await host.plugin.getDataPath();
     library = new PetLibrary(dataPath);
+    sidebarSprite = new SidebarSprite(library);
     chat = new QuickChat(host, dataPath);
     monitor = new ActivityMonitor(host, { pollSeconds: settings.pollSeconds });
     await Promise.all([library.init(path.join(__dirname, 'pets')), chat.init(), refreshCatalog()]);
@@ -182,7 +185,14 @@ function createPlugin(providedHost) {
       }
     } catch (error) { throw localError(error); }
   }
-  return { onLoad, onUnload, onPanelInvoke };
+  async function onRendererCall(method, args) {
+    if (unloaded) fail('PET_UNLOADED', '宠物插件已停止。', 'The pet plugin has stopped.');
+    await onLoad();
+    if (method === 'pet.sidebarState') return sidebarSprite.state(settings);
+    if (method === 'pet.sidebarChunk') return sidebarSprite.chunk(args);
+    fail('PET_ACTION_UNKNOWN', '未知宠物操作。', 'Unknown pet action.');
+  }
+  return { onLoad, onUnload, onPanelInvoke, onRendererCall };
 }
 
 module.exports = { ...createPlugin(), createPlugin, DEFAULTS };

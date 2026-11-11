@@ -14,7 +14,7 @@ export const BUILTIN_PLUGIN_SOURCES = [
   },
   {
     id: "local.codex-pet", directory: "codex-pet",
-    assets: ["ui", "shared", "pets", "README.md"], browserEntries: [],
+    assets: ["ui", "shared", "pets", "README.md"], browserEntries: [], rendererEntry: "renderer/index.js",
   },
 ];
 
@@ -44,6 +44,15 @@ export async function prepareBuiltinPlugins(root) {
         external: ["bufferutil", "utf-8-validate"],
         sourcemap: false, legalComments: "eof",
       });
+      if (manifest.renderer) {
+        await build({
+          entryPoints: [join(source, plugin.rendererEntry || manifest.renderer)],
+          outfile: join(destination, manifest.renderer),
+          bundle: true, platform: "browser", target: "es2022", format: "esm",
+          external: ["react", "react-dom", "react/jsx-runtime"],
+          sourcemap: false, legalComments: "eof",
+        });
+      }
       for (const entry of plugin.browserEntries) {
         await build({
           entryPoints: [join(source, entry)], outfile: join(destination, entry),
