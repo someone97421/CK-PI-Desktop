@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/shared",
-  "version": "2611.1015.5154",
+  "version": "2611.1112.149",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
