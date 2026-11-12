@@ -92,18 +92,24 @@ function matchesSegment(candidate: string, wanted: string): boolean {
   return CASE_INSENSITIVE_FS && candidate.toLowerCase() === wanted.toLowerCase();
 }
 
-/** Strip the composer sigil, optional quotes, and a file line reference. */
+/**
+ * Strip the composer sigil, optional quotes, and a file line reference, then
+ * repair a Windows drive path that arrived rooted the POSIX way.
+ */
 function cleanRef(raw: string): string {
   let value = stripRefDecorations(String(raw ?? ""));
   if (value.includes("\0")) return "";
   value = value.replace(/(?::\d+(?::\d+|-\d+)?|#L\d+(?:-L?\d+)?)$/i, "");
-  if (process.platform === "win32") {
-    // 兼容 Git Bash 和 Markdown 中的 Windows 盘符写法。
-    value = toPosix(value)
-      .replace(/^\/([a-z])\//i, "$1:/")
-      .replace(/^\/(?=[a-z]:\/)/i, "");
-  }
-  return value;
+  return normalizeDriveRef(value);
+}
+
+const POSIX_ROOTED_DRIVE = /^\/+([A-Za-z]):\//;
+
+function normalizeDriveRef(value: string): string {
+  if (process.platform !== "win32") return value;
+  const normalized = toPosix(value).replace(/^\/([a-z])\//i, "$1:/");
+  const match = POSIX_ROOTED_DRIVE.exec(normalized);
+  return match ? `${match[1].toUpperCase()}:/${normalized.slice(match[0].length)}` : normalized;
 }
 
 function stripRefDecorations(raw: string): string {

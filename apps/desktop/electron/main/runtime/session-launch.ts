@@ -495,7 +495,10 @@ export function createSessionLaunchRuntime({
         apiStyle,
         modelId,
       });
-    const modelConfig = catalogModelConfig;
+    const limits = resolveBindingLimits(catalogModelConfig, storedModel);
+    const modelConfig = limits.binding
+      ? modelConfigWithBinding(limits.catalogConfig, limits.binding)
+      : limits.catalogConfig;
     const thinkingCapabilities = capabilitiesFromModelConfig(modelConfig);
     const thinkingLevel = clampThinkingLevel(
       thinkingCapabilities,

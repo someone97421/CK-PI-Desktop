@@ -13,6 +13,8 @@ import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import { compact } from "./pi-runtime-compaction-summary.js";
 import { ESTIMATED_TEXT_CHARS_PER_TOKEN, estimateContextTokens, estimateTokens } from "./pi-runtime-estimates.js";
 import type { CompactionPreparation, FileOperations } from "./pi-runtime-types.js";
+import { collectMessageFileOperations } from "./pi-runtime-compaction-plan.js";
+import { PI_FILE_OP_TOOL_NAMES } from "./pi-file-ops.js";
 import type { Api, Model, Models, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "@pi-desktop/shared";
 import { assistantContent } from "./agent-messages.js";
@@ -391,16 +393,15 @@ export function fileOpsFromMessages(
     edited: new Set<string>(),
   };
   for (const message of messages) {
-    if (message.role !== "assistant") continue;
-    for (const block of message.content) {
-      if (block.type !== "toolCall") continue;
-      const args = block.arguments as { path?: unknown } | undefined;
-      const path = typeof args?.path === "string" ? args.path.trim() : "";
-      if (!path) continue;
-      if (block.name === "Read") fileOps.read.add(path);
-      else if (block.name === "Write") fileOps.written.add(path);
-      else if (block.name === "Edit") fileOps.edited.add(path);
-    }
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    collectMessageFileOperations({
+      ...message,
+      content: message.content.map((block) =>
+        block?.type === "toolCall"
+          ? { ...block, name: PI_FILE_OP_TOOL_NAMES[block.name] ?? block.name }
+          : block,
+      ),
+    }, fileOps);
   }
   return fileOps;
 }
