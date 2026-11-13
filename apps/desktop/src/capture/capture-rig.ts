@@ -952,9 +952,9 @@ export function installCaptureRig(): CaptureRig {
           source: "builtin",
         },
         {
-          name: "fixer",
-          description: "Diagnose and fix bugs, regressions or other observed failures.",
-          prompt: "You are fixer.\n",
+          name: "worker",
+          description: "Carry out a self-contained implementation, diagnosis, repair or execution task with a clear deliverable.",
+          prompt: "You are worker.\n",
           tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
           source: "builtin",
         },

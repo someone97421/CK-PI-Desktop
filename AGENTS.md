@@ -115,7 +115,7 @@
 - 保留运行状态提醒（2026-10-04 用户确认）：主代理每次运行从本轮开始计时，每满设定间隔在下一次模型请求前追加一条隐藏 `custom` 通知，只报告运行时长与主代理累计 token（输入/输出，不含压缩等内部请求）。通知按会话消息锚点保存在内存中，后续请求与同一 runtime 的新轮次重建时保持对话顺序，成功压缩后清理，不写入持久化对话。通过 `prepareRequest` 在协调上下文准备完成后注入，避免 `system` 消息被提供商适配器合并到顶部指令。设置在「设置 → AI」板块填写提醒间隔（`runStatusReminderMinutes`，单位分钟，0 为关闭，缺省 0；2026-10-28 用户确认由开关改为数值）。实现在 `packages/agent-runtime/src/runtime.ts` 的 `withRunStatusReminder`/`restoreTransientStatusMessages`/`resetRunStatusReminder`，上游无对应功能，同步时勿删除或回退。已于 2026-10-04 在真实会话实测通过（5 分 20 秒 sleep 后收到「运行状态」通知，时长与 token 统计正确）。
 - 子代理协调状态（2026-10-07 用户确认只追加、不删除）通过 `prepareRequest` 在请求上下文末尾追加隐藏 `custom` 消息（`customType: "subagent-coordination"`），避免提供商适配器将动态状态归并到顶部系统指令。事件触发追加快照，历史快照与运行状态提醒共用内存消息锚点，跨轮及上下文重建保持原位置，不改写已有请求前缀；仅在压缩成功后归并到摘要中的最新状态并清理内存历史，压缩失败保留。普通请求不剥离已有摘要中的协调状态，不写入持久化对话；进度与完成报告继续使用独立的 `subagent-supervision` 通知。实现在 `packages/agent-runtime/src/runtime.ts` 的 `coordinationMessageFor`/`prepareSubagentCoordination`/`restoreTransientStatusMessages`，同步时保留该消息角色与顺序。
 - 按时间顺序持久化模型系统状态（2026-10-05 用户确认）：沿现有转录元数据保存指令分区、工具声明与激活变化，旧记录兼容，此功能本身不提升 schema/protocol；旧版本无法完整恢复这类新状态。运行状态提醒与子代理协调快照继续使用隐藏 `custom` 消息，不写入系统状态日志或持久化对话。
-- 内置子智能体开关使用独立 `agent-capabilities/subagent-builtins.json`，不参与数据库迁移。
+- 内置子智能体开关使用独立 `agent-capabilities/subagent-builtins.json`，不参与数据库迁移。内置执行与修复角色统一为 `worker`（2026-11-14 用户确认），不恢复独立 `fixer` 定义、模板或专用兼容层；历史任务沿用既有读取与上下文不可用时的材料返回通路。
 - 采用官方插件市场、备用渠道、动态下载解析及设备标识摘要发送；设备标识仅随官方下载解析请求发送。采用上游宽松网络模式并默认开启。
 - 采用官方窗口显隐切换 `toggleWindow`，默认 `Alt+Shift+W`，按官方规则迁移旧唤出/关闭快捷键配置。
 - Windows 主窗口保留 `thickFrame: true` 与系统原生排布手势（2026-10-14 用户确认，决策 F008）。用户体验 `20261014-214243` 后认可外观，保留自定义标题栏和 Windows 11 DWM 原生圆角；后续同步或外观调整不得自动关闭原生边框能力。改变此取舍须先获用户确认；Windows 10 现有透明窗口分支的限制另行处理，不视为已修复。macOS 半透明窗口默认开启，可显式关闭并在下次启动使用不透明背景（2026-10-22 用户确认），不按上游中间提交改成默认不透明。

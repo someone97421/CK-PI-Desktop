@@ -119,7 +119,6 @@ export const SUBAGENT_PRESET_COPY = {
   explorer: { name: "presetExplorerName", desc: "presetExplorerDesc" },
   "code-reviewer": { name: "presetReviewerName", desc: "presetReviewerDesc" },
   worker: { name: "presetWorkerName", desc: "presetWorkerDesc" },
-  fixer: { name: "presetFixerName", desc: "presetFixerDesc" },
   "ui-designer": { name: "presetUiDesignerName", desc: "presetUiDesignerDesc" },
   "native-media-analyst": { name: "presetMediaAnalystName", desc: "presetMediaAnalystDesc" },
   advisor: { name: "presetAdvisorName", desc: "presetAdvisorDesc" },

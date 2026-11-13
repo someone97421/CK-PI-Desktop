@@ -57,31 +57,27 @@ test("resetSubagentTemplate clears a selected preset without dropping model choi
 });
 
 test("preset ids and builtin document ids agree", () => {
-  // The runtime ships the same five delegates in
-  // `agent-runtime/src/subagent-definitions.ts`; the shared preset catalog
-  // duplicates them as UI-ready data. A drift here would mean a user picks
-  // "explorer" in the editor and the runtime loads a different prompt.
+  // 设置模板与运行时内置目录保持一致。
   const presetIds = [
     ...presetSource.matchAll(
-      /id: "(explorer|code-reviewer|test-runner|fixer|ui-designer)",/g,
+      /^\s+id: "([^"]+)",$/gm,
     ),
   ].map((m) => m[1]);
   assert.deepEqual(presetIds, [
     "explorer",
     "code-reviewer",
-    "test-runner",
-    "fixer",
+    "worker",
     "ui-designer",
+    "native-media-analyst",
+    "advisor",
   ]);
 });
 
 test("preset tools match the runtime builtin documents", () => {
-  // Spot-check explorer and fixer — they cover the read-only and
-  // write-capable extremes.
+  // 检查探索、执行与界面角色的工具边界。
   assert.match(presetSource, /id: "explorer"[\s\S]*?tools: \["Read", "Glob", "Grep", "Bash"\]/);
   assert.match(presetSource, /id: "code-reviewer"[\s\S]*?tools: \["Read", "Glob", "Grep"\]/);
-  assert.match(presetSource, /id: "test-runner"[\s\S]*?tools: \["Read", "Glob", "Grep", "Bash"\]/);
-  assert.match(presetSource, /id: "fixer"[\s\S]*?tools: \["Read", "Glob", "Grep", "Edit", "Write", "Bash"\]/);
+  assert.match(presetSource, /id: "worker"[\s\S]*?tools: \["Read", "Glob", "Grep", "Edit", "Write", "Bash"\]/);
   assert.match(presetSource, /id: "ui-designer"[\s\S]*?tools: \["Read", "Glob", "Grep", "BrowserPreview", "Bash", "Edit", "Write"\]/);
 });
 
@@ -98,15 +94,15 @@ test("preset bodies mirror the runtime markdown frontmatter bodies", () => {
   assert.match(bodies[0], /codebase navigation specialist/);
   // code-reviewer
   assert.match(bodies[1], /Review only what the task names/);
-  // test-runner
-  assert.match(bodies[2], /Run the command the task names/);
-  // fixer
-  assert.match(bodies[3], /fast, focused implementation specialist/);
-  // ui-designer (the extraction stops at the body's first escaped backtick,
-  // so only the leading bullets are visible here; the BrowserPreview grant is
-  // asserted by the tools test above)
-  assert.match(bodies[4], /UI designer/);
-  assert.match(bodies[4], /design contract/);
+  // worker
+  assert.match(bodies[2], /general-purpose implementation and repair agent/);
+  // ui-designer
+  assert.match(bodies[3], /UI designer/);
+  assert.match(bodies[3], /design contract/);
+  // native-media-analyst
+  assert.match(bodies[4], /native audio\/video understanding/);
+  // advisor
+  assert.match(bodies[5], /independent technical advice/);
 });
 
 test("the removed turn cap leaves no trace in the editor or the presets", () => {

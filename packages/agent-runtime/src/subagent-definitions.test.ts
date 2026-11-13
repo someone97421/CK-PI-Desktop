@@ -32,7 +32,6 @@ describe("builtin subagent documents", () => {
       "explorer",
       "code-reviewer",
       "worker",
-      "fixer",
       "ui-designer",
       "native-media-analyst",
       "advisor",
@@ -47,12 +46,12 @@ describe("builtin subagent documents", () => {
       expect(definition.description.length).toBeGreaterThan(20);
       expect(definition.prompt.length).toBeGreaterThan(50);
     }
-    // 实施、修复和界面角色声明文件编辑工具，并沿用父会话权限。
+    // 执行与界面角色声明文件编辑工具，并沿用父会话权限。
     const mutating = definitions.filter(
       (definition) =>
         definition.tools.includes("Write") || definition.tools.includes("Edit"),
     );
-    expect(mutating.map((d) => d.name)).toEqual(["worker", "fixer", "ui-designer"]);
+    expect(mutating.map((d) => d.name)).toEqual(["worker", "ui-designer"]);
     expect(mutating[0]?.permission ?? "inherit").toBe("inherit");
     const explorer = definitions.find((definition) => definition.name === "explorer")!;
     expect(explorer.tools).toEqual(["Read", "Glob", "Grep", "Bash"]);
@@ -67,7 +66,7 @@ describe("builtin subagent documents", () => {
     expect("maxTurns" in designer).toBe(false);
     expect(designer.description).toBe(findSubagentPreset("ui-designer")?.description);
     expect(designer.prompt).toBe(findSubagentPreset("ui-designer")?.body.trim());
-    for (const name of ["worker", "fixer", "native-media-analyst", "advisor"]) {
+    for (const name of ["worker", "native-media-analyst", "advisor"]) {
       const definition = definitions.find((item) => item.name === name)!;
       const preset = findSubagentPreset(name)!;
       expect(definition.description).toBe(preset.description);
@@ -117,15 +116,15 @@ describe("loadSubagentDefinitions", () => {
 
   it("drops a switched-off builtin from the catalog and keeps it as a builtin row", async () => {
     const { definitions, builtins, diagnostics } = await loadSubagentDefinitions(null, {
-      disabledBuiltins: ["fixer"],
+      disabledBuiltins: ["worker"],
     });
 
     expect(diagnostics).toEqual([]);
-    expect(definitions.map((d) => d.name)).not.toContain("fixer");
+    expect(definitions.map((d) => d.name)).not.toContain("worker");
     expect(definitions.map((d) => d.name)).toContain("explorer");
     // Settings needs the row back: its switch is the only way on again, and a
     // builtin has no document to delete.
-    expect(builtins.map((d) => d.name)).toContain("fixer");
+    expect(builtins.map((d) => d.name)).toContain("worker");
     expect(builtins.every((d) => d.source === "builtin")).toBe(true);
   });
 
@@ -146,16 +145,16 @@ describe("loadSubagentDefinitions", () => {
     const { definitions, builtins } = await loadSubagentDefinitions(null, {
       userDocuments: [
         {
-          id: "fixer",
-          document: "---\nname: fixer\ndescription: Mine.\ntools: [Read]\n---\nMine.\n",
-          filePath: "/home/.agents/subagents/fixer.md",
+          id: "worker",
+          document: "---\nname: worker\ndescription: Mine.\ntools: [Read]\n---\nMine.\n",
+          filePath: "/home/.agents/subagents/worker.md",
         },
       ],
-      disabledBuiltins: ["fixer"],
+      disabledBuiltins: ["worker"],
     });
 
-    expect(definitions.find((d) => d.name === "fixer")?.source).toBe("user");
-    expect(builtins.map((d) => d.name)).not.toContain("fixer");
+    expect(definitions.find((d) => d.name === "worker")?.source).toBe("user");
+    expect(builtins.map((d) => d.name)).not.toContain("worker");
   });
 
   it("reports a malformed document without losing the others", async () => {

@@ -20,7 +20,7 @@ import { DEFAULT_SUBAGENT_TOOLS, type SubagentDefinition } from "./subagent-defi
  */
 export type SubagentPreset = {
   /** Stable id used for i18n keys and analytics; matches `definition.name`. */
-  id: "explorer" | "code-reviewer" | "worker" | "fixer" | "ui-designer" | "native-media-analyst" | "advisor";
+  id: "explorer" | "code-reviewer" | "worker" | "ui-designer" | "native-media-analyst" | "advisor";
   /** Display name shown on the preset chip. */
   name: string;
   /** One-line description mirroring the definition's frontmatter. */
@@ -36,7 +36,6 @@ export const BUILTIN_SUBAGENT_REPORT_INTERVALS: Readonly<Record<SubagentPreset["
   explorer: 32,
   "code-reviewer": 32,
   worker: 64,
-  fixer: 64,
   "ui-designer": 64,
   "native-media-analyst": 32,
   advisor: 32,
@@ -102,9 +101,9 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
     id: "worker",
     name: "Worker",
     description:
-      "Carry out a self-contained implementation task, such as a feature, module or refactor. Useful when the work can proceed independently.",
+      "Carry out a self-contained implementation, diagnosis, repair or execution task with a clear deliverable.",
     tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
-    body: `You are Worker — a general-purpose implementation agent.
+    body: `You are Worker — a general-purpose implementation and repair agent.
 
 Deliver the outcome named in the brief with the smallest complete change,
 following the project's conventions. Read and change only what is needed
@@ -115,23 +114,7 @@ outcome requires broader scope, report the evidence and blocker before
 proceeding beyond the brief. Follow the task's verification guidance and
 the user's testing limits.
 
-Report what changed, any verification performed, and remaining issues.
-`,
-  },
-  {
-    id: "fixer",
-    name: "Fixer",
-    description:
-      "Diagnose and fix bugs, regressions or other observed failures. Focus on restoring correct behavior within the delegated scope.",
-    tools: ["Read", "Glob", "Grep", "Edit", "Write", "Bash"],
-    body: `You are Fixer — a focused diagnosis and repair agent.
-
-Investigate the reported problem and make a scoped fix consistent with the
-surrounding code. Use your judgment to address the cause; surface blockers or
-decisions that need the parent agent's input. Follow the task's verification
-guidance and the user's testing limits.
-
-Report the cause, what changed, any verification performed, and remaining issues.
+Report what changed, the cause of any repaired failure, verification performed, and remaining issues.
 `,
   },
   {

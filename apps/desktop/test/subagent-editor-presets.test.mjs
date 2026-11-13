@@ -1,9 +1,7 @@
 /**
  * UI-side coverage for the Subagent editor changes from issue #60:
  *
- *  - The sheet ships a preset picker driven by `SUBAGENT_PRESETS`, so the
- *    user can start from `explorer`, `code-reviewer`, `test-runner` or
- *    `fixer` instead of an empty form.
+ *  - The sheet ships a preset picker driven by `SUBAGENT_PRESETS`.
  *  - The model field is a picker over the configured, runnable providers'
  *    model bindings, with an explicit custom-model path.
  *
@@ -46,8 +44,8 @@ test("the shared index re-exports the preset catalog", () => {
   assert.match(sharedIndex, /export \* from "\.\/subagent-presets\.js"/);
 });
 
-test("the preset catalog covers the four builtin roles", () => {
-  for (const id of ["explorer", "code-reviewer", "test-runner", "fixer"]) {
+test("the preset catalog covers the builtin roles", () => {
+  for (const id of ["explorer", "code-reviewer", "worker", "ui-designer", "native-media-analyst", "advisor"]) {
     assert.match(
       sharedPresets,
       new RegExp(`id: "${id}"`),
@@ -145,7 +143,7 @@ test("hyphenated preset ids map to catalog keys instead of capitalizing the id",
   );
   assert.match(
     editorSource,
-    /"test-runner": \{ name: "presetTestRunnerName", desc: "presetTestRunnerDesc" \}/,
+    /"ui-designer": \{ name: "presetUiDesignerName", desc: "presetUiDesignerDesc" \}/,
   );
   assert.doesNotMatch(editorSource, /capitalize\(preset\.id\)/);
   assert.doesNotMatch(
@@ -164,10 +162,14 @@ test("the English catalog ships every mapped preset copy key", async () => {
     "presetExplorerDesc",
     "presetReviewerName",
     "presetReviewerDesc",
-    "presetTestRunnerName",
-    "presetTestRunnerDesc",
-    "presetFixerName",
-    "presetFixerDesc",
+    "presetWorkerName",
+    "presetWorkerDesc",
+    "presetUiDesignerName",
+    "presetUiDesignerDesc",
+    "presetMediaAnalystName",
+    "presetMediaAnalystDesc",
+    "presetAdvisorName",
+    "presetAdvisorDesc",
     "presetBlank",
     "presetBlankDesc",
   ]) {

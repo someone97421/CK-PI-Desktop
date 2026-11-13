@@ -207,23 +207,23 @@ try {
   // registry runs on every list, and the loader must drop the handle from the
   // delegation catalog while still reporting the builtin row.
   const beforeBuiltins = await call("agents.disabledBuiltins");
-  const offBuiltin = await call("agents.setBuiltinEnabled", { id: "fixer", enabled: false });
+  const offBuiltin = await call("agents.setBuiltinEnabled", { id: "worker", enabled: false });
   const disabledNow = await call("agents.disabledBuiltins");
   check(
     "a builtin handle is switched off without writing a document",
-    offBuiltin.result?.id === "fixer" &&
+    offBuiltin.result?.id === "worker" &&
       offBuiltin.result?.enabled === false &&
-      (beforeBuiltins.result?.disabled ?? []).includes("fixer") === false &&
-      (disabledNow.result?.disabled ?? []).includes("fixer") === true &&
-      !existsSync(join(agentsDir, "fixer.md")),
+      (beforeBuiltins.result?.disabled ?? []).includes("worker") === false &&
+      (disabledNow.result?.disabled ?? []).includes("worker") === true &&
+      !existsSync(join(agentsDir, "worker.md")),
     JSON.stringify(disabledNow.result?.disabled),
   );
-  const fixed = await call("agents.setBuiltinEnabled", { id: "fixer", enabled: true });
+  const restored = await call("agents.setBuiltinEnabled", { id: "worker", enabled: true });
   const restoredBuiltins = await call("agents.disabledBuiltins");
   check(
     "switching it back on clears the stored override",
-    fixed.result?.enabled === true &&
-      !(restoredBuiltins.result?.disabled ?? []).includes("fixer"),
+    restored.result?.enabled === true &&
+      !(restoredBuiltins.result?.disabled ?? []).includes("worker"),
     JSON.stringify(restoredBuiltins.result?.disabled),
   );
 
@@ -313,24 +313,24 @@ try {
   // a builtin row, which is where Settings keeps its switch (ADR 0270).
   const withDisabledBuiltin = await loadSubagentDefinitions(projectA, {
     userDocuments,
-    disabledBuiltins: ["fixer"],
+    disabledBuiltins: ["code-reviewer"],
   });
   check(
     "a switched-off builtin leaves the catalog and keeps its builtin row",
-    !withDisabledBuiltin.definitions.some((definition) => definition.name === "fixer") &&
+    !withDisabledBuiltin.definitions.some((definition) => definition.name === "code-reviewer") &&
       withDisabledBuiltin.builtins.some(
-        (definition) => definition.name === "fixer" && definition.source === "builtin",
+        (definition) => definition.name === "code-reviewer" && definition.source === "builtin",
       ),
     `${withDisabledBuiltin.definitions.length} definitions, ${withDisabledBuiltin.builtins.length} builtins`,
   );
-  const builtinNames = ["explorer", "code-reviewer", "test-runner", "fixer", "ui-designer"];
+  const builtinNames = ["explorer", "code-reviewer", "ui-designer", "native-media-analyst", "advisor"];
   check(
     "the global registry document reaches the loader as a user definition",
     byName.get("log-reader")?.source === "user",
     `source=${byName.get("log-reader")?.source}`,
   );
   check(
-    "the five builtins remain available beside it",
+    "the remaining builtins stay available beside user definitions",
     merged.definitions.filter((definition) => definition.source === "builtin").length ===
       builtinNames.length &&
       builtinNames.every((name) => byName.get(name)?.source === "builtin"),

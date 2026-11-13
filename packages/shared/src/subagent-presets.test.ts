@@ -21,7 +21,6 @@ describe("SUBAGENT_PRESETS", () => {
       "explorer",
       "code-reviewer",
       "worker",
-      "fixer",
       "ui-designer",
       "native-media-analyst",
       "advisor",
@@ -54,14 +53,11 @@ describe("SUBAGENT_PRESETS", () => {
 
   it("grants Edit/Write only to roles that need them", () => {
     const worker = findSubagentPreset("worker");
-    const fixer = findSubagentPreset("fixer");
     const explorer = findSubagentPreset("explorer");
     const reviewer = findSubagentPreset("code-reviewer");
     const designer = findSubagentPreset("ui-designer");
     expect(worker?.tools).toContain("Edit");
     expect(worker?.tools).toContain("Write");
-    expect(fixer?.tools).toContain("Edit");
-    expect(fixer?.tools).toContain("Write");
     expect(designer?.tools).toContain("Edit");
     expect(designer?.tools).toContain("Write");
     expect(designer?.tools).toContain("BrowserPreview");
@@ -74,13 +70,13 @@ describe("findSubagentPreset", () => {
   it("returns the matching preset", () => {
     expect(findSubagentPreset("explorer")?.id).toBe("explorer");
     expect(findSubagentPreset("worker")?.id).toBe("worker");
-    expect(findSubagentPreset("fixer")?.id).toBe("fixer");
     expect(findSubagentPreset("ui-designer")?.id).toBe("ui-designer");
     expect(findSubagentPreset("media-analyst")?.id).toBe("native-media-analyst");
     expect(findSubagentPreset("native-media-analyst")?.name).toBe("Native Media Analyst");
   });
 
   it("returns undefined for unknown ids", () => {
+    expect(findSubagentPreset("fixer")).toBeUndefined();
     expect(findSubagentPreset("nope")).toBeUndefined();
     expect(findSubagentPreset("")).toBeUndefined();
   });

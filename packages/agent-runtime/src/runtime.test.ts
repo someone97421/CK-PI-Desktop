@@ -3551,7 +3551,7 @@ describe("DesktopAgentRuntime live activity", () => {
       subagentCount: 2,
       agents: [
         { name: "explorer", lastPhase: "tool", lastToolName: "Read" },
-        { name: "fixer", lastPhase: "thinking" },
+        { name: "worker", lastPhase: "thinking" },
       ],
     });
 
@@ -3582,7 +3582,7 @@ describe("DesktopAgentRuntime live activity", () => {
         subagentCount: 2,
         agents: [
           { name: "explorer", lastPhase: "tool", lastToolName: "Read" },
-          { name: "fixer", lastPhase: "thinking" },
+          { name: "worker", lastPhase: "thinking" },
         ],
       },
     ]);
@@ -3592,7 +3592,7 @@ describe("DesktopAgentRuntime live activity", () => {
       subagentCount: 2,
       agents: [
         { name: "explorer", lastPhase: "tool", lastToolName: "Read" },
-        { name: "fixer", lastPhase: "thinking" },
+        { name: "worker", lastPhase: "thinking" },
       ],
     });
 
@@ -11302,7 +11302,7 @@ describe("DesktopAgentRuntime subagents", () => {
 
   it("scopes a mutating delegate's tool calls with its permission", async () => {
     const mutator: SubagentDefinition = {
-      name: "fixer",
+      name: "worker",
       description: "Implement a multi-file change.",
       tools: ["Read", "Edit", "Write"],
       permission: "accept-edits",
@@ -11329,7 +11329,7 @@ describe("DesktopAgentRuntime subagents", () => {
     subagentRuns.calls.length = 0;
     const tool = taskTool(runtime);
 
-    await tool.execute("task-1", { agent: "fixer", task: "Do it." });
+    await tool.execute("task-1", { agent: "worker", task: "Do it." });
     const options = subagentRuns.calls[0];
     // The delegate's tools are wrapped; the wrapper forwards the permission
     // scope into the host RPC while the call runs, then clears it.
@@ -13799,7 +13799,7 @@ describe("isolated session workspace (ADR 0329)", () => {
 
 describe("isolated-session subagent worktrees (ADR 0329)", () => {
   const writer: SubagentDefinition = {
-    name: "fixer",
+    name: "worker",
     description: "Implement a change.",
     tools: ["Read", "Edit", "Write"],
     prompt: "Implement it.",
@@ -13855,7 +13855,7 @@ describe("isolated-session subagent worktrees (ADR 0329)", () => {
       projectPath: "/work/app",
       workspaceRoot: "/data/wt/app/s1",
     });
-    const { delegationId, text } = await runToEnd(runtime, "fixer", "task-w");
+    const { delegationId, text } = await runToEnd(runtime, "worker", "task-w");
     const [create] = calls(host, "worktree.delegate.create");
     expect(create).toEqual({ sessionId: "session-1", delegationId });
 
@@ -13883,7 +13883,7 @@ describe("isolated-session subagent worktrees (ADR 0329)", () => {
     });
     await runToEnd(isolated, "test-runner", "task-b");
     const ordinary = createRuntime({ subagents: [writer], host: host as never, projectPath: "/work/app" });
-    await runToEnd(ordinary, "fixer", "task-o");
+    await runToEnd(ordinary, "worker", "task-o");
     expect(calls(host, "worktree.delegate.create")).toEqual([]);
     expect(calls(host, "worktree.delegate.settle")).toEqual([]);
     const write = subagentRuns.calls[1].tools.find((entry: any) => entry.name === "Write");
@@ -13901,7 +13901,7 @@ describe("isolated-session subagent worktrees (ADR 0329)", () => {
       projectPath: "/work/app",
       workspaceRoot: "/data/wt/app/s1",
     });
-    const { delegationId, text } = await runToEnd(runtime, "fixer", "task-c");
+    const { delegationId, text } = await runToEnd(runtime, "worker", "task-c");
     expect(text).toContain("NOT merged");
     expect(text).toContain("src/a.ts");
     expect(text).toContain(`TaskResume(delegationId: "${delegationId}", expectedExecution: 1)`);
@@ -13913,8 +13913,8 @@ describe("isolated-session subagent worktrees (ADR 0329)", () => {
       projectPath: "/work/app",
       workspaceRoot: "/data/wt/app/s1",
     });
-    subagentRuns.result = { agentName: "fixer", status: "failed", report: "boom", turns: 1, toolCalls: 1 };
-    const failed = await runToEnd(failing, "fixer", "task-f");
+    subagentRuns.result = { agentName: "worker", status: "failed", report: "boom", turns: 1, toolCalls: 1 };
+    const failed = await runToEnd(failing, "worker", "task-f");
     expect(calls(keptHost, "worktree.delegate.settle")[0].merge).toBe(false);
     expect(failed.text).toContain("changes were kept unmerged");
     await runtime.dispose();
@@ -13929,7 +13929,7 @@ describe("isolated-session subagent worktrees (ADR 0329)", () => {
       projectPath: "/work/app",
       workspaceRoot: "/data/wt/app/s1",
     });
-    const result = await tool(runtime, "Task").execute("task-x", { agent: "fixer", task: "Do it." });
+    const result = await tool(runtime, "Task").execute("task-x", { agent: "worker", task: "Do it." });
     expect(result.details.error).toContain("Could not prepare an isolated worktree");
     expect(result.details.error).toContain("unfinished merge conflict");
     expect(subagentRuns.calls).toHaveLength(0);
