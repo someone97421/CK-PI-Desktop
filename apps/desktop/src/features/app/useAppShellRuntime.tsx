@@ -627,7 +627,7 @@ export function useAppShellRuntime() {
       "--font-scale",
       String(resolveFontScale(settings ?? {})),
     );
-  }, [settings?.fontScale, settings?.fontSize]);
+  }, [settings?.fontScale]);
 
   useEffect(() => {
     if (bootstrapStartedRef.current) return;

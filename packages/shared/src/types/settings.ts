@@ -4,7 +4,6 @@ import type { KeybindingOverrides } from "../keyboard-shortcuts.js";
 import type { NetworkProxySettings } from "../network-proxy.js";
 import type { NetworkPolicySettings } from "../network-policy.js";
 import type { FileHostingSettings } from "../media-input.js";
-import type { ContextCompactionSettings } from "./sessions.js";
 import type { Mode } from "./common.js";
 import type { GlobalPermissionMode } from "./permissions.js";
 import type { PluginMarketSource } from "./plugins.js";
@@ -197,20 +196,9 @@ export type AppSettings = {
   keepCommandsExpanded?: boolean;
   /** 保留旧配置读取兼容；compact 隐藏思考，其他值显示。 */
   thinkingDisplayMode?: "detailed" | "compact";
-  /**
-   * @deprecated Unreleased D343 px field. Reads migrate into `fontScale`
-   * as `px / 14`; new writes persist `fontScale` instead.
-   */
-  fontSize?: number;
   enterToSend: boolean;
   /** Text length above which a plain-text paste becomes a session file reference. */
   largePasteThreshold?: number;
-  /**
-   * @deprecated No longer read. Compaction derives its budgets from the model
-   * window instead of exposing knobs; persisted values are ignored so a
-   * session disabled long ago is not stuck without a switch to re-enable it.
-   */
-  contextCompaction?: ContextCompactionSettings;
   /** User overrides for the shared application shortcut map. */
   keybindings?: KeybindingOverrides;
   /** Unlocks the devtools console (settings button, F12, macOS View menu). */

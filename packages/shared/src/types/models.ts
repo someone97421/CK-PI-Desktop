@@ -208,8 +208,6 @@ export function catalogModelIdsMatch(candidate: string, requested: string): bool
 
 /** Where a saved model limit came from; user-authored values are never replaced. */
 export type ModelLimitSource = "catalog" | "user";
-/** @deprecated Use ModelLimitSource; kept for existing context-window callers. */
-export type ContextWindowSource = ModelLimitSource;
 
 /** Provider-local model settings persisted with the provider configuration. */
 export type ModelBinding = {
@@ -219,7 +217,7 @@ export type ModelBinding = {
   alias?: string;
   contextWindow: number;
   /** 上下文窗口来源；旧记录没有标记时保留已保存值，按用户值处理。 */
-  contextWindowSource?: ContextWindowSource;
+  contextWindowSource?: ModelLimitSource;
   maxTokens: number;
   /** Provenance of `maxTokens`, independent of `contextWindowSource`. */
   maxTokensSource?: ModelLimitSource;

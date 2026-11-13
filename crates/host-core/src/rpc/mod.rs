@@ -386,11 +386,6 @@ fn read_app_settings(db: &crate::db::Database) -> Result<Value, JsonRpcError> {
             "theme": "dark",
             "enterToSend": true,
             "largePasteThreshold": DEFAULT_LARGE_PASTE_THRESHOLD,
-            "contextCompaction": {
-                "enabled": true,
-                "reserveTokens": 16384,
-                "keepRecentTokens": 20000
-            },
             "onboardingDismissed": false
         })
     }));
@@ -452,10 +447,7 @@ pub async fn serve(state: Arc<Mutex<AppState>>) -> Result<()> {
         let state = state.clone();
         let tx = tx.clone();
         async move {
-            // The host owns a short local debounce clock; remote polling is
-            // gated inside the engine to five minutes when no local change is
-            // pending. This lets a quiet app settle filesystem edits without
-            // turning every tick into a WebDAV request.
+            // 本地变更以短周期合并；远端轮询由同步引擎按需节流。
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -2621,11 +2613,6 @@ async fn handle_request(
                     "theme": "dark",
                     "enterToSend": true,
                     "largePasteThreshold": DEFAULT_LARGE_PASTE_THRESHOLD,
-                    "contextCompaction": {
-                        "enabled": true,
-                        "reserveTokens": 16384,
-                        "keepRecentTokens": 20000
-                    },
                     "onboardingDismissed": false
                 })
             }));

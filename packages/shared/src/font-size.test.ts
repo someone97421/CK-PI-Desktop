@@ -4,7 +4,6 @@ import {
   FONT_SCALE_PRESETS,
   MAX_FONT_SCALE,
   MIN_FONT_SCALE,
-  fontScaleFromLegacyFontSize,
   normalizeFontScale,
   resolveFontScale,
 } from "./font-size.js";
@@ -31,17 +30,9 @@ describe("font scale", () => {
     expect(normalizeFontScale(FONT_SCALE_PRESETS.xl)).toBe(1.25);
   });
 
-  it("migrates the unreleased px field as px / 14", () => {
-    expect(fontScaleFromLegacyFontSize(14)).toBe(1);
-    expect(fontScaleFromLegacyFontSize(12)).toBe(0.85);
-    expect(fontScaleFromLegacyFontSize(16)).toBe(1.15);
-    expect(fontScaleFromLegacyFontSize(21)).toBe(1.5);
-    expect(fontScaleFromLegacyFontSize("14")).toBeUndefined();
-  });
-
-  it("prefers fontScale over a leftover fontSize", () => {
-    expect(resolveFontScale({ fontScale: 1.25, fontSize: 12 })).toBe(1.25);
-    expect(resolveFontScale({ fontSize: 12 })).toBe(0.85);
+  it("resolves fontScale from settings", () => {
+    expect(resolveFontScale({ fontScale: 1.25 })).toBe(1.25);
+    expect(resolveFontScale({ fontScale: 1.12 })).toBe(1.125);
     expect(resolveFontScale({})).toBe(1);
   });
 });

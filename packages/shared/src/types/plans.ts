@@ -36,9 +36,6 @@ export type PlanApprovalStatus =
   | "expired"
   | "interrupted";
 
-/** Compatibility name for the proposal-shaped approval wire record. */
-export type PlanProposalStatus = PlanApprovalStatus;
-
 export type PlanArtifact = {
   /** Workspace-relative path of the host-created plan artifact. */
   relativePath: string;
@@ -74,7 +71,7 @@ export type PlanProposal = {
   artifact?: PlanArtifact;
   /** Host schema/version for this proposal snapshot. */
   version: number;
-  status: PlanProposalStatus;
+  status: PlanApprovalStatus;
   createdAt: string;
   updatedAt: string;
   expiresAt?: string;

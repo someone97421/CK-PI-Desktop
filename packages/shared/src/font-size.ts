@@ -39,23 +39,6 @@ export function isFontScale(value: unknown): value is number {
   );
 }
 
-/**
- * One-shot read of the unreleased D343 px field (`fontSize` / 14).
- * Returns undefined when the value is not a usable integer px.
- */
-export function fontScaleFromLegacyFontSize(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    return undefined;
-  }
-  return normalizeFontScale(value / 14);
-}
-
-export function resolveFontScale(settings: {
-  fontScale?: unknown;
-  fontSize?: unknown;
-}): number {
-  if (settings.fontScale !== undefined) {
-    return normalizeFontScale(settings.fontScale);
-  }
-  return fontScaleFromLegacyFontSize(settings.fontSize) ?? DEFAULT_FONT_SCALE;
+export function resolveFontScale(settings: { fontScale?: unknown }): number {
+  return normalizeFontScale(settings.fontScale);
 }
