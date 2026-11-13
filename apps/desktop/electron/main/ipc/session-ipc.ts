@@ -11,6 +11,7 @@ import {
   draftMatchesExisting,
   providerCreateInputFromDraft,
   isModelConfigImportSource,
+  isModeId,
   type ModelConfigImportDraft,
   type Mode,
   type SessionThinkingLevel,
@@ -300,11 +301,12 @@ export function registerSessionIpc({
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw Object.assign(new Error("会话创建参数无效"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
     }
+    const currentHost = host;
     const mode = input.mode === "chat" ? "plan" : input.mode ?? "agent";
     if (!isModeId(mode)) throw Object.assign(new Error("工作模式无效"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
     const modeSnapshot = await modeCatalog.snapshotFor(mode);
     const { providers, defaults } = await sessionCapabilityContext();
-    const res = await host.call<{ session?: (RuntimeSession & { id?: string }) | null }>(
+    const res = await currentHost.call<{ session?: (RuntimeSession & { id?: string }) | null }>(
       "session.create",
       { ...input, mode, modeSnapshot },
     );

@@ -25,7 +25,7 @@ import {
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
 import { clampThinkingLevel, omitThinkingModel } from "./thinking-level.js";
-import { effectiveModelContextWindow } from "./output-cap.js";
+import { effectiveModelContextWindow, estimateOutputCapInputTokens, truncateTextWithinOutputCap } from "./output-cap.js";
 
 import {
   COMPACTION_SUMMARY_RETRY_POLICY,
@@ -168,8 +168,10 @@ function truncateUserMessageForCheckpoint(
 ): UserMessage {
   return {
     ...message,
-    content: truncateTextForCheckpoint(
+    content: truncateTextWithinOutputCap(
       userMessageTextForCheckpoint(message),
+      tokenBudget,
+      CHECKPOINT_TRUNCATION_MARKER,
       Math.max(1, Math.floor(tokenBudget * ESTIMATED_TEXT_CHARS_PER_TOKEN)),
     ),
   };
@@ -190,7 +192,9 @@ export function selectRetainedUserMessages(
   let remaining = Math.max(0, maxTokens);
   for (let index = candidates.length - 1; index >= 0 && remaining > 0; index -= 1) {
     const message = candidates[index];
-    const tokens = estimateTokens(message);
+    const tokens = Math.max(estimateTokens(message), estimateOutputCapInputTokens({
+      messages: [{ role: "user", content: message.content }],
+    }));
     if (tokens <= remaining) {
       selected.push(message);
       remaining -= tokens;
@@ -392,6 +396,9 @@ export function fileOpsFromMessages(
     written: new Set<string>(),
     edited: new Set<string>(),
   };
+  const executedCallIds = new Set(messages.flatMap((message) =>
+    message.role === "toolResult" && message.isError !== true ? [message.toolCallId] : [],
+  ));
   for (const message of messages) {
     if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
     collectMessageFileOperations({
@@ -401,7 +408,7 @@ export function fileOpsFromMessages(
           ? { ...block, name: PI_FILE_OP_TOOL_NAMES[block.name] ?? block.name }
           : block,
       ),
-    }, fileOps);
+    }, fileOps, executedCallIds);
   }
   return fileOps;
 }

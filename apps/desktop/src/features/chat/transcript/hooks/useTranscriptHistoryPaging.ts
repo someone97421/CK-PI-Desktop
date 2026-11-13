@@ -6,10 +6,16 @@ import {
   restoreTranscriptReadingPosition,
   type TranscriptReadingPosition,
 } from "../../../../lib/transcript-reading-position";
+import {
+  captureTranscriptTextAnchor,
+  resolveTranscriptTextAnchor,
+  transcriptReaderMovement,
+  type TranscriptTextAnchor,
+} from "../../../../lib/transcript-reading-anchor";
 
 type Hold = {
   position: TranscriptReadingPosition;
-  point?: { element: HTMLElement; offset: number };
+  point?: TranscriptTextAnchor;
   settled: boolean;
   stableFrames: number;
   page: boolean;
@@ -41,15 +47,7 @@ function messageRow(content: HTMLElement, position: TranscriptReadingPosition) {
 }
 
 function contentPoint(scroller: HTMLElement, content: HTMLElement, position: TranscriptReadingPosition) {
-  const viewport = scroller.getBoundingClientRect();
-  const row = messageRow(content, position);
-  for (const element of row?.querySelectorAll<HTMLElement>(".task-process-summary, .tool-activity-header, .prose-chat p, .prose-chat li, .prose-chat pre, .prose-chat h1, .prose-chat h2, .prose-chat h3, .message-user-text") ?? []) {
-    if (!isTranscriptElementShown(element)) continue;
-    const rect = element.getBoundingClientRect();
-    if (rect.height > 0 && rect.bottom > viewport.top && rect.top < viewport.bottom) {
-      return { element, offset: rect.top - viewport.top };
-    }
-  }
+  return captureTranscriptTextAnchor(scroller, messageRow(content, position));
 }
 
 /** Single-flight page IO and pre-paint anchoring follow the reader's newest
@@ -125,11 +123,10 @@ export function useTranscriptHistoryPaging({ scrollRef, contentRef, visible, sou
     if (isLayoutClamp(held)) return;
     // Retain the same readable message across a gesture. Switching immediately
     // to a newly exposed, estimated row lets its late layout move the text away.
-    const delta = scroller.scrollTop - held.top;
-    held.position = { ...held.position, offset: held.position.offset - delta,
-      anchorOffset: held.position.anchorOffset === undefined ? undefined : held.position.anchorOffset - delta,
+    const movement = transcriptReaderMovement(held.top, scroller.scrollTop, scroller.scrollHeight, scroller.clientHeight);
+    held.position = { ...held.position, offset: held.position.offset - movement,
+      anchorOffset: held.position.anchorOffset === undefined ? undefined : held.position.anchorOffset - movement,
       scrollTop: scroller.scrollTop };
-    const movement = scroller.scrollTop - held.top;
     if (held.point) held.point.offset -= movement;
     if (!layoutChanged(held, sourceHeadRef.current) &&
       !isTranscriptReadingAnchorVisible(scroller, content, held.position)) {
@@ -139,8 +136,9 @@ export function useTranscriptHistoryPaging({ scrollRef, contentRef, visible, sou
         held.point = contentPoint(scroller, content, position);
       }
     }
-    if (!layoutChanged(held, sourceHeadRef.current) && (!held.point?.element.isConnected ||
-      held.point.offset >= scroller.clientHeight || held.point.offset + held.point.element.getBoundingClientRect().height <= 0)) {
+    const rect = held.point && resolveTranscriptTextAnchor(messageRow(content, held.position), held.point);
+    if (!layoutChanged(held, sourceHeadRef.current) && (!held.point || (rect &&
+      (held.point.offset >= scroller.clientHeight || held.point.offset + rect.height <= 0)))) {
       held.point = contentPoint(scroller, content, held.position);
     }
     held.top = scroller.scrollTop;
@@ -153,23 +151,20 @@ export function useTranscriptHistoryPaging({ scrollRef, contentRef, visible, sou
     track();
     const before = scroller.scrollTop;
     const changed = layoutChanged(held, sourceHeadRef.current);
-    if (held.point?.element.isConnected && isTranscriptElementShown(held.point.element)
-      && held.point.element.getBoundingClientRect().height > 0) {
-      const delta = held.point.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - held.point.offset;
-      if (Math.abs(delta) > 0.5) {
-        const target = scroller.scrollTop + delta;
-        scroller.scrollTop = target;
-        // 无法越过滚动边界时接受实际位置，不在后续观察回调里反复追逐旧目标。
-        if (Math.abs(scroller.scrollTop - target) > 0.5) {
-          held.point.offset = held.point.element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-        }
+    const row = messageRow(content, held.position);
+    const rect = held.point && resolveTranscriptTextAnchor(row, held.point);
+    if (held.point && rect) {
+      const delta = rect.top - scroller.getBoundingClientRect().top - held.point.offset;
+      const target = scroller.scrollTop + delta;
+      if (Math.abs(delta) > 0.5) scroller.scrollTop = target;
+      if (target < 0 || target > scroller.scrollHeight - scroller.clientHeight) {
+        held.point.offset += target - scroller.scrollTop;
       }
-      const row = messageRow(content, held.position);
-      if (row) held.position = { ...held.position, offset: row.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
     } else {
       restoreTranscriptReadingPosition(scroller, content, held.position);
       held.point = contentPoint(scroller, content, held.position);
     }
+    if (row) held.position = { ...held.position, offset: row.getBoundingClientRect().top - scroller.getBoundingClientRect().top };
     held.height = scroller.scrollHeight;
     held.viewport = scroller.clientHeight;
     held.alignedHead = sourceHeadRef.current;

@@ -551,6 +551,7 @@ export const zhCN = {
     responseError: "这次回复未能完成",
     responseFailed: "助手没能完成这次回复。",
     dismissError: "关闭错误消息",
+    outputTruncated: "回复因达到模型输出 token 上限而被截断，内容可能不完整。",
     showErrorDetails: "显示详情",
     hideErrorDetails: "隐藏详情",
     copyErrorDetails: "复制详情",

@@ -558,6 +558,7 @@ export const en = {
     responseError: "Couldn't finish this reply",
     responseFailed: "The assistant couldn't complete this reply.",
     dismissError: "Dismiss error message",
+    outputTruncated: "This reply was truncated because the model reached its output token limit. The content may be incomplete.",
     showErrorDetails: "Show details",
     hideErrorDetails: "Hide details",
     copyErrorDetails: "Copy details",

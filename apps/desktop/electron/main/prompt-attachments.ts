@@ -19,8 +19,10 @@ import {
 import { copyFile, open } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { MediaStore } from "@pi-desktop/agent-runtime/media-store";
+import { resolveComposerFileReference } from "./composer-file-references.ts";
 import {
   ErrorCodes,
+  appendLocalFileReferenceContext,
   formatFileInsert,
   formatPromptPathText,
   imageExceedsInlineDimensions,
@@ -264,6 +266,18 @@ export async function preparePromptAttachments(
     attachments.map((attachment) => attachment.path),
   );
   for (const [index, attachment] of attachments.entries()) {
+    if (attachment.localReference !== undefined) {
+      const file = await resolveComposerFileReference(dataRoot, projectPath, attachment.path, attachment.localReference, sessionId);
+      prepared.push({
+        message: {
+          kind: "file", name: file.name, ref: file.path, mimeType: file.mimeType,
+          size: file.size, localReference: file.localReference,
+          ...(inlineSpans[index] ? { inlinePath: formatPromptPathText(file.path) } : {}),
+        },
+        fallbackPath: file.path,
+      });
+      continue;
+    }
     const source = resolvePromptPath(dataRoot, sessionId, projectPath, attachment.path);
     if (!source) {
       throw Object.assign(new Error(`Attachment path is outside the session roots: ${attachment.path}`), {
@@ -373,7 +387,7 @@ export function appendPromptFallbackPaths(
   attachments: readonly PreparedPromptAttachment[],
 ): string {
   const paths = attachments
-    .filter((attachment) => !attachment.inlineData && !attachment.mediaRef)
+    .filter((attachment) => !attachment.inlineData && !attachment.mediaRef && !attachment.message.localReference)
     // 已在正文中的原路径无需追加；历史副本的新路径仍需保留。
     .filter(
       (attachment) =>
@@ -383,6 +397,6 @@ export function appendPromptFallbackPaths(
     .join("")
     .trim();
   const text = content.trim();
-  if (!text) return paths;
-  return paths ? `${text}\n${paths}` : text;
+  return appendLocalFileReferenceContext([text, paths].filter(Boolean).join("\n"),
+    attachments.map(attachment => ({ ...attachment.message, path: attachment.fallbackPath })));
 }

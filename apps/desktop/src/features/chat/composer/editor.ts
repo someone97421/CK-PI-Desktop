@@ -39,6 +39,8 @@ export function createFileReference(
   preferredName?: string,
   sessionId = "",
   metadata?: {
+    size?: number;
+    localReference?: string;
     kind?: "image" | "file" | "session" | "directory" | "agent";
     mimeType?: string;
     token?: string;
@@ -57,6 +59,8 @@ export function createFileReference(
         ? (preferredName ?? "")
         : fileReferenceLabel(path, preferredName),
     kind: metadata?.kind ?? (isImageFilePath(path) ? "image" : "file"),
+    ...(metadata?.size !== undefined ? { size: metadata.size } : {}),
+    ...(metadata?.localReference ? { localReference: metadata.localReference } : {}),
     ...(metadata?.mimeType ? { mimeType: metadata.mimeType } : {}),
     ...(metadata?.token ? { token: metadata.token } : {}),
     ...(metadata?.plugin ? { plugin: metadata.plugin } : {}),
@@ -282,6 +286,7 @@ function chipSvg(key: string, size = 13): string {
 }
 
 export function isEditableTextReference(reference: ComposerFileReference): boolean {
+  if (reference.localReference) return false;
   if (isPluginMark(reference) || reference.kind === "directory" || reference.kind === "agent") return false;
   return reference.mimeType?.toLowerCase() === "text/plain" || /\.txt$/i.test(reference.name);
 }
@@ -314,7 +319,7 @@ function buildChipElement(
   if (directory) chip.classList.add("composer-directory-card");
   // An image keeps the compact chip and opens its preview, a session chip opens
   // that conversation, and only plain text expands into editable draft text.
-  const image = chipIconKey(reference) === "image";
+  const image = !reference.localReference && chipIconKey(reference) === "image";
   if (image) chip.dataset.image = "";
   const session = reference.kind === "session";
   if (session) chip.dataset.sessionId = reference.path;
@@ -363,6 +368,13 @@ function buildChipElement(
   const nameSpan = document.createElement("span");
   nameSpan.className = "composer-chip-name";
   nameSpan.textContent = reference.name;
+  if (reference.localReference && reference.size !== undefined) {
+    const unit = Math.min(3, Math.floor(Math.log2(Math.max(1, reference.size)) / 10));
+    const size = reference.size / 1024 ** unit;
+    nameSpan.textContent += ` · ${Number(size.toFixed(1))} ${["B", "KiB", "MiB", "GiB"][unit]}`;
+    chip.title += ` (${reference.size} B)`;
+    chip.setAttribute("aria-label", `${reference.name} — ${chip.title}`);
+  }
 
   const remove = document.createElement("button");
   remove.type = "button";

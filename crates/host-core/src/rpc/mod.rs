@@ -14,6 +14,9 @@ mod window_corner_rpc;
 mod worktree_rpc;
 
 #[cfg(test)]
+mod session_mode_create_tests;
+
+#[cfg(test)]
 mod plugin_reviews_rpc_tests;
 #[cfg(test)]
 mod review_rpc_tests;
@@ -2887,7 +2890,6 @@ async fn handle_request(
             } else {
                 None
             };
-            let requested_mode = sessions::normalize_mode(params.get("mode").and_then(Value::as_str));
             let st = state.lock().await;
             if let Some(project) = isolated_project.as_deref() {
                 worktree_rpc::ensure_local_project(&st.db, project)?;
@@ -2901,10 +2903,7 @@ async fn handle_request(
             } else {
                 None
             };
-            let tx = st.db.conn().unchecked_transaction()
-                .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
-            let prepared_mode = modes_rpc::prepare_configure(&st, "", &requested_mode, &params)?;
-            let session = sessions::create_session_with_options(
+            let session = sessions::create_session_with_mode_snapshot(
                 &st.db,
                 sessions::SessionCreateOptions {
                     draft_id: params.get("draftId").and_then(|v| v.as_str()).map(str::to_string),
@@ -2936,13 +2935,9 @@ async fn handle_request(
                     permission_mode,
                     fast_mode,
                 },
+                params.get("modeSnapshot"),
             )
-            .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
-            st.db.conn().execute(
-                "UPDATE sessions SET mode_snapshot_hash = ?1 WHERE id = ?2",
-                rusqlite::params![prepared_mode.snapshot_hash(), session.id],
-            ).map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
-            tx.commit().map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
+            .map_err(modes_rpc::error)?;
             let Some(project) = isolated_project else {
                 let session = remote_tools::decorate_session(
                     &st.db,

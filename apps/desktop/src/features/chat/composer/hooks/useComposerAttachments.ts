@@ -135,6 +135,8 @@ export function useComposerAttachments({
           reference: createFileReference(file.path, file.name, referenceSessionId, {
             kind: file.kind,
             mimeType: file.mimeType,
+            size: file.size,
+            localReference: file.localReference,
             token,
           }),
         };
@@ -158,8 +160,8 @@ export function useComposerAttachments({
           ...chips.map((chip) => draftFileReference(chip.reference)),
         ],
       });
-      const currentSessionId = useAppStore.getState().activeSessionId;
-      if (currentSessionId === targetSessionId) {
+      const currentSessionId = useAppStore.getState().activeSessionId ?? undefined;
+      if (currentSessionId === (targetSessionId ?? undefined)) {
         draft.applyEditorDraft(nextText, nextReferences, selectionStart + inserted.length);
       } else if (sourceDraftKey === HOME_DRAFT_KEY) {
         deleteComposerDraft(HOME_DRAFT_KEY);
@@ -304,12 +306,14 @@ export function useComposerAttachments({
 
         let result;
         if (native) {
+          const owner = useAppStore.getState().sessions.find(session => session.id === targetSessionId);
+          const reference = !owner?.remoteWorkspace && (!owner?.source || owner.source === "desktop") && !targetSessionId?.startsWith("remote:");
           const imported = native.token
-            ? await api.importFiles(targetSessionId, native.token, draftId)
+            ? await api.importFiles(targetSessionId, native.token, draftId, reference)
             : { files: [] };
           let index = 0;
           result = { files: native.items.map(item => item.kind === "directory"
-            ? { path: item.path, name: item.name, kind: "directory" as const, mimeType: undefined }
+            ? { path: item.path, name: item.name, kind: "directory" as const, mimeType: undefined, size: undefined, localReference: undefined }
             : imported.files[index++]) };
         } else {
           result = await api.pasteFiles(targetSessionId, payload, draftId);
@@ -337,6 +341,8 @@ export function useComposerAttachments({
             reference: createFileReference(file.path, file.name, referenceSessionId, {
               kind: file.kind,
               mimeType: file.mimeType,
+              size: file.size,
+              localReference: file.localReference,
               token,
             }),
           };
@@ -445,6 +451,8 @@ export function useComposerAttachments({
           reference: createFileReference(file.path, file.name, referenceSessionId, {
             kind: file.kind,
             mimeType: file.mimeType,
+            size: file.size,
+            localReference: file.localReference,
             token,
           }),
         };
@@ -478,8 +486,8 @@ export function useComposerAttachments({
           ...chips.map((chip) => draftFileReference(chip.reference)),
         ],
       });
-      const currentSessionId = useAppStore.getState().activeSessionId;
-      if (currentSessionId === targetSessionId) {
+      const currentSessionId = useAppStore.getState().activeSessionId ?? undefined;
+      if (currentSessionId === (targetSessionId ?? undefined)) {
         draft.applyEditorDraft(nextText, nextReferences, selectionStart + inserted.length);
       } else if (sourceDraftKey === HOME_DRAFT_KEY) {
         deleteComposerDraft(HOME_DRAFT_KEY);

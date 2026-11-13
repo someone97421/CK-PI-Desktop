@@ -294,7 +294,11 @@ export function ComposerToolbar({
           </TooltipButton>
         ) : null}
         {runActive && !hasDraftContent ? (
-          <StopRunPill t={t} abort={() => { if (stopAllowed) void abort(); }} startedAt={runStartedAt} timing={runTiming} />
+          <StopRunPill t={t} abort={() => {
+            if (stopAllowed) void abort().catch((error) => {
+              showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+            });
+          }} startedAt={runStartedAt} timing={runTiming} />
         ) : (
           <TooltipButton
             type="button"

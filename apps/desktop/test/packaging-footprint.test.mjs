@@ -297,3 +297,18 @@ test("packaging does not include removed PTY native payload configuration", () =
   assert.doesNotMatch(JSON.stringify(packageJson.build.files), /node-pty/);
   assert.doesNotMatch(JSON.stringify(packageJson.build.extraResources), /node-pty/);
 });
+
+test("main output is minified without renaming and shares one Pi SDK copy", () => {
+  const mainConfig = viteConfigSource.slice(
+    viteConfigSource.indexOf("  main: {"),
+    viteConfigSource.indexOf("  preload: {"),
+  );
+  assert.match(mainConfig, /minify:\s*"esbuild"/);
+  // Packaged builds ship no source maps; identifiers keep stack traces readable.
+  assert.match(mainConfig, /minifyIdentifiers:\s*false/);
+  assert.match(mainConfig, /plugins:\s*\[dedupeMainPackages\(\)\]/);
+  assert.match(
+    viteConfigSource,
+    /MAIN_SHARED_PACKAGES = \["@earendil-works\/pi-ai", "typebox"\]/,
+  );
+});

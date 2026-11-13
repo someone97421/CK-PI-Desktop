@@ -28,6 +28,9 @@ type HostCaller = { call<T = unknown>(method: string, params?: unknown): Promise
 /** `modes.settleReturn` answer: the return mode still pending, or the one applied. */
 type ModeSettleReturnResult = { pending: string | null; applied: string | null };
 
+function isPlainMode(mode: string): boolean {
+  return mode === "agent" || mode === "plan";
+}
 
 /** Model-facing content of a Host-started turn. It is never persisted as a
  * user message; the stage brief in the system prompt carries the details. */
@@ -45,7 +48,7 @@ export function modeContinuationOrigin(request: object): Exclude<ModeTurnOrigin,
   return continuationOrigins.get(request);
 }
 
-export type PreparedModeTurn = { modeTurn: ModeTurnContext; definition: ModeDefinition };
+export type PreparedModeTurn = { modeTurn?: ModeTurnContext; definition: ModeDefinition };
 
 export type ModeTurnEnd = { reason: "completed" | "aborted" | "error"; usage?: MessageUsage; errorCode?: string };
 
@@ -115,6 +118,7 @@ export function createModeRunCoordinator(deps: {
 
   return {
     async definitionForPrompt(modeId: string): Promise<ModeDefinition | undefined> {
+      if (isPlainMode(modeId)) return undefined;
       const definition = await deps.catalog.definition(modeId);
       if (!definition && modeId !== "agent" && modeId !== "plan") {
         throw Object.assign(new Error("Mode is not available"), { errorCode: "MODE_NOT_FOUND" });
@@ -128,9 +132,8 @@ export function createModeRunCoordinator(deps: {
     },
 
     /**
-     * Claim the session's run for a durable turn. Returns nothing for simple
-     * modes, or when a user turn cannot claim (it then runs as a plain turn of
-     * the selected mode). A continuation that cannot claim throws, so the
+     * Claim the session's run for a durable turn, or return a simple mode's
+     * definition without a claim. A continuation that cannot claim throws, so the
      * caller closes the empty turn instead of running it.
      */
     async prepareTurn(input: {
@@ -140,22 +143,22 @@ export function createModeRunCoordinator(deps: {
       content: string;
       origin: ModeTurnOrigin;
     }): Promise<PreparedModeTurn | undefined> {
+      if (isPlainMode(input.sessionMode)) {
+        if (input.origin !== "user") throw Object.assign(new Error("mode run is not staged"), { errorCode: "MODE_NOT_STAGED" });
+        return undefined;
+      }
       const hostCaller = host();
       const { run } = await hostCaller.call<ModeRunResult>("modes.get", { sessionId: input.sessionId });
-      const selected = run?.modeId === input.sessionMode ? undefined : await deps.catalog.definition(input.sessionMode);
-      if (!run || run.modeId !== input.sessionMode) {
-        if (!selected && input.sessionMode !== "agent" && input.sessionMode !== "plan") {
-          throw Object.assign(new Error("工作模式不可用"), { errorCode: "MODE_NOT_FOUND" });
-        }
-        if (!selected || selected.stages.length === 0) {
-          if (input.origin !== "user") throw Object.assign(new Error("mode run is not staged"), { errorCode: "MODE_NOT_STAGED" });
-          return undefined;
-        }
-      }
-      await assertLocalSession(input.sessionId);
+      let selected: ModeDefinition | undefined;
       let claim: ModeClaimResult;
       if (!run) {
+        selected = await this.definitionForPrompt(input.sessionMode);
+        if (!selected || selected.stages.length === 0) {
+          if (input.origin !== "user") throw Object.assign(new Error("mode run is not staged"), { errorCode: "MODE_NOT_STAGED" });
+          return selected ? { definition: selected } : undefined;
+        }
         if (input.origin !== "user") throw Object.assign(new Error("no open mode run"), { errorCode: "MODE_RUN_NOT_FOUND" });
+        await assertLocalSession(input.sessionId);
         claim = await hostCaller.call<ModeClaimResult>("modes.start", {
           sessionId: input.sessionId,
           input: input.content,
@@ -165,6 +168,7 @@ export function createModeRunCoordinator(deps: {
         if (input.origin !== "user") throw Object.assign(new Error("mode run belongs to another mode"), { errorCode: "MODE_RUN_ACTIVE" });
         return undefined;
       } else {
+        await assertLocalSession(input.sessionId);
         claim = await hostCaller.call<ModeClaimResult>("modes.claimTurn", {
           sessionId: input.sessionId,
           runId: run.id,
@@ -179,7 +183,10 @@ export function createModeRunCoordinator(deps: {
       }
       turnRuns.set(input.turnId, { sessionId: input.sessionId, runId: claim.run.id });
       const definition = claim.definition ?? selected;
-      if (!definition) throw Object.assign(new Error("模式运行缺少定义快照"), { errorCode: "MODE_DEFINITION_INVALID" });
+      if (!definition) {
+        await this.abandonTurn(input.sessionId, input.turnId);
+        throw Object.assign(new Error("Mode run snapshot is unavailable"), { errorCode: "MODE_NOT_FOUND" });
+      }
       return {
         // The run executes the snapshot it started with; editing the file
         // during a run never changes it.

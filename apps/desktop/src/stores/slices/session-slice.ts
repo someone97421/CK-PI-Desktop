@@ -239,6 +239,7 @@ export function createSessionSlice({
                   ...session,
                   mode: modeAfterPlanningUpdate(durableMode, hostState, () =>
                     sessionModeForPlanningState(hostState, nextKind),
+                    wasPending ? checkpoint : undefined,
                   ),
                 }
               : session,

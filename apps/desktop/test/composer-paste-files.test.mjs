@@ -99,9 +99,9 @@ test("paste IPC is a typed renderer-to-main bridge", () => {
   assert.match(protocol, /composerPasteFiles: "pi-desktop\/composer\/pasteFiles"/);
   assert.match(protocol, /clipboardRecordPaste: "pi-desktop\/clipboard\/recordPaste"/);
   assert.match(protocol, /composerImportFiles: "pi-desktop\/composer\/importFiles"/);
-  assert.match(api, /pasteFiles: \(sessionId: string, files: ComposerPasteFile\[\]\)/);
+  assert.match(api, /pasteFiles: \(\s*sessionId: string \| null \| undefined,\s*files: ComposerPasteFile\[\],\s*draftId\?: string/);
   assert.match(api, /pickFiles: \(\) =>[\s\S]*token: string \| null/);
-  assert.match(api, /importFiles: \(sessionId: string, token: string\)/);
+  assert.match(api, /importFiles: \(sessionId: string \| null \| undefined, token: string, draftId\?: string, reference = false\)/);
   assert.match(api, /IPC\.invoke\.composerPasteFiles/);
   assert.match(api, /recordClipboardPaste: \(text: string\)/);
   assert.match(api, /IPC\.invoke\.clipboardRecordPaste/);
@@ -123,16 +123,10 @@ test("paste IPC is a typed renderer-to-main bridge", () => {
   assert.doesNotMatch(api, /importFiles: \(sessionId: string, paths: string\[\]\)/);
 });
 
-test("picker attachments materialize a session before importing paths", () => {
-  assert.match(
-    composer,
-    /const sessionId = sourceSessionId \?\? \(await materializeDraftSession\(\)\)/,
-  );
-  assert.match(composer, /api\.importFiles\(\s*sessionId,\s*result\.token\s*\)/);
-  assert.match(
-    composer,
-    /createFileReference\(file\.path, file\.name, sessionId, \{[\s\S]*kind: file\.kind/,
-  );
+test("picker attachments resolve a session or temporary draft owner before import", () => {
+  assert.match(composer, /const \{ sessionId: targetSessionId, draftId \} = await resolveAttachmentOwner\(sourceSessionId\)/);
+  assert.match(composer, /api\.importFiles\(targetSessionId, result\.token, draftId\)/);
+  assert.match(composer, /createFileReference\(file\.path, file\.name, referenceSessionId, \{[\s\S]*kind: file\.kind/);
   assert.doesNotMatch(
     composer,
     /createFileReference\(path, undefined, referenceSessionId/,

@@ -1,3 +1,4 @@
+import { appendLocalFileReferenceContext } from "@pi-desktop/shared";
 import { buildJobTools } from "./background-job-tools.js";
 import {
   MAX_MUTATION_RECOVERY_FAILURES, BASH_PATCH_FAILURE_KEY,
@@ -174,6 +175,7 @@ import { withExplicitRequired } from "./tool-schema.js";
 import { buildSessionContext } from "./session-context.js";
 import {
   collectMessageFileOperations,
+  executedToolCallIdsInEntries,
   prepareCompaction,
 } from "./pi-runtime-compaction-plan.js";
 import {
@@ -387,9 +389,10 @@ function promptText(input: RuntimePrompt): string {
   const references = (input.attachments ?? [])
     .map((attachment) => sessionReferenceBlock(attachment))
     .filter((block): block is string => block !== null);
-  return references.length
+  const text = references.length
     ? `${input.text}\n\n${references.join("\n\n")}`.trim()
     : input.text;
+  return appendLocalFileReferenceContext(text, input.attachments ?? []);
 }
 
 function promptContent(input: string | RuntimePrompt, capabilities: MediaInputCapabilities = {}): UserMessage["content"] {
@@ -432,6 +435,7 @@ function runtimeAttachmentFromMessage(
     kind: attachment.kind,
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+    ...(attachment.localReference ? { localReference: attachment.localReference } : {}),
     ...(attachment.text ? { text: attachment.text } : {}),
     // Recorded placement: the message content names this image at that spot, so
     // the restored prompt keeps the block there too.
@@ -1526,7 +1530,6 @@ function appendToolProgress(current: string, chunk: string): string {
   const head = takePrefixCodeUnits(combined, headBudget);
   const tail = tailBudget > 0 ? takeSuffixCodeUnits(combined, tailBudget) : "";
   return `${head}${TOOL_PROGRESS_TRUNCATION_MARKER}${tail}`;
-
 }
 
 /**
@@ -2121,7 +2124,7 @@ export class DesktopAgentRuntime {
     this.compactionCandidate = opts.compactionProvider;
     this.applyCompactionBinding();
 
-    this.fullEntries = this.historyToEntries(opts.history ?? []);
+    this.fullEntries = this.historyToEntries(opts.history ?? [], opts.compaction?.throughMessageId);
     this.savedDelegationResults = subagentResultsFromHistory(opts.history ?? []);
     this.uniqueToolCalls = createToolCallIdentity(this.fullEntries.map((entry) => entry.message));
     this.activeCompaction = opts.compaction;
@@ -3209,7 +3212,7 @@ Delegation rules:
    * turns after a restart. Losing either (the pre-D120 tool behavior)
    * collapsed a reseeded session to bare chat text. Failed assistant turns
    * stay transcript-only. */
-  private historyToEntries(history: UiMessage[]): MessageEntry[] {
+  private historyToEntries(history: UiMessage[], compactionThroughMessageId?: string): MessageEntry[] {
     const api = apiBindingForProviderModel(this.provider).api;
     const deepSeekCompletionsReplay =
       api === "openai-completions" &&
@@ -3237,7 +3240,16 @@ Delegation rules:
     let toolCarrier: AssistantMessage | undefined;
     // Function-call signatures of the carrier's row, restored by call id.
     let carrierToolSignatures = new Map<string, string>();
+    let compactedCarrier: AssistantMessage | undefined;
+    let previousRowId: string | undefined;
     for (const m of orderSystemRows(history)) {
+      // A carrier before this boundary is removed by context compaction. Tool
+      // rows after it must reconstruct their calls on a surviving carrier.
+      if (compactionThroughMessageId && previousRowId === compactionThroughMessageId) {
+        compactedCarrier = toolCarrier;
+        toolCarrier = undefined;
+      }
+      previousRowId = m.id;
       // Subagent rows belong to the transcript and to review, never to the
       // parent's model context (ADR 0062): the parent only ever saw the `Task`
       // report, and replaying a delegate's messages would both contradict that
@@ -3251,6 +3263,7 @@ Delegation rules:
         append(m.id, this.systemJournal.restore(m));
       } else if (m.role === "user") {
         toolCarrier = undefined;
+        compactedCarrier = undefined;
         const attachments = (m.attachments ?? []).map((attachment) =>
           runtimeAttachmentFromMessage(
             attachment,
@@ -3270,6 +3283,7 @@ Delegation rules:
         append(m.id, { role: "user", content, timestamp });
       } else if (m.role === "assistant") {
         toolCarrier = undefined;
+        compactedCarrier = undefined;
         // Failed provider responses belong in the transcript for diagnosis,
         // but must never become model context on the next turn.
         if (m.status === "error" || m.isError || m.error) continue;
@@ -3335,15 +3349,16 @@ Delegation rules:
           toolCarrier = {
             role: "assistant",
             content: [],
-            api,
-            provider: this.model.provider,
-            model: this.model.id,
+            api: compactedCarrier?.api ?? api,
+            provider: compactedCarrier?.provider ?? this.model.provider,
+            model: compactedCarrier?.model ?? this.model.id,
             usage: usageToPi(undefined),
             stopReason: "toolUse",
             timestamp,
           };
           append(`${m.id}:carrier`, toolCarrier);
-          carrierToolSignatures = new Map();
+          if (!compactedCarrier) carrierToolSignatures = new Map();
+          compactedCarrier = undefined;
         }
         const thoughtSignature = carrierToolSignatures.get(m.toolCallId);
         toolCarrier.content.push({
@@ -3359,6 +3374,8 @@ Delegation rules:
     }
     return entries.filter(
       (entry) =>
+        // An empty call-only boundary still anchors the persisted checkpoint.
+        entry.id === compactionThroughMessageId ||
         entry.message.role !== "assistant" || entry.message.content.length > 0,
     );
   }
@@ -7847,14 +7864,15 @@ Delegation rules:
       ...preparation.turnPrefixMessages,
       ...preparation.retainedTail,
     ];
-    // 近期尾部也进入摘要；复制已有清单后补齐文件操作，保留原准备结果。
+    // 近期尾部也进入摘要；只收集具有成功执行回执的文件操作。
     const fileOps: CompactionPreparation["fileOps"] = {
       read: new Set(preparation.fileOps.read),
       written: new Set(preparation.fileOps.written),
       edited: new Set(preparation.fileOps.edited),
     };
+    const executedCallIds = executedToolCallIdsInEntries(this.fullEntries);
     for (const message of preparation.retainedTail) {
-      collectMessageFileOperations(message, fileOps);
+      collectMessageFileOperations(message, fileOps, executedCallIds);
     }
     const latestUser = messagesToSummarize
       .filter((message): message is UserMessage => message.role === "user")
@@ -9446,6 +9464,10 @@ Delegation rules:
             modelId: this.provider.modelId,
             providerId: this.provider.id,
             responseModelId: concreteResponseModel(event.message, this.provider.modelId),
+            // Tool-call truncation is recovered by Pi; annotate only a visible
+            // text answer, without turning the settled run into an error.
+            outputTruncated: !failed && !aborted && stopReason === "length" &&
+              Boolean(responseText.trim()) && !messageRequestsTools(event.message) || undefined,
             ...(usage ? { usage } : {}),
             ...(responseDurationMs !== undefined ? { responseDurationMs } : {}),
             ...(streamMs !== undefined ? { modelStreamDurationMs } : {}),
@@ -10044,11 +10066,7 @@ Delegation rules:
       next.onPayload = async (payload, payloadModel) => {
         const base = await options.onPayload?.(payload, payloadModel);
         const current = base ?? payload;
-        const replaced = await runner.emit<unknown>(
-          "before_provider_request",
-          { type: "before_provider_request", payload: current },
-          (_acc, value) => value,
-        );
+        const replaced = await runner.emitBeforeProviderRequest(current);
         return replaced ?? base;
       };
     }

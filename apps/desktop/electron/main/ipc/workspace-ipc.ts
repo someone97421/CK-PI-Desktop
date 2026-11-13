@@ -1,6 +1,7 @@
 import { clipboard } from "electron";
 import { registerSidebarPreferencesIpc } from "./sidebar-preferences-ipc";
 import { readComposerClipboardDirectories } from "../composer-clipboard-directories";
+import { referenceComposerFiles } from "../composer-file-references";
 import { BrowserWindow, dialog, shell, type OpenDialogOptions } from "electron";
 import { basename, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -621,10 +622,26 @@ export function registerWorkspaceIpc({
     IPC.invoke.composerImportFiles,
     async (
       event,
-      input: { sessionId?: unknown; draftId?: unknown; token?: unknown } = {},
+      input: { sessionId?: unknown; draftId?: unknown; token?: unknown; reference?: unknown } = {},
     ) => {
+      assertMainWindowSender(event);
       const sessionId = await composerStorageOwner(input);
+      let projectPath: string | undefined;
+      if (input.reference === true && !input.draftId) {
+        if (!host) throw new Error("host unavailable");
+        const { session } = await host.call<{
+          session?: { projectPath?: string; remoteWorkspace?: unknown; source?: string };
+        }>("session.get", { id: sessionId, messageLimit: 1, contentLimit: 1 });
+        if (!session) throw Object.assign(new Error("session not found"), { errorCode: ErrorCodes.NOT_FOUND });
+        if (session.remoteWorkspace || session.projectPath?.startsWith("remote-project:") || (session.source && session.source !== "desktop") || sessionId.startsWith("remote:")) {
+          throw new Error("local file references require a local desktop session");
+        }
+        projectPath = session.projectPath?.trim() || undefined;
+      }
       const paths = consumeComposerPickerSelection(input.token, event.sender.id);
+      if (input.reference === true) {
+        return { files: await referenceComposerFiles(dataDir, sessionId, projectPath, paths) };
+      }
       return {
         files: await importComposerFiles(
           dataDir,

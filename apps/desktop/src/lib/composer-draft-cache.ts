@@ -26,6 +26,8 @@ export function temporaryDraftKey(id: string): string {
 }
 
 export type ComposerDraftFileInput = {
+  size?: number;
+  localReference?: string;
   sessionId?: string;
   path: string;
   name: string;
@@ -37,6 +39,8 @@ export type ComposerDraftFileInput = {
 
 /** The draft-snapshot form of a live reference: its fields without session or id. */
 export function draftFileReference({
+  size,
+  localReference,
   path,
   name,
   kind,
@@ -45,6 +49,8 @@ export function draftFileReference({
   plugin,
 }: ComposerDraftFileInput): ComposerDraftFileReference {
   return {
+    ...(size !== undefined ? { size } : {}),
+    ...(localReference ? { localReference } : {}),
     path,
     name,
     kind,
@@ -77,6 +83,8 @@ export function sameDraftFileReference(
     a.name === b.name &&
     a.kind === b.kind &&
     a.mimeType === b.mimeType &&
+    a.size === b.size &&
+    a.localReference === b.localReference &&
     a.token === b.token &&
     samePluginPart(a.plugin, b.plugin)
   );

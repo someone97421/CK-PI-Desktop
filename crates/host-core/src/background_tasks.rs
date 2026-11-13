@@ -407,6 +407,7 @@ async fn supervise(
     let mut exit = None;
     let mut output_closed = false;
     let mut stopping = false;
+    let mut stop_signal_sent = false;
     let mut lifecycle_failed = false;
     let mut drain_deadline = None;
     let mut drain_timed_out = false;
@@ -421,10 +422,15 @@ async fn supervise(
             // stop, and stopping takes precedence over a busy output pipe.
             biased;
             waited = &mut wait, if exit.is_none() => {
+                let cleanup = if stop_signal_sent && matches!(waited, Ok(Ok(_))) {
+                    runner.ownership.cleanup_after_stopped_exit(runner.pid).await
+                } else {
+                    runner.ownership.terminate_fail_closed(runner.pid)
+                };
                 exit = Some(waited);
                 runner.control.take();
                 drain_deadline = Some(tokio::time::Instant::now() + tools::PIPE_DRAIN_TIMEOUT);
-                if let Err(error) = runner.ownership.terminate_fail_closed(runner.pid) {
+                if let Err(error) = cleanup {
                     tracing::error!(task_id = %task.id, %error, "background task exit cleanup failed");
                     lifecycle_failed = true;
                 }
@@ -433,9 +439,12 @@ async fn supervise(
                 if changed.is_err() || *stop_rx.borrow() {
                     stopping = true;
                     runner.control.take();
-                    if let Err(error) = runner.ownership.terminate_fail_closed(runner.pid) {
-                        tracing::error!(task_id = %task.id, %error, "background task stop failed");
-                        lifecycle_failed = true;
+                    match runner.ownership.request_background_stop(runner.pid) {
+                        Ok(sent) => stop_signal_sent = sent,
+                        Err(error) => {
+                            tracing::error!(task_id = %task.id, %error, "background task stop failed");
+                            lifecycle_failed = true;
+                        }
                     }
                 }
             }
