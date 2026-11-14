@@ -82,7 +82,7 @@
   overflow-y: auto;
   padding: 5px;
   border-radius: var(--radius-xl);
-  background: color-mix(in oklab, var(--ds-bg-elevated-opaque) 82%, transparent);
+  background: color-mix(in oklab, var(--ds-bg-elevated-opaque) 96%, transparent);
   backdrop-filter: saturate(1.6) blur(40px);
   -webkit-backdrop-filter: saturate(1.6) blur(40px);
   box-shadow:
@@ -684,9 +684,7 @@
   }
 }
 
-/* Light mode: the glassmorphism layer needs an opaque white base because
-   82% white-on-white is invisible. Use a solid background with a subtle
-   border and a stronger shadow instead of backdrop-filter translucency. */
+/* Light mode uses an opaque base and a stronger shadow for contrast. */
 :root[data-theme="light"] .composer-model-menu {
   background: var(--ds-bg-elevated-opaque);
   backdrop-filter: none;
