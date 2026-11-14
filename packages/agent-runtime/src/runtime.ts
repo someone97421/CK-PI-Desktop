@@ -8988,12 +8988,12 @@ Delegation rules:
    */
   private applyHostedSearch(message: AssistantMessage): void {
     if (!this.currentAssistant) return;
+    const previous = this.currentAssistant.hostedSearch;
     const next = hostedSearchFromMessage({
       content: message.content,
       citations: message.hostedSearchCitations,
-    });
+    }) ?? (previous?.citations?.length ? { ...previous, citations: [] } : undefined);
     if (!next) return;
-    const previous = this.currentAssistant.hostedSearch;
     if (previous && JSON.stringify(previous) === JSON.stringify(next)) return;
     this.currentAssistant = {
       ...this.currentAssistant,
@@ -9072,6 +9072,9 @@ Delegation rules:
             ...(cumulativeProviderWaitMs !== undefined
               ? { providerWaitMs: cumulativeProviderWaitMs }
               : {}),
+            ...(retryingAssistant?.hostedSearch ? {
+              hostedSearch: { ...retryingAssistant.hostedSearch, citations: [] },
+            } : {}),
           };
           if (retryingAssistant) {
             // Keep one visible assistant bubble across the bounded retry. The
@@ -9477,7 +9480,9 @@ Delegation rules:
             ...(classifiedError
               ? { error: classifiedError, isError: true }
               : {}),
-            ...(hostedSearch ? { hostedSearch } : {}),
+            hostedSearch: hostedSearch ?? (this.currentAssistant.hostedSearch
+              ? { ...this.currentAssistant.hostedSearch, citations: [] }
+              : undefined),
             // Signatures only describe this response's own blocks. A bubble
             // that kept text from an earlier recovery attempt no longer lines
             // up with them, so it keeps only the function-call signatures,

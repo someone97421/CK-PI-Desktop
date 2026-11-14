@@ -279,6 +279,8 @@ export type HostedSearch = {
    * render, but later turns cannot ground on the old search.
    */
   replay?: HostedSearchReplayBlock[];
+  /** Provider annotations addressed against this message's flattened text. */
+  citations?: HostedSearchCitation[];
 };
 
 /** One adapter-captured search block, stripped of streaming scratch. */
@@ -314,6 +316,11 @@ export type HostedSearchRound = {
 export type HostedSearchSource = {
   url: string;
   title?: string;
+};
+
+export type HostedSearchCitation = HostedSearchSource & {
+  startIndex?: number;
+  endIndex?: number;
 };
 
 /** Terminal outcome of one background subagent run. TaskStop adds its own

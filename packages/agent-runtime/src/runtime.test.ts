@@ -12053,6 +12053,28 @@ describe("DesktopAgentRuntime compaction summary retry and sizing (#543, ADR 028
 });
 
 describe("DesktopAgentRuntime hosted web search rounds (ADR 0297)", () => {
+  it("clears positioned citations when a retry reuses the assistant bubble", async () => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const handle = (runtime as any).handleAgentEvent.bind(runtime);
+    const first = {
+      ...assistantMessage({ content: [{ type: "text", text: "Old [1]" }] }),
+      hostedSearchCitations: [{ url: "https://example.test/old", contentIndex: 0, startIndex: 4, endIndex: 7 }],
+    };
+    await handle({ type: "message_start", message: first });
+    const id = (runtime as any).currentAssistant.id;
+    expect((runtime as any).currentAssistant.hostedSearch.citations).toHaveLength(1);
+    (runtime as any).providerRetryInProgress = true;
+    const second = assistantMessage({ content: [{ type: "text", text: "New answer" }] });
+    await handle({ type: "message_start", message: second });
+    expect((runtime as any).currentAssistant.id).toBe(id);
+    expect((runtime as any).currentAssistant.hostedSearch.citations).toEqual([]);
+    await handle({ type: "message_end", message: second });
+    const events = onEvent.mock.calls.map(([envelope]) => (envelope as any).event);
+    expect(events.filter((event: any) => event.type === "message_end").at(-1)?.message.hostedSearch.citations).toEqual([]);
+    await runtime.dispose();
+  });
+
   it("emits each search round as it happens and closes open rounds on message_end", async () => {
     const onEvent = vi.fn();
     const runtime = createRuntime({ onEvent });

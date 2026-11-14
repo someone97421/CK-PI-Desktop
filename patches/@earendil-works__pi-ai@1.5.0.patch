@@ -1,5 +1,5 @@
 diff --git a/dist/api/anthropic-messages.js b/dist/api/anthropic-messages.js
-index de2b2d8c209f5576c18b020de297d4ef5fad5960..037ecdaea6efcb76f827ba2dd69bc3a09a3d78f7 100644
+index de2b2d8c209f5576c18b020de297d4ef5fad5960..529fb33d7323c3940ade62663830adb9adadc685 100644
 --- a/dist/api/anthropic-messages.js
 +++ b/dist/api/anthropic-messages.js
 @@ -1,3 +1,6 @@
@@ -9,11 +9,15 @@ index de2b2d8c209f5576c18b020de297d4ef5fad5960..037ecdaea6efcb76f827ba2dd69bc3a0
  import Anthropic, {} from "@anthropic-ai/sdk";
  import { ANTHROPIC_FEDERATION_RULE_ID_ENV, ANTHROPIC_IDENTITY_TOKEN_FILE_ENV, ANTHROPIC_ORGANIZATION_ID_ENV, ANTHROPIC_SERVICE_ACCOUNT_ID_ENV, ANTHROPIC_WORKSPACE_ID_ENV, } from "../env-api-keys.js";
  import { calculateCost } from "../models.js";
-@@ -44,3 +47,3 @@ function mergeHeaders(...headerSources) {
+@@ -42,7 +45,7 @@ function getCacheControl(model, cacheRetention, env) {
+     };
+ }
  // Stealth mode: Mimic Claude Code's tool naming exactly
 -const claudeCodeVersion = "2.1.280";
 +const claudeCodeVersion = "2.1.322";
  // Claude Code 2.x tool names (canonical casing)
+ // Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
+ // To update: https://github.com/badlogic/cchistory
 @@ -377,8 +380,6 @@ async function* iterateAnthropicEvents(response, signal) {
  }
  export const stream = (model, context, options) => {
@@ -462,7 +466,7 @@ index 12ec37eaf976340d2b29234dab2f17964ed56c91..02d3cdec478f40f40c312dea4d412f9e
          openRouterRouting: model.compat.openRouterRouting ?? {},
          vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 diff --git a/dist/api/openai-responses-shared.js b/dist/api/openai-responses-shared.js
-index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d39472222693 100644
+index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..ec9881c95ce02910d21119cc7826da84d37fcf7f 100644
 --- a/dist/api/openai-responses-shared.js
 +++ b/dist/api/openai-responses-shared.js
 @@ -1,3 +1,4 @@
@@ -492,7 +496,7 @@ index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d394
                  else if (block.type === "toolCall") {
                      const toolCall = block;
                      const [callId, itemIdRaw] = toolCall.id.split("|");
-@@ -458,6 +467,28 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -458,11 +467,47 @@ export async function processResponsesStream(openaiStream, output, stream, model
              stream.push({ type: "toolcall_start", contentIndex: slot.contentIndex, partial: output });
              return slot;
          }
@@ -521,7 +525,26 @@ index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d394
          return undefined;
      };
      const getOrCreateSlot = (outputIndex, item) => {
-@@ -539,11 +570,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+         return outputSlots.get(outputIndex) ?? createSlot(outputIndex, item);
+     };
++    const collectCitation = (annotation, contentIndex, textOffset = 0) => {
++        if (annotation?.type !== "url_citation" || typeof annotation.url !== "string") return;
++        const positioned = Number.isSafeInteger(contentIndex) && Number.isSafeInteger(annotation.start_index) &&
++            Number.isSafeInteger(annotation.end_index) && annotation.start_index >= 0 && annotation.end_index > annotation.start_index;
++        const citation = {
++            url: annotation.url,
++            title: typeof annotation.title === "string" ? annotation.title : undefined,
++            ...(positioned ? { contentIndex, startIndex: textOffset + annotation.start_index, endIndex: textOffset + annotation.end_index } : {}),
++        };
++        output.hostedSearchCitations ??= [];
++        if (!output.hostedSearchCitations.some((previous) => JSON.stringify(previous) === JSON.stringify(citation))) {
++            output.hostedSearchCitations.push(citation);
++        }
++    };
+     // Azure OpenAI can omit reasoning.encrypted_content from response.output_item.done
+     // and provide it only in response.completed.response.output. Backfill the
+     // persisted reasoning signature from the terminal response to keep store:false
+@@ -539,11 +584,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "thinking");
              if (!slot)
                  continue;
@@ -535,7 +558,7 @@ index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d394
                  partial: output,
              });
          }
-@@ -563,11 +594,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -563,11 +608,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "thinking");
              if (!slot)
                  continue;
@@ -549,7 +572,7 @@ index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d394
                  partial: output,
              });
          }
-@@ -575,23 +606,44 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -575,23 +620,36 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "text");
              if (!slot)
                  continue;
@@ -563,18 +586,10 @@ index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d394
                  partial: output,
              });
          }
-+        // Hosted web search (PI-Desktop): citation annotations arrive while
-+        // the text streams. They are collected on the output message so the
-+        // application can render sources without parsing text offsets.
++        // Keep source positions so the application can resolve inline citations.
 +        else if (event.type === "response.output_text.annotation.added") {
-+            const annotation = event.annotation;
-+            if (annotation?.type === "url_citation" && typeof annotation.url === "string") {
-+                output.hostedSearchCitations = output.hostedSearchCitations ?? [];
-+                output.hostedSearchCitations.push({
-+                    url: annotation.url,
-+                    title: typeof annotation.title === "string" ? annotation.title : undefined,
-+                });
-+            }
++            const slot = getSlot(event.output_index, "text");
++            collectCitation(event.annotation, event.content_index === 0 ? slot?.contentIndex : undefined);
 +        }
 +        // Hosted web search status transitions (`response.web_search_call.in_progress`
 +        // / `.completed` / `.failed`); the payload mirrors the item.
@@ -598,7 +613,7 @@ index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d394
                  partial: output,
              });
          }
-@@ -599,8 +651,8 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -599,8 +657,8 @@ export async function processResponsesStream(openaiStream, output, stream, model
              const slot = getSlot(event.output_index, "toolCall");
              if (slot?.input.kind !== "json")
                  continue;
@@ -609,7 +624,19 @@ index 3901bfc4bc6dee0eb45a209dbcbdb59d6c55d054..60b63766576f463b83a964ef9b16d394
          }
          else if (event.type === "response.function_call_arguments.done") {
              const slot = getSlot(event.output_index, "toolCall");
-@@ -680,9 +732,25 @@ export async function processResponsesStream(openaiStream, output, stream, model
+@@ -644,6 +702,11 @@ export async function processResponsesStream(openaiStream, output, stream, model
+             else if (item.type === "message" && slot?.type === "text") {
+                 slot.block.text = item.content?.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("") || "";
+                 slot.block.textSignature = encodeTextSignatureV1(item.id, item.phase ?? undefined);
++                let textOffset = 0;
++                for (const part of item.content ?? []) {
++                    for (const annotation of part.annotations ?? []) collectCitation(annotation, slot.contentIndex, textOffset);
++                    textOffset += (part.type === "output_text" ? part.text : part.refusal)?.length ?? 0;
++                }
+                 stream.push({
+                     type: "text_end",
+                     contentIndex: slot.contentIndex,
+@@ -680,9 +743,25 @@ export async function processResponsesStream(openaiStream, output, stream, model
                  });
                  outputSlots.delete(event.output_index);
              }
@@ -985,7 +1012,7 @@ index 1443bb592b2913ba09579f3f555a2b09456e63cf..5fc0625778014863aa267ac5186db2cd
 -{"openai-completions":{"chat:deepseek-flash":{"id":"deepseek-flash","name":"DeepSeek V4.1 Flash","api":"openai-completions","baseUrl":"https://api.deepseek.com","provider":"deepseek","reasoning":true,"thinkingLevelMap":{"minimal":null,"low":"low","medium":null,"high":"high","max":"max"},"input":["text","image"],"cost":{"input":0.3,"output":1.2,"cacheRead":0.006,"cacheWrite":0},"contextWindow":1000000,"maxTokens":384000,"compat":{"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens","requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek","supportsStrictMode":true},"inputLimits":{"images":{"resize":{"maxWidth":2000,"maxHeight":2000,"maxBytes":4718592,"jpegQuality":80}}},"type":"chat"},"chat:deepseek-v4-pro":{"id":"deepseek-v4-pro","name":"DeepSeek V4 Pro","api":"openai-completions","baseUrl":"https://api.deepseek.com","provider":"deepseek","reasoning":true,"input":["text"],"cost":{"input":1.32,"output":3.96,"cacheRead":0.044,"cacheWrite":0},"contextWindow":1000000,"maxTokens":384000,"compat":{"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens","requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek","supportsStrictMode":true,"supportsMidConvoSystemMessages":true},"thinkingLevelMap":{"minimal":null,"low":null,"medium":null,"high":"high","max":"max"},"type":"chat"}}}
 +{"openai-completions":{"chat:deepseek-flash":{"id":"deepseek-flash","name":"DeepSeek V4.1 Flash","api":"openai-completions","baseUrl":"https://api.deepseek.com","provider":"deepseek","reasoning":true,"thinkingLevelMap":{"minimal":null,"low":"low","medium":null,"high":"high","max":"max"},"input":["text","image"],"cost":{"input":0.3,"output":1.2,"cacheRead":0.006,"cacheWrite":0},"contextWindow":1000000,"maxTokens":384000,"compat":{"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens","requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek","supportsStrictMode":true,"supportsMidConvoSystemMessages":true},"inputLimits":{"images":{"resize":{"maxWidth":2000,"maxHeight":2000,"maxBytes":4718592,"jpegQuality":80}}},"type":"chat"},"chat:deepseek-v4-pro":{"id":"deepseek-v4-pro","name":"DeepSeek V4 Pro","api":"openai-completions","baseUrl":"https://api.deepseek.com","provider":"deepseek","reasoning":true,"input":["text"],"cost":{"input":1.32,"output":3.96,"cacheRead":0.044,"cacheWrite":0},"contextWindow":1000000,"maxTokens":384000,"compat":{"supportsStore":false,"supportsDeveloperRole":false,"maxTokensField":"max_tokens","requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek","supportsStrictMode":true,"supportsMidConvoSystemMessages":true},"thinkingLevelMap":{"minimal":null,"low":null,"medium":null,"high":"high","max":"max"},"type":"chat"}}}
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index 2d650ea3ece9ed470dc6c60538409e2b84f06f32..c814ef7e9187fd57b26cbefc8722c81ed5e68159 100644
+index 2d650ea3ece9ed470dc6c60538409e2b84f06f32..73850e152091b7d30e195f6eaff359568adb09f1 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
 @@ -240,6 +240,8 @@ export interface SimpleStreamOptions extends StreamOptions {
@@ -997,13 +1024,16 @@ index 2d650ea3ece9ed470dc6c60538409e2b84f06f32..c814ef7e9187fd57b26cbefc8722c81e
  }
  export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (model: Model<TApi>, context: TranscriptContext, options?: TOptions) => AssistantMessageEventStream;
  export type ImagesFunction<TOptions extends ImagesOptions = ImagesOptions> = (model: ImageModel<ImageApi>, context: ImagesContext, options?: TOptions) => Promise<AssistantImages>;
-@@ -282,6 +284,30 @@ export interface ToolCall {
+@@ -282,6 +284,33 @@ export interface ToolCall {
       */
      argumentsError?: string;
  }
 +export interface HostedSearchCitation {
 +    url: string;
 +    title?: string;
++    contentIndex?: number;
++    startIndex?: number;
++    endIndex?: number;
 +}
 +export type HostedSearchContent = {
 +    type: "hostedSearch";
@@ -1028,7 +1058,7 @@ index 2d650ea3ece9ed470dc6c60538409e2b84f06f32..c814ef7e9187fd57b26cbefc8722c81e
  export interface Usage {
      input: number;
      output: number;
-@@ -374,7 +400,7 @@ export interface UserMessage {
+@@ -374,7 +403,7 @@ export interface UserMessage {
  }
  export interface AssistantMessage {
      role: "assistant";
@@ -1037,7 +1067,7 @@ index 2d650ea3ece9ed470dc6c60538409e2b84f06f32..c814ef7e9187fd57b26cbefc8722c81e
      api: Api;
      provider: ProviderId;
      model: string;
-@@ -389,6 +415,8 @@ export interface AssistantMessage {
+@@ -389,6 +418,8 @@ export interface AssistantMessage {
      stopReason: StopReason;
      deferred?: DeferredHandle;
      errorMessage?: string;
@@ -1046,7 +1076,7 @@ index 2d650ea3ece9ed470dc6c60538409e2b84f06f32..c814ef7e9187fd57b26cbefc8722c81e
      rawStopReason?: string;
      /**
       * Provider indication of whether the model explicitly ended its turn.
-@@ -627,6 +655,10 @@ export type AssistantMessageEvent = {
+@@ -627,6 +658,10 @@ export type AssistantMessageEvent = {
      contentIndex: number;
      toolCall: ToolCall;
      partial: AssistantMessage;
@@ -1057,7 +1087,7 @@ index 2d650ea3ece9ed470dc6c60538409e2b84f06f32..c814ef7e9187fd57b26cbefc8722c81e
  } | {
      type: "done";
      reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;
-@@ -658,6 +690,8 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
+@@ -658,6 +693,8 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
       */
      type?: "chat";
      reasoning: boolean;

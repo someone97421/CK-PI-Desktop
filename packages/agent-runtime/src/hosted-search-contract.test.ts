@@ -153,6 +153,31 @@ describe("pi-ai hosted web search: responses stream extraction", () => {
     ]);
   });
 
+  it.each([true, false])("preserves annotation positions from item completion and deduplicates stream events (%s)", async (streamAnnotation) => {
+    const text = "😀正文。citeturn1search0";
+    const annotation = {
+      type: "url_citation", url: "https://example.test/source", title: "Source",
+      start_index: text.indexOf(""), end_index: text.length,
+    };
+    const { output } = await processEvents([
+      { type: "response.output_item.added", output_index: 0, item: { type: "message", id: "preface", role: "assistant" } },
+      { type: "response.output_item.done", output_index: 0, item: {
+        type: "message", id: "preface", content: [{ type: "output_text", text: "Preface", annotations: [] }],
+      } },
+      { type: "response.output_item.added", output_index: 1, item: { type: "message", id: "answer", role: "assistant" } },
+      { type: "response.output_text.delta", output_index: 1, delta: text },
+      ...(streamAnnotation ? [{ type: "response.output_text.annotation.added", output_index: 1, content_index: 0, annotation }] : []),
+      { type: "response.output_item.done", output_index: 1, item: {
+        type: "message", id: "answer", content: [{ type: "output_text", text, annotations: [annotation] }],
+      } },
+      { type: "response.completed", response: { id: "resp_citations", usage: {} } },
+    ]);
+    expect(output.hostedSearchCitations).toEqual([{
+      url: annotation.url, title: "Source", contentIndex: 1,
+      startIndex: annotation.start_index, endIndex: annotation.end_index,
+    }]);
+  });
+
   it("ignores malformed annotations and unknown web_search_call shapes", async () => {
     const { output } = await processEvents([
       {

@@ -23,6 +23,7 @@
 | COMPAT-007 | 已移除 | 全局 `contextCompaction` 死设置 | 2026-11-14 |
 | COMPAT-008 | 已移除 | `ContextWindowSource` 类型别名 | 2026-11-14 |
 | COMPAT-009 | 已移除 | `PlanProposalStatus` 类型别名 | 2026-11-14 |
+| COMPAT-010 | 保留 | 旧联网搜索消息缺少正文引用位置 | 2026-11-14 |
 
 ## 仍需跟踪
 
@@ -60,6 +61,13 @@
 - **入口与断言**：[工具执行与旧参数断言](../crates/host-core/src/tools/mod.rs)、[失败编辑审查断言](../crates/host-core/src/rpc/review_rpc_tests.rs)；运行时旧参数处理还需核对[运行时实现](../packages/agent-runtime/src/runtime.ts)。
 - **保留原因／待核实**：这是工具接口形状兼容，历史工具调用不会因此自动重放；移除会改变实时调用可接受的参数形状。本轮旧数据清理未调整该接口。
 - **移除条件**：核实当前调用和归一链不再依赖旧形状，确认停用旧参数后，连同执行适配、专用错误码和相关断言一起移除。状态为待确认移除，最近复核 2026-11-14。
+
+### COMPAT-010：旧联网搜索消息缺少正文引用位置
+
+- **来源与替代**：截至 `c54d8ffd3`，供应商引用只归一网址和标题，旧转录可能在正文中保留 `cite` 内部标记而没有位置映射；对应最后一个发布版本待核实。现行写入为可选 `HostedSearch.citations`，按助手正文保存网址、标题及可用的起止位置，继续沿用转录格式 2、schema 29 / protocol 11。
+- **入口与断言**：[采集归一](../packages/shared/src/native-web-search.ts)、[正文显示](../apps/desktop/src/lib/assistant-citations.ts)、[共享数据断言](../packages/shared/src/native-web-search.test.ts)、[正文渲染断言](../apps/desktop/test/assistant-citations.test.mjs)、[供应商采集断言](../packages/agent-runtime/src/hosted-search-contract.test.ts)。
+- **保留原因与行为**：旧消息不回写、不猜测编号与网址的对应关系；仅在助手正文显示时隐藏无法解析的内部引用标记，代码示例、用户消息和搜索来源列表保留。新消息按供应商明确提供的位置显示链接；可选字段缺失仍可读取。
+- **移除条件与验证依据**：仅在不再支持这批历史正文、且供应商均不再输出未定位标记时评估移除兜底。本轮核对真实会话转录和数据通路，新增回归用例，执行改动文件静态类型诊断及与基线对照；未执行回归测试、构建或界面实测。状态为保留，最近复核 2026-11-14。
 
 ## 已移除记录
 

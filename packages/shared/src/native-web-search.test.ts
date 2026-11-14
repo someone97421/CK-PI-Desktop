@@ -552,4 +552,49 @@ describe("hostedSearchFromMessage", () => {
       },
     ]);
   });
+
+  it("preserves positioned citations even without a search round", () => {
+    const content = [
+      { type: "text", text: "😀前言" },
+      { type: "thinking", thinking: "not visible" },
+      { type: "text", text: "正文[1]" },
+    ];
+    const citation = { url: "https://example.test/source", title: "Source", contentIndex: 2, startIndex: 2, endIndex: 5 };
+    expect(hostedSearchFromMessage({ content, citations: [citation, citation] })).toEqual({
+      status: "completed", rounds: [],
+      citations: [{ url: citation.url, title: "Source", startIndex: 6, endIndex: 9 }],
+    });
+  });
+
+  it("keeps source-only citations without inventing positions and ignores invalid URLs", () => {
+    const search = hostedSearchFromMessage({
+      content: [{ type: "text", text: "Answer" }],
+      citations: [
+        { url: "https://example.test/one", startIndex: -1, endIndex: 3 },
+        { url: "https://example.test/two", contentIndex: 99, startIndex: 0, endIndex: 2 },
+        { url: "javascript:alert(1)", startIndex: 0, endIndex: 1 },
+      ],
+    });
+    expect(search?.citations).toEqual([
+      { url: "https://example.test/one" }, { url: "https://example.test/two" },
+    ]);
+    expect(hostedSearchFromMessage({ content: [] })).toBeUndefined();
+  });
+});
+
+describe("hosted search citation character positions", () => {
+  it.each([true, false])("normalizes only exact citation markers across emoji (%s)", (codePoints) => {
+    const text = "😀正文。citeturn1search0";
+    const positionText = codePoints ? Array.from(text) : text.split("");
+    const search = hostedSearchFromMessage({
+      content: [{ type: "text", text }],
+      citations: [{
+        url: "https://example.test/source", contentIndex: 0,
+        startIndex: positionText.indexOf(""), endIndex: positionText.length,
+      }],
+    });
+    expect(search?.citations).toEqual([{
+      url: "https://example.test/source", startIndex: text.indexOf(""), endIndex: text.length,
+    }]);
+  });
 });

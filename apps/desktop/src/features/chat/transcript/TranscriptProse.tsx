@@ -1,4 +1,5 @@
 import { memo, useContext, useLayoutEffect, useRef, useState } from "react";
+import type { HostedSearchCitation } from "@pi-desktop/shared";
 import { Markdown } from "../../../components/Markdown";
 import { observeTranscriptContent } from "../../../lib/transcript-content-observer";
 import { hasStatefulTranscriptContent, shouldMountTranscriptContent } from "../../../lib/transcript-content-window";
@@ -6,10 +7,11 @@ import { ScopeContext } from "./disclosure-scope";
 import { useStreamingCursor } from "../../../hooks/use-streaming-cursor";
 
 /** Keep the existing prose shell and message anchors while releasing its renderer. */
-export const TranscriptProse = memo(function TranscriptProse({ source, streaming, showCursor = false }: {
+export const TranscriptProse = memo(function TranscriptProse({ source, streaming, showCursor = false, assistantCitations }: {
   source: string;
   streaming: boolean;
   showCursor?: boolean;
+  assistantCitations?: readonly HostedSearchCitation[];
 }) {
   const elementRef = useStreamingCursor(source, showCursor);
   const { visible } = useContext(ScopeContext);
@@ -56,6 +58,6 @@ export const TranscriptProse = memo(function TranscriptProse({ source, streaming
     data-transcript-content={mounted ? "mounted" : "placeholder"}
     style={mounted ? undefined : { height: window.height }}
   >
-    {mounted ? <Markdown source={source} streaming={streaming} /> : null}
+    {mounted ? <Markdown source={source} streaming={streaming} assistantCitations={assistantCitations} /> : null}
   </div>;
 });

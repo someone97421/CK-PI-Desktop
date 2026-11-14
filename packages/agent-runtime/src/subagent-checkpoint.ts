@@ -422,7 +422,7 @@ function assistantMetadata(message: Pick<AssistantMessage, "responseModel" | "re
     ...(typeof message.rawStopReason === "string" ? { rawStopReason: message.rawStopReason } : {}),
     ...(typeof message.endTurn === "boolean" ? { endTurn: message.endTurn } : {}),
     ...(typeof message.durationMs === "number" ? { durationMs: message.durationMs } : {}),
-    ...(message.hostedSearchCitations ? { hostedSearchCitations: message.hostedSearchCitations.map(({ url, title }) => ({ url, title })) } : {}),
+    ...(message.hostedSearchCitations ? { hostedSearchCitations: message.hostedSearchCitations.map((citation) => ({ ...citation })) } : {}),
   };
 }
 

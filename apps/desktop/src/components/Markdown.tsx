@@ -38,7 +38,7 @@ import {
 import { useTranslation } from "react-i18next";
 import type { ThemedToken } from "shiki";
 import "katex/dist/katex.min.css";
-import { parseSessionLinkToken } from "@pi-desktop/shared";
+import { parseSessionLinkToken, type HostedSearchCitation } from "@pi-desktop/shared";
 import { SessionLinkChip } from "../features/chat/transcript/shared";
 import {
   IconCheck,
@@ -75,6 +75,7 @@ import { useAppStore } from "../stores/app-store";
 import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url";
 import { absoluteImagePath, remarkLocalImagePaths } from "../lib/markdown-image-paths";
 import { remarkNormalizeWrappedMarkdownLinkDestinations } from "../lib/markdown-link-destinations";
+import { remarkAssistantCitations } from "../lib/assistant-citations";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import { useSlotSessionId } from "../plugins/renderer-slots/use-slots";
 import {
@@ -1001,6 +1002,7 @@ const Block = memo(function MarkdownBlock({
   renderDiagrams,
   workspaceRoot,
   baseDir,
+  assistantCitations,
 }: {
   raw: string;
   originalRaw: string;
@@ -1008,6 +1010,7 @@ const Block = memo(function MarkdownBlock({
   renderDiagrams: boolean;
   workspaceRoot?: string | null;
   baseDir?: string;
+  assistantCitations?: readonly HostedSearchCitation[];
 }) {
   const context = useMemo(
     () => ({
@@ -1024,9 +1027,12 @@ const Block = memo(function MarkdownBlock({
       // bracket-display plugin can promote them to display math after
       // remark-math parses the pre-normalized `$$ … $$` form.
       remarkLatexBracketDisplay(originalRaw),
+      ...(assistantCitations ? [() => remarkAssistantCitations({
+        source: originalRaw, sourceOffset, citations: assistantCitations,
+      })] : []),
       remarkChatFileLinks(workspaceRoot, baseDir),
     ],
-    [originalRaw, workspaceRoot, baseDir],
+    [originalRaw, sourceOffset, workspaceRoot, baseDir, assistantCitations],
   );
   const positionedRehypePlugins = useMemo(
     () => [...rehypePlugins!, [rehypeSourcePositions, { offset: sourceOffset }]] as Options["rehypePlugins"],
@@ -1065,6 +1071,7 @@ export const Markdown = memo(function Markdown({
   renderDiagrams = true,
   baseDir,
   streaming = false,
+  assistantCitations,
 }: {
   source: string;
   renderDiagrams?: boolean;
@@ -1072,6 +1079,8 @@ export const Markdown = memo(function Markdown({
   streaming?: boolean;
   /** Workspace-relative directory of the source file, for `./` / `../` links. */
   baseDir?: string;
+  /** Defined only for assistant prose; an empty list enables marker cleanup. */
+  assistantCitations?: readonly HostedSearchCitation[];
 }) {
   const workspaceRoot = useMarkdownWorkspaceRoot();
 
@@ -1153,6 +1162,7 @@ export const Markdown = memo(function Markdown({
               renderDiagrams={renderDiagrams}
               workspaceRoot={workspaceRoot}
               baseDir={baseDir}
+              assistantCitations={assistantCitations}
             />
           );
         })}

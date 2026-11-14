@@ -125,9 +125,70 @@ export function hostedSearchFromMessage(input: {
   citations?: unknown;
 }): import("./types/messages.js").HostedSearch | undefined {
   const search = hostedSearchFromBlocks(input);
-  if (!search) return undefined;
+  const citations = hostedSearchCitations(input);
+  if (!search && citations.length === 0) return undefined;
   const replay = hostedSearchReplayBlocks(input.content);
-  return replay.length > 0 ? { ...search, replay } : search;
+  return {
+    ...(search ?? { status: "completed" as const, rounds: [] }),
+    ...(replay.length > 0 ? { replay } : {}),
+    ...(citations.length > 0 ? { citations } : {}),
+  };
+}
+
+function hostedSearchCitations(input: {
+  content: unknown;
+  citations?: unknown;
+}): import("./types/messages.js").HostedSearchCitation[] {
+  const blocks = Array.isArray(input.content) ? input.content : [];
+  const result: import("./types/messages.js").HostedSearchCitation[] = [];
+  const seen = new Set<string>();
+  for (const value of Array.isArray(input.citations) ? input.citations : []) {
+    if (!value || typeof value !== "object") continue;
+    const citation = value as Record<string, unknown>;
+    const url = hostedSearchUrl(citation.url);
+    if (!url) continue;
+    let offset = 0;
+    let positioned = Number.isSafeInteger(citation.startIndex) && Number.isSafeInteger(citation.endIndex) &&
+      (citation.startIndex as number) >= 0 && (citation.endIndex as number) > (citation.startIndex as number);
+    if (citation.contentIndex !== undefined) {
+      const index = citation.contentIndex;
+      positioned = positioned && Number.isSafeInteger(index) && (index as number) >= 0 &&
+        blocks[index as number]?.type === "text";
+      if (positioned) {
+        for (let i = 0; i < (index as number); i++) {
+          if (blocks[i]?.type === "text" && typeof blocks[i].text === "string") offset += blocks[i].text.length;
+        }
+      }
+    }
+    let startIndex = citation.startIndex as number;
+    let endIndex = citation.endIndex as number;
+    if (positioned) {
+      const text = citation.contentIndex === undefined
+        ? blocks.filter((block) => block?.type === "text" && typeof block.text === "string").map((block) => block.text).join("")
+        : blocks[citation.contentIndex as number].text;
+      const marker = /^(?:\uE200cite\uE202[A-Za-z0-9_\-\uE202]+\uE201|\[\d+\])$/;
+      if (typeof text === "string" && !marker.test(text.slice(startIndex, endIndex))) {
+        const characters = Array.from(text);
+        if (endIndex <= characters.length && marker.test(characters.slice(startIndex, endIndex).join(""))) {
+          startIndex = characters.slice(0, startIndex).join("").length;
+          endIndex = characters.slice(0, endIndex).join("").length;
+        }
+      }
+    }
+    const next: import("./types/messages.js").HostedSearchCitation = {
+      url,
+      ...(typeof citation.title === "string" && citation.title.trim() ? { title: citation.title } : {}),
+      ...(positioned ? {
+        startIndex: offset + startIndex,
+        endIndex: offset + endIndex,
+      } : {}),
+    };
+    const key = JSON.stringify(next);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(next);
+  }
+  return result;
 }
 
 /**

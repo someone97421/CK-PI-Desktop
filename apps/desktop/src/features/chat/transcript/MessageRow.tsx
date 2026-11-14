@@ -1,3 +1,4 @@
+import { EMPTY_ASSISTANT_CITATIONS } from "../../../lib/assistant-citations";
 import {
   memo,
   useContext,
@@ -420,7 +421,9 @@ export const MessageRow = memo(function MessageRow({
               </>
             ) : (
               <div className="prose-chat">
-                <Markdown source={displayed} />
+                <Markdown source={displayed} assistantCitations={message.role === "assistant"
+                  ? message.hostedSearch?.citations ?? EMPTY_ASSISTANT_CITATIONS
+                  : undefined} />
               </div>
             )}
           </div>

@@ -15,6 +15,7 @@ import { AssistantErrorMessage } from "./shared";
 import { useRenderBlocks, type RenderBlock } from "./render-blocks";
 import { CompactionRow } from "./AssistantTurn";
 import { MessageRow } from "./MessageRow";
+import { EMPTY_ASSISTANT_CITATIONS } from "../../../lib/assistant-citations";
 
 /** Message bubble that optionally applies smooth text release. */
 const SmoothMessageBubble = memo(function SmoothMessageBubble({ message, streaming }: {
@@ -40,7 +41,12 @@ const SmoothMessageBubble = memo(function SmoothMessageBubble({ message, streami
       className={`message-bubble assistant-turn-fragment${streaming ? " streaming" : ""}${showCursor ? " smooth-cursor" : ""}`}
       data-message-id={message.id}
     >
-      {genUi.content ? <TranscriptProse source={genUi.content} streaming={streaming} showCursor={showCursor} /> : null}
+      {genUi.content ? <TranscriptProse
+        source={genUi.content} streaming={streaming} showCursor={showCursor}
+        assistantCitations={genUi.content === displayContent
+          ? message.hostedSearch?.citations ?? EMPTY_ASSISTANT_CITATIONS
+          : EMPTY_ASSISTANT_CITATIONS}
+      /> : null}
       <GenUiCards references={genUi.references} sessionId={sessionId} remote={remote} />
       {message.outputTruncated ? (
         <p className="message-output-notice" role="status">{t("chat.outputTruncated")}</p>
