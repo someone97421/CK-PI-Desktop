@@ -63,7 +63,10 @@ export type UserMcpRuntimeOptions = {
 
 type Entry = {
   key: string;
-  record: McpServerRecord;
+  /** Actual cwd a stdio process runs in; `null` for a shared HTTP connection. */
+  workspace: string | null;
+  /** Project list identity used to decide whether this record is still active. */
+  recordWorkspace: string | null;
   client: UserMcpClient;
   status: McpServerStatus;
   connecting?: Promise<McpTool[]>;
@@ -88,8 +91,17 @@ export class UserMcpRuntime {
   private readonly calls = new McpCallRegistry();
   // Routing identity must survive a transport clearing its own tools on close.
   // These names are hints only: dispatch revalidates the fresh handshake list.
-  private discoveredTools = new Map<string, Set<string>>();
-  private records: McpServerRecord[] = [];
+  // Keyed like `records`, so a project server never borrows the names of the
+  // global server it overrides.
+  private discoveredTools = new Map<string, { serverId: string; tools: Set<string> }>();
+  // One copy of every saved server some workspace can use, keyed by
+  // `recordKey`: a global server is shared by all workspaces, a project server
+  // belongs to its project.
+  private records = new Map<string, McpServerRecord>();
+  // Which of those servers host-core reported active in each workspace. Every
+  // workspace keeps its own answer, because a global server can be switched off
+  // per project and a project server can override a global one.
+  private workspaces = new Map<string, { projectPath: string | null; keys: string[] }>();
   private options: UserMcpRuntimeOptions;
 
   // Spelled out rather than a constructor parameter property, because the test
@@ -99,20 +111,36 @@ export class UserMcpRuntime {
   }
 
   /**
-   * Adopt a fresh list from host-core. Servers whose configuration changed —
-   * or that vanished — lose their connection so the next call re-handshakes
-   * against what the user actually saved.
+   * Adopt host-core's active list for one workspace (`null` = no project).
+   *
+   * Other workspaces keep theirs: refreshing project B must not take project
+   * A's servers away from a turn still running there. A workspace that was
+   * never refreshed reads the projectless list. A connection is dropped when
+   * its server's configuration changed, when its own workspace no longer lists
+   * the server, or when no workspace lists it any more, so the next call
+   * re-handshakes against what the user actually saved.
    */
-  setRecords(records: McpServerRecord[]): void {
-    this.records = records.map((record) => ({ ...record }));
-    const byId = new Map(this.records.map((record) => [record.id, record]));
-    for (const id of this.discoveredTools.keys()) {
-      if (!byId.has(id)) this.discoveredTools.delete(id);
+  setRecords(records: McpServerRecord[], projectPath: string | null = null): void {
+    const keys: string[] = [];
+    for (const record of records) {
+      const key = recordKey(record);
+      this.records.set(key, { ...record });
+      keys.push(key);
+    }
+    this.workspaces.set(workspaceIdentity(projectPath), { projectPath, keys });
+    const listed = new Set([...this.workspaces.values()].flatMap((workspace) => workspace.keys));
+    for (const key of [...this.records.keys()]) {
+      if (!listed.has(key)) this.records.delete(key);
+    }
+    for (const key of [...this.discoveredTools.keys()]) {
+      if (!listed.has(key)) this.discoveredTools.delete(key);
     }
     for (const [key, entry] of [...this.entries]) {
-      const next = byId.get(entry.record.id);
-      if (!next || configurationChanged(entry.record, next)) {
-        entry.client.close();
+      const id = recordKey(entry.record);
+      const next = this.records.get(id);
+      // HTTP connections are shared by every workspace (`workspace === null`).
+      const stillListed = entry.recordWorkspace === null || this.listedKeys(entry.recordWorkspace).includes(id);
+      if (!next || !stillListed || configurationChanged(entry.record, next)) {
         this.entries.delete(key);
         continue;
       }
@@ -120,17 +148,33 @@ export class UserMcpRuntime {
     }
   }
 
-  listRecords(): McpServerRecord[] {
-    return this.records.map((record) => ({ ...record }));
+  /** The workspaces that hold their own list, for refreshing them all at once. */
+  listedWorkspaces(): (string | null)[] {
+    return [...this.workspaces.values()].map((workspace) => workspace.projectPath);
+  }
+
+  listRecords(projectPath: string | null = null): McpServerRecord[] {
+    return this.listedRecords(projectPath).map((record) => ({ ...record }));
   }
 
   /** Per-server connection state for the Extensions page. */
-  listStatuses(): McpServerStatus[] {
-    return this.records.map((record) => this.statusFor(record.id));
+  listStatuses(projectPath: string | null = null): McpServerStatus[] {
+    return this.listedRecords(projectPath).map((record) => this.statusForRecord(record));
+  }
+
+  private listedKeys(workspace: string): string[] {
+    return (this.workspaces.get(workspace) ?? this.workspaces.get(workspaceIdentity(null)))?.keys ?? [];
+  }
+
+  /** The servers listed for a workspace, enabled or not. */
+  private listedRecords(projectPath: string | null | undefined): McpServerRecord[] {
+    return this.listedKeys(workspaceIdentity(projectPath))
+      .map((key) => this.records.get(key))
+      .filter((record): record is McpServerRecord => record !== undefined);
   }
 
   /** Confirm ready remote connections when the settings page refreshes. */
-  async refreshStatuses(): Promise<McpServerStatus[]> {
+  async refreshStatuses(projectPath: string | null = null): Promise<McpServerStatus[]> {
     await Promise.all([...this.entries].map(async ([key, entry]) => {
       if (entry.record.transport === "stdio" || entry.status.state !== "ready") return;
       let pending = this.statusRefreshes.get(key);
@@ -160,12 +204,25 @@ export class UserMcpRuntime {
         if (this.statusRefreshes.get(key) === pending) this.statusRefreshes.delete(key);
       }
     }));
-    return this.listStatuses();
+    return this.listStatuses(projectPath);
   }
 
   statusFor(serverId: string): McpServerStatus {
+    return this.latestStatus(serverId, (record) => record.id === serverId);
+  }
+
+  /** Status of one saved server, never of a same-id server in another project. */
+  private statusForRecord(record: McpServerRecord): McpServerStatus {
+    const key = recordKey(record);
+    return this.latestStatus(record.id, (candidate) => recordKey(candidate) === key);
+  }
+
+  private latestStatus(
+    serverId: string,
+    matches: (record: McpServerRecord) => boolean,
+  ): McpServerStatus {
     const entry = [...this.entries.values()]
-      .filter((candidate) => candidate.record.id === serverId)
+      .filter((candidate) => matches(candidate.record))
       .sort((left, right) => right.status.updatedAt - left.status.updatedAt)[0];
     if (entry) return { ...entry.status };
     return {
@@ -183,8 +240,11 @@ export class UserMcpRuntime {
    * the turn: each handshake has its own timeout and a failure is recorded as
    * status rather than thrown.
    */
-  async toolsForProject(projectPath: string | null | undefined, workingDirectory = projectPath): Promise<UserMcpToolDescriptor[]> {
-    const active = this.records.filter((record) => isActiveInProject(record, projectPath));
+  async toolsForProject(
+    projectPath: string | null | undefined,
+    workingDirectory = projectPath,
+  ): Promise<UserMcpToolDescriptor[]> {
+    const active = this.listedRecords(projectPath).filter((record) => isActiveInProject(record, projectPath));
     const admitted = active.slice(0, MAX_ACTIVE_SERVERS);
     if (admitted.length < active.length) {
       this.options.log?.("warn", "user mcp servers skipped over the active cap", {
@@ -193,7 +253,7 @@ export class UserMcpRuntime {
       });
     }
     const lists = await Promise.all(admitted.map(async (record) => {
-      const result = await this.connect(record, workingDirectory);
+      const result = await this.connect(record, projectPath, false, workingDirectory);
       return result.tools;
     }));
     const out: UserMcpToolDescriptor[] = [];
@@ -213,7 +273,12 @@ export class UserMcpRuntime {
 
   /** Whether a saved server advertised this name (not a readiness check). */
   hasTool(fullName: string): boolean {
-    return this.findTool(fullName) !== undefined;
+    for (const { serverId, tools } of this.discoveredTools.values()) {
+      for (const toolName of tools) {
+        if (userMcpToolName(serverId, toolName) === fullName) return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -229,7 +294,9 @@ export class UserMcpRuntime {
     sessionId?: string,
     workingDirectory = projectPath,
   ): Promise<unknown> {
-    return this.calls.run(sessionId, (signal) => this.callToolActive(fullName, args, projectPath, signal, workingDirectory));
+    return this.calls.run(sessionId, (signal) =>
+      this.callToolActive(fullName, args, projectPath, signal, workingDirectory),
+    );
   }
 
   private async callToolActive(
@@ -239,31 +306,32 @@ export class UserMcpRuntime {
     signal?: AbortSignal,
     workingDirectory = projectPath,
   ): Promise<unknown> {
-    const found = this.findTool(fullName);
+    const found = this.findTool(fullName, projectPath);
     if (!found) {
       throw Object.assign(new Error(`unknown mcp tool: ${fullName}`), {
         errorCode: "TOOL_NOT_FOUND",
       });
     }
-    const record = this.records.find((entry) => entry.id === found.serverId);
-    if (!record || !isActiveInProject(record, projectPath)) {
+    const { record } = found;
+    if (!isActiveInProject(record, projectPath)) {
       throw Object.assign(
-        new Error(`mcp server ${found.serverId} is not active for this session`),
+        new Error(`mcp server ${record.id} is not active for this session`),
         { errorCode: "TOOL_NOT_FOUND" },
       );
     }
-    const { entry } = await this.connect(record, workingDirectory, true);
+    const { entry } = await this.connect(record, projectPath, true, workingDirectory);
     if (!entry) {
-      throw Object.assign(new Error(`mcp server ${found.serverId} is unavailable`), {
+      throw Object.assign(new Error(`mcp server ${record.id} is unavailable`), {
         errorCode: "UNAVAILABLE",
       });
     }
     try {
       // Configuration or scope can change while the handshake is in flight.
-      const current = this.records.find((entry) => entry.id === found.serverId);
+      const key = recordKey(record);
+      const current = this.listedRecords(projectPath).find((candidate) => recordKey(candidate) === key);
       if (!current || !isActiveInProject(current, projectPath)) {
         throw Object.assign(
-          new Error(`mcp server ${found.serverId} is not active for this session`),
+          new Error(`mcp server ${record.id} is not active for this session`),
           { errorCode: "TOOL_NOT_FOUND" },
         );
       }
@@ -271,7 +339,7 @@ export class UserMcpRuntime {
         configurationChanged(record, current) ||
         entry.status.state !== "ready" || !entry.client.isConnected()
       ) {
-        throw Object.assign(new Error(`mcp server ${found.serverId} is unavailable`), {
+        throw Object.assign(new Error(`mcp server ${record.id} is unavailable`), {
           errorCode: "UNAVAILABLE",
         });
       }
@@ -305,12 +373,16 @@ export class UserMcpRuntime {
    * Handshake once and report what happened, for the editor's "Test connection"
    * button. The connection is kept: a user who just tested a server is about to
    * use it.
+   *
+   * `saved` tests a record the workspace does not list — a disabled server, or
+   * one in another project — without adopting it into any workspace.
    */
   async test(
     serverId: string,
     projectPath: string | null | undefined = null,
+    saved?: McpServerRecord,
   ): Promise<McpServerStatus> {
-    const record = this.records.find((entry) => entry.id === serverId);
+    const record = saved ?? this.listedRecords(projectPath).find((entry) => entry.id === serverId);
     if (!record) {
       return {
         serverId,
@@ -324,9 +396,10 @@ export class UserMcpRuntime {
     // workspace caches. A successful home test must not leave project sessions
     // stuck on an earlier failure. Never interrupt a handshake or tool call.
     const targetKey = connectionKey(record, projectPath);
+    const savedKey = recordKey(record);
     for (const [key, entry] of [...this.entries]) {
       if (
-        entry.record.id !== serverId || entry.connecting || entry.activeCalls > 0 ||
+        recordKey(entry.record) !== savedKey || entry.connecting || entry.activeCalls > 0 ||
         (key !== targetKey && entry.status.state !== "failed")
       ) continue;
       entry.client.close();
@@ -350,7 +423,9 @@ export class UserMcpRuntime {
         this.entries.delete(key);
       }
     }
-    this.discoveredTools.delete(serverId);
+    for (const [key, discovered] of [...this.discoveredTools]) {
+      if (discovered.serverId === serverId) this.discoveredTools.delete(key);
+    }
   }
 
   /** Drop every connection, e.g. on quit. */
@@ -366,11 +441,15 @@ export class UserMcpRuntime {
     this.calls.cancelSession(sessionId);
   }
 
-  private findTool(fullName: string): { serverId: string; toolName: string } | undefined {
-    for (const [serverId, tools] of this.discoveredTools) {
-      for (const toolName of tools) {
-        if (userMcpToolName(serverId, toolName) === fullName) {
-          return { serverId, toolName };
+  /** Resolve a tool name against the servers this workspace lists. */
+  private findTool(
+    fullName: string,
+    projectPath: string | null | undefined,
+  ): { record: McpServerRecord; toolName: string } | undefined {
+    for (const record of this.listedRecords(projectPath)) {
+      for (const toolName of this.discoveredTools.get(recordKey(record))?.tools ?? []) {
+        if (userMcpToolName(record.id, toolName) === fullName) {
+          return { record, toolName };
         }
       }
     }
@@ -381,6 +460,7 @@ export class UserMcpRuntime {
     record: McpServerRecord,
     projectPath: string | null | undefined = null,
     pin = false,
+    workingDirectory = projectPath,
   ): Promise<{ tools: McpTool[]; entry?: Entry }> {
     let oauthToken: string | null = null;
     if (record.transport === "http" && this.options.oauth) {
@@ -391,7 +471,7 @@ export class UserMcpRuntime {
       }
     }
 
-    const key = connectionKey(record, projectPath);
+    const key = connectionKey(record, workingDirectory);
     let existing = this.entries.get(key);
     // Token refresh can run while Test connection or another session arrives.
     // Let existing calls/handshakes finish; rotate the transport when idle.
@@ -431,7 +511,7 @@ export class UserMcpRuntime {
       return { tools: [], entry: existing };
     }
 
-    const entry = existing ?? this.createEntry(record, oauthToken, key, projectPath);
+    const entry = existing ?? this.createEntry(record, oauthToken, key, projectPath, workingDirectory);
     if (pin) entry.activeCalls += 1;
     entry.lastUsedAt = Date.now();
     entry.connecting = this.handshake(record, entry).finally(() => {
@@ -453,9 +533,10 @@ export class UserMcpRuntime {
         entry.client.close();
         return [];
       }
-      const catalog = this.discoveredTools.get(record.id) ?? new Set<string>();
-      for (const tool of tools) catalog.add(tool.name);
-      this.discoveredTools.set(record.id, catalog);
+      const key = recordKey(record);
+      const catalog = this.discoveredTools.get(key) ?? { serverId: record.id, tools: new Set<string>() };
+      for (const tool of tools) catalog.tools.add(tool.name);
+      this.discoveredTools.set(key, catalog);
       entry.status = {
         serverId: record.id,
         state: "ready",
@@ -489,6 +570,7 @@ export class UserMcpRuntime {
     oauthToken: string | null | undefined,
     key: string,
     projectPath: string | null | undefined,
+    workingDirectory = projectPath,
   ): Entry {
     const headers = {
       ...(record.headers ?? {}),
@@ -501,7 +583,7 @@ export class UserMcpRuntime {
     const client = this.options.createClient({
       // Stdio servers inherit the session workspace as their cwd. HTTP
       // transports do not spawn a child and keep the existing home default.
-      rootPath: record.transport === "stdio" ? workspacePath(projectPath) : homedir(),
+      rootPath: record.transport === "stdio" ? workspacePath(workingDirectory) : homedir(),
       commandPolicy: "trusted",
       server: {
         id: record.id,
@@ -522,6 +604,8 @@ export class UserMcpRuntime {
     });
     const entry: Entry = {
       key,
+      workspace: record.transport === "stdio" ? workspaceIdentity(workingDirectory) : null,
+      recordWorkspace: record.transport === "stdio" ? workspaceIdentity(projectPath) : null,
       record,
       client,
       oauthToken,
@@ -558,11 +642,24 @@ function workspacePath(projectPath: string | null | undefined): string {
   return projectPath ? resolve(projectPath) : homedir();
 }
 
-function connectionKey(record: McpServerRecord, projectPath: string | null | undefined): string {
-  if (record.transport !== "stdio") return JSON.stringify([record.id, "http"]);
+function workspaceIdentity(projectPath: string | null | undefined): string {
   const rootPath = workspacePath(projectPath);
-  const identity = process.platform === "win32" ? rootPath.toLowerCase() : rootPath;
-  return JSON.stringify([record.id, identity]);
+  return process.platform === "win32" ? rootPath.toLowerCase() : rootPath;
+}
+
+/**
+ * Which saved server a record is: a global server is one server everywhere,
+ * while a project server is its own server even when it reuses a global id.
+ */
+function recordKey(record: McpServerRecord): string {
+  return record.level === "project" && record.projectPath
+    ? JSON.stringify([record.id, workspaceIdentity(record.projectPath)])
+    : JSON.stringify([record.id]);
+}
+
+function connectionKey(record: McpServerRecord, projectPath: string | null | undefined): string {
+  if (record.transport !== "stdio") return JSON.stringify([recordKey(record), "http"]);
+  return JSON.stringify([recordKey(record), workspaceIdentity(projectPath)]);
 }
 
 /**

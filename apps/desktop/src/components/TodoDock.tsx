@@ -24,13 +24,39 @@ export function todoProgress(todos: readonly SessionTodo[], t: (key: string, opt
   };
 }
 
-export function TodoPanel({ todos, listId, interactive, labelledBy }: {
-  todos: readonly SessionTodo[]; listId: string; interactive: boolean; labelledBy?: string;
+function statusSymbol(status: TodoStatus): string {
+  switch (status) {
+    case "in_progress":
+      return "\u2022";
+    case "cancelled":
+      return "\u2212";
+    default:
+      return "";
+  }
+}
+
+/** The todo list as a container panel: rows only, no disclosure of its own. */
+export function TodoPanel({
+  todos,
+  listId,
+  interactive,
+  animate,
+  labelledBy,
+}: {
+  todos: readonly SessionTodo[];
+  listId: string;
+  /** False while the container is collapsed: the list is mounted but inert. */
+  interactive: boolean;
+  /** False while the session is idle: a leftover in_progress step stays still. */
+  animate: boolean;
+  labelledBy?: string;
 }) {
   return (
     <div id={listId} className="dock-panel" role="tabpanel" aria-labelledby={labelledBy} hidden={!interactive}>
       <div className="todo-dock-list" role="list" tabIndex={interactive ? 0 : -1}>
-        {todos.map((todo, index) => <TodoRow key={`${index}:${todo.content}`} todo={todo} shimmer={interactive} />)}
+        {todos.map((todo, index) => (
+          <TodoRow key={`${index}:${todo.content}`} todo={todo} shimmer={interactive && animate} />
+        ))}
       </div>
     </div>
   );
