@@ -62,16 +62,6 @@ export function TodoPanel({
   );
 }
 
-function statusSymbol(status: TodoStatus): string {
-  switch (status) {
-    case "in_progress":
-      return "•";
-    case "cancelled":
-      return "−";
-    default:
-      return "";
-  }
-}
 
 export function TodoDock({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();

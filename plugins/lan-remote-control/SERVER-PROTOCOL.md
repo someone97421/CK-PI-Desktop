@@ -1,10 +1,10 @@
 # 网络与面板协议
 
-实现位于 `main.cjs`、`server/*.cjs`。默认关闭监听，可信本地面板启动服务。绑定选定本机私网 IPv4，HTTP/WS 无传输加密，不自动设置防火墙。
+实现位于 `main.cjs`、`server/*.cjs` 和 `browse-bridge.cjs`。默认关闭监听，可信本地面板启动服务。默认端口 `7878`，逐个绑定全部本机私网 IPv4 并始终额外尝试 `127.0.0.1`，无 LAN 时仍可启动。HTTP/WS 无传输加密，不自动设置防火墙。
 
 ## HTTP
 
-所有请求校验 Host；变更请求要求同源 Origin，WebSocket 升级也要求同源 Origin。无宽泛 CORS。
+所有请求校验 Host；变更请求及 WebSocket 升级要求同源 Origin 或受信任扩展 Origin。固定 `chrome-extension://afeafocngkodbmaipcngoamamfmekgfo` 与设置中的 `extensionIds` 精确匹配，不允许尾斜杠、通配符或后缀。仅对扩展 Origin 返回 CORS：`Access-Control-Allow-Origin` 为原值，`Vary: Origin`，允许方法 `GET, POST, HEAD, OPTIONS`，允许头 `Content-Type, Authorization, X-Filename, X-Session-Id`；合法 `OPTIONS` 预检返回空 `204`，其他来源、方法或请求头返回 `403`。同源手机网页和 Bearer/WS 首帧认证沿用原协议。
 
 | 路径 | 鉴权 | 作用 |
 | --- | --- | --- |
@@ -34,9 +34,12 @@
 - remote.status / remote.refresh → `{ok,status}`。
 - remote.start `{address,port}`、remote.stop。
 - remote.setPassword `{password}`：首次设置或改密；成功后退出全部已登录设备。
-- remote.link → `{ok,url}`：返回当前监听地址，不包含认证信息。
+- remote.link → `{ok,url,links}`：`links: [{address,label,url}]` 为全部成功监听入口，`url` 保留首选成功入口，不包含认证信息。
 - remote.indicator → `{running}`：宿主侧栏专用只读状态。
 - remote.revoke `{deviceId}`、remote.revokeAll。
+- remote.setUiScale `{uiScale}`：保存 75～150、步长 5 的页面比例。
+- remote.setConnectorSettings `{extensionIds: string[]}` → `{ok:true,status,warning?}`：校验并去重后仅保存扩展 ID；空数组清除自定义 ID，固定 ID 始终保留。其他设置和 LAN 监听范围不受影响，立即应用 Origin 校验。写入失败沿用现有 warning 与待补写语义。
+- browse.status / browse.ensureRelay / browse.mintPairingCode：本地面板返回 `{ok:true,result}` 或 `{ok:false,error:{code,message}}`，不需要 RPC requestId/mutationId。
 
 status 包含 phase、running、address、port、url、addresses、error、devices、passwordConfigured、capabilities、adapter。设备标识字段为 deviceId，附在线连接数、IP、最近访问时间和到期时间。改密和设备管理通道只供本地面板调用。
 
@@ -45,5 +48,17 @@ status 包含 phase、running、address、port、url、addresses、error、devic
 登录每 IP 每分钟最多 6 次，全局每分钟 24 次，最多 2 个并发密码校验；同时保留网络请求、连接、上传和 WebSocket 限制。密码为至少 8 个字符、最多 256 UTF-8 字节。旧的一次性配对接口已移除，旧网页需刷新。
 
 暂存附件写入插件自己的临时目录，停止服务或撤销设备时清理。业务数据保持原有格式；用户操作授权以局域网密码登录为唯一门槛，手机提交的模型配置、工具审批、提问和计划审批直接生效，移除电脑二次确认。
+
+## Browse 本地 RPC 与 MCP
+
+三个操作均不要求 sessionId，走同一 `POST /api/rpc`、Bearer、UUID requestId 与变更幂等机制，不转发给宿主适配器。
+
+| operation | input | mutationId | result |
+| --- | --- | --- | --- |
+| browse.status | `{}` | 禁止 | `{running,endpoint,port,cliAvailable,browsers,tabs,relay,version,setup,error,connected,pairingState,extension}` |
+| browse.ensureRelay | `{}` | UUID 必填 | 同 browse.status；合并并发启动 |
+| browse.mintPairingCode | `{}` | UUID 必填 | `{code:"ABCD-EF56",port:19988,endpoint:"http://127.0.0.1:19988"}` |
+
+CLI 从 PATH 与 `~/.local/bin/browse` 查找，分别执行 `status --json`、`serve` 和 `pair --mint-json`。配对码只在回执和界面内存返回，不写日志或插件设置；插件退出只回收自身启动的 Relay，不终止预先存在的 Relay。MCP 声明为 `{id:"browse",transport:"stdio",command:"browse",args:["mcp"],env:{OPENCODE_BROWSER_TOOLS:"all",OPENCODE_BROWSER_PORT:"19988"}}`，要求 `mcp.server.local`，check/pack 均检查匹配。
 
 实际验收与未完成项见 `IMPLEMENTATION-STATUS.md`。

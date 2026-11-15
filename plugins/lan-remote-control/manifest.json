@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "local.lan-remote-control",
   "name": "局域网远程控制",
-  "description": "通过局域网浏览器访问这是一个助手的项目和会话。由主机设置访问密码，记录已登录设备；默认不监听网络。",
-  "version": "0.2.38",
+  "description": "通过局域网浏览器或 Chrome 侧边栏访问这是一个助手的项目和会话，并连接 Browse 浏览器调试。共用访问密码和设备记录；默认不监听网络。",
+  "version": "0.2.40",
   "main": "main.cjs",
   "enabledByDefault": false,
   "engines": {
@@ -14,6 +14,7 @@
     "background.service",
     "desktop.control",
     "models.list",
+    "mcp.server.local",
     "clipboard.write"
   ],
   "activationEvents": [
@@ -27,6 +28,21 @@
     "title": "局域网远程控制"
   },
   "contributes": {
+    "mcpServers": [
+      {
+        "id": "browse",
+        "label": "Browse 浏览器调试",
+        "transport": "stdio",
+        "command": "browse",
+        "args": [
+          "mcp"
+        ],
+        "env": {
+          "OPENCODE_BROWSER_TOOLS": "all",
+          "OPENCODE_BROWSER_PORT": "19988"
+        }
+      }
+    ],
     "commands": [
       {
         "id": "lan-remote-control.open",
@@ -36,7 +52,11 @@
           "远程",
           "局域网",
           "remote",
-          "LAN"
+          "LAN",
+          "Chrome",
+          "侧边栏",
+          "Browse",
+          "浏览器调试"
         ],
         "category": "远程访问"
       }
@@ -57,7 +77,10 @@
           "局域网",
           "手机",
           "密码",
-          "远程"
+          "远程",
+          "Chrome",
+          "侧边栏",
+          "Browse"
         ],
         "entry": "panel/index.html"
       }

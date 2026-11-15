@@ -4,3 +4,4 @@
 .access-link strong{display:block;margin:0 4px 6px}.access-link-actions{display:flex;align-items:center;gap:4px}.access-link-actions input{flex:1;min-width:0}.access-link-actions button{flex-shrink:0}@media(max-width:480px){main{padding:12px}section{padding:12px}.access-link-actions{flex-wrap:wrap}.access-link-actions input{flex-basis:100%}}
 #app .rc-select { display: inline-block; width: 160px; max-width: calc(100% - 8px); margin: 4px; vertical-align: middle; }
 #app .rc-select .rc-select-trigger { font-size: 16px; }
+#app .hint{font-size:13px}#app input[readonly]{max-width:calc(100% - 32px)}

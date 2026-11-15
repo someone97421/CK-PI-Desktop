@@ -279,7 +279,11 @@ function parseHostHeader(raw) {
  * Origins are compared as full `http://host:port` strings, so no wildcard, no
  * subdomain and no port confusion can slip through.
  */
-function createRequestGuard({ getAllowedHostnames, getPort }) {
+const DEFAULT_EXTENSION_ID = "afeafocngkodbmaipcngoamamfmekgfo";
+function extensionOrigins(ids = []) {
+  return new Set([DEFAULT_EXTENSION_ID, ...ids].filter((id) => typeof id === "string" && /^[a-p]{32}$/.test(id)).map((id) => `chrome-extension://${id}`));
+}
+function createRequestGuard({ getAllowedHostnames, getPort, getExtensionIds = () => [] }) {
   const allowedNames = () => {
     const names = new Set();
     for (const name of getAllowedHostnames() ?? []) {
@@ -335,6 +339,7 @@ function createRequestGuard({ getAllowedHostnames, getPort }) {
     if (raw === "null") {
       return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is not allowed" };
     }
+    if (extensionOrigins(getExtensionIds()).has(raw)) return { ok: true, origin: raw, extension: true };
     let parsed;
     try {
       parsed = new URL(raw);
@@ -348,13 +353,22 @@ function createRequestGuard({ getAllowedHostnames, getPort }) {
       return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is not allowed" };
     }
     const origin = `${parsed.protocol}//${parsed.host}`;
-    if (!expectedOrigins().has(origin)) {
+    if (raw !== origin || !expectedOrigins().has(origin)) {
       return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is not allowed" };
     }
     return { ok: true, origin };
   };
 
-  return { checkHost, checkOrigin };
+  const applyCors = (req, res, checked) => {
+    if (!checked?.ok || !checked.extension) return false;
+    res.setHeader("Access-Control-Allow-Origin", checked.origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Filename, X-Session-Id");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    return true;
+  };
+  return { checkHost, checkOrigin, applyCors };
 }
 
 function isInsidePath(parent, child) {

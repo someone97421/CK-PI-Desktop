@@ -93,6 +93,7 @@ export const READ_OPERATIONS = [
   "collaboration.get",
   "attachments.read",
   "plans.list",
+  "browse.status",
 ];
 
 /** 变更操作（必须携带 mutationId）。 */
@@ -116,6 +117,8 @@ export const MUTATION_OPERATIONS = [
   "modes.run.control",
   "modes.run.update",
   "modes.run.resolve",
+  "browse.ensureRelay",
+  "browse.mintPairingCode",
 ];
 
 const MUTATION_SET = new Set(MUTATION_OPERATIONS);

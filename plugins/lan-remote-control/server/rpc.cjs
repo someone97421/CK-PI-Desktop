@@ -3,14 +3,11 @@
 /**
  * RPC surface: operation whitelist, mutation idempotency, adapter dispatch.
  *
- * The operation catalogue itself is owned by the host adapter — this module
- * imports whatever `adapter.cjs` exports (`OPERATION_META`, or the
- * `READ_OPERATIONS` / `MUTATION_OPERATIONS` pair) so the two sides cannot
- * drift. When the adapter exports nothing usable, everything except
- * `capabilities` fails closed with `UNSUPPORTED`.
+ * 宿主操作目录由适配器提供；Browse 本地操作由桥接模块声明。
  */
 
 const crypto = require("node:crypto");
+const { OPERATION_META: BROWSE_OPERATIONS } = require("../browse-bridge.cjs");
 
 const MAX_OPERATION_LENGTH = 64;
 const MAX_MUTATION_TTL_MS = 60 * 60 * 1000;
@@ -67,7 +64,7 @@ function isOperationName(value) {
     typeof value === "string" &&
     value.length > 0 &&
     value.length <= MAX_OPERATION_LENGTH &&
-    OPERATION_NAME_PATTERN.test(value)
+    (OPERATION_NAME_PATTERN.test(value) || Object.hasOwn(BROWSE_OPERATIONS, value))
   );
 }
 
@@ -122,15 +119,7 @@ function buildOperationTable(adapterModule) {
   addList(source.READ_OPERATIONS, false);
   addList(source.MUTATION_OPERATIONS, true);
 
-  if (table.size === 0) {
-    return {
-      ok: false,
-      code: "UNSUPPORTED",
-      message:
-        "adapter.cjs did not export an operation catalogue (OPERATION_META or READ_OPERATIONS/MUTATION_OPERATIONS)",
-      table: new Map(),
-    };
-  }
+  for (const [name, meta] of Object.entries(BROWSE_OPERATIONS)) table.set(name, normalizeEntry(name, meta));
   return { ok: true, table };
 }
 
@@ -375,6 +364,7 @@ function createRpcDispatcher({
   getOperationTable,
   getCapabilities,
   attachments,
+  localOperations = {},
   log = () => {},
 } = {}) {
   const mutations = new MutationStore();
@@ -488,8 +478,7 @@ function createRpcDispatcher({
       if (resolved.items.length) input.__attachments = attachments.toAdapterDescriptors(resolved.items);
     }
 
-    const capabilities = await resolveCapabilities();
-    const capability = capabilityBlock(capabilities, operation);
+    const capability = Object.hasOwn(BROWSE_OPERATIONS, operation) ? null : capabilityBlock(await resolveCapabilities(), operation);
     if (capability && capability.supported === false) {
       const reason = capability.reason ? `: ${capability.reason}` : "";
       return fail("UNSUPPORTED", `operation is not supported by this host${reason}`);
@@ -497,6 +486,12 @@ function createRpcDispatcher({
 
     const execute = async () => {
       if (!isAuthorized()) return { ok: false, error: codedError("UNAUTHORIZED", "device authorization was revoked") };
+      if (Object.hasOwn(BROWSE_OPERATIONS, operation)) {
+        try {
+          if (typeof localOperations[operation] !== "function") throw Object.assign(new Error("Browse bridge unavailable"), { code: "UNAVAILABLE" });
+          return { ok: true, result: await localOperations[operation]() };
+        } catch (error) { return { ok: false, error: codedError(error.code || "INTERNAL", error.message) }; }
+      }
       const outcome = await callAdapter(adapter, operation, input, { isAuthorized });
       if (outcome.ok) return { ok: true, result: outcome.result };
       return { ok: false, error: codedError(outcome.code, outcome.message) };

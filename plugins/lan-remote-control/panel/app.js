@@ -4,6 +4,8 @@ const root = document.querySelector("#app");
 function node(tag, text) { const n = document.createElement(tag); if (text) n.textContent = text; return n; }
 const title = node("h1", "局域网远程控制"), status = node("p"), error = node("p"), hint = node("p");
 error.role = "alert";
+hint.className = "hint";
+const connector = node("section"), relay = node("section");
 const controls = node("section"), credentials = node("section"), appearance = node("section"), linkArea = node("section"), devices = node("section");
 const port = node("input"), password = node("input"), confirmation = node("input");
 port.type = "number"; port.min = "1024"; port.max = "65535"; port.value = "7878";
@@ -15,7 +17,7 @@ for (const field of [password, confirmation]) { field.type = "password"; field.a
 password.placeholder = "设置访问密码（至少 8 个字符）"; password.setAttribute("aria-label", "访问密码");
 confirmation.placeholder = "再次输入密码"; confirmation.setAttribute("aria-label", "再次输入密码");
 const passwordStatus = node("p");
-root.append(title, node("p", "开启后，把访问链接发到手机，输入主机密码即可登录。开启意图会保存：主程序重开后自动恢复监听，直到你手动关闭。"), status, hint, error, credentials, controls, appearance, linkArea, devices,
+root.append(title, node("p", "开启后，把访问链接发到手机或 Chrome 侧边栏，输入主机密码即可登录。开启意图会保存：主程序重开后自动恢复监听，直到你手动关闭。"), status, hint, error, credentials, controls, connector, relay, appearance, linkArea, devices,
   node("p", "仅用于可信局域网：HTTP 不加密。关闭访问会断开连接；设备登录保留 30 天，可随时移除。修改密码会退出全部设备。"));
 async function call(channel, payload = {}) {
   const r = await window.pluginBridge.invoke(channel, payload);
@@ -36,7 +38,7 @@ credentials.append(node("h2", "访问密码"), passwordStatus, password, confirm
   password.value = ""; confirmation.value = "";
   await refresh();
 }));
-controls.append(node("h2", "远程访问"), node("p", "开启后同时监听本机所有局域网 IPv4 地址，以太网和 WLAN 可同时使用。"), port,
+controls.append(node("h2", "远程访问"), node("p", "开启后同时监听本机所有局域网 IPv4 地址及 127.0.0.1，以太网、WLAN 和本机侧边栏可同时使用。"), port,
   button("开启", async () => {
     const requestedPort = Number(port.value);
     if (!Number.isInteger(requestedPort) || requestedPort < PORT_MIN || requestedPort > PORT_MAX) {
@@ -58,6 +60,51 @@ controls.append(node("h2", "远程访问"), node("p", "开启后同时监听本�
     renderLinks(result.links || (result.url ? [{ url: result.url }] : []));
   }),
   button("移除全部设备", async () => { await call("remote.revokeAll"); await refresh(); }));
+const extensionIds = node("textarea");
+extensionIds.rows = 2; extensionIds.placeholder = "每行一个扩展 ID";
+extensionIds.setAttribute("aria-label", "自定义 Chrome 扩展 ID");
+extensionIds.title = "固定 ID afeafocngkodbmaipcngoamamfmekgfo 始终受信任；此处仅添加其他 32 位 a-p 小写字母 ID。保存后立即应用 HTTP 与 WebSocket。";
+let connectorEdited = false;
+extensionIds.addEventListener("input", () => { connectorEdited = true; });
+connector.append(node("h2", "Chrome 侧边栏"), extensionIds, button("保存扩展 ID", async () => {
+  const ids = extensionIds.value.split(/[\s,]+/).filter(Boolean);
+  if (ids.some((id) => !/^[a-p]{32}$/.test(id))) throw new Error("扩展 ID 须为 32 位 a-p 小写字母");
+  const result = await call("remote.setConnectorSettings", { extensionIds: ids });
+  connectorEdited = false;
+  if (result.warning) error.textContent = result.warning.message;
+  await refresh();
+}));
+const relayStatus = node("p"), relayDetails = node("p"), pairing = node("input"), pairingStatus = node("span");
+pairing.readOnly = true; pairing.placeholder = "尚未生成配对码"; pairing.setAttribute("aria-label", "Browse 一次性配对码");
+pairingStatus.className = "hint";
+let pairingTimer = null;
+relay.append(node("h2", "Browse Relay"), relayStatus, relayDetails,
+  button("刷新调试状态", async () => refreshBrowse()),
+  button("启动 Relay", async () => { await call("browse.ensureRelay"); await refreshBrowse(); }),
+  button("生成配对码", async () => {
+    const { result } = await call("browse.mintPairingCode");
+    pairing.value = result.code;
+    pairingStatus.textContent = `配对地址 ${result.endpoint} · 一次有效，10 分钟内使用`;
+    clearTimeout(pairingTimer);
+    pairingTimer = setTimeout(() => { pairing.value = ""; pairingStatus.textContent = "配对码已过期"; }, 10 * 60_000);
+    await refreshBrowse();
+  }), pairing,
+  button("复制配对码", async () => {
+    if (!pairing.value) throw new Error("请先生成配对码");
+    await call("clipboard.writeText", { text: pairing.value });
+  }), pairingStatus);
+relay.title = "需要安装支持 pair --mint-json 的 browse 并加入 PATH。也会检测 ~/.local/bin/browse。侧边栏密码登录后可自动获取配对码；跨机调试仍取决于 Relay 的远程连接能力。";
+let browseRefreshing = false;
+async function refreshBrowse() {
+  if (browseRefreshing) return;
+  browseRefreshing = true;
+  try {
+    const { result } = await call("browse.status");
+    relayStatus.textContent = `${result.running ? "Relay 运行中" : "Relay 未运行"} · ${result.endpoint}`;
+    relayDetails.textContent = !result.cliAvailable ? "未找到 browse（PATH 或 ~/.local/bin/browse）" : result.error?.message || `${result.browsers.length} 个浏览器 · ${result.tabs.length} 个挂载标签页`;
+    relayDetails.title = JSON.stringify({ browsers: result.browsers, tabs: result.tabs }, null, 2);
+  } finally { browseRefreshing = false; }
+}
 const uiScale = node("select"), scaleStatus = node("span");
 uiScale.setAttribute("aria-label", "远控页面比例");
 uiScale.title = "调整远控网页的文字、按钮和间距；保存后刷新手机页面生效。";
@@ -89,8 +136,8 @@ function renderLinks(links) {
   linksSignature = signature;
   linkArea.replaceChildren();
   if (!links.length) return;
-  linkArea.append(node("h2", "局域网访问链接"),
-    node("p", "以下地址已成功监听。手机使用与其网络可互通的链接，输入访问密码即可登录；跨设备连接仍取决于路由和防火墙设置。"));
+  linkArea.append(node("h2", "访问链接"),
+    node("p", "以下地址已成功监听。手机使用局域网链接，本机侧边栏使用 127.0.0.1；输入同一访问密码即可登录。"));
   for (const entry of links) {
     const row = node("article"); row.className = "access-link";
     const label = node("strong", entry.label || entry.address || "局域网地址");
@@ -120,7 +167,7 @@ async function refresh() {
     status.className = `service-status ${s.running ? "is-running" : "is-stopped"}`;
     const remembered = auto.enabled && auto.persisted !== false;
     status.textContent = s.running
-      ? `访问已开启 · ${(s.links || (s.url ? [{ url: s.url }] : [])).length} 个局域网地址${remembered ? " · 已记住：下次启动自动开启" : ""}`
+      ? `访问已开启 · ${(s.links || (s.url ? [{ url: s.url }] : [])).filter((entry) => !entry.address?.startsWith("127.")).length} 个局域网地址 · 本机入口${remembered ? " · 已记住：下次启动自动开启" : ""}`
       : auto.pending
         ? auto.slowCheck
           ? `访问已关闭 · 等待自动复查（第 ${auto.attempts} 次）`
@@ -131,6 +178,7 @@ async function refresh() {
     const notes = [];
     if (s.warning?.message) notes.push(s.warning.message);
     if (s.settingsWriteError) notes.push(`${s.settingsWriteError}（本期仍按你的选择运行）`);
+    if (s.settingsError) notes.push(s.settingsError);
     if (!s.running && auto.lastError) {
       notes.push(`上次开启失败：${auto.lastError.message}${auto.pending ? "" : "；可再次点击“开启”立即重试。"}`);
     }
@@ -141,6 +189,7 @@ async function refresh() {
       const savedPort = Number(s.settings?.port);
       port.value = String(Number.isInteger(savedPort) && savedPort >= PORT_MIN && savedPort <= PORT_MAX ? savedPort : PORT_FALLBACK);
     }
+    if (!connectorEdited && document.activeElement !== extensionIds) extensionIds.value = (s.settings?.extensionIds || []).join("\n");
     if (!scaleEdited && !scalePicker.element.contains(document.activeElement)) {
       uiScale.value = String(s.settings?.uiScale ?? 100);
       scalePicker.sync();
@@ -155,10 +204,11 @@ async function refresh() {
       devices.append(row);
     }
     renderLinks(s.running ? (s.links || (s.url ? [{ address: s.address, url: s.url }] : [])) : []);
-    if (!s.addresses?.length) error.textContent = "未发现局域网地址，请检查网络连接。";
     if (s.adapter?.error) error.textContent = s.adapter.error.message;
   } finally { refreshing = false; }
 }
 refresh().catch((e) => (error.textContent = e.message));
 const timer = setInterval(() => refresh().catch((e) => (error.textContent = e.message)), 2000);
-window.addEventListener("pagehide", () => clearInterval(timer));
+refreshBrowse().catch((e) => (error.textContent = e.message));
+const browseTimer = setInterval(() => refreshBrowse().catch((e) => (error.textContent = e.message)), 10000);
+window.addEventListener("pagehide", () => { clearInterval(timer); clearInterval(browseTimer); clearTimeout(pairingTimer); });

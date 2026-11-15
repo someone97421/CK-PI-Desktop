@@ -3,7 +3,7 @@
 /**
  * LAN interface selection.
  *
- * 服务逐个绑定 listLanAddresses 返回的本机私网 IPv4，不使用 0.0.0.0 或 ::，
+ * 服务逐个绑定本机私网 IPv4，并额外监听回环，不使用 0.0.0.0 或 ::，
  * 避免同时暴露机器上的公网网卡。每个监听建立后再次核对实际绑定地址。
  */
 
@@ -41,7 +41,7 @@ function isPrivateIPv4(value) {
   return false;
 }
 
-/** Loopback is accepted for development only; it is not a phone-reachable address. */
+/** 回环同时用于本机 Chrome 侧边栏，不是手机可访问的地址。 */
 function isAllowedBindAddress(value) {
   return isPrivateIPv4(value) || isLoopbackIPv4(value);
 }
@@ -130,7 +130,13 @@ function normalizeRequestedAddress(value) {
   return { ok: true, address };
 }
 
+function listenerAddresses() {
+  const addresses = listLanAddresses();
+  return [...addresses, { address: "127.0.0.1", label: "本机", recommended: addresses.length === 0 }];
+}
+
 module.exports = {
+  listenerAddresses,
   parseIPv4,
   isLoopbackIPv4,
   isPrivateIPv4,

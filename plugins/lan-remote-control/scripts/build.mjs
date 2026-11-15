@@ -27,6 +27,10 @@ try {
   await mkdir(staging, { recursive: true });
   await mkdir(tooling, { recursive: true });
   const manifest = JSON.parse(await readFile(join(root, 'manifest.json'), 'utf8'));
+  for (const server of manifest.contributes?.mcpServers ?? []) {
+    const permission = server.transport === 'stdio' ? 'mcp.server.local' : 'mcp.server.remote';
+    if (!manifest.permissions?.includes(permission)) throw new Error(`${server.transport} MCP 服务需要权限 ${permission}`);
+  }
   let versionFiles = [];
   if (mode === 'pack') {
     const packagePath = join(root, 'package.json');

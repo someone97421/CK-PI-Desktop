@@ -33,6 +33,14 @@ const network = require("./server/network.cjs");
 const { buildOperationTable } = require("./server/rpc.cjs");
 const { DEFAULT_MAX_BYTES } = require("./server/uploads.cjs");
 
+const { createBrowseBridge } = require("./browse-bridge.cjs");
+const browse = createBrowseBridge();
+const browseOperations = Object.freeze({
+  "browse.status": () => browse.status(),
+  "browse.ensureRelay": () => browse.ensureRelay(),
+  "browse.mintPairingCode": () => browse.mintPairingCode(),
+});
+
 const PLUGIN_DIR = __dirname;
 const WEB_DIR = path.join(PLUGIN_DIR, "web");
 
@@ -43,6 +51,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   bindAddress: "",
   port: 7878,
   uiScale: 100,
+  extensionIds: [],
   /** 用户意图：主程序重开后是否自动恢复监听；只有显式“关闭”会清除。 */
   autoStart: false,
 });
@@ -84,6 +93,8 @@ const PANEL_CHANNELS = Object.freeze([
   "remote.indicator",
   "remote.revoke",
   "remote.revokeAll",
+  "remote.setConnectorSettings",
+  ...Object.keys(browseOperations),
 ]);
 
 let remote = null;
@@ -210,8 +221,10 @@ function normalizeSettings(raw) {
     }
   }
 
+  const extensionIds = Array.isArray(source.extensionIds) ? [...new Set(source.extensionIds.filter((id) => typeof id === "string" && /^[a-p]{32}$/.test(id)))] : [];
+  if (source.extensionIds !== undefined && (!Array.isArray(source.extensionIds) || extensionIds.length !== new Set(source.extensionIds).size)) errors.push("自定义扩展 ID 须为 32 位 a-p 小写字母");
   return {
-    settings: { bindAddress, port, autoStart: autoStartIntent, uiScale },
+    settings: { bindAddress, port, autoStart: autoStartIntent, uiScale, extensionIds },
     error: errors.length ? errors.join("；") : null,
   };
 }
@@ -488,6 +501,8 @@ async function initializeRemote() {
       getOperationTable: () => buildOperationTable(adapterModule),
       getCapabilities,
       getUiScale: () => settings.uiScale,
+      getExtensionIds: () => settings.extensionIds,
+      localOperations: browseOperations,
       hooks: {
         onSubscribe: handleAdapterSubscribe,
         onUnsubscribe: handleAdapterUnsubscribe,
@@ -704,7 +719,7 @@ async function buildStatus() {
         url: null,
         links: [],
         warning: null,
-        addresses: network.listLanAddresses(),
+        addresses: network.listenerAddresses(),
         startedAt: null,
         error: remoteError ?? null,
         restartRequired: false,
@@ -834,6 +849,21 @@ async function refreshFromPanel() {
 async function onPanelInvoke(channel, payload) {
   const input = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
   switch (channel) {
+    case "browse.status":
+    case "browse.ensureRelay":
+    case "browse.mintPairingCode":
+      try { return { ok: true, result: await browseOperations[channel]() }; }
+      catch (error) { return { ok: false, error: errorPayload(error) }; }
+    case "remote.setConnectorSettings": {
+      if (!Array.isArray(input.extensionIds) || input.extensionIds.some((id) => typeof id !== "string" || !/^[a-p]{32}$/.test(id))) {
+        return { ok: false, error: { code: "INVALID_PARAMS", message: "扩展 ID 须为 32 位 a-p 小写字母" } };
+      }
+      return serializeLifecycle(async () => {
+        await refreshSettings(true);
+        const persisted = await persistSettings({ extensionIds: [...new Set(input.extensionIds)] });
+        return { ok: true, ...(persisted ? {} : { warning: persistenceWarning() }), status: await buildStatus() };
+      });
+    }
     case "remote.status":
       return { ok: true, status: await buildStatus() };
     case "remote.refresh":
@@ -991,6 +1021,7 @@ function registerService() {
     pi.services.register({
       id: SERVICE_ID,
       start: () => {
+        browse.open();
         // Wiring only: the resident service owns teardown, never the listener.
         ensureWired();
         startLivenessWatch();
@@ -1006,7 +1037,7 @@ function registerService() {
         stopLivenessWatch();
         return serializeLifecycle(async () => {
           try {
-            await remote?.stop();
+            await Promise.all([remote?.stop(), browse.stop()]);
           } catch (error) {
             recordLog("warn", `service stop failed: ${error?.message ?? error}`);
           }
@@ -1032,6 +1063,7 @@ async function unregisterService() {
 // --- lifecycle --------------------------------------------------------------
 
 async function onLoad() {
+  browse.open();
   const manifest = safeManifest();
   // 允许自动开启（重新加载/宿主重启插件后复用同一模块实例的情况）。
   unloaded = false;
@@ -1066,12 +1098,10 @@ async function shutdown() {
       unwireEvents();
       const server = remote;
       remote = null;
-      if (server) {
-        try {
-          await server.stop();
-        } catch (error) {
-          recordLog("warn", `server stop failed: ${error?.message ?? error}`);
-        }
+      try {
+        await Promise.all([server?.stop(), browse.stop()]);
+      } catch (error) {
+        recordLog("warn", `service shutdown failed: ${error?.message ?? error}`);
       }
       adapter = null;
       adapterModule = null;

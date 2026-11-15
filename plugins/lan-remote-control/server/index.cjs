@@ -111,6 +111,8 @@ function createRemoteServer(options = {}) {
     getOperationTable = () => buildOperationTable(getAdapter()),
     getCapabilities = null,
     getUiScale = () => 100,
+    getExtensionIds = () => [],
+    localOperations = {},
     hooks = {},
     limits = {},
   } = options;
@@ -167,6 +169,7 @@ function createRemoteServer(options = {}) {
       return names;
     },
     getPort: () => state.port,
+    getExtensionIds,
   });
 
   const dispatcher = createRpcDispatcher({
@@ -174,6 +177,7 @@ function createRemoteServer(options = {}) {
     getOperationTable,
     getCapabilities: getCapabilities ?? (() => refreshCapabilities(false)),
     attachments: state.attachments,
+    localOperations,
     log,
   });
 
@@ -193,7 +197,7 @@ function createRemoteServer(options = {}) {
   function getStatus() {
     const running = state.phase === "running";
     const url = running && state.address ? `http://${state.address}:${state.port}/` : null;
-    const addresses = network.listLanAddresses();
+    const addresses = network.listenerAddresses();
     const networkChanged = running && (addresses.length !== state.requestedAddresses.length ||
       addresses.some((entry) => !state.requestedAddresses.includes(entry.address)));
     return {
@@ -766,20 +770,26 @@ function createRemoteServer(options = {}) {
         httpHelpers.sendError(res, hostCheck.status, hostCheck.code, hostCheck.message);
         return;
       }
-      if (pathname !== "/api/health") {
-        const originCheck = guard.checkOrigin(req, { required: !isGet });
-        if (!originCheck.ok) {
-          httpHelpers.sendError(res, originCheck.status, originCheck.code, originCheck.message);
-          return;
-        }
+      const originCheck = guard.checkOrigin(req, { required: !isGet });
+      if (!originCheck.ok) {
+        httpHelpers.sendError(res, originCheck.status, originCheck.code, originCheck.message);
+        return;
       }
+      const cors = guard.applyCors(req, res, originCheck);
 
       if (state.phase !== "running") {
         httpHelpers.sendError(res, 503, "NOT_READY", "server is not running");
         return;
       }
       if (req.method === "OPTIONS") {
-        httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "CORS preflight is not supported");
+        const method = req.headers["access-control-request-method"];
+        const headers = String(req.headers["access-control-request-headers"] || "").toLowerCase().split(",").map((value) => value.trim()).filter(Boolean);
+        if (!cors || !["GET", "POST", "HEAD"].includes(method) || headers.some((value) => !["content-type", "authorization", "x-filename", "x-session-id"].includes(value))) {
+          httpHelpers.sendError(res, 403, "FORBIDDEN_ORIGIN", "preflight is not allowed");
+          return;
+        }
+        res.writeHead(204);
+        res.end();
         return;
       }
 
@@ -935,7 +945,7 @@ function createRemoteServer(options = {}) {
     if (!Number.isInteger(listenPort) || listenPort < 0 || listenPort > 65_535) {
       throw fail("INVALID_PARAMS", "port must be an integer between 0 and 65535");
     }
-    const candidates = network.listLanAddresses();
+    const candidates = network.listenerAddresses();
     candidates.sort((a, b) => Number(b.address === address) - Number(a.address === address));
     if (state.phase === "running") {
       const sameAddresses = candidates.length === state.listeners.length &&
@@ -957,10 +967,6 @@ function createRemoteServer(options = {}) {
     state.requestedAddresses = candidates.map((entry) => entry.address);
     const failures = [];
     try {
-      if (!candidates.length) {
-        throw fail("ADDRESS_UNAVAILABLE", "no private IPv4 address found on this machine");
-      }
-
       const WebSocketServer = loadWebSocketServer();
       await state.attachments.init();
       state.webRootReal = await fsp.realpath(state.webRoot).catch(() => null);
@@ -1002,8 +1008,8 @@ function createRemoteServer(options = {}) {
           await listen(server, candidate.address, listenPort);
           const addressInfo = server.address();
           if (!addressInfo || typeof addressInfo === "string" ||
-              addressInfo.address !== candidate.address || !network.isPrivateIPv4(addressInfo.address)) {
-            throw fail("ADDRESS_UNAVAILABLE", "listener did not bind the requested private address");
+              addressInfo.address !== candidate.address || !network.isAllowedBindAddress(addressInfo.address)) {
+            throw fail("ADDRESS_UNAVAILABLE", "listener did not bind the requested address");
           }
           listenPort = addressInfo.port;
           state.port = listenPort;
