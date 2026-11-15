@@ -11,7 +11,6 @@ import {
   draftMatchesExisting,
   providerCreateInputFromDraft,
   isModelConfigImportSource,
-  isModeId,
   type ModelConfigImportDraft,
   type Mode,
   type SessionThinkingLevel,

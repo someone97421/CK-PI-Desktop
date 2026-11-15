@@ -1,11 +1,11 @@
 {
   "name": "@local/lan-remote-control",
-  "version": "0.2.40",
+  "version": "0.2.41",
   "private": true,
   "type": "module",
   "scripts": {
     "test:settings": "node --test scripts/model-settings.test.mjs",
-    "test": "node --test scripts/connector.test.mjs scripts/model-settings.test.mjs scripts/temporary-sessions.test.mjs",
+    "test": "node --test scripts/connector.test.mjs scripts/ipc.test.mjs scripts/model-settings.test.mjs scripts/temporary-sessions.test.mjs",
     "build": "node scripts/build.mjs",
     "check": "node scripts/check-source.mjs && node scripts/build.mjs --check",
     "pack": "node scripts/build.mjs --pack"

@@ -96,6 +96,7 @@ import {
   type PluginThemeVariableContrib,
 } from "@pi-desktop/plugin-sdk";
 import {
+  IPC,
   isAllowedKeybinding,
   isReservedKeybinding,
   normalizeKeybinding,
@@ -412,6 +413,10 @@ export type PluginHostServices = {
    * answer `UNSUPPORTED` and a new subscription reports `snapshot: null`.
    */
   desktopSessionSnapshot?: (sessionId: string) => Promise<unknown>;
+  invokeIpc?: (channel: string, ...args: unknown[]) => Promise<unknown>;
+  getRendererRoot?: () => string;
+  readRendererResource?: (url: string) => Promise<{ status: number; headers: Record<string, string>; body: string }>;
+  importUploadedFiles?: (input: { sessionId?: string; draftId?: string; files: Array<{ path: string; name?: string }> }) => Promise<unknown>;
   /**
    * 普通插件危险桌面操作（删除会话、修改权限、处理审批）的原生确认。
    * local.lan-remote-control 以密码登录作为用户授权，不再弹出桌面确认。
@@ -608,6 +613,12 @@ const HOST_API_ALLOWLIST = new Set([
   "desktop.subscribe",
   "desktop.unsubscribe",
   "desktop.getSessionSnapshot",
+  "desktop.invokeIpc",
+  "desktop.subscribeIpc",
+  "desktop.unsubscribeIpc",
+  "desktop.getRendererRoot",
+  "desktop.readRendererResource",
+  "desktop.importUploadedFiles",
   "workspace.get",
   "projects.list",
   "fs.readText",
@@ -1535,6 +1546,7 @@ export class PluginRuntime {
    * disable all run `clearContributions`, so nothing survives its process.
    */
   private desktopSubscriptions = new Map<string, DesktopSubscription>();
+  private ipcSubscriptions = new Map<string, string>();
   private readonly toolInvocations = new PluginToolInvocations();
   private readonly rendererCalls = new RendererCallRelay();
   private completeRate = new Map<string, { windowStart: number; count: number }>();
@@ -2208,6 +2220,18 @@ export class PluginRuntime {
           ts: Date.now(),
         });
       }
+    }
+  }
+
+  publishIpcEvent(channel: string, ...args: unknown[]): void {
+    if (!Object.values(IPC.event).includes(channel as typeof IPC.event[keyof typeof IPC.event])) return;
+    if (![...this.ipcSubscriptions.values()].includes("local.lan-remote-control")) return;
+    const target = this.loaded.get("local.lan-remote-control");
+    if (!target?.child || target.disposing || !target.permissions.has("desktop.control")) return;
+    try {
+      target.child.postMessage({ t: "event", event: "desktop:ipc-event", args: [{ channel, args }] });
+    } catch {
+      // 插件退出时丢弃广播，重连后由 Renderer 重新读取状态。
     }
   }
 
@@ -3836,6 +3860,9 @@ export class PluginRuntime {
     // registered for a stream the host would keep pushing into nothing.
     for (const [id, subscription] of this.desktopSubscriptions) {
       if (subscription.pluginId === pluginId) this.desktopSubscriptions.delete(id);
+    }
+    for (const [id, owner] of this.ipcSubscriptions) {
+      if (owner === pluginId) this.ipcSubscriptions.delete(id);
     }
     // A system-wide accelerator outlives every renderer, so it is released on
     // the same path that clears commands — disable, unload, and crash alike.
@@ -5787,6 +5814,10 @@ export class PluginRuntime {
       mkdirSync(dir, { recursive: true });
       return dir;
     };
+    const assertRemoteRenderer = () => {
+      this.assertPermission(loaded, "desktop.control");
+      if (pluginId !== "local.lan-remote-control") throw apiError("PERMISSION_DENIED", "renderer IPC requires the password-authorized LAN plugin");
+    };
 
     return {
       app: {
@@ -6053,6 +6084,47 @@ export class PluginRuntime {
         list: async () => this.services.listProjects?.() ?? [],
       },
       desktop: {
+        invokeIpc: async (channel: string, args: unknown[] = []) => {
+          assertRemoteRenderer();
+          if (typeof channel !== "string" || !Array.isArray(args)) throw apiError("INVALID_PARAMS", "channel and args are required");
+          if (!this.services.invokeIpc) throw apiError("UNSUPPORTED", "renderer IPC is unavailable");
+          return this.services.invokeIpc(channel, ...args);
+        },
+        subscribeIpc: async () => {
+          assertRemoteRenderer();
+          const existing = [...this.ipcSubscriptions].find(([, owner]) => owner === pluginId);
+          const subscriptionId = existing?.[0] ?? randomUUID();
+          this.ipcSubscriptions.set(subscriptionId, pluginId);
+          return { subscriptionId };
+        },
+        unsubscribeIpc: async (subscriptionId: string) => {
+          assertRemoteRenderer();
+          if (this.ipcSubscriptions.get(subscriptionId) === pluginId) this.ipcSubscriptions.delete(subscriptionId);
+          return { ok: true };
+        },
+        getRendererRoot: async () => {
+          assertRemoteRenderer();
+          if (!this.services.getRendererRoot) throw apiError("UNSUPPORTED", "renderer assets are unavailable");
+          return this.services.getRendererRoot();
+        },
+        readRendererResource: async (url: string) => {
+          assertRemoteRenderer();
+          if (typeof url !== "string" || !this.services.readRendererResource) throw apiError("UNSUPPORTED", "renderer resource is unavailable");
+          return this.services.readRendererResource(url);
+        },
+        importUploadedFiles: async (input: { sessionId?: string; draftId?: string; files?: Array<{ path: string; name?: string }> }) => {
+          assertRemoteRenderer();
+          if (!input || !Array.isArray(input.files) || !input.files.length || input.files.length > 32) throw apiError("INVALID_PARAMS", "uploaded files are required");
+          if (!this.services.importUploadedFiles) throw apiError("UNSUPPORTED", "renderer uploads are unavailable");
+          const root = this.pluginDataDir(pluginId);
+          const files = await Promise.all(input.files.map(async (file) => {
+            if (!file || typeof file.path !== "string") throw apiError("INVALID_PARAMS", "uploaded file path is required");
+            const path = await resolveRealPathWithinRoot(root, file.path);
+            if (!path) throw apiError("INVALID_PARAMS", "uploaded file is outside the plugin data directory");
+            return { path, name: file.name };
+          }));
+          return this.services.importUploadedFiles({ sessionId: input.sessionId, draftId: input.draftId, files });
+        },
         listOperations: async () => {
           this.assertPermission(loaded, "desktop.control");
           const controller = this.services.desktopControl;

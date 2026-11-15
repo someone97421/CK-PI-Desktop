@@ -1645,6 +1645,13 @@ export type PluginHostApi = {
     getSessionSnapshot: (input: {
       sessionId: string;
     }) => Promise<PluginDesktopSessionSnapshot>;
+    /** LAN 插件在密码认证后使用原 Renderer；事件通过 desktop:ipc-event 交付。 */
+    invokeIpc: (channel: string, args?: unknown[]) => Promise<unknown>;
+    subscribeIpc: () => Promise<{ subscriptionId: string }>;
+    unsubscribeIpc: (subscriptionId: string) => Promise<{ ok: true }>;
+    getRendererRoot: () => Promise<string>;
+    readRendererResource: (url: string) => Promise<{ status: number; headers: Record<string, string>; body: string }>;
+    importUploadedFiles: (input: { sessionId?: string; draftId?: string; files: Array<{ path: string; name?: string }> }) => Promise<unknown>;
   };
   /**
    * Background microphone capture and streaming playback

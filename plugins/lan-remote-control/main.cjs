@@ -43,6 +43,7 @@ const browseOperations = Object.freeze({
 
 const PLUGIN_DIR = __dirname;
 const WEB_DIR = path.join(PLUGIN_DIR, "web");
+let rendererRoot = WEB_DIR;
 
 const COMMAND_OPEN = "lan-remote-control.open";
 const SERVICE_ID = "lan-remote-control";
@@ -140,6 +141,30 @@ let lifecycleEpoch = 0;
 /** onUnload 之后为 true：禁止再排期任何自动开启（onLoad 会复位）。 */
 let unloaded = false;
 let livenessTimer = null;
+let ipcSubscription = null;
+
+async function ensureIpcSubscription() {
+  if (!ipcSubscription && typeof pi.desktop?.subscribeIpc === "function") {
+    ipcSubscription = Promise.resolve().then(() => pi.desktop.subscribeIpc());
+    ipcSubscription.catch((error) => {
+      ipcSubscription = null;
+      recordLog("warn", `IPC subscription failed: ${error?.message ?? error}`);
+    });
+  }
+  if (ipcSubscription) await ipcSubscription.catch(() => undefined);
+}
+
+async function releaseIpcSubscription() {
+  const pending = ipcSubscription;
+  ipcSubscription = null;
+  if (!pending) return;
+  try {
+    const subscription = await pending;
+    if (subscription?.subscriptionId) await pi.desktop.unsubscribeIpc(subscription.subscriptionId);
+  } catch (error) { recordLog("warn", `IPC unsubscribe failed: ${error?.message ?? error}`); }
+}
+
+function onIpcEvent(event) { remote?.broadcastIpc(event); }
 let webReady = false;
 const recentLog = [];
 
@@ -449,6 +474,7 @@ function ensureWired() {
   if (wired) return;
   wired = true;
   if (typeof pi.events?.on === "function") {
+    pi.events.on("desktop:ipc-event", onIpcEvent);
     pi.events.on("desktop:event", onDesktopEvent);
     pi.events.on("plugin:settingsChanged", onSettingsChanged);
   } else {
@@ -460,6 +486,7 @@ function unwireEvents() {
   if (!wired) return;
   wired = false;
   try {
+    pi.events?.off?.("desktop:ipc-event", onIpcEvent);
     pi.events?.off?.("desktop:event", onDesktopEvent);
     pi.events?.off?.("plugin:settingsChanged", onSettingsChanged);
   } catch (error) {
@@ -489,10 +516,13 @@ async function initializeRemote() {
     remoteError = { code: "DATA_DIR_UNAVAILABLE", message: dataDirError ?? "无法确定插件数据目录" };
     return null;
   }
-  webReady = fs.existsSync(WEB_DIR);
   try {
+    if (typeof pi.desktop?.getRendererRoot === "function") {
+      rendererRoot = path.resolve(await pi.desktop.getRendererRoot());
+    }
+    webReady = fs.existsSync(path.join(rendererRoot, "index.html"));
     remote = createRemoteServer({
-      webDir: WEB_DIR,
+      rendererDir: rendererRoot,
       dataDir,
       version: pluginVersion(manifest),
       name: "lan-remote-control",
@@ -502,6 +532,24 @@ async function initializeRemote() {
       getCapabilities,
       getUiScale: () => settings.uiScale,
       getExtensionIds: () => settings.extensionIds,
+      ipcInvoke: (channel, args) => {
+        if (typeof pi.desktop?.invokeIpc !== "function") {
+          throw Object.assign(new Error("宿主缺少 IPC 调用能力"), { code: "UNSUPPORTED" });
+        }
+        return pi.desktop.invokeIpc(channel, args);
+      },
+      rendererUpload: (input) => {
+        if (typeof pi.desktop?.importUploadedFiles !== "function") {
+          throw Object.assign(new Error("宿主缺少附件导入能力"), { code: "UNSUPPORTED" });
+        }
+        return pi.desktop.importUploadedFiles(input);
+      },
+      rendererResource: (url) => {
+        if (typeof pi.desktop?.readRendererResource !== "function") {
+          throw Object.assign(new Error("宿主缺少界面资源读取能力"), { code: "UNSUPPORTED" });
+        }
+        return pi.desktop.readRendererResource(url);
+      },
       localOperations: browseOperations,
       hooks: {
         onSubscribe: handleAdapterSubscribe,
@@ -737,7 +785,7 @@ async function buildStatus() {
     settingsWriteError,
     autoStart: autoStartStatus(),
     appearance,
-    web: { ready: webReady, root: "web" },
+    web: { ready: webReady, root: path.relative(PLUGIN_DIR, rendererRoot) || "." },
     adapter: adapter
       ? { available: true, error: null }
       : { available: false, error: adapterError ?? { code: "ADAPTER_MISSING", message: "宿主适配器不可用" } },
@@ -1074,6 +1122,7 @@ async function onLoad() {
   adapter = loadAdapter();
   await ensureRemote();
   ensureWired();
+  await ensureIpcSubscription();
   registerService();
   await registerCommands(manifest);
   startLivenessWatch();
@@ -1095,6 +1144,7 @@ async function shutdown() {
   stopLivenessWatch();
   return serializeLifecycle(async () => {
     try {
+      await releaseIpcSubscription();
       unwireEvents();
       const server = remote;
       remote = null;

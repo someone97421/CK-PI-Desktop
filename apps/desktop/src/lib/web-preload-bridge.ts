@@ -1,0 +1,408 @@
+import { IPC, type Result } from "@pi-desktop/shared";
+import "./web-remote-login.css";
+
+declare global {
+  interface Window {
+    __piDesktopInsertPromptText?: (text: string) => boolean;
+    __piDesktopResourceUrl?: (url: string) => string;
+    __piDesktopBrowseAction?: (method: BrowseMethod) => Promise<unknown>;
+    __piDesktopBrowseStatus?: BrowseStatus;
+  }
+}
+
+type BrowseMethod = "toggleAttach" | "insertCurrent" | "handoff";
+type BrowseStatus = {
+  authenticated: boolean;
+  online: boolean;
+  busy: boolean;
+  borrowed: boolean;
+  browserContext: string | null;
+};
+type Listener = (...args: unknown[]) => void;
+type RemoteStatus = { authenticated: boolean; online: boolean; canCompose: boolean };
+const TOKEN_KEY = "lan-remote-control.token";
+
+export function webRemoteId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 15) | 64;
+  bytes[8] = (bytes[8]! & 63) | 128;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function trustedExtensionOrigin(value: string | null): string | null {
+  return value && /^chrome-extension:\/\/[a-p]{32}$/.test(value) ? value : null;
+}
+
+export async function initializeWebPreloadBridge(): Promise<void> {
+  if (window.piDesktop) return;
+  document.documentElement.dataset.webRemote = "true";
+  document.documentElement.dataset.platform = "linux";
+  document.documentElement.dataset.theme = "dark";
+  // HTTP 局域网页面也使用同一 UUID 实现。
+  if (typeof crypto.randomUUID !== "function") {
+    Object.defineProperty(crypto, "randomUUID", { value: webRemoteId, configurable: true });
+  }
+  const params = new URLSearchParams(location.search);
+  const server = new URL(params.get("server") || location.origin);
+  if (!/^https?:$/.test(server.protocol) || server.username || server.password || server.pathname !== "/" || server.search || server.hash) {
+    throw new Error("无效的服务地址");
+  }
+  const origin = server.origin;
+  const parentOrigin = trustedExtensionOrigin(params.get("parentOrigin"));
+  const storageKey = origin === location.origin ? TOKEN_KEY : `${TOKEN_KEY}:${origin}`;
+  const readStored = (key: string) => {
+    try { return localStorage.getItem(key) || sessionStorage.getItem(key) || ""; } catch { return ""; }
+  };
+  let token = readStored(storageKey);
+  const resourceProtocol = /^(pi-genui|plugin-renderer|plugin-asset|appearance-media):\/\//;
+  const resourceUrl = (value: string): string => {
+    if (!resourceProtocol.test(value)) return value;
+    try {
+      const url = new URL(value);
+      return `${origin}/api/resource/${encodeURIComponent(token)}/${url.protocol.slice(0, -1)}/${url.hostname}${url.pathname}${url.search}${url.hash}`;
+    } catch { return value; }
+  };
+  window.__piDesktopResourceUrl = resourceUrl;
+  const resourceString = (value: string): string => {
+    if (resourceProtocol.test(value)) return resourceUrl(value);
+    return value.replace(/url\(\s*(?:"([^"]*)"|'([^']*)'|([^\s)]+))\s*\)/gi, (match, doubleQuoted: string | undefined, singleQuoted: string | undefined, bare: string | undefined) => {
+      const url = doubleQuoted ?? singleQuoted ?? bare ?? "";
+      if (!resourceProtocol.test(url)) return match;
+      const quote = doubleQuoted !== undefined ? '"' : singleQuoted !== undefined ? "'" : "";
+      return `url(${quote}${resourceUrl(url)}${quote})`;
+    });
+  };
+  const resourceData = <T,>(value: T): T => {
+    if (typeof value === "string") return resourceString(value) as T;
+    if (Array.isArray(value)) return value.map((item) => resourceData(item)) as T;
+    if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resourceData(item)])) as T;
+    }
+    return value;
+  };
+  const storeToken = (value: string) => {
+    token = value;
+    for (const storage of [() => localStorage, () => sessionStorage]) {
+      try { value ? storage().setItem(storageKey, value) : storage().removeItem(storageKey); } catch { /* 当前页仍可使用内存令牌。 */ }
+    }
+  };
+  const status: RemoteStatus = { authenticated: false, online: false, canCompose: false };
+  const browseStatus: BrowseStatus = { authenticated: false, online: false, busy: false, borrowed: false, browserContext: null };
+  const browsePending = new Map<string, { method: BrowseMethod; resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  const post = (message: unknown) => {
+    if (parentOrigin && parent !== window) parent.postMessage(message, parentOrigin);
+  };
+  const publishBrowseStatus = () => {
+    browseStatus.authenticated = status.authenticated;
+    browseStatus.online = status.online;
+    window.__piDesktopBrowseStatus = { ...browseStatus };
+    window.dispatchEvent(new CustomEvent("pi-desktop:browse-status", { detail: { ...browseStatus } }));
+  };
+  const browseAction = (method: BrowseMethod): Promise<unknown> => new Promise((resolve, reject) => {
+    if (!parentOrigin || parent === window) { reject(new Error("当前页面不在 Chrome 侧栏中")); return; }
+    const requestId = webRemoteId();
+    browsePending.set(requestId, { method, resolve, reject });
+    post({ type: "pi-desktop:browse-request", requestId, method });
+  });
+  if (parentOrigin) window.__piDesktopBrowseAction = browseAction;
+  const publishStatus = () => post({ type: "pi-desktop:remote-status", ...status, canCompose: status.authenticated && status.online && status.canCompose });
+  window.addEventListener("pi-desktop:remote-view", (event) => {
+    status.canCompose = (event as CustomEvent<{ canCompose: boolean }>).detail?.canCompose === true;
+    publishStatus();
+    publishBrowseStatus();
+  });
+  const desktopPresentationEvents = new Set<string>([
+    IPC.event.temporaryWorkspacePending, IPC.event.pluginLauncherShown,
+    IPC.event.browserOpenFile, IPC.event.pluginViewReveal, IPC.event.pluginComposerSuggestion,
+    IPC.event.windowMaximized, IPC.event.windowFullScreen, IPC.event.windowWorkPanelResize,
+    IPC.event.closePrompt, IPC.event.lifecycleDialogRequest, IPC.event.lifecycleDialogDismiss,
+    IPC.event.menuCommand, IPC.event.traySessionActivated,
+    IPC.event.notificationActivated, IPC.event.notificationSound,
+  ]);
+  const listeners = new Map<string, Set<Listener>>();
+  const buffered = new Map<string, unknown[][]>();
+  const emit = (channel: string, args: unknown[]) => {
+    if (desktopPresentationEvents.has(channel)) return;
+    args = resourceData(args);
+    const entries = listeners.get(channel);
+    if (entries?.size) for (const listener of entries) listener(...args);
+    else {
+      const events = buffered.get(channel) ?? [];
+      events.push(args);
+      buffered.set(channel, events.slice(-100));
+    }
+  };
+  let socket: WebSocket | undefined;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let attempts = 0, lastMessage = 0, mounted = false, expired = false;
+  let resolveReady!: () => void;
+  const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
+  const expire = () => {
+    if (expired) return;
+    expired = true;
+    storeToken("");
+    status.authenticated = false; status.online = false; status.canCompose = false;
+    publishStatus();
+    publishBrowseStatus();
+    socket?.close();
+    if (retry) clearTimeout(retry);
+    if (heartbeat) clearInterval(heartbeat);
+    location.reload();
+  };
+  const bridgeError = (code: string, message: string) => Object.assign(new Error(message), { code });
+  const request = async (path: string, init: RequestInit, authenticated = true): Promise<any> => {
+    const headers = new Headers(init.headers);
+    if (authenticated) {
+      if (!token) throw bridgeError("UNAUTHORIZED", "请先登录");
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    let response: Response;
+    try {
+      response = await fetch(`${origin}${path}`, { ...init, headers, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(60_000) });
+    } catch (error) {
+      const timedOut = error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name);
+      throw bridgeError(timedOut ? "TIMEOUT" : "NETWORK_ERROR", timedOut ? "请求超时" : "无法连接主机");
+    }
+    if (response.status === 401 && authenticated) { expire(); throw bridgeError("UNAUTHORIZED", "登录已失效"); }
+    let result: any;
+    try { result = await response.json(); }
+    catch { throw bridgeError(response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`, `主机响应无效 (${response.status})`); }
+    if (!response.ok) throw bridgeError(
+      typeof result?.error?.code === "string" ? result.error.code : `HTTP_${response.status}`,
+      typeof result?.error?.message === "string" ? result.error.message : `请求失败 (${response.status})`,
+    );
+    return result;
+  };
+  const jsonRequest = (path: string, body: unknown, authenticated = true) => request(path, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }, authenticated);
+  const picked = new Map<string, File[]>();
+  const pick = (photos: boolean): Promise<Result<unknown>> => new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file"; input.multiple = true;
+    if (photos) input.accept = "image/*";
+    input.hidden = true; document.body.append(input);
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      const files = Array.from(input.files ?? []);
+      input.remove();
+      if (!files.length) { resolve({ ok: true, data: { token: null, canceled: true } }); return; }
+      const id = webRemoteId(); picked.set(id, files);
+      resolve({ ok: true, data: { token: id, canceled: false } });
+    };
+    input.addEventListener("change", finish, { once: true });
+    input.addEventListener("cancel", finish, { once: true });
+    input.click();
+  });
+  const localPresentationChannels = new Set<string>([
+    IPC.invoke.lifecycleDialogRespond, IPC.invoke.closePromptRespond,
+    IPC.invoke.traySetSessionPreferences, IPC.invoke.pluginSessionActive,
+    IPC.invoke.notificationSetViewingSession, IPC.invoke.notificationShowNative,
+    IPC.invoke.pluginViewOpen, IPC.invoke.pluginViewClose,
+    IPC.invoke.pluginViewSetBounds, IPC.invoke.pluginViewSetVisible,
+    IPC.invoke.browserSetBounds, IPC.invoke.browserSetVisible,
+  ]);
+  const nativePresentationChannels = new Set<string>([
+    IPC.invoke.fsOpen, IPC.invoke.fsReveal, IPC.invoke.workspaceReviewOpenFile,
+    IPC.invoke.storageChoose, IPC.invoke.projectOpen, IPC.invoke.projectPickFolders,
+    IPC.invoke.projectClone, IPC.invoke.devtoolsToggle, IPC.invoke.worktreeReveal,
+    IPC.invoke.sessionOpenScratchPath, IPC.invoke.projectOpenFolder,
+    IPC.invoke.settingsDataDirectoryChange, IPC.invoke.settingsDataDirectoryOpen,
+    IPC.invoke.settingsExportConfig, IPC.invoke.settingsImportConfig,
+    IPC.invoke.appearanceMediaSelect, IPC.invoke.providersExportConfig, IPC.invoke.providersImportConfig,
+    IPC.invoke.pluginLoadDev, IPC.invoke.pluginCreateFromTemplate,
+    IPC.invoke.pluginInstallFromPath, IPC.invoke.pluginInstallFromPackage, IPC.invoke.pluginImportExtension,
+    IPC.invoke.skillImport, IPC.invoke.skillReveal, IPC.invoke.subagentReveal,
+    IPC.invoke.logOpenFolder, IPC.invoke.startupAnimationOpenFolder,
+    IPC.invoke.appOpenFeedback, IPC.invoke.updatesOpenReleases,
+    IPC.invoke.pluginLauncherOpenApp, IPC.invoke.pluginLauncherOpenMarket,
+  ]);
+  window.piDesktop = {
+    platform: "linux", channels: IPC, locale: navigator.language, getDroppedFilePath: () => null,
+    on(channel, listener) {
+      const entries = listeners.get(channel) ?? new Set<Listener>();
+      entries.add(listener); listeners.set(channel, entries);
+      const pending = buffered.get(channel);
+      buffered.delete(channel);
+      if (pending) queueMicrotask(() => { if (entries.has(listener)) for (const args of pending) listener(...args); });
+      return () => { entries.delete(listener); };
+    },
+    async invoke<T>(channel: string, ...args: unknown[]): Promise<Result<T>> {
+      try {
+        if (nativePresentationChannels.has(channel)) return { ok: false, error: { code: "UNSUPPORTED", message: "Web 端不支持此电脑原生窗口操作" } };
+        if (channel === IPC.invoke.browserOpenExternal) {
+          const raw = (args[0] as { url?: unknown } | undefined)?.url;
+          if (typeof raw !== "string" || !raw.trim()) throw bridgeError("INVALID_ARGUMENT", "缺少要打开的链接");
+          let url: URL;
+          try { url = new URL(raw); } catch { throw bridgeError("INVALID_ARGUMENT", "链接地址无效"); }
+          if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) throw bridgeError("UNSUPPORTED", "Web 端不支持此链接协议");
+          window.open(url.href, "_blank", "noopener");
+          return { ok: true, data: { ok: true } as T };
+        }
+        if (localPresentationChannels.has(channel)) return { ok: true, data: { ok: true, accepted: false } as T };
+        if (channel === IPC.invoke.windowSetWorkPanelReservation) return { ok: true, data: { requested: 0, reserved: 0 } as T };
+        if (channel === IPC.invoke.windowSetWorkPanelChatWidth) return { ok: true, data: { requested: 0, applied: 0 } as T };
+        if (channel === IPC.invoke.windowSetBackgroundColor) return { ok: true, data: { applied: false, theme: document.documentElement.dataset.theme } as T };
+        if (channel === IPC.invoke.windowControl || channel === IPC.invoke.nativeMenuAction) return { ok: true, data: { maximized: false, fullScreen: false, macosWindowTranslucency: false } as T };
+        if (channel === IPC.invoke.menuRendererReady || channel === IPC.invoke.lifecycleDialogReady) return { ok: true, data: { ready: true } as T };
+        if (channel === IPC.invoke.pluginLauncherToggle || channel === IPC.invoke.pluginLauncherDismiss) return { ok: true, data: { visible: false } as T };
+        if (channel === IPC.invoke.pluginLauncherContentHeight) return { ok: true, data: { ok: true } as T };
+        if (channel === IPC.invoke.workPanelTabMenu) return { ok: true, data: null as T };
+        if (channel === IPC.invoke.temporaryWorkspaceTake) return { ok: true, data: { workspacePaths: [] } as T };
+        if (channel === IPC.invoke.composerPickFiles || channel === IPC.invoke.composerPickPhotos) {
+          return await pick(channel === IPC.invoke.composerPickPhotos) as Result<T>;
+        }
+        if (channel === IPC.invoke.composerReadClipboardDirectories) return { ok: true, data: null as T };
+        if (channel === IPC.invoke.composerImportFiles) {
+          const input = args[0] as { token?: string; sessionId?: string; draftId?: string } | undefined;
+          if (!input || typeof input.token !== "string") throw bridgeError("INVALID_ARGUMENT", "缺少文件选择 token");
+          if (!input.sessionId && !input.draftId) throw bridgeError("INVALID_ARGUMENT", "缺少附件所属会话或草稿");
+          const files = picked.get(input.token);
+          if (!files) throw bridgeError("NOT_FOUND", "文件选择已失效，请重新选择");
+          const uploaded = [];
+          try {
+            for (const file of files) {
+              const query = new URLSearchParams({ target: "renderer" });
+              if (input.draftId) query.set("draftId", input.draftId);
+              const result = await request(`/api/upload?${query}`, {
+                method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-Filename": encodeURIComponent(file.name), ...(input.sessionId ? { "X-Session-Id": input.sessionId } : {}) }, body: file,
+              });
+              if (result?.ok === false) return result as Result<T>;
+              const imported = result?.files ?? result?.result?.files ?? result?.data?.files;
+              if (!Array.isArray(imported) || !imported.length) throw bridgeError("INVALID_RESPONSE", "附件导入响应无效");
+              uploaded.push(...imported);
+            }
+            return { ok: true, data: { files: uploaded } as T };
+          } finally { picked.delete(input.token); }
+        }
+        if (channel === IPC.invoke.composerPasteFiles) {
+          const input = args[0] as { files?: Array<{ data: ArrayBuffer | string; [key: string]: unknown }> } | undefined;
+          if (!input || !Array.isArray(input.files)) throw bridgeError("INVALID_ARGUMENT", "缺少粘贴文件");
+          args = [{ ...input, files: input.files.map((file) => {
+            if (typeof file.data === "string") return file;
+            const bytes = new Uint8Array(file.data);
+            let binary = "";
+            for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+            return { ...file, data: btoa(binary) };
+          }) }];
+        }
+        const result = await jsonRequest("/api/ipc", { channel, args }) as Result<T>;
+        return result.ok ? { ...result, data: resourceData(result.data) } : result;
+      } catch (error) {
+        const failure = error as { code?: unknown; message?: unknown } | null;
+        return { ok: false, error: {
+          code: typeof failure?.code === "string" ? failure.code : "INTERNAL",
+          message: typeof failure?.message === "string" ? failure.message : String(error),
+        } };
+      }
+    },
+  };
+  window.addEventListener("message", (event) => {
+    if (!parentOrigin || event.source !== parent || event.origin !== parentOrigin) return;
+    const data = event.data;
+    if (!data || typeof data !== "object") return;
+    if (data.type === "pi-desktop:status-request") { publishStatus(); return; }
+    if (data.type === "pi-desktop:browse-status") {
+      if (typeof data.authenticated === "boolean") browseStatus.authenticated = data.authenticated;
+      if (typeof data.online === "boolean") browseStatus.online = data.online;
+      if (typeof data.busy === "boolean") browseStatus.busy = data.busy;
+      if (typeof data.borrowed === "boolean") browseStatus.borrowed = data.borrowed;
+      browseStatus.browserContext = typeof data.browserContext === "string" ? data.browserContext : null;
+      window.__piDesktopBrowseStatus = { ...browseStatus };
+      window.dispatchEvent(new CustomEvent("pi-desktop:browse-status", { detail: { ...browseStatus } }));
+      return;
+    }
+    if (data.type === "pi-desktop:browse-response" && typeof data.requestId === "string") {
+      const pending = browsePending.get(data.requestId);
+      if (!pending) return;
+      browsePending.delete(data.requestId);
+      if (data.ok !== true) { pending.reject(new Error(typeof data.error === "string" ? data.error : "Browse 操作失败")); return; }
+      const result = data.result;
+      const browserContext = result && typeof result === "object" && typeof result.browserContext === "string" ? result.browserContext : null;
+      if (pending.method === "insertCurrent" && (!browserContext || !window.__piDesktopInsertPromptText?.(browserContext))) {
+        pending.reject(new Error("当前页面无法编辑草稿"));
+        return;
+      }
+      pending.resolve(result);
+      return;
+    }
+    const reply = (body: object) => post({ type: "pi-desktop:response", requestId: data.requestId, ...body });
+    void (async () => {
+      if (!status.authenticated || !status.online) throw new Error("请先登录并等待连接就绪");
+      if (data.method === "composer.insert") {
+        if (typeof data.text !== "string" || !status.canCompose || !window.__piDesktopInsertPromptText?.(data.text)) throw new Error("当前页面无法编辑草稿");
+        return { inserted: true };
+      }
+      if (!["browse.ensureRelay", "browse.mintPairingCode"].includes(data.method)) throw new Error("不支持的侧栏操作");
+      const result = await jsonRequest("/api/rpc", { requestId: data.requestId, mutationId: webRemoteId(), operation: data.method, input: {} });
+      if (!result.ok) throw new Error(result.error?.message || "Browse 操作失败");
+      return result.result;
+    })().then((result) => reply({ ok: true, result }), (error: unknown) => reply({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+  });
+  const login = document.createElement("section");
+  login.className = "web-remote-login";
+  const form = document.createElement("form"); form.className = "web-remote-login__card";
+  const heading = document.createElement("h1"); heading.textContent = "这是一个助手";
+  const label = document.createElement("label"); label.textContent = "主机密码";
+  const password = document.createElement("input"); password.type = "password"; password.autocomplete = "current-password"; password.required = true;
+  label.append(password);
+  const button = document.createElement("button"); button.type = "submit"; button.textContent = "连接主机";
+  const hint = document.createElement("p"); hint.className = "hint"; hint.role = "status";
+  const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "重新登录";
+  reset.addEventListener("click", expire);
+  form.append(heading, label, button, hint, reset); login.append(form); document.body.append(login);
+  const showConnection = () => { label.hidden = !!token; button.hidden = !!token; reset.hidden = !token; hint.textContent = token ? "正在连接主机…" : ""; };
+  const connect = () => {
+    if (!token || expired) return;
+    showConnection();
+    const ws = new WebSocket(`${origin.replace(/^http/, "ws")}/ws`);
+    socket = ws;
+    const authTimeout = setTimeout(() => ws.close(4000, "ready timeout"), 15_000);
+    ws.addEventListener("open", () => {
+      lastMessage = Date.now(); ws.send(JSON.stringify({ type: "auth", token }));
+      heartbeat = setInterval(() => {
+        if (Date.now() - lastMessage > 45_000) ws.close(4000, "heartbeat timeout");
+        else if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+      }, 15_000);
+    });
+    ws.addEventListener("message", (event) => {
+      if (socket !== ws) return;
+      lastMessage = Date.now();
+      let frame: any;
+      try { frame = JSON.parse(String(event.data)); } catch { return; }
+      if (frame.type === "ready") {
+        clearTimeout(authTimeout); attempts = 0;
+        status.authenticated = true; status.online = true;
+        login.remove(); publishStatus(); publishBrowseStatus();
+        if (!mounted) { mounted = true; resolveReady(); }
+        else window.dispatchEvent(new CustomEvent("pi-desktop:remote-reconnected"));
+      } else if (frame.type === "ipc-event" && typeof frame.channel === "string" && Array.isArray(frame.args)) emit(frame.channel, frame.args);
+      else if (frame.type === "ping") ws.send(JSON.stringify({ type: "pong", ts: frame.ts }));
+      else if (frame.type === "error" && ["UNAUTHORIZED", "FORBIDDEN"].includes(frame.error?.code)) expire();
+    });
+    ws.addEventListener("close", (event) => {
+      clearTimeout(authTimeout);
+      if (heartbeat) clearInterval(heartbeat);
+      if (socket !== ws || expired) return;
+      status.online = false; publishStatus(); publishBrowseStatus();
+      if (event.code === 4401 || event.code === 4403) { expire(); return; }
+      hint.textContent = "连接已断开，正在重连…";
+      retry = setTimeout(connect, Math.min(15_000, 500 * 2 ** Math.min(attempts++, 5)));
+    });
+    ws.addEventListener("error", () => ws.close());
+  };
+  form.addEventListener("submit", (event) => {
+    event.preventDefault(); button.disabled = true; hint.textContent = "正在登录…";
+    void jsonRequest("/api/login", { password: password.value, name: parentOrigin ? "Chrome 侧边栏" : "Web Renderer" }, false).then((response) => {
+      if (!response.ok || typeof response.result?.token !== "string") throw new Error(response.error?.message || "登录响应无效");
+      storeToken(response.result.token); password.value = ""; connect();
+    }).catch((error: unknown) => { hint.textContent = error instanceof Error ? error.message : String(error); }).finally(() => { button.disabled = false; });
+  });
+  showConnection(); publishStatus(); publishBrowseStatus();
+  if (token) connect(); else password.focus();
+  await ready;
+}

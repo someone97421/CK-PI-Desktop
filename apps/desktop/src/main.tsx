@@ -5,76 +5,86 @@ import { initReactI18next } from "react-i18next";
 import { catalogs, flattenCatalog, resolveLocale } from "@pi-desktop/i18n";
 import { remoteEn, remoteZh } from "./locales/remote";
 import { MAC_TRAFFIC_LIGHT_EDGE_DIP } from "@pi-desktop/shared";
-import App from "./App";
-import { PluginLauncher } from "./components/PluginLauncher";
 import { initLanguageSync, resolveOsLocale } from "./lib/app-language";
 import { installScrollbarReveal } from "./lib/scrollbar-reveal";
+import { initializeWebPreloadBridge } from "./lib/web-preload-bridge";
 import "./styles/globals.css";
 
-const rendererSurface = new URLSearchParams(window.location.search).get("surface");
-if (rendererSurface) document.documentElement.dataset.surface = rendererSurface;
-document.documentElement.dataset.theme = "dark";
-// Window-chrome layout differs per OS (traffic lights left on macOS,
-// controls overlay right on Windows/Linux); set before first paint.
-document.documentElement.dataset.platform =
-  window.piDesktop?.platform ?? "darwin";
-// The macOS traffic lights are native views with a fixed footprint; the space
-// the shell leaves clear for them derives from the same shared constant the
-// main process positions them with (styles/tokens.css). Only macOS has them —
-// the 0px default keeps Windows/Linux on the renderer-drawn controls.
-if (document.documentElement.dataset.platform === "darwin") {
-  document.documentElement.style.setProperty(
-    "--ds-traffic-light-edge",
-    `${MAC_TRAFFIC_LIGHT_EDGE_DIP}px`,
+async function bootRenderer() {
+  await initializeWebPreloadBridge();
+  const [{ default: App }, { PluginLauncher }] = await Promise.all([
+    import("./App"), import("./components/PluginLauncher"),
+  ]);
+  if (document.documentElement.dataset.webRemote === "true") {
+    let refreshing = false;
+    window.addEventListener("pi-desktop:remote-reconnected", () => {
+      if (refreshing) return;
+      refreshing = true;
+      void Promise.all([import("./stores/app-store"), import("./lib/api")]).then(async ([{ useAppStore }, { api }]) => {
+        const state = useAppStore.getState();
+        const [settings, sessions] = await Promise.all([
+          api.getSettings(), api.listSessions(), state.refreshSessions(),
+          state.refreshProviders(), state.refreshPlugins(), state.refreshNotifications(),
+          state.refreshPlanCheckpoints(),
+        ]);
+        const runningSessions = Object.fromEntries((sessions.runningSessionIds ?? []).map((id) => [id, true]));
+        useAppStore.setState((current) => ({ settings, runningSessions, isRunning: !!current.activeSessionId && !!runningSessions[current.activeSessionId] }));
+        const current = useAppStore.getState();
+        if (current.page === "chat" && current.activeSessionId) {
+          await current.selectSession(current.activeSessionId, { record: false });
+        }
+      }).catch(console.error).finally(() => { refreshing = false; });
+    });
+  }
+  const rendererSurface = new URLSearchParams(window.location.search).get("surface");
+  if (rendererSurface) document.documentElement.dataset.surface = rendererSurface;
+  document.documentElement.dataset.theme = "dark";
+  document.documentElement.dataset.platform = window.piDesktop?.platform ?? "darwin";
+  if (document.documentElement.dataset.platform === "darwin") {
+    document.documentElement.style.setProperty("--ds-traffic-light-edge", `${MAC_TRAFFIC_LIGHT_EDGE_DIP}px`);
+  }
+  installScrollbarReveal(document);
+
+  const locale = resolveLocale(resolveOsLocale());
+  const resources = Object.fromEntries(
+    Object.entries(catalogs).map(([lng, catalog]) => [
+      lng,
+      { remote: lng === "zh-CN" ? remoteZh : remoteEn, translation: flattenCatalog(catalog as unknown as Record<string, unknown>) },
+    ]),
   );
+  void i18n.use(initReactI18next).init({
+    lng: locale,
+    fallbackLng: "en",
+    resources,
+    interpolation: { escapeValue: false },
+  });
+  initLanguageSync();
+
+  const rootEl = document.getElementById("root");
+  if (!rootEl) throw new Error("root element missing");
+  try {
+    ReactDOM.createRoot(rootEl).render(
+      <React.StrictMode>
+        {rendererSurface === "plugin-launcher" ? <PluginLauncher /> : <App />}
+      </React.StrictMode>,
+    );
+  } catch (error) {
+    const crashCatalog = catalogs[resolveLocale(i18n.resolvedLanguage ?? i18n.language ?? locale)];
+    const panel = document.createElement("div");
+    panel.style.cssText = "padding:24px;font:14px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#181818;color:#fff;height:100%";
+    const heading = document.createElement("h1");
+    heading.style.cssText = "margin:0 0 8px;font-size:16px";
+    heading.textContent = crashCatalog.app.uiCrashed;
+    const detail = document.createElement("pre");
+    detail.style.cssText = "white-space:pre-wrap;color:#fca5a5";
+    detail.textContent = String(error);
+    panel.append(heading, detail);
+    rootEl.replaceChildren(panel);
+  }
 }
-// Scrollbars are transparent at rest (base.css); this marks the scrolling
-// element so the thumb shows while it moves, not only under the pointer.
-installScrollbarReveal(document);
 
-const locale = resolveLocale(resolveOsLocale());
-const resources = Object.fromEntries(
-  Object.entries(catalogs).map(([lng, catalog]) => [
-    lng,
-    { remote: lng === "zh-CN" ? remoteZh : remoteEn, translation: flattenCatalog(catalog as unknown as Record<string, unknown>) },
-  ]),
-);
-
-void i18n.use(initReactI18next).init({
-  lng: locale,
-  fallbackLng: "en",
-  resources,
-  interpolation: { escapeValue: false },
+void bootRenderer().catch((error: unknown) => {
+  const root = document.getElementById("root");
+  if (root) root.textContent = error instanceof Error ? error.message : String(error);
+  console.error(error);
 });
-
-// Settings load async after mount; switch i18n when the stored language lands.
-initLanguageSync();
-
-const rootEl = document.getElementById("root");
-if (!rootEl) {
-  throw new Error("root element missing");
-}
-
-try {
-  ReactDOM.createRoot(rootEl).render(
-    <React.StrictMode>
-      {rendererSurface === "plugin-launcher" ? <PluginLauncher /> : <App />}
-    </React.StrictMode>,
-  );
-} catch (error) {
-  const crashCatalog =
-    catalogs[resolveLocale(i18n.resolvedLanguage ?? i18n.language ?? locale)];
-  // Built with DOM nodes, not markup: the error text is untrusted and must not
-  // be interpreted as HTML.
-  const panel = document.createElement("div");
-  panel.style.cssText =
-    "padding:24px;font:14px/1.4 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#181818;color:#fff;height:100%";
-  const heading = document.createElement("h1");
-  heading.style.cssText = "margin:0 0 8px;font-size:16px";
-  heading.textContent = crashCatalog.app.uiCrashed;
-  const detail = document.createElement("pre");
-  detail.style.cssText = "white-space:pre-wrap;color:#fca5a5";
-  detail.textContent = String(error);
-  panel.append(heading, detail);
-  rootEl.replaceChildren(panel);
-}

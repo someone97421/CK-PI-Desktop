@@ -6,6 +6,7 @@ import { useNativeViewOcclusion } from "../../lib/native-view-occlusion";
 import { useAppStore } from "../../stores/app-store";
 import { IconPlug } from "../icons";
 import { WorkTabEmpty } from "./WorkTabEmpty";
+import { FilesTab } from "./FilesTab";
 
 /**
  * A plugin-contributed work panel view (ADR 0104).
@@ -15,7 +16,19 @@ import { WorkTabEmpty } from "./WorkTabEmpty";
  * measures the placeholder rect and drives visibility. Native content yields
  * to blocking dialogs and global floating surfaces that overlap its bounds.
  */
-export function PluginViewTab({
+export function PluginViewTab(props: Parameters<typeof NativePluginViewTab>[0]) {
+  if (document.documentElement.dataset.webRemote !== "true") return <NativePluginViewTab {...props} />;
+  if (props.pluginId === "pi.file-manager") return <FilesTab />;
+  return <WebPluginViewNotice title={props.title} icon={props.icon} />;
+}
+
+function WebPluginViewNotice({ title, icon }: { title: string; icon?: string }) {
+  const { i18n } = useTranslation();
+  return <div className="work-plugin-view"><WorkTabEmpty icon={pluginViewIcon(icon) ?? IconPlug} title={title}
+    body={i18n.resolvedLanguage?.startsWith("zh") ? "此扩展视图需要在桌面端打开" : "Open this extension view on the desktop"} /></div>;
+}
+
+function NativePluginViewTab({
   pluginId,
   viewId,
   title,

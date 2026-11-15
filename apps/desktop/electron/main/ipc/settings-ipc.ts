@@ -22,6 +22,8 @@ export type SettingsIpcDependencies = {
   registrar: IpcRegistrar;
   getHost: () => HostProcess | null;
   getSidecar: () => AgentSidecar | null;
+  getMainWindow: () => BrowserWindow | null;
+  sendToRenderer: (channel: string, payload: unknown) => void;
   dataDir: string;
   normalizeSettings: (settings: unknown) => unknown;
   validateSettingsWrite: (settings: unknown) => any;
@@ -50,6 +52,8 @@ export function registerSettingsIpc({
   registrar,
   getHost,
   getSidecar,
+  getMainWindow,
+  sendToRenderer,
   dataDir,
   normalizeSettings,
   validateSettingsWrite,
@@ -71,8 +75,9 @@ export function registerSettingsIpc({
   const appearanceMedia = new AppearanceMediaStore(dataDir, (state) => {
     systemIcons.selectionChanged();
     applyAppearanceIcon(readAppearanceIconPath(dataDir));
+    sendToRenderer(IPC.event.appearanceMediaChanged, state);
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      if (window !== getMainWindow() && !window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send(IPC.event.appearanceMediaChanged, state);
       }
     }
@@ -220,8 +225,9 @@ export function registerSettingsIpc({
         ? await importProviderConfig({ getHost: () => transferHost, saveSettings: deps.saveSettings })
         : scopes === undefined ? await importConfig(deps) : await exportConfig(deps, scopes);
       if (scopes === undefined && !result.canceled) {
+        sendToRenderer(IPC.event.pluginChanged, { reason: "subagent" });
         for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          if (window !== getMainWindow() && !window.isDestroyed() && !window.webContents.isDestroyed()) {
             window.webContents.send(IPC.event.pluginChanged, { reason: "subagent" });
           }
         }

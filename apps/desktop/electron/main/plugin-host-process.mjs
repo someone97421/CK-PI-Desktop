@@ -288,6 +288,12 @@ function buildApi() {
       subscribe: (input) => call("desktop.subscribe", [input ?? {}]),
       unsubscribe: (subscriptionId) => call("desktop.unsubscribe", [subscriptionId]),
       getSessionSnapshot: (input) => call("desktop.getSessionSnapshot", [input ?? {}]),
+      invokeIpc: (channel, args) => call("desktop.invokeIpc", [channel, args ?? []]),
+      subscribeIpc: () => call("desktop.subscribeIpc"),
+      unsubscribeIpc: (subscriptionId) => call("desktop.unsubscribeIpc", [subscriptionId]),
+      getRendererRoot: () => call("desktop.getRendererRoot"),
+      readRendererResource: (url) => call("desktop.readRendererResource", [url]),
+      importUploadedFiles: (input) => call("desktop.importUploadedFiles", [input]),
     },
     fs: {
       readText: (path) => call("fs.readText", [path]),

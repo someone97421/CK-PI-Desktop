@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/desktop",
-  "version": "2611.1511.125",
+  "version": "2611.1523.4657",
   "desktopName": "this-is-a-agent.desktop",
   "private": true,
   "description": "这是一个助手 — local-first AI coding agent desktop app",
@@ -101,6 +101,9 @@
       "!**/node_modules/node-addon-api/*.{c,gyp,gypi,h,js,json}",
       "!**/node_modules/node-addon-api/README.md"
     ],
+    "asarUnpack": [
+      "out/renderer/**"
+    ],
     "electronLanguages": [
       "en-US",
       "zh-CN",
@@ -138,7 +141,7 @@
     ],
     "mac": {
       "identity": "-",
-      "artifactName": "this-is-a-agent-20261115-110125-${arch}-mac.${ext}",
+      "artifactName": "this-is-a-agent-20261115-234657-${arch}-mac.${ext}",
       "target": [
         {
           "target": "dmg"
@@ -177,10 +180,10 @@
         "this-is-a-agent-macOS-open.command",
         "this-is-a-agent-macOS-opening-help.txt"
       ],
-      "bundleVersion": "2611.1511.125"
+      "bundleVersion": "2611.1523.4657"
     },
     "dmg": {
-      "artifactName": "this-is-a-agent-20261115-110125-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-20261115-234657-${arch}.${ext}",
       "window": {
         "width": 720,
         "height": 500
@@ -240,22 +243,22 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "这是一个助手",
-      "artifactName": "this-is-a-agent-Setup-20261115-110125-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-Setup-20261115-234657-${arch}.${ext}",
       "uninstallDisplayName": "这是一个助手",
       "deleteAppDataOnUninstall": false
     },
     "portable": {
-      "artifactName": "this-is-a-agent-Portable-20261115-110125-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-Portable-20261115-234657-${arch}.${ext}",
       "requestExecutionLevel": "user",
       "unpackDirName": "this-is-a-agent-Portable"
     },
     "deb": {
       "packageName": "this-is-a-agent",
-      "artifactName": "this-is-a-agent-20261115-110125-${arch}.${ext}"
+      "artifactName": "this-is-a-agent-20261115-234657-${arch}.${ext}"
     },
     "rpm": {
       "packageName": "this-is-a-agent",
-      "artifactName": "this-is-a-agent-20261115-110125-${arch}.${ext}",
+      "artifactName": "this-is-a-agent-20261115-234657-${arch}.${ext}",
       "fpm": [
         "--rpm-rpmbuild-define",
         "_build_id_links none"
@@ -299,15 +302,15 @@
           "Comment": "这是一个助手"
         }
       },
-      "artifactName": "this-is-a-agent-20261115-110125-${arch}.${ext}"
+      "artifactName": "this-is-a-agent-20261115-234657-${arch}.${ext}"
     },
     "asar": {
       "smartUnpack": false
     },
-    "buildVersion": "2611.1511.125.0",
+    "buildVersion": "2611.1523.4657.0",
     "extraMetadata": {
       "name": "this-is-a-agent"
     }
   },
-  "buildVersionLabel": "20261115-110125"
+  "buildVersionLabel": "20261115-234657"
 }

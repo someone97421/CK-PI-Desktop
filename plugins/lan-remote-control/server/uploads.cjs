@@ -214,7 +214,7 @@ class AttachmentStore {
    * await so concurrent uploads cannot overshoot the device limit, and refuses
    * to file anything once the store has been disposed (`generation` guard).
    */
-  async save({ deviceId, sessionId, name, mimeType, buffer, isAuthorized = () => false }) {
+  async save({ deviceId, sessionId, name, mimeType, buffer, renderer = false, isAuthorized = () => false }) {
     if (!this.active) return { ok: false, code: "NOT_READY", message: "attachment store is not ready" };
     if (!Buffer.isBuffer(buffer)) {
       return { ok: false, code: "INVALID_PARAMS", message: "upload body is required" };
@@ -228,7 +228,11 @@ class AttachmentStore {
     const session = validateSessionId(sessionId);
     if (!session.ok) return session;
     const filename = decodeFilenameHeader(name);
-    const validated = validateUpload({ mimeType, filename, buffer });
+    const validated = renderer ? {
+      ok: true,
+      mimeType: normalizeMimeType(mimeType) || "application/octet-stream",
+      rule: { kind: ["png", "jpeg", "webp", "gif"].includes(sniffMagic(buffer)) ? "image" : "file", stored: ".bin" },
+    } : validateUpload({ mimeType, filename, buffer });
     if (!validated.ok) return validated;
     if (this.reservedForDevice(deviceId) >= this.maxPerDevice) {
       return { ok: false, code: "RATE_LIMITED", message: "attachment quota reached for this device" };
@@ -242,7 +246,7 @@ class AttachmentStore {
         return { ok: false, code: "NOT_READY", message: "attachment store was closed" };
       }
       const id = crypto.randomBytes(16).toString("base64url");
-      filePath = path.join(this.dir, `${id}${validated.rule.stored}`);
+      filePath = path.join(this.dir, `${id}${path.extname(filename) || validated.rule.stored}`);
       if (!isInsidePath(this.dir, filePath)) {
         filePath = null;
         return { ok: false, code: "INTERNAL", message: "attachment path escaped its directory" };

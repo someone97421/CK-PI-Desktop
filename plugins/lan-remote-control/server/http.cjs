@@ -30,6 +30,9 @@ const MIME_TYPES = Object.freeze({
   ".woff": "font/woff",
   ".woff2": "font/woff2",
   ".ttf": "font/ttf",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".wasm": "application/wasm",
   ".txt": "text/plain; charset=utf-8",
 });
 
@@ -43,18 +46,23 @@ const MAX_STATIC_BYTES = 8 * 1024 * 1024;
  */
 function buildCsp({ connectOrigins = [] } = {}) {
   const connect = ["'self'", ...connectOrigins.filter((origin) => typeof origin === "string" && origin)];
+  const ancestors = ["'self'", ...new Set(connectOrigins.filter((origin) =>
+    typeof origin === "string" && /^chrome-extension:\/\/[a-p]{32}$/.test(origin),
+  ))];
   return [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' blob: data:",
+    "img-src 'self' blob: data: https:",
     "font-src 'self' data:",
     `connect-src ${connect.join(" ")}`,
-    "media-src 'self' blob:",
+    "media-src 'self' data: blob: https:",
+    "worker-src 'self' blob:",
+    "frame-src 'self'",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    `frame-ancestors ${ancestors.join(" ")}`,
   ].join("; ");
 }
 
@@ -415,7 +423,7 @@ function resolveStaticPath(rootDir, pathname) {
  * `lstat` and the resolved real path must stay inside the real root, so neither
  * a link nor a reparse point can escape into the plugin or the user's disk.
  */
-async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, connectOrigins = [] }) {
+async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, connectOrigins = [], renderer = false }) {
   const resolved = resolveStaticPath(rootDir, pathname);
   if (!resolved.ok) return resolved;
   const mime = mimeForFile(resolved.filePath);
@@ -445,6 +453,18 @@ async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, conne
   }
   const html = mime.startsWith("text/html");
   applySecurityHeaders(res, { html, connectOrigins });
+  if (html && renderer) {
+    const source = await fsp.readFile(resolved.filePath, "utf8");
+    const content = source.replace(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) =>
+      /\bhttp-equiv\s*=\s*(["'])Content-Security-Policy\1/i.test(tag) ? "" : tag,
+    ).replace(/\b(src|href)=(['"])\.\/assets\//g, "$1=$2/assets/");
+    const body = Buffer.from(content, "utf8");
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Content-Length", String(body.length));
+    res.writeHead(200);
+    res.end(req.method === "HEAD" ? undefined : body);
+    return { ok: true };
+  }
   res.setHeader("Content-Type", mime);
   res.setHeader("Content-Length", String(stats.size));
   if (req.method === "HEAD") {

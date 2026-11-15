@@ -10,6 +10,7 @@ import {
   type SessionSummary,
 } from "@pi-desktop/shared";
 import { isRemoteSession } from "../../../lib/remote-session-safety";
+import { rendererResourceUrl } from "../../../lib/renderer-resource-url";
 
 export type GenUiUnavailableReason = "outside" | "remote" | GenUiErrorCode;
 
@@ -44,7 +45,7 @@ export function genUiCardSource(reference: GenUiReference, owner: GenUiOwner): G
   if (!reference.location || !isGenUiSessionId(owner.sessionId)) {
     return { kind: "unavailable", reason: "outside" };
   }
-  return { kind: "live", url: genUiUrl({ sessionId: owner.sessionId, fileName: reference.location.fileName }) };
+  return { kind: "live", url: rendererResourceUrl(genUiUrl({ sessionId: owner.sessionId, fileName: reference.location.fileName })) };
 }
 
 const REASON_KEYS = {

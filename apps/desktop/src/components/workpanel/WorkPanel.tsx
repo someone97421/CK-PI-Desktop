@@ -177,7 +177,7 @@ export function WorkPanel(props: Parameters<typeof LocalWorkPanel>[0]) {
   const sessionId = useAppStore((state) => state.activeSessionId);
   const width = useAppStore((state) => state.workPanelWidth);
   if (session && isRemoteSession(session)) {
-    return <RemoteWorkspace key={session.id} session={session} width={Math.min(width, Math.max(280, (props.containerWidth || 900) - 320))}
+    return <RemoteWorkspace key={session.id} session={session} width={props.compact ? props.containerWidth || window.innerWidth : Math.min(width, Math.max(280, (props.containerWidth || 900) - 320))}
       exiting={props.exiting} onExitAnimationEnd={props.onExitAnimationEnd} />;
   }
   if (sessionId?.startsWith("remote:")) return null;
@@ -185,6 +185,7 @@ export function WorkPanel(props: Parameters<typeof LocalWorkPanel>[0]) {
 }
 
 function LocalWorkPanel({
+  compact = false,
   panelBlocked = false,
   exiting = false,
   onExitAnimationEnd,
@@ -198,6 +199,7 @@ function LocalWorkPanel({
   maximized = false,
   onToggleMaximize,
 }: {
+  compact?: boolean;
   /**
    * Hides every native surface in the panel. Both the preview browser and a
    * plugin view are `WebContentsView`s composited above renderer content, so a
@@ -307,8 +309,8 @@ function LocalWorkPanel({
   const isResizing = panelDragWidth !== null;
 
   useLayoutEffect(() => {
-    if (!exiting && layout.shouldCollapseSidebar) onAutoCollapseSidebar?.();
-  }, [exiting, layout.shouldCollapseSidebar, onAutoCollapseSidebar]);
+    if (!compact && !exiting && layout.shouldCollapseSidebar) onAutoCollapseSidebar?.();
+  }, [compact, exiting, layout.shouldCollapseSidebar, onAutoCollapseSidebar]);
 
   useEffect(() => {
     if (isResizing) {
@@ -908,8 +910,8 @@ function LocalWorkPanel({
     : t("panel.title");
   const exitAnimationReady = exiting && nativeSurfaceReadyForExit;
   const panelStyle = {
-    width: renderPanelWidth,
-    maxWidth: layout.maxPanelWidth,
+    width: compact ? "100%" : renderPanelWidth,
+    maxWidth: compact ? "100%" : layout.maxPanelWidth,
     "--work-panel-width": `${renderPanelWidth}px`,
   } as CSSProperties;
 
@@ -934,6 +936,7 @@ function LocalWorkPanel({
     >
       <div
         className="work-panel-resize no-drag"
+        hidden={compact}
         role="separator"
         aria-orientation="vertical"
         aria-label={t("panel.resize")}
@@ -948,7 +951,7 @@ function LocalWorkPanel({
         aria-valuenow={Math.round(panelDragWidth ?? renderPanelWidth)}
         aria-disabled={maximized || undefined}
         data-maximized={maximized ? "true" : undefined}
-        tabIndex={0}
+        tabIndex={compact ? -1 : 0}
         onPointerDown={onPanelResizeStart}
         onPointerMove={onPanelResizeMove}
         onPointerUp={onPanelResizeCommit}
@@ -1002,7 +1005,7 @@ function LocalWorkPanel({
                       // outside the strip, so bring the whole box in first.
                       onPointerEnter={() => revealTab(tab.id)}
                       onContextMenu={(event) => {
-                        if (tab.kind === "plugin") {
+                        if (tab.kind === "plugin" && document.documentElement.dataset.webRemote !== "true") {
                           openNativeTabMenu(event, tab.id, label);
                           return;
                         }
@@ -1101,7 +1104,7 @@ function LocalWorkPanel({
                 <IconPlus size={16} />
               </TooltipButton>
             )}
-            <TooltipButton
+            {!compact && <TooltipButton
               type="button"
               className="work-panel-maximize"
               tooltip={t(maximized ? "panel.restore" : "panel.maximize")}
@@ -1114,7 +1117,7 @@ function LocalWorkPanel({
               ) : (
                 <IconPanelMaximize size={15} />
               )}
-            </TooltipButton>
+            </TooltipButton>}
           </div>
         </header>
         <div className="work-panel-body">

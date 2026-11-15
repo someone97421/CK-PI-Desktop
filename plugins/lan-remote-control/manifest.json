@@ -3,7 +3,7 @@
   "id": "local.lan-remote-control",
   "name": "局域网远程控制",
   "description": "通过局域网浏览器或 Chrome 侧边栏访问这是一个助手的项目和会话，并连接 Browse 浏览器调试。共用访问密码和设备记录；默认不监听网络。",
-  "version": "0.2.40",
+  "version": "0.2.41",
   "main": "main.cjs",
   "enabledByDefault": false,
   "engines": {

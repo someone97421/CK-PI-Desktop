@@ -538,6 +538,7 @@ function sendToRenderer(channel: string, payload: unknown) {
     window.isDestroyed() ||
     window.webContents.isDestroyed()
   ) {
+    plugins.publishIpcEvent(channel, payload);
     return;
   }
   try {
@@ -1100,6 +1101,11 @@ function registerIpc() {
 // window that forgets to set a window-open handler therefore denies popups
 // and cannot attach a <webview> instead of inheriting Chromium's defaults.
 app.on("web-contents-created", (_event, contents) => {
+  const send = contents.send.bind(contents);
+  contents.send = (channel: string, ...args: unknown[]) => {
+    if (contents === mainState.mainWindow?.webContents) plugins.publishIpcEvent(channel, ...args);
+    send(channel, ...args);
+  };
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
   contents.on("will-attach-webview", (event) => {
     event.preventDefault();

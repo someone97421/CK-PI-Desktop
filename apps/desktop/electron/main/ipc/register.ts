@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import { dialog, shell, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from "electron";
-import { err, ErrorCodes, IPC, ok, type LifecycleDialogChoice, type Result } from "@pi-desktop/shared";
+import { dialog, net, shell, type BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from "electron";
+import { err, ErrorCodes, IPC, IPC_WHITELIST, ok, type LifecycleDialogChoice, type Result } from "@pi-desktop/shared";
 import type { AgentHostBridge } from "../agent-host-bridge";
 import type { AgentSidecar } from "../agent-sidecar";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
@@ -48,6 +48,8 @@ import type { createTraySessions } from "../tray-sessions";
 import type { createTaskbarUnreadBadge } from "../taskbar-unread-badge";
 import { registerStorageIpc } from "../storage/ipc";
 import { requestStorageRestart } from "../storage/bootstrap";
+import { getModuleDirectory } from "../module-path";
+import { rememberComposerPickerSelection } from "../composer-picker";
 
 export type RegisterIpcDependencies = {
   isQuitting: () => boolean;
@@ -101,6 +103,24 @@ function wrap<T>(fn: () => Promise<T>): Promise<Result<T>> {
         { retriable: e?.data?.retriable === true, details: e?.data },
       ),
     );
+}
+
+const registeredIpcHandlers = new Map<string, (...args: unknown[]) => Promise<Result<unknown>>>();
+
+export async function invokeRegisteredIpc(channel: string, ...args: unknown[]): Promise<Result<unknown>> {
+  if (!IPC_WHITELIST.has(channel)) return err(ErrorCodes.UNAUTHORIZED, `IPC channel is not allowed: ${channel}`);
+  const handler = registeredIpcHandlers.get(channel);
+  if (!handler) return err(ErrorCodes.NOT_FOUND, `IPC channel is not registered: ${channel}`);
+  if (channel === IPC.invoke.composerPasteFiles && args[0] && typeof args[0] === "object") {
+    const input = args[0] as { files?: Array<{ data?: unknown }> };
+    if (Array.isArray(input.files)) {
+      args[0] = { ...input, files: input.files.map((file) => ({
+        ...file,
+        data: typeof file.data === "string" ? Uint8Array.from(Buffer.from(file.data, "base64")) : file.data,
+      })) };
+    }
+  }
+  return handler(...args);
 }
 
 export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
@@ -225,26 +245,39 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     // session is owned by a paired remote host is served over RACP-WS; every
     // other call (and every internal invoke, which never reaches this wrapper)
     // runs the existing local handler byte-for-byte unchanged.
-    ipcMain.handle(channel, async (_event, ...args) =>
-      wrap(async () => {
-        const router = getBackendRouter?.();
-        if (router) {
-          const outcome = await router.route(channel, args);
-          if (outcome !== ROUTE_LOCAL) return outcome.value;
-        }
-        return handler(...args);
-      }),
-    );
+    const invoke = (...args: unknown[]) => wrap(async () => {
+      const router = getBackendRouter?.();
+      if (router) {
+        const outcome = await router.route(channel, args);
+        if (outcome !== ROUTE_LOCAL) return outcome.value;
+      }
+      return handler(...args);
+    });
+    registeredIpcHandlers.set(channel, invoke);
+    ipcMain.handle(channel, (_event, ...args) => invoke(...args));
+  };
+  const internalEvents = new WeakSet<IpcMainInvokeEvent>();
+  const internalSender = () => {
+    const window = getMainWindow();
+    if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) return window.webContents;
+    const mainFrame = { routingId: 0, processId: 0, url: "" };
+    return { id: 0, mainFrame, getURL: () => "", getZoomFactor: () => 1 } as IpcMainInvokeEvent["sender"];
   };
   const handleWithEvent = (
     channel: string,
     fn: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<any>,
   ) => {
-    ipcMain.handle(channel, async (event, ...args) =>
-      wrap(() => fn(event, ...args)),
-    );
+    registeredIpcHandlers.set(channel, (...args) => wrap(async () => {
+      const sender = internalSender();
+      const event = { sender, senderFrame: sender.mainFrame, frameId: sender.mainFrame.routingId, processId: sender.mainFrame.processId } as IpcMainInvokeEvent;
+      internalEvents.add(event);
+      try { return await fn(event, ...args); }
+      finally { internalEvents.delete(event); }
+    }));
+    ipcMain.handle(channel, async (event, ...args) => wrap(() => fn(event, ...args)));
   };
   const assertMainWindowSender = (event: IpcMainInvokeEvent): void => {
+    if (internalEvents.has(event)) return;
     if (event.sender.id !== getMainWindow()?.webContents.id) {
       throw Object.assign(new Error("renderer is not the main window"), {
         errorCode: "PERMISSION_DENIED",
@@ -321,6 +354,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     registrar,
     getHost,
     getSidecar,
+    getMainWindow,
+    sendToRenderer,
     dataDir,
     normalizeSettings,
     validateSettingsWrite,
@@ -597,6 +632,30 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
   });
 
   registerStartupAnimationIpc({ registrar, dataDir, stripWinLongPrefix });
+
+  plugins?.setServices?.({
+    invokeIpc: invokeRegisteredIpc,
+    getRendererRoot: () => join(getModuleDirectory(import.meta.url), "../renderer").replace(/\.asar([/\\])/, ".asar.unpacked$1"),
+    readRendererResource: async (url: string) => {
+      if (!/^(pi-genui|plugin-renderer|plugin-asset|appearance-media):\/\//.test(url)) {
+        throw new Error("unsupported renderer resource");
+      }
+      const response = await net.fetch(url);
+      const headers: Record<string, string> = {};
+      for (const name of ["content-type", "content-security-policy"]) {
+        const value = response.headers.get(name);
+        if (value) headers[name] = value;
+      }
+      return { status: response.status, headers, body: Buffer.from(await response.arrayBuffer()).toString("base64") };
+    },
+    importUploadedFiles: async (input: { sessionId?: string; draftId?: string; files: Array<{ path: string; name?: string }> }) => {
+      const token = rememberComposerPickerSelection(input.files.map((file) => file.path), internalSender().id);
+      const result = await invokeRegisteredIpc(IPC.invoke.composerImportFiles, { sessionId: input.sessionId, draftId: input.draftId, token });
+      if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+      const imported = result.data as { files: Array<{ path: string; name: string }> };
+      return { ...imported, files: imported.files.map((file, index) => ({ ...file, name: input.files[index]?.name || file.name })) };
+    },
+  });
 
 
   return async (channel: string, args: readonly unknown[] = []) => {

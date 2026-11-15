@@ -52,7 +52,7 @@ const MODIFIER_ONLY_KEYS = new Set([
 
 const PLUGIN_THEME_STYLE_ID = "pi-plugin-theme";
 
-export function useAppShellRuntime() {
+export function useAppShellRuntime(compact = false) {
   const { t } = useTranslation();
   const platform = window.piDesktop?.platform ?? "darwin";
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -132,6 +132,8 @@ export function useAppShellRuntime() {
   const workPanelWidthRef = useRef(workPanelWidth);
   const workPanelOpenRef = useRef(workPanelVisible);
   const workPanelMaximizedRef = useRef(false);
+  const compactRef = useRef(compact);
+  compactRef.current = compact;
   const autoCollapsedSidebarRef = useRef(false);
   sidebarCollapsedRef.current = sidebarCollapsed;
   sidebarWidthRef.current = sidebarWidth;
@@ -160,6 +162,7 @@ export function useAppShellRuntime() {
   const handleSidebarWidthCommit = useCallback(() => {}, []);
   // 重开侧栏时先压缩右侧面板，保留聊天宽度；不足最小宽度时使用重开目标宽度。
   const reopenSidebar = useCallback(() => {
+    if (compactRef.current) return;
     if (!sidebarCollapsedRef.current) return;
     if (workPanelOpenRef.current && !workPanelMaximizedRef.current) {
       const currentPanelWidth = workPanelWidthRef.current;
@@ -187,6 +190,7 @@ export function useAppShellRuntime() {
   // must never capture a stale `sidebarCollapsed`. Every invocation is a user
   // action, so it clears an automatic-collapse record before toggling.
   const toggleSidebar = useCallback(() => {
+    if (compactRef.current) return;
     autoCollapsedSidebarRef.current = false;
     if (sidebarCollapsedRef.current) reopenSidebar();
     else setSidebarCollapsed(true);
@@ -196,6 +200,7 @@ export function useAppShellRuntime() {
   // MainChat under its floor. The record is remembered only until the panel
   // closes.
   const autoCollapseSidebar = useCallback(() => {
+    if (compactRef.current) return;
     if (sidebarCollapsedRef.current) return;
     autoCollapsedSidebarRef.current = true;
     setSidebarCollapsed(true);
@@ -270,6 +275,7 @@ export function useAppShellRuntime() {
   // well, so the user can read a wide plugin view or preview. Transient: it is
   // never persisted and it ends with the panel.
   const toggleWorkPanelMaximize = useCallback(() => {
+    if (compactRef.current) return;
     setWorkPanelMaximized((current) => !current);
   }, []);
 
@@ -306,7 +312,7 @@ export function useAppShellRuntime() {
     workPanelExitClosing.current = true;
     const request = ++workPanelReservationRequest.current;
     void commitWorkPanelPresentation({
-      reservation: api.setWorkPanelReservation(0),
+      reservation: compactRef.current ? Promise.resolve() : api.setWorkPanelReservation(0),
       isCurrent: () =>
         request === workPanelReservationRequest.current &&
         generation === workPanelExitGeneration.current,
@@ -343,7 +349,7 @@ export function useAppShellRuntime() {
       workPanelExitingRef.current = false;
       setWorkPanelExiting(false);
       void commitWorkPanelPresentation({
-        reservation: api.setWorkPanelReservation(0),
+        reservation: compact ? Promise.resolve() : api.setWorkPanelReservation(0),
         isCurrent: () => request === workPanelReservationRequest.current,
         commit: () => setPresentedWorkPanelOpen(shouldPresent),
       });
@@ -363,11 +369,11 @@ export function useAppShellRuntime() {
     }
 
     void commitWorkPanelPresentation({
-      reservation: api.setWorkPanelReservation(0),
+      reservation: compact ? Promise.resolve() : api.setWorkPanelReservation(0),
       isCurrent: () => request === workPanelReservationRequest.current,
       commit: () => setPresentedWorkPanelOpen(shouldPresent),
     });
-  }, [page, ready, subagentPanelOpen, workPanelOpen]);
+  }, [page, ready, subagentPanelOpen, workPanelOpen, compact]);
 
   // Fallback if animationend is skipped (display:none mid-flight, etc.).
   useEffect(() => {
@@ -455,7 +461,9 @@ export function useAppShellRuntime() {
   );
 
   useEffect(() => {
-    const unsubscribe = api.onMenuCommand((command) => void runMenuCommand(command));
+    const unsubscribe = api.onMenuCommand((command) => {
+      if (document.documentElement.dataset.webRemote !== "true") void runMenuCommand(command);
+    });
     return unsubscribe;
   }, [runMenuCommand]);
 
@@ -463,6 +471,7 @@ export function useAppShellRuntime() {
     // Fullscreen hides the macOS traffic lights; CSS shifts titlebar
     // controls left via this attribute.
     const off = api.onWindowFullScreen(({ fullScreen }) => {
+      if (document.documentElement.dataset.webRemote === "true") return;
       document.documentElement.dataset.fullscreen = fullScreen ? "true" : "false";
     });
     return off;

@@ -626,6 +626,30 @@ export function useComposerDraft({
     });
   };
 
+  useEffect(() => {
+    if (document.documentElement.dataset.webRemote !== "true") return;
+    const insert = (text: string) => {
+      const editor = ref.current;
+      if (inputBlocked || !editor?.isConnected || editor.getAttribute("contenteditable") === "false") return false;
+      const source = readEditorValue(editor);
+      const { start, end } = document.activeElement === editor
+        ? editorSelectionRange(editor) : { start: source.length, end: source.length };
+      const nextText = source.slice(0, start) + text + source.slice(end);
+      invalidateComposerTransforms();
+      valueRef.current = nextText;
+      applyEditorDraft(nextText, fileReferencesRef.current, start + text.length);
+      writeComposerDraft(draftKeyRef.current, {
+        text: nextText,
+        fileReferences: fileReferencesRef.current.map(draftFileReference),
+      });
+      return true;
+    };
+    window.__piDesktopInsertPromptText = insert;
+    return () => {
+      if (window.__piDesktopInsertPromptText === insert) delete window.__piDesktopInsertPromptText;
+    };
+  });
+
   const expandTextReference = async (token: string) => {
     if (inputBlocked) return;
     const reference = referenceByTokenRef.current.get(token);

@@ -122,6 +122,29 @@ function StopRunPill({
   );
 };
 
+type BrowseStatus = {
+  authenticated: boolean;
+  online: boolean;
+  busy: boolean;
+  borrowed: boolean;
+  browserContext: string | null;
+};
+
+function useWebBrowse() {
+  const [status, setStatus] = useState<BrowseStatus | null>(() => window.__piDesktopBrowseStatus ?? null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!window.__piDesktopBrowseAction) return;
+    const onStatus = (event: Event) => {
+      const next = (event as CustomEvent<BrowseStatus>).detail;
+      if (next && typeof next === "object") setStatus(next);
+    };
+    window.addEventListener("pi-desktop:browse-status", onStatus);
+    return () => window.removeEventListener("pi-desktop:browse-status", onStatus);
+  }, []);
+  return { status, busy, setBusy, available: Boolean(window.__piDesktopBrowseAction) };
+}
+
 /** Composer controls: mode, permission, model, plugin actions, and send/stop. */
 export function ComposerToolbar({
   t,
@@ -164,6 +187,18 @@ export function ComposerToolbar({
   runTiming,
 }: ComposerToolbarProps) {
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
+  const browse = useWebBrowse();
+  const browseStatus = browse.status;
+  const browseBusy = browse.busy || browseStatus?.busy === true;
+  const browseUnavailable = !browseStatus?.authenticated || !browseStatus?.online;
+  const browseTitle = !browseStatus?.authenticated ? "请先登录 Chrome 侧栏" : !browseStatus.online ? "正在连接 Chrome 侧栏" : browseBusy ? "浏览器正在处理请求" : undefined;
+  const runBrowse = async (method: "toggleAttach" | "insertCurrent") => {
+    const action = window.__piDesktopBrowseAction;
+    if (!action) return;
+    browse.setBusy(true);
+    try { await action(method); } catch (error) { showToast(error instanceof Error ? error.message : String(error), { variant: "error" }); }
+    finally { browse.setBusy(false); }
+  };
   const steeringShortcut = keybindingDisplayParts("Alt+Enter", platform).join("+");
   return (
     <div className="composer-toolbar">
@@ -184,6 +219,30 @@ export function ComposerToolbar({
             <IconPlus size={15} aria-hidden="true" />
           </TooltipButton>
         </div>
+        {browse.available ? (
+          <>
+            <TooltipButton
+              type="button"
+              className="icon-btn composer-browse-btn"
+              tooltip={browseTitle ?? (browseStatus?.borrowed ? "收回此页" : "借出此页")}
+              ariaLabel={browseStatus?.borrowed ? "收回此页" : "借出此页"}
+              disabled={controlsBlocked || browseUnavailable || browseBusy}
+              onClick={() => void runBrowse("toggleAttach")}
+            >
+              {browseStatus?.borrowed ? "收回此页" : "借出此页"}
+            </TooltipButton>
+            <TooltipButton
+              type="button"
+              className="icon-btn composer-browse-btn"
+              tooltip={browseTitle ?? (browseStatus?.browserContext ? "插入当前页" : "当前页不可用")}
+              ariaLabel="@当前页"
+              disabled={controlsBlocked || browseUnavailable || browseBusy || !browseStatus?.browserContext}
+              onClick={() => void runBrowse("insertCurrent")}
+            >
+              @当前页
+            </TooltipButton>
+          </>
+        ) : null}
         <ComposerModePicker
           t={t}
           mode={mode}
