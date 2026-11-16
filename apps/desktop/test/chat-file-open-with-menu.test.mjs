@@ -143,6 +143,7 @@ const nativeCapability = loadModule("../src/hooks/use-chat-session-capability.ts
   "../stores/app-store": { useAppStore },
 });
 
+let remoteActions = null;
 const { useChatFileMenu, useChatFileMenuItems } = loadModule(
   "../src/hooks/use-chat-file-menu.tsx",
   {
@@ -155,10 +156,18 @@ const { useChatFileMenu, useChatFileMenuItems } = loadModule(
       IconExternal: () => null,
       IconFolderOpen: () => null,
       IconGlobe: () => null,
+      IconDownload: () => null,
+      IconPanelOpen: () => null,
     },
     "../lib/chat-links": {
       isHtmlFilePath: (path) => /\.html?$/i.test(path),
+      safeDecodeUri: value => decodeURIComponent(value),
+      toWorkspaceRel: (path, root, baseDir) => path.startsWith("./") && baseDir ? `${baseDir}/${path.slice(2)}` : path,
     },
+    "../lib/file-menu-extension": { remoteFileMenuActions: context => remoteActions?.(context) ?? null },
+    "../lib/session-workspace": loadModule("../src/lib/session-workspace.ts", {}),
+    "../stores/app-store": { useAppStore },
+    "../plugins/renderer-slots/use-slots": { useSlotSessionId: () => "" },
     "../components/ContextMenu": {
       useContextMenu: () => ({
         contextMenu: null,
@@ -575,7 +584,7 @@ test("a directory reference browses the file manager instead of the file view (i
     id: "plugin:pi.file-manager/manager",
     kind: "plugin",
     resource: "pi.file-manager/manager",
-    location: "examples",
+    location: "C:/project/examples",
   }]);
   assert.deepEqual(calls.files, []);
   assert.deepEqual(calls.toasts, []);
@@ -626,4 +635,19 @@ test("定位文件沿侧边对话所属会话与隔离工作目录解析", () =>
   const reveal = source.slice(source.indexOf("export function useRevealChatFileRef"), source.indexOf("export function useCopyChatFileRef"));
   assert.match(reveal, /paneSessionId \|\| s\.activeSessionId/);
   assert.match(reveal, /api\.fsReveal\(resolved\.absolutePath, sessionId\)/);
+});
+
+test("工具与图片文件菜单也将插件预览下载置顶，并锚定文档相对路径", async () => {
+  const contexts = [];
+  remoteActions = context => {
+    contexts.push(context);
+    return [{ id: "preview", label: "预览", run: async () => {} }, { id: "download", label: "下载", run: async () => {} }];
+  };
+  try {
+    let items;
+    function Harness() { items = useChatFileMenuItems()({ path: "./文件.html:12", baseDir: "docs" }); return null; }
+    renderToStaticMarkup(React.createElement(Harness));
+    assert.deepEqual(items.slice(0, 2).map(item => item.label), ["预览", "下载"]);
+    assert.deepEqual(contexts, [{ path: "docs/文件.html", sessionId: "session-1" }]);
+  } finally { remoteActions = null; }
 });

@@ -447,3 +447,136 @@ test("浏览器标签页绑定认证连接，引用仅发到目标端并在断�
   const closed = once(first, "close"); first.close(); await closed;
   assert.deepEqual(await cleared, { channel: "pi-desktop/browserReferences/update", args: [{ sourceId: first.referenceConnectionId, active: false, closed: true }] });
 });
+
+test("页面资源与状态读取超过旧总额度后，第二条消息仍只投递一次", async (context) => {
+  const messages = [];
+  const { endpoint, post, token } = await fixture(context, { ipcInvoke: async (channel, args) => {
+    if (channel === "session:send") messages.push(args[0]);
+    return { ok: true, data: { messages: [...messages] } };
+  } });
+  const send = text => post("/api/ipc", { channel: "session:send", args: [text] }, token);
+  assert.equal((await send("第一条")).status, 200);
+  for (let batch = 0; batch < 32; batch++) {
+    await Promise.all(Array.from({ length: 10 }, async () => {
+      const [asset, state] = await Promise.all([
+        fetch(`${endpoint}/assets/app.js`),
+        post("/api/ipc", { channel: "session:state", args: [] }, token),
+      ]);
+      assert.equal(asset.status, 200);
+      assert.equal(state.status, 200);
+      await Promise.all([asset.text(), state.json()]);
+    }));
+  }
+  const second = await send("第二条");
+  assert.equal(second.status, 200);
+  assert.deepEqual((await second.json()).data.messages, ["第一条", "第二条"]);
+  assert.deepEqual(messages, ["第一条", "第二条"]);
+  assert.equal((await post("/api/ipc", { channel: "session:send", args: ["未登录"] })).status, 401);
+});
+
+test("已登录 Browse RPC 不按调用次数中断", async (context) => {
+  let calls = 0;
+  const { post, token } = await fixture(context, { localOperations: {
+    "browse.ensureRelay": async () => ({ ok: true, result: { calls: ++calls } }),
+  } });
+  for (let index = 0; index < 245; index++) {
+    const response = await post("/api/rpc", { operation: "browse.ensureRelay" }, token);
+    assert.equal(response.status, 200);
+    await response.json();
+  }
+  assert.equal(calls, 245);
+});
+
+test("浏览器上下文与心跳超过旧消息额度后仍保持事件同步", async (context) => {
+  let updates = 0;
+  const { connect, server } = await fixture(context, { ipcInvoke: async channel => {
+    if (channel === "pi-desktop/browserReferences/update") updates++;
+    return { ok: true, data: {} };
+  } });
+  const socket = await connect();
+  for (let index = 0; index < 70; index++) {
+    const reply = once(socket, "message");
+    socket.send(JSON.stringify({ type: "browser-context", active: true, tabs: [] }));
+    socket.send(JSON.stringify({ type: "ping" }));
+    assert.equal(JSON.parse((await reply)[0]).type, "pong");
+  }
+  assert.equal(updates, 70);
+  assert.equal(socket.readyState, WebSocket.OPEN);
+  const event = { channel: "session:changed", args: ["session", { status: "idle" }] };
+  const received = once(socket, "message");
+  assert.equal(server.broadcastIpc(event), 1);
+  assert.deepEqual(JSON.parse((await received)[0]), { type: "ipc-event", ...event });
+});
+
+test("文件交付保留原始字节、中文文件名和作用域，且只接受登录后的 POST", async (context) => {
+  const calls = [];
+  const bytes = Buffer.from([0, 255, 128, 13, 10, 42]);
+  const { post, token, endpoint } = await fixture(context, { rendererFile: async (input) => {
+    calls.push(input);
+    if (input.path === "/missing") throw Object.assign(new Error("文件不存在"), { code: "NOT_FOUND" });
+    return { name: "原始 文件.zip", body: bytes.toString("base64") };
+  } });
+  assert.equal((await post("/api/file", { path: "/file" })).status, 401);
+  assert.equal((await fetch(`${endpoint}/api/file`)).status, 405);
+  for (const input of [{}, { path: "" }, { path: "/file", sessionId: {} }]) assert.equal((await post("/api/file", input, token)).status, 400);
+  assert.equal(calls.length, 0);
+  const input = { path: "/host/worktree/原始 文件.zip", sessionId: "session-owner" };
+  const response = await post("/api/file", input, token);
+  assert.equal(response.status, 200);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  assert.deepEqual(calls, [input]);
+  assert.equal(response.headers.get("Content-Type"), "application/zip");
+  assert.equal(decodeURIComponent(response.headers.get("X-File-Name")), "原始 文件.zip");
+  assert.match(response.headers.get("Content-Disposition"), /attachment;.*filename\*=UTF-8''/);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  const missing = await post("/api/file", { path: "/missing" }, token);
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error.message, "文件不存在");
+});
+
+test("文件读取途中撤销登录时不交付文件，旧宿主返回明确不支持", async (context) => {
+  let complete;
+  let started;
+  const began = new Promise(resolve => { started = resolve; });
+  const { post, token, server } = await fixture(context, { rendererFile: async () => {
+    started();
+    return new Promise(resolve => { complete = resolve; });
+  } });
+  const pending = post("/api/file", { path: "/file" }, token);
+  await began;
+  await server.revokeAllDevices();
+  complete({ name: "private.txt", body: Buffer.from("private bytes").toString("base64") });
+  const response = await pending;
+  assert.equal(response.status, 401);
+  assert.doesNotMatch(await response.text(), /private bytes/);
+  const old = await fixture(context);
+  assert.equal((await old.post("/api/file", { path: "/file" }, old.token)).status, 501);
+});
+
+test("HTML 预览目录链支持相对资源、Windows 路径和 sandbox 来源，撤销后资源失效", async (context) => {
+  const { fileViewUrl, parseFileViewUrl } = require("../server/files.cjs");
+  for (const path of ["/project/中文 文件/index.html", "C:\\项目 文件\\index.html"]) {
+    const url = fileViewUrl("token", { path, sessionId: "owner:session" });
+    assert.deepEqual(parseFileViewUrl(url), { token: "token", input: { path: path.replaceAll("\\", "/"), sessionId: "owner:session" } });
+  }
+  const calls = [];
+  const { endpoint, post, token, server } = await fixture(context, { rendererFile: async (input) => {
+    calls.push(input);
+    const name = input.path.split("/").at(-1);
+    return { name, body: Buffer.from(name.endsWith(".html") ? '<link rel="stylesheet" href="./style.css"><script src="../app.js"></script>' : "resource").toString("base64") };
+  } });
+  const response = await post("/api/file", { path: "/project/中文/index.html", sessionId: "owner:session" }, token);
+  const preview = new URL(response.headers.get("X-File-Preview"), endpoint);
+  assert.equal(preview.origin, endpoint);
+  for (const [relative, path, mime] of [["", "/project/中文/index.html", "text/html"], ["./style.css", "/project/中文/style.css", "text/css"], ["../app.js", "/project/app.js", "text/javascript"]]) {
+    const result = await fetch(new URL(relative, preview), { headers: { Origin: "null" } });
+    assert.equal(result.status, 200);
+    assert.equal(result.headers.get("Content-Type"), mime);
+    assert.equal(result.headers.get("Access-Control-Allow-Origin"), "null");
+    assert.match(result.headers.get("Content-Security-Policy"), /sandbox allow-scripts/);
+    assert.equal(result.headers.get("Content-Disposition"), "inline");
+    assert.deepEqual(calls.at(-1), { path, sessionId: "owner:session" });
+  }
+  await server.revokeAllDevices();
+  assert.equal((await fetch(preview)).status, 401);
+});

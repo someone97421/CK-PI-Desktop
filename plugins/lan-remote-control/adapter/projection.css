@@ -69,3 +69,27 @@
   display: none;
   pointer-events: none;
 }
+
+.lan-composer-grip { cursor: crosshair; }
+.lan-composer-grip[data-dragging="true"] { color: var(--ds-text-primary); }
+.lan-composer-grip svg { pointer-events: none; }
+.lan-grip-hint {
+  position: fixed;
+  z-index: 1000;
+  max-width: min(260px, calc(100vw - 16px));
+  padding: 6px 9px;
+  border: 1px solid var(--ds-border);
+  border-radius: 6px;
+  background: var(--ds-bg-elevated, var(--ds-bg-dock));
+  color: var(--ds-text-primary);
+  font: 12px/1.4 var(--ds-font-sans, system-ui);
+  pointer-events: none;
+}
+.lan-grip-flight {
+  position: fixed;
+  z-index: 1000;
+  width: 16px;
+  height: 16px;
+  color: var(--ds-text-secondary);
+  pointer-events: none;
+}

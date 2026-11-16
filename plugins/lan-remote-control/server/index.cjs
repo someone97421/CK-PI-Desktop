@@ -14,12 +14,12 @@ const { DeviceStore, MAX_DEVICES } = require("./auth.cjs");
 const { AttachmentStore, DEFAULT_MAX_BYTES } = require("./uploads.cjs");
 const { OPERATION_META: BROWSE_OPERATIONS } = require("../browse-bridge.cjs");
 const { RESOURCE_SCHEMES, rewriteResourceCsp, rewriteResourceText } = require("./resources.cjs");
+const { fileResponse, fileViewUrl, parseFileViewUrl } = require("./files.cjs");
 
 const WS_PATH = "/ws";
 const AUTH_TIMEOUT_MS = 10_000;
 const WS_MAX_PAYLOAD_BYTES = 64 * 1024;
 const WS_HEARTBEAT_MS = 30_000;
-const WS_MESSAGES_PER_MINUTE = 120;
 const MAX_WS_CONNECTIONS = 16;
 const MAX_WS_PER_DEVICE = 4;
 const MAX_HTTP_CONNECTIONS = 64;
@@ -33,10 +33,7 @@ const SHUTDOWN_GRACE_MS = 1500;
 const SWEEP_INTERVAL_MS = 30_000;
 
 const RATE_LIMITS = Object.freeze({
-  general: { windowMs: 60_000, max: 600 },
   login: { windowMs: 60_000, max: 6 },
-  rpc: { windowMs: 60_000, max: 240 },
-  upload: { windowMs: 60_000, max: 40 },
 });
 
 function delay(ms) {
@@ -118,6 +115,7 @@ function createRemoteServer(options = {}) {
     localOperations = {},
     rendererUpload = null,
     rendererResource = null,
+    rendererFile = null,
     limits = {},
   } = options;
   if (typeof rendererDir !== "string" || !rendererDir.trim()) {
@@ -164,11 +162,8 @@ function createRemoteServer(options = {}) {
   state.webRoot = path.resolve(rendererDir);
 
   const rateLimiters = {
-    general: httpHelpers.createRateLimiter(RATE_LIMITS.general),
     login: httpHelpers.createRateLimiter(RATE_LIMITS.login),
     loginGlobal: httpHelpers.createRateLimiter({ windowMs: 60_000, max: 24 }),
-    rpc: httpHelpers.createRateLimiter(RATE_LIMITS.rpc),
-    upload: httpHelpers.createRateLimiter(RATE_LIMITS.upload),
     ws: httpHelpers.createRateLimiter({ windowMs: 60_000, max: MAX_WS_CONNECTIONS * 4 }),
   };
 
@@ -319,11 +314,6 @@ function createRemoteServer(options = {}) {
       closeWs(conn, 4001, "server stopping");
       return;
     }
-    if (!conn.rate.take("messages")) {
-      wsError(conn, "RATE_LIMITED", "too many messages");
-      closeWs(conn, 4429, "rate limited");
-      return;
-    }
     if (isBinary) {
       wsError(conn, "INVALID_PARAMS", "binary frames are not supported");
       return;
@@ -387,7 +377,6 @@ function createRemoteServer(options = {}) {
       deviceId: null,
       alive: true,
       ip: clientAddress(req),
-      rate: httpHelpers.createRateLimiter({ windowMs: 60_000, max: WS_MESSAGES_PER_MINUTE }),
       authTimer: null,
     };
     conn.authTimer = setTimeout(() => {
@@ -552,18 +541,9 @@ function createRemoteServer(options = {}) {
 
   async function handleRpc(req, res) {
     const requestGeneration = generation;
-    const address = clientAddress(req);
-    if (!rateLimiters.rpc.take(`rpc:${address}`)) {
-      httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many requests");
-      return;
-    }
     const device = authenticate(req);
     if (!device) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device token is missing or invalid");
-      return;
-    }
-    if (!rateLimiters.rpc.take(`rpc-device:${device.id}`)) {
-      httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many requests");
       return;
     }
     const body = await httpHelpers.readJsonBody(req, { maxBytes: RPC_BODY_MAX_BYTES });
@@ -604,11 +584,6 @@ function createRemoteServer(options = {}) {
       return;
     }
     const requestGeneration = generation;
-    const address = clientAddress(req);
-    if (!rateLimiters.upload.take(`upload:${address}`)) {
-      httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many uploads");
-      return;
-    }
     const device = authenticate(req);
     if (!device) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device token is missing or invalid");
@@ -662,6 +637,65 @@ function createRemoteServer(options = {}) {
     } finally {
       state.inFlight.delete(task);
     }
+  }
+
+  async function handleFile(req, res) {
+    const requestGeneration = generation;
+    const device = authenticate(req);
+    if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
+    const body = await httpHelpers.readJsonBody(req, { maxBytes: RPC_BODY_MAX_BYTES });
+    if (!body.ok) { httpHelpers.sendBodyError(req, res, body); return; }
+    const { path: filePath, sessionId } = body.value;
+    if (typeof filePath !== "string" || !filePath.trim() ||
+        (sessionId !== undefined && (typeof sessionId !== "string" || !sessionId))) {
+      httpHelpers.sendError(res, 400, "INVALID_PARAMS", "文件路径或会话无效"); return;
+    }
+    const authorized = () => generation === requestGeneration && state.phase === "running" && authenticate(req)?.id === device.id;
+    if (!authorized()) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
+    if (typeof rendererFile !== "function") { httpHelpers.sendError(res, 501, "UNSUPPORTED", "请更新主程序以启用文件预览和下载"); return; }
+    const task = Promise.resolve().then(() => rendererFile({ path: filePath, ...(sessionId ? { sessionId } : {}) }));
+    state.inFlight.add(task);
+    try {
+      const file = fileResponse(await task);
+      if (!authorized()) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
+      res.setHeader("Content-Type", file.mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, (value) => `%${value.charCodeAt(0).toString(16)}`)}`);
+      res.setHeader("X-File-Name", encodeURIComponent(file.name));
+      const previewUrl = fileViewUrl(req.headers.authorization.replace(/^Bearer\s+/i, "").trim(), { path: file.path || filePath, sessionId });
+      if (previewUrl) res.setHeader("X-File-Preview", previewUrl);
+      res.setHeader("Access-Control-Expose-Headers", "X-File-Name, X-File-Preview, Content-Disposition");
+      res.setHeader("Content-Length", String(file.body.length));
+      res.writeHead(200);
+      res.end(file.body);
+    } catch (error) {
+      httpHelpers.sendError(res, statusForCode(error?.code), error?.code ?? "INTERNAL", error?.message ?? "文件读取失败");
+    } finally { state.inFlight.delete(task); }
+  }
+
+  async function handleFileView(req, res, url) {
+    const requestGeneration = generation;
+    const target = parseFileViewUrl(url.pathname);
+    const device = target?.token ? state.devices.authorize(target.token) : null;
+    if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
+    if (typeof rendererFile !== "function") { httpHelpers.sendError(res, 501, "UNSUPPORTED", "请更新主程序以启用文件预览和下载"); return; }
+    const task = Promise.resolve().then(() => rendererFile(target.input));
+    state.inFlight.add(task);
+    try {
+      const file = fileResponse(await task);
+      if (generation !== requestGeneration || state.phase !== "running" || state.devices.authorize(target.token)?.id !== device.id) {
+        httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return;
+      }
+      res.setHeader("Content-Type", file.mimeType);
+      res.setHeader("Content-Disposition", "inline");
+      res.setHeader("Content-Security-Policy", "sandbox allow-scripts allow-downloads; default-src 'self' data: blob: http: https: 'unsafe-inline' 'unsafe-eval'");
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      if (req.headers.origin === "null") res.setHeader("Access-Control-Allow-Origin", "null");
+      res.setHeader("Content-Length", String(file.body.length));
+      res.writeHead(200);
+      res.end(req.method === "HEAD" ? undefined : file.body);
+    } catch (error) {
+      httpHelpers.sendError(res, statusForCode(error?.code), error?.code ?? "INTERNAL", error?.message ?? "文件读取失败");
+    } finally { state.inFlight.delete(task); }
   }
 
   async function handleResource(req, res, url) {
@@ -732,12 +766,7 @@ function createRemoteServer(options = {}) {
 
   async function handleRequest(req, res) {
     httpHelpers.applySecurityHeaders(res);
-    const address = clientAddress(req);
     try {
-      if (!rateLimiters.general.take(`general:${address}`)) {
-        httpHelpers.sendError(res, 429, "RATE_LIMITED", "too many requests");
-        return;
-      }
       let url;
       try {
         url = new URL(req.url ?? "/", "http://localhost");
@@ -753,7 +782,7 @@ function createRemoteServer(options = {}) {
         httpHelpers.sendError(res, hostCheck.status, hostCheck.code, hostCheck.message);
         return;
       }
-      const sandboxResource = isGet && pathname.startsWith("/api/resource/") && req.headers.origin === "null";
+      const sandboxResource = isGet && (pathname.startsWith("/api/resource/") || pathname.startsWith("/api/file-view/")) && req.headers.origin === "null";
       const originCheck = sandboxResource ? { ok: true, origin: "null" } : guard.checkOrigin(req, { required: !isGet });
       if (!originCheck.ok) {
         httpHelpers.sendError(res, originCheck.status, originCheck.code, originCheck.message);
@@ -787,7 +816,7 @@ function createRemoteServer(options = {}) {
       }
       if (pathname === "/api/login") {
         if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
-        await handleLogin(req, res, address);
+        await handleLogin(req, res, clientAddress(req));
         return;
       }
       if (pathname === "/api/logout") {
@@ -796,6 +825,16 @@ function createRemoteServer(options = {}) {
         if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
         await revokeDevice(device.id);
         httpHelpers.sendResult(res, { loggedOut: true });
+        return;
+      }
+      if (pathname.startsWith("/api/file-view/")) {
+        if (!isGet) { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
+        await handleFileView(req, res, url);
+        return;
+      }
+      if (pathname === "/api/file") {
+        if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
+        await handleFile(req, res);
         return;
       }
       if (pathname === "/api/ipc") {
@@ -837,7 +876,7 @@ function createRemoteServer(options = {}) {
       if (pathname.startsWith("/__lan-remote/")) {
         if (!isGet) { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
         const asset = pathname.slice("/__lan-remote/".length);
-        if (!state.projectionRootReal || !["projection.css", "projection.js"].includes(asset)) {
+        if (!state.projectionRootReal || !["projection.css", "projection.js", "file-actions.css", "file-actions.js", "browser-grip.js"].includes(asset)) {
           httpHelpers.sendError(res, 404, "NOT_FOUND", "not found"); return;
         }
         const served = await httpHelpers.serveStaticFile(req, res, {
@@ -982,7 +1021,7 @@ function createRemoteServer(options = {}) {
       }
       if (projectionDir) {
         state.projectionRootReal = await fsp.realpath(projectionDir);
-        for (const name of ["projection.css", "projection.js"]) {
+        for (const name of ["projection.css", "projection.js", "file-actions.css", "file-actions.js", "browser-grip.js"]) {
           await fsp.access(path.join(state.projectionRootReal, name), fs.constants.R_OK);
         }
       }

@@ -61,7 +61,7 @@ try {
     sourcemap: false,
     legalComments: 'eof',
   });
-  for (const entry of ['settings/access.js', 'adapter/projection.js']) {
+  for (const entry of ['settings/access.js', 'adapter/projection.js', 'adapter/file-actions.js', 'adapter/browser-grip.js']) {
     await build({
       entryPoints: [join(root, entry)],
       outfile: join(staging, entry),

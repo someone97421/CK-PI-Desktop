@@ -20,6 +20,7 @@ import { RemoteAccessButton } from "./RemoteAccessButton";
 
 import { portalToBody } from "../lib/portal-visibility";
 import {
+  placeSidebarFloatingMenu,
   placeSidebarFloatingMenuTop,
   SIDEBAR_FLOATING_MENU_MAX_HEIGHT,
   SIDEBAR_MENU_VIEWPORT_PADDING,
@@ -296,6 +297,8 @@ export function Sidebar({
     left: number;
     anchorTop: number;
     anchorBottom: number;
+    anchorRight: number;
+    anchorTrigger: HTMLButtonElement | null;
   } | null>(null);
   const {
     card: sessionHoverCard,
@@ -420,11 +423,11 @@ export function Sidebar({
       left: Math.max(SIDEBAR_MENU_VIEWPORT_PADDING, rect.right + 4),
       anchorTop: anchor.top,
       anchorBottom: anchor.bottom,
+      anchorRight: rect.right,
+      anchorTrigger: event.currentTarget,
     });
   }, []);
 
-  // Body-level sidebar menus always anchor their left edge to the right side
-  // of the trigger or pointer; they never flip to the left at the viewport edge.
   const placeMenuAtPoint = useCallback((x: number, y: number) => {
     const anchor = { top: y, bottom: y };
     setMenuPosition({
@@ -436,6 +439,8 @@ export function Sidebar({
       left: Math.max(SIDEBAR_MENU_VIEWPORT_PADDING, x + 4),
       anchorTop: anchor.top,
       anchorBottom: anchor.bottom,
+      anchorRight: x,
+      anchorTrigger: null,
     });
   }, []);
 
@@ -489,14 +494,11 @@ export function Sidebar({
       if (e.key !== "Escape") return;
       closeMenus();
     };
-    const onViewportChange = () => closeMenus(false);
     window.addEventListener("pointerdown", onPointer);
     window.addEventListener("keydown", onKey);
-    window.addEventListener("resize", onViewportChange);
     return () => {
       window.removeEventListener("pointerdown", onPointer);
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", onViewportChange);
     };
   }, [sortOpen, sessionMenu, projectMenu, sectionMenu, closeMenus]);
 
@@ -507,31 +509,52 @@ export function Sidebar({
 
   const menuAnchorTop = menuPosition?.anchorTop;
   const menuAnchorBottom = menuPosition?.anchorBottom;
+  const menuAnchorRight = menuPosition?.anchorRight;
+  const menuAnchorTrigger = menuPosition?.anchorTrigger;
 
   useLayoutEffect(() => {
-    if (menuAnchorTop === undefined || menuAnchorBottom === undefined) return;
+    if (
+      menuAnchorTop === undefined ||
+      menuAnchorBottom === undefined ||
+      menuAnchorRight === undefined
+    ) return;
     const menu = floatingMenuRef.current;
     if (!menu) return;
 
     const reposition = () => {
-      const top = placeSidebarFloatingMenuTop(
-        { top: menuAnchorTop, bottom: menuAnchorBottom },
-        menu.getBoundingClientRect().height,
-        window.innerHeight,
+      const anchor = menuAnchorTrigger?.getBoundingClientRect() ?? {
+        top: menuAnchorTop,
+        bottom: menuAnchorBottom,
+        right: menuAnchorRight,
+      };
+      const next = placeSidebarFloatingMenu(
+        anchor,
+        menu.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
       );
       setMenuPosition((current) =>
-        current && current.top !== top ? { ...current, top } : current,
+        current && (current.top !== next.top || current.left !== next.left)
+          ? { ...current, ...next }
+          : current,
       );
     };
 
     reposition();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(reposition);
-    observer.observe(menu);
-    return () => observer.disconnect();
+    window.addEventListener("resize", reposition);
+    let observer: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(reposition);
+      observer.observe(menu);
+    }
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", reposition);
+    };
   }, [
     menuAnchorTop,
     menuAnchorBottom,
+    menuAnchorRight,
+    menuAnchorTrigger,
     sessionMenu,
     projectMenu,
     sectionMenu,

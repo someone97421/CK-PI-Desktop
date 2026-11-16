@@ -21,8 +21,14 @@ import {
   IconExternal,
   IconFolderOpen,
   IconGlobe,
+  IconDownload,
+  IconPanelOpen,
 } from "../components/icons";
-import { isHtmlFilePath } from "../lib/chat-links";
+import { isHtmlFilePath, safeDecodeUri, toWorkspaceRel } from "../lib/chat-links";
+import { remoteFileMenuActions } from "../lib/file-menu-extension";
+import { sessionWorkspacePath } from "../lib/session-workspace";
+import { useAppStore } from "../stores/app-store";
+import { useSlotSessionId } from "../plugins/renderer-slots/use-slots";
 import { useChatNativeFilesAllowed } from "./use-chat-session-capability";
 import {
   useCopyChatFileRef,
@@ -43,8 +49,24 @@ export function useChatFileMenuItems() {
   const openFileRef = useOpenChatFileRef();
   const revealFileRef = useRevealChatFileRef();
   const copyFileRef = useCopyChatFileRef();
+  const paneSessionId = useSlotSessionId();
+  const sessionId = useAppStore((s) => paneSessionId || s.activeSessionId);
+  const workspacePath = useAppStore((s) => sessionWorkspacePath(s.sessions.find((session) => session.id === sessionId), s.workspace?.path));
+  const showToast = useAppStore((s) => s.showToast);
   return useCallback(
-    ({ path, baseDir }: ChatFileMenuTarget): ContextMenuItem[] => [
+    ({ path, baseDir }: ChatFileMenuTarget): ContextMenuItem[] => {
+      const ref = safeDecodeUri(path).replace(/:\d+(?::\d+)?$/, "");
+      const lookup = /^\.{1,2}[/\\]/.test(ref) ? toWorkspaceRel(ref, workspacePath, baseDir) ?? ref : ref;
+      const actions = remoteFileMenuActions({ path: lookup, ...(sessionId ? { sessionId } : {}) });
+      return [
+      ...(actions?.map((action) => ({
+        id: `remote-file-${action.id}`,
+        label: action.label,
+        icon: action.id === "download" ? <IconDownload size={14} /> : <IconPanelOpen size={14} />,
+        onSelect: () => requestAnimationFrame(() => {
+          void action.run().catch((error: unknown) => showToast(error instanceof Error ? error.message : t("chat.fileActionFailed"), { variant: "error" }));
+        }),
+      })) ?? []),
       ...(nativeFilesAllowed && isHtmlFilePath(path)
         ? [{
             id: "open-with",
@@ -102,8 +124,9 @@ export function useChatFileMenuItems() {
         icon: <IconCopy size={14} />,
         onSelect: () => copyFileRef(path, baseDir, "relative"),
       },
-    ],
-    [copyFileRef, nativeFilesAllowed, openFileRef, revealFileRef, t],
+      ];
+    },
+    [copyFileRef, nativeFilesAllowed, openFileRef, revealFileRef, t, sessionId, workspacePath, showToast],
   );
 }
 

@@ -15,25 +15,14 @@ async function bootRenderer() {
     import("./App"), import("./components/PluginLauncher"), import("./lib/app-language"),
   ]);
   if (document.documentElement.dataset.webRemote === "true") {
-    let refreshing = false;
-    window.addEventListener("pi-desktop:remote-reconnected", () => {
-      if (refreshing) return;
-      refreshing = true;
-      void Promise.all([import("./stores/app-store"), import("./lib/api")]).then(async ([{ useAppStore }, { api }]) => {
-        const state = useAppStore.getState();
-        const [settings, sessions] = await Promise.all([
-          api.getSettings(), api.listSessions(), state.refreshSessions(),
-          state.refreshProviders(), state.refreshPlugins(), state.refreshNotifications(),
-          state.refreshPlanCheckpoints(),
-        ]);
-        const runningSessions = Object.fromEntries((sessions.runningSessionIds ?? []).map((id) => [id, true]));
-        useAppStore.setState((current) => ({ settings, runningSessions, isRunning: !!current.activeSessionId && !!runningSessions[current.activeSessionId] }));
-        const current = useAppStore.getState();
-        if (current.page === "chat" && current.activeSessionId) {
-          await current.selectSession(current.activeSessionId, { record: false });
-        }
-      }).catch(console.error).finally(() => { refreshing = false; });
+    const { createRefreshCoordinator } = await import("./lib/refresh-coordinator");
+    const refresh = createRefreshCoordinator(async () => {
+      const [{ useAppStore }, { api }, { refreshRemoteSessionState }] = await Promise.all([
+        import("./stores/app-store"), import("./lib/api"), import("./lib/remote-session-refresh"),
+      ]);
+      await refreshRemoteSessionState(useAppStore, api);
     });
+    window.addEventListener("pi-desktop:remote-reconnected", () => { void refresh().catch(console.error); });
   }
   const rendererSurface = new URLSearchParams(window.location.search).get("surface");
   if (rendererSurface) document.documentElement.dataset.surface = rendererSurface;

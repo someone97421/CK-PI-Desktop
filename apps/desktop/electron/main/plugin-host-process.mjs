@@ -293,6 +293,7 @@ function buildApi() {
       unsubscribeIpc: (subscriptionId) => call("desktop.unsubscribeIpc", [subscriptionId]),
       getRendererRoot: () => call("desktop.getRendererRoot"),
       readRendererResource: (url) => call("desktop.readRendererResource", [url]),
+      readRendererFile: (input) => call("desktop.readRendererFile", [input]),
       importUploadedFiles: (input) => call("desktop.importUploadedFiles", [input]),
     },
     fs: {

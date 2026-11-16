@@ -134,7 +134,7 @@ export function SidebarMenuPanel({
       root?.removeEventListener("scroll", reposition);
       window.removeEventListener("resize", reposition);
     };
-  }, [openSubmenuId, rootMenuRef]);
+  }, [openSubmenuId, rootMenuRef, position.top, position.left]);
 
   useLayoutEffect(() => {
     if (!openSubmenuId || !submenuPosition || !focusSubmenuOnOpen.current) return;

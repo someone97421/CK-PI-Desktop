@@ -416,6 +416,7 @@ export type PluginHostServices = {
   invokeIpc?: (channel: string, ...args: unknown[]) => Promise<unknown>;
   getRendererRoot?: () => string;
   readRendererResource?: (url: string) => Promise<{ status: number; headers: Record<string, string>; body: string }>;
+  readRendererFile?: (input: { path: string; sessionId?: string }) => Promise<{ path: string; name: string; body: string }>;
   importUploadedFiles?: (input: { sessionId?: string; draftId?: string; files: Array<{ path: string; name?: string }> }) => Promise<unknown>;
   /**
    * 普通插件危险桌面操作（删除会话、修改权限、处理审批）的原生确认。
@@ -618,6 +619,7 @@ const HOST_API_ALLOWLIST = new Set([
   "desktop.unsubscribeIpc",
   "desktop.getRendererRoot",
   "desktop.readRendererResource",
+  "desktop.readRendererFile",
   "desktop.importUploadedFiles",
   "workspace.get",
   "projects.list",
@@ -6111,6 +6113,11 @@ export class PluginRuntime {
           assertRemoteRenderer();
           if (typeof url !== "string" || !this.services.readRendererResource) throw apiError("UNSUPPORTED", "renderer resource is unavailable");
           return this.services.readRendererResource(url);
+        },
+        readRendererFile: async (input: { path: string; sessionId?: string }) => {
+          assertRemoteRenderer();
+          if (!this.services.readRendererFile) throw apiError("UNSUPPORTED", "请更新主程序以启用文件预览和下载");
+          return this.services.readRendererFile(input);
         },
         importUploadedFiles: async (input: { sessionId?: string; draftId?: string; files?: Array<{ path: string; name?: string }> }) => {
           assertRemoteRenderer();

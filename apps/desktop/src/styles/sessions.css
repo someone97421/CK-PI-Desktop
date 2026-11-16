@@ -564,7 +564,7 @@
   top: auto;
   right: auto;
   z-index: 60; /* z-command-palette: body-level overlays above pane stacking */
-  min-width: 184px;
+  min-width: min(184px, calc(100vw - 16px));
   width: max-content;
   max-width: calc(100vw - 16px);
 }
@@ -573,7 +573,7 @@
   position: fixed;
   z-index: 61;
   width: max-content;
-  min-width: 184px;
+  min-width: min(184px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
   max-height: min(360px, calc(100vh - 16px));
   overflow-y: auto;

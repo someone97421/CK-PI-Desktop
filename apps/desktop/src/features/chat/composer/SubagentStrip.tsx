@@ -35,7 +35,8 @@ export function SubagentStrip({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     const previous = previousTranscript.current;
     previousTranscript.current = { live, running };
-    if (!running && !previous.running && live !== previous.live && transcriptWasRewritten(previous.live, live)) {
+    if (!running && !previous.running && live !== previous.live
+      && transcriptWasRewritten(previous.live.filter(rosterMessage), live.filter(rosterMessage))) {
       setHistory([]);
       setRetry((value) => value + 1);
     }

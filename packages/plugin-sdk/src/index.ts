@@ -1651,6 +1651,7 @@ export type PluginHostApi = {
     unsubscribeIpc: (subscriptionId: string) => Promise<{ ok: true }>;
     getRendererRoot: () => Promise<string>;
     readRendererResource: (url: string) => Promise<{ status: number; headers: Record<string, string>; body: string }>;
+    readRendererFile: (input: { path: string; sessionId?: string }) => Promise<{ path: string; name: string; body: string }>;
     importUploadedFiles: (input: { sessionId?: string; draftId?: string; files: Array<{ path: string; name?: string }> }) => Promise<unknown>;
   };
   /**

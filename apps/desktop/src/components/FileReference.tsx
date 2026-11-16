@@ -14,6 +14,8 @@ import { safeDecodeUri, toWorkspaceRel } from "../lib/chat-links";
 import { useAppStore } from "../stores/app-store";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import { sessionWorkspacePath } from "../lib/session-workspace";
+import { remoteFileMenuActions } from "../lib/file-menu-extension";
+import { useSlotSessionId } from "../plugins/renderer-slots/use-slots";
 import { PortalTooltip, useTooltip } from "./ui";
 import {
   IconCopy,
@@ -21,6 +23,7 @@ import {
   IconFileText,
   IconFolderOpen,
   IconPanelOpen,
+  IconDownload,
 } from "./icons";
 
 /*
@@ -103,7 +106,8 @@ function useFileRefResolution(
   baseDir: string | undefined,
   active: boolean,
 ): FileRefResolution {
-  const sessionId = useAppStore((s) => s.activeSessionId);
+  const paneSessionId = useSlotSessionId();
+  const sessionId = useAppStore((s) => paneSessionId || s.activeSessionId);
   const activeSession = useAppStore((s) =>
     sessionId ? s.sessions.find((session) => session.id === sessionId) : undefined,
   );
@@ -168,7 +172,8 @@ function FileRefMenu({
   onClose: (restoreFocus: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const sessionId = useAppStore((s) => s.activeSessionId);
+  const paneSessionId = useSlotSessionId();
+  const sessionId = useAppStore((s) => paneSessionId || s.activeSessionId);
   const activeSession = useAppStore((s) =>
     sessionId ? s.sessions.find((session) => session.id === sessionId) : undefined,
   );
@@ -176,6 +181,9 @@ function FileRefMenu({
   const openFileRef = useOpenChatFileRef();
   const showToast = useAppStore((s) => s.showToast);
   const resolution = useFileRefResolution(rawRef, baseDir, true);
+  const pluginActions = resolution.status === "file"
+    ? remoteFileMenuActions({ path: resolution.match.absolutePath, ...(sessionId ? { sessionId } : {}) })
+    : null;
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState(position);
 
@@ -252,8 +260,10 @@ function FileRefMenu({
 
   const runAction = (action: () => Promise<unknown>) => {
     onClose(true);
-    void action().catch(() => {
-      showToast(t("chat.fileActionFailed"), { variant: "error" });
+    requestAnimationFrame(() => {
+      void action().catch((error: unknown) => {
+        showToast(error instanceof Error ? error.message : t("chat.fileActionFailed"), { variant: "error" });
+      });
     });
   };
 
@@ -273,7 +283,7 @@ function FileRefMenu({
     onClose(true);
     void (async () => {
       try {
-        const result = await api.fsRead(absolutePath);
+        const result = await api.fsRead(absolutePath, undefined, sessionId ?? undefined);
         // Only a complete text read is copied; binary, image, and oversized
         // results never reach the clipboard half-truncated.
         if (result.kind === "text" && typeof result.content === "string") {
@@ -317,19 +327,27 @@ function FileRefMenu({
       : resolution.relativePath;
     body = (
       <>
+        {pluginActions?.map((action) => (
+          <button type="button" role="menuitem" key={action.id} onClick={() => runAction(action.run)}>
+            {action.id === "download" ? <IconDownload size={14} /> : <IconPanelOpen size={14} />}
+            {action.label}
+          </button>
+        ))}
         {resolution.status === "file" ? (
           <>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                onClose(true);
-                openFileRef(resolution.match.absolutePath);
-              }}
-            >
-              <IconPanelOpen size={14} />
-              {t("chat.previewFile")}
-            </button>
+            {!pluginActions ? (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onClose(true);
+                  openFileRef(resolution.match.absolutePath);
+                }}
+              >
+                <IconPanelOpen size={14} />
+                {t("chat.previewFile")}
+              </button>
+            ) : null}
             <button
               type="button"
               role="menuitem"
@@ -343,7 +361,7 @@ function FileRefMenu({
         <button
           type="button"
           role="menuitem"
-          onClick={() => runAction(() => api.fsOpen(actionPath))}
+          onClick={() => runAction(() => api.fsOpen(actionPath, undefined, sessionId ?? undefined))}
         >
           <IconExternal size={14} />
           {t("chat.openFile")}
@@ -370,7 +388,7 @@ function FileRefMenu({
         <button
           type="button"
           role="menuitem"
-          onClick={() => runAction(() => api.fsReveal(actionPath))}
+          onClick={() => runAction(() => api.fsReveal(actionPath, sessionId ?? undefined))}
         >
           <IconFolderOpen size={14} />
           {t("chat.fileMenuReveal")}
@@ -409,9 +427,11 @@ export function FileRefTarget({
   baseDir?: string;
   children: ReactNode;
 }) {
-  const root = useAppStore((s) => s.workspace?.path ?? null);
+  const paneSessionId = useSlotSessionId();
+  const sessionId = useAppStore((s) => paneSessionId || s.activeSessionId);
+  const activeSession = useAppStore((s) => s.sessions.find((session) => session.id === sessionId));
+  const root = useAppStore((s) => sessionWorkspacePath(activeSession, s.workspace?.path));
   const [resolveRequested, setResolveRequested] = useState(false);
-  const sessionId = useAppStore((s) => s.activeSessionId);
   useEffect(() => { setMenu(null); setResolveRequested(false); }, [sessionId, root, fileRef, baseDir]);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const resolution = useFileRefResolution(

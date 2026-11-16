@@ -6,6 +6,8 @@ import type { AgentSidecar } from "../agent-sidecar";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 import type { HostProcess } from "../host-process";
 import { ROUTE_LOCAL, type BackendRouter } from "../remote/backend-router";
+import { createRendererFileReader } from "../renderer-file-reader";
+import { remoteWorkspaceForFiles } from "../remote/workspace-file-scope";
 import { registerAgentExtensionIpc } from "../agent-extensions-ipc";
 import { readNpmPath, writeNpmPath } from "../npm-preferences";
 import { registerAgentIpc } from "./agent-ipc";
@@ -638,6 +640,14 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
   plugins?.setServices?.({
     invokeIpc: invokeRegisteredIpc,
     getRendererRoot: () => join(getModuleDirectory(import.meta.url), "../renderer").replace(/\.asar([/\\])/, ".asar.unpacked$1"),
+    readRendererFile: createRendererFileReader({
+      isRemote: async (sessionId) => Boolean(await remoteWorkspaceForFiles(getHost, sessionId, getSidecar)),
+      resolve: async (input) => {
+        const result = await invokeRegisteredIpc(IPC.invoke.fsResolveRef, { ref: input.path, sessionId: input.sessionId });
+        if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
+        return result.data as import("@pi-desktop/shared").FsChatRefResolveResult;
+      },
+    }),
     readRendererResource: async (url: string) => {
       if (!/^(pi-genui|plugin-renderer|plugin-asset|appearance-media):\/\//.test(url)) {
         throw new Error("unsupported renderer resource");

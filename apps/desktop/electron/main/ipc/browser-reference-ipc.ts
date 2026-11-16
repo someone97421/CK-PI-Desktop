@@ -106,9 +106,9 @@ export class BrowserReferenceBroker {
     this.sweep();
     if (!this.sources.size) return Promise.reject(new Error("请先打开并登录浏览器侧边栏"));
     const client = [...this.clients.values()]
-      .filter(item => input.connectionId ? item.connectionId === input.connectionId : item.focusedAt > 0)
+      .filter(item => !input.connectionId || item.connectionId === input.connectionId)
       .sort((a, b) => b.focusedAt - a.focusedAt || b.seenAt - a.seenAt)[0];
-    if (!client) return Promise.reject(new Error("请先在 Agent 输入框中放置光标，再发送浏览器引用"));
+    if (!client) return Promise.reject(new Error("当前没有可编辑的 Agent 输入框，请先打开会话"));
     const requestId = randomUUID();
     const expiresAt = this.now() + 8_000;
     return new Promise((resolve, reject) => {

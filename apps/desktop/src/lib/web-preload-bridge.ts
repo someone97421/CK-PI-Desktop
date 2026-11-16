@@ -1,5 +1,6 @@
 import { IPC, parseBrowserReference, type BrowserReference, type Result } from "@pi-desktop/shared";
 import { createLanPasswordGate } from "./lan-password-gate";
+import type { FileMenuContext } from "./file-menu-extension";
 
 declare global {
   interface Window {
@@ -159,7 +160,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     location.reload();
   };
   const bridgeError = (code: string, message: string) => Object.assign(new Error(message), { code });
-  const request = async (path: string, init: RequestInit, authenticated = true): Promise<any> => {
+  const request = async (path: string, init: RequestInit, authenticated = true, binary = false): Promise<any> => {
     const headers = new Headers(init.headers);
     if (authenticated) {
       if (!token) throw bridgeError("UNAUTHORIZED", "请先登录");
@@ -173,6 +174,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       throw bridgeError(timedOut ? "TIMEOUT" : "NETWORK_ERROR", timedOut ? "请求超时" : "无法连接主机");
     }
     if (response.status === 401 && authenticated) { expire(); throw bridgeError("UNAUTHORIZED", "登录已失效"); }
+    if (response.ok && binary) return response;
     let result: any;
     try { result = await response.json(); }
     catch { throw bridgeError(response.ok ? "INVALID_RESPONSE" : `HTTP_${response.status}`, `主机响应无效 (${response.status})`); }
@@ -185,6 +187,15 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   const jsonRequest = (path: string, body: unknown, authenticated = true) => request(path, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   }, authenticated);
+  window.__piDesktopReadRemoteFile = async (context: FileMenuContext) => {
+    const response: Response = await request("/api/file", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context),
+    }, true, true);
+    const name = decodeURIComponent(response.headers.get("X-File-Name") || "download");
+    const mimeType = response.headers.get("Content-Type") || "application/octet-stream";
+    const previewPath = response.headers.get("X-File-Preview");
+    return { blob: await response.blob(), name, mimeType, ...(previewPath?.startsWith("/api/file-view/") ? { previewUrl: `${origin}${previewPath}` } : {}) };
+  };
   const picked = new Map<string, File[]>();
   const pick = (photos: boolean): Promise<Result<unknown>> => new Promise((resolve) => {
     const input = document.createElement("input");
@@ -213,21 +224,6 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     IPC.invoke.pluginViewSetBounds, IPC.invoke.pluginViewSetVisible,
     IPC.invoke.browserSetBounds, IPC.invoke.browserSetVisible,
   ]);
-  const nativePresentationChannels = new Set<string>([
-    IPC.invoke.fsOpen, IPC.invoke.fsReveal, IPC.invoke.workspaceReviewOpenFile,
-    IPC.invoke.storageChoose, IPC.invoke.projectOpen, IPC.invoke.projectPickFolders,
-    IPC.invoke.projectClone, IPC.invoke.devtoolsToggle, IPC.invoke.worktreeReveal,
-    IPC.invoke.sessionOpenScratchPath, IPC.invoke.projectOpenFolder,
-    IPC.invoke.settingsDataDirectoryChange, IPC.invoke.settingsDataDirectoryOpen,
-    IPC.invoke.settingsExportConfig, IPC.invoke.settingsImportConfig,
-    IPC.invoke.appearanceMediaSelect, IPC.invoke.providersExportConfig, IPC.invoke.providersImportConfig,
-    IPC.invoke.pluginLoadDev, IPC.invoke.pluginCreateFromTemplate,
-    IPC.invoke.pluginInstallFromPath, IPC.invoke.pluginInstallFromPackage, IPC.invoke.pluginImportExtension,
-    IPC.invoke.skillImport, IPC.invoke.skillReveal, IPC.invoke.subagentReveal,
-    IPC.invoke.logOpenFolder, IPC.invoke.startupAnimationOpenFolder,
-    IPC.invoke.appOpenFeedback, IPC.invoke.updatesOpenReleases,
-    IPC.invoke.pluginLauncherOpenApp, IPC.invoke.pluginLauncherOpenMarket,
-  ]);
   window.piDesktop = {
     platform: "linux", channels: IPC, locale: navigator.language, getDroppedFilePath: () => null,
     on(channel, listener) {
@@ -240,16 +236,6 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     },
     async invoke<T>(channel: string, ...args: unknown[]): Promise<Result<T>> {
       try {
-        if (nativePresentationChannels.has(channel)) return { ok: false, error: { code: "UNSUPPORTED", message: "Web 端不支持此电脑原生窗口操作" } };
-        if (channel === IPC.invoke.browserOpenExternal) {
-          const raw = (args[0] as { url?: unknown } | undefined)?.url;
-          if (typeof raw !== "string" || !raw.trim()) throw bridgeError("INVALID_ARGUMENT", "缺少要打开的链接");
-          let url: URL;
-          try { url = new URL(raw); } catch { throw bridgeError("INVALID_ARGUMENT", "链接地址无效"); }
-          if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) throw bridgeError("UNSUPPORTED", "Web 端不支持此链接协议");
-          window.open(url.href, "_blank", "noopener");
-          return { ok: true, data: { ok: true } as T };
-        }
         if (localPresentationChannels.has(channel)) return { ok: true, data: { ok: true, accepted: false } as T };
         if (channel === IPC.invoke.windowSetWorkPanelReservation) return { ok: true, data: { requested: 0, reserved: 0 } as T };
         if (channel === IPC.invoke.windowSetWorkPanelChatWidth) return { ok: true, data: { requested: 0, applied: 0 } as T };

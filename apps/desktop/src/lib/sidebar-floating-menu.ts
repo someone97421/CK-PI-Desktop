@@ -43,3 +43,26 @@ export function placeSidebarFloatingMenuTop(
     SIDEBAR_MENU_ANCHOR_GAP;
   return clampTop(availableAbove > availableBelow ? aboveTop : belowTop);
 }
+
+export function placeSidebarFloatingMenu(
+  anchor: SidebarFloatingMenuAnchor & { right: number },
+  menu: { width: number; height: number },
+  viewport: { width: number; height: number },
+): { top: number; left: number } {
+  const availableWidth = Math.max(
+    0,
+    viewport.width - 2 * SIDEBAR_MENU_VIEWPORT_PADDING,
+  );
+  const width = Math.min(Math.max(0, menu.width), availableWidth);
+  const maxLeft = Math.max(
+    SIDEBAR_MENU_VIEWPORT_PADDING,
+    viewport.width - width - SIDEBAR_MENU_VIEWPORT_PADDING,
+  );
+  return {
+    top: placeSidebarFloatingMenuTop(anchor, menu.height, viewport.height),
+    left: Math.min(
+      maxLeft,
+      Math.max(SIDEBAR_MENU_VIEWPORT_PADDING, anchor.right + SIDEBAR_MENU_ANCHOR_GAP),
+    ),
+  };
+}

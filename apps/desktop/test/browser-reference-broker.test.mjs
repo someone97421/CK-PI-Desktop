@@ -58,12 +58,16 @@ test("只选择最近聚焦的输入框，并等待匹配端和草稿的成功�
 });
 
 test("切换草稿会取消未确认投递，不改投其他会话", async () => {
-  const { broker } = setup();
+  const { broker, events } = setup();
   broker.client({ clientId: "desktop", draftKey: "session-a", available: true, focused: true });
   const rejected = assert.rejects(broker.insert({ reference: page }), /切换会话/);
   broker.client({ clientId: "desktop", draftKey: "session-b", available: true });
   await rejected;
-  await assert.rejects(broker.insert({ reference: page }), /放置光标/);
+  const result = broker.insert({ reference: page });
+  const request = insertion(events);
+  assert.equal(request.draftKey, "session-b");
+  broker.acknowledge({ ...request, ok: true });
+  await result;
 });
 
 test("浏览器连接断开时取消该端投递并清除标签页", async () => {
@@ -82,7 +86,7 @@ test("失活输入框不接收引用，失败回执保留明确失败", async ()
   broker.acknowledge({ ...insertion(events), ok: false, error: "当前草稿不可编辑" });
   await rejected;
   advance();
-  await assert.rejects(broker.insert({ reference: page }), /放置光标/);
+  await assert.rejects(broker.insert({ reference: page }), /没有可编辑/);
 });
 
 test("浏览器mark保留选文与特殊字符，标签不超限，大引用明确拒绝", () => {
@@ -147,4 +151,28 @@ test("同浏览器只采用最近侧栏完整列表，不从旧列表补回已�
   assert.deepEqual(broker.snapshot().tabs, []);
   broker.update({ sourceId: "sidebar", browserId: "profile", active: true, tabs: [{ ...page, title: "已更新" }] });
   assert.deepEqual(broker.snapshot().tabs.map(tab => tab.title), ["已更新"]);
+});
+
+test("输入框从未聚焦也能接收浏览器引用", async () => {
+  const { broker, events } = setup();
+  broker.client({ clientId: "desktop", draftKey: "draft", available: true, focused: false });
+  const result = broker.insert({ reference: page });
+  const request = insertion(events);
+  assert.equal(request.clientId, "desktop");
+  assert.equal(request.draftKey, "draft");
+  assert.deepEqual(broker.claim(request), { accepted: true });
+  broker.acknowledge({ ...request, ok: true });
+  assert.deepEqual(await result, { inserted: true, clientId: "desktop" });
+});
+
+test("无光标的侧栏仍定向当前输入框，不改投其他连接", async () => {
+  const { broker, events } = setup();
+  broker.client({ clientId: "web", draftKey: "draft", connectionId: "sidebar", available: true, focused: false });
+  broker.client({ clientId: "desktop", draftKey: "other", available: true, focused: true });
+  const result = broker.insert({ reference: page, connectionId: "sidebar" });
+  const request = insertion(events);
+  assert.equal(request.clientId, "web");
+  broker.acknowledge({ ...request, ok: true });
+  await result;
+  await assert.rejects(broker.insert({ reference: page, connectionId: "missing" }), /没有可编辑/);
 });

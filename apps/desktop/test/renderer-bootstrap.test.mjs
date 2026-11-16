@@ -33,11 +33,12 @@ const bundle = await build({
   }],
 });
 
-function environment(native = false, { rejectFirstLogin = false } = {}) {
+function environment(native = false, { rejectFirstLogin = false, fetchHandler } = {}) {
   const errors = [];
   const bootEvents = [];
   const consumerIds = [];
   let loginAttempts = 0;
+  const requests = [];
   const root = element("root");
   const crypto = { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) };
   const originalUuid = () => "native-uuid";
@@ -71,7 +72,10 @@ function environment(native = false, { rejectFirstLogin = false } = {}) {
     crypto, localStorage, sessionStorage: localStorage,
     bootEvents, consumerIds, URL, URLSearchParams, Headers, AbortSignal, TextEncoder, TextDecoder,
     WebSocket: Socket, CustomEvent: class {}, queueMicrotask,
-    fetch: async (url) => {
+    fetch: async (url, init) => {
+      requests.push({ url: String(url), init });
+      const handled = await fetchHandler?.(String(url), init);
+      if (handled) return handled;
       if (String(url).endsWith("/api/login") && ++loginAttempts === 1 && rejectFirstLogin) {
         return { ok: false, status: 401, json: async () => ({ error: { code: "UNAUTHORIZED", message: "密码错误" } }) };
       }
@@ -80,7 +84,7 @@ function environment(native = false, { rejectFirstLogin = false } = {}) {
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 2, clearInterval() {},
     console: { error: error => errors.push(error) },
   });
-  return { context, root, crypto, originalUuid, errors, bootEvents, consumerIds };
+  return { context, root, crypto, originalUuid, errors, bootEvents, consumerIds, requests };
 }
 
 function element(tag) {
@@ -171,4 +175,64 @@ test("登录失败后恢复输入，重复提交不并发，重试成功后清�
   assert.equal(form.listeners.has("submit"), false);
   assert.equal(field.listeners.has("input"), false);
   assert.equal(reveal.listeners.has("click"), false);
+});
+
+async function authenticatedEnvironment(fetchHandler) {
+  const state = environment(false, { fetchHandler });
+  vm.runInContext(bundle.outputFiles[0].text, state.context);
+  await settle();
+  const form = descendant(state.root, node => node.tag === "form");
+  descendant(form, node => node.name === "password").value = "bridge-test-password";
+  form.listeners.get("submit")({ preventDefault() {} });
+  await settle();
+  assert.equal(state.errors.length, 0);
+  return state;
+}
+
+test("远控原生打开和定位交给主程序，参数/会话/失败原样回传，展示几何不转发", async () => {
+  const state = await authenticatedEnvironment(async (url, init) => {
+    if (!url.endsWith("/api/ipc")) return;
+    const { channel } = JSON.parse(init.body);
+    return new Response(JSON.stringify(channel.endsWith("/reveal")
+      ? { ok: false, error: { code: "NOT_FOUND", message: "文件已删除" } }
+      : { ok: true, data: { ok: true } }), { headers: { "Content-Type": "application/json" } });
+  });
+  const bridge = state.context.window.piDesktop;
+  const channels = bridge.channels.invoke;
+  const input = { path: "/host/path.txt", sessionId: "session-owner" };
+  assert.equal((await bridge.invoke(channels.fsOpen, input)).ok, true);
+  const failure = await bridge.invoke(channels.fsReveal, input);
+  assert.equal(failure.error.message, "文件已删除");
+  assert.equal(failure.error.code, "NOT_FOUND");
+  await bridge.invoke(channels.browserOpenExternal, { url: "https://example.com/" });
+  const calls = state.requests.filter(call => call.url.endsWith("/api/ipc"));
+  assert.deepEqual(calls.map(call => JSON.parse(call.init.body)), [
+    { channel: channels.fsOpen, args: [input] }, { channel: channels.fsReveal, args: [input] },
+    { channel: channels.browserOpenExternal, args: [{ url: "https://example.com/" }] },
+  ]);
+  for (const call of calls) assert.equal(new Headers(call.init.headers).get("Authorization"), "Bearer bootstrap-test-token");
+  await bridge.invoke(channels.browserSetBounds, { x: 10, width: 200 });
+  assert.equal(state.requests.filter(call => call.url.endsWith("/api/ipc")).length, 3);
+});
+
+test("远端文件桥保留二进制、中文文件名、预览资源地址并回传读取错误", async () => {
+  const bytes = new Uint8Array([0, 255, 128, 13, 10]);
+  const state = await authenticatedEnvironment(async (url, init) => {
+    if (!url.endsWith("/api/file")) return;
+    if (JSON.parse(init.body).path === "/missing") return new Response(JSON.stringify({ error: { code: "NOT_FOUND", message: "文件不存在" } }), { status: 404 });
+    return new Response(bytes, { headers: {
+      "Content-Type": "application/zip", "X-File-Name": encodeURIComponent("原始 文件.zip"),
+      "X-File-Preview": "/api/file-view/token/session/posix/host/path.zip",
+    } });
+  });
+  const input = { path: "/host/path.zip", sessionId: "session-owner" };
+  const result = await state.context.window.__piDesktopReadRemoteFile(input);
+  assert.deepEqual(new Uint8Array(await result.blob.arrayBuffer()), bytes);
+  assert.equal(result.name, "原始 文件.zip");
+  assert.equal(result.mimeType, "application/zip");
+  assert.equal(result.previewUrl, "http://192.168.8.10:7878/api/file-view/token/session/posix/host/path.zip");
+  const call = state.requests.find(call => call.url.endsWith("/api/file"));
+  assert.deepEqual(JSON.parse(call.init.body), input);
+  assert.equal(new Headers(call.init.headers).get("Authorization"), "Bearer bootstrap-test-token");
+  await assert.rejects(state.context.window.__piDesktopReadRemoteFile({ path: "/missing" }), /文件不存在/);
 });

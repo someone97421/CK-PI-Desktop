@@ -174,6 +174,12 @@ pnpm build:pi-host
 - [Codex 宠物](plugins/codex-pet/README.md)
 - [任务文件审查增强](plugins/file-review/README.md)
 
+## 浏览器扩展与侧栏聊天
+
+配套的 [「这是一个助手」浏览器扩展（CK Browse）](https://github.com/someone97421/ck-pi-desktop-browse) 把本应用的原始聊天界面放进 Chromium 侧栏，支持标签页、选文和 DOM 元素引用。DOM 捕捉入口位于聊天输入工具栏，拖动准星到网页元素即可加入引用；侧栏与局域网网页中的文件菜单提供预览和下载。
+
+先启用本应用的局域网远程控制插件，再按 [扩展中文安装说明](https://github.com/someone97421/ck-pi-desktop-browse#安装扩展) 安装并连接。扩展包从 [扩展 Releases](https://github.com/someone97421/ck-pi-desktop-browse/releases) 下载；主程序与扩展独立发布。
+
 ## 仓库结构
 
 | 路径 | 内容 |

@@ -100,6 +100,10 @@ async function ensureRemote() {
       ipcInvoke: (channel, args) => pi.desktop.invokeIpc(channel, args),
       rendererUpload: (input) => pi.desktop.importUploadedFiles(input),
       rendererResource: (url) => pi.desktop.readRendererResource(url),
+      rendererFile: (input) => {
+        if (typeof pi.desktop.readRendererFile !== "function") throw fail("UNSUPPORTED", "请更新主程序以启用文件预览和下载");
+        return pi.desktop.readRendererFile(input);
+      },
       localOperations,
     });
     initializationError = null;
