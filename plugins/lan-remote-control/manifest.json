@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "local.lan-remote-control",
   "name": "局域网远控 V2",
-  "description": "直接投射当前安装的原版 Renderer，仅转换局域网通信、认证、IPC 与资源。保存访问密码和自动启用选择。",
-  "version": "2.0.14",
+  "description": "直接投射当前安装的原版 Renderer，内置 Browse 连接与 MCP。本机扩展即开即用；远控网页使用密码登录。",
+  "version": "2.0.15",
   "main": "main.cjs",
-  "enabledByDefault": false,
+  "enabledByDefault": true,
   "engines": {
     "piDesktop": ">=2609.1622.5115"
   },

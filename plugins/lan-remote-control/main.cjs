@@ -134,7 +134,7 @@ async function stopListener() {
 
 function scheduleRetry() {
   clearRetry();
-  if (!active || !settings.autoStart) return;
+  if (!active) return;
   const delay = Math.min(3000 * 2 ** Math.min(retryCount++, 5), 60000);
   retryTimer = setTimeout(() => {
     retryTimer = null;
@@ -144,16 +144,27 @@ function scheduleRetry() {
 }
 
 async function restore() {
-  if (!active || !settings.autoStart) return;
+  if (!active) return;
   const requestedEpoch = epoch;
   try {
-    if (Object.keys(unsaved).length) await persist(unsaved);
+    let persistenceError;
+    if (Object.keys(unsaved).length) {
+      try { await persist(unsaved); } catch (error) { persistenceError = error; }
+    }
     const server = await ensureRemote();
-    if (!active || !settings.autoStart || requestedEpoch !== epoch) return;
+    if (!active || requestedEpoch !== epoch) return;
     await subscribe();
-    if (!active || !settings.autoStart || requestedEpoch !== epoch) { await unsubscribe(); return; }
-    if (!server.getStatus().running) await server.start({ address: settings.bindAddress, port: settings.port });
-    if (!active || !settings.autoStart || requestedEpoch !== epoch) { await stopListener(); return; }
+    if (!active || requestedEpoch !== epoch) { await unsubscribe(); return; }
+    try {
+      await server.start({ address: settings.bindAddress, port: settings.port, remoteAccess: settings.autoStart });
+    } catch (error) {
+      if (settings.autoStart && active && requestedEpoch === epoch) {
+        await server.start({ port: settings.port, remoteAccess: false });
+      }
+      throw error;
+    }
+    if (!active || requestedEpoch !== epoch) { await stopListener(); return; }
+    if (persistenceError) throw persistenceError;
     lastError = null;
     retryCount = 0;
     clearRetry();
@@ -173,7 +184,13 @@ function status() {
     passwordConfigured: false, addresses: network.listenerAddresses(),
   };
   return {
-    ...base, settings: { ...settings }, settingsError,
+    ...base,
+    localRunning: base.running,
+    running: base.running && base.remoteAccess === true,
+    phase: base.running && !base.remoteAccess ? "stopped" : base.phase,
+    links: base.remoteAccess ? base.links : [],
+    url: base.remoteAccess ? base.url : null,
+    settings: { ...settings }, settingsError,
     autoStart: { enabled: settings.autoStart, persisted: Object.keys(unsaved).length === 0, pending: retryTimer !== null },
     renderer: { ready: rendererRoot !== null },
     error: lastError || initializationError || base.error || null,
@@ -189,7 +206,7 @@ async function start(input) {
     try { await persist({ port: settings.port, autoStart: true }); }
     catch (error) { lastError = failure(error); scheduleRetry(); throw error; }
     if (!active || requestedEpoch !== epoch) throw fail("CANCELED", "开启请求已取消");
-    if (remote?.getStatus().running && (remote.getStatus().port !== settings.port || remote.getStatus().restartRequired)) await remote.stop();
+    if (remote?.getStatus().running && remote.getStatus().port !== settings.port) await remote.stop();
     await restore();
     return { ok: true, status: status() };
   });
@@ -202,7 +219,7 @@ function stop() {
   return serial(async () => {
     let writeError;
     try { await persist({ autoStart: false }); } catch (error) { writeError = error; }
-    await stopListener();
+    await restore();
     lastError = writeError ? failure(writeError) : null;
     retryCount = 0;
     if (writeError) throw writeError;
@@ -217,15 +234,15 @@ async function onPanelInvoke(channel, payload) {
       case "remote.status":
       case "remote.refresh":
         return { ok: true, status: status() };
-      case "remote.indicator": return { running: remote?.getStatus().running === true };
+      case "remote.indicator": return { running: status().running === true };
       case "remote.start": return await start(input);
       case "remote.stop": return await stop();
-      case "remote.link": return remote ? remote.createLink() : { ok: false, error: { code: "NOT_RUNNING", message: "请先开启访问" } };
+      case "remote.link": return status().running ? remote.createLink() : { ok: false, error: { code: "NOT_RUNNING", message: "请先开启访问" } };
       case "remote.setPassword":
         return await serial(async () => {
           const server = await ensureRemote();
           await server.setPassword(input.password);
-          if (active && settings.autoStart && !server.getStatus().running) scheduleRetry();
+          if (active && settings.autoStart) scheduleRetry();
           return { ok: true, status: status() };
         });
       case "remote.revoke":
@@ -258,9 +275,8 @@ function onSettingsChanged() {
     try {
       const previous = settings;
       await readSettings();
-      if (!settings.autoStart) { clearRetry(); await stopListener(); }
-      else if (active) {
-        if (remote?.getStatus().running && (previous.port !== settings.port || remote.getStatus().port !== settings.port)) await remote.stop();
+      if (active) {
+        if (remote?.getStatus().running && previous.port !== settings.port) await remote.stop();
         await restore();
       }
     } catch (error) { lastError = failure(error); }
@@ -274,10 +290,10 @@ function startLiveness() {
       if (!active) return;
       try {
         if (Object.keys(unsaved).length) await persist(unsaved);
-        if (settings.autoStart && !retryTimer) {
-          if (remote?.getStatus().restartRequired) await remote.stop();
-          if (!remote?.getStatus().running) await restore();
-        } else if (!settings.autoStart) await unsubscribe();
+        if (!retryTimer) {
+          const current = remote?.getStatus();
+          if (!current?.running || current.restartRequired || current.remoteAccess !== settings.autoStart) await restore();
+        }
       } catch (error) { lastError = failure(error); }
     });
   }, 30000);
@@ -312,13 +328,14 @@ async function onLoad() {
       active = true;
       browse.open();
       startLiveness();
-      if (!wasActive && settings.autoStart) void serial(() => restore()).catch(() => undefined);
+      if (!wasActive) void serial(() => restore()).catch(() => undefined);
     },
     stop: suspend,
   });
   serviceRegistered = true;
   startLiveness();
-  if (settings.autoStart) void serial(() => restore()).catch(() => undefined);
+  await serial(() => restore()).catch(() => undefined);
+  try { await browse.ensureRelay(); } catch (error) { lastError = failure(error); }
 }
 
 async function onUnload() {

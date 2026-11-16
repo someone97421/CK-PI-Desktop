@@ -114,6 +114,7 @@ import {
   resolveWithinRoot,
 } from "@pi-desktop/host-runtime";
 import { pluginChildEnv } from "./child-process-env";
+import { bundledBrowseExecutable } from "./bundled-browse";
 import {
   readThemeAssetBytes,
   resolveAbsoluteThemeAssetPath,
@@ -1451,7 +1452,10 @@ const spawnUtilityProcess: PluginProcessSpawner = async ({ pluginId, entry }) =>
   const child = utilityProcess.fork(entry, [], {
     serviceName: `pi-plugin-${pluginId.replace(/[^a-zA-Z0-9._-]/g, "_")}`,
     stdio: "pipe",
-    env: pluginChildEnv(pluginId),
+    env: {
+      ...pluginChildEnv(pluginId),
+      THIS_IS_A_AGENT_BROWSE_EXECUTABLE: bundledBrowseExecutable(),
+    },
   });
   return {
     postMessage: (message) => child.postMessage(message),

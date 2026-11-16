@@ -178,7 +178,7 @@ pnpm build:pi-host
 
 配套的 [「这是一个助手」浏览器扩展（CK Browse）](https://github.com/someone97421/ck-pi-desktop-browse) 把本应用的原始聊天界面放进 Chromium 侧栏，支持标签页、选文和 DOM 元素引用。DOM 捕捉入口位于聊天输入工具栏，拖动准星到网页元素即可加入引用；侧栏与局域网网页中的文件菜单提供预览和下载。
 
-先启用本应用的局域网远程控制插件，再按 [扩展中文安装说明](https://github.com/someone97421/ck-pi-desktop-browse#安装扩展) 安装并连接。扩展包从 [扩展 Releases](https://github.com/someone97421/ck-pi-desktop-browse/releases) 下载；主程序与扩展独立发布。
+主程序内置 Browse CLI 与 MCP，本机浏览器连接默认启用。按 [扩展中文安装说明](https://github.com/someone97421/ck-pi-desktop-browse#安装扩展) 安装扩展后，打开侧栏即可连接，无需密码、手动配对或额外 MCP 配置；已有明确停用插件的设置仍被保留。扩展包从 [扩展 Releases](https://github.com/someone97421/ck-pi-desktop-browse/releases) 下载；主程序与扩展独立发布。直接通过浏览器访问远控端口网页仍需密码登录，包括 localhost；局域网远控须在主程序中另行开启。
 
 ## 仓库结构
 

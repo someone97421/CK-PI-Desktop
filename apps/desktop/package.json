@@ -111,6 +111,10 @@
     ],
     "extraResources": [
       {
+        "from": "resources/browse",
+        "to": "browse"
+      },
+      {
         "from": "resources/models.dev",
         "to": "models.dev"
       },

@@ -51,11 +51,13 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   }
   const origin = server.origin;
   const parentOrigin = trustedExtensionOrigin(params.get("parentOrigin"));
+  const extensionSession = parentOrigin !== null && parent !== window &&
+    (server.hostname === "localhost" || server.hostname === "[::1]" || /^127\./.test(server.hostname));
   const storageKey = origin === location.origin ? TOKEN_KEY : `${TOKEN_KEY}:${origin}`;
   const readStored = (key: string) => {
     try { return localStorage.getItem(key) || sessionStorage.getItem(key) || ""; } catch { return ""; }
   };
-  let token = readStored(storageKey);
+  let token = extensionSession ? "" : readStored(storageKey);
   const resourceProtocol = /^(pi-genui|plugin-renderer|plugin-asset|appearance-media):\/\//;
   const resourceUrl = (value: string): string => {
     if (!resourceProtocol.test(value)) return value;
@@ -84,6 +86,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   };
   const storeToken = (value: string) => {
     token = value;
+    if (extensionSession) return;
     for (const storage of [() => localStorage, () => sessionStorage]) {
       try { value ? storage().setItem(storageKey, value) : storage().removeItem(storageKey); } catch { /* 当前页仍可使用内存令牌。 */ }
     }
@@ -367,7 +370,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     if (!response.ok || typeof response.result?.token !== "string") throw new Error(response.error?.message || "登录响应无效");
     storeToken(response.result.token);
     connect();
-  });
+  }, { extension: extensionSession });
   const connect = () => {
     if (!token || expired) return;
     gate.connecting();
@@ -412,7 +415,31 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     });
     ws.addEventListener("error", () => ws.close());
   };
+  const connectExtension = async () => {
+    gate.connecting();
+    try {
+      token = await new Promise<string>((resolve, reject) => {
+        const requestId = webRemoteId();
+        const cleanup = () => { clearTimeout(timeout); window.removeEventListener("message", receive); };
+        const receive = (event: MessageEvent) => {
+          if (event.source !== parent || event.origin !== parentOrigin ||
+              event.data?.type !== "pi-desktop:extension-session-response" || event.data.requestId !== requestId) return;
+          cleanup();
+          if (event.data.ok === true && typeof event.data.token === "string" && event.data.token) resolve(event.data.token);
+          else reject(new Error(typeof event.data.error === "string" ? event.data.error : "无法连接主程序"));
+        };
+        const timeout = setTimeout(() => { cleanup(); reject(new Error("主程序连接超时，正在重试…")); }, 10_000);
+        window.addEventListener("message", receive);
+        post({ type: "pi-desktop:extension-session-request", requestId });
+      });
+      connect();
+    } catch (error) {
+      gate.failed(error instanceof Error ? error.message : "无法连接主程序，正在重试…");
+      retry = setTimeout(() => { void connectExtension(); }, Math.min(15_000, 1000 * 2 ** Math.min(attempts++, 4)));
+    }
+  };
   publishStatus(); publishBrowseStatus();
-  if (token) connect();
+  if (extensionSession) void connectExtension();
+  else if (token) connect();
   await ready;
 }

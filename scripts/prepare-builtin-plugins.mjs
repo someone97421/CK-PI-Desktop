@@ -6,14 +6,17 @@ import { join } from "node:path";
 export const BUILTIN_PLUGIN_SOURCES = [
   {
     id: "net.aiuo.session-title", directory: "session-title",
+    enabledByDefault: false,
     assets: ["panel", "package.json", "LICENSE", "UPSTREAM.md"], browserEntries: [],
   },
   {
     id: "local.lan-remote-control", directory: "lan-remote-control",
+    enabledByDefault: true,
     assets: ["settings", "adapter", "README.md"], browserEntries: ["settings/access.js", "adapter/projection.js"],
   },
   {
     id: "local.codex-pet", directory: "codex-pet",
+    enabledByDefault: false,
     assets: ["ui", "shared", "pets", "README.md"], browserEntries: [], rendererEntry: "renderer/index.js",
   },
 ];
@@ -29,8 +32,8 @@ export async function prepareBuiltinPlugins(root) {
       const source = join(root, "plugins", plugin.directory);
       const destination = join(staging, plugin.id);
       const manifest = JSON.parse(await readFile(join(source, "manifest.json"), "utf8"));
-      if (manifest.id !== plugin.id || manifest.enabledByDefault !== false) {
-        throw new Error(`内置可选插件必须匹配 ID 并声明缺省关闭：${plugin.directory}`);
+      if (manifest.id !== plugin.id || manifest.enabledByDefault !== plugin.enabledByDefault) {
+        throw new Error(`内置插件 ID 或默认启用状态不匹配：${plugin.directory}`);
       }
       await mkdir(destination, { recursive: true });
       await cp(join(source, "manifest.json"), join(destination, "manifest.json"));
@@ -68,7 +71,7 @@ export async function prepareBuiltinPlugins(root) {
       await rm(destination, { recursive: true, force: true });
       await cp(join(staging, plugin.id), destination, { recursive: true });
     }
-    console.log("已准备内置可选插件：会话标题、局域网远程控制、Codex 宠物（缺省关闭）");
+    console.log("已准备内置插件：浏览器连接默认启用；会话标题与 Codex 宠物默认关闭");
   } finally {
     await rm(staging, { recursive: true, force: true });
   }

@@ -183,7 +183,7 @@ test("bundled plugins are packaged and located at runtime", () => {
   assert.match(hostProcessSource, /join\(process\.resourcesPath \|\| "", "plugins"\)/);
 });
 
-test("三个内置可选插件保留原 ID、完整资源且缺省关闭", () => {
+test("三个内置插件保留原 ID 和完整资源，浏览器连接默认启用", () => {
   assert.deepEqual(BUILTIN_PLUGIN_SOURCES.map((plugin) => plugin.id), [
     "net.aiuo.session-title", "local.lan-remote-control", "local.codex-pet",
   ]);
@@ -191,7 +191,7 @@ test("三个内置可选插件保留原 ID、完整资源且缺省关闭", () =>
     const source = resolve("../../plugins", plugin.directory);
     const manifest = JSON.parse(read(`${source}/manifest.json`));
     assert.equal(manifest.id, plugin.id);
-    assert.equal(manifest.enabledByDefault, false);
+    assert.equal(manifest.enabledByDefault, plugin.id === "local.lan-remote-control");
     for (const file of [manifest.main, ...plugin.assets, ...plugin.browserEntries]) {
       assert.ok(existsSync(resolve(source, file)), `${plugin.id} 缺少 ${file}`);
     }

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { prepareBuild } from "./prepare-build.mjs";
 import { isDesktopArtifact, isPiHostArtifact, retainArtifacts } from "./artifact-retention.mjs";
 import { prepareBuiltinPlugins } from "./prepare-builtin-plugins.mjs";
+import { prepareBuiltinBrowse } from "./prepare-builtin-browse.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(root, "apps/desktop");
@@ -94,8 +95,13 @@ try {
     await retainArtifacts(outputDirectory, [completed], isPiHostArtifact);
     console.log(`本次 pi-host 产物：${completed}`);
   } else {
+    const nativePlatform = { "dist:win": "win32", "dist:mac": "darwin", "dist:linux": "linux" }[mode];
+    if (nativePlatform && nativePlatform !== process.platform) {
+      throw new Error(`内置 Browse 需要原生构建；${mode} 请在 ${nativePlatform} 上执行`);
+    }
     await pnpm(["run", "build:deps"], desktop);
     await prepareBuiltinPlugins(root);
+    await prepareBuiltinBrowse(root, { run });
     if (mode === "dev") {
       await run("cargo", ["build", "-p", "host-core"]);
       await run(process.execPath, [join(root, "scripts/dev-electron.mjs")], desktop);

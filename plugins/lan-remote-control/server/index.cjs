@@ -61,6 +61,10 @@ function clientAddress(req) {
   return address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
 }
 
+function isLoopback(address) {
+  return address === "::1" || /^127\./.test(address);
+}
+
 function mapListenError(error) {
   switch (error?.code) {
     case "EADDRINUSE":
@@ -136,6 +140,7 @@ function createRemoteServer(options = {}) {
     restartRequired: false,
     listeners: [],
     requestedAddresses: [],
+    remoteAccess: false,
     warning: null,
     webRootReal: null,
     projectionRootReal: null,
@@ -144,6 +149,7 @@ function createRemoteServer(options = {}) {
     timers: new Set(),
     inFlight: new Set(),
     devices: new DeviceStore({ file: path.join(dataDir, "remote-access.json") }),
+    extensionDevices: new DeviceStore({ maxDevices: Infinity }),
     attachments: new AttachmentStore({
       dir: path.join(dataDir, "tmp", "lan-remote-control"),
       maxBytes: uploadMaxBytes,
@@ -192,12 +198,13 @@ function createRemoteServer(options = {}) {
   function getStatus() {
     const running = state.phase === "running";
     const url = running && state.address ? `http://${state.address}:${state.port}/` : null;
-    const addresses = network.listenerAddresses();
+    const addresses = listenerAddresses(state.remoteAccess);
     const networkChanged = running && (addresses.length !== state.requestedAddresses.length ||
       addresses.some((entry) => !state.requestedAddresses.includes(entry.address)));
     return {
       phase: state.phase,
       running,
+      remoteAccess: state.remoteAccess,
       address: state.address,
       bindAddress: state.address,
       port: state.port,
@@ -225,6 +232,18 @@ function createRemoteServer(options = {}) {
     };
   }
 
+
+  function listenerAddresses(remoteAccess) {
+    return network.listenerAddresses().filter((entry) => remoteAccess || isLoopback(entry.address));
+  }
+
+  function authorizeToken(token, address) {
+    return state.devices.authorize(token) || (isLoopback(address) ? state.extensionDevices.authorize(token) : null);
+  }
+
+  function connectionDevice(conn) {
+    return state.devices.get(conn.deviceId) || (isLoopback(conn.ip) ? state.extensionDevices.get(conn.deviceId) : null);
+  }
 
   // --- websocket plumbing ---------------------------------------------------
 
@@ -280,7 +299,7 @@ function createRemoteServer(options = {}) {
 
   function handleWsAuth(conn, message) {
     const token = typeof message.token === "string" ? message.token : "";
-    const device = state.devices.authorize(token);
+    const device = authorizeToken(token, conn.ip);
     if (!device) {
       wsError(conn, "UNAUTHORIZED", "device token is not valid");
       closeWs(conn, 4401, "unauthorized");
@@ -338,7 +357,7 @@ function createRemoteServer(options = {}) {
       handleWsAuth(conn, message);
       return;
     }
-    if (conn.deviceId && !state.devices.get(conn.deviceId)) {
+    if (conn.deviceId && !connectionDevice(conn)) {
       closeWs(conn, 4401, "unauthorized");
       return;
     }
@@ -457,7 +476,7 @@ function createRemoteServer(options = {}) {
     if (typeof header !== "string" || !header.startsWith("Bearer ")) return null;
     const token = header.slice("Bearer ".length).trim();
     if (!token || token.length > 256) return null;
-    return state.devices.authorize(token);
+    return authorizeToken(token, clientAddress(req));
   }
 
   function healthResult() {
@@ -495,6 +514,20 @@ function createRemoteServer(options = {}) {
       httpHelpers.sendResult(res, { token: result.token, deviceId: result.device.id, deviceName: result.device.name,
         expiresAt: new Date(result.device.expiresAt).toISOString() });
     } finally { state.loginInFlight--; }
+  }
+
+  async function handleExtensionSession(req, res, originCheck) {
+    const address = clientAddress(req);
+    if (originCheck.extension !== true || !isLoopback(address)) {
+      httpHelpers.sendError(res, 403, "FORBIDDEN", "仅本机浏览器扩展可建立此会话");
+      return;
+    }
+    const body = await httpHelpers.readJsonBody(req, { maxBytes: LOGIN_BODY_MAX_BYTES });
+    if (!body.ok) { httpHelpers.sendBodyError(req, res, body); return; }
+    if (state.phase !== "running") { httpHelpers.sendError(res, 503, "NOT_READY", "server is not running"); return; }
+    const result = state.extensionDevices.add({ name: "Chrome 侧边栏", remoteAddress: address, userAgent: req.headers["user-agent"] });
+    httpHelpers.sendResult(res, { token: result.token, deviceId: result.device.id, deviceName: result.device.name,
+      expiresAt: new Date(result.device.expiresAt).toISOString() });
   }
 
   async function handleIpc(req, res) {
@@ -675,14 +708,14 @@ function createRemoteServer(options = {}) {
   async function handleFileView(req, res, url) {
     const requestGeneration = generation;
     const target = parseFileViewUrl(url.pathname);
-    const device = target?.token ? state.devices.authorize(target.token) : null;
+    const device = target?.token ? authorizeToken(target.token, clientAddress(req)) : null;
     if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
     if (typeof rendererFile !== "function") { httpHelpers.sendError(res, 501, "UNSUPPORTED", "请更新主程序以启用文件预览和下载"); return; }
     const task = Promise.resolve().then(() => rendererFile(target.input));
     state.inFlight.add(task);
     try {
       const file = fileResponse(await task);
-      if (generation !== requestGeneration || state.phase !== "running" || state.devices.authorize(target.token)?.id !== device.id) {
+      if (generation !== requestGeneration || state.phase !== "running" || authorizeToken(target.token, clientAddress(req))?.id !== device.id) {
         httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return;
       }
       res.setHeader("Content-Type", file.mimeType);
@@ -704,7 +737,7 @@ function createRemoteServer(options = {}) {
     let token;
     try { token = parts ? decodeURIComponent(parts[1]) : ""; }
     catch { token = ""; }
-    const device = token && token.length <= 256 ? state.devices.authorize(token) : null;
+    const device = token && token.length <= 256 ? authorizeToken(token, clientAddress(req)) : null;
     if (!device) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device token is missing or invalid");
       return;
@@ -727,7 +760,7 @@ function createRemoteServer(options = {}) {
       httpHelpers.sendError(res, 501, "UNSUPPORTED", "host resource reader is unavailable");
       return;
     }
-    const authorized = () => requestGeneration === generation && state.phase === "running" && state.devices.authorize(token)?.id === device.id;
+    const authorized = () => requestGeneration === generation && state.phase === "running" && authorizeToken(token, clientAddress(req))?.id === device.id;
     const task = Promise.resolve().then(() => rendererResource(resourceUrl.href));
     state.inFlight.add(task);
     try {
@@ -814,6 +847,11 @@ function createRemoteServer(options = {}) {
         httpHelpers.sendResult(res, healthResult());
         return;
       }
+      if (pathname === "/api/extension-session") {
+        if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
+        await handleExtensionSession(req, res, originCheck);
+        return;
+      }
       if (pathname === "/api/login") {
         if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
         await handleLogin(req, res, clientAddress(req));
@@ -823,7 +861,7 @@ function createRemoteServer(options = {}) {
         if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
         const device = authenticate(req);
         if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
-        await revokeDevice(device.id);
+        await revokeDevice(device.id, state.extensionDevices.get(device.id) ? state.extensionDevices : state.devices);
         httpHelpers.sendResult(res, { loggedOut: true });
         return;
       }
@@ -953,7 +991,7 @@ function createRemoteServer(options = {}) {
 
   async function sweepNow() {
     for (const conn of [...state.connections]) {
-      if (conn.deviceId && !state.devices.get(conn.deviceId)) closeWs(conn, 4403, "session expired");
+      if (conn.deviceId && !connectionDevice(conn)) closeWs(conn, 4403, "session expired");
     }
     await state.attachments.pruneExpired();
   }
@@ -976,7 +1014,7 @@ function createRemoteServer(options = {}) {
     });
   }
 
-  async function start({ address, port } = {}, expectedGeneration = generation) {
+  async function start({ address, port, remoteAccess = true } = {}, expectedGeneration = generation) {
     if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
     // 旧 address 仅作为首选链接，不限制监听集合；旧网卡地址失效也能恢复。
     if (address && (typeof address !== "string" || !network.isAllowedBindAddress(address))) {
@@ -986,22 +1024,23 @@ function createRemoteServer(options = {}) {
     if (!Number.isInteger(listenPort) || listenPort < 0 || listenPort > 65_535) {
       throw fail("INVALID_PARAMS", "port must be an integer between 0 and 65535");
     }
-    const candidates = network.listenerAddresses();
+    if (remoteAccess && !state.devices.passwordConfigured) throw fail("PASSWORD_REQUIRED", "请先在电脑端设置访问密码");
+    const candidates = listenerAddresses(remoteAccess);
     candidates.sort((a, b) => Number(b.address === address) - Number(a.address === address));
     if (state.phase === "running") {
       const sameAddresses = candidates.length === state.listeners.length &&
         candidates.every((entry) => state.listeners.some((active) => active.address === entry.address && active.server.listening));
-      if (sameAddresses && (listenPort === 0 || listenPort === state.port)) return getStatus();
+      if (sameAddresses && remoteAccess === state.remoteAccess && (listenPort === 0 || listenPort === state.port)) return getStatus();
       generation += 1;
       expectedGeneration = generation;
       await stop();
       if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
     }
-    if (!state.devices.passwordConfigured) throw fail("PASSWORD_REQUIRED", "请先在电脑端设置访问密码");
     if (state.phase === "starting" || state.phase === "stopping") {
       throw fail("NOT_READY", "server is busy");
     }
     state.phase = "starting";
+    state.remoteAccess = remoteAccess;
     state.lastError = null;
 
     state.warning = null;
@@ -1240,8 +1279,8 @@ function createRemoteServer(options = {}) {
     return { ok: true };
   }
 
-  async function revokeDevice(deviceId) {
-    const existed = state.devices.revoke(deviceId);
+  async function revokeDevice(deviceId, store = state.devices) {
+    const existed = store.revoke(deviceId);
     for (const conn of [...state.connections]) {
       if (conn.deviceId !== deviceId) continue;
       wsError(conn, "UNAUTHORIZED", "device was revoked");
@@ -1263,7 +1302,7 @@ function createRemoteServer(options = {}) {
     if (state.phase !== "running" || typeof event?.channel !== "string" || !Array.isArray(event.args)) return 0;
     let delivered = 0;
     for (const conn of state.connections) {
-      if (!conn.deviceId || !state.devices.get(conn.deviceId) || !wsOpen(conn)) continue;
+      if (!conn.deviceId || !connectionDevice(conn) || !wsOpen(conn)) continue;
       if (event.channel === "pi-desktop/browserReferences/event/insertRequested" && event.args[0]?.connectionId !== conn.id) continue;
       sendWs(conn, { type: "ipc-event", channel: event.channel, args: event.args });
       delivered += 1;

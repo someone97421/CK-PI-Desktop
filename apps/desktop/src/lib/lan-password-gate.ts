@@ -1,6 +1,6 @@
 import "./lan-password-gate.css";
 
-export function createLanPasswordGate(authenticate: (password: string) => Promise<void>) {
+export function createLanPasswordGate(authenticate: (password: string) => Promise<void>, options: { extension?: boolean } = {}) {
   const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string) => {
     const node = document.createElement(tag);
     node.className = className;
@@ -56,6 +56,15 @@ export function createLanPasswordGate(authenticate: (password: string) => Promis
   status.setAttribute("aria-atomic", "true");
   form.append(label, fieldGroup, hint, submit, status);
   const footer = element("p", "lan-gate-footer", "远程连接 · V2");
+  if (options.extension) {
+    identity.lastElementChild!.textContent = "浏览器侧栏";
+    title.textContent = "正在连接主程序";
+    label.remove();
+    fieldGroup.remove();
+    hint.remove();
+    submit.remove();
+    footer.textContent = "本机扩展连接";
+  }
   card.append(header, title, endpoint, form, footer);
   page.append(card);
   const root = document.getElementById("root");
@@ -113,10 +122,11 @@ export function createLanPasswordGate(authenticate: (password: string) => Promis
   reveal.addEventListener("click", onReveal);
   field.addEventListener("input", onInput);
   form.addEventListener("submit", onSubmit);
-  field.focus();
+  if (!options.extension) field.focus();
   return {
     connecting: () => setPending(true, "正在连接…"),
     reconnecting: () => setPending(true, "正在重连…"),
+    failed: (message: string) => setPending(true, message),
     dispose: () => {
       if (disposed) return;
       disposed = true;

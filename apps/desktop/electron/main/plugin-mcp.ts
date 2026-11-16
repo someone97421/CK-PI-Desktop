@@ -9,6 +9,7 @@ import {
   resolveMcpStdioLaunch,
 } from "./mcp-stdio-launch.ts";
 import { userLookupPath } from "./user-login-path.ts";
+import { bundledBrowseExecutable } from "./bundled-browse.ts";
 
 /** MCP revision we advertise during the handshake. */
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -129,6 +130,9 @@ export function resolveMcpCommand(
   command: string,
   policy: McpCommandPolicy = "confined",
 ): string {
+  if (process.platform === "win32" ? /^browse(?:\.exe)?$/i.test(command) : command === "browse") {
+    return bundledBrowseExecutable();
+  }
   if (!/[\\/]/.test(command)) return command;
   if (policy === "trusted") {
     if (command.split(/[\\/]/).some((part) => part === "..")) {

@@ -15,6 +15,10 @@ const OPERATION_META = Object.freeze({
 
 function failure(code, message) { return Object.assign(new Error(message), { code }); }
 function resolveCommand() {
+  const bundled = process.env.THIS_IS_A_AGENT_BROWSE_EXECUTABLE;
+  if (bundled && path.isAbsolute(bundled)) {
+    try { fs.accessSync(bundled, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK); return bundled; } catch {}
+  }
   const name = process.platform === "win32" ? "browse.exe" : "browse";
   const directories = [...(process.env.PATH || "").split(path.delimiter), path.join(os.homedir(), ".local", "bin")];
   for (const directory of directories) {
@@ -67,7 +71,7 @@ function createBrowseBridge({ resolveExecutable = resolveCommand, run = runComma
     if (await probe()) return status();
     if (closed) throw failure("NOT_READY", "连接器已停止");
     const command = resolveExecutable();
-    if (!command) throw failure("UNAVAILABLE", "未找到 browse，请安装到 PATH 或 ~/.local/bin/browse");
+    if (!command) throw failure("UNAVAILABLE", "内置 Browse 不可用，请重新构建或更新主程序");
     let spawnError = null;
     child = spawnRelay(command, ["serve"], {
       stdio: "ignore", windowsHide: true,

@@ -11,15 +11,19 @@ function host(saved = {}, options = {}) {
   const timers = new Map();
   const events = new Map();
   const services = new Map();
-  const calls = { starts: 0, stops: 0, subscriptions: 0, releases: 0 };
+  const calls = { starts: 0, stops: 0, subscriptions: 0, releases: 0, ensureRelay: 0, inputs: [] };
   let running = false;
   let port = null;
+  let remoteAccess = false;
   const server = {
-    getStatus: () => ({ running, port, restartRequired: options.networkChanged === true, passwordConfigured: true, links: [], devices: [] }),
+    getStatus: () => ({ running, remoteAccess, port, restartRequired: options.networkChanged === true, passwordConfigured: options.passwordConfigured !== false, links: running ? [{ url: "http://localhost/" }] : [], devices: [] }),
     start: async (input) => {
-      calls.starts++;
+      calls.starts++; calls.inputs.push({ ...input });
       if (options.startFails) throw Object.assign(new Error("port busy"), { code: "EADDRINUSE" });
-      await options.beforeStart?.(); running = true; port = input.port;
+      if (input.remoteAccess && options.passwordConfigured === false) throw Object.assign(new Error("password required"), { code: "PASSWORD_REQUIRED" });
+      await options.beforeStart?.();
+      if (running && (remoteAccess !== input.remoteAccess || port !== input.port || options.networkChanged)) calls.stops++;
+      running = true; port = input.port; remoteAccess = input.remoteAccess; options.networkChanged = false;
     },
     stop: async () => { calls.stops++; running = false; options.networkChanged = false; },
     setPassword: async () => {}, revokeDevice: async () => {}, revokeAllDevices: async () => {},
@@ -61,7 +65,7 @@ function host(saved = {}, options = {}) {
       if (name === "node:path") return path;
       if (name === "./server.cjs") return { createRemoteServer: () => server };
       if (name === "./server/network.cjs") return { isAllowedBindAddress: () => true, listenerAddresses: () => [] };
-      if (name === "./browse-bridge.cjs") return { createBrowseBridge: () => ({ open() {}, stop: async () => {}, status() {}, ensureRelay() {}, mintPairingCode() {} }) };
+      if (name === "./browse-bridge.cjs") return { createBrowseBridge: () => ({ open() {}, stop: async () => {}, status() {}, ensureRelay() { calls.ensureRelay++; }, mintPairingCode() {} }) };
       throw new Error(`Unexpected dependency: ${name}`);
     },
   };
@@ -70,11 +74,16 @@ function host(saved = {}, options = {}) {
   return { plugin, calls, timers, services, saved, options, status: async () => (await plugin.onPanelInvoke("remote.status")).status };
 }
 
-test("首次加载不监听；开启保存端口及意图，重载自动恢复，手动关闭取消恢复", async () => {
+test("首次加载常驻本机通道；远控开启保存意图，重载恢复，关闭仅禁用远控", async () => {
   const saved = {};
   const first = host(saved);
   await first.plugin.onLoad();
-  assert.equal(first.calls.starts, 0);
+  assert.equal(first.calls.starts, 1);
+  assert.equal(first.calls.inputs[0].remoteAccess, false);
+  assert.equal(first.calls.ensureRelay, 1);
+  assert.equal((await first.status()).localRunning, true);
+  assert.equal((await first.status()).running, false);
+  assert.equal((await first.plugin.onPanelInvoke("remote.link")).ok, false);
   assert.equal((await first.plugin.onPanelInvoke("remote.start", { port: 7879 })).ok, true);
   assert.equal(saved.autoStart, true);
   assert.equal(saved.port, 7879);
@@ -86,17 +95,25 @@ test("首次加载不监听；开启保存端口及意图，重载自动恢复�
   await settle();
   assert.equal(second.calls.starts, 1);
   assert.equal((await second.status()).running, true);
+  assert.equal(second.calls.inputs[0].remoteAccess, true);
   assert.equal((await second.plugin.onPanelInvoke("remote.stop")).ok, true);
   assert.equal(saved.autoStart, false);
+  assert.equal((await second.status()).running, false);
+  assert.equal((await second.status()).localRunning, true);
+  assert.equal(second.calls.inputs.at(-1).remoteAccess, false);
+  assert.equal(second.calls.releases, 0);
   await second.plugin.onUnload();
   const third = host(saved);
   await third.plugin.onLoad();
   await settle();
-  assert.equal(third.calls.starts, 0);
+  assert.equal(third.calls.starts, 1);
+  assert.equal(third.calls.inputs[0].remoteAccess, false);
+  assert.equal((await third.status()).localRunning, true);
+  assert.equal((await third.status()).running, false);
   await third.plugin.onUnload();
 });
 
-test("写盘失败如实返回未保存；手动关闭仍停止监听", async () => {
+test("写盘失败如实返回未保存；关闭远控仍保留本机监听和订阅", async () => {
   const instance = host();
   await instance.plugin.onLoad();
   await instance.plugin.onPanelInvoke("remote.start", { port: 7878 });
@@ -105,6 +122,9 @@ test("写盘失败如实返回未保存；手动关闭仍停止监听", async ()
   assert.equal(result.ok, false);
   assert.equal(result.error.code, "SETTINGS_NOT_PERSISTED");
   assert.equal(result.status.running, false);
+  assert.equal(result.status.localRunning, true);
+  assert.equal(instance.calls.inputs.at(-1).remoteAccess, false);
+  assert.equal(instance.calls.releases, 0);
   assert.equal(result.status.autoStart.persisted, false);
   assert.equal(result.status.autoStart.enabled, false);
   assert.equal(instance.saved.autoStart, true);
@@ -114,8 +134,9 @@ test("写盘失败如实返回未保存；手动关闭仍停止监听", async ()
 test("开启进行中收到关闭，以关闭为最终状态", async () => {
   let release;
   const pendingStart = new Promise((resolve) => { release = resolve; });
-  const instance = host({}, { beforeStart: () => pendingStart });
+  const instance = host();
   await instance.plugin.onLoad();
+  instance.options.beforeStart = () => pendingStart;
   const starting = instance.plugin.onPanelInvoke("remote.start", { port: 7878 });
   await settle();
   const stopping = instance.plugin.onPanelInvoke("remote.stop");
@@ -123,6 +144,7 @@ test("开启进行中收到关闭，以关闭为最终状态", async () => {
   await Promise.all([starting, stopping]);
   await settle();
   assert.equal((await instance.status()).running, false);
+  assert.equal((await instance.status()).localRunning, true);
   assert.equal(instance.saved.autoStart, false);
   assert.equal((await instance.status()).autoStart.pending, false);
   await instance.plugin.onUnload();
@@ -155,16 +177,17 @@ test("Renderer 不可用时不回退旧页面、不开启监听", async () => {
   await instance.plugin.onUnload();
 });
 
-test("关闭释放 IPC 订阅，重新开启重新订阅", async () => {
+test("关闭和重开远控复用 IPC 订阅，卸载才释放本机通道", async () => {
   const instance = host();
   await instance.plugin.onLoad();
   await instance.plugin.onPanelInvoke("remote.start");
   await instance.plugin.onPanelInvoke("remote.stop");
-  assert.equal(instance.calls.releases, 1);
+  assert.equal(instance.calls.releases, 0);
+  assert.equal((await instance.status()).localRunning, true);
   await instance.plugin.onPanelInvoke("remote.start");
-  assert.equal(instance.calls.subscriptions, 2);
+  assert.equal(instance.calls.subscriptions, 1);
   await instance.plugin.onUnload();
-  assert.equal(instance.calls.releases, 2);
+  assert.equal(instance.calls.releases, 1);
 });
 
 test("网络地址变化后自动重建监听，重复宿主启动不另排恢复", async () => {
@@ -183,7 +206,7 @@ test("网络地址变化后自动重建监听，重复宿主启动不另排恢�
 });
 
 test("监听失败退避重试，成功后清理重试并恢复事件订阅", async () => {
-  const instance = host({ autoStart: true }, { startFails: true });
+  const instance = host({}, { startFails: true });
   await instance.plugin.onLoad();
   await settle();
   assert.equal(instance.calls.starts, 1);
@@ -196,6 +219,31 @@ test("监听失败退避重试，成功后清理重试并恢复事件订阅", as
   assert.equal(instance.calls.starts, 2);
   assert.equal(instance.calls.subscriptions, 2);
   assert.equal((await instance.status()).autoStart.pending, false);
+  assert.equal((await instance.status()).running, false);
+  assert.equal((await instance.status()).localRunning, true);
+  await instance.plugin.onUnload();
+});
+
+test("远控恢复失败回退本机通道，保留自动恢复意图和 IPC 订阅", async () => {
+  const instance = host({ autoStart: true }, { passwordConfigured: false });
+  await instance.plugin.onLoad();
+  assert.deepEqual(instance.calls.inputs.map(input => input.remoteAccess), [true, false]);
+  const status = await instance.status();
+  assert.equal(status.localRunning, true);
+  assert.equal(status.running, false);
+  assert.equal(status.passwordConfigured, false);
+  assert.equal(status.error.code, "PASSWORD_REQUIRED");
+  assert.equal(status.autoStart.enabled, true);
+  assert.equal(status.autoStart.pending, true);
+  assert.equal(instance.calls.releases, 0);
+  assert.equal(instance.calls.subscriptions, 1);
+  const retry = [...instance.timers.entries()].find(([timer]) => timer.delay === 3000);
+  assert.ok(retry);
+  instance.options.passwordConfigured = true;
+  retry[1]();
+  await settle();
   assert.equal((await instance.status()).running, true);
+  assert.equal((await instance.status()).autoStart.pending, false);
+  assert.equal(instance.calls.subscriptions, 1);
   await instance.plugin.onUnload();
 });

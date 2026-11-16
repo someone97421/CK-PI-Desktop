@@ -21,6 +21,7 @@ apps/*/dist-bundle/
 apps/desktop/resources/plugins/net.aiuo.session-title/
 apps/desktop/resources/plugins/local.lan-remote-control/
 apps/desktop/resources/plugins/local.codex-pet/
+apps/desktop/resources/browse/
 
 # Local design-source exports
 docs/image/pi_logo.png

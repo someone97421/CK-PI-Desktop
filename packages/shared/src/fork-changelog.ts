@@ -5,6 +5,8 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "主程序内置 Browse CLI 与 MCP，本机 Chrome 侧栏打开即用，无需密码、手动配对或额外依赖配置。",
+  "浏览器扩展使用独立本机会话；远控网页仍须密码登录，关闭私网远控后本机侧栏继续可用。",
   "局域网远控升级至 V2，使用桌面原始聊天界面，修复窄屏菜单、重连状态、历史与队列刷新。",
   "配套 Chrome 侧栏支持标签页、选文与 DOM 引用；从输入工具栏拖动准星选择元素，无需预先放置光标。",
   "远控文件菜单新增预览与下载，支持 HTML 相对资源；按所属会话读取文件，系统打开与定位在桌面主机执行。",
@@ -27,7 +29,7 @@ const zh = entry([
   "远控项目会话首屏显示 3 条、每次增加 5 条；统一启动器磁贴并保留原有面板宽度。",
   "数据库升级至 schema 28，迁移前备份并归并真实项目目录别名；旧版回退须恢复升级前整份业务目录。",
   "完善配置备份内容，统一完整覆盖与合并导入，兼容旧备份并继续隔离插件托管配置。",
-  "内置默认关闭的局域网远程控制、会话标题和 Codex 宠物插件，沿用已有启停选择与设置；修复标题生成的模型补全初始化。",
+  "内置浏览器连接默认启用，会话标题和 Codex 宠物默认关闭；沿用已有启停选择与设置，修复标题生成的模型补全初始化。",
   "远控支持临时会话分组和指定电脑工作目录的新草稿，首次发送时才建立正式会话并导入附件。",
   "远控自动加载模型名称，新增可保存的页面缩放比例，统一下拉菜单和搜索框样式，改善工作过程展开留白。",
   "会话标题默认提示词改为中文，明确沿用用户语言，并保留用户提示和助理回复上下文。",
@@ -140,6 +142,8 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Bundle Browse CLI and MCP with the app so the local Chrome sidebar connects without passwords, manual pairing or extra dependency setup.",
+  "Use a separate local extension session while keeping password login for remote web pages; the local sidebar remains available when LAN access is disabled.",
   "Upgrade LAN remote control to V2 using the desktop chat interface, fixing narrow-screen menus, reconnection state, history and queue refreshes.",
   "Add tab, selection and DOM references to the companion Chrome sidebar; drag the composer crosshair to pick an element without first placing the caret.",
   "Add remote file previews and downloads with relative HTML resources; resolve files in their session and run system open and reveal actions on the desktop host.",
@@ -162,7 +166,7 @@ const en = entry([
   "Show three remote project sessions initially and five more per page; unify launcher tiles while retaining the existing panel width.",
   "Upgrade to schema 28 with a backup before reconciling project directory aliases; downgrades require restoring the full pre-upgrade data directory.",
   "Expand configuration backups and unify replace-all and merge imports, keeping older backups compatible and plugin-managed configuration isolated.",
-  "Bundle opt-in LAN remote control, session titles and Codex Pet, retaining saved enablement and settings; fix model completion initialization for generated titles.",
+  "Enable the bundled browser connector by default while leaving session titles and Codex Pet off, retaining saved enablement and settings; fix model completion initialization for generated titles.",
   "Remote control supports temporary sessions and drafts with a computer workspace, creating the session and importing attachments on the first send.",
   "Load remote model names automatically, save page scaling, unify dropdowns and search styling, and improve spacing in expanded work processes.",
   "Use a Chinese default title prompt that explicitly follows the user's language and includes the user prompt and assistant reply.",
