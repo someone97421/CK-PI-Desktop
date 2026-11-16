@@ -6,6 +6,20 @@
 
 ## 与上游的主要区别
 
+
+
+https://github.com/user-attachments/assets/77b7147b-bc28-4282-838c-b73c38343fe7
+
+
+
+https://github.com/user-attachments/assets/fae84784-bd2e-42da-9b2b-3fb1ea9e737c
+
+
+
+https://github.com/user-attachments/assets/02a68fb3-5999-413a-b37a-352f7f26d0ba
+
+
+
 | 方向 | 与上游的关系 | 本 fork 的重点 |
 | --- | --- | --- |
 | 过程协作 | 在既有 Task 执行器上扩展 | 从实际工具事件生成阶段报告，主 Agent 可边做自己的工作、边掌握子任务进展 |
