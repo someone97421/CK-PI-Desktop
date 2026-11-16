@@ -5,6 +5,10 @@ const stampDate = APP_DISPLAY_VERSION.slice(0, 8);
 const date = `${stampDate.slice(0, 4)}-${stampDate.slice(4, 6)}-${stampDate.slice(6, 8)}`;
 const entry = (highlights: string[]): ChangelogEntry[] => [{ version: APP_VERSION, date, highlights }];
 const zh = entry([
+  "局域网远控升级至 V2，使用桌面原始聊天界面，修复窄屏菜单、重连状态、历史与队列刷新。",
+  "配套 Chrome 侧栏支持标签页、选文与 DOM 引用；从输入工具栏拖动准星选择元素，无需预先放置光标。",
+  "远控文件菜单新增预览与下载，支持 HTML 相对资源；按所属会话读取文件，系统打开与定位在桌面主机执行。",
+  "统一内置执行与修复子代理为 worker，保留 TaskResume／Guide／Inspect，改善联网来源、模型面板与项目 MCP 配置隔离。",
   "新增提问超时自动选择：可设置等待分钟数，0 为关闭，倒计时结束自动提交推荐项或第一项。",
   "接入可自定义的分阶段工作模式与 Goal 多轮推进，支持预算和阶段完成检查，保留旧历史并修复普通模式启动校验。",
   "局域网远控升级至 0.2.37，支持动态模式选择、阶段与预算展示、暂停、继续、停止和阶段确认。",
@@ -136,6 +140,10 @@ const zh = entry([
   "统一使用小恐龙图标，内置 Windows 黑屏修正版终端。",
 ]);
 const en = entry([
+  "Upgrade LAN remote control to V2 using the desktop chat interface, fixing narrow-screen menus, reconnection state, history and queue refreshes.",
+  "Add tab, selection and DOM references to the companion Chrome sidebar; drag the composer crosshair to pick an element without first placing the caret.",
+  "Add remote file previews and downloads with relative HTML resources; resolve files in their session and run system open and reveal actions on the desktop host.",
+  "Unify execution and repair subagents as worker while retaining TaskResume, TaskGuide and TaskInspect; improve web sources, model menus and project MCP isolation.",
   "Add question timeouts in minutes, with 0 disabling automatic submission; select the recommended or first option when the countdown ends.",
   "Add custom staged modes and multi-turn Goal execution with budgets and stage completion checks, preserving legacy history and fixing ordinary-mode launch validation.",
   "Upgrade LAN remote control to 0.2.37 with dynamic modes, stage and budget status, pause, resume, stop and stage confirmation.",
