@@ -480,6 +480,12 @@ export const IPC = {
     browserOpenExternal: "pi-desktop/browser/openExternal",
     browserGetState: "pi-desktop/browser/getState",
     browserGetPages: "pi-desktop/browser/getPages",
+    browserReferencesGet: "pi-desktop/browserReferences/get",
+    browserReferencesUpdate: "pi-desktop/browserReferences/update",
+    browserReferencesClient: "pi-desktop/browserReferences/client",
+    browserReferencesInsert: "pi-desktop/browserReferences/insert",
+    browserReferencesClaim: "pi-desktop/browserReferences/claim",
+    browserReferencesAcknowledge: "pi-desktop/browserReferences/acknowledge",
     fsList: "pi-desktop/fs/list",
     fsRead: "pi-desktop/fs/read",
     fsReadImageDataUrl: "pi-desktop/fs/readImageDataUrl",
@@ -534,6 +540,8 @@ export const IPC = {
     browserState: "pi-desktop/browser/event/state",
     browserPreview: "pi-desktop/browser/event/preview",
     browserOpenFile: "pi-desktop/browser/event/openFile",
+    browserReferencesChanged: "pi-desktop/browserReferences/event/changed",
+    browserReferenceInsertRequested: "pi-desktop/browserReferences/event/insertRequested",
     /**
      * A plugin asked the shell to show one of its own work-panel views
      * (`pi.ui.revealView`). The shell owns tabs, so it — not the plugin — decides

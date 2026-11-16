@@ -4,6 +4,7 @@ import {
 } from "@pi-desktop/shared";
 import type { ComposerPluginPart } from "../../../lib/composer-smart-stop";
 import type { ComposerFileReference } from "./model";
+import { browserReferenceForChip, browserReferenceTooltip } from "./browser-references";
 
 export { type ComposerFileReference } from "./model";
 
@@ -240,6 +241,9 @@ export function setEditorCaret(el: HTMLElement, index: number): void {
 
 /** One glyph per file family on attachment chips, as inline SVG strings. */
 const CHIP_ICON_SVG: Record<string, string> = {
+  "browser-page": '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a17 17 0 0 1 0 18 17 17 0 0 1 0-18"/>',
+  "browser-selection": '<path d="M4 5h16M4 10h16M4 15h10M4 20h10"/><path d="m18 15 3 3-3 3"/>',
+  "browser-element": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="m10 8-4 4 4 4m4-8 4 4-4 4"/>',
   dir: '<path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 9h18"/>',
   image:
     '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
@@ -263,6 +267,8 @@ const CHIP_ICON_SVG: Record<string, string> = {
 };
 
 function chipIconKey(reference: ComposerFileReference): string {
+  const browserReference = browserReferenceForChip(reference);
+  if (browserReference) return `browser-${browserReference.kind}`;
   if (reference.plugin?.kind === "mark") return "plugin";
   if (reference.plugin?.kind === "fold") return "fold";
   if (reference.kind === "session") return "session";
@@ -306,12 +312,15 @@ function buildChipElement(
   chip.className = "composer-chip";
   chip.contentEditable = "false";
   chip.dataset.token = token;
+  const browserReference = browserReferenceForChip(reference);
+  if (browserReference) chip.dataset.browserReference = browserReference.kind;
   // A mark names the plugin that put it there where a file names its path.
-  const origin = isPluginMark(reference)
-    ? (reference.plugin?.pluginId ?? "")
-    : reference.kind === "agent"
-      ? `@${reference.path}`
-      : reference.path;
+  const origin = browserReference ? browserReferenceTooltip(browserReference)
+    : isPluginMark(reference)
+      ? (reference.plugin?.pluginId ?? "")
+      : reference.kind === "agent"
+        ? `@${reference.path}`
+        : reference.path;
   if (isPluginMark(reference)) chip.dataset.pluginMark = reference.plugin?.kind;
   if (reference.kind === "agent") chip.dataset.agent = reference.path;
   chip.title = origin;

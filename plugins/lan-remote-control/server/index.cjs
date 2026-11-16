@@ -276,7 +276,11 @@ function createRemoteServer(options = {}) {
       clearTimeout(conn.authTimer);
       conn.authTimer = null;
     }
-    state.connections.delete(conn);
+    const removed = state.connections.delete(conn);
+    if (removed && conn.deviceId && typeof ipcInvoke === "function") {
+      void Promise.resolve().then(() => ipcInvoke("pi-desktop/browserReferences/update", [{ sourceId: conn.id, active: false, closed: true }]))
+        .catch((error) => log(`clear browser references failed: ${error?.message ?? error}`));
+    }
   }
 
   function handleWsAuth(conn, message) {
@@ -305,6 +309,7 @@ function createRemoteServer(options = {}) {
     sendWs(conn, {
       type: "ready",
       protocolVersion: 2,
+      connectionId: conn.id,
       device: { id: device.id, name: device.name },
     });
   }
@@ -348,6 +353,18 @@ function createRemoteServer(options = {}) {
       return;
     }
     switch (message.type) {
+      case "browser-context": {
+        if (typeof ipcInvoke !== "function" || (message.active === true && !Array.isArray(message.tabs))) {
+          wsError(conn, "INVALID_PARAMS", "browser context is unavailable");
+          return;
+        }
+        const result = await ipcInvoke("pi-desktop/browserReferences/update", [{
+          sourceId: conn.id, active: message.active === true, tabs: message.tabs ?? [],
+          ...(typeof message.browserId === "string" ? { browserId: message.browserId } : {}),
+        }]);
+        if (result?.ok === false) wsError(conn, result.error?.code || "INTERNAL", result.error?.message || "browser context update failed");
+        return;
+      }
       case "ping":
         sendWs(conn, { type: "pong", ts: Date.now() });
         return;
@@ -355,7 +372,7 @@ function createRemoteServer(options = {}) {
         conn.alive = true;
         return;
       case "auth":
-        sendWs(conn, { type: "ready", protocolVersion: 2, device: { id: conn.deviceId, name: conn.device?.name ?? "" } });
+        sendWs(conn, { type: "ready", protocolVersion: 2, connectionId: conn.id, device: { id: conn.deviceId, name: conn.device?.name ?? "" } });
         return;
       default:
         wsError(conn, "INVALID_PARAMS", `unsupported message type: ${String(message.type)}`);
@@ -1202,12 +1219,13 @@ function createRemoteServer(options = {}) {
     return ids.length;
   }
 
-  /** 向所有已认证连接广播宿主 IPC 事件。 */
+  /** 状态事件共享，引用插入仅投递到目标连接。 */
   function broadcastIpc(event) {
     if (state.phase !== "running" || typeof event?.channel !== "string" || !Array.isArray(event.args)) return 0;
     let delivered = 0;
     for (const conn of state.connections) {
       if (!conn.deviceId || !state.devices.get(conn.deviceId) || !wsOpen(conn)) continue;
+      if (event.channel === "pi-desktop/browserReferences/event/insertRequested" && event.args[0]?.connectionId !== conn.id) continue;
       sendWs(conn, { type: "ipc-event", channel: event.channel, args: event.args });
       delivered += 1;
     }

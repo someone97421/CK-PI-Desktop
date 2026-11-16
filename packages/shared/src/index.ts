@@ -13,6 +13,7 @@ export * from "./keyboard-shortcuts.js";
 export * from "./changelog.js";
 export * from "./fork-changelog.js";
 export * from "./composer-trigger.js";
+export * from "./browser-reference.js";
 export * from "./inline-attachments.js";
 export * from "./session-link.js";
 export * from "./fuzzy.js";

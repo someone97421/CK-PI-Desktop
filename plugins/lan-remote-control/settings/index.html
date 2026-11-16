@@ -3,26 +3,47 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>局域网远控 V2</title>
   <link rel="stylesheet" href="access.css">
   <script type="module" src="access.js"></script>
 </head>
 <body>
-  <main>
-    <header><h1>局域网远控 V2</h1><output id="state" aria-live="polite">读取中</output></header>
-    <form id="connection">
-      <label>端口<input id="port" type="number" min="1" max="65535" required value="7878"></label>
-      <button id="enable" type="submit" title="保存开启状态；应用重启后自动恢复访问">开启并记住</button>
-      <button id="disable" type="button" title="关闭访问并取消自动启用">关闭</button>
-    </form>
-    <form id="credentials">
-      <label>访问密码<input id="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required placeholder="至少 8 个字符"></label>
-      <button type="submit" title="保存密码后，已登录设备需要重新登录">保存密码</button>
-      <output id="password-state"></output>
-    </form>
-    <nav id="links" aria-label="访问地址"></nav>
-    <section id="devices" aria-label="已登录设备"></section>
-    <output id="feedback" class="hint" role="status" aria-live="polite"></output>
+  <main class="console">
+    <header class="page-header">
+      <div class="identity"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="13" rx="3"/><path d="M8 21h8M12 17v4m-4-10 3 3 5-5"/></svg></span><div><p class="eyebrow">这是一个助手 <span>／ V2</span></p><h1>局域网远控</h1></div></div>
+      <span class="header-label">连接控制台</span>
+    </header>
+
+    <section class="panel service-panel" aria-labelledby="service-title">
+      <div class="section-heading"><h2 id="service-title">远程访问</h2><output id="state" class="badge" data-tone="neutral" aria-live="polite">读取中</output></div>
+      <form id="connection" class="connection-form">
+        <label class="port-field" for="port">监听端口<input id="port" type="number" min="1" max="65535" required value="7878" inputmode="numeric" disabled></label>
+        <div class="service-actions"><button id="enable" class="primary" type="submit" title="保存开启状态；应用重启后自动恢复访问" disabled>开启并记住</button><button id="disable" type="button" title="关闭访问并取消自动启用" disabled>关闭</button></div>
+      </form>
+      <p id="service-hint" class="hint">正在读取主机状态…</p>
+    </section>
+
+    <section class="panel" aria-labelledby="address-title">
+      <div class="section-heading"><h2 id="address-title">访问地址</h2><span class="section-tag">同一局域网</span></div>
+      <nav id="links" class="rows" aria-label="访问地址"><p class="empty hint">正在读取访问地址…</p></nav>
+    </section>
+
+    <section class="panel" aria-labelledby="password-title">
+      <div class="section-heading"><h2 id="password-title">访问密码</h2><output id="password-state" class="section-tag">读取中</output></div>
+      <form id="credentials" class="credentials-form">
+        <label class="sr-only" for="password">访问密码</label>
+        <div class="password-field"><input id="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required placeholder="至少 8 个字符" aria-describedby="password-hint" disabled><button id="show-password" class="reveal" type="button" aria-label="显示密码" aria-pressed="false" disabled>显示</button></div>
+        <button id="save-password" type="submit" title="保存密码后，已登录设备需要重新登录" disabled>保存密码</button>
+      </form>
+      <p id="password-hint" class="hint">更换密码后，已登录设备需重新登录。</p>
+    </section>
+
+    <section class="panel" aria-labelledby="devices-title">
+      <div class="section-heading"><h2 id="devices-title">已登录设备 <span id="device-count" class="count">—</span></h2><span class="section-tag">设备管理</span></div>
+      <div id="devices" class="rows"><p class="empty hint">正在读取设备…</p></div>
+    </section>
+    <footer class="console-footer"><output id="feedback" class="hint" role="status" aria-live="polite" aria-atomic="true"></output><button id="refresh" class="text-button" type="button" disabled>刷新状态</button></footer>
   </main>
 </body>
 </html>

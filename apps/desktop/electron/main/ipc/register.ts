@@ -39,6 +39,7 @@ import { registerWindowIpc } from "./window-ipc";
 import { registerWorktreeIpc } from "./worktree-ipc";
 import { createComposerTemplateLoader, registerWorkspaceIpc } from "./workspace-ipc";
 import { registerComposerIpc } from "./composer-ipc";
+import { registerBrowserReferenceIpc } from "./browser-reference-ipc";
 import { registerSpeechIpc } from "./speech-ipc";
 import { registerLiveVoiceIpc } from "./live-voice-ipc";
 import type { LiveCallService } from "../live-voice/call-service";
@@ -305,6 +306,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     assertMainWindowSender,
   };
   registerStorageIpc({ registrar, getMainWindow, restart: requestStorageRestart });
+  registerBrowserReferenceIpc({ registrar, sendToRenderer });
 
   if (dependencies.takeTemporaryWorkspaces) {
     registrar.handle(IPC.invoke.temporaryWorkspaceTake, async () =>

@@ -38,6 +38,7 @@ async function fixture(context, options = {}) {
       const message = JSON.parse((await ready)[0]);
       assert.equal(message.type, "ready");
       assert.equal(message.protocolVersion, 2);
+      socket.referenceConnectionId = message.connectionId;
     }
     return socket;
   };
@@ -418,4 +419,31 @@ test("插件适配层在入口和 SPA 注入，资源独立提供且不改 Rende
   }
   assert.equal((await fetch(`${endpoint}/__lan-remote/missing.js`)).status, 404);
   assert.equal(await readFile(join(rendererDir, "index.html"), "utf8"), original);
+});
+
+test("浏览器标签页绑定认证连接，引用仅发到目标端并在断线后清理", async (context) => {
+  const calls = [];
+  let resolveUpdate;
+  const nextUpdate = () => new Promise(resolve => { resolveUpdate = resolve; });
+  const { connect, server } = await fixture(context, { ipcInvoke: async (channel, args) => {
+    calls.push({ channel, args });
+    if (channel === "pi-desktop/browserReferences/update") resolveUpdate?.({ channel, args });
+    return { ok: true, data: {} };
+  } });
+  const first = await connect();
+  const second = await connect();
+  assert.equal(typeof first.referenceConnectionId, "string");
+  assert.notEqual(first.referenceConnectionId, second.referenceConnectionId);
+  const updated = nextUpdate();
+  const tabs = [{ kind: "page", tabId: 1, title: "引用测试", url: "https://example.test/" }];
+  first.send(JSON.stringify({ type: "browser-context", browserId: "profile-a", active: true, sourceId: "ignored", tabs }));
+  assert.deepEqual(await updated, { channel: "pi-desktop/browserReferences/update", args: [{ sourceId: first.referenceConnectionId, browserId: "profile-a", active: true, tabs }] });
+  const event = { channel: "pi-desktop/browserReferences/event/insertRequested", args: [{ connectionId: first.referenceConnectionId, clientId: "target", draftKey: "draft", reference: tabs[0] }] };
+  const delivered = once(first, "message");
+  assert.equal(server.broadcastIpc(event), 1);
+  assert.deepEqual(JSON.parse((await delivered)[0]), { type: "ipc-event", ...event });
+  assert.equal(server.broadcastIpc({ ...event, args: [{ clientId: "desktop" }] }), 0);
+  const cleared = nextUpdate();
+  const closed = once(first, "close"); first.close(); await closed;
+  assert.deepEqual(await cleared, { channel: "pi-desktop/browserReferences/update", args: [{ sourceId: first.referenceConnectionId, active: false, closed: true }] });
 });

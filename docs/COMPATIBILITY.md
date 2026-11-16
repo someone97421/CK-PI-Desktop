@@ -72,7 +72,7 @@
 
 ### COMPAT-011：局域网远控 V2
 
-- **来源与替代**：V1 最后源码基线为 `5ec6b15fc`（插件 `0.2.41`）。按用户重新开发 V2 的要求，删除 V1 的 `web/`、`panel/`、独立聊天适配器与操作表；原版 Renderer 和宿主既有 IPC 接替聊天、项目、模型、模式与审批操作。旧聊天 RPC 不再提供兼容入口，`/api/rpc` 只保留声明过的 Browse 转换操作。
+- **来源与替代**：V1 最后源码基线为 `5ec6b15fc`（插件 `0.2.41`），源码快照、原始插件包和校验值已存入 [V1 归档](archive/lan-remote-control-v1/README.md)，自 2026-11-16 起停止维护。按用户重新开发 V2 的要求，删除 V1 的 `web/`、`panel/`、独立聊天适配器与操作表；原版 Renderer 和宿主既有 IPC 接替聊天、项目、模型、模式与审批操作。旧聊天 RPC 不再提供兼容入口，`/api/rpc` 只保留声明过的 Browse 转换操作。
 - **保留数据与入口**：[插件入口](../plugins/lan-remote-control/main.cjs)继续使用 `local.lan-remote-control` 的原数据目录与插件设置 API，读取既有 `port`、`bindAddress`、`extensionIds`、`autoStart`；[认证存储](../plugins/lan-remote-control/server/auth.cjs)沿用 `remote-access.json` version 1 的密码哈希与设备记录。无数据库或持久化格式迁移，旧页面比例等残留键不再使用，也不主动清除原数据。
 - **行为与移除条件**：不复制旧界面、不提供页面回退；Renderer 或宿主转换能力缺失时明确失败。认证与开启意图仍有实际数据依赖，需先提供显式迁移方案并核实数据后才能移除读取。旧界面及业务接口的移除结论保留在本项。
 - **验证依据**：[网络/IPC/资源测试](../plugins/lan-remote-control/scripts/ipc.test.mjs)与[生命周期测试](../plugins/lan-remote-control/scripts/lifecycle.test.mjs)共 25 项通过，包含[密码持久化检查](../plugins/lan-remote-control/scripts/check-auth.mjs)；插件 check/pack、主程序 Renderer 构建和 `git diff --check` 通过。桌面 typecheck 仍有原有 21 项诊断，归一行号后与本轮修改前日志一致。已核对插件包及内置资源不含旧页面；真实安装升级、手机与 Chrome 全流程验收尚未进行。最近复核 2026-11-16。

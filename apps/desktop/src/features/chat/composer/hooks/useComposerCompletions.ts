@@ -19,13 +19,15 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
-import { detectTrigger } from "@pi-desktop/shared";
+import { detectTrigger, type BrowserReferenceTab } from "@pi-desktop/shared";
 import {
   useComposerAutocomplete,
   type AutocompleteItem,
 } from "../../../../hooks/use-composer-autocomplete";
 import { slotRegistry } from "../../../../plugins/renderer-slots/registry";
 import { useAppStore } from "../../../../stores/app-store";
+import { useBrowserReferenceTabs } from "../../../../lib/browser-reference-client";
+import { checkedBrowserReferenceMark, filterBrowserReferenceTabs } from "../browser-references";
 import { createFileReference, isImageFilePath, nextChipToken } from "../editor";
 import type { ComposerFileReference } from "../model";
 import { placePluginMark } from "../plugins/plugin-marks";
@@ -44,7 +46,9 @@ export type PluginCompletionItem = {
   row: PluginTriggerRow;
 };
 
-export type CompletionItem = AutocompleteItem | PluginCompletionItem;
+export type BrowserCompletionItem = { kind: "browser"; tab: BrowserReferenceTab };
+
+export type CompletionItem = AutocompleteItem | PluginCompletionItem | BrowserCompletionItem;
 
 export type CompletionController = {
   open: boolean;
@@ -88,6 +92,7 @@ export function useComposerCompletions({
   invalidateComposerTransforms: () => void;
 }) {
   const host = useComposerAutocomplete({ value, cursor, composing, enabled, agentsEnabled });
+  const browserTabs = useBrowserReferenceTabs();
   const { triggers } = useSyncExternalStore(
     slotRegistry.subscribe,
     slotRegistry.getSnapshot,
@@ -146,9 +151,19 @@ export function useComposerCompletions({
   }, [entry, dismissed, answer, requestKey, plugins]);
 
   const hostItems = host.open ? host.items : NO_ITEMS;
+  const frozenBrowserItemsRef = useRef<BrowserCompletionItem[]>([]);
+  const browserItems = useMemo<BrowserCompletionItem[]>(() => {
+    if (composing) return frozenBrowserItemsRef.current;
+    return host.open && host.mode === "file"
+      ? filterBrowserReferenceTabs(browserTabs, host.query).map(tab => ({ kind: "browser", tab }))
+      : [];
+  }, [composing, host.open, host.mode, host.query, browserTabs]);
+  useEffect(() => {
+    if (!composing) frozenBrowserItemsRef.current = browserItems;
+  }, [composing, browserItems]);
   const items = useMemo<CompletionItem[]>(
-    () => [...hostItems, ...pluginItems],
-    [hostItems, pluginItems],
+    () => [...hostItems, ...browserItems, ...pluginItems],
+    [hostItems, browserItems, pluginItems],
   );
 
   // A new query restarts keyboard navigation at the top hit.
@@ -177,8 +192,25 @@ export function useComposerCompletions({
   };
 
   const acceptCompletion = (index: number) => {
+    const browserItem = items[index];
+    if (browserItem?.kind === "browser") {
+      const trigger = detectTrigger(value, cursor);
+      if (!trigger || trigger.mode !== "file") return;
+      try {
+        const mark = checkedBrowserReferenceMark(browserItem.tab);
+        const text = value.slice(0, trigger.tokenStart) + value.slice(trigger.tokenEnd);
+        const placed = placePluginMark(fileReferencesRef.current, text, mark, referenceSessionId);
+        const token = placed.token ?? "";
+        invalidateComposerTransforms();
+        applyEditorDraft(text.slice(0, trigger.tokenStart) + token + text.slice(trigger.tokenStart),
+          placed.references, trigger.tokenStart + token.length);
+      } catch (error) {
+        useAppStore.getState().showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+      }
+      return;
+    }
     if (index >= hostItems.length) {
-      const item = pluginItems[index - hostItems.length];
+      const item = pluginItems[index - hostItems.length - browserItems.length];
       if (!item || !match) return;
       invalidateComposerTransforms();
       const text = value.slice(0, match.tokenStart) + value.slice(match.tokenEnd);

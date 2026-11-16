@@ -33,10 +33,11 @@ const bundle = await build({
   }],
 });
 
-function environment(native = false) {
+function environment(native = false, { rejectFirstLogin = false } = {}) {
   const errors = [];
   const bootEvents = [];
   const consumerIds = [];
+  let loginAttempts = 0;
   const root = element("root");
   const crypto = { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) };
   const originalUuid = () => "native-uuid";
@@ -70,7 +71,12 @@ function environment(native = false) {
     crypto, localStorage, sessionStorage: localStorage,
     bootEvents, consumerIds, URL, URLSearchParams, Headers, AbortSignal, TextEncoder, TextDecoder,
     WebSocket: Socket, CustomEvent: class {}, queueMicrotask,
-    fetch: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, result: { token: "bootstrap-test-token" } }) }),
+    fetch: async (url) => {
+      if (String(url).endsWith("/api/login") && ++loginAttempts === 1 && rejectFirstLogin) {
+        return { ok: false, status: 401, json: async () => ({ error: { code: "UNAUTHORIZED", message: "密码错误" } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: { token: "bootstrap-test-token" } }) };
+    },
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 2, clearInterval() {},
     console: { error: error => errors.push(error) },
   });
@@ -79,12 +85,27 @@ function environment(native = false) {
 
 function element(tag) {
   return {
-    tag, children: [], listeners: new Map(), value: "", textContent: "",
-    setAttribute() {}, focus() {}, remove() {},
-    append(...children) { this.children.push(...children); },
-    replaceChildren(...children) { this.children = children; },
+    tag, children: [], listeners: new Map(), attributes: new Map(), value: "", textContent: "",
+    setAttribute(name, value) { this.attributes.set(name, value); },
+    focus() {},
+    remove() {
+      if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this);
+    },
+    append(...children) {
+      for (const child of children) { child.parent = this; this.children.push(child); }
+    },
+    replaceChildren(...children) { this.children = []; this.append(...children); },
     addEventListener(name, listener) { this.listeners.set(name, listener); },
+    removeEventListener(name, listener) { if (this.listeners.get(name) === listener) this.listeners.delete(name); },
   };
+}
+function descendant(root, predicate) {
+  if (predicate(root)) return root;
+  for (const child of root.children) {
+    const found = descendant(child, predicate);
+    if (found) return found;
+  }
+  return null;
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
@@ -95,9 +116,10 @@ test("HTTP 缺少 randomUUID 时先完成 Web 桥和认证，再初始化状态�
   assert.equal(state.errors.length, 0);
   assert.deepEqual(state.consumerIds, []);
   assert.equal(typeof state.crypto.randomUUID, "function");
-  const form = state.root.children[0];
-  assert.equal(form.tag, "form");
-  form.children[0].value = "bootstrap-test-password";
+  const form = descendant(state.root, node => node.tag === "form");
+  assert.ok(form);
+  const field = descendant(form, node => node.name === "password");
+  field.value = "bootstrap-test-password";
   form.listeners.get("submit")({ preventDefault() {} });
   await settle();
   assert.equal(state.errors.length, 0);
@@ -115,4 +137,38 @@ test("桌面预加载可用时直接启动，保留原生 randomUUID", async () 
   assert.deepEqual(state.bootEvents, ["language-sync", "render"]);
   assert.deepEqual(state.consumerIds, ["native-uuid", "native-uuid"]);
   assert.equal(state.crypto.randomUUID, state.originalUuid);
+});
+
+test("登录失败后恢复输入，重复提交不并发，重试成功后清理登录页", async () => {
+  const state = environment(false, { rejectFirstLogin: true });
+  vm.runInContext(bundle.outputFiles[0].text, state.context);
+  await settle();
+  const form = descendant(state.root, node => node.tag === "form");
+  const field = descendant(form, node => node.name === "password");
+  const reveal = descendant(form, node => node.tag === "button" && node.type === "button");
+  const status = descendant(form, node => node.tag === "output");
+  field.value = "bootstrap-wrong-password";
+  reveal.listeners.get("click")();
+  assert.equal(field.type, "text");
+  form.listeners.get("submit")({ preventDefault() {} });
+  form.listeners.get("submit")({ preventDefault() {} });
+  assert.equal(field.disabled, true);
+  assert.equal(field.value, "");
+  assert.equal(field.type, "password");
+  await settle();
+  assert.equal(status.textContent, "密码错误");
+  assert.equal(field.disabled, false);
+  assert.equal(field.attributes.get("aria-invalid"), "true");
+  assert.deepEqual(state.consumerIds, []);
+  field.value = "bootstrap-correct-password";
+  field.listeners.get("input")();
+  assert.equal(status.textContent, "");
+  form.listeners.get("submit")({ preventDefault() {} });
+  await settle();
+  assert.equal(state.errors.length, 0);
+  assert.deepEqual(state.bootEvents, ["language-sync", "render"]);
+  assert.equal(descendant(state.root, node => node.tag === "form"), null);
+  assert.equal(form.listeners.has("submit"), false);
+  assert.equal(field.listeners.has("input"), false);
+  assert.equal(reveal.listeners.has("click"), false);
 });

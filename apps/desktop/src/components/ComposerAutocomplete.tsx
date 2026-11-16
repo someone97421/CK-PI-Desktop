@@ -10,6 +10,7 @@ import {
   IconBot,
   IconFileText,
   IconFolder,
+  IconGlobe,
   IconPlug,
   IconSlash,
   IconSparkles,
@@ -70,7 +71,7 @@ export function ComposerAutocomplete({
   ac: CompletionController;
   onAccept: (index: number) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -93,7 +94,9 @@ export function ComposerAutocomplete({
             ? `a:${item.agent.name}`
             : item.kind === "plugin"
               ? `pl:${item.pluginId}:${index}`
-              : `p:${item.entry.path}`,
+              : item.kind === "browser"
+                ? `b:${item.tab.sourceId}:${item.tab.tabId}`
+                : `p:${item.entry.path}`,
       type: "button" as const,
       role: "option" as const,
       "aria-selected": active,
@@ -142,6 +145,15 @@ export function ComposerAutocomplete({
         </button>
       );
     }
+    if (item.kind === "browser") {
+      return (
+        <button {...commonProps} title={`${item.tab.title}\n${item.tab.url}`}>
+          <span className="composer-ac-icon"><IconGlobe size={14} /></span>
+          <span className="composer-ac-name">{item.tab.title || item.tab.url}</span>
+          <span className="composer-ac-path">{item.tab.url}</span>
+        </button>
+      );
+    }
     if (item.kind === "plugin") {
       return (
         <button {...commonProps} title={item.row.detail}>
@@ -173,15 +185,16 @@ export function ComposerAutocomplete({
 
   const rows: React.ReactNode[] = [];
   let lastGroup: string | null = null;
-  // Files carry a heading only beside an Agents group (ADR 0346); a plain
-  // `@` file list stays as it was.
-  const hasAgents = ac.items.some((item) => item.kind === "agent");
+  const hasMentionGroups = ac.items.some((item) => item.kind === "agent" || item.kind === "browser");
   ac.items.forEach((item, index) => {
-    if ((item.kind === "agent" || (item.kind === "path" && hasAgents)) && lastGroup !== item.kind) {
+    if ((item.kind === "browser" || item.kind === "agent" || (item.kind === "path" && hasMentionGroups)) && lastGroup !== item.kind) {
       lastGroup = item.kind;
       rows.push(
         <div key={`g:${item.kind}`} className="composer-model-group-label">
-          {t(item.kind === "agent" ? "chat.mentionGroupAgents" : "chat.mentionGroupFiles")}
+          {item.kind === "browser" ? t("chat.mentionGroupBrowserTabs", {
+            defaultValue: (i18n.resolvedLanguage ?? i18n.language).startsWith("zh") ? "浏览器标签页" : "Browser tabs",
+          })
+            : t(item.kind === "agent" ? "chat.mentionGroupAgents" : "chat.mentionGroupFiles")}
         </div>,
       );
     } else if (item.kind === "command") {

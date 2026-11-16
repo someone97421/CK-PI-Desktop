@@ -47,7 +47,9 @@ import {
   type ComposerFileReference,
 } from "../editor";
 import type { ComposerPrefill } from "../model";
+import { browserInsertionReferences } from "../browser-references";
 import { useComposerImagePreview, type ComposerImagePreviewController } from "./useComposerImagePreview";
+import { useComposerBrowserReferences } from "./useComposerBrowserReferences";
 
 import { attachImageTokens } from "../image-attachments";
 
@@ -613,11 +615,24 @@ export function useComposerDraft({
     editorValueRef.current = null;
     // A caret placed in an unfocused editor would focus it, so a write that
     // leaves focus alone places none.
-    pendingEditorCaretRef.current = focus || document.activeElement === ref.current ? caret : null;
+    pendingEditorCaretRef.current = focus || (document.hasFocus() && document.activeElement === ref.current) ? caret : null;
+    valueRef.current = nextText;
+    fileReferencesRef.current = nextReferences;
     setValue(nextText);
     setCursor(caret);
     setFileReferences(nextReferences);
-    if (!focus) return;
+    if (!focus) {
+      const element = ref.current;
+      if (element) {
+        referenceByTokenRef.current = new Map(nextReferences
+          .filter(reference => reference.sessionId === referenceSessionId && reference.token)
+          .map(reference => [reference.token!, reference]));
+        paintCurrentDraft(element, nextText);
+        if (pendingEditorCaretRef.current !== null) setEditorCaret(element, caret);
+        pendingEditorCaretRef.current = null;
+      }
+      return;
+    }
     requestAnimationFrame(() => {
       const element = ref.current;
       if (!element) return;
@@ -626,26 +641,36 @@ export function useComposerDraft({
     });
   };
 
+  const browserReferences = useComposerBrowserReferences({
+    editorRef: ref,
+    draftKey,
+    loadedDraftKeyRef: draftKeyRef,
+    referenceSessionId,
+    inputBlocked,
+    composing,
+    valueRef,
+    referencesRef: fileReferencesRef,
+    invalidate: invalidateComposerTransforms,
+    apply: applyEditorDraft,
+  });
+
   useEffect(() => {
     if (document.documentElement.dataset.webRemote !== "true") return;
-    const canCompose = () => {
-      const editor = ref.current;
-      return !inputBlocked && !!editor?.isConnected && editor.getAttribute("contenteditable") !== "false"
-        && !editor.closest("[hidden], [inert]");
-    };
+    const canCompose = browserReferences.available;
     const publish = (available: boolean) => window.dispatchEvent(new CustomEvent("pi-desktop:composer-ready", {
       detail: { canCompose: available },
     }));
     const insert = (text: string) => {
       const editor = ref.current;
       if (!editor || !canCompose()) return false;
-      const source = readEditorValue(editor);
-      const { start, end } = document.activeElement === editor
-        ? editorSelectionRange(editor) : { start: source.length, end: source.length };
+      const source = valueRef.current;
+      const { start, end } = browserReferences.insertionRange(source.length);
       const nextText = source.slice(0, start) + text + source.slice(end);
       invalidateComposerTransforms();
       valueRef.current = nextText;
-      applyEditorDraft(nextText, fileReferencesRef.current, start + text.length);
+      const nextReferences = browserInsertionReferences(fileReferencesRef.current, nextText, referenceSessionId);
+      applyEditorDraft(nextText, nextReferences, start + text.length, false);
+      browserReferences.rememberCaret(start + text.length);
       writeComposerDraft(draftKeyRef.current, {
         text: nextText,
         fileReferences: fileReferencesRef.current.map(draftFileReference),

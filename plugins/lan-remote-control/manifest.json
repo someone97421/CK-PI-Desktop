@@ -3,7 +3,7 @@
   "id": "local.lan-remote-control",
   "name": "局域网远控 V2",
   "description": "直接投射当前安装的原版 Renderer，仅转换局域网通信、认证、IPC 与资源。保存访问密码和自动启用选择。",
-  "version": "2.0.8",
+  "version": "2.0.10",
   "main": "main.cjs",
   "enabledByDefault": false,
   "engines": {

@@ -1,4 +1,4 @@
-import { IPC, type Result } from "@pi-desktop/shared";
+import { IPC, parseBrowserReference, type BrowserReference, type Result } from "@pi-desktop/shared";
 import { createLanPasswordGate } from "./lan-password-gate";
 
 declare global {
@@ -134,6 +134,13 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     }
   };
   let socket: WebSocket | undefined;
+  let connectionId = "";
+  let browserTabs: { active: boolean; tabs: BrowserReference[]; browserId?: string } = { active: false, tabs: [] };
+  const publishBrowserTabs = () => {
+    if (parentOrigin && status.online && socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "browser-context", ...browserTabs }));
+    }
+  };
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let attempts = 0, lastMessage = 0, mounted = false, expired = false;
@@ -290,6 +297,10 @@ export async function initializeWebPreloadBridge(): Promise<void> {
             return { ...file, data: btoa(binary) };
           }) }];
         }
+        if (channel === IPC.invoke.browserReferencesClient && args[0] && typeof args[0] === "object") {
+          if (!status.online || !connectionId) throw bridgeError("OFFLINE", "浏览器连接尚未就绪");
+          args = [{ ...args[0], connectionId }, ...args.slice(1)];
+        }
         const result = await jsonRequest("/api/ipc", { channel, args }) as Result<T>;
         return result.ok ? { ...result, data: resourceData(result.data) } : result;
       } catch (error) {
@@ -306,6 +317,16 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     const data = event.data;
     if (!data || typeof data !== "object") return;
     if (data.type === "pi-desktop:status-request") { publishStatus(); return; }
+    if (data.type === "pi-desktop:browser-tabs") {
+      browserTabs = {
+        active: data.active === true,
+        ...(typeof data.browserId === "string" ? { browserId: data.browserId } : {}),
+        tabs: Array.isArray(data.tabs) ? data.tabs.map(parseBrowserReference)
+          .filter((tab: BrowserReference | null): tab is BrowserReference => tab?.kind === "page") : [],
+      };
+      publishBrowserTabs();
+      return;
+    }
     if (data.type === "pi-desktop:browse-status") {
       if (typeof data.authenticated === "boolean") browseStatus.authenticated = data.authenticated;
       if (typeof data.online === "boolean") browseStatus.online = data.online;
@@ -323,16 +344,28 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       if (data.ok !== true) { pending.reject(new Error(typeof data.error === "string" ? data.error : "Browse 操作失败")); return; }
       const result = data.result;
       const browserContext = result && typeof result === "object" && typeof result.browserContext === "string" ? result.browserContext : null;
-      if (pending.method === "insertCurrent" && (!browserContext || !window.__piDesktopInsertPromptText?.(browserContext))) {
+      if (pending.method === "insertCurrent" && result?.inserted !== true && (!browserContext || !window.__piDesktopInsertPromptText?.(browserContext))) {
         pending.reject(new Error("当前页面无法编辑草稿"));
         return;
       }
       pending.resolve(result);
       return;
     }
+    if (data.type !== "pi-desktop:request" || typeof data.requestId !== "string") return;
     const reply = (body: object) => post({ type: "pi-desktop:response", requestId: data.requestId, ...body });
     void (async () => {
       if (!status.authenticated || !status.online) throw new Error("请先登录并等待连接就绪");
+      if (data.method === "browser.insertReference") {
+        const reference = parseBrowserReference(data.reference);
+        if (!reference || !browserTabs.active || !connectionId) throw new Error("浏览器引用或侧边栏状态无效，请重新打开侧边栏后重试");
+        const updated = await window.piDesktop!.invoke(IPC.invoke.browserReferencesUpdate, { sourceId: connectionId, ...browserTabs });
+        if (!updated.ok) throw new Error(updated.error.message);
+        const result = await window.piDesktop!.invoke(IPC.invoke.browserReferencesInsert, {
+          reference, ...(data.target === "current" ? { connectionId } : {}),
+        });
+        if (!result.ok) throw new Error(result.error.message);
+        return result.data;
+      }
       if (data.method === "composer.insert") {
         if (typeof data.text !== "string" || !status.canCompose || !window.__piDesktopInsertPromptText?.(data.text)) throw new Error("当前页面无法编辑草稿");
         return { inserted: true };
@@ -369,7 +402,9 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       try { frame = JSON.parse(String(event.data)); } catch { return; }
       if (frame.type === "ready") {
         clearTimeout(authTimeout); attempts = 0;
+        connectionId = typeof frame.connectionId === "string" ? frame.connectionId : "";
         status.authenticated = true; status.online = true;
+        publishBrowserTabs();
         gate.dispose(); publishStatus(); publishBrowseStatus();
         if (!mounted) { mounted = true; resolveReady(); }
         else window.dispatchEvent(new CustomEvent("pi-desktop:remote-reconnected"));
@@ -382,6 +417,9 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       if (heartbeat) clearInterval(heartbeat);
       if (socket !== ws || expired) return;
       status.online = false; publishStatus(); publishBrowseStatus();
+      connectionId = "";
+      buffered.delete(IPC.event.browserReferenceInsertRequested);
+      emit(IPC.event.browserReferencesChanged, [{ tabs: [] }]);
       if (event.code === 4401 || event.code === 4403) { expire(); return; }
       gate.reconnecting();
       retry = setTimeout(connect, Math.min(15_000, 500 * 2 ** Math.min(attempts++, 5)));
