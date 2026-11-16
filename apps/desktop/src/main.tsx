@@ -5,15 +5,14 @@ import { initReactI18next } from "react-i18next";
 import { catalogs, flattenCatalog, resolveLocale } from "@pi-desktop/i18n";
 import { remoteEn, remoteZh } from "./locales/remote";
 import { MAC_TRAFFIC_LIGHT_EDGE_DIP } from "@pi-desktop/shared";
-import { initLanguageSync, resolveOsLocale } from "./lib/app-language";
 import { installScrollbarReveal } from "./lib/scrollbar-reveal";
 import { initializeWebPreloadBridge } from "./lib/web-preload-bridge";
 import "./styles/globals.css";
 
 async function bootRenderer() {
   await initializeWebPreloadBridge();
-  const [{ default: App }, { PluginLauncher }] = await Promise.all([
-    import("./App"), import("./components/PluginLauncher"),
+  const [{ default: App }, { PluginLauncher }, { initLanguageSync, resolveOsLocale }] = await Promise.all([
+    import("./App"), import("./components/PluginLauncher"), import("./lib/app-language"),
   ]);
   if (document.documentElement.dataset.webRemote === "true") {
     let refreshing = false;

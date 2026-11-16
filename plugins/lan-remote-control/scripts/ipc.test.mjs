@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EventEmitter, once } from "node:events";
+import { fileURLToPath } from "node:url";
+import { once } from "node:events";
 import WebSocket from "ws";
 
 const require = createRequire(import.meta.url);
@@ -12,7 +12,8 @@ const { createRemoteServer } = require("../server/index.cjs");
 const extension = "chrome-extension://afeafocngkodbmaipcngoamamfmekgfo";
 
 async function fixture(context, options = {}) {
-  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR || tmpdir(), "lan-ipc-test-"));
+  assert.ok(process.env.PI_SCRATCH_DIR, "PI_SCRATCH_DIR 必须设置");
+  const directory = await mkdtemp(join(process.env.PI_SCRATCH_DIR, "lan-ipc-test-"));
   const rendererDir = join(directory, "renderer");
   await mkdir(join(rendererDir, "assets"), { recursive: true });
   await writeFile(join(rendererDir, "index.html"), `<!doctype html><meta http-equiv="Content-Security-Policy" content="connect-src 'self';"><meta name="viewport" content="width=device-width"><title>renderer fixture</title><script src="./assets/app.js"></script>`);
@@ -34,7 +35,9 @@ async function fixture(context, options = {}) {
     if (authenticate) {
       const ready = once(socket, "message");
       socket.send(JSON.stringify({ type: "auth", token }));
-      assert.equal(JSON.parse((await ready)[0]).type, "ready");
+      const message = JSON.parse((await ready)[0]);
+      assert.equal(message.type, "ready");
+      assert.equal(message.protocolVersion, 2);
     }
     return socket;
   };
@@ -68,30 +71,19 @@ test("IPC 回调缺失明确返回 UNSUPPORTED", async (context) => {
   assert.equal((await response.json()).error.code, "UNSUPPORTED");
 });
 
-test("WS 认证后订阅 IPC，隔离未认证设备并在关闭和撤销时取消", async (context) => {
-  const handlers = new Set();
-  let cancelled = 0;
-  let notifyCancelled;
-  const cancellation = new Promise(resolve => { notifyCancelled = resolve; });
-  const { connect, server } = await fixture(context, { subscribeIpc: async (handler) => {
-    handlers.add(handler);
-    return () => { handlers.delete(handler); cancelled++; notifyCancelled(); };
-  } });
+test("WS 原样转发 IPC，仅交付已认证连接并在关闭或撤销后停止", async (context) => {
+  const { connect, server } = await fixture(context);
   const unauthenticated = await connect(false);
-  assert.equal(handlers.size, 0);
+  assert.equal(server.broadcastIpc({ channel: "changed", args: [] }), 0);
   const socket = await connect();
-  assert.equal(handlers.size, 1);
   const event = { channel: "session:changed", args: ["id", { status: "running" }] };
   const received = once(socket, "message");
-  for (const handler of handlers) handler(event);
-  assert.deepEqual(JSON.parse((await received)[0]), { type: "ipc-event", ...event });
   assert.equal(server.broadcastIpc(event), 1);
+  assert.deepEqual(JSON.parse((await received)[0]), { type: "ipc-event", ...event });
   const closed = once(socket, "close"); socket.close(); await closed;
-  await cancellation;
-  assert.equal(handlers.size, 0); assert.equal(cancelled, 1);
+  assert.equal(server.broadcastIpc(event), 0);
   await connect();
   await server.revokeAllDevices();
-  assert.equal(handlers.size, 0); assert.equal(cancelled, 2);
   assert.equal(server.broadcastIpc(event), 0);
   unauthenticated.terminate();
 });
@@ -138,7 +130,7 @@ test("renderer 静态根目录、SPA fallback、HEAD 和 CSP 保留 API 路由",
   assert.deepEqual(updatedAncestors.split(/\s+/), ["frame-ancestors", "'self'", extension]);
 });
 
-test("renderer 上传交给宿主复制，保留草稿身份和旧上传响应", async (context) => {
+test("Renderer 上传交给宿主复制，保留草稿身份且统一返回宿主响应", async (context) => {
   const imported = [];
   const { endpoint, token } = await fixture(context, { rendererUpload: async (input) => {
     imported.push(input);
@@ -155,63 +147,20 @@ test("renderer 上传交给宿主复制，保留草稿身份和旧上传响应",
   assert.equal(uploaded.files[0].path, "/host/draft/original.CSV");
   assert.equal(imported[0].draftId, "draft-id"); assert.equal(Object.hasOwn(imported[0], "sessionId"), false);
   assert.deepEqual(Object.keys(imported[0].files[0]).sort(), ["kind", "mimeType", "name", "path", "size"]);
-  const old = await upload("/api/upload", true, "existing-session");
-  const oldBody = await old.json();
-  assert.equal(oldBody.ok, true); assert.equal(typeof oldBody.result.id, "string"); assert.equal(Object.hasOwn(oldBody.result, "path"), false);
+  const current = await upload("/api/upload", true, "existing-session");
+  const currentBody = await current.json();
+  assert.deepEqual(Object.keys(currentBody), ["files"]);
+  assert.equal(imported[1].sessionId, "existing-session");
+  await assert.rejects(readFile(imported[1].files[0].path), { code: "ENOENT" });
   const source = await upload("/api/upload?target=renderer&draftId=draft-id", true, undefined, "source.ts", "application/octet-stream");
   assert.equal(source.status, 200);
   const sourceBody = await source.json();
   assert.deepEqual(Object.keys(sourceBody), ["files"]);
   assert.equal(sourceBody.files[0].path, "/host/draft/source.ts");
   assert.equal(sourceBody.files[0].mimeType, "application/octet-stream");
-  assert.equal((await upload("/api/upload", true, "existing-session", "source.ts", "application/octet-stream")).status, 501);
+  assert.equal((await upload("/api/upload?target=legacy", true, "existing-session")).status, 400);
 });
 
-test("插件入口使用单个宿主 IPC 订阅、事件总线与同版本 renderer 根目录", async () => {
-  const previousPi = globalThis.pi;
-  const entry = require.resolve("../main.cjs");
-  const serverModule = require("../server.cjs");
-  const originalCreate = serverModule.createRemoteServer;
-  const events = new EventEmitter();
-  let options, subscribed = 0, unsubscribed = [], broadcast = [];
-  serverModule.createRemoteServer = (value) => {
-    options = value;
-    return { stop: async () => {}, broadcastIpc: event => broadcast.push(event) };
-  };
-  globalThis.pi = {
-    plugin: { getSettings: async () => ({}), getManifest: () => ({}), getDataPath: async () => "/plugin-data" },
-    desktop: {
-      getRendererRoot: async () => "/same-install/out/renderer",
-      subscribeIpc: async (...args) => { assert.deepEqual(args, []); subscribed++; return { subscriptionId: "shared" }; },
-      unsubscribeIpc: async id => unsubscribed.push(id),
-      invokeIpc: (channel, args) => ({ channel, args }),
-      importUploadedFiles: input => input,
-      readRendererResource: url => ({ url }),
-    },
-    events,
-    commands: { register: async () => {}, unregister: async () => {} },
-  };
-  delete require.cache[entry];
-  const main = require(entry);
-  try {
-    await main.onLoad();
-    assert.equal(options.rendererDir, "/same-install/out/renderer");
-    assert.equal(subscribed, 1);
-    assert.deepEqual(options.ipcInvoke("channel", [1]), { channel: "channel", args: [1] });
-    assert.deepEqual(options.rendererUpload({ files: [] }), { files: [] });
-    assert.deepEqual(options.rendererResource("pi-genui://assets/index.html"), { url: "pi-genui://assets/index.html" });
-    const event = { channel: "changed", args: [1] };
-    events.emit("desktop:ipc-event", event); assert.deepEqual(broadcast, [event]);
-    await main.onUnload();
-    assert.deepEqual(unsubscribed, ["shared"]);
-    assert.equal(events.listenerCount("desktop:ipc-event"), 0);
-  } finally {
-    await main.onUnload();
-    serverModule.createRemoteServer = originalCreate;
-    delete require.cache[entry];
-    if (previousPi === undefined) delete globalThis.pi; else globalThis.pi = previousPi;
-  }
-});
 
 test("资源代理仅接受路径 token 和四协议，不转发请求或响应 cookie", async (context) => {
   const calls = [];
@@ -309,4 +258,164 @@ test("资源改写归一父级和协议相对引用，单引号 GenUI meta CSP �
   assert.ok(result.includes('/api/resource/test-token/pi-genui/other/picture.png'));
   assert.ok(result.includes('/api/resource/test-token/pi-genui/assets/image.png'));
   assert.ok(result.includes("content='default-src &#39;self&#39;;'"));
+});
+
+test("必须指定可读取的 Renderer，拒绝 webDir 回退", async (context) => {
+  assert.throws(() => createRemoteServer({ webDir: "/legacy" }), { code: "RENDERER_UNAVAILABLE" });
+  const { server, directory } = await fixture(context);
+  await server.stop();
+  for (const rendererDir of [join(directory, "missing"), join(directory, "empty"), join(directory, "file")]) {
+    if (rendererDir.endsWith("empty")) await mkdir(rendererDir);
+    if (rendererDir.endsWith("file")) await writeFile(rendererDir, "not a directory");
+    const invalid = createRemoteServer({ dataDir: directory, rendererDir });
+    await assert.rejects(invalid.start({ port: 0 }), { code: "RENDERER_UNAVAILABLE" });
+    assert.equal(invalid.getStatus().running, false);
+    assert.equal(invalid.getStatus().error.code, "RENDERER_UNAVAILABLE");
+  }
+});
+
+test("Browse 转换仅执行声明且已提供的操作，V1 业务路由和订阅不可用", async (context) => {
+  const calls = [];
+  const localOperations = Object.fromEntries(["browse.status", "browse.ensureRelay", "browse.mintPairingCode", "browse.arbitrary", "chat.send"].map(operation => [operation, () => { calls.push(operation); return { operation }; }]));
+  const { endpoint, post, token, connect } = await fixture(context, { localOperations });
+  assert.equal((await post("/api/rpc", { operation: "browse.status" })).status, 401);
+  for (const operation of ["browse.status", "browse.ensureRelay", "browse.mintPairingCode"]) {
+    const response = await post("/api/rpc", { operation, requestId: "connector-request" }, token);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, result: { operation }, requestId: "connector-request" });
+  }
+  for (const operation of ["browse.arbitrary", "chat.send", "sessions.list", "capabilities", "models.list", "__proto__"]) {
+    const response = await post("/api/rpc", { operation }, token);
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error.code, "OPERATION_NOT_ALLOWED");
+  }
+  assert.equal(calls.length, 3);
+  for (const route of ["/api/mutation/id", "/api/attachment/id"]) assert.equal((await fetch(`${endpoint}${route}`)).status, 404);
+  const socket = await connect();
+  const result = once(socket, "message");
+  socket.send(JSON.stringify({ type: "subscribe", sessionId: "session" }));
+  assert.equal(JSON.parse((await result)[0]).error.code, "INVALID_PARAMS");
+  const pong = once(socket, "message");
+  socket.send(JSON.stringify({ type: "ping" }));
+  assert.equal(JSON.parse((await pong)[0]).type, "pong");
+});
+
+test("Chrome 扩展来源白名单动态生效，拒绝未知来源与公网监听", async (context) => {
+  const custom = "b".repeat(32), forbidden = `chrome-extension://${"c".repeat(32)}`;
+  let ids = [custom];
+  const { endpoint, server, token } = await fixture(context, { getExtensionIds: () => ids, ipcInvoke: () => ({ ok: true }) });
+  const invoke = origin => fetch(`${endpoint}/api/ipc`, { method: "POST", headers: { Origin: origin, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: "any", args: [] }) });
+  assert.equal((await invoke(forbidden)).status, 403);
+  const allowed = await invoke(`chrome-extension://${custom}`);
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.headers.get("access-control-allow-origin"), `chrome-extension://${custom}`);
+  const preflight = await fetch(`${endpoint}/api/ipc`, { method: "OPTIONS", headers: { Origin: extension, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization, content-type" } });
+  assert.equal(preflight.status, 204);
+  ids = [];
+  assert.equal((await invoke(`chrome-extension://${custom}`)).status, 403);
+  assert.equal((await invoke(extension)).status, 200);
+  for (const address of ["0.0.0.0", "::", "8.8.8.8"]) await assert.rejects(server.start({ address }), { code: "INVALID_PARAMS" });
+  const network = require("../server/network.cjs");
+  for (const listener of server._internals.listeners) assert.ok(network.isAllowedBindAddress(listener.server.address().address));
+});
+
+test("设备记录兼容重启，注销与改密立即撤销令牌和 WS", async (context) => {
+  const { server, rendererDir, directory, token, post, connect } = await fixture(context);
+  const socket = await connect();
+  const closed = once(socket, "close");
+  assert.equal((await post("/api/logout", {}, token)).status, 200);
+  await closed;
+  assert.equal((await post("/api/ipc", { channel: "any", args: [] }, token)).status, 401);
+  const login = await (await post("/api/login", { password: "ipc-test-password", name: "持久设备" })).json();
+  const persistedToken = login.result.token;
+  await server.stop();
+  const restarted = createRemoteServer({ rendererDir, dataDir: directory, ipcInvoke: () => "persisted" });
+  context.after(() => restarted.stop());
+  const { port } = await restarted.start({ port: 0 });
+  const request = () => fetch(`http://127.0.0.1:${port}/api/ipc`, { method: "POST", headers: { Origin: extension, Authorization: `Bearer ${persistedToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: "any", args: [] }) });
+  assert.equal(await (await request()).json(), "persisted");
+  await restarted.setPassword("new-ipc-password");
+  assert.equal((await request()).status, 401);
+  const saved = await readFile(join(directory, "remote-access.json"), "utf8");
+  assert.equal(JSON.parse(saved).version, 1);
+  assert.ok(!saved.includes(persistedToken));
+  assert.ok(!saved.includes("new-ipc-password"));
+});
+
+test("IPC 等待期间撤销授权不交付宿主结果", async (context) => {
+  let release, notify;
+  const started = new Promise(resolve => { notify = resolve; });
+  const { post, token, server } = await fixture(context, { ipcInvoke: () => new Promise(resolve => { release = resolve; notify(); }) });
+  const pending = post("/api/ipc", { channel: "any", args: [] }, token);
+  await started;
+  await server.revokeAllDevices();
+  release({ secret: "host-result" });
+  const response = await pending;
+  assert.equal(response.status, 401);
+  assert.ok(!(await response.text()).includes("host-result"));
+});
+
+test("密码、设备持久化与到期的独立回归", async () => {
+  await import("./check-auth.mjs");
+});
+
+test("Renderer 上传支持空文件，宿主失败或缺失时清理暂存文件", async (context) => {
+  let importedPath;
+  const { endpoint, token, server } = await fixture(context, { rendererUpload: async input => {
+    importedPath = input.files[0].path;
+    assert.equal((await readFile(importedPath)).length, 0);
+    throw Object.assign(new Error("导入失败"), { code: "INVALID_PARAMS" });
+  } });
+  const response = await fetch(`${endpoint}/api/upload?target=renderer&draftId=draft`, { method: "POST", headers: { Origin: extension, Authorization: `Bearer ${token}`, "X-Filename": encodeURIComponent("空文件.ts"), "Content-Type": "application/octet-stream" }, body: Buffer.alloc(0) });
+  assert.equal(response.status, 400);
+  await server.stop();
+  await assert.rejects(readFile(importedPath), { code: "ENOENT" });
+  const unsupported = await fixture(context);
+  const missing = await fetch(`${unsupported.endpoint}/api/upload?target=renderer&draftId=draft`, { method: "POST", headers: { Origin: extension, Authorization: `Bearer ${unsupported.token}` }, body: "data" });
+  assert.equal(missing.status, 501);
+  assert.equal((await missing.json()).error.code, "UNSUPPORTED");
+});
+
+test("正常停服按可重连关闭，重新开启后原设备登录仍有效", async (context) => {
+  const { server, connect, token } = await fixture(context, { ipcInvoke: () => ({ ok: true, data: "connected" }) });
+  const socket = await connect();
+  const closed = once(socket, "close");
+  const stopping = server.stop();
+  socket.send(JSON.stringify({ type: "ping" }));
+  assert.equal((await closed)[0], 4001);
+  await stopping;
+  const { port } = await server.start({ port: 0 });
+  const response = await fetch(`http://127.0.0.1:${port}/api/ipc`, {
+    method: "POST", headers: { Origin: extension, "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ channel: "settings:get", args: [] }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, data: "connected" });
+});
+
+test("插件适配层在入口和 SPA 注入，资源独立提供且不改 Renderer 文件", async (context) => {
+  const projectionDir = fileURLToPath(new URL("../adapter/", import.meta.url));
+  const { endpoint, rendererDir } = await fixture(context, { projectionDir });
+  const original = '<!doctype html><html><head><script type="module" src="./assets/app.js"></script></head><body></body></html>';
+  await writeFile(join(rendererDir, "index.html"), original);
+  for (const route of ["/", "/sessions/id"]) {
+    const response = await fetch(`${endpoint}${route}`);
+    const html = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(html, /href="\/__lan-remote\/projection.css"/);
+    assert.match(html, /src="\/__lan-remote\/projection.js"><\/script><\/head>/);
+    assert.equal(Number(response.headers.get("content-length")), Buffer.byteLength(html));
+  }
+  for (const [name, mime] of [["projection.js", "javascript"], ["projection.css", "text/css"]]) {
+    const route = `${endpoint}/__lan-remote/${name}`;
+    const response = await fetch(route);
+    assert.equal(response.status, 200);
+    assert.ok(response.headers.get("content-type").includes(mime));
+    assert.equal(await response.text(), await readFile(join(projectionDir, name), "utf8"));
+    const head = await fetch(route, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), "");
+  }
+  assert.equal((await fetch(`${endpoint}/__lan-remote/missing.js`)).status, 404);
+  assert.equal(await readFile(join(rendererDir, "index.html"), "utf8"), original);
 });

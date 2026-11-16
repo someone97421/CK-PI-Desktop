@@ -628,9 +628,17 @@ export function useComposerDraft({
 
   useEffect(() => {
     if (document.documentElement.dataset.webRemote !== "true") return;
+    const canCompose = () => {
+      const editor = ref.current;
+      return !inputBlocked && !!editor?.isConnected && editor.getAttribute("contenteditable") !== "false"
+        && !editor.closest("[hidden], [inert]");
+    };
+    const publish = (available: boolean) => window.dispatchEvent(new CustomEvent("pi-desktop:composer-ready", {
+      detail: { canCompose: available },
+    }));
     const insert = (text: string) => {
       const editor = ref.current;
-      if (inputBlocked || !editor?.isConnected || editor.getAttribute("contenteditable") === "false") return false;
+      if (!editor || !canCompose()) return false;
       const source = readEditorValue(editor);
       const { start, end } = document.activeElement === editor
         ? editorSelectionRange(editor) : { start: source.length, end: source.length };
@@ -645,8 +653,12 @@ export function useComposerDraft({
       return true;
     };
     window.__piDesktopInsertPromptText = insert;
+    publish(canCompose());
     return () => {
-      if (window.__piDesktopInsertPromptText === insert) delete window.__piDesktopInsertPromptText;
+      if (window.__piDesktopInsertPromptText === insert) {
+        delete window.__piDesktopInsertPromptText;
+        publish(false);
+      }
     };
   });
 

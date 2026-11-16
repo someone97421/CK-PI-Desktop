@@ -206,6 +206,8 @@ export function Sidebar({
   sidebarToggleShortcut,
   className,
   onAnimationEnd,
+  inactive = false,
+  onOpenConversation,
 }: {
   onToggleSidebar: () => void;
   sidebarToggleShortcut: string;
@@ -214,6 +216,8 @@ export function Sidebar({
   onWidthCommit: (width: number) => void;
   className?: string;
   onAnimationEnd?: ReactAnimationEventHandler<HTMLElement>;
+  inactive?: boolean;
+  onOpenConversation?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const sessions = useAppStore((s) => s.sessions);
@@ -1017,10 +1021,11 @@ export function Sidebar({
   );
 
   const focusComposer = useCallback(() => {
+    onOpenConversation?.();
     requestAnimationFrame(() => {
       document.querySelector<HTMLTextAreaElement>(".composer-input")?.focus();
     });
-  }, []);
+  }, [onOpenConversation]);
 
   const selectProject = async (path: string): Promise<boolean> => {
     const normalized = normalizeProjectPath(path);
@@ -2512,6 +2517,8 @@ export function Sidebar({
       className={cx("sidebar", "sidebar-surface", className)}
       data-window-blur={windowFocused ? undefined : "true"}
       onAnimationEnd={onAnimationEnd}
+      inert={inactive ? true : undefined}
+      aria-hidden={inactive ? true : undefined}
     >
       <div className="sidebar-header">
         <TooltipButton
@@ -2520,7 +2527,7 @@ export function Sidebar({
           data-nav="home"
           tooltip={t("nav.home")}
           ariaLabel={t("nav.home")}
-          onClick={() => setPage("chat")}
+          onClick={() => { setPage("chat"); onOpenConversation?.(); }}
         >
           <BrandLogo size={20} />
           <span>{settings?.appDisplayName?.trim() || t("app.shellName")}</span>
@@ -2735,7 +2742,7 @@ export function Sidebar({
               data-nav="settings"
               tooltip={t("nav.settings")}
               ariaLabel={t("nav.settings")}
-              onClick={() => setPage("settings")}
+              onClick={() => { setPage("settings"); onOpenConversation?.(); }}
               aria-pressed={page === "settings"}
             >
               <IconSettings size={14} aria-hidden />
@@ -2746,9 +2753,13 @@ export function Sidebar({
               data-nav="plugins"
               tooltip={t("nav.plugins")}
               ariaLabel={t("nav.plugins")}
-              onClick={() => page === "plugins"
-                ? (canNavBack() ? navBack() : setPage("chat"))
-                : setPage("plugins")}
+              onClick={() => {
+                if (page === "plugins") {
+                  if (canNavBack()) navBack();
+                  else setPage("chat");
+                } else setPage("plugins");
+                onOpenConversation?.();
+              }}
               aria-pressed={page === "plugins"}
             >
               <IconPlug size={14} aria-hidden />
@@ -2760,7 +2771,7 @@ export function Sidebar({
                 data-nav="scheduled"
                 tooltip={t("scheduled.title")}
                 ariaLabel={t("scheduled.title")}
-                onClick={() => setPage("scheduled")}
+                onClick={() => { setPage("scheduled"); onOpenConversation?.(); }}
                 aria-pressed={page === "scheduled"}
               >
                 <IconClock size={14} aria-hidden />

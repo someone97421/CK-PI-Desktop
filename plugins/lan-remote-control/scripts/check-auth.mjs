@@ -2,11 +2,11 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const { DeviceStore, SESSION_TTL_MS } = require("../server/auth.cjs");
-const directory = mkdtempSync(join(tmpdir(), "lan-auth-test-"));
+assert.ok(process.env.PI_SCRATCH_DIR, "PI_SCRATCH_DIR 必须设置");
+const directory = mkdtempSync(join(process.env.PI_SCRATCH_DIR, "lan-auth-test-"));
 const file = join(directory, "remote-access.json");
 let now = Date.now();
 try {

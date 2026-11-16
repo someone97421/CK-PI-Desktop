@@ -6,15 +6,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const http = require("node:http");
-const os = require("node:os");
 const path = require("node:path");
 
 const httpHelpers = require("./http.cjs");
 const network = require("./network.cjs");
-const { SubscriptionPool } = require("./subscriptions.cjs");
 const { DeviceStore, MAX_DEVICES } = require("./auth.cjs");
-const { AttachmentStore, DEFAULT_MAX_BYTES, ID_PATTERN } = require("./uploads.cjs");
-const { buildOperationTable, createRpcDispatcher, isUuid, statusForCode } = require("./rpc.cjs");
+const { AttachmentStore, DEFAULT_MAX_BYTES } = require("./uploads.cjs");
+const { OPERATION_META: BROWSE_OPERATIONS } = require("../browse-bridge.cjs");
 const { RESOURCE_SCHEMES, rewriteResourceCsp, rewriteResourceText } = require("./resources.cjs");
 
 const WS_PATH = "/ws";
@@ -53,6 +51,12 @@ function fail(code, message) {
   const error = new Error(String(message));
   error.code = String(code);
   return error;
+}
+
+function statusForCode(code) {
+  return ({ INVALID_PARAMS: 400, UNAUTHORIZED: 401, FORBIDDEN: 403, OPERATION_NOT_ALLOWED: 403,
+    NOT_FOUND: 404, PAYLOAD_TOO_LARGE: 413, RATE_LIMITED: 429, UNSUPPORTED: 501,
+    NOT_READY: 503, UNAVAILABLE: 503, TIMEOUT: 504 })[code] ?? 500;
 }
 
 function clientAddress(req) {
@@ -103,25 +107,25 @@ function rejectUpgrade(socket, status, code) {
 
 function createRemoteServer(options = {}) {
   const {
-    webDir,
     rendererDir,
+    projectionDir = null,
     dataDir,
     version = "0.0.0",
     name = "lan-remote-control",
     log = () => {},
-    getAdapter = () => null,
-    getOperationTable = () => buildOperationTable(getAdapter()),
-    getCapabilities = null,
-    getUiScale = () => 100,
     getExtensionIds = () => [],
     ipcInvoke = null,
-    subscribeIpc = null,
     localOperations = {},
     rendererUpload = null,
     rendererResource = null,
-    hooks = {},
     limits = {},
   } = options;
+  if (typeof rendererDir !== "string" || !rendererDir.trim()) {
+    throw fail("RENDERER_UNAVAILABLE", "必须提供同一安装的 Renderer 目录 rendererDir");
+  }
+  if (typeof dataDir !== "string" || !dataDir.trim()) {
+    throw fail("INVALID_PARAMS", "必须提供插件数据目录 dataDir");
+  }
 
   const uploadMaxBytes = Number.isFinite(limits.maxUploadBytes) ? limits.maxUploadBytes : DEFAULT_MAX_BYTES;
 
@@ -136,16 +140,16 @@ function createRemoteServer(options = {}) {
     requestedAddresses: [],
     warning: null,
     webRootReal: null,
+    projectionRootReal: null,
     sockets: new Set(),
     connections: new Set(),
     timers: new Set(),
     inFlight: new Set(),
-    devices: new DeviceStore({ file: dataDir ? path.join(dataDir, "remote-access.json") : undefined }),
+    devices: new DeviceStore({ file: path.join(dataDir, "remote-access.json") }),
     attachments: new AttachmentStore({
-      dir: path.join(dataDir ?? os.tmpdir(), "tmp", "lan-remote-control"),
+      dir: path.join(dataDir, "tmp", "lan-remote-control"),
       maxBytes: uploadMaxBytes,
     }),
-    capabilities: { value: null, error: null, at: 0 },
     loginInFlight: 0,
   };
 
@@ -157,7 +161,7 @@ function createRemoteServer(options = {}) {
     return task;
   }
 
-  state.webRoot = path.resolve(rendererDir ?? webDir ?? path.join(__dirname, "..", "web"));
+  state.webRoot = path.resolve(rendererDir);
 
   const rateLimiters = {
     general: httpHelpers.createRateLimiter(RATE_LIMITS.general),
@@ -178,26 +182,16 @@ function createRemoteServer(options = {}) {
     getExtensionIds,
   });
 
-  const dispatcher = createRpcDispatcher({
-    adapter: typeof getAdapter === "function" ? getAdapter : () => getAdapter,
-    getOperationTable,
-    getCapabilities: getCapabilities ?? (() => refreshCapabilities(false)),
-    attachments: state.attachments,
-    localOperations,
-    log,
-  });
 
   // --- status ---------------------------------------------------------------
 
   function deviceConnections(deviceId) {
     let connections = 0;
-    let subscriptions = 0;
     for (const conn of state.connections) {
       if (conn.deviceId !== deviceId) continue;
       connections += 1;
-      subscriptions += conn.sessions.size;
     }
-    return { connections, subscriptions };
+    return { connections };
   }
 
   function getStatus() {
@@ -226,8 +220,6 @@ function createRemoteServer(options = {}) {
         ...device,
         ...deviceConnections(device.deviceId),
       })),
-      capabilities: state.capabilities.value,
-      capabilitiesError: state.capabilities.error,
       version,
       name,
       limits: {
@@ -238,34 +230,6 @@ function createRemoteServer(options = {}) {
     };
   }
 
-  // --- capabilities ---------------------------------------------------------
-
-  async function refreshCapabilities(force = false) {
-    const now = Date.now();
-    if (!force && state.capabilities.at && now - state.capabilities.at < 30_000) {
-      return state.capabilities.value;
-    }
-    if (typeof getCapabilities !== "function") return state.capabilities.value;
-    try {
-      const value = await getCapabilities();
-      state.capabilities = { value: value && typeof value === "object" ? value : null, error: null, at: now };
-    } catch (error) {
-      state.capabilities = {
-        value: state.capabilities.value,
-        error: { code: error?.code ? String(error.code) : "INTERNAL", message: String(error?.message ?? error) },
-        at: now,
-      };
-    }
-    return state.capabilities.value;
-  }
-
-  const subscriptionPool = new SubscriptionPool(hooks);
-
-  // --- subscriptions --------------------------------------------------------
-
-  function releaseSubscription(sessionId) {
-    subscriptionPool.release(sessionId)?.catch(error => log(`unsubscribe failed: ${error.message}`));
-  }
 
   // --- websocket plumbing ---------------------------------------------------
 
@@ -303,12 +267,8 @@ function createRemoteServer(options = {}) {
     timer.unref?.();
   }
 
-  function wsError(conn, code, message, sessionId) {
-    sendWs(conn, {
-      type: "error",
-      error: { code: String(code), message: String(message) },
-      ...(sessionId ? { sessionId } : {}),
-    });
+  function wsError(conn, code, message) {
+    sendWs(conn, { type: "error", error: { code: String(code), message: String(message) } });
   }
 
   function dropConnection(conn) {
@@ -316,84 +276,10 @@ function createRemoteServer(options = {}) {
       clearTimeout(conn.authTimer);
       conn.authTimer = null;
     }
-    if (typeof conn.ipcUnsubscribe === "function") {
-      try { void Promise.resolve(conn.ipcUnsubscribe()).catch((error) => log(`IPC unsubscribe failed: ${error?.message ?? error}`)); }
-      catch (error) { log(`IPC unsubscribe failed: ${error?.message ?? error}`); }
-      conn.ipcUnsubscribe = null;
-    }
-    for (const sessionId of [...conn.sessions]) {
-      conn.sessions.delete(sessionId);
-      releaseSubscription(sessionId);
-    }
     state.connections.delete(conn);
   }
 
-  async function handleSubscribe(conn, message) {
-    const sessionId = message.sessionId;
-    if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 200) {
-      wsError(conn, "INVALID_PARAMS", "sessionId is required");
-      return;
-    }
-    if (conn.sessions.has(sessionId)) {
-      return;
-    }
-    if (conn.sessions.size >= 16) {
-      wsError(conn, 'RATE_LIMITED', 'too many session subscriptions');
-      return;
-    }
-    conn.sessions.add(sessionId);
-    let snapshot;
-    try {
-      const result = await subscriptionPool.acquire(sessionId);
-      snapshot=result?.snapshot;
-    } catch(error) {
-      if(conn.sessions.delete(sessionId))releaseSubscription(sessionId);
-      wsError(conn,error?.code||'UNSUPPORTED',String(error?.message||error),sessionId);
-      return;
-    }
-    if(!conn.sessions.has(sessionId)||!state.connections.has(conn)||!state.devices.get(conn.deviceId))return;
-    sendWs(conn, {
-      type: "subscribed",
-      sessionId,
-      ...(snapshot !== undefined ? { snapshot } : {}),
-    });
-  }
-
-  function handleUnsubscribe(conn, message) {
-    const sessionId = message.sessionId;
-    if (typeof sessionId !== "string" || !sessionId.trim()) {
-      wsError(conn, "INVALID_PARAMS", "sessionId is required");
-      return;
-    }
-    if (conn.sessions.delete(sessionId)) {
-      releaseSubscription(sessionId);
-    }
-    sendWs(conn, { type: "unsubscribed", sessionId });
-  }
-
-  async function subscribeIpcForConnection(conn) {
-    if (typeof subscribeIpc !== "function") return;
-    const handler = (event) => {
-      if (!event || typeof event !== "object" || Array.isArray(event)) return;
-      if (typeof event.channel !== "string" || !Array.isArray(event.args)) return;
-      if (!state.connections.has(conn) || !conn.deviceId || !state.devices.get(conn.deviceId)) return;
-      sendWs(conn, { type: "ipc-event", channel: event.channel, args: event.args });
-    };
-    const subscription = await subscribeIpc(handler);
-    const unsubscribe = typeof subscription === "function"
-      ? subscription
-      : subscription && typeof subscription.unsubscribe === "function"
-        ? () => subscription.unsubscribe()
-        : null;
-    if (!unsubscribe) return;
-    if (!state.connections.has(conn) || !conn.deviceId || !wsOpen(conn) || !state.devices.get(conn.deviceId)) {
-      await unsubscribe();
-      return;
-    }
-    conn.ipcUnsubscribe = unsubscribe;
-  }
-
-  async function handleWsAuth(conn, message) {
+  function handleWsAuth(conn, message) {
     const token = typeof message.token === "string" ? message.token : "";
     const device = state.devices.authorize(token);
     if (!device) {
@@ -416,22 +302,18 @@ function createRemoteServer(options = {}) {
       clearTimeout(conn.authTimer);
       conn.authTimer = null;
     }
-    if (!state.capabilities.at) await refreshCapabilities(false);
-    try { await subscribeIpcForConnection(conn); }
-    catch (error) {
-      wsError(conn, error?.code ?? "INTERNAL", error?.message ?? error);
-      closeWs(conn, 1011, "IPC subscription failed");
-      return;
-    }
     sendWs(conn, {
       type: "ready",
-      protocolVersion: 1,
+      protocolVersion: 2,
       device: { id: device.id, name: device.name },
-      capabilities: state.capabilities.value,
     });
   }
 
   async function handleWsMessage(conn, data, isBinary) {
+    if (state.phase !== "running") {
+      closeWs(conn, 4001, "server stopping");
+      return;
+    }
     if (!conn.rate.take("messages")) {
       wsError(conn, "RATE_LIMITED", "too many messages");
       closeWs(conn, 4429, "rate limited");
@@ -458,20 +340,14 @@ function createRemoteServer(options = {}) {
         closeWs(conn, 4401, "unauthorized");
         return;
       }
-      await handleWsAuth(conn, message);
+      handleWsAuth(conn, message);
       return;
     }
-    if (state.phase !== "running" || (conn.deviceId && !state.devices.get(conn.deviceId))) {
+    if (conn.deviceId && !state.devices.get(conn.deviceId)) {
       closeWs(conn, 4401, "unauthorized");
       return;
     }
     switch (message.type) {
-      case "subscribe":
-        await handleSubscribe(conn, message);
-        return;
-      case "unsubscribe":
-        handleUnsubscribe(conn, message);
-        return;
       case "ping":
         sendWs(conn, { type: "pong", ts: Date.now() });
         return;
@@ -479,7 +355,7 @@ function createRemoteServer(options = {}) {
         conn.alive = true;
         return;
       case "auth":
-        sendWs(conn, { type: "ready", protocolVersion: 1, device: { id: conn.deviceId, name: conn.device?.name ?? "" } });
+        sendWs(conn, { type: "ready", protocolVersion: 2, device: { id: conn.deviceId, name: conn.device?.name ?? "" } });
         return;
       default:
         wsError(conn, "INVALID_PARAMS", `unsupported message type: ${String(message.type)}`);
@@ -492,8 +368,6 @@ function createRemoteServer(options = {}) {
       ws,
       device: null,
       deviceId: null,
-      sessions: new Set(),
-      ipcUnsubscribe: null,
       alive: true,
       ip: clientAddress(req),
       rate: httpHelpers.createRateLimiter({ windowMs: 60_000, max: WS_MESSAGES_PER_MINUTE }),
@@ -585,10 +459,9 @@ function createRemoteServer(options = {}) {
       name,
       version,
       requiresAuth: true,
-      protocolVersion: 1,
+      protocolVersion: 2,
       authMode: "password",
       passwordConfigured: state.devices.passwordConfigured,
-      uiScale: getUiScale(),
     };
   }
 
@@ -599,7 +472,7 @@ function createRemoteServer(options = {}) {
       return;
     }
     const body = await httpHelpers.readJsonBody(req, { maxBytes: LOGIN_BODY_MAX_BYTES });
-    if (!body.ok) { httpHelpers.sendError(res, body.status, body.code, body.message); return; }
+    if (!body.ok) { httpHelpers.sendBodyError(req, res, body); return; }
     if (state.loginInFlight >= 2) {
       httpHelpers.sendError(res, 429, "RATE_LIMITED", "登录尝试过多，请稍后重试");
       return;
@@ -678,35 +551,41 @@ function createRemoteServer(options = {}) {
     }
     const body = await httpHelpers.readJsonBody(req, { maxBytes: RPC_BODY_MAX_BYTES });
     if (!body.ok) {
-      httpHelpers.sendError(res, body.status, body.code, body.message);
+      httpHelpers.sendBodyError(req, res, body);
       return;
     }
     if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
       return;
     }
-    const sessionId =
-      body.value.input && typeof body.value.input === "object" && typeof body.value.input.sessionId === "string"
-        ? body.value.input.sessionId
-        : undefined;
-    const task = dispatcher.handle({
-      deviceId: device.id, sessionId, body: body.value,
-      isAuthorized: () => generation === requestGeneration && state.phase === "running" && authenticate(req)?.id === device.id,
-    });
+    const { operation, requestId } = body.value;
+    const responseOptions = typeof requestId === "string" && requestId.length <= 64 ? { requestId } : {};
+    if (typeof operation !== "string" || !Object.hasOwn(BROWSE_OPERATIONS, operation) ||
+        !Object.hasOwn(localOperations, operation) || typeof localOperations[operation] !== "function") {
+      httpHelpers.sendError(res, 403, "OPERATION_NOT_ALLOWED", "only declared Browse operations are available", responseOptions);
+      return;
+    }
+    const task = Promise.resolve().then(() => localOperations[operation]());
     state.inFlight.add(task);
     try {
-      const { status, envelope } = await task;
+      const result = await task;
       if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
         httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
         return;
       }
-      httpHelpers.sendJson(res, status, envelope);
+      httpHelpers.sendResult(res, result, responseOptions);
+    } catch (error) {
+      httpHelpers.sendError(res, statusForCode(error?.code), error?.code ?? "INTERNAL", error?.message ?? error, responseOptions);
     } finally {
       state.inFlight.delete(task);
     }
   }
 
   async function handleUpload(req, res, url) {
+    if (url.searchParams.has("target") && url.searchParams.get("target") !== "renderer") {
+      httpHelpers.sendError(res, 400, "INVALID_PARAMS", "only Renderer uploads are supported");
+      return;
+    }
     const requestGeneration = generation;
     const address = clientAddress(req);
     if (!rateLimiters.upload.take(`upload:${address}`)) {
@@ -733,136 +612,39 @@ function createRemoteServer(options = {}) {
     }
     const saved = await state.attachments.save({
       deviceId: device.id,
-      sessionId: headerValue("x-session-id") || (url.searchParams.get("target") === "renderer" ? `renderer:${device.id}` : ""),
       name: headerValue("x-filename"),
       mimeType: headerValue("content-type"),
       buffer: body.buffer,
-      renderer: url.searchParams.get("target") === "renderer",
       isAuthorized: () => generation === requestGeneration && state.phase === "running" && authenticate(req)?.id === device.id,
     });
     if (!saved.ok) {
       httpHelpers.sendError(res, statusForCode(saved.code), saved.code, saved.message);
       return;
     }
-    if (url.searchParams.get("target") === "renderer") {
-      let task;
-      try {
-        if (typeof rendererUpload !== "function") throw fail("UNSUPPORTED", "renderer upload is unavailable");
-        const item = state.attachments.get(saved.item.id);
-        if (!item) throw fail("INTERNAL", "staged upload is unavailable");
-        task = Promise.resolve().then(() => rendererUpload({
-          ...(headerValue("x-session-id") ? { sessionId: headerValue("x-session-id") } : {}),
-          ...(url.searchParams.get("draftId") ? { draftId: url.searchParams.get("draftId") } : {}),
-          files: [{ path: item.filePath, name: item.name, kind: item.kind, mimeType: item.mimeType, size: item.size }],
-        }));
-        state.inFlight.add(task);
-        const result = await task;
-        if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
-          httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
-          return;
-        }
-        httpHelpers.sendJson(res, 200, result === undefined ? null : result);
-      } catch (error) {
-        httpHelpers.sendError(res, statusForCode(error?.code), error?.code ?? "INTERNAL", error?.message ?? error);
-      } finally {
-        state.inFlight.delete(task);
-        await state.attachments.remove(saved.item.id, device.id);
-      }
-      return;
-    }
-    httpHelpers.sendResult(res, saved.item);
-  }
-
-  async function handleAttachment(req, res, pathname, url) {
-    const requestGeneration = generation;
-    const device = authenticate(req);
-    if (!device) {
-      httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device token is missing or invalid");
-      return;
-    }
-    const id = pathname.slice("/api/attachment/".length);
-    if (!ID_PATTERN.test(id)) {
-      httpHelpers.sendError(res, 404, "NOT_FOUND", "attachment not found");
-      return;
-    }
-    const item = state.attachments.get(id);
-    if (!item || item.deviceId !== device.id) {
-      httpHelpers.sendError(res, 404, "NOT_FOUND", "attachment not found");
-      return;
-    }
-    const requestedSession = url.searchParams.get("sessionId");
-    if (requestedSession && item.sessionId && requestedSession !== item.sessionId) {
-      httpHelpers.sendError(res, 404, "NOT_FOUND", "attachment not found");
-      return;
-    }
-    let file;
-    let stats;
+    let task;
     try {
-      const link = await fsp.lstat(item.filePath);
-      const real = await fsp.realpath(item.filePath);
-      if (link.isSymbolicLink() || !httpHelpers.isInsidePath(state.attachments.dir, real)) throw new Error("invalid file");
-      file = await fsp.open(item.filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-      stats = await file.stat();
-      if (!stats.isFile() || stats.size !== item.size || stats.ino !== link.ino || stats.dev !== link.dev) throw new Error("invalid file");
+      if (typeof rendererUpload !== "function") throw fail("UNSUPPORTED", "renderer upload is unavailable");
+      const item = state.attachments.get(saved.item.id);
+      if (!item) throw fail("INTERNAL", "staged upload is unavailable");
+      task = Promise.resolve().then(() => rendererUpload({
+        ...(headerValue("x-session-id") ? { sessionId: headerValue("x-session-id") } : {}),
+        ...(url.searchParams.get("draftId") ? { draftId: url.searchParams.get("draftId") } : {}),
+        files: [{ path: item.filePath, name: item.name, kind: item.kind, mimeType: item.mimeType, size: item.size }],
+      }));
+      state.inFlight.add(task);
+      const result = await task;
+      await state.attachments.remove(saved.item.id, device.id);
       if (generation !== requestGeneration || state.phase !== "running" || authenticate(req)?.id !== device.id) {
-        await file.close();
         httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device authorization was revoked");
         return;
       }
-    } catch {
-      await file?.close().catch(() => undefined);
-      httpHelpers.sendError(res, 404, "NOT_FOUND", "attachment not found");
-      return;
+      httpHelpers.sendJson(res, 200, result === undefined ? null : result);
+    } catch (error) {
+      await state.attachments.remove(saved.item.id, device.id);
+      httpHelpers.sendError(res, statusForCode(error?.code), error?.code ?? "INTERNAL", error?.message ?? error);
+    } finally {
+      state.inFlight.delete(task);
     }
-    httpHelpers.applySecurityHeaders(res);
-    res.setHeader("Content-Type", item.mimeType);
-    res.setHeader("Content-Length", String(stats.size));
-    res.setHeader("Content-Disposition", "inline");
-    if (req.method === "HEAD") {
-      await file.close();
-      res.writeHead(200);
-      res.end();
-      return;
-    }
-    res.writeHead(200);
-    await new Promise((resolve) => {
-      const stream = file.createReadStream({ autoClose: true });
-      stream.on("error", () => {
-        if (!res.writableEnded) res.destroy();
-        resolve();
-      });
-      stream.on("end", resolve);
-      res.on("close", () => {
-        stream.destroy();
-        resolve();
-      });
-      stream.pipe(res);
-    });
-  }
-
-  /**
-   * `GET /api/mutation/:id` — read-only outcome lookup. A client that lost its
-   * connection checks here instead of re-sending the original POST (which, once
-   * the id has been evicted, would otherwise execute as a brand-new mutation).
-   */
-  function handleMutationLookup(req, res, pathname) {
-    const device = authenticate(req);
-    if (!device) {
-      httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device token is missing or invalid");
-      return;
-    }
-    let mutationId = "";
-    try {
-      mutationId = decodeURIComponent(pathname.slice("/api/mutation/".length));
-    } catch {
-      mutationId = "";
-    }
-    if (!isUuid(mutationId)) {
-      httpHelpers.sendError(res, 400, "INVALID_PARAMS", "mutationId must be a UUID");
-      return;
-    }
-    const { status, envelope } = dispatcher.queryMutation({ deviceId: device.id, mutationId });
-    httpHelpers.sendJson(res, status, envelope);
   }
 
   async function handleResource(req, res, url) {
@@ -1031,24 +813,21 @@ function createRemoteServer(options = {}) {
         await handleResource(req, res, url);
         return;
       }
-      if (pathname.startsWith("/api/attachment/")) {
-        if (!isGet) {
-          httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed");
-          return;
-        }
-        await handleAttachment(req, res, pathname, url);
-        return;
-      }
-      if (pathname.startsWith("/api/mutation/")) {
-        if (!isGet) {
-          httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed");
-          return;
-        }
-        handleMutationLookup(req, res, pathname);
-        return;
-      }
       if (pathname.startsWith("/api/")) {
         httpHelpers.sendError(res, 404, "NOT_FOUND", "not found");
+        return;
+      }
+      if (pathname.startsWith("/__lan-remote/")) {
+        if (!isGet) { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
+        const asset = pathname.slice("/__lan-remote/".length);
+        if (!state.projectionRootReal || !["projection.css", "projection.js"].includes(asset)) {
+          httpHelpers.sendError(res, 404, "NOT_FOUND", "not found"); return;
+        }
+        const served = await httpHelpers.serveStaticFile(req, res, {
+          rootDir: state.projectionRootReal, rootRealDir: state.projectionRootReal,
+          pathname: `/${asset}`, connectOrigins: connectOrigins(),
+        });
+        if (!served.ok) httpHelpers.sendError(res, served.status, served.code, served.message);
         return;
       }
       if (!isGet) {
@@ -1060,7 +839,8 @@ function createRemoteServer(options = {}) {
         rootRealDir: state.webRootReal,
         pathname,
         connectOrigins: connectOrigins(),
-        renderer: rendererDir !== undefined,
+        renderer: true,
+        projection: state.projectionRootReal !== null,
       };
       let served = await httpHelpers.serveStaticFile(req, res, staticOptions);
       if (!served.ok && served.code === "NOT_FOUND" && path.extname(pathname) === "") {
@@ -1120,7 +900,6 @@ function createRemoteServer(options = {}) {
       if (conn.deviceId && !state.devices.get(conn.deviceId)) closeWs(conn, 4403, "session expired");
     }
     await state.attachments.pruneExpired();
-    dispatcher.mutations.sweep();
   }
 
   // --- lifecycle ------------------------------------------------------------
@@ -1175,7 +954,21 @@ function createRemoteServer(options = {}) {
     try {
       const WebSocketServer = loadWebSocketServer();
       await state.attachments.init();
-      state.webRootReal = await fsp.realpath(state.webRoot).catch(() => null);
+      try {
+        state.webRootReal = await fsp.realpath(state.webRoot);
+        if (!(await fsp.stat(state.webRootReal)).isDirectory()) throw new Error("not a directory");
+        const index = path.join(state.webRootReal, "index.html");
+        if (!(await fsp.stat(index)).isFile()) throw new Error("index.html is not a file");
+        await fsp.access(index, fs.constants.R_OK);
+      } catch (error) {
+        throw fail("RENDERER_UNAVAILABLE", `无法读取同一安装的 Renderer：${state.webRoot}（${error.message}）`);
+      }
+      if (projectionDir) {
+        state.projectionRootReal = await fsp.realpath(projectionDir);
+        for (const name of ["projection.css", "projection.js"]) {
+          await fsp.access(path.join(state.projectionRootReal, name), fs.constants.R_OK);
+        }
+      }
 
       for (const candidate of candidates) {
         if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
@@ -1244,7 +1037,6 @@ function createRemoteServer(options = {}) {
       state.startedAt = Date.now();
       state.phase = "running";
       startTimers();
-      void refreshCapabilities(true);
       log(`listening on ${getStatus().links.map((entry) => entry.url).join(", ")}`);
       return getStatus();
     } catch (error) {
@@ -1300,14 +1092,7 @@ function createRemoteServer(options = {}) {
     state.sockets.clear();
   }
 
-  /**
-   * 监听在非 stop() 的情况下消失（套接字被关闭或致命错误）。
-   *
-   * 只做“止血”：标记 stopped、记录原因、断开连接、关掉监听与定时器，并把
-   * generation 前推使在途请求/设备会话失效。暂存的附件与 mutation 结果不动，
-   * 便于随后的自动恢复继续服务同一批设备。上层凭 running === false 与
-   * LISTENER_CLOSED 原因按开启意图重新监听。
-   */
+  /** 监听意外关闭时使在途请求失效，并保留设备以供重新开启。 */
   function noteUnexpectedStop(code, message) {
     if (state.phase !== "running") return;
     state.phase = "stopped";
@@ -1345,7 +1130,6 @@ function createRemoteServer(options = {}) {
     state.address = null;
     state.port = null;
     state.startedAt = null;
-    void subscriptionPool.clear().catch((error) => log(`unsubscribe failed: ${error?.message ?? error}`));
     log(`listener stopped unexpectedly: ${code} ${state.lastError.message}`);
   }
 
@@ -1354,9 +1138,7 @@ function createRemoteServer(options = {}) {
     state.phase = "stopping";
     clearTimers();
 
-    // Stop talking to devices first, then give in-flight mutations a bounded
-    // window to settle: a task the host already accepted is never cancelled by
-    // closing the network service.
+    // 宿主已接收的操作继续执行，停止服务只等待有限的收尾时间。
     for (const conn of [...state.connections]) {
       sendWs(conn, { type: "error", error: { code: "NOT_READY", message: "server is stopping" } });
       closeWs(conn, 4001, "server stopping");
@@ -1376,9 +1158,7 @@ function createRemoteServer(options = {}) {
     wss?.close();
     await Promise.all(listeners.map(({ server }) => closeHttpServer(server)));
 
-    await subscriptionPool.clear();
     await state.attachments.dispose();
-    dispatcher.cancel();
     state.connections.clear();
     state.inFlight.clear();
     state.address = null;
@@ -1406,8 +1186,6 @@ function createRemoteServer(options = {}) {
 
   async function revokeDevice(deviceId) {
     const existed = state.devices.revoke(deviceId);
-    dispatcher.mutations.entries.delete(deviceId);
-    dispatcher.mutations.tombstones.delete(deviceId);
     for (const conn of [...state.connections]) {
       if (conn.deviceId !== deviceId) continue;
       wsError(conn, "UNAUTHORIZED", "device was revoked");
@@ -1435,24 +1213,6 @@ function createRemoteServer(options = {}) {
     }
     return delivered;
   }
-  function broadcast(desktopEvent) {
-    if (state.phase !== "running") return 0;
-    const sessionId =
-      desktopEvent && typeof desktopEvent === "object" && typeof desktopEvent.sessionId === "string"
-        ? desktopEvent.sessionId
-        : null;
-    if (!sessionId) {
-      log("dropping desktop event without sessionId");
-      return 0;
-    }
-    let delivered = 0;
-    for (const conn of state.connections) {
-      if (!conn.deviceId || !state.devices.get(conn.deviceId) || !conn.sessions.has(sessionId) || !wsOpen(conn)) continue;
-      sendWs(conn, { type: "event", event: desktopEvent });
-      delivered += 1;
-    }
-    return delivered;
-  }
 
   function markRestartRequired(required) {
     state.restartRequired = required === true;
@@ -1473,12 +1233,9 @@ function createRemoteServer(options = {}) {
     setPassword: (password) => serializeLifecycle(() => setPassword(password)),
     revokeDevice,
     revokeAllDevices,
-    broadcast,
     broadcastIpc,
-    refreshCapabilities,
     sweepNow,
     markRestartRequired,
-    getLogTail: () => [],
     constants: {
       WS_PATH,
       DEFAULT_PORT,

@@ -4,6 +4,7 @@ import {
   type ReactNode,
   Suspense,
   useState,
+  useRef,
 } from "react";
 import { ChatSurface } from "../../components/ChatSurface";
 import { ConversationTopbar } from "../../components/ConversationTopbar";
@@ -29,10 +30,6 @@ import { api } from "../../lib/api";
 import { PortalVisibilityProvider } from "../../lib/portal-visibility";
 import { CollapsedTitlebarActions, RoutePending } from "./chrome";
 import { useAppShellRuntime } from "./useAppShellRuntime";
-import { useCompactShell } from "./useCompactShell";
-import { useRemoteStack } from "./useRemoteStack";
-import { RemoteProjectLobby } from "./RemoteProjectLobby";
-import { RemotePanelSheet } from "./RemotePanelSheet";
 
 const SettingsPage = lazy(() =>
   import("../../pages/SettingsPage").then((module) => ({
@@ -56,8 +53,10 @@ const PluginsPage = lazy(() =>
 );
 
 export function AppShell() {
-  const compact = useCompactShell();
   const {
+    projection,
+    projectionLayer,
+    openProjectionConversation,
     t,
     ready,
     page,
@@ -99,11 +98,10 @@ export function AppShell() {
     startupRetrying,
     sidebarToggleShortcut,
     workPanelToggleTooltip,
-  } = useAppShellRuntime(compact);
-  const remotePanel = compact && (presentedWorkPanelOpen || workPanelExiting);
-  const remoteStack = useRemoteStack(compact, ready, remotePanel);
-  const remoteLobby = compact && remoteStack.view === "projects";
+  } = useAppShellRuntime();
   const [toastAnchor, setToastAnchor] = useState<HTMLElement | null>(null);
+  const projectionWorkPanelMounted = useRef(false);
+  if (projection && (presentedWorkPanelOpen || workPanelExiting)) projectionWorkPanelMounted.current = true;
   useCopyTex();
 
   // A boot that never reaches the shell gets a surface it can act on instead of
@@ -120,23 +118,6 @@ export function AppShell() {
       />
     );
 
-  const panel = (presentedWorkPanelOpen || workPanelExiting) ? (
-    <WorkPanel
-      compact={compact}
-      panelBlocked={searchOpen || remoteLobby}
-      exiting={workPanelExiting}
-      onExitAnimationEnd={() => finishWorkPanelExit(workPanelExitGeneration.current)}
-      subagentPanel={subagentPanelOpen ? subagentPanel : null}
-      onCloseSubagentPanel={closeSubagentPanel}
-      containerWidth={shellWidth}
-      sidebarWidth={sidebarWidth}
-      sidebarCollapsed={compact || sidebarCollapsed}
-      sidebarExiting={!compact && sidebarExiting}
-      onAutoCollapseSidebar={compact ? undefined : autoCollapseSidebar}
-      maximized={compact || workPanelMaximized}
-      onToggleMaximize={compact ? undefined : toggleWorkPanelMaximize}
-    />
-  ) : null;
   let shell: ReactNode = null;
   if (ready) {
     shell = (
@@ -147,19 +128,23 @@ export function AppShell() {
             hidden={page === "settings"}
             inert={page === "settings" ? true : undefined}
           >
-            {!compact && (!sidebarCollapsed || sidebarExiting) ? (
-              <Sidebar
-                className={cx(sidebarEntering && "is-entering", sidebarExiting && "is-exiting")}
-                onAnimationEnd={handleSidebarAnimationEnd}
-                onToggleSidebar={toggleSidebar}
-                sidebarToggleShortcut={sidebarToggleShortcut}
-                sidebarWidth={sidebarWidth}
-                onWidthChange={handleSidebarWidthChange}
-                onWidthCommit={handleSidebarWidthCommit}
-              />
+            {projection || !sidebarCollapsed || sidebarExiting ? (
+              <PortalVisibilityProvider visible={page !== "settings" && (!projection || projectionLayer === "projects")}>
+                <Sidebar
+                  className={cx(sidebarEntering && "is-entering", sidebarExiting && "is-exiting")}
+                  onAnimationEnd={handleSidebarAnimationEnd}
+                  onToggleSidebar={toggleSidebar}
+                  inactive={projection && projectionLayer !== "projects"}
+                  onOpenConversation={projection ? openProjectionConversation : undefined}
+                  sidebarToggleShortcut={sidebarToggleShortcut}
+                  sidebarWidth={sidebarWidth}
+                  onWidthChange={handleSidebarWidthChange}
+                  onWidthCommit={handleSidebarWidthCommit}
+                />
+              </PortalVisibilityProvider>
             ) : null}
 
-            {!compact && workPanelMaximized && (
+            {!projection && workPanelMaximized && (
               /* MainChat is absent; the panel header owns dragging while this
                  pass-through row keeps the shell controls available. */
               <div
@@ -191,15 +176,18 @@ export function AppShell() {
               </div>
             )}
 
-            {(!workPanelMaximized || compact) && (
-              <PortalVisibilityProvider visible={!remoteLobby && !remotePanel}>
-              <section ref={setToastAnchor} className="main-pane"
-                hidden={remoteLobby}
-                inert={compact && (remoteLobby || remotePanel || remoteStack.busy) ? true : undefined}>
+            {(projection || !workPanelMaximized) && (
+              <PortalVisibilityProvider visible={page !== "settings" && (!projection || projectionLayer === "chat")}>
+              <section
+                ref={setToastAnchor}
+                className="main-pane"
+                inert={projection && projectionLayer !== "chat" ? true : undefined}
+                aria-hidden={projection && projectionLayer !== "chat" ? true : undefined}
+              >
                 {page === "chat" ? (
                   <ConversationTopbar
-                    sidebarCollapsed={compact || sidebarCollapsed}
-                    workPanelOpen={!compact && presentedWorkPanelOpen}
+                    sidebarCollapsed={sidebarCollapsed}
+                    workPanelOpen={presentedWorkPanelOpen}
                     onToggleSidebar={toggleSidebar}
                     onNewTask={() => void runMenuCommand("newTask")}
                     onOpenSearch={() => setSearchOpen(true)}
@@ -279,6 +267,11 @@ export function AppShell() {
                   </div>
                 )}
 
+                {projection && (
+                  <div hidden={page !== "chat"} style={page === "chat" ? { display: "contents" } : undefined}>
+                    <ChatSurface visible={page === "chat" && projectionLayer === "chat"} />
+                  </div>
+                )}
                 <Suspense fallback={<RoutePending />}>
                   {page === "pulls" ? (
                     <div className="route-surface route-page">
@@ -293,25 +286,39 @@ export function AppShell() {
                       <PluginsPage />
                     </div>
                   ) : (
-                    <ChatSurface visible={page === "chat" && !remoteLobby && !remotePanel} />
+                    !projection && <ChatSurface visible={page === "chat"} />
                   )}
                 </Suspense>
               </section>
               </PortalVisibilityProvider>
             )}
 
-            {compact && <RemoteProjectLobby visible={remoteLobby} busy={remoteStack.busy || remotePanel} openChat={remoteStack.openChat} />}
-            {compact && panel ? (
-              <RemotePanelSheet exiting={workPanelExiting} onBack={remoteStack.back}
-                onExited={() => finishWorkPanelExit(workPanelExitGeneration.current)}>
-                {panel}
-              </RemotePanelSheet>
-            ) : panel}
+            {(presentedWorkPanelOpen || workPanelExiting || (projection && projectionWorkPanelMounted.current)) && (
+              <PortalVisibilityProvider visible={page !== "settings" && (!projection || projectionLayer === "workpanel")}>
+                <WorkPanel
+                  panelBlocked={searchOpen || (projection && projectionLayer !== "workpanel")}
+                  exiting={workPanelExiting}
+                  onExitAnimationEnd={() =>
+                    finishWorkPanelExit(workPanelExitGeneration.current)
+                  }
+                  subagentPanel={subagentPanelOpen ? subagentPanel : null}
+                  onCloseSubagentPanel={closeSubagentPanel}
+                  containerWidth={shellWidth}
+                  sidebarWidth={sidebarWidth}
+                  sidebarCollapsed={sidebarCollapsed}
+                  sidebarExiting={sidebarExiting}
+                  onAutoCollapseSidebar={projection ? undefined : autoCollapseSidebar}
+                  maximized={projection || workPanelMaximized}
+                  projection={projection}
+                  inactive={projection && projectionLayer !== "workpanel"}
+                  onToggleMaximize={toggleWorkPanelMaximize}
+                />
+              </PortalVisibilityProvider>
+            )}
 
             <TooltipButton
               type="button"
               className="app-work-panel-toggle no-drag"
-              hidden={compact && (remoteLobby || remotePanel)}
               tooltip={workPanelToggleTooltip}
               ariaLabel={workPanelToggleTooltip}
               aria-pressed={workPanelOpen || presentedWorkPanelOpen}
@@ -331,7 +338,7 @@ export function AppShell() {
           </Suspense>
         ) : null}
         <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
-        <ToastHost anchorElement={page === "settings" || remoteLobby ? null : toastAnchor} />
+        <ToastHost anchorElement={page === "settings" ? null : toastAnchor} />
         <PluginRendererHost />
         <ExtensionPromptHost />
         {page === "settings" ? <UpdateBanner /> : null}
@@ -341,14 +348,14 @@ export function AppShell() {
 
   return (
     <div
+      data-projection-layer={projection ? projectionLayer : undefined}
       ref={appShellRef}
       className={cx(
         "app-shell",
-        compact && "app-shell-compact",
         !ready && "app-shell-boot",
         page === "settings" && ready && "settings-mode",
         sidebarCollapsed && "sidebar-collapsed",
-        !compact && workPanelMaximized && "work-panel-maximized",
+        workPanelMaximized && "work-panel-maximized",
         showSplash && "is-booting",
       )}
       style={{ "--ds-sidebar-width": `${sidebarWidth}px` } as CSSProperties}
@@ -360,7 +367,7 @@ export function AppShell() {
           bare `!showSplash` test would leave the recovery surface without any
           window controls — the only ones a frameless Windows/Linux window has.
           The controls therefore follow the boot surface that is actually up. */}
-      {document.documentElement.dataset.webRemote !== "true" && ((ready && !showSplash) || startupPhase !== "starting") ? (
+      {(ready && !showSplash) || startupPhase !== "starting" ? (
         <WindowControls />
       ) : null}
       <ProjectCreateDialog />

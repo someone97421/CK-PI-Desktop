@@ -1,5 +1,5 @@
 import { IPC, type Result } from "@pi-desktop/shared";
-import "./web-remote-login.css";
+import { createLanPasswordGate } from "./lan-password-gate";
 
 declare global {
   interface Window {
@@ -107,7 +107,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   });
   if (parentOrigin) window.__piDesktopBrowseAction = browseAction;
   const publishStatus = () => post({ type: "pi-desktop:remote-status", ...status, canCompose: status.authenticated && status.online && status.canCompose });
-  window.addEventListener("pi-desktop:remote-view", (event) => {
+  window.addEventListener("pi-desktop:composer-ready", (event) => {
     status.canCompose = (event as CustomEvent<{ canCompose: boolean }>).detail?.canCompose === true;
     publishStatus();
     publishBrowseStatus();
@@ -343,22 +343,15 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       return result.result;
     })().then((result) => reply({ ok: true, result }), (error: unknown) => reply({ ok: false, error: error instanceof Error ? error.message : String(error) }));
   });
-  const login = document.createElement("section");
-  login.className = "web-remote-login";
-  const form = document.createElement("form"); form.className = "web-remote-login__card";
-  const heading = document.createElement("h1"); heading.textContent = "这是一个助手";
-  const label = document.createElement("label"); label.textContent = "主机密码";
-  const password = document.createElement("input"); password.type = "password"; password.autocomplete = "current-password"; password.required = true;
-  label.append(password);
-  const button = document.createElement("button"); button.type = "submit"; button.textContent = "连接主机";
-  const hint = document.createElement("p"); hint.className = "hint"; hint.role = "status";
-  const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "重新登录";
-  reset.addEventListener("click", expire);
-  form.append(heading, label, button, hint, reset); login.append(form); document.body.append(login);
-  const showConnection = () => { label.hidden = !!token; button.hidden = !!token; reset.hidden = !token; hint.textContent = token ? "正在连接主机…" : ""; };
+  const gate = createLanPasswordGate(async (password) => {
+    const response = await jsonRequest("/api/login", { password, name: parentOrigin ? "Chrome 侧边栏" : "Web Renderer" }, false);
+    if (!response.ok || typeof response.result?.token !== "string") throw new Error(response.error?.message || "登录响应无效");
+    storeToken(response.result.token);
+    connect();
+  });
   const connect = () => {
     if (!token || expired) return;
-    showConnection();
+    gate.connecting();
     const ws = new WebSocket(`${origin.replace(/^http/, "ws")}/ws`);
     socket = ws;
     const authTimeout = setTimeout(() => ws.close(4000, "ready timeout"), 15_000);
@@ -377,7 +370,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       if (frame.type === "ready") {
         clearTimeout(authTimeout); attempts = 0;
         status.authenticated = true; status.online = true;
-        login.remove(); publishStatus(); publishBrowseStatus();
+        gate.dispose(); publishStatus(); publishBrowseStatus();
         if (!mounted) { mounted = true; resolveReady(); }
         else window.dispatchEvent(new CustomEvent("pi-desktop:remote-reconnected"));
       } else if (frame.type === "ipc-event" && typeof frame.channel === "string" && Array.isArray(frame.args)) emit(frame.channel, frame.args);
@@ -390,19 +383,12 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       if (socket !== ws || expired) return;
       status.online = false; publishStatus(); publishBrowseStatus();
       if (event.code === 4401 || event.code === 4403) { expire(); return; }
-      hint.textContent = "连接已断开，正在重连…";
+      gate.reconnecting();
       retry = setTimeout(connect, Math.min(15_000, 500 * 2 ** Math.min(attempts++, 5)));
     });
     ws.addEventListener("error", () => ws.close());
   };
-  form.addEventListener("submit", (event) => {
-    event.preventDefault(); button.disabled = true; hint.textContent = "正在登录…";
-    void jsonRequest("/api/login", { password: password.value, name: parentOrigin ? "Chrome 侧边栏" : "Web Renderer" }, false).then((response) => {
-      if (!response.ok || typeof response.result?.token !== "string") throw new Error(response.error?.message || "登录响应无效");
-      storeToken(response.result.token); password.value = ""; connect();
-    }).catch((error: unknown) => { hint.textContent = error instanceof Error ? error.message : String(error); }).finally(() => { button.disabled = false; });
-  });
-  showConnection(); publishStatus(); publishBrowseStatus();
-  if (token) connect(); else password.focus();
+  publishStatus(); publishBrowseStatus();
+  if (token) connect();
   await ready;
 }

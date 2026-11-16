@@ -39,17 +39,6 @@ export function TemporaryWorkspacePicker({
   };
 
   if (!editable && !path) return null;
-  if (document.documentElement.dataset.webRemote === "true") {
-    return <div className="temporary-workspace-picker">
-      {editable ? <div className="remote-directory-field">
-        <input aria-label={t("chat.chooseTemporaryWorkspace")} placeholder={t("chat.chooseTemporaryWorkspace")}
-          value={path ?? ""} onChange={(event) => setDraftTemporaryWorkspacePath(event.target.value || null)} />
-        {path && <TooltipButton type="button" className="temporary-workspace-button"
-          tooltip={t("chat.clearTemporaryWorkspace")} ariaLabel={t("chat.clearTemporaryWorkspace")}
-          onClick={() => setDraftTemporaryWorkspacePath(null)}><IconX size={15} /></TooltipButton>}
-      </div> : <span className="temporary-workspace-path" title={path ?? undefined}>{path}</span>}
-    </div>;
-  }
 
   return (
     <div className="temporary-workspace-picker" data-testid="temporary-workspace-picker">

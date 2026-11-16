@@ -41,6 +41,7 @@ import { StartupSplash } from "../../components/StartupSplash";
 import { useStartupAnimation } from "./useStartupAnimation";
 import { useStartupWatchdog } from "./useStartupWatchdog";
 import { useTraySessions } from "./useTraySessions";
+import { listenProjectionNavigation, projectionLayerFor, publishProjectionState, webProjectionEnabled } from "../../lib/web-projection";
 
 const MODIFIER_ONLY_KEYS = new Set([
   "Alt",
@@ -52,13 +53,15 @@ const MODIFIER_ONLY_KEYS = new Set([
 
 const PLUGIN_THEME_STYLE_ID = "pi-plugin-theme";
 
-export function useAppShellRuntime(compact = false) {
+export function useAppShellRuntime() {
+  const projection = webProjectionEnabled(document.documentElement.dataset);
   const { t } = useTranslation();
   const platform = window.piDesktop?.platform ?? "darwin";
   const bootstrap = useAppStore((s) => s.bootstrap);
   const ready = useAppStore((s) => s.ready);
   const page = useAppStore((s) => s.page);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const projectionSelectingSession = useAppStore((s) => projection ? s.selectingSessionId : undefined);
   const acknowledgeSessionOutcome = useAppStore(
     (s) => s.acknowledgeSessionOutcome,
   );
@@ -122,7 +125,7 @@ export function useAppShellRuntime(compact = false) {
   const [sidebarWidth] = useState(() => loadSidebarWidth());
   const { sidebarEntering, sidebarExiting, handleSidebarAnimationEnd } = useSidebarTransition(
     sidebarCollapsed,
-    ready && page !== "settings",
+    !projection && ready && page !== "settings",
   );
   const [shellWidth, setShellWidth] = useState(0);
   const appShellRef = useRef<HTMLDivElement>(null);
@@ -132,8 +135,6 @@ export function useAppShellRuntime(compact = false) {
   const workPanelWidthRef = useRef(workPanelWidth);
   const workPanelOpenRef = useRef(workPanelVisible);
   const workPanelMaximizedRef = useRef(false);
-  const compactRef = useRef(compact);
-  compactRef.current = compact;
   const autoCollapsedSidebarRef = useRef(false);
   sidebarCollapsedRef.current = sidebarCollapsed;
   sidebarWidthRef.current = sidebarWidth;
@@ -162,7 +163,15 @@ export function useAppShellRuntime(compact = false) {
   const handleSidebarWidthCommit = useCallback(() => {}, []);
   // 重开侧栏时先压缩右侧面板，保留聊天宽度；不足最小宽度时使用重开目标宽度。
   const reopenSidebar = useCallback(() => {
-    if (compactRef.current) return;
+    if (projection) {
+      const store = useAppStore.getState();
+      store.closeSubagentPanel();
+      store.collapseWorkPanel();
+      store.setPage("chat");
+      autoCollapsedSidebarRef.current = false;
+      setSidebarCollapsed(false);
+      return;
+    }
     if (!sidebarCollapsedRef.current) return;
     if (workPanelOpenRef.current && !workPanelMaximizedRef.current) {
       const currentPanelWidth = workPanelWidthRef.current;
@@ -183,14 +192,13 @@ export function useAppShellRuntime(compact = false) {
     }
     autoCollapsedSidebarRef.current = false;
     setSidebarCollapsed(false);
-  }, []);
+  }, [projection]);
   useTraySessions({ setSearchOpen, reopenSidebar });
 
   // Stable identity: the keydown and native-menu handlers register once and
   // must never capture a stale `sidebarCollapsed`. Every invocation is a user
   // action, so it clears an automatic-collapse record before toggling.
   const toggleSidebar = useCallback(() => {
-    if (compactRef.current) return;
     autoCollapsedSidebarRef.current = false;
     if (sidebarCollapsedRef.current) reopenSidebar();
     else setSidebarCollapsed(true);
@@ -200,11 +208,14 @@ export function useAppShellRuntime(compact = false) {
   // MainChat under its floor. The record is remembered only until the panel
   // closes.
   const autoCollapseSidebar = useCallback(() => {
-    if (compactRef.current) return;
     if (sidebarCollapsedRef.current) return;
+    if (projection) {
+      setSidebarCollapsed(true);
+      return;
+    }
     autoCollapsedSidebarRef.current = true;
     setSidebarCollapsed(true);
-  }, []);
+  }, [projection]);
   // Width the panel lent to a reopened sidebar returns once the sidebar has
   // finished collapsing, whichever path collapsed it.
   useEffect(() => {
@@ -221,6 +232,65 @@ export function useAppShellRuntime(compact = false) {
   const workPanelExitClosing = useRef(false);
   const presentedWorkPanelRef = useRef(false);
   const workPanelExitingRef = useRef(false);
+  const projectionLayer = projectionLayerFor(sidebarCollapsed, presentedWorkPanelOpen, workPanelExiting);
+  const closeProjectionWorkPanel = useCallback(() => {
+    const store = useAppStore.getState();
+    store.closeSubagentPanel();
+    store.collapseWorkPanel();
+    workPanelReservationRequest.current += 1;
+    workPanelExitGeneration.current += 1;
+    presentedWorkPanelRef.current = false;
+    workPanelExitingRef.current = false;
+    workPanelExitClosing.current = false;
+    autoCollapsedSidebarRef.current = false;
+    setPresentedWorkPanelOpen(false);
+    setWorkPanelExiting(false);
+    setWorkPanelMaximized(false);
+  }, []);
+  const openProjectionConversation = useCallback(() => {
+    closeProjectionWorkPanel();
+    setSidebarCollapsed(true);
+  }, [closeProjectionWorkPanel]);
+  const projectionInitialized = useRef(false);
+  useLayoutEffect(() => {
+    if (!projection || !ready || projectionInitialized.current) return;
+    useAppStore.getState().setPage("chat", { record: false });
+    projectionInitialized.current = true;
+    closeProjectionWorkPanel();
+    setSidebarCollapsed(false);
+  }, [projection, ready, closeProjectionWorkPanel]);
+  useLayoutEffect(() => {
+    if (projection && !sidebarCollapsed && projectionSelectingSession) closeProjectionWorkPanel();
+  }, [projection, sidebarCollapsed, projectionSelectingSession, activeSessionId, workPanelOpen, subagentPanelOpen, closeProjectionWorkPanel]);
+  useLayoutEffect(() => {
+    if (projection && ready && !sidebarCollapsed && page !== "chat" && useAppStore.getState().page === page) {
+      openProjectionConversation();
+    }
+  }, [projection, ready, sidebarCollapsed, page, openProjectionConversation]);
+  useEffect(() => {
+    if (!projection || !ready) return;
+    return listenProjectionNavigation(window, { ready, layer: projectionLayer, page }, (layer) => {
+      if (layer === "projects") {
+        closeProjectionWorkPanel();
+        reopenSidebar();
+      } else if (layer === "chat") {
+        useAppStore.getState().setPage("chat");
+        openProjectionConversation();
+      } else {
+        const store = useAppStore.getState();
+        if (!store.activeSessionId) return false;
+        store.setPage("chat");
+        store.openWorkPanel();
+        if (!useAppStore.getState().workPanelOpen) return false;
+        setSidebarCollapsed(true);
+      }
+      return true;
+    });
+  }, [projection, ready, projectionLayer, page, reopenSidebar, closeProjectionWorkPanel, openProjectionConversation]);
+  useEffect(() => {
+    if (!projection) return;
+    publishProjectionState(window, { ready, layer: projectionLayer, page });
+  }, [projection, ready, projectionLayer, page]);
   const [backendDown, setBackendDown] = useState<
     {
       fatal: boolean;
@@ -275,12 +345,19 @@ export function useAppShellRuntime(compact = false) {
   // well, so the user can read a wide plugin view or preview. Transient: it is
   // never persisted and it ends with the panel.
   const toggleWorkPanelMaximize = useCallback(() => {
-    if (compactRef.current) return;
+    if (projection) {
+      openProjectionConversation();
+      return;
+    }
     setWorkPanelMaximized((current) => !current);
-  }, []);
+  }, [projection, openProjectionConversation]);
 
   const togglePresentedWorkPanel = useCallback(() => {
     const store = useAppStore.getState();
+    if (projection && (store.workPanelOpen || store.subagentPanel || presentedWorkPanelRef.current)) {
+      openProjectionConversation();
+      return;
+    }
     if (workPanelExitingRef.current) {
       store.openWorkPanel();
       return;
@@ -303,7 +380,7 @@ export function useAppShellRuntime(compact = false) {
       return;
     }
     store.openWorkPanel();
-  }, []);
+  }, [projection, openProjectionConversation]);
 
   const finishWorkPanelExit = useCallback((generation: number) => {
     if (generation !== workPanelExitGeneration.current) return;
@@ -312,7 +389,7 @@ export function useAppShellRuntime(compact = false) {
     workPanelExitClosing.current = true;
     const request = ++workPanelReservationRequest.current;
     void commitWorkPanelPresentation({
-      reservation: compactRef.current ? Promise.resolve() : api.setWorkPanelReservation(0),
+      reservation: api.setWorkPanelReservation(0),
       isCurrent: () =>
         request === workPanelReservationRequest.current &&
         generation === workPanelExitGeneration.current,
@@ -339,6 +416,21 @@ export function useAppShellRuntime(compact = false) {
     const shouldPresent =
       ready && !pageHidesWorkPanel && (workPanelOpen || subagentPanelOpen);
     const request = ++workPanelReservationRequest.current;
+    if (projection) {
+      const store = useAppStore.getState();
+      const visible = ready && store.page === "chat" && (store.workPanelOpen || Boolean(
+        store.subagentPanel && store.subagentPanel.sessionId === store.activeSessionId,
+      ));
+      presentedWorkPanelRef.current = visible;
+      workPanelExitingRef.current = false;
+      setPresentedWorkPanelOpen(visible);
+      setWorkPanelExiting(false);
+      if (visible) {
+        autoCollapsedSidebarRef.current = false;
+        setSidebarCollapsed(true);
+      }
+      return;
+    }
 
     if (shouldPresent) {
       // The panel is an internal flex column. Keep the reservation seam
@@ -349,7 +441,7 @@ export function useAppShellRuntime(compact = false) {
       workPanelExitingRef.current = false;
       setWorkPanelExiting(false);
       void commitWorkPanelPresentation({
-        reservation: compact ? Promise.resolve() : api.setWorkPanelReservation(0),
+        reservation: api.setWorkPanelReservation(0),
         isCurrent: () => request === workPanelReservationRequest.current,
         commit: () => setPresentedWorkPanelOpen(shouldPresent),
       });
@@ -369,11 +461,11 @@ export function useAppShellRuntime(compact = false) {
     }
 
     void commitWorkPanelPresentation({
-      reservation: compact ? Promise.resolve() : api.setWorkPanelReservation(0),
+      reservation: api.setWorkPanelReservation(0),
       isCurrent: () => request === workPanelReservationRequest.current,
       commit: () => setPresentedWorkPanelOpen(shouldPresent),
     });
-  }, [page, ready, subagentPanelOpen, workPanelOpen, compact]);
+  }, [projection, page, ready, subagentPanelOpen, workPanelOpen]);
 
   // Fallback if animationend is skipped (display:none mid-flight, etc.).
   useEffect(() => {
@@ -411,6 +503,7 @@ export function useAppShellRuntime(compact = false) {
           case "newTask":
             if (workPanelMaximizedRef.current) setWorkPanelMaximized(false);
             await store.newSession();
+            if (projection) openProjectionConversation();
             requestAnimationFrame(() =>
               document.querySelector<HTMLTextAreaElement>(".composer-input")?.focus(),
             );
@@ -457,13 +550,11 @@ export function useAppShellRuntime(compact = false) {
         );
       }
     },
-    [showToast, toggleSidebar],
+    [showToast, toggleSidebar, projection, openProjectionConversation],
   );
 
   useEffect(() => {
-    const unsubscribe = api.onMenuCommand((command) => {
-      if (document.documentElement.dataset.webRemote !== "true") void runMenuCommand(command);
-    });
+    const unsubscribe = api.onMenuCommand((command) => void runMenuCommand(command));
     return unsubscribe;
   }, [runMenuCommand]);
 
@@ -471,7 +562,6 @@ export function useAppShellRuntime(compact = false) {
     // Fullscreen hides the macOS traffic lights; CSS shifts titlebar
     // controls left via this attribute.
     const off = api.onWindowFullScreen(({ fullScreen }) => {
-      if (document.documentElement.dataset.webRemote === "true") return;
       document.documentElement.dataset.fullscreen = fullScreen ? "true" : "false";
     });
     return off;
@@ -1154,6 +1244,9 @@ export function useAppShellRuntime(compact = false) {
 
 
   return {
+    projection,
+    projectionLayer,
+    openProjectionConversation,
     t,
     ready,
     page,

@@ -1,3 +1,8 @@
+.composer-permission-icon {
+  display: none;
+  flex: 0 0 auto;
+}
+
 /*
   Composer menus — the dark composer box treatment (DARK_COMPOSER_BOX), the
   permission-mode chip menu, the model × reasoning picker and its

@@ -1,0 +1,18 @@
+:root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+body { margin: 0; color: CanvasText; background: Canvas; }
+main { max-width: 640px; margin: auto; padding: 24px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+h1 { margin: 0; font-size: 20px; }
+form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 24px; }
+label { display: grid; gap: 6px; }
+input, button { box-sizing: border-box; font: inherit; padding: 8px 12px; border: 1px solid color-mix(in srgb, CanvasText 25%, Canvas); border-radius: 6px; }
+input { min-width: 0; background: Field; color: FieldText; }
+#port { width: 110px; }
+button { cursor: pointer; color: ButtonText; background: ButtonFace; }
+button:disabled { cursor: default; opacity: .5; }
+input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+#password-state { align-self: center; }
+#links { display: grid; gap: 8px; margin-block: 16px; }
+a { color: LinkText; overflow-wrap: anywhere; }
+#devices > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 8px; }
+.hint { display: block; font-size: 12px; opacity: .75; overflow-wrap: anywhere; }

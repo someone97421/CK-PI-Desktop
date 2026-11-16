@@ -56,23 +56,35 @@
 }
 
 @container composer-stack (max-width: 450px) {
-  .composer-right .composer-model-thinking-chip {
-    width: 32px;
-    max-width: 32px;
-    flex: 0 0 32px;
-    justify-content: center;
+  .composer-right .composer-model-thinking-chip,
+  .composer-mode-chip,
+  .composer-permission > .mode-chip {
+    width: 28px !important;
+    min-width: 28px !important;
+    max-width: 28px !important;
+    flex: 0 0 28px !important;
+    justify-content: center !important;
     gap: 0 !important;
     padding: 0 !important;
   }
 
-  /* Collapsed to a glyph: the labels are gone, so the icon carries the trigger. */
-  .composer-model-thinking-icon {
-    display: inline-flex;
+  .composer-mode-chip-face {
+    gap: 0;
   }
 
+  .composer-mode-chip-label,
+  .composer-permission > .mode-chip > .text-sm,
   .composer-model-thinking-model,
+  .composer-model-thinking-level,
+  .composer-mode-chip-caret,
+  .composer-permission-chevron,
   .composer-model-thinking-chevron {
     display: none;
+  }
+
+  .composer-permission-icon,
+  .composer-model-thinking-icon {
+    display: inline-flex;
   }
 
   .composer-right .context-inspector-trigger {
@@ -83,7 +95,6 @@
   .composer-right .context-inspector-ring-value {
     display: none;
   }
-
 }
 
 @media (prefers-reduced-motion: reduce) {

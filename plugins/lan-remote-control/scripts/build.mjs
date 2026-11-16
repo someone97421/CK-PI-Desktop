@@ -47,7 +47,7 @@ try {
     console.log(`本次插件打包版本：${nextVersion}`);
   }
   await writeFile(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  for (const name of ['web', 'panel']) {
+  for (const name of ['settings', 'adapter']) {
     await copyAssets(join(root, name), join(staging, name));
   }
   await build({
@@ -61,10 +61,10 @@ try {
     sourcemap: false,
     legalComments: 'eof',
   });
-  for (const name of ['web', 'panel']) {
+  for (const entry of ['settings/access.js', 'adapter/projection.js']) {
     await build({
-      entryPoints: [join(root, name, 'app.js')],
-      outfile: join(staging, name, 'app.js'),
+      entryPoints: [join(root, entry)],
+      outfile: join(staging, entry),
       bundle: true,
       platform: 'browser',
       target: ['chrome110', 'safari16'],

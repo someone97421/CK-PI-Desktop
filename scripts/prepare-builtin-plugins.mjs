@@ -10,7 +10,7 @@ export const BUILTIN_PLUGIN_SOURCES = [
   },
   {
     id: "local.lan-remote-control", directory: "lan-remote-control",
-    assets: ["web", "panel", "README.md"], browserEntries: ["web/app.js", "panel/app.js"],
+    assets: ["settings", "adapter", "README.md"], browserEntries: ["settings/access.js", "adapter/projection.js"],
   },
   {
     id: "local.codex-pet", directory: "codex-pet",

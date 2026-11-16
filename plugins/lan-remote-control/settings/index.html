@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>局域网远控 V2</title>
+  <link rel="stylesheet" href="access.css">
+  <script type="module" src="access.js"></script>
+</head>
+<body>
+  <main>
+    <header><h1>局域网远控 V2</h1><output id="state" aria-live="polite">读取中</output></header>
+    <form id="connection">
+      <label>端口<input id="port" type="number" min="1" max="65535" required value="7878"></label>
+      <button id="enable" type="submit" title="保存开启状态；应用重启后自动恢复访问">开启并记住</button>
+      <button id="disable" type="button" title="关闭访问并取消自动启用">关闭</button>
+    </form>
+    <form id="credentials">
+      <label>访问密码<input id="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required placeholder="至少 8 个字符"></label>
+      <button type="submit" title="保存密码后，已登录设备需要重新登录">保存密码</button>
+      <output id="password-state"></output>
+    </form>
+    <nav id="links" aria-label="访问地址"></nav>
+    <section id="devices" aria-label="已登录设备"></section>
+    <output id="feedback" class="hint" role="status" aria-live="polite"></output>
+  </main>
+</body>
+</html>

@@ -6116,10 +6116,11 @@ export class PluginRuntime {
           assertRemoteRenderer();
           if (!input || !Array.isArray(input.files) || !input.files.length || input.files.length > 32) throw apiError("INVALID_PARAMS", "uploaded files are required");
           if (!this.services.importUploadedFiles) throw apiError("UNSUPPORTED", "renderer uploads are unavailable");
-          const root = this.pluginDataDir(pluginId);
+          const root = realpathSync(this.pluginDataDir(pluginId));
           const files = await Promise.all(input.files.map(async (file) => {
             if (!file || typeof file.path !== "string") throw apiError("INVALID_PARAMS", "uploaded file path is required");
-            const path = await resolveRealPathWithinRoot(root, file.path);
+            const requested = isAbsolute(file.path) ? file.path : resolve(root, file.path);
+            const path = await resolveRealPathWithinRoot(root, relative(root, requested));
             if (!path) throw apiError("INVALID_PARAMS", "uploaded file is outside the plugin data directory");
             return { path, name: file.name };
           }));

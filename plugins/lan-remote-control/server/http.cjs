@@ -423,7 +423,7 @@ function resolveStaticPath(rootDir, pathname) {
  * `lstat` and the resolved real path must stay inside the real root, so neither
  * a link nor a reparse point can escape into the plugin or the user's disk.
  */
-async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, connectOrigins = [], renderer = false }) {
+async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, connectOrigins = [], renderer = false, projection = false }) {
   const resolved = resolveStaticPath(rootDir, pathname);
   if (!resolved.ok) return resolved;
   const mime = mimeForFile(resolved.filePath);
@@ -455,9 +455,13 @@ async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, conne
   applySecurityHeaders(res, { html, connectOrigins });
   if (html && renderer) {
     const source = await fsp.readFile(resolved.filePath, "utf8");
-    const content = source.replace(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) =>
+    let content = source.replace(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) =>
       /\bhttp-equiv\s*=\s*(["'])Content-Security-Policy\1/i.test(tag) ? "" : tag,
     ).replace(/\b(src|href)=(['"])\.\/assets\//g, "$1=$2/assets/");
+    if (projection) {
+      const adapter = '<link rel="stylesheet" href="/__lan-remote/projection.css"><script src="/__lan-remote/projection.js"></script>';
+      content = /<\/head>/i.test(content) ? content.replace(/<\/head>/i, `${adapter}</head>`) : `${adapter}${content}`;
+    }
     const body = Buffer.from(content, "utf8");
     res.setHeader("Content-Type", mime);
     res.setHeader("Content-Length", String(body.length));

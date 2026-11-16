@@ -17,15 +17,8 @@ import { FilesTab } from "./FilesTab";
  * to blocking dialogs and global floating surfaces that overlap its bounds.
  */
 export function PluginViewTab(props: Parameters<typeof NativePluginViewTab>[0]) {
-  if (document.documentElement.dataset.webRemote !== "true") return <NativePluginViewTab {...props} />;
-  if (props.pluginId === "pi.file-manager") return <FilesTab />;
-  return <WebPluginViewNotice title={props.title} icon={props.icon} />;
-}
-
-function WebPluginViewNotice({ title, icon }: { title: string; icon?: string }) {
-  const { i18n } = useTranslation();
-  return <div className="work-plugin-view"><WorkTabEmpty icon={pluginViewIcon(icon) ?? IconPlug} title={title}
-    body={i18n.resolvedLanguage?.startsWith("zh") ? "此扩展视图需要在桌面端打开" : "Open this extension view on the desktop"} /></div>;
+  if (document.documentElement.dataset.webRemote === "true" && props.pluginId === "pi.file-manager") return <FilesTab />;
+  return <NativePluginViewTab {...props} />;
 }
 
 function NativePluginViewTab({

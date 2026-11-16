@@ -5,9 +5,11 @@ import { mergeLiveSessionMessages } from "../lib/session-transcript";
 import { EMPTY_TRANSCRIPT, transcriptWasRewritten } from "../lib/transcript-reading";
 import { useAppStore } from "../stores/app-store";
 import { useTranscriptView } from "./use-transcript-view";
+import { toolResultPayload } from "../lib/tool-presentation";
+import { delegationExecutionKey, isDelegationStartTool } from "../lib/tool-display";
 
 /** 子代理详情独立读取历史，不依赖主聊天当前加载的分页窗口。 */
-export function useSubagentTranscriptView(sessionId: string) {
+export function useSubagentTranscriptView(sessionId: string, delegationId?: string) {
   const transcript = useTranscriptView(sessionId);
   const live = useAppStore((state) => state.activeSessionId === sessionId
     ? state.messages : state.retainedTranscripts[sessionId] ?? EMPTY_TRANSCRIPT);
@@ -42,13 +44,18 @@ export function useSubagentTranscriptView(sessionId: string) {
       const pages: UiMessage[][] = [];
       do {
         const { session } = await api.getSession(sessionId, {
-          messageLimit: 200,
+          messageLimit: delegationId ? 100 : 200,
           ...(before === undefined ? {} : { messageBefore: before }),
         });
         if (cancelled) return;
         if (!session) throw new Error("Session unavailable");
         pages.unshift(session.messages);
-        if (!session.hasMoreBefore) break;
+        const containsDelegation = delegationId && session.messages.some((message) =>
+          message.role === "tool" &&
+          isDelegationStartTool(message.toolName) &&
+          delegationExecutionKey(toolResultPayload(message)) === delegationId,
+        );
+        if (containsDelegation || !session.hasMoreBefore) break;
         const next = session.messageStart;
         if (next === undefined || (before !== undefined && next >= before)) {
           throw new Error("History page did not advance");
@@ -62,7 +69,7 @@ export function useSubagentTranscriptView(sessionId: string) {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [sessionId, running, revision]);
+  }, [delegationId, sessionId, running, revision]);
 
   const messages = useMemo(() => {
     const durable = mergeLiveSessionMessages(history, transcript.messages);

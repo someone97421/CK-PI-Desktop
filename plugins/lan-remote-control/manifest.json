@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "id": "local.lan-remote-control",
-  "name": "局域网远程控制",
-  "description": "通过局域网浏览器或 Chrome 侧边栏访问这是一个助手的项目和会话，并连接 Browse 浏览器调试。共用访问密码和设备记录；默认不监听网络。",
-  "version": "0.2.41",
+  "name": "局域网远控 V2",
+  "description": "直接投射当前安装的原版 Renderer，仅转换局域网通信、认证、IPC 与资源。保存访问密码和自动启用选择。",
+  "version": "2.0.8",
   "main": "main.cjs",
   "enabledByDefault": false,
   "engines": {
@@ -13,19 +13,17 @@
     "ui.panel",
     "background.service",
     "desktop.control",
-    "models.list",
-    "mcp.server.local",
-    "clipboard.write"
+    "mcp.server.local"
   ],
   "activationEvents": [
     "onStartup",
     "onCommand:lan-remote-control.open"
   ],
   "ui": {
-    "panel": "panel/index.html",
-    "width": 840,
-    "height": 760,
-    "title": "局域网远程控制"
+    "panel": "settings/index.html",
+    "width": 700,
+    "height": 560,
+    "title": "局域网远控 V2"
   },
   "contributes": {
     "mcpServers": [
@@ -46,7 +44,7 @@
     "commands": [
       {
         "id": "lan-remote-control.open",
-        "title": "局域网远程控制",
+        "title": "局域网远控 V2",
         "keywords": [
           "手机",
           "远程",
@@ -64,14 +62,14 @@
     "services": [
       {
         "id": "lan-remote-control",
-        "label": "局域网远程控制",
+        "label": "局域网远控 V2",
         "autoRestart": true
       }
     ],
     "settingsDestinations": [
       {
         "id": "lan-remote-control",
-        "label": "局域网远程控制",
+        "label": "局域网远控 V2",
         "icon": "plug",
         "keywords": [
           "局域网",
@@ -82,7 +80,7 @@
           "侧边栏",
           "Browse"
         ],
-        "entry": "panel/index.html"
+        "entry": "settings/index.html"
       }
     ]
   }

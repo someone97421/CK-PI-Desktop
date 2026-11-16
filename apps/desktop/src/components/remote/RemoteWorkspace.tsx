@@ -7,8 +7,8 @@ import { useAppStore } from "../../stores/app-store";
 import { Button, SegmentedControl } from "../ui";
 import "../../styles/remote-mvp.css";
 
-export function RemoteWorkspace({ session, width, exiting, onExitAnimationEnd }: {
-  session: SessionSummary; width: number; exiting?: boolean; onExitAnimationEnd?: () => void;
+export function RemoteWorkspace({ session, width, exiting, onExitAnimationEnd, inactive = false }: {
+  session: SessionSummary; width: number; exiting?: boolean; onExitAnimationEnd?: () => void; inactive?: boolean;
 }) {
   const { t } = useTranslation("remote");
   const [tab, setTab] = useState<"files" | "review">("files");
@@ -58,7 +58,10 @@ export function RemoteWorkspace({ session, width, exiting, onExitAnimationEnd }:
   };
   return (
     <aside className={`work-panel remote-workspace${exiting ? " is-exiting" : ""}`}
-      style={{ "--work-panel-width": `${width}px` } as CSSProperties}
+      style={{ "--work-panel-width": `${width}px`, display: inactive ? "none" : undefined } as CSSProperties}
+      hidden={inactive ? true : undefined}
+      inert={inactive ? true : undefined}
+      aria-hidden={inactive ? true : undefined}
       onAnimationEnd={(event) => { if (event.target === event.currentTarget && exiting) onExitAnimationEnd?.(); }}
       aria-label={t("workspace")}>
       <div className="remote-actions">

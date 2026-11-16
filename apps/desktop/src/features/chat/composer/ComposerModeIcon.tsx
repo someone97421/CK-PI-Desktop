@@ -1,7 +1,7 @@
 import type { Mode } from "@pi-desktop/shared";
 import {
+  IconBot,
   IconListChecks,
-  IconShield,
   IconSparkles,
   IconTarget,
   IconWorkflow,
@@ -11,6 +11,6 @@ import {
 export function ModeIcon({ mode, staged }: { mode: Mode; staged?: boolean }) {
   if (mode === "plan") return <IconListChecks size={14} />;
   if (mode === "goal") return <IconTarget size={14} />;
-  if (mode === "agent" || staged === undefined) return <IconShield size={14} />;
+  if (mode === "agent" || staged === undefined) return <IconBot size={14} />;
   return staged ? <IconWorkflow size={14} /> : <IconSparkles size={14} />;
 }

@@ -52,7 +52,7 @@ function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
   const activeSessionId = useAppStore((state) => state.activeSessionId);
   // A tab only renders inside a presented panel, which always has a session;
   // the empty key keeps the hook's contract while nothing is active.
-  const transcript = useSubagentTranscriptView(activeSessionId ?? "");
+  const transcript = useSubagentTranscriptView(activeSessionId ?? "", delegationId);
   const { messages } = transcript;
   const delegateMessage = useMemo(() => [...messages].reverse().find(message => {
     if (message.role !== "tool" || !isDelegationStartTool(message.toolName)) return false;
