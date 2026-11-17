@@ -1,5 +1,11 @@
 /** Resolve configured chat defaults by complete provider and wire model ID. */
-import { isImageGenerationModel, modelWireIdsEqual as sameComposerModelId, type ImageGenerationBindings, type ProviderPublic } from "@pi-desktop/shared";
+import {
+  isImageOnlyChatModel,
+  type ImageGenerationBindings,
+  modelWireIdsEqual as sameComposerModelId,
+  type ModelInfo,
+  type ProviderPublic,
+} from "@pi-desktop/shared";
 
 export type DefaultModelOption = {
   provider: ProviderPublic;
@@ -10,14 +16,25 @@ export type DefaultModelOption = {
 export function defaultModelOptions(
   providers: readonly ProviderPublic[],
   imageGeneration?: ImageGenerationBindings | null,
+  discovered?: Record<string, readonly ModelInfo[] | undefined>,
 ): DefaultModelOption[] {
   return providers.flatMap((provider) => {
     const modelIds = (provider.models ?? [])
       .map((binding) => binding.id.trim())
       .filter(Boolean);
     const ids = modelIds.length > 0 ? modelIds : [defaultModelIdOf(provider)?.trim() ?? ""];
+    const catalog = discovered?.[provider.id];
     return [...new Set(ids)].filter((modelId) => !!modelId &&
-      !isImageGenerationModel(imageGeneration, provider.id, modelId),
+      // Only a pure image-generation endpoint is excluded; a dual-capability
+      // model the user marked for image generation stays selectable (#2253).
+      // The discovered metadata is the same modalities source session launch
+      // reads, so the default picker and launch cannot disagree.
+      !isImageOnlyChatModel(
+        imageGeneration,
+        provider.id,
+        modelId,
+        catalog?.find((model) => sameComposerModelId(model.modelId, modelId)),
+      ),
     ).map((modelId) => ({ provider, modelId }));
   });
 }
@@ -60,10 +77,12 @@ export function hasResolvedDefaultModel(
   providers: readonly ProviderPublic[],
   defaultProviderId?: string,
   defaultModelId?: string,
+  imageGeneration?: ImageGenerationBindings | null,
+  discovered?: Record<string, readonly ModelInfo[] | undefined>,
 ): boolean {
   const provider = providers.find((candidate) => candidate.id === defaultProviderId);
   if (!provider) return false;
-  return defaultModelOptions([provider]).some(({ modelId }) => sameComposerModelId(modelId, defaultModelId?.trim() || defaultModelIdOf(provider) || ""));
+  return defaultModelOptions([provider], imageGeneration, discovered).some(({ modelId }) => sameComposerModelId(modelId, defaultModelId?.trim() || defaultModelIdOf(provider) || ""));
 }
 
 /**
@@ -77,10 +96,11 @@ export function hasResolvedDefaultModel(
 export function providerServesChatModels(
   provider: ProviderPublic,
   imageGeneration?: ImageGenerationBindings | null,
+  discovered?: Record<string, readonly ModelInfo[] | undefined>,
 ): boolean {
   return provider.enabled &&
     (provider.hasSecret || !!provider.hasOauth || provider.authKind === "none") &&
-    defaultModelOptions([provider], imageGeneration).length > 0;
+    defaultModelOptions([provider], imageGeneration, discovered).length > 0;
 }
 
 /**
@@ -98,11 +118,11 @@ export function keepsAppDefaultModel(
   defaultProviderId?: string,
   defaultModelId?: string,
   imageGeneration?: ImageGenerationBindings | null,
+  discovered?: Record<string, readonly ModelInfo[] | undefined>,
 ): boolean {
   const provider = providers.find((candidate) => candidate.id === defaultProviderId);
-  if (!provider || !providerServesChatModels(provider, imageGeneration)) return false;
-  return defaultModelOptions([provider], imageGeneration).some(({ modelId }) =>
-    sameComposerModelId(modelId, defaultModelId?.trim() || defaultModelIdOf(provider) || ""));
+  if (!provider || !providerServesChatModels(provider, imageGeneration, discovered)) return false;
+  return hasResolvedDefaultModel(providers, defaultProviderId, defaultModelId, imageGeneration, discovered);
 }
 
 /**
@@ -118,15 +138,17 @@ export function loginDefaultModel(
   providerId: string,
   defaults: { defaultProviderId?: string; defaultModelId?: string },
   imageGeneration?: ImageGenerationBindings | null,
+  discovered?: Record<string, readonly ModelInfo[] | undefined>,
 ): { providerId: string; modelId: string } | null {
   if (keepsAppDefaultModel(
     providers,
     defaults.defaultProviderId,
     defaults.defaultModelId,
     imageGeneration,
+    discovered,
   )) return null;
   const account = providers.find((candidate) => candidate.id === providerId);
-  if (!account || !providerServesChatModels(account, imageGeneration)) return null;
-  const modelId = defaultModelOptions([account], imageGeneration)[0]?.modelId;
+  if (!account || !providerServesChatModels(account, imageGeneration, discovered)) return null;
+  const modelId = defaultModelOptions([account], imageGeneration, discovered)[0]?.modelId;
   return modelId ? { providerId: account.id, modelId } : null;
 }

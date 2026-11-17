@@ -46,6 +46,7 @@ function fixture(t) {
   }));
   Object.assign(state, createQueueSlice({
     get, set, runtime, materializeDraftSession: coordination.materializeDraftSession,
+    flushPendingSessionConfiguration: coordination.flushPendingSessionConfiguration,
     recordSubmittedInput: async () => {}, insertOptimisticUserMessage: runtime.insertOptimisticUserMessage,
     retractOptimisticUserMessage: runtime.retractOptimisticUserMessage,
     promptAttachmentsFromDraft: () => [], withoutRecordKey,
@@ -109,4 +110,40 @@ test("failed creation rejects all waiters and releases the slot for retry", asyn
     projectPath: "/synthetic/project", updatedAt: "2026-11-02T00:00:00Z",
   } }));
   assert.equal(await f.coordination.materializeDraftSession(), "retry");
+});
+
+test("sending a Goal preserves the selected mode and newer model settings", async t => {
+  const f = fixture(t);
+  f.set({ activeSessionId: "goal", sessions: [{ id: "goal", title: "Task", mode: "goal", permissionMode: "auto", providerId: "p", modelId: "old", thinkingLevel: "high" }] });
+  const accepted = Promise.withResolvers();
+  t.mock.method(api, "prompt", async () => { await accepted.promise; return { accepted: true }; });
+  const sending = f.get().sendPrompt("first objective");
+  await f.get().configureActiveSession({ mode: "goal", modelId: "new", thinkingLevel: "high", permissionMode: "auto" });
+  accepted.resolve();
+  assert.equal(await sending, true);
+  assert.equal(f.get().sessions[0].mode, "goal");
+  assert.equal(f.get().sessions[0].modelId, "new");
+  assert.equal(f.get().runningSessions.goal, true);
+  assert.equal(f.runtime.pendingSessionConfigurations.get("goal").permissionMode, "auto");
+});
+
+test("queued input preserves the selected mode and later selections", async t => {
+  const f = fixture(t);
+  f.set({ activeSessionId: "goal", sessions: [{ id: "goal", title: "Task", mode: "goal", thinkingLevel: "high" }], runningSessions: { goal: true } });
+  t.mock.method(api, "queuePrompt", async request => ({ id: "queued", ...request }));
+  t.mock.method(api, "listQueuedPrompts", async () => ({ entries: [] }));
+  assert.equal(await f.get().sendPrompt("replacement"), true);
+  assert.equal(f.get().sessions[0].mode, "goal");
+  await f.get().configureActiveSession({ mode: "goal", thinkingLevel: "high" });
+  const gate = Promise.withResolvers();
+  t.mock.method(api, "queuePrompt", async () => gate.promise);
+  const sending = f.get().sendPrompt("later goal");
+  await f.get().configureActiveSession({ mode: "plan", thinkingLevel: "high" });
+  gate.resolve({ id: "later", content: "later goal", sessionId: "goal" });
+  assert.equal(await sending, true);
+  assert.equal(f.get().sessions[0].mode, "plan");
+  await f.get().configureActiveSession({ mode: "goal", thinkingLevel: "high" });
+  t.mock.method(api, "queuePrompt", async () => { throw new Error("queue full"); });
+  assert.equal(await f.get().sendPrompt("rejected"), false);
+  assert.equal(f.get().sessions[0].mode, "goal");
 });

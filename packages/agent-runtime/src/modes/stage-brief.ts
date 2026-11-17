@@ -133,7 +133,7 @@ function originLine(turn: ModeTurnContext): string {
 
 function flowLine(stage: ModeStage): string {
   if (stage.loop) {
-    return "This stage repeats: after each turn the host starts another turn of it until its exit checks pass or the run's budget runs out.";
+    return "This stage repeats: after each normal turn the host starts another turn until its exit checks pass, a blocked report or execution error stops continuation, or the run's budget runs out.";
   }
   if (stage.exit.length === 0) {
     return `This stage has no exit checks: it completes when this turn ends, or as soon as you call ${COMPLETE_STAGE_TOOL_NAME}.`;
@@ -179,7 +179,7 @@ export function stageBrief(definition: ModeDefinition, stage: ModeStage, turn: M
     : `When the checks pass, the run finishes and the session returns to the \`${definition.returnTo}\` mode.`);
   lines.push(
     "",
-    `Call ${COMPLETE_STAGE_TOOL_NAME} with a short summary of what the stage produced and the complete Markdown of every artifact you write (\`artifacts: { <id>: <markdown> }\`) once the stage's work is done. If a check fails, fix the cause and call it again. When it reports that the stage advanced, finished, is blocked, or awaits approval, the turn ends.`,
+    `Call ${COMPLETE_STAGE_TOOL_NAME} with a short summary and complete artifact Markdown (\`artifacts: { <id>: <markdown> }\`) when the stage's work is done. A completed report requires fresh evidence for every criterion, no remaining work, and passing exit checks. If no authorized work can proceed, submit a blocked report with criterion outcomes, evidence, remainingWork, and blockerReason; this records non-success and waits for the user. Reports do not change the objective, budget, permissions, or user controls. Correct failed exit checks and retry; a settled outcome ends the turn.`,
   );
   return lines.join("\n");
 }

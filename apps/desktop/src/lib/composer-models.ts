@@ -1,7 +1,7 @@
 import {
   bindingSupportsImages,
   effectiveContextWindow,
-  isImageGenerationModel,
+  isImageOnlyChatModel,
   type ImageGenerationBindings,
   modelMatchesFilter,
   modelWireIdsEqual,
@@ -15,6 +15,31 @@ type ConfiguredProvider = Pick<ProviderPublic, "id" | "models" | "defaultModelId
 /** UI identity is the complete wire id, not a catalog alias or a route suffix. */
 export function sameComposerModelId(left: string, right: string): boolean {
   return modelWireIdsEqual(left, right);
+}
+
+/**
+ * Catalog/discovery metadata for a configured model id — the same modalities
+ * source session launch reads from its catalog row. Callers of
+ * `isImageOnlyChatModel` must resolve and pass this so every chat-eligibility
+ * answer (picker, defaults, subagents, canSend, launch) sees one truth (#2253).
+ */
+export function composerModelMetadata(
+  discovered: readonly ModelInfo[] | undefined,
+  modelId: string | undefined,
+): ModelInfo | undefined {
+  if (!modelId) return undefined;
+  return (discovered ?? []).find((model) => sameComposerModelId(model.modelId, modelId));
+}
+
+/** Explicit output capabilities decide whether an image binding can chat. */
+export function composerModelChatEligible(
+  imageGeneration: ImageGenerationBindings | null | undefined,
+  providerId: string | undefined,
+  modelId: string | undefined,
+  discovered?: readonly ModelInfo[],
+): boolean {
+  const metadata = composerModelMetadata(discovered, modelId);
+  return !isImageOnlyChatModel(imageGeneration, providerId, modelId, metadata);
 }
 
 function configuredModelIds(provider: ConfiguredProvider): string[] {
@@ -38,9 +63,10 @@ export function composerModelsForProvider(
   discovered: readonly ModelInfo[] | undefined,
   imageGeneration?: ImageGenerationBindings | null,
 ): ModelInfo[] {
-  return configuredModelIds(provider).filter((modelId) =>
-    !isImageGenerationModel(imageGeneration, provider.id, modelId),
-  ).map((modelId) => {
+  return configuredModelIds(provider).filter((modelId) => {
+    const metadata = composerModelMetadata(discovered, modelId);
+    return !isImageOnlyChatModel(imageGeneration, provider.id, modelId, metadata);
+  }).map((modelId) => {
     const metadata = (discovered ?? []).find((model) =>
       sameComposerModelId(model.modelId, modelId),
     );

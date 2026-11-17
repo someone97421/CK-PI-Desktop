@@ -164,6 +164,14 @@ pnpm build:pi-host
 
 开发、编译和打包统一经过 `scripts/build.mjs`。桌面产物默认写入 `apps/desktop/release/`；可用 `THIS_IS_A_AGENT_OUTPUT_DIR` 指定输出根目录，用 `THIS_IS_A_AGENT_BUILD_TIME` 为多平台构建复用同一版本时间。
 
+## 安装桌面应用
+
+从 [CK-PI-Desktop Releases](https://github.com/someone97421/CK-PI-Desktop/releases) 下载与你的系统匹配的安装包。Windows 使用 `Setup-版本号-x64.exe` 安装，或直接运行 `Portable-版本号-x64.exe`；macOS 根据芯片选择 `arm64` 或 `x64` 的 `.dmg` 或 `-mac.zip`。macOS 压缩包解压后将应用拖到「应用程序」即可。
+
+安装桌面应用后，再按 [扩展中文安装说明](https://github.com/someone97421/ck-pi-desktop-browse#安装扩展) 安装浏览器扩展。桌面应用已内置 Browse CLI 与 MCP，普通使用无需单独安装 CLI、构建 CLI、配置 MCP 或输入配对码。
+
+预发布版本在 GitHub Releases 中标记为 **Pre-release**；需要稳定版本时选择未标记为 Pre-release 的正式版本。
+
 ## 内置与可选插件
 
 桌面应用随包提供浏览器、文件管理器、终端、子代理观测和 Responses 原生生图插件。仓库 [`plugins/`](plugins/) 下提供可选的桌面控制、局域网远程控制、Codex 宠物和任务文件审查插件，安装包通过应用插件页面导入。

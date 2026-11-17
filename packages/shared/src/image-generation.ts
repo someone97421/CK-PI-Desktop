@@ -45,6 +45,31 @@ export function isImageGenerationModel(
     entry.providerId === providerId && sameImageModelId(entry.modelId, modelId),
   );
 }
+
+/** Unknown output capabilities remain chat-eligible, including custom wire ids. */
+export function modelSupportsConversation(
+  _modelId: string | undefined,
+  model?: { modalities?: { output?: readonly string[] } | null } | null,
+): boolean {
+  const output = model?.modalities?.output;
+  return !output?.length || output.includes("text");
+}
+
+/**
+ * Whether a model marked for image generation must stay out of chat. Only a
+ * pure image-generation endpoint is excluded; a dual-capability model — one
+ * the user marked for image generation that also supports conversation —
+ * keeps its chat eligibility everywhere (#2253).
+ */
+export function isImageOnlyChatModel(
+  binding: ImageGenerationBindings | null | undefined,
+  providerId: string | undefined,
+  modelId: string | undefined,
+  model?: { modalities?: { output?: readonly string[] } | null } | null,
+): boolean {
+  return isImageGenerationModel(binding, providerId, modelId) &&
+    !modelSupportsConversation(modelId, model);
+}
 export const MAX_GENERATED_IMAGES = 10;
 export const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
 export const IMAGE_BATCH_TIMEOUT_MS = 950_000;

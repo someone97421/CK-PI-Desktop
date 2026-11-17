@@ -285,12 +285,17 @@ function finishTurn(
       }, 5 * 60 * 1000).unref();
     }
 
-    if (!isQuitting() && onTurnEnded) {
-      await onTurnEnded(id, turnId, { reason, ...(turnUsage ? { usage: turnUsage } : {}), ...(errorCode ? { errorCode } : {}) })
-        .catch((error: unknown) => logger.app("session", "warn", "mode run settlement failed", { sessionId: id, data: String(error) }));
+    if (!isQuitting() && typeof onTurnEnded === "function") {
+      try {
+        await onTurnEnded(id, turnId, {
+          reason,
+          ...(turnUsage ? { usage: turnUsage } : {}),
+          ...(errorCode ? { errorCode } : {}),
+        });
+      } catch (error) {
+        logger.app("session", "warn", "mode run settlement failed", { sessionId: id, data: String(error) });
+      }
     }
-    // Apply the next-turn draft while finalization still holds Agent Host's
-    // queue. The configuration lock is independent of admission/abort locks.
     await sessionConfiguration?.flush(id);
 
     // The turn can no longer start a plugin tool, and its finalization record

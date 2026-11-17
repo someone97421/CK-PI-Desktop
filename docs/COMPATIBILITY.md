@@ -25,6 +25,9 @@
 | COMPAT-009 | 已移除 | `PlanProposalStatus` 类型别名 | 2026-11-14 |
 | COMPAT-010 | 保留 | 旧联网搜索消息缺少正文引用位置 | 2026-11-14 |
 | COMPAT-011 | 保留数据、移除旧界面与业务接口 | 局域网远控 V2 | 2026-11-16 |
+| COMPAT-012 | 保留 | 模式运行 schema 29→33 与旧阶段调用 | 2026-11-17 |
+| COMPAT-013 | 保留 | 崩溃留下的转录 EOF 截断行 | 2026-11-17 |
+| COMPAT-014 | 已替换 | 计划审批本地权限偏好 | 2026-11-17 |
 
 ## 仍需跟踪
 
@@ -79,6 +82,19 @@
 - **入口隔离**：普通网页（含 localhost）继续密码登录；真实允许的扩展 Origin 经回环连接申请独立内存会话，不写原设备文件或页面存储。WebSocket、IPC、附件、文件和资源统一检查令牌作用域，非回环请求不能使用扩展令牌。修改远控密码、移除远控设备不影响扩展会话。
 - **验证依据**：[网络/IPC/资源测试](../plugins/lan-remote-control/scripts/ipc.test.mjs)、[生命周期测试](../plugins/lan-remote-control/scripts/lifecycle.test.mjs)及插件投影/文件/准星回归共 62 项通过，扩展会话与侧栏 20 项、桌面内置插件配置 12 项通过，扩展类型检查与插件 2.0.15 pack 通过。桌面 typecheck 仍有原有 21 项诊断，归一行号后与修改前日志一致。新版桌面由预发布 Actions 构建，真实安装升级、手机与 Chrome 全流程验收尚未进行。最近复核 2026-11-16。
 
+### COMPAT-012：模式运行 schema 29→33 与旧阶段调用
+
+- **来源与替代**：本轮从上游 `39954dbb3375bd2037e5203e147346b7bbd33240` 同步到 `fcd958ae46110d68ffb77b054138c62ce0bd38ef`，沿既有迁移链逐步升级。v30 增加实际活跃耗时和队列 `start_goal` 兼容列；v31 增加可选完成／阻塞报告；v32 放宽旧 `sessions.mode` 约束；v33 清理已撤回 Goal 候选的 `turn_execution_snapshot` 触发器并幂等修复约束。protocol 11、转录格式 2 保持不变。
+- **入口与断言**：[升级调度](../crates/host-core/src/db/repositories.rs)、[v30](../crates/host-core/src/db/mode_run_elapsed_migration.rs)、[v31](../crates/host-core/src/db/completion_report_migration.rs)、[v32](../crates/host-core/src/db/session_mode_migration.rs)、[v33](../crates/host-core/src/db/legacy_goal_migration.rs)、[报告校验](../crates/host-core/src/mode_runs/completion_report.rs)、[迁移断言](../crates/host-core/src/db/session_mode_migration_tests.rs)。
+- **兼容行为**：每步升级前备份，表重建保留既有索引、触发器并核对外键；旧运行耗时从 0 开始，不按创建时间猜测；报告可省略，旧 `CompleteStage` 调用继续使用退出检查。`start_goal` 默认 0，fork 业务入口不提供新 Goal 替换／自动复位。已保存 `goalBudget` 优先于 Goal 定义的预算，缺省时采用定义预算；单次运行编辑优先并仅作用于该运行。历史记录和已有运行快照保留。
+- **移除条件与验证依据**：支持 schema 29 等旧库升级期间保留迁移；停止支持旧阶段调用前不得把 report 改成必填。旧安装包不能打开 schema 33，完整回退须保留升级前业务目录，单独数据库备份不覆盖既有转录转换。本轮只做源码及迁移链静态核对，相关断言未执行，未操作真实业务数据库。最近复核 2026-11-17。
+
+### COMPAT-013：崩溃留下的转录 EOF 截断行
+
+- **来源与替代**：上游 `fe68b42b4`、`4534e9fe9`、`6de6df6f3` 修复进程中断可能留下的不完整末行；此前 fork 基线 `39954dbb33` 的读取／写入校验可能因此拒绝整份转录。现行恢复按 JSON 解析器的 EOF 类型识别截断，不依赖错误文本。
+- **入口与断言**：[转录读取](../crates/host-core/src/transcripts.rs)、[二进制完整性校验](../crates/host-core/src/transcripts/binary_integrity.rs)、[存储恢复](../crates/host-core/src/transcripts/binary_storage.rs)、[断言](../crates/host-core/src/transcripts/binary_integrity_tests.rs)。
+- **保留原因与移除条件**：恢复崩溃前的完整记录，读取和存储验证均容忍 EOF 截断行；完整损坏仍返回错误，不伪造 outbox 成功。只要进程中断仍可能留下这类尾行就保留，不主动重写历史转录格式。静态核对通过，未执行恢复用例或打开真实转录。最近复核 2026-11-17。
+
 ## 已移除记录
 
 以下四项已于 2026-11-14 落实清理；移除提交为本台账首次入库的提交，可通过 `git log --diff-filter=A -- docs/COMPATIBILITY.md` 查询。静态核对覆盖 6 个 TypeScript 文件、2 个 Rust 文件、38 处相对导入和 `git diff --check`，未运行测试、类型检查或构建。
@@ -106,3 +122,9 @@
 - **来源与替代**：旧声明可追溯到 2026-09-12 的 `b0f7baa09` 类型拆分节点，原始引入版本待核实；现行类型为 `PlanApprovalStatus`。
 - **清理与影响**：[Plan 类型](../packages/shared/src/types/plans.ts)直接使用 `PlanApprovalStatus`，删除旧别名；审批状态取值和历史记录格式不变。
 - **验证依据**：源码引用检索及 TS 语法解析通过，未运行类型检查。最近复核 2026-11-14。
+
+### COMPAT-014：计划审批本地权限偏好
+
+- **来源与替代**：上游 `cd6dbc00b` 引入的 `pi.desktop.planApprovalMode` 本地存储偏好在 `7a7827727` 中由所属会话的实际权限／全局默认权限替代，本轮同步采用。旧键不迁移、不再读取，也不主动删除。
+- **入口与断言**：[审批默认值](../apps/desktop/src/lib/plan-approval-preferences.ts)、[审批卡接线](../apps/desktop/src/components/PlanApprovalBar.tsx)、[权限断言](../apps/desktop/test/plan-approval-permission.test.mjs)。
+- **行为与结论**：会话明确权限优先，继承权限采用当前全局设置，缺省回退 ask；用户仍可在审批时选择权限。避免另一会话记住的审批偏好覆盖用户当前权限。属于现行路径替换，旧读取逻辑已移除并保留本结论；源码静态核对及语法检查通过，未执行审批测试或界面验证。最近复核 2026-11-17。

@@ -130,6 +130,8 @@ export interface MessageTask {
 
 export type UiMessage = {
   id: string;
+  /** Durable root conversation identity for display grouping, never authorization. */
+  turnId?: string;
   role: UiMessageRole;
   content: string;
   /** Task identifier associated with this turn/message. */

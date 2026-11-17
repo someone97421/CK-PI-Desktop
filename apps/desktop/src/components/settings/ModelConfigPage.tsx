@@ -15,10 +15,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   imageGenerationBindings,
-  isImageGenerationModel,
+  isImageOnlyChatModel,
   modelWireIdsEqual,
   type ImageGenerationBinding,
   type ModelBinding,
+  type ModelInfo,
   type ProviderPublic,
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
@@ -98,9 +99,20 @@ type CatalogStatus = {
   lastError?: string;
 };
 
+const sameWireId = modelWireIdsEqual;
+
+function chatModelOptions(
+  providers: readonly ProviderPublic[],
+  imageModels: readonly ImageGenerationBinding[],
+  discovered?: Record<string, readonly ModelInfo[] | undefined>,
+) {
+  return defaultModelOptions(providers, imageModels, discovered);
+}
+
 export function ModelConfigPage() {
   const { t, i18n } = useTranslation();
   const providers = useAppStore((s) => s.providers);
+  const providerModels = useAppStore((s) => s.providerModels);
   const settings = useAppStore((s) => s.settings);
   const refreshProviders = useAppStore((s) => s.refreshProviders);
   const showToast = useAppStore((s) => s.showToast);
@@ -218,10 +230,10 @@ export function ModelConfigPage() {
   // One readiness rule for the picker, the provider rows and the add-provider
   // guard: both call `providerServesChatModels`.
   const providerReady = (provider: ProviderPublic) =>
-    providerServesChatModels(provider, imageGenerationCandidates);
+    providerServesChatModels(provider, imageGenerationCandidates, providerModels);
 
   const readyProviders = providers.filter(providerReady);
-  const defaultModelOptionsList = defaultModelOptions(readyProviders, imageGenerationCandidates);
+  const defaultModelOptionsList = defaultModelOptions(readyProviders, imageGenerationCandidates, providerModels);
   /*
     The compaction picker offers the follow entry plus the same configured
     models the default picker lists, filtered locally like every other picker.
@@ -256,9 +268,9 @@ export function ModelConfigPage() {
     ? providers.find((provider) => provider.id === editingAccountId) ?? null
     : null;
   const effectiveDefaultModelId = settings.defaultModelId?.trim() ||
-    (defaultProvider ? defaultModelOptions([defaultProvider], imageGenerationCandidates)[0]?.modelId : undefined);
+    (defaultProvider ? defaultModelOptions([defaultProvider], imageGenerationCandidates, providerModels)[0]?.modelId : undefined);
   const defaultProviderReady = defaultProvider !== null && providerReady(defaultProvider) &&
-    defaultModelOptions([defaultProvider], imageGenerationCandidates).some(({ modelId }) =>
+    defaultModelOptions([defaultProvider], imageGenerationCandidates, providerModels).some(({ modelId }) =>
       modelWireIdsEqual(modelId, effectiveDefaultModelId ?? ""));
   /*
     Compaction follows the main model until both fields name a provider and one
@@ -277,17 +289,19 @@ export function ModelConfigPage() {
     compactionProvider !== null &&
     providerReady(compactionProvider) &&
     providerOffersModel(compactionProvider, compactionModelId) &&
-    !isImageGenerationModel(imageGenerationCandidates, compactionProvider.id, compactionModelId);
+    !isImageOnlyChatModel(imageGenerationCandidates, compactionProvider.id, compactionModelId,
+      providerModels[compactionProvider.id]?.find((model) => sameWireId(model.modelId, compactionModelId)));
 
 
   const setDefaultModel = async (provider: ProviderPublic, modelId: string) => {
-    if (isImageGenerationModel(
+    if (isImageOnlyChatModel(
       imageGenerationBindings(
         useAppStore.getState().settings?.imageGenerationModels,
         useAppStore.getState().settings?.imageGeneration,
       ),
       provider.id,
       modelId,
+      providerModels[provider.id]?.find((model) => sameWireId(model.modelId, modelId)),
     )) return;
     if (!rowBusy.begin(provider.id)) return;
     try {
@@ -346,15 +360,14 @@ export function ModelConfigPage() {
     models: ModelBinding[],
     imageModelIds?: string[],
   ) => {
-    const selectedImageIds = imageModelIds ?? imageGenerationCandidates
-      .filter((entry) => entry.providerId === saved.id).map((entry) => entry.modelId);
     const firstModelId = models.find((model) =>
-      !selectedImageIds.some((id) => modelWireIdsEqual(id, model.id)))?.id;
-    const replacementChatModelId =
-      settings.defaultProviderId === saved.id && firstModelId &&
-      !models.some((model) => modelWireIdsEqual(model.id, settings.defaultModelId ?? "") &&
-        !selectedImageIds.some((id) => modelWireIdsEqual(id, model.id)))
-        ? firstModelId : undefined;
+      !isImageOnlyChatModel(
+        imageGenerationCandidates,
+        saved.id,
+        model.id,
+        providerModels[saved.id]?.find((entry) => sameWireId(entry.modelId, model.id)),
+      ),
+    )?.id;
     try {
       if (pluginCatalogSetup?.providerId === saved.id) {
         const defaultsProviders = [...providers.filter((provider) => provider.id !== saved.id), saved];
@@ -363,6 +376,7 @@ export function ModelConfigPage() {
           settings.defaultProviderId,
           settings.defaultModelId,
           imageGenerationCandidates,
+          providerModels,
         );
         if (!keepsCurrentDefault && firstModelId) {
           const nextSettings = {
@@ -388,8 +402,34 @@ export function ModelConfigPage() {
         const nextSettings = {
           ...current,
           ...plan,
-          ...(replacementChatModelId ? { defaultModelId: replacementChatModelId } : {}),
         };
+        // The image bindings this save writes are `plan.imageGenerationModels`,
+        // so the new marking is judged from post-save state — never from the
+        // pre-save `imageGenerationCandidates` memo, which cannot see what this
+        // save just marked (#2304 review). A dual-capability model keeps its
+        // chat default; only a default this save left unable to chat is
+        // migrated, and only to a chat model the saved provider still serves.
+        // With no replacement the stored default is left exactly as saved —
+        // the image picker and the chat menus stay the user's own choices.
+        const savedChatOptions = chatModelOptions(
+          [saved],
+          plan.imageGenerationModels,
+          providerModels,
+        );
+        const migratableDefault =
+          current.defaultProviderId === saved.id && !!current.defaultModelId?.trim() &&
+          !savedChatOptions.some(({ modelId }) =>
+            sameWireId(modelId, current.defaultModelId ?? ""),
+          );
+        if (migratableDefault) {
+          const replacement = savedChatOptions.find(
+            ({ modelId }) => !sameWireId(modelId, current.defaultModelId ?? ""),
+          );
+          if (replacement) {
+            nextSettings.defaultProviderId = saved.id;
+            nextSettings.defaultModelId = replacement.modelId;
+          }
+        }
         await api.setSettings(nextSettings);
         useAppStore.setState({ settings: nextSettings });
         showToast(t(editingProvider ? "settings.providerUpdated" : "settings.providerSaved"), {
@@ -406,6 +446,7 @@ export function ModelConfigPage() {
           settings.defaultProviderId,
           settings.defaultModelId,
           imageGenerationCandidates,
+          providerModels,
         );
         if (!keepsCurrentDefault && firstModelId) {
           await api.setSettings({
@@ -416,9 +457,6 @@ export function ModelConfigPage() {
         }
         showToast(t("settings.providerSaved"), { variant: "success" });
       } else {
-        if (replacementChatModelId) {
-          await api.setSettings({ ...settings, defaultModelId: replacementChatModelId });
-        }
         showToast(t("settings.providerUpdated"), { variant: "success" });
       }
       setSetupFor(null);
@@ -681,7 +719,7 @@ export function ModelConfigPage() {
               onMakeDefault={(provider) =>
                 void setDefaultModel(
                   provider,
-                  defaultModelOptions([provider], imageGenerationCandidates)[0]?.modelId ?? "",
+                  defaultModelOptions([provider], imageGenerationCandidates, providerModels)[0]?.modelId ?? "",
                 )
               }
               onTest={(provider) => void testProvider(provider)}

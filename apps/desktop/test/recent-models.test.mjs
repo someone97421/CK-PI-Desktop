@@ -5,10 +5,11 @@ import { availableRecentModels, inheritedSessionModelBinding, pinnedSessionModel
 
 const ref = (providerId, modelId) => ({ providerId, modelId });
 const providers = [
-  { id: "a", enabled: true, authKind: "none", models: [{ id: "one" }, { id: "two" }, { id: "image" }] },
+  { id: "a", enabled: true, authKind: "none", models: [{ id: "one" }, { id: "two" }, { id: "image" }, { id: "render-only" }] },
   { id: "b", enabled: true, authKind: "api_key", hasSecret: true, models: [{ id: "one" }] },
 ];
-const settings = { defaultProviderId: "a", defaultModelId: "one", imageGenerationModels: [ref("a", "image")] };
+const settings = { defaultProviderId: "a", defaultModelId: "one", imageGenerationModels: [ref("a", "render-only")] };
+const providerModels = { a: [{ modelId: "render-only", modalities: { output: ["image"] } }] };
 
 test("recent selection restores after reload and deduplicates exact provider/model pairs", () => {
   const old = globalThis.localStorage;
@@ -33,11 +34,11 @@ test("new chat inherits the default model and existing chats retain their own bi
   assert.deepEqual(pinnedSessionModelBinding({ providers, settings, recentModels, session: ref("a", "one") }), ref("a", "one"));
 });
 
-test("deleted, disabled, unauthenticated and image models are skipped in the recent menu", () => {
-  const recentModels = [ref("missing", "one"), ref("a", "removed"), ref("a", "image"), ref("b", "one"), ref("a", "two")];
+test("deleted, disabled, unauthenticated and pure image models are skipped in the recent menu", () => {
+  const recentModels = [ref("missing", "one"), ref("a", "removed"), ref("a", "render-only"), ref("b", "one"), ref("a", "two")];
   for (const unavailable of [{ enabled: false }, { hasSecret: false }]) {
     const current = [providers[0], { ...providers[1], ...unavailable }];
-    assert.deepEqual(availableRecentModels(recentModels, current, settings), [ref("a", "two")]);
+    assert.deepEqual(availableRecentModels(recentModels, current, settings, providerModels), [ref("a", "two")]);
     assert.deepEqual(inheritedSessionModelBinding({ providers: current, settings, recentModels }), ref("a", "one"));
   }
 });
@@ -50,6 +51,17 @@ test("first run preserves configured defaults without choosing a recent model", 
     settings: { ...settings, imageGenerationModels: [], imageGeneration: ref("a", "image") },
   }), ref("a", "one"));
   assert.deepEqual(inheritedSessionModelBinding({ providers, settings, draft: { providerId: "b" } }), ref("b", "one"));
+});
+
+test("recent chat eligibility uses provider capabilities while inheritance keeps the configured default", () => {
+  const imageMarked = { ...settings, defaultModelId: "image", imageGenerationModels: [ref("a", "image")] };
+  const recent = [ref("a", "image")];
+  const imageOnly = { a: [{ modelId: "image", modalities: { output: ["image"] } }] };
+  const dual = { a: [{ modelId: "image", modalities: { output: ["text", "image"] } }] };
+  assert.deepEqual(availableRecentModels(recent, providers, imageMarked), recent);
+  assert.deepEqual(availableRecentModels(recent, providers, imageMarked, imageOnly), []);
+  assert.deepEqual(availableRecentModels(recent, providers, imageMarked, dual), recent);
+  assert.deepEqual(inheritedSessionModelBinding({ providers, settings: imageMarked }), ref("a", "image"));
 });
 
 test("corrupt local preferences are ignored and history remains bounded", () => {

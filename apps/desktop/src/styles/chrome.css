@@ -27,6 +27,7 @@
   justify-content: center;
   padding: 24px;
   background: var(--ds-bg-primary);
+  --window-drag-region: drag;
   -webkit-app-region: drag;
   animation: startup-splash-in var(--motion-duration-slow) var(--motion-ease-out) both;
 }
@@ -59,6 +60,7 @@
   align-items: center;
   gap: 18px;
   width: min(100%, 280px);
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
@@ -190,6 +192,7 @@
   background: #000;
   opacity: 1;
   /* The window has no chrome yet, so the surface itself has to be draggable. */
+  --window-drag-region: drag;
   -webkit-app-region: drag;
   transition: opacity var(--motion-startup-reveal) var(--motion-ease-out);
 }
@@ -298,6 +301,7 @@
   justify-content: center;
   padding: 24px;
   background: var(--ds-bg-primary);
+  --window-drag-region: drag;
   -webkit-app-region: drag;
   animation: startup-splash-in var(--motion-duration-slow) var(--motion-ease-out) both;
 }
@@ -319,6 +323,7 @@
   gap: 14px;
   width: min(100%, 420px);
   text-align: center;
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
@@ -592,6 +597,7 @@
   /* Keep the shell continuous; titlebar hierarchy comes from spacing and
    * surface color instead of a hard lower rule. */
   border-bottom: 0;
+  --window-drag-region: drag;
   -webkit-app-region: drag;
 }
 
@@ -626,6 +632,7 @@
    * governs expansion; the .ct-collapsed rule below matches sidebar-out.
    */
   transition: padding-left var(--motion-duration-normal) var(--motion-ease-out);
+  --window-drag-region: drag;
   -webkit-app-region: drag;
   app-region: drag;
 }
@@ -674,6 +681,7 @@
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  --window-drag-region: drag;
   -webkit-app-region: drag; /* keep the title area draggable */
   app-region: drag;
 }
@@ -759,6 +767,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: text;
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -793,6 +802,7 @@
   font-weight: var(--font-weight-medium);
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-compact);
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -816,6 +826,7 @@
   background: transparent;
   color: var(--ds-text-secondary);
   cursor: pointer;
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
   transition: background var(--motion-duration-fast) var(--motion-ease-out),
@@ -910,6 +921,7 @@
   right: var(--ds-work-panel-toggle-inset);
   z-index: 30;
   pointer-events: auto;
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -1002,6 +1014,7 @@
    * The sidebar toggle sits inside the draggable top bar and needs its own
    * no-drag region so it continues receiving clicks.
    */
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
   opacity: 0;
@@ -1307,6 +1320,7 @@
 }
 
 .window-controls {
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
   pointer-events: auto;
@@ -1350,6 +1364,7 @@
 }
 
 .window-control-btn {
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
   pointer-events: auto;
@@ -1413,6 +1428,7 @@
   justify-content: space-between;
   gap: 4px;
   padding: 0 8px;
+  --window-drag-region: drag;
   -webkit-app-region: drag;
 }
 
@@ -1503,6 +1519,7 @@
 
 .window-chrome-row button {
   pointer-events: auto;
+  --window-drag-region: no-drag;
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -1510,4 +1527,12 @@
 .window-chrome-drag {
   flex: 1 1 auto;
   align-self: stretch;
+}
+
+
+/* A zoomed macOS window stays fixed; double-click restore is renderer-owned
+ * only while these native drag regions are disabled. Normal windows stay OS-owned. */
+:root[data-platform="darwin"][data-window-maximized="true"] * {
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
 }

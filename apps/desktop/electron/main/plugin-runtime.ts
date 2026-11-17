@@ -2874,6 +2874,10 @@ export class PluginRuntime {
 
   private handleChildMessage(loaded: LoadedPlugin, message: any): void {
     if (!message || typeof message !== "object") return;
+    if (message.t === "ping") {
+      loaded.child?.postMessage({ t: "pong", id: message.id });
+      return;
+    }
     if (message.t === "res") {
       const entry = loaded.pending.get(message.id);
       if (!entry) return;

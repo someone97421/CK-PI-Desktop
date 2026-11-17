@@ -6,7 +6,7 @@ import {
   isCommandShellCatalog,
   JEV_API_KEY_SECRET_REF,
   imageGenerationBindings,
-  isImageGenerationModel,
+  isImageOnlyChatModel,
   normalizeMode,
   resolveBindingLimits,
   trustedExtensionAgentKeyFromProviderId,
@@ -320,11 +320,6 @@ export function createSessionLaunchRuntime({
   ): Promise<RuntimeProviderConfig | undefined> {
     const { compactionProviderId, compactionModelId } = settings;
     if (!compactionProviderId || !compactionModelId) return undefined;
-    if (isImageGenerationModel(
-      imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration),
-      compactionProviderId,
-      compactionModelId,
-    )) return undefined;
     const row = providers.find(
       (candidate) => candidate.id === compactionProviderId && candidate.enabled !== false,
     );
@@ -352,6 +347,12 @@ export function createSessionLaunchRuntime({
       });
       const resolved = resolveBindingLimits(catalogConfig, binding);
       const modelConfig = modelConfigWithBinding(resolved.catalogConfig, resolved.binding);
+      if (isImageOnlyChatModel(
+        imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration),
+        row.id,
+        binding.id,
+        modelConfig,
+      )) return undefined;
       const capabilities = capabilitiesFromModelConfig(modelConfig);
       return {
         id: row.id,
@@ -463,15 +464,6 @@ export function createSessionLaunchRuntime({
         errorCode: ErrorCodes.MODEL_NOT_CONFIGURED,
       });
     }
-    if (isImageGenerationModel(
-      imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration),
-      provider.id,
-      modelId,
-    )) {
-      throw Object.assign(new Error("The image model cannot be used for conversation; select a chat model"), {
-        errorCode: ErrorCodes.MODEL_NOT_CONFIGURED,
-      });
-    }
     // The authenticated collection owns a vendor account's available model IDs
     // and wire endpoint. models.dev owns metadata; one account can span multiple
     // wire APIs and gateway catalogs.
@@ -501,6 +493,16 @@ export function createSessionLaunchRuntime({
     const modelConfig = limits.binding
       ? modelConfigWithBinding(limits.catalogConfig, limits.binding)
       : limits.catalogConfig;
+    if (isImageOnlyChatModel(
+      imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration),
+      provider.id,
+      modelId,
+      modelConfig,
+    )) {
+      throw Object.assign(new Error("The image model cannot be used for conversation; select a chat model"), {
+        errorCode: ErrorCodes.MODEL_NOT_CONFIGURED,
+      });
+    }
     const thinkingCapabilities = capabilitiesFromModelConfig(modelConfig);
     const thinkingLevel = clampThinkingLevel(
       thinkingCapabilities,
@@ -731,6 +733,7 @@ export function createSessionLaunchRuntime({
     // them and the parent agent can pass them to `Task.model` without an
     // extra RPC round-trip. Statically pinned entries from definitions take
     // precedence — they were resolved above with stricter diagnostics.
+    const imageBindings = imageGenerationBindings(settings.imageGenerationModels, settings.imageGeneration);
     const subagentModelKeys: string[] = [];
     for (const row of providers.providers) {
       if (!row.enabled) continue;
@@ -743,6 +746,7 @@ export function createSessionLaunchRuntime({
           key = `${row.id}/${binding.id}`;
         }
         if (subagentBindings.providers[key]) {
+          if (isImageOnlyChatModel(imageBindings, row.id, binding.id, subagentBindings.providers[key].modelConfig)) continue;
           subagentModelKeys.push(key);
           continue; // already resolved, and independently opted in
         }
@@ -791,6 +795,7 @@ export function createSessionLaunchRuntime({
           binding.id,
           catalogModelConfig,
         );
+        if (isImageOnlyChatModel(imageBindings, row.id, binding.id, effective.modelConfig)) continue;
         const mc = effective.modelConfig;
         const caps = effective.capabilities;
         subagentBindings.providers[key] = {

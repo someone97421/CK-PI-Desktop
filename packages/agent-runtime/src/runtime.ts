@@ -4562,6 +4562,13 @@ Delegation rules:
       endTurn: () => {
         this.gracefulStopRequested = true;
       },
+      failTurn: (failure) => {
+        this.terminateParentTurn();
+        this.gracefulStopRequested = true;
+        const error = { ...classifyAgentError(new Error(failure.message)), code: failure.code, retriable: false };
+        this.finalizeCurrentAssistant("error", error);
+        this.emit({ type: "error", error });
+      },
     });
   }
 

@@ -9,12 +9,16 @@ mod review_actions_rpc;
 mod scheduled_rpc;
 mod scheduled_settings;
 mod scheduled_tools;
+mod session_display;
 mod todos;
 mod window_corner_rpc;
 mod worktree_rpc;
 
 #[cfg(test)]
 mod session_mode_create_tests;
+
+#[cfg(test)]
+mod session_mode_migration_tests;
 
 #[cfg(test)]
 mod plugin_reviews_rpc_tests;
@@ -1295,9 +1299,8 @@ fn validate_settings_value(value: &Value) -> Result<(), JsonRpcError> {
             }
         }
     }
-    if let Err(message) = crate::mode_runs::validate_goal_budget_setting(value) {
-        return Err(rpc_err(1002, message, "INVALID_PARAMS"));
-    }
+    crate::mode_runs::validate_goal_budget_setting(value)
+        .map_err(|message| rpc_err(1002, message, "INVALID_PARAMS"))?;
     if let Some(infinite_retry) = object.get("infiniteProviderRetry") {
         if !infinite_retry.is_boolean() {
             return Err(rpc_err(
@@ -3064,8 +3067,7 @@ async fn handle_request(
             .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?;
             let session = remote_tools::decorate_session(
                 &st.db,
-                serde_json::to_value(session)
-                    .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?,
+                session_display::serialize(&st.db, session)?,
             )?;
             Ok(json!({ "session": session }))
         }
