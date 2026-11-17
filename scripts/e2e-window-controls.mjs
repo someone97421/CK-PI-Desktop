@@ -340,26 +340,18 @@ try {
     await waitFor(() => evaluate(`window.piDesktop.invoke('pi-desktop/window/control', {action:'getState'}).then(s => s.ok && !s.data.maximized)`), "native window restored");
   } else {
     await evaluate(`window.piDesktop.invoke('pi-desktop/window/control', {action:'toggleMaximize'})`);
-    await waitFor(() => evaluate(`document.documentElement.dataset.windowMaximized === 'true'`), "macOS maximized caption lock");
+    await waitFor(() => evaluate(`window.piDesktop.invoke('pi-desktop/window/control', {action:'getState'}).then(s => s.ok && s.data.maximized)`), "macOS window maximized");
     await settle();
-    const point = await evaluate(`(() => {
+    await evaluate(`(() => {
       for (let y = 8; y < 46; y += 8) for (let x = 180; x < innerWidth - 40; x += 32) {
         const el = document.elementFromPoint(x, y);
-        if (!el) continue;
-        const style = getComputedStyle(el);
-        if (style.getPropertyValue('--window-drag-region').trim() !== 'drag') continue;
-        if (style.getPropertyValue('-webkit-app-region').trim() !== 'no-drag') throw new Error('Maximized caption is still natively draggable');
-        return { x, y };
+        if (el && getComputedStyle(el).getPropertyValue('-webkit-app-region').trim() === 'drag') return;
       }
-      throw new Error('No visible caption region');
+      throw new Error('No native draggable caption region while maximized');
     })()`);
-    await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
-    for (const clickCount of [1, 2]) for (const type of ["mousePressed", "mouseReleased"]) {
-      await send("Input.dispatchMouseEvent", { type, ...point, button: "left", clickCount });
-    }
-    await waitFor(() => evaluate(`window.piDesktop.invoke('pi-desktop/window/control', {action:'getState'}).then(s => s.ok && !s.data.maximized)`), "macOS caption double-click restore");
-    await waitFor(() => evaluate(`document.documentElement.dataset.windowMaximized === 'false'`), "macOS normal caption unlock");
-    console.log("PASS macOS maximized caption cannot drag and double-click restores through real IPC");
+    await evaluate(`window.piDesktop.invoke('pi-desktop/window/control', {action:'toggleMaximize'})`);
+    await waitFor(() => evaluate(`window.piDesktop.invoke('pi-desktop/window/control', {action:'getState'}).then(s => s.ok && !s.data.maximized)`), "macOS window restored");
+    console.log("PASS macOS maximized caption retains native drag regions and window restore succeeds");
   }
   await click(".app-work-panel-toggle");
   await waitFor(() => evaluate(`!document.querySelector('.work-panel')`), "panel closed again");

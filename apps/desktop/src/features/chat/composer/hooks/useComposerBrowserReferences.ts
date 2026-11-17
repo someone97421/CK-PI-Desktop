@@ -82,13 +82,28 @@ export function useComposerBrowserReferences(options: Options) {
     const editor = options.editorRef.current;
     if (!editor) return;
     let lastAvailable: boolean | null = null;
+    const announce = (canCompose: boolean) => {
+      if (document.documentElement.dataset.webRemote !== "true") return;
+      window.dispatchEvent(new CustomEvent("pi-desktop:composer-ready", {
+        detail: { canCompose, draftKey: options.draftKey },
+      }));
+    };
     const publish = (focused = false, force = false) => {
       const canCompose = available();
       if (!force && !focused && lastAvailable === canCompose) return;
       lastAvailable = canCompose;
+      if (!canCompose) announce(false);
+      const registration = ++revision.current;
       void browserReferenceClient.register({ clientId, draftKey: options.draftKey, available: canCompose,
-        focused: canCompose && (focused || document.hasFocus() && document.activeElement === editor), revision: ++revision.current })
-        .catch(() => undefined);
+        focused: canCompose && (focused || document.hasFocus() && document.activeElement === editor), revision: registration })
+        .then(({ registered }) => {
+          if (revision.current === registration) announce(canCompose && registered && available());
+        })
+        .catch(() => {
+          if (revision.current !== registration) return;
+          lastAvailable = null;
+          announce(false);
+        });
     };
     const claimFocus = () => {
       if (document.activeElement === editor) publish(true);
@@ -112,6 +127,7 @@ export function useComposerBrowserReferences(options: Options) {
       document.removeEventListener("visibilitychange", refresh);
       observer.disconnect();
       window.clearInterval(heartbeat);
+      announce(false);
       void browserReferenceClient.register({ clientId, draftKey: options.draftKey, available: false, focused: false, revision: ++revision.current })
         .catch(() => undefined);
     };

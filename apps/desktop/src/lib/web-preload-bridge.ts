@@ -122,7 +122,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     const detail = (event as CustomEvent<{ canCompose: boolean; draftKey: string }>).detail;
     composerDraftKey = detail?.draftKey ?? "";
     status.canCompose = detail?.canCompose === true;
-    if (initialDraftKey && status.canCompose) rendererReady = true;
+    if (initialDraftKey && composerDraftKey === initialDraftKey && status.canCompose) rendererReady = true;
     publishStatus();
     publishBrowseStatus();
   });

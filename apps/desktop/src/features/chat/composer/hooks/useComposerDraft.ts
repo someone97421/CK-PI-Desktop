@@ -657,9 +657,6 @@ export function useComposerDraft({
   useEffect(() => {
     if (document.documentElement.dataset.webRemote !== "true") return;
     const canCompose = browserReferences.available;
-    const publish = (available: boolean) => window.dispatchEvent(new CustomEvent("pi-desktop:composer-ready", {
-      detail: { canCompose: available, draftKey: draftKeyRef.current },
-    }));
     const insert = (text: string) => {
       const editor = ref.current;
       if (!editor || !canCompose()) return false;
@@ -678,11 +675,9 @@ export function useComposerDraft({
       return true;
     };
     window.__piDesktopInsertPromptText = insert;
-    publish(canCompose());
     return () => {
       if (window.__piDesktopInsertPromptText === insert) {
         delete window.__piDesktopInsertPromptText;
-        publish(false);
       }
     };
   });

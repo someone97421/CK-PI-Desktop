@@ -257,7 +257,7 @@ export function useAppShellRuntime() {
     useAppStore.getState().setPage("chat", { record: false });
     projectionInitialized.current = true;
     closeProjectionWorkPanel();
-    setSidebarCollapsed(false);
+    setSidebarCollapsed(!!window.__piDesktopBrowseAction);
   }, [projection, ready, closeProjectionWorkPanel]);
   useLayoutEffect(() => {
     if (projection && !sidebarCollapsed && projectionSelectingSession) closeProjectionWorkPanel();
@@ -586,7 +586,7 @@ export function useAppShellRuntime() {
   useEffect(() => {
     // 页面重载后仍使用递增时间，避免新页面的低序号被主进程当成迟到消息。
     activeSessionSeq.current = Math.max(activeSessionSeq.current + 1, performance.timeOrigin + performance.now());
-    const localSessionId = page === "chat" && !activeSessionIsRemote ? activeSessionId : null;
+    const localSessionId = page === "chat" && !activeSessionIsRemote ? activeSessionId ?? null : null;
     void api
       .setPluginActiveSession({
         sessionId: localSessionId,

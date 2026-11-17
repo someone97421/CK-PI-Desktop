@@ -1528,11 +1528,3 @@
   flex: 1 1 auto;
   align-self: stretch;
 }
-
-
-/* A zoomed macOS window stays fixed; double-click restore is renderer-owned
- * only while these native drag regions are disabled. Normal windows stay OS-owned. */
-:root[data-platform="darwin"][data-window-maximized="true"] * {
-  -webkit-app-region: no-drag !important;
-  app-region: no-drag !important;
-}

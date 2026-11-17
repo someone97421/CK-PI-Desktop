@@ -27,7 +27,6 @@ import { WindowControls } from "../../components/WindowControls";
 import { WorkPanel } from "../../components/workpanel/WorkPanel";
 import { useCopyTex } from "../../hooks/use-copy-tex";
 import { api } from "../../lib/api";
-import { installMaximizedWindowChrome } from "../../lib/maximized-window-chrome";
 import { PortalVisibilityProvider } from "../../lib/portal-visibility";
 import { CollapsedTitlebarActions, RoutePending } from "./chrome";
 import { useAppShellRuntime } from "./useAppShellRuntime";
@@ -104,9 +103,6 @@ export function AppShell() {
   const projectionWorkPanelMounted = useRef(false);
   if (projection && (presentedWorkPanelOpen || workPanelExiting)) projectionWorkPanelMounted.current = true;
   useCopyTex();
-  useEffect(() => installMaximizedWindowChrome(
-    window.piDesktop?.platform ?? "darwin", document, window, api,
-  ), []);
 
   // A boot that never reaches the shell gets a surface it can act on instead of
   // a window that only knows how to wait (issue #831). Rendered as a direct child
