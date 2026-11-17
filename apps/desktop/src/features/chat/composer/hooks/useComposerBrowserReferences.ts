@@ -94,8 +94,10 @@ export function useComposerBrowserReferences(options: Options) {
       if (document.activeElement === editor) publish(true);
     };
     const refresh = () => publish();
+    const reconnect = () => publish(false, true);
     editor.addEventListener("focusin", claimFocus);
     window.addEventListener("focus", claimFocus);
+    window.addEventListener("pi-desktop:remote-reconnected", reconnect);
     document.addEventListener("visibilitychange", refresh);
     const observer = new MutationObserver(refresh);
     for (let ancestor: HTMLElement | null = editor; ancestor; ancestor = ancestor.parentElement) {
@@ -106,6 +108,7 @@ export function useComposerBrowserReferences(options: Options) {
     return () => {
       editor.removeEventListener("focusin", claimFocus);
       window.removeEventListener("focus", claimFocus);
+      window.removeEventListener("pi-desktop:remote-reconnected", reconnect);
       document.removeEventListener("visibilitychange", refresh);
       observer.disconnect();
       window.clearInterval(heartbeat);

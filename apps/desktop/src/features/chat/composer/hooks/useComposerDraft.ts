@@ -658,7 +658,7 @@ export function useComposerDraft({
     if (document.documentElement.dataset.webRemote !== "true") return;
     const canCompose = browserReferences.available;
     const publish = (available: boolean) => window.dispatchEvent(new CustomEvent("pi-desktop:composer-ready", {
-      detail: { canCompose: available },
+      detail: { canCompose: available, draftKey: draftKeyRef.current },
     }));
     const insert = (text: string) => {
       const editor = ref.current;

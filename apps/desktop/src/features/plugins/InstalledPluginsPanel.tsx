@@ -98,12 +98,6 @@ export function InstalledPluginsPanel({
                       const canOpenPanel = plugin.enabled && Boolean(plugin.ui?.panel);
                       const menuOpen = rowMenu === plugin.id;
                       const update = plugin.updateAvailable;
-                      /**
-                       * The card's one call to action: an available update, or
-                       * opening the plugin's own panel. A disabled plugin has
-                       * neither, so it never carries a primary button.
-                       */
-                      const canOpenPanel = plugin.enabled && !!plugin.ui?.panel;
                       return (
                         <article
                           key={plugin.id}

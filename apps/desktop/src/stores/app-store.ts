@@ -11,6 +11,7 @@ import {
 } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { rememberProject } from "../lib/recent-projects";
+import { temporaryDraftKey } from "../lib/composer-draft-cache";
 import {
   RETAINED_SESSION_PANE_LIMIT,
   clearSessionPanes,
@@ -424,8 +425,14 @@ export const useAppStore = create<AppState>((set, get) => {
       // restoring a prior transcript as the first paint. A live host plan is
       // the exception: its owning session must be visible so approval can be
       // restored after a renderer reload.
+      if (generation !== bootstrapGeneration) return;
       const livePlanSessionId = activePendingPlans[0]?.sessionId;
-      if (livePlanSessionId) {
+      if (window.__piDesktopBrowseAction) {
+        const draftId = crypto.randomUUID();
+        await get().newSession({ projectPath: null, temporaryWorkspacePath: null, draftId });
+        if (generation !== bootstrapGeneration) return;
+        window.dispatchEvent(new CustomEvent("pi-desktop:sidepanel-ready", { detail: { draftKey: temporaryDraftKey(draftId) } }));
+      } else if (livePlanSessionId) {
         await get().selectSession(livePlanSessionId);
       } else {
         // App startup keeps the home composer unpersisted. Explicit New Task

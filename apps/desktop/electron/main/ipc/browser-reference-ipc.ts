@@ -99,7 +99,7 @@ export class BrowserReferenceBroker {
     return { registered: true };
   }
 
-  insert(input: { reference: unknown; connectionId?: string }): Promise<{ inserted: true; clientId: string }> {
+  insert(input: { reference: unknown; connectionId?: string; draftKey?: string }): Promise<{ inserted: true; clientId: string }> {
     const reference = parseBrowserReference(input?.reference);
     if (!reference) return Promise.reject(new Error("浏览器引用无效"));
     try { browserReferenceMark(reference); } catch (error) { return Promise.reject(error); }
@@ -107,6 +107,7 @@ export class BrowserReferenceBroker {
     if (!this.sources.size) return Promise.reject(new Error("请先打开并登录浏览器侧边栏"));
     const client = [...this.clients.values()]
       .filter(item => !input.connectionId || item.connectionId === input.connectionId)
+      .filter(item => !input.draftKey || item.draftKey === input.draftKey)
       .sort((a, b) => b.focusedAt - a.focusedAt || b.seenAt - a.seenAt)[0];
     if (!client) return Promise.reject(new Error("当前没有可编辑的 Agent 输入框，请先打开会话"));
     const requestId = randomUUID();

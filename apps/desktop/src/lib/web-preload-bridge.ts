@@ -92,6 +92,8 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     }
   };
   const status: RemoteStatus = { authenticated: false, online: false, canCompose: false };
+  let rendererReady = !parentOrigin;
+  let initialDraftKey = "", composerDraftKey = "";
   const browseStatus: BrowseStatus = { authenticated: false, online: false, busy: false, borrowed: false, browserContext: null };
   const browsePending = new Map<string, { method: BrowseMethod; resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   const post = (message: unknown) => {
@@ -110,9 +112,17 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     post({ type: "pi-desktop:browse-request", requestId, method });
   });
   if (parentOrigin) window.__piDesktopBrowseAction = browseAction;
-  const publishStatus = () => post({ type: "pi-desktop:remote-status", ...status, canCompose: status.authenticated && status.online && status.canCompose });
+  const publishStatus = () => post({ type: "pi-desktop:remote-status", ...status, initialDraftKey, draftKey: composerDraftKey, canCompose: rendererReady && status.authenticated && status.online && status.canCompose });
+  window.addEventListener("pi-desktop:sidepanel-ready", (event) => {
+    initialDraftKey = (event as CustomEvent<{ draftKey: string }>).detail?.draftKey ?? "";
+    rendererReady = !!initialDraftKey && composerDraftKey === initialDraftKey;
+    publishStatus();
+  });
   window.addEventListener("pi-desktop:composer-ready", (event) => {
-    status.canCompose = (event as CustomEvent<{ canCompose: boolean }>).detail?.canCompose === true;
+    const detail = (event as CustomEvent<{ canCompose: boolean; draftKey: string }>).detail;
+    composerDraftKey = detail?.draftKey ?? "";
+    status.canCompose = detail?.canCompose === true;
+    if (initialDraftKey && status.canCompose) rendererReady = true;
     publishStatus();
     publishBrowseStatus();
   });
@@ -145,25 +155,31 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       socket.send(JSON.stringify({ type: "browser-context", ...browserTabs }));
     }
   };
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let attempts = 0, lastMessage = 0, mounted = false, expired = false;
+  let requestingExtension = false;
   let resolveReady!: () => void;
   const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
   const expire = () => {
     if (expired) return;
-    expired = true;
+    expired = !extensionSession;
     storeToken("");
-    status.authenticated = false; status.online = false; status.canCompose = false;
-    publishStatus();
-    publishBrowseStatus();
-    socket?.close();
+    status.authenticated = false; status.online = false;
+    if (!extensionSession) status.canCompose = false;
+    connectionId = "";
+    publishStatus(); publishBrowseStatus();
+    buffered.delete(IPC.event.browserReferenceInsertRequested);
+    emit(IPC.event.browserReferencesChanged, [{ tabs: [] }]);
+    const previous = socket;
+    socket = undefined;
+    previous?.close();
     if (retry) clearTimeout(retry);
-    if (heartbeat) clearInterval(heartbeat);
-    location.reload();
+    if (extensionSession) void connectExtension();
+    else location.reload();
   };
   const bridgeError = (code: string, message: string) => Object.assign(new Error(message), { code });
   const request = async (path: string, init: RequestInit, authenticated = true, binary = false): Promise<any> => {
+    const requestToken = token;
     const headers = new Headers(init.headers);
     if (authenticated) {
       if (!token) throw bridgeError("UNAUTHORIZED", "请先登录");
@@ -176,7 +192,10 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       const timedOut = error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name);
       throw bridgeError(timedOut ? "TIMEOUT" : "NETWORK_ERROR", timedOut ? "请求超时" : "无法连接主机");
     }
-    if (response.status === 401 && authenticated) { expire(); throw bridgeError("UNAUTHORIZED", "登录已失效"); }
+    if (response.status === 401 && authenticated) {
+      if (token === requestToken) expire();
+      throw bridgeError("UNAUTHORIZED", "登录已失效");
+    }
     if (response.ok && binary) return response;
     let result: any;
     try { result = await response.json(); }
@@ -347,10 +366,12 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       if (data.method === "browser.insertReference") {
         const reference = parseBrowserReference(data.reference);
         if (!reference || !browserTabs.active || !connectionId) throw new Error("浏览器引用或侧边栏状态无效，请重新打开侧边栏后重试");
-        const updated = await window.piDesktop!.invoke(IPC.invoke.browserReferencesUpdate, { sourceId: connectionId, ...browserTabs });
+        const targetConnectionId = connectionId;
+        const targetDraftKey = typeof data.draftKey === "string" ? data.draftKey : composerDraftKey;
+        const updated = await window.piDesktop!.invoke(IPC.invoke.browserReferencesUpdate, { sourceId: targetConnectionId, ...browserTabs });
         if (!updated.ok) throw new Error(updated.error.message);
         const result = await window.piDesktop!.invoke(IPC.invoke.browserReferencesInsert, {
-          reference, ...(data.target === "current" ? { connectionId } : {}),
+          reference, connectionId: targetConnectionId, ...(targetDraftKey ? { draftKey: targetDraftKey } : {}),
         });
         if (!result.ok) throw new Error(result.error.message);
         return result.data;
@@ -373,15 +394,22 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   }, { extension: extensionSession });
   const connect = () => {
     if (!token || expired) return;
+    if (retry) { clearTimeout(retry); retry = undefined; }
+    if (socket && socket.readyState < WebSocket.CLOSING) return;
     gate.connecting();
     const ws = new WebSocket(`${origin.replace(/^http/, "ws")}/ws`);
     socket = ws;
     const authTimeout = setTimeout(() => ws.close(4000, "ready timeout"), 15_000);
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     ws.addEventListener("open", () => {
+      if (socket !== ws || expired) { ws.close(); return; }
       lastMessage = Date.now(); ws.send(JSON.stringify({ type: "auth", token }));
       heartbeat = setInterval(() => {
         if (Date.now() - lastMessage > 45_000) ws.close(4000, "heartbeat timeout");
-        else if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "ping" }));
+        else if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ping" }));
+          publishBrowserTabs();
+        }
       }, 15_000);
     });
     ws.addEventListener("message", (event) => {
@@ -405,6 +433,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       clearTimeout(authTimeout);
       if (heartbeat) clearInterval(heartbeat);
       if (socket !== ws || expired) return;
+      socket = undefined;
       status.online = false; publishStatus(); publishBrowseStatus();
       connectionId = "";
       buffered.delete(IPC.event.browserReferenceInsertRequested);
@@ -416,6 +445,9 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     ws.addEventListener("error", () => ws.close());
   };
   const connectExtension = async () => {
+    if (requestingExtension || expired) return;
+    requestingExtension = true;
+    if (retry) { clearTimeout(retry); retry = undefined; }
     gate.connecting();
     try {
       token = await new Promise<string>((resolve, reject) => {
@@ -428,7 +460,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
           if (event.data.ok === true && typeof event.data.token === "string" && event.data.token) resolve(event.data.token);
           else reject(new Error(typeof event.data.error === "string" ? event.data.error : "无法连接主程序"));
         };
-        const timeout = setTimeout(() => { cleanup(); reject(new Error("主程序连接超时，正在重试…")); }, 10_000);
+        const timeout = setTimeout(() => { cleanup(); reject(new Error("主程序连接超时，正在重试…")); }, 15_000);
         window.addEventListener("message", receive);
         post({ type: "pi-desktop:extension-session-request", requestId });
       });
@@ -436,7 +468,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     } catch (error) {
       gate.failed(error instanceof Error ? error.message : "无法连接主程序，正在重试…");
       retry = setTimeout(() => { void connectExtension(); }, Math.min(15_000, 1000 * 2 ** Math.min(attempts++, 4)));
-    }
+    } finally { requestingExtension = false; }
   };
   publishStatus(); publishBrowseStatus();
   if (extensionSession) void connectExtension();
