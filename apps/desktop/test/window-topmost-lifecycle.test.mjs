@@ -9,13 +9,8 @@ import {
   windowBoundsEqual,
 } from "../electron/main/work-panel-window.ts";
 import { readMainModule } from "./helpers/source-contracts.mjs";
-import { nativeWindowMinimumSize } from "../electron/main/window-native-behavior.ts";
-import { isWindowFullScreen } from "../electron/main/window-fullscreen.ts";
 
 const source = await readMainModule("bootstrap/window.ts");
-const minimumStart = source.indexOf("  const setNativeMinimumSize =");
-const nativeMinimum = source.slice(minimumStart,
-  source.indexOf('  if (process.platform === "win32") {', minimumStart));
 // Execute the production recovery, event wiring and watchdog without booting Electron.
 const recovery = source.slice(
   source.indexOf("  const CODEX_BOUNDS ="),
@@ -33,7 +28,6 @@ function createRecoveryWindow(platform, { tiny = false, visible = true, minimize
   const calls = [];
   const window = Object.assign(new EventEmitter(), {
     isMaximized: () => false,
-    isFullScreen: () => false,
     isMinimized: () => minimized,
     isVisible: () => visible,
     getBounds: () => ({ ...bounds }),
@@ -53,7 +47,7 @@ function createRecoveryWindow(platform, { tiny = false, visible = true, minimize
     timers.set(id, { callback, at: now + delay, delay, repeat });
     return id;
   };
-  vm.runInNewContext(stripTypeScriptTypes(`${nativeMinimum}\n${recovery}\n${watchdog}`), {
+  vm.runInNewContext(stripTypeScriptTypes(`${recovery}\n${watchdog}`), {
     window,
     windowState: {},
     windowMinWidth: 800,
@@ -62,8 +56,6 @@ function createRecoveryWindow(platform, { tiny = false, visible = true, minimize
     isLiveWindow: () => true,
     screen: { getDisplayMatching: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) },
     clampMinimumSizeToWorkArea,
-    nativeWindowMinimumSize,
-    isWindowFullScreen,
     emptyWorkPanelReservationState,
     windowBoundsEqual,
     applyWorkPanelReservation: () => {},
