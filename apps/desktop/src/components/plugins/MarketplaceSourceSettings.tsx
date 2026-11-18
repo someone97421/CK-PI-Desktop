@@ -8,7 +8,7 @@ import { SettingsMenuSelect } from "../settings/SettingsMenuSelect";
 
 type MarketplaceSourceSettingsProps = {
   settings: AppSettings;
-  onSourceRefreshed: (source: string) => void;
+  onSourceRefreshed: () => void;
 };
 
 export function MarketplaceSourceSettings({
@@ -33,7 +33,7 @@ export function MarketplaceSourceSettings({
       // Keep settings.set free of network waits; refreshing after persistence
       // also makes the marketplace list reflect the newly selected source.
       const meta = await api.marketRefresh(true);
-      onSourceRefreshed(meta.sourceUrl ?? "");
+      onSourceRefreshed();
       showToast(
         t("plugins.marketRefreshed", {
           count: meta.pluginCount,

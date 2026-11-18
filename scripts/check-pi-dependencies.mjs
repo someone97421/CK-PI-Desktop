@@ -25,7 +25,7 @@ function parseArgs(argv) {
 }
 
 const root = parseArgs(process.argv.slice(2));
-const targetVersion = "1.5.0";
+const targetVersion = "1.5.2";
 
 function readJson(path) {
   return JSON.parse(readFileSync(join(root, path), "utf8"));
@@ -68,11 +68,6 @@ for (const packageName of ["@earendil-works/pi-ai", "@earendil-works/pi-mcp"]) {
 }
 
 const lockfile = readFileSync(join(root, "pnpm-lock.yaml"), "utf8");
-for (const packageName of ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-mcp"]) {
-  if (new RegExp(`@earendil-works/${packageName}@1\\.[0-4]\\.\\d+(?:[(:]|$)`).test(lockfile)) {
-    throw new Error(`pnpm-lock.yaml still contains an outdated @earendil-works/${packageName}`);
-  }
-}
 const workspace = readFileSync(join(root, "pnpm-workspace.yaml"), "utf8");
 const releaseAgeExclusions = workspace.match(
   /^minimumReleaseAgeExclude:[ \t]*\r?\n((?:[ \t]+-[^\r\n]*\r?\n)*)/m,
@@ -80,18 +75,25 @@ const releaseAgeExclusions = workspace.match(
 const actualReleaseAgeExclusions = [...releaseAgeExclusions.matchAll(/^[ \t]+-[ \t]*['"]?([^'"\s]+)['"]?[ \t]*$/gm)]
   .map((match) => match[1])
   .sort();
-const expectedReleaseAgeExclusions = [
-  "@earendil-works/pi-agent-core@1.5.0",
-  "@earendil-works/pi-ai@1.5.0",
-  "@earendil-works/pi-codemode@1.5.0",
-  "@earendil-works/pi-coding-agent@1.5.0",
-  "@earendil-works/pi-mcp@1.5.0",
-  "@earendil-works/pi-schema@1.5.0",
-  "@earendil-works/pi-telemetry@1.5.0",
-  "@earendil-works/pi-tui@1.5.0",
-].sort();
+const piPackages = new Set([
+  "@earendil-works/pi-agent-core",
+  "@earendil-works/pi-ai",
+  "@earendil-works/pi-codemode",
+  "@earendil-works/pi-coding-agent",
+  "@earendil-works/pi-mcp",
+  "@earendil-works/pi-schema",
+  "@earendil-works/pi-telemetry",
+  "@earendil-works/pi-tui",
+]);
+const expectedReleaseAgeExclusions = [...piPackages].map((name) => `${name}@${targetVersion}`).sort();
 if (JSON.stringify(actualReleaseAgeExclusions) !== JSON.stringify(expectedReleaseAgeExclusions)) {
-  throw new Error("Pi minimumReleaseAgeExclude entries must match only the exact 1.5.0 release packages");
+  throw new Error(`Pi minimumReleaseAgeExclude entries must match only the exact ${targetVersion} release packages`);
+}
+
+for (const [, name, version] of lockfile.matchAll(/^  ['"]?(@earendil-works\/pi-[^@\s]+)@([^('":\s]+)/gm)) {
+  if (piPackages.has(name) && version !== targetVersion) {
+    throw new Error(`pnpm-lock.yaml contains ${name}@${version}, expected ${targetVersion}`);
+  }
 }
 
 process.stdout.write(`Pi direct pins and installed package instances are aligned at ${targetVersion}.\n`);

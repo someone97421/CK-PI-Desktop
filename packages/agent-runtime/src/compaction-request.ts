@@ -41,7 +41,10 @@ import {
  *
  * The session id is the runtime's own, not a per-call id, so the summary reaches
  * the same gateway backend as the conversation
- * it summarizes — the same id the session's turns already send.
+ * it summarizes — the same id the session's turns already send. The summary
+ * must not continue or replace the conversation's server-side thread (pi-ai
+ * Anthropic message threads key that state by session id), so continuation is
+ * disabled for it.
  */
 export function compactionRequestOptions(input: {
   provider: RuntimeProviderConfig;
@@ -54,7 +57,14 @@ export function compactionRequestOptions(input: {
   return withSessionAffinityOptions(
     withProviderHeaders(
       withOpenCodeSessionHeaders(
-        { ...options, sessionId, ...(options?.reasoning !== undefined ? { reasoning: requestThinkingLevel(model, options.reasoning) } : {}) },
+        {
+          ...options,
+          sessionId,
+          disableContinuation: true,
+          ...(options?.reasoning !== undefined
+            ? { reasoning: requestThinkingLevel(model, options.reasoning) }
+            : {}),
+        },
         { ...openCodeEndpointFromProvider(provider, model), sessionId },
       ),
       mergeProviderHeaders(

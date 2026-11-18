@@ -155,6 +155,7 @@ test("shared protocol declares marketplace and package install IPC", () => {
   for (const channel of [
     "pluginInstallFromPackage",
     "marketSearch",
+    "marketBrowse",
     "marketInstall",
     "marketCheckUpdates",
     "marketApplyUpdates",
@@ -170,7 +171,7 @@ test("shared protocol declares marketplace and package install IPC", () => {
 test("插件市场支持刷新与渠道选择", () => {
   assert.match(pageSrc, /marketRefresh|refreshMarket|refreshRemote/);
   assert.match(pageSrc, /MarketplaceSourceSettings/);
-  assert.match(pageSrc, /marketSource/);
+  assert.match(pageSrc, /onSourceRefreshed=\{refreshMarket\}/);
 });
 
 

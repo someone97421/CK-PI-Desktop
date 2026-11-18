@@ -123,6 +123,8 @@ test("marketplace source settings omit redundant explanatory copy", () => {
   }
   assert.match(marketSettingsSrc, /source === "custom"/);
   assert.match(pageSrc, /MarketplaceSourceSettings/);
+  assert.match(pageSrc, /refreshMarket\(\{ refreshRemote: true \}\)/);
+  assert.match(pageSrc, /queueInstall/);
 });
 
 test("installed plugin rows keep secondary detail behind a disclosure", () => {
@@ -143,7 +145,9 @@ test("extension row actions stay visible and labelled", () => {
 test("the client hides development-only demo plugins from marketplace results", () => {
   assert.match(pageSrc, /function isClientVisibleMarketPlugin/);
   assert.match(pageSrc, /!plugin\.id\.startsWith\("demo\."\)/);
-  assert.match(pageSrc, /setMarket\(\(res\.plugins \?\? \[\]\)\.filter\(isClientVisibleMarketPlugin\)\)/);
+  // The host already drops samples from a page; the client filter stays as a
+  // second line for a snapshot or center that does not.
+  assert.match(pageSrc, /answer\.plugins\.filter\(isClientVisibleMarketPlugin\)/);
 });
 
 test("Settings exposes three independent Agent capability destinations", () => {

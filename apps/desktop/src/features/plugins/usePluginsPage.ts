@@ -4,6 +4,7 @@ import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
 import { useRowBusy } from "../../hooks/use-row-busy";
 import { usePluginBrowseState } from "./browse-state";
+import { useMarketBrowse } from "./useMarketBrowse";
 import type {
   MarketPluginDetail,
   MarketPluginSummary,
@@ -20,10 +21,8 @@ import {
   TEMPLATE_IDS,
   type TemplateId,
   groupOf,
-  isClientVisibleMarketPlugin,
   matchesQuery,
   orderPermissions,
-  sortMarketPlugins,
   versionInstallable,
   versionWithdrawn,
 } from "./model";
@@ -54,12 +53,35 @@ export function usePluginsPage() {
   const currentProjectPath = useAppStore((s) => s.workspace?.path ?? null);
 
   const {
-    tab, setTab, installedQuery, setInstalledQuery, query, setQuery,
-    category, setCategory, marketSort, setMarketSort,
+    tab,
+    setTab,
+    installedQuery,
+    setInstalledQuery,
+    query,
+    setQuery,
+    category,
+    setCategory,
+    sort,
+    setSort,
   } = usePluginBrowseState();
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
-  const [market, setMarket] = useState<MarketPluginSummary[]>([]);
-  const [marketLoading, setMarketLoading] = useState(false);
+  const {
+    market,
+    marketLoading,
+    marketLoadingMore,
+    marketLoadMoreFailed,
+    marketTotal,
+    marketHasMore,
+    browseOrigin,
+    categories,
+    reloadMarket,
+    loadMoreMarket,
+    markMarketInstalled,
+  } = useMarketBrowse({
+    active: tab === "market",
+    locale,
+    onError: (e) => showToast(e instanceof Error ? e.message : String(e), { variant: "error" }),
+  });
   // One busy key per plugin row: the first request to settle must not re-arm
   // a row that is still in flight, and a busy row does not lock the others
   // (the same contract the capability pages pin).
@@ -89,7 +111,6 @@ export function usePluginsPage() {
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [templatePick, setTemplatePick] = useState<TemplateId | null>(null);
   const [creating, setCreating] = useState(false);
-  const [marketSource, setMarketSource] = useState("");
   const [headerMenu, setHeaderMenu] = useState(false);
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -145,12 +166,14 @@ export function usePluginsPage() {
     setInstallJob(null);
   };
 
-  const refreshMarket = async (q = query, opts?: { refreshRemote?: boolean }) => {
-    setMarketLoading(true);
-    try {
-      if (opts?.refreshRemote) {
+  /**
+   * Re-read the current page. An explicit refresh first pulls the catalog
+   * from the plugin center, which also drops the host's cached pages.
+   */
+  const refreshMarket = async (opts?: { refreshRemote?: boolean }) => {
+    if (opts?.refreshRemote) {
+      try {
         const meta = await api.marketRefresh(true);
-        setMarketSource(meta.sourceUrl || meta.homepage || "");
         showToast(
           t("plugins.marketRefreshed", {
             count: meta.pluginCount,
@@ -158,19 +181,11 @@ export function usePluginsPage() {
           }),
           { variant: "success" },
         );
+      } catch (e) {
+        showToast(e instanceof Error ? e.message : String(e), { variant: "error" });
       }
-      const res = await api.marketSearch(q);
-      setMarket((res.plugins ?? []).filter(isClientVisibleMarketPlugin));
-      if (!marketSource) {
-        // The host reports the catalog URL actually in effect, so a mirror or
-        // custom source shows up here instead of the official repo.
-        setMarketSource(res.sourceUrl || res.providerId || "");
-      }
-    } catch (e) {
-      showToast(e instanceof Error ? e.message : String(e), { variant: "error" });
-    } finally {
-      setMarketLoading(false);
     }
+    await reloadMarket();
   };
 
   const openDetail = async (id: string) => {
@@ -243,24 +258,8 @@ export function usePluginsPage() {
     })();
   }, [refreshPlugins]);
 
-  // The marketplace query drives a debounced provider search: typing is the only
-  // control, so there is no separate Search button that can fall out of sync.
-  useEffect(() => {
-    if (tab !== "market") return;
-    const delay = query.trim() ? 240 : 0;
-    const handle = window.setTimeout(() => void refreshMarket(query), delay);
-    return () => window.clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, query]);
-
-  // Plugin and catalog labels are resolved in the host, so a language switch
-  // has to re-read the marketplace list; otherwise the previous language stays
-  // on the cards until the user happens to type (ADR 0160).
-  useEffect(() => {
-    if (tab !== "market") return;
-    void refreshMarket(query);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locale]);
+  // The marketplace page (query, category, sort, page, locale) is loaded by
+  // useMarketBrowse: typing is debounced, every other control asks at once.
 
   // Escape closes the detail sheet, but only while it owns the top layer: the
   // permission dialog, the install dialog, and the review drawer in front of
@@ -450,23 +449,8 @@ export function usePluginsPage() {
     });
   }, [filteredInstalled]);
 
-  const categories = useMemo(() => {
-    const seen = new Set<string>();
-    for (const item of market) {
-      for (const value of item.categories ?? []) if (value) seen.add(value);
-    }
-    return [...seen].sort((a, b) => a.localeCompare(b));
-  }, [market]);
-
-  const visibleMarket = useMemo(
-    () => sortMarketPlugins(
-      category
-        ? market.filter((item) => (item.categories ?? []).includes(category))
-        : market,
-      marketSort,
-    ),
-    [market, category, marketSort],
-  );
+  // The host filters by category, so the page is already what is visible.
+  const visibleMarket = market;
 
   const activeVersion = useMemo(() => {
     if (!detail?.versions?.length) return null;
@@ -680,7 +664,7 @@ export function usePluginsPage() {
         grantedPermissions: request.grantedPermissions,
       });
       await refreshPlugins();
-      await refreshMarket();
+      markMarketInstalled(request.id, request.version);
       if (selectedId === request.id) await openDetail(request.id);
       showToast(t("plugins.installed", { name: request.name }), {
         variant: "success",
@@ -798,10 +782,16 @@ export function usePluginsPage() {
     setQuery,
     category,
     setCategory,
-    marketSort,
-    setMarketSort,
+    sort,
+    setSort,
     market,
     marketLoading,
+    marketLoadingMore,
+    marketLoadMoreFailed,
+    marketTotal,
+    marketHasMore,
+    loadMoreMarket,
+    browseOrigin,
     isPluginBusy: rowBusy.isBusy,
     reloadingId,
     pendingInstall,
@@ -811,8 +801,6 @@ export function usePluginsPage() {
     templatePick,
     setTemplatePick,
     creating,
-    marketSource,
-    setMarketSource,
     headerMenu,
     setHeaderMenu,
     rowMenu,

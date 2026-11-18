@@ -474,7 +474,7 @@ test("市场渠道设置位于插件市场页面并保留刷新入口", () => {
   }
   assert.match(marketplaceSettingsSource, /source === "custom"/);
   assert.match(pluginsPageSource, /api\.marketRefresh\(true\)/);
-  assert.match(pluginsPageSource, /refreshMarket\(query, \{ refreshRemote: true \}\)/);
+  assert.match(pluginsPageSource, /refreshMarket\(\{ refreshRemote: true \}\)/);
   assert.doesNotMatch(settingsPageSource, /ExtensionMarketSection/);
   assert.doesNotMatch(settingsPageSource, /tab === "extensions"/);
 });

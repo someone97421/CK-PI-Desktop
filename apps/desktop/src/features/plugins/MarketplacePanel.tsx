@@ -1,8 +1,10 @@
-import { Button, cx } from "../../components/ui";
+import { Button, Tooltip, cx } from "../../components/ui";
 import { IconCheck, IconSearch, IconShield } from "../../components/icons";
 import { MarketplaceSourceSettings } from "../../components/plugins/MarketplaceSourceSettings";
 import { PermissionChips, RatingChip } from "./presentation";
 import { ReviewTicker } from "./ReviewTicker";
+import { MarketLoadMore } from "./MarketLoadMore";
+import { MARKET_SORTS, MARKET_SORT_LABEL_KEYS } from "./market-paging";
 import {
   formatDate,
   monogram,
@@ -17,13 +19,18 @@ export function MarketplacePanel({
   query,
   setQuery,
   refreshMarket,
-  setMarketSource,
   categories,
   category,
   setCategory,
-  marketSort,
-  setMarketSort,
+  sort,
+  setSort,
   marketLoading,
+  marketLoadingMore,
+  marketLoadMoreFailed,
+  marketTotal,
+  marketHasMore,
+  loadMoreMarket,
+  browseOrigin,
   market,
   visibleMarket,
   installedById,
@@ -34,71 +41,89 @@ export function MarketplacePanel({
   reviewSummaries,
   reviewTickers,
 }: PluginsPageModel) {
+  const selected = category.toLowerCase();
   return (
           <div
             id="plugins-panel-market"
             role="tabpanel"
             aria-labelledby="plugins-tab-market"
+            aria-busy={marketLoading || undefined}
             className="plugins-panel"
           >
             {settings ? (
               <MarketplaceSourceSettings
                 settings={settings}
-                onSourceRefreshed={(source) => {
-                  setMarketSource(source);
-                  void refreshMarket(query);
-                }}
+                onSourceRefreshed={refreshMarket}
               />
             ) : null}
 
-            <div
-              className="plugins-filters"
-              role="group"
-              aria-label={t("plugins.sortLabel")}
-            >
-              {([
-                ["default", "plugins.sortDefault"],
-                ["updated", "plugins.sortUpdated"],
-                ["published", "plugins.sortPublished"],
-              ] as const).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={cx("plugins-filter", marketSort === value && "active")}
-                  aria-pressed={marketSort === value}
-                  title={value === "published" ? t("plugins.sortPublishedHint") : undefined}
-                  onClick={() => setMarketSort(value)}
+            <div className="plugins-browse-bar">
+              {categories.length > 0 ? (
+                <div
+                  className="plugins-filters"
+                  role="group"
+                  aria-label={t("plugins.categories")}
                 >
-                  {t(label)}
-                </button>
-              ))}
-            </div>
-
-            {categories.length > 1 ? (
+                  <button
+                    type="button"
+                    className={cx("plugins-filter", !category && "active")}
+                    aria-pressed={!category}
+                    onClick={() => setCategory("")}
+                  >
+                    {t("plugins.categoryAll")}
+                  </button>
+                  {categories.map((facet) => {
+                    const active = facet.id.toLowerCase() === selected;
+                    return (
+                      <button
+                        key={facet.id}
+                        type="button"
+                        className={cx("plugins-filter", active && "active")}
+                        aria-pressed={active}
+                        onClick={() => setCategory(active ? "" : facet.id)}
+                      >
+                        {facet.name ?? facet.id}
+                        {facet.count > 0 ? (
+                          <span className="plugins-filter-count">{facet.count}</span>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <span />
+              )}
               <div
-                className="plugins-filters"
-                role="group"
-                aria-label={t("plugins.categories")}
+                className="plugins-sort"
+                role="radiogroup"
+                aria-label={t("plugins.sortLabel")}
               >
-                <button
-                  type="button"
-                  className={cx("plugins-filter", !category && "active")}
-                  aria-pressed={!category}
-                  onClick={() => setCategory("")}
-                >
-                  {t("plugins.categoryAll")}
-                </button>
-                {categories.map((value) => (
+                {MARKET_SORTS.map((value) => (
                   <button
                     key={value}
                     type="button"
-                    className={cx("plugins-filter", category === value && "active")}
-                    aria-pressed={category === value}
-                    onClick={() => setCategory(category === value ? "" : value)}
+                    role="radio"
+                    aria-checked={sort === value}
+                    className={cx("plugins-sort-btn", sort === value && "active")}
+                    title={value === "published" ? t("plugins.sortPublishedHint") : undefined}
+                    onClick={() => setSort(value)}
                   >
-                    {value}
+                    {t(MARKET_SORT_LABEL_KEYS[value])}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {browseOrigin || marketTotal > 0 ? (
+              <div className="plugins-browse-meta" aria-live="polite">
+                <span className="plugins-result-count">
+                  {t("plugins.browseTotal", { count: marketTotal })}
+                </span>
+                {browseOrigin === "local" ? (
+                  <Tooltip label={t("plugins.sourceLocalHint")}>
+                    <span className="plugins-source-chip">{t("plugins.sourceLocal")}</span>
+                  </Tooltip>
+                ) : null}
               </div>
             ) : null}
 
@@ -132,14 +157,17 @@ export function MarketplacePanel({
                   ) : null}
                   <Button
                     variant="secondary"
-                    onClick={() => void refreshMarket(query, { refreshRemote: true })}
+                    onClick={() => void refreshMarket({ refreshRemote: true })}
                   >
                     {t("plugins.refreshMarket")}
                   </Button>
                 </div>
               </div>
             ) : (
-              <div className="plugins-card-grid" role="list">
+              <div
+                className={cx("plugins-card-grid", marketLoading && "is-refreshing")}
+                role="list"
+              >
                 {visibleMarket.map((item) => {
                   const installed = installedById.get(item.id);
                   const upgradable = !!installed && !!item.updateAvailable;
@@ -197,7 +225,7 @@ export function MarketplacePanel({
                               <span>
                                 {installed
                                   ? t("plugins.installedVersion", { version: installed.version })
-                                  : marketSort === "published"
+                                  : sort === "published"
                                     ? t("plugins.firstPublishedOn", {
                                         date: formatDate(item.firstPublishedAt, locale),
                                       })
@@ -259,6 +287,18 @@ export function MarketplacePanel({
                 })}
               </div>
             )}
+
+            {!marketLoading || market.length > 0 ? (
+              <MarketLoadMore
+                t={t}
+                loaded={market.length}
+                total={marketTotal}
+                hasMore={marketHasMore}
+                loading={marketLoadingMore}
+                failed={marketLoadMoreFailed}
+                onLoadMore={() => void loadMoreMarket()}
+              />
+            ) : null}
           </div>
 );
 }

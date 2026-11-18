@@ -132,9 +132,8 @@ impl PluginManager {
 
     /// Re-pin the catalog channel after the user switches sources.
     ///
-    /// Cached snapshots are left on disk: they are keyed back to their source
-    /// through `cache-meta.json`, so a snapshot from another channel is ignored
-    /// rather than deleted and switching back keeps working offline.
+    /// Leave the snapshot on disk. The recorded source controls whether the
+    /// new channel can use it until a refresh replaces it.
     pub fn set_market_channel(&mut self, channel: MarketChannel, custom_url: Option<String>) {
         self.market_channel = channel;
         self.market_custom_url = custom_url;
@@ -169,6 +168,10 @@ impl PluginManager {
     pub(crate) fn ensure_default_catalog(&self) -> Result<()> {
         let path = self.catalog_path();
         if path.exists() {
+            // The snapshot may have been written by a build that could not read
+            // the catalog's multi-word fields; replacing it is a one-time cost
+            // and a no-op afterwards.
+            let _ = self.migrate_catalog_metadata();
             return Ok(());
         }
         // Prefer the official remote marketplace repo; fall back to bundled demos.
@@ -323,13 +326,49 @@ impl PluginManager {
             "providerId": catalog.provider_id,
             "fetchedAt": Utc::now().to_rfc3339(),
             "pluginCount": catalog.plugins.len(),
+            "metadataGeneration": CATALOG_METADATA_GENERATION,
         });
         fs::write(meta_path, serde_json::to_string_pretty(&meta)?)?;
         Ok(catalog)
     }
 
+    /// Bring a snapshot written before the catalog fields were readable back to
+    /// the current shape, once.
+    ///
+    /// The previous parser accepted snake_case only, so `readmeMarkdown`,
+    /// `publisherId`, `safetyNotes` and `iconUrl` were dropped and recorded as
+    /// null. A snapshot like that cannot be repaired without the source: it is
+    /// fetched again, and the marker in `cache-meta.json` keeps the next launch
+    /// from repeating the request. A failed fetch leaves the snapshot in place
+    /// and the marker absent, so the next launch tries again.
+    fn migrate_catalog_metadata(&self) -> Result<()> {
+        if !self.uses_download_resolve() {
+            return Ok(());
+        }
+        let Ok(raw) = fs::read_to_string(self.market_cache_meta_path()) else {
+            return Ok(());
+        };
+        let Ok(meta) = serde_json::from_str::<Value>(&raw) else {
+            return Ok(());
+        };
+        if meta.get("sourceUrl").and_then(Value::as_str) != Some(OFFICIAL_CHANNEL_CATALOG_URL)
+            || meta
+                .get("metadataGeneration")
+                .and_then(Value::as_u64)
+                .is_some_and(|generation| generation >= u64::from(CATALOG_METADATA_GENERATION))
+        {
+            return Ok(());
+        }
+        self.refresh_catalog_from_remote(true).map(|_| ())
+    }
+
     pub fn refresh_market(&self, force: bool) -> Result<Value> {
         let catalog = self.refresh_catalog_from_remote(force)?;
+        // A refresh the user asked for must not be answered by a page cached
+        // before it.
+        if force {
+            super::market_browse::clear_browse_cache();
+        }
         Ok(json!({
             "providerId": catalog.provider_id,
             "name": catalog.name,
@@ -353,10 +392,9 @@ impl PluginManager {
     /// never hold the host RPC state lock behind a remote timeout; an explicit
     /// refresh remains responsible for fetching the latest catalog.
     ///
-    /// A snapshot left by a different source is skipped rather than deleted,
-    /// so switching back to a previously used provider recovers its catalog
-    /// without a round trip.
-    fn load_cached_catalog(&self) -> Result<MarketCatalogFile> {
+    /// Skip snapshots from other sources so their package URLs and checksums
+    /// cannot be paired with the current catalog.
+    pub(crate) fn load_cached_catalog(&self) -> Result<MarketCatalogFile> {
         if self.cached_catalog_matches_source(&self.market_source_url()) {
             if let Ok(raw) = fs::read_to_string(self.catalog_path()) {
                 if let Ok(catalog) = serde_json::from_str::<MarketCatalogFile>(&raw) {
@@ -382,6 +420,25 @@ impl PluginManager {
             Ok(catalog) => Ok(catalog),
             Err(_) => self.load_catalog(),
         }
+    }
+
+    /// Turn an entry's category ids into the labels the cards show, keeping the
+    /// ids for filtering.
+    ///
+    /// A catalog that predates the vocabulary carries no labels, and then the
+    /// id is what the reader sees — the same fallback the website uses.
+    pub(crate) fn localize_categories(
+        &self,
+        entry: &MarketCatalogEntry,
+        summary: &mut MarketPluginSummary,
+        labels: &CategoryLabels,
+    ) {
+        summary.category_ids = entry.categories.clone();
+        summary.categories = entry
+            .categories
+            .iter()
+            .map(|id| category_label(labels, id, &self.locale))
+            .collect();
     }
 
     pub fn market_search(
@@ -413,22 +470,34 @@ impl PluginManager {
                     continue;
                 }
             }
-            out.push(self.to_market_summary(&entry));
+            let mut summary = self.to_market_summary(&entry);
+            self.localize_categories(&entry, &mut summary, &catalog.category_labels);
+            out.push(summary);
         }
         Ok(out)
     }
 
     pub fn market_get(&self, plugin_id: &str) -> Result<MarketPluginDetail> {
-        let catalog = self.load_catalog()?;
-        let mut entry = catalog
-            .plugins
-            .into_iter()
-            .find(|p| p.id == plugin_id)
-            .ok_or_else(|| anyhow!("PLUGIN_NOT_FOUND: {plugin_id}"))?;
+        // A remote card may be newer than the snapshot. Prefer its entry and
+        // category labels together, so the detail matches the card.
+        let (mut entry, labels) =
+            match super::market_browse::cached_browse_entry(&self.market_source_url(), plugin_id) {
+                Some(found) => found,
+                None => {
+                    let catalog = self.load_catalog()?;
+                    let entry = catalog
+                        .plugins
+                        .into_iter()
+                        .find(|p| p.id == plugin_id)
+                        .ok_or_else(|| anyhow!("PLUGIN_NOT_FOUND: {plugin_id}"))?;
+                    (entry, catalog.category_labels)
+                }
+            };
         entry
             .versions
             .sort_by(|a, b| compare_plugin_versions(&b.version, &a.version));
-        let summary = self.to_market_summary(&entry);
+        let mut summary = self.to_market_summary(&entry);
+        self.localize_categories(&entry, &mut summary, &labels);
         let permissions = latest_market_version(&entry.versions)
             .map(|v| v.permissions.clone())
             .unwrap_or_default();
@@ -599,6 +668,7 @@ impl PluginManager {
         let installed = self.get(&entry.id);
         let catalog_url = self.market_source_url();
         MarketPluginSummary {
+            category_ids: Vec::new(),
             id: entry.id.clone(),
             name: localized_field(entry.i18n.as_ref(), &self.locale, |text| text.name.as_ref())
                 .cloned()
@@ -615,14 +685,7 @@ impl PluginManager {
             updated_at: latest_version
                 .map(|v| v.published_at.clone())
                 .unwrap_or_default(),
-            first_published_at: entry
-                .versions
-                .iter()
-                .filter_map(|version| {
-                    chrono::DateTime::parse_from_rfc3339(&version.published_at).ok()
-                })
-                .min()
-                .map(|date| date.to_rfc3339()),
+            first_published_at: first_published_at(entry).map(|date| date.to_rfc3339()),
             categories: entry.categories.clone(),
             permission_summary: latest_version
                 .map(|v| v.permissions.clone())
@@ -701,6 +764,45 @@ impl PluginManager {
             || url == GITHUB_BACKUP_CHANNEL_CATALOG_URL
             || url == MIRROR_MARKET_CATALOG_URL
     }
+}
+
+/// Label for one category id in one locale.
+///
+/// The exact locale wins; then the same language with another region
+/// (`zh-TW` reads `zh-CN`); then English; then the id itself.
+pub(crate) fn category_label(labels: &CategoryLabels, id: &str, locale: &str) -> String {
+    let Some(by_locale) = labels.get(id) else {
+        return id.to_string();
+    };
+    if let Some(text) = by_locale.get(locale).filter(|text| !text.trim().is_empty()) {
+        return text.clone();
+    }
+    let language = locale.split(['-', '_']).next().unwrap_or(locale);
+    if let Some((_, text)) = by_locale
+        .iter()
+        .find(|(key, text)| !text.trim().is_empty() && key.starts_with(language))
+    {
+        return text.clone();
+    }
+    if let Some(text) = by_locale.get("en").filter(|text| !text.trim().is_empty()) {
+        return text.clone();
+    }
+    id.to_string()
+}
+
+/// Shape of the catalog metadata this build reads and writes. A snapshot
+/// recorded under an older generation is refreshed once; see
+/// `migrate_catalog_metadata`.
+const CATALOG_METADATA_GENERATION: u32 = 2;
+
+pub(crate) fn first_published_at(
+    entry: &MarketCatalogEntry,
+) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    entry
+        .versions
+        .iter()
+        .filter_map(|version| chrono::DateTime::parse_from_rfc3339(&version.published_at).ok())
+        .min()
 }
 
 pub(crate) fn host_supports_version(version: &MarketVersion) -> bool {

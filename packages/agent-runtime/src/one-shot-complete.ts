@@ -103,6 +103,7 @@ export async function completeOneShot(
         maxTokens: clampOutputToContext(model, context, undefined),
         ...(options.signal ? { signal: options.signal } : {}),
         maxRetries: 0,
+        disableContinuation: true,
         reasoning: requestThinkingLevel(model, thinkingLevel),
         fetch: providerRequestFetch(
           model.api,

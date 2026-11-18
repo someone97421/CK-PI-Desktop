@@ -28,6 +28,7 @@
 | COMPAT-012 | 保留 | 模式运行 schema 29→33 与旧阶段调用 | 2026-11-17 |
 | COMPAT-013 | 保留 | 崩溃留下的转录 EOF 截断行 | 2026-11-17 |
 | COMPAT-014 | 已替换 | 计划审批本地权限偏好 | 2026-11-17 |
+| COMPAT-015 | 保留 | 插件市场旧目录字段与元数据刷新 | 2026-11-18 |
 
 ## 仍需跟踪
 
@@ -95,6 +96,12 @@
 - **来源与替代**：上游 `fe68b42b4`、`4534e9fe9`、`6de6df6f3` 修复进程中断可能留下的不完整末行；此前 fork 基线 `39954dbb33` 的读取／写入校验可能因此拒绝整份转录。现行恢复按 JSON 解析器的 EOF 类型识别截断，不依赖错误文本。
 - **入口与断言**：[转录读取](../crates/host-core/src/transcripts.rs)、[二进制完整性校验](../crates/host-core/src/transcripts/binary_integrity.rs)、[存储恢复](../crates/host-core/src/transcripts/binary_storage.rs)、[断言](../crates/host-core/src/transcripts/binary_integrity_tests.rs)。
 - **保留原因与移除条件**：恢复崩溃前的完整记录，读取和存储验证均容忍 EOF 截断行；完整损坏仍返回错误，不伪造 outbox 成功。只要进程中断仍可能留下这类尾行就保留，不主动重写历史转录格式。静态核对通过，未执行恢复用例或打开真实转录。最近复核 2026-11-17。
+
+### COMPAT-015：插件市场旧目录字段与元数据刷新
+
+- 上游 `047c4eab1` 修复目录多词字段被忽略的问题。`crates/host-core/src/plugins/model.rs` 按 camelCase 读取中心响应，同时接受旧快照的 snake_case 字段。
+- `crates/host-core/src/plugins/marketplace.rs` 的 `migrate_catalog_metadata` 会检查已有快照、所选官方渠道及来源 URL。无环境覆盖、缓存来源匹配且 `metadataGeneration` 缺失或小于 2 时，从官方渠道重新获取目录。成功后在 `plugins/market/cache-meta.json` 写入代数 2，网络失败保留原快照，下次启动可重试。
+- 旧目录快照仍可能随备份恢复。待支持范围内的快照均已更新、旧备份恢复也有替代迁移路径，并验证首次升级、离线重试和多渠道切换后，方可移除别名和刷新分支。本轮静态核对序列化字段及刷新路径。
 
 ## 已移除记录
 

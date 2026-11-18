@@ -50,6 +50,7 @@ import {
   type PrepareNextTurnContext,
 } from "@earendil-works/pi-agent-core";
 import {
+  cleanupSessionResources,
   isContextOverflow,
   getCurrentTools,
   getToolStateChanges,
@@ -10373,6 +10374,10 @@ Delegation rules:
     this.cleanupActiveToolProgress();
     if (this.compactionInProgress) this.compactionAborted = true;
     this.compactionAbort?.abort();
-    await closingExtensions;
+    try {
+      await closingExtensions;
+    } finally {
+      cleanupSessionResources(this.sessionId);
+    }
   }
 }
