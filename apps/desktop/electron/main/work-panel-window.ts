@@ -22,9 +22,9 @@ export type WorkPanelReservationState = {
 export const WORK_PANEL_MIN_WIDTH = 244;
 export const WORK_PANEL_MAX_WIDTH = 720;
 /** App-wide minimum window size, in DIP, before clamping to the work area. */
-export const WINDOW_MIN_WIDTH = 800;
+export const WINDOW_MIN_WIDTH = 480;
 export const WINDOW_MIN_HEIGHT = 560;
-export const WORK_PANEL_CHAT_MIN_WIDTH = WINDOW_MIN_WIDTH;
+export const WORK_PANEL_CHAT_MIN_WIDTH = 800;
 export const WORK_PANEL_CHAT_MAX_WIDTH = 10000;
 
 export const emptyWorkPanelReservationState = (): WorkPanelReservationState => ({

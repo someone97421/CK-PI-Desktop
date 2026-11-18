@@ -893,13 +893,17 @@ export async function createWindow({
     const cg = readCgBounds();
     if (!cg && cgHelperAvailable) missingCgStreak += 1;
     else missingCgStreak = 0;
+    const minimumRecoveryWidth = Math.min(
+      windowMinWidth,
+      screen.getDisplayMatching(electronBounds).workArea.width,
+    );
     // Tiny/offscreen CG footprint is Stage Manager shelf. Missing CG alone is not
     // conclusive (alwaysOnTop can change window layer); require a short streak.
     const shelved =
-      (!!cg && (cg.width < 500 || cg.height < 400 || cg.x < -40)) ||
+      (!!cg && (cg.width < minimumRecoveryWidth || cg.height < 400 || cg.x < -40)) ||
       (!cg && cgHelperAvailable && missingCgStreak >= 3);
     const electronTiny =
-      electronBounds.width < 500 || electronBounds.height < 400;
+      electronBounds.width < minimumRecoveryWidth || electronBounds.height < 400;
     if (!force && !shelved && !electronTiny) return;
 
     boundsGuard = true;

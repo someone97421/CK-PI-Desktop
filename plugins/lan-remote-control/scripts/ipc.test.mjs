@@ -557,11 +557,11 @@ test("插件适配层在入口和 SPA 注入，资源独立提供且不改 Rende
     const response = await fetch(`${endpoint}${route}`);
     const html = await response.text();
     assert.equal(response.status, 200);
-    assert.match(html, /href="\/__lan-remote\/projection.css"/);
+    assert.match(html, /href="\/__lan-remote\/file-actions\.css"/);
     assert.match(html, /src="\/__lan-remote\/projection.js"><\/script><\/head>/);
     assert.equal(Number(response.headers.get("content-length")), Buffer.byteLength(html));
   }
-  for (const [name, mime] of [["projection.js", "javascript"], ["projection.css", "text/css"]]) {
+  for (const [name, mime] of [["projection.js", "javascript"], ["file-actions.css", "text/css"]]) {
     const route = `${endpoint}/__lan-remote/${name}`;
     const response = await fetch(route);
     assert.equal(response.status, 200);

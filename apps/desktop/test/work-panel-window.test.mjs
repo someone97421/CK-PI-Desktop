@@ -37,10 +37,10 @@ test("chat resize IPC accepts only bounded integer widths", () => {
   assert.equal(parseWorkPanelChatWidth({ width: 10000.5 }), null);
 });
 
-test("app-wide minimum window size is shared with the chat width floor", () => {
-  assert.equal(WINDOW_MIN_WIDTH, 800);
+test("window minimum allows narrow layouts while chat divider keeps its desktop floor", () => {
+  assert.equal(WINDOW_MIN_WIDTH, 480);
   assert.equal(WINDOW_MIN_HEIGHT, 560);
-  assert.equal(WORK_PANEL_CHAT_MIN_WIDTH, WINDOW_MIN_WIDTH);
+  assert.equal(WORK_PANEL_CHAT_MIN_WIDTH, 800);
 });
 
 test("minimum window size is capped to the work area", () => {
@@ -54,7 +54,7 @@ test("minimum window size is capped to the work area", () => {
       { width: WINDOW_MIN_WIDTH, height: WINDOW_MIN_HEIGHT },
       workArea,
     ),
-    { width: 800, height: 560 },
+    { width: 480, height: 560 },
   );
   assert.deepEqual(
     clampMinimumSizeToWorkArea({ width: 800, height: 560 }, { width: 640.7, height: 480.9 }),

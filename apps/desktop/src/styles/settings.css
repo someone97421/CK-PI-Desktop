@@ -4310,3 +4310,83 @@
 .sklm-page-jump::placeholder {
   color: var(--ds-text-muted);
 }
+
+.app-shell[data-compact-layout="true"] .settings-titlebar {
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: calc(var(--ds-window-lead-inset) + 8px);
+  padding-right: 12px;
+}
+
+.app-shell[data-compact-layout="true"] .settings-titlebar-back {
+  flex: 0 0 auto;
+  max-width: 45%;
+  min-width: 28px;
+  pointer-events: auto;
+}
+
+.app-shell[data-compact-layout="true"] .settings-titlebar-back > span,
+.app-shell[data-compact-layout="true"] .settings-titlebar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell[data-compact-layout="true"] .settings-titlebar-label {
+  min-width: 0;
+  color: var(--ds-text-secondary);
+  font-size: var(--text-md);
+}
+
+.app-shell[data-compact-layout="true"] .settings-shell-full .settings-nav {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 100%;
+}
+
+.app-shell[data-compact-layout="true"] .settings-nav-top {
+  padding: calc(var(--ds-toolbar-height) + 8px) 16px 6px;
+}
+
+.app-shell[data-compact-layout="true"] .settings-nav-scroll {
+  padding-inline: 14px;
+}
+
+.app-shell[data-compact-layout="true"] .settings-nav-item {
+  min-height: 40px;
+}
+
+.app-shell[data-compact-layout="true"] .settings-shell[data-settings-view="detail"] .settings-nav,
+.app-shell[data-compact-layout="true"] .settings-shell[data-settings-view="directory"] .settings-content,
+.app-shell[data-compact-layout="true"] .settings-nav-footer {
+  display: none;
+}
+
+.app-shell[data-compact-layout="true"] .settings-content {
+  padding: calc(var(--ds-toolbar-height) + 12px) 16px 32px;
+  scroll-padding-top: calc(var(--ds-toolbar-height) + 12px);
+}
+
+.app-shell[data-compact-layout="true"] .settings-section-title {
+  margin-bottom: 20px;
+}
+
+.app-shell[data-compact-layout="true"] .settings-row {
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.app-shell[data-compact-layout="true"] .settings-row-copy {
+  flex-basis: 160px;
+}
+
+.app-shell[data-compact-layout="true"] .settings-row-control {
+  max-width: 100%;
+}
+
+.app-shell[data-compact-layout="true"] .settings-card-heading-row {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}

@@ -88,7 +88,13 @@ test("拖动使用透明占位图，保留同一捕捉 ID 且等待成功回执�
 });
 
 test("取消、失败及减少动态效果不播放成功动画", () => {
-  const cancel = fixture(); cancel.start(); cancel.event("keydown", { key: "Escape" }); cancel.result("drag-1", true);
+  const cancel = fixture();
+  let escapesHandled = 0;
+  const escape = { key: "Escape", preventDefault() { escapesHandled++; } };
+  cancel.event("keydown", escape);
+  assert.equal(escapesHandled, 0);
+  cancel.start(); cancel.event("keydown", escape); cancel.result("drag-1", true);
+  assert.equal(escapesHandled, 1);
   assert.equal(cancel.messages.at(-1).message.cancel, true);
   assert.equal(cancel.animations.length, 0);
   const failed = fixture(); failed.start(); failed.result("drag-1", false);

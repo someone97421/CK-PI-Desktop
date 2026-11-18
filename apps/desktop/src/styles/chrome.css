@@ -1359,7 +1359,7 @@
 }
 
 /* Follow the adjacent titlebar surface when the dock occupies the right edge. */
-.app-shell:has(.work-panel) > .window-controls {
+.app-shell:not(.settings-mode):has(.work-panel:not([hidden])) > .window-controls {
   background: var(--ds-bg-dock-raised);
 }
 

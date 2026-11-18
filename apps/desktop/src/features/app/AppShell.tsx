@@ -11,6 +11,7 @@ import { ConversationTopbar } from "../../components/ConversationTopbar";
 import { ExtensionPromptHost } from "../../components/ExtensionPromptDialog";
 import { PluginRendererHost } from "../../plugins/renderer-host/PluginRendererHost";
 import {
+  IconChevronLeft,
   IconNewSession,
   IconPanel,
   IconPanelOpen,
@@ -54,9 +55,9 @@ const PluginsPage = lazy(() =>
 
 export function AppShell() {
   const {
-    projection,
-    projectionLayer,
-    openProjectionConversation,
+    compact,
+    compactLayer,
+    showCompactChat,
     t,
     ready,
     page,
@@ -100,8 +101,10 @@ export function AppShell() {
     workPanelToggleTooltip,
   } = useAppShellRuntime();
   const [toastAnchor, setToastAnchor] = useState<HTMLElement | null>(null);
-  const projectionWorkPanelMounted = useRef(false);
-  if (projection && (presentedWorkPanelOpen || workPanelExiting)) projectionWorkPanelMounted.current = true;
+  const chatVisible = page !== "settings" && (compact ? compactLayer === "chat" : !workPanelMaximized);
+  const panelVisible = page !== "settings" && (compact ? compactLayer === "workpanel" : presentedWorkPanelOpen || workPanelExiting);
+  const workPanelMounted = useRef(false);
+  if (presentedWorkPanelOpen || workPanelExiting) workPanelMounted.current = true;
   useCopyTex();
 
   // A boot that never reaches the shell gets a surface it can act on instead of
@@ -128,14 +131,15 @@ export function AppShell() {
             hidden={page === "settings"}
             inert={page === "settings" ? true : undefined}
           >
-            {projection || !sidebarCollapsed || sidebarExiting ? (
-              <PortalVisibilityProvider visible={page !== "settings" && (!projection || projectionLayer === "projects")}>
+            {compact || !sidebarCollapsed || sidebarExiting ? (
+              <PortalVisibilityProvider visible={page !== "settings" && (!compact || compactLayer === "projects")}>
                 <Sidebar
                   className={cx(sidebarEntering && "is-entering", sidebarExiting && "is-exiting")}
                   onAnimationEnd={handleSidebarAnimationEnd}
-                  onToggleSidebar={toggleSidebar}
-                  inactive={projection && projectionLayer !== "projects"}
-                  onOpenConversation={projection ? openProjectionConversation : undefined}
+                  onToggleSidebar={compact ? showCompactChat : toggleSidebar}
+                  compact={compact}
+                  inactive={compact && compactLayer !== "projects"}
+                  onOpenConversation={compact ? showCompactChat : undefined}
                   sidebarToggleShortcut={sidebarToggleShortcut}
                   sidebarWidth={sidebarWidth}
                   onWidthChange={handleSidebarWidthChange}
@@ -144,9 +148,8 @@ export function AppShell() {
               </PortalVisibilityProvider>
             ) : null}
 
-            {!projection && workPanelMaximized && (
-              /* MainChat is absent; the panel header owns dragging while this
-                 pass-through row keeps the shell controls available. */
+            {!compact && workPanelMaximized && (
+              /* 面板占满内容区时，保留标题栏操作。 */
               <div
                 className={cx(
                   "window-chrome-row",
@@ -176,18 +179,20 @@ export function AppShell() {
               </div>
             )}
 
-            {(projection || !workPanelMaximized) && (
-              <PortalVisibilityProvider visible={page !== "settings" && (!projection || projectionLayer === "chat")}>
+            {(compact || !workPanelMaximized) && (
+            <PortalVisibilityProvider visible={chatVisible}>
               <section
                 ref={setToastAnchor}
                 className="main-pane"
-                inert={projection && projectionLayer !== "chat" ? true : undefined}
-                aria-hidden={projection && projectionLayer !== "chat" ? true : undefined}
+                hidden={!chatVisible}
+                inert={compact && compactLayer !== "chat" ? true : undefined}
+                aria-hidden={compact && compactLayer !== "chat" ? true : undefined}
               >
                 {page === "chat" ? (
                   <ConversationTopbar
-                    sidebarCollapsed={sidebarCollapsed}
-                    workPanelOpen={presentedWorkPanelOpen}
+                    compact={compact}
+                    sidebarCollapsed={compact || sidebarCollapsed}
+                    workPanelOpen={!compact && presentedWorkPanelOpen}
                     onToggleSidebar={toggleSidebar}
                     onNewTask={() => void runMenuCommand("newTask")}
                     onOpenSearch={() => setSearchOpen(true)}
@@ -196,10 +201,10 @@ export function AppShell() {
                   <div
                     className={cx(
                       "main-titlebar",
-                      presentedWorkPanelOpen && "work-panel-open",
+                      !compact && presentedWorkPanelOpen && "work-panel-open",
                     )}
                   >
-                    {sidebarCollapsed && (
+                    {(compact || sidebarCollapsed) && (
                       <div className="main-titlebar-left no-drag">
                         <CollapsedTitlebarActions
                           onToggleSidebar={reopenSidebar}
@@ -267,11 +272,9 @@ export function AppShell() {
                   </div>
                 )}
 
-                {projection && (
-                  <div hidden={page !== "chat"} style={page === "chat" ? { display: "contents" } : undefined}>
-                    <ChatSurface visible={page === "chat" && projectionLayer === "chat"} />
-                  </div>
-                )}
+                <div hidden={page !== "chat"} style={page === "chat" ? { display: "contents" } : undefined}>
+                  <ChatSurface visible={page === "chat" && chatVisible} />
+                </div>
                 <Suspense fallback={<RoutePending />}>
                   {page === "pulls" ? (
                     <div className="route-surface route-page">
@@ -285,18 +288,16 @@ export function AppShell() {
                     <div className="route-surface route-page">
                       <PluginsPage />
                     </div>
-                  ) : (
-                    !projection && <ChatSurface visible={page === "chat"} />
-                  )}
+                  ) : null}
                 </Suspense>
               </section>
-              </PortalVisibilityProvider>
+            </PortalVisibilityProvider>
             )}
 
-            {(presentedWorkPanelOpen || workPanelExiting || (projection && projectionWorkPanelMounted.current)) && (
-              <PortalVisibilityProvider visible={page !== "settings" && (!projection || projectionLayer === "workpanel")}>
+            {(presentedWorkPanelOpen || workPanelExiting || (compact && workPanelMounted.current)) && (
+              <PortalVisibilityProvider visible={panelVisible}>
                 <WorkPanel
-                  panelBlocked={searchOpen || (projection && projectionLayer !== "workpanel")}
+                  panelBlocked={searchOpen || !panelVisible}
                   exiting={workPanelExiting}
                   onExitAnimationEnd={() =>
                     finishWorkPanelExit(workPanelExitGeneration.current)
@@ -307,13 +308,25 @@ export function AppShell() {
                   sidebarWidth={sidebarWidth}
                   sidebarCollapsed={sidebarCollapsed}
                   sidebarExiting={sidebarExiting}
-                  onAutoCollapseSidebar={projection ? undefined : autoCollapseSidebar}
-                  maximized={projection || workPanelMaximized}
-                  projection={projection}
-                  inactive={projection && projectionLayer !== "workpanel"}
+                  onAutoCollapseSidebar={compact || !panelVisible ? undefined : autoCollapseSidebar}
+                  maximized={compact || workPanelMaximized}
+                  compact={compact}
+                  inactive={compact ? compactLayer !== "workpanel" : !panelVisible && !workPanelExiting}
                   onToggleMaximize={toggleWorkPanelMaximize}
                 />
               </PortalVisibilityProvider>
+            )}
+
+            {compact && compactLayer === "workpanel" && (
+              <TooltipButton
+                type="button"
+                className="compact-panel-back title-nav-btn no-drag"
+                tooltip={t("nav.conversation")}
+                ariaLabel={t("nav.conversation")}
+                onClick={showCompactChat}
+              >
+                <IconChevronLeft size={15} />
+              </TooltipButton>
             )}
 
             <TooltipButton
@@ -334,7 +347,7 @@ export function AppShell() {
         </PortalVisibilityProvider>
         {page === "settings" ? (
           <Suspense fallback={<RoutePending />}>
-            <SettingsPage />
+            <SettingsPage compact={compact} />
           </Suspense>
         ) : null}
         <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
@@ -348,14 +361,15 @@ export function AppShell() {
 
   return (
     <div
-      data-projection-layer={projection ? projectionLayer : undefined}
+      data-compact-layout={compact ? "true" : undefined}
+      data-compact-layer={compact ? compactLayer : undefined}
       ref={appShellRef}
       className={cx(
         "app-shell",
         !ready && "app-shell-boot",
         page === "settings" && ready && "settings-mode",
         sidebarCollapsed && "sidebar-collapsed",
-        workPanelMaximized && "work-panel-maximized",
+        !compact && workPanelMaximized && "work-panel-maximized",
         showSplash && "is-booting",
       )}
       style={{ "--ds-sidebar-width": `${sidebarWidth}px` } as CSSProperties}

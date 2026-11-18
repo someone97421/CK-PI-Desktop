@@ -93,6 +93,12 @@ import { ConfigSyncPage } from "../../components/settings/ConfigSyncPage";
 import { StorageSettingsSection } from "./StorageSettingsSection";
 import { ModesSettingsPage } from "../modes/ModesSettingsPage";
 import { GoalBudgetSettingsRow } from "../modes/GoalBudgetSettingsRow";
+import {
+  getCompactSettingsNavigation,
+  parseCompactSettingsTarget,
+  requestCompactSettingsNavigation,
+  subscribeCompactSettingsNavigation,
+} from "./compact-settings-navigation";
 
 type SettingsTab = ReturnType<typeof useAppStore.getState>["settingsTab"];
 
@@ -107,13 +113,24 @@ type NavItem = {
   keywordKeys: string[];
 };
 
-export function SettingsPage() {
+import { backFromProjectionSettings } from "../../lib/web-projection";
+
+export function SettingsPage({ compact = false }: { compact?: boolean }) {
   const { t } = useTranslation();
-  const tab = useAppStore((s) => s.settingsTab);
+  const storeTab = useAppStore((s) => s.settingsTab);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
-  const settingsAnchor = useAppStore((s) => s.settingsAnchor);
+  const storeAnchor = useAppStore((s) => s.settingsAnchor);
   const settingsTabNonce = useAppStore((s) => s.settingsTabNonce);
   const setSettingsAnchor = useAppStore((s) => s.setSettingsAnchor);
+  const navigation = useSyncExternalStore(
+    subscribeCompactSettingsNavigation,
+    getCompactSettingsNavigation,
+  );
+  const compactDetail = !compact || navigation.layer === "settings-detail";
+  const compactTarget = useMemo(
+    () => parseCompactSettingsTarget(navigation.settingsTarget),
+    [navigation.settingsTarget],
+  );
   const setPage = useAppStore((s) => s.setPage);
   const settings = useAppStore((s) => s.settings);
   const version = useAppStore((s) => s.version);
@@ -127,36 +144,36 @@ export function SettingsPage() {
     () => visibleSettingsNav(developerMode, includeDevelopmentOnly),
     [developerMode, includeDevelopmentOnly],
   );
-  const tabHidden = isSettingsDestinationHidden(
-    tab,
-    developerMode,
-    includeDevelopmentOnly,
-  );
+  const builtinTarget = compactTarget?.kind === "builtin" ? compactTarget : undefined;
+  const requestedTab = builtinTarget?.tab ?? storeTab;
+  const tabHidden = isSettingsDestinationHidden(requestedTab, developerMode, includeDevelopmentOnly);
+  const tab = compact && tabHidden ? "general" : requestedTab;
+  const settingsAnchor = compact ? (!tabHidden ? builtinTarget?.anchor : undefined) : storeAnchor;
 
   const [query, setQuery] = useState("");
   const saveError = useSyncExternalStore(subscribeSettingsSaveError, getSettingsSaveError);
   const [recoveringSettings, setRecoveringSettings] = useState(!settings);
   const [settingsRecoveryFailed, setSettingsRecoveryFailed] = useState(false);
-  const [extensions, setExtensions] = useState<PluginScenicThemesDestinationMeta[]>([]);
-  const [activeExtension, setActiveExtension] = useState<PluginScenicThemesDestinationMeta | null>(null);
-  const seenSettingsTabNonce = useRef(settingsTabNonce);
-  // setSettingsTab means "show this built-in category", even when the tab id
-  // does not change. Dismiss a plugin page before paint; an anchor-only deep
-  // link has to do the same or the row lookup hits the plugin instead.
-  if (
-    seenSettingsTabNonce.current !== settingsTabNonce ||
-    (activeExtension && settingsAnchor)
-  ) {
-    seenSettingsTabNonce.current = settingsTabNonce;
-    if (activeExtension) setActiveExtension(null);
-  }
+  const [extensions, setExtensions] = useState<PluginScenicThemesDestinationMeta[] | null>(null);
+  const extensionRef = compactTarget?.kind === "extension" ? compactTarget.ref : null;
+  const activeExtension = extensions?.find((entry) => entry.ref === extensionRef);
+  const loadingExtension = extensionRef !== null && extensions === null;
+  const navScrollRef = useRef<HTMLDivElement>(null);
+  const navScrollTop = useRef(0);
+  const sectionTitleRef = useRef<HTMLHeadingElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const settingsSearchRef = useRef<HTMLInputElement>(null);
-  const destination = activeExtension ? `extension:${activeExtension.ref}` : `builtin:${tab}`;
+  const destination = extensionRef ? `extension:${extensionRef}` : `builtin:${tab}`;
+  const focusDestination = compact ? destination : null;
 
   useLayoutEffect(() => {
-    settingsSearchRef.current?.focus({ preventScroll: true });
-  }, []);
+    if (!compact || !compactDetail) {
+      if (navScrollRef.current) navScrollRef.current.scrollTop = navScrollTop.current;
+      settingsSearchRef.current?.focus({ preventScroll: true });
+    } else {
+      sectionTitleRef.current?.focus({ preventScroll: true });
+    }
+  }, [compact, compactDetail, focusDestination]);
 
   useLayoutEffect(() => {
     // Reset before paint and before the search-anchor effect positions its row.
@@ -164,23 +181,32 @@ export function SettingsPage() {
   }, [destination]);
 
   useEffect(() => {
-    const refresh = () => void api.listPluginScenicThemesDestinations().then(setExtensions, () => setExtensions([]));
+    let generation = 0;
+    const refresh = () => {
+      const current = ++generation;
+      void api.listPluginScenicThemesDestinations().then(
+        (entries) => { if (current === generation) setExtensions(entries); },
+        () => { if (current === generation) setExtensions([]); },
+      );
+    };
     refresh();
-    return api.onPluginChanged(refresh);
+    const unsubscribe = api.onPluginChanged(refresh);
+    return () => {
+      generation++;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
-    if (activeExtension && !extensions.some((entry) => entry.ref === activeExtension.ref)) {
-      setActiveExtension(null);
+    if (extensionRef && extensions && !extensions.some((entry) => entry.ref === extensionRef)) {
       setSettingsTab("general");
     }
-  }, [activeExtension, extensions, setSettingsTab]);
+  }, [extensionRef, extensions, setSettingsTab]);
 
-  // Fall back if a future destination is mode-gated while currently selected.
   useEffect(() => {
-    if (!settings || !tabHidden) return;
+    if (compact || !settings || !tabHidden) return;
     setSettingsTab("general");
-  }, [settings, tabHidden, setSettingsTab]);
+  }, [compact, settings, tabHidden, setSettingsTab]);
 
   const recoverSettings = useCallback(async () => {
     setRecoveringSettings(true);
@@ -207,15 +233,18 @@ export function SettingsPage() {
   // (providers, import) needs no per-row wiring; a short retry window covers
   // late mounts.
   useLayoutEffect(() => {
-    if (!settingsAnchor) return;
+    if (!settingsAnchor || (compact && !compactDetail)) return;
+    const clearStoreAnchor = () => {
+      if (useAppStore.getState().settingsAnchor === settingsAnchor) setSettingsAnchor(null);
+    };
     const target = t(settingsAnchor).trim();
     let cancelled = false;
     let timer: number | undefined;
     const tryFind = (attempt: number) => {
       if (cancelled) return;
-      const titles = document.querySelectorAll<HTMLElement>(
+      const titles = contentRef.current?.querySelectorAll<HTMLElement>(
         ".settings-content .settings-row-title, .settings-content .settings-card-heading, .settings-content .about-update-title",
-      );
+      ) ?? [];
       const match = [...titles].find(
         (node) => node.textContent?.trim() === target,
       );
@@ -230,18 +259,18 @@ export function SettingsPage() {
           () => row.classList.remove("settings-anchor-flash"),
           1800,
         );
-        setSettingsAnchor(null);
+        clearStoreAnchor();
         return;
       }
       if (attempt < 8) timer = window.setTimeout(() => tryFind(attempt + 1), 120);
-      else setSettingsAnchor(null);
+      else clearStoreAnchor();
     };
     tryFind(0);
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [settingsAnchor, tab, t, setSettingsAnchor]);
+  }, [settingsAnchor, tab, t, setSettingsAnchor, compact, compactDetail, settingsTabNonce]);
 
   const saveSettings = async (patch: Partial<AppSettings>) => {
     await saveSettingsPatch(patch);
@@ -316,9 +345,41 @@ export function SettingsPage() {
   const tabNeedsSettings = ["general", "appearance", "ai", "shortcuts", "agent"].includes(tab);
 
   return (
-    <div className="settings-shell settings-shell-full">
-      <div className="settings-titlebar" aria-hidden="true" />
-      <aside className="settings-nav sidebar-surface" aria-label={t("settings.title")}>
+    <div
+      className="settings-shell settings-shell-full"
+      data-settings-view={compactDetail ? "detail" : "directory"}
+    >
+      <div className="settings-titlebar">
+        {compact && (
+          <>
+            <button
+              type="button"
+              className="settings-back settings-titlebar-back no-drag"
+              aria-label={compactDetail ? t("settings.title") : t("settings.backToApp")}
+              title={compactDetail ? t("settings.title") : t("settings.backToApp")}
+              onClick={() => {
+                if (compactDetail) {
+                  setSettingsAnchor(null);
+                  requestCompactSettingsNavigation("settings-directory");
+                } else {
+                  if (!backFromProjectionSettings()) setPage("chat");
+                }
+              }}
+            >
+              <IconChevronLeft size={16} />
+              <span>{compactDetail ? t("settings.title") : t("settings.backToApp")}</span>
+            </button>
+            <span className="settings-titlebar-label">
+              {compactDetail ? activeExtension?.label ?? t(activeTitleKey) : t("settings.title")}
+            </span>
+          </>
+        )}
+      </div>
+      <aside
+        className="settings-nav sidebar-surface"
+        aria-label={t("settings.title")}
+        inert={compact && compactDetail}
+      >
         <div className="settings-nav-top drag">
           <div className="settings-search-wrap no-drag">
             <IconSearch size={14} />
@@ -336,7 +397,13 @@ export function SettingsPage() {
           </div>
         </div>
 
-        <div className="settings-nav-scroll no-drag">
+        <div
+          className="settings-nav-scroll no-drag"
+          ref={navScrollRef}
+          onScroll={(event) => {
+            if (!compact || !compactDetail) navScrollTop.current = event.currentTarget.scrollTop;
+          }}
+        >
           {filteredGroups.length === 0 ? (
             <div className="settings-nav-empty">{t("settings.noResults")}</div>
           ) : (
@@ -348,11 +415,9 @@ export function SettingsPage() {
                 {items.map((item) => (
                   <button
                     key={item.id}
-                    className={cx("settings-nav-item", tab === item.id && "active")}
-                    onClick={() => {
-                      setActiveExtension(null);
-                      setSettingsTab(item.id);
-                    }}
+                    className={cx("settings-nav-item", !activeExtension && tab === item.id && "active")}
+                    aria-current={!activeExtension && tab === item.id ? "page" : undefined}
+                    onClick={() => setSettingsTab(item.id)}
                   >
                     <span className="settings-nav-icon">{item.icon}</span>
                     <span className="settings-nav-label">{t(item.labelKey)}</span>
@@ -366,7 +431,7 @@ export function SettingsPage() {
               </div>
             ))
           )}
-          {extensions.length > 0 && (
+          {extensions && extensions.length > 0 && (
             <div className="settings-nav-group">
               <div className="settings-nav-group-label">{t("settings.groupExtensions")}</div>
               {extensions.filter((entry) => {
@@ -378,7 +443,8 @@ export function SettingsPage() {
                   <button
                     key={entry.ref}
                     className={cx("settings-nav-item", activeExtension?.ref === entry.ref && "active")}
-                    onClick={() => setActiveExtension(entry)}
+                    aria-current={activeExtension?.ref === entry.ref ? "page" : undefined}
+                    onClick={() => requestCompactSettingsNavigation("settings-detail", `extension:${entry.ref}`)}
                   >
                     <span className="settings-nav-icon"><ExtensionIcon size={14} /></span>
                     <span className="settings-nav-label">{entry.label}</span>
@@ -405,17 +471,19 @@ export function SettingsPage() {
         </div>
       </aside>
 
-      <div className="settings-content" ref={contentRef}>
+      <div className="settings-content" ref={contentRef} inert={compact && !compactDetail}>
         <div className="settings-content-inner">
           <div className="settings-content-enter">
-          <h1 className="settings-section-title">
+          <h1 className="settings-section-title" ref={sectionTitleRef} tabIndex={-1}>
             <span>{activeExtension?.label ?? t(activeTitleKey)}</span>
             {!activeExtension && activeNavItem?.experimentalBadgeKey ? (
               <Badge tone="warning">{t(activeNavItem.experimentalBadgeKey)}</Badge>
             ) : null}
           </h1>
 
-          {activeExtension ? (
+          {loadingExtension ? (
+            <div className="settings-recovery" role="status">{t("common.loading")}</div>
+          ) : activeExtension ? (
             <PluginScenicThemesDestination destination={activeExtension} selectTheme={selectPluginTheme} />
           ) : <>
 

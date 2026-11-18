@@ -413,6 +413,7 @@ export type AppState = {
   composerPrefill: ComposerPrefill | null;
   clearComposerPrefill: () => void;
   workPanelOpen: boolean;
+  workPanelRevealNonce: number;
   workPanelTabs: WorkPanelTab[];
   activeWorkPanelTabId: string | null;
   /** Runtime-only work panel state owned by each conversation. */

@@ -47,6 +47,7 @@ export function createInitialState(): AppStateData {
     ),
     subagentPanel: null,
     workPanelOpen: false,
+    workPanelRevealNonce: 0,
     workPanelTabs: [],
     activeWorkPanelTabId: null,
     workPanelContexts: {},

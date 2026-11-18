@@ -105,7 +105,14 @@
     if (event.data.ok === true) animate(button);
     else showHint(button, typeof event.data.error === "string" ? event.data.error : "元素引用添加失败", true);
   });
-  window.addEventListener("keydown", (event) => { if (event.key === "Escape") { clearPending(true); hideHint(); } }, true);
+  window.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (pending) {
+      event.preventDefault();
+      clearPending(true);
+    }
+    hideHint();
+  }, true);
   window.addEventListener("pagehide", () => {
     clearPending(true); hideHint(); flight?.remove(); flight = null;
     observer.disconnect(); if (frame !== null) cancelAnimationFrame(frame); frame = null;

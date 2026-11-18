@@ -186,3 +186,165 @@
     animation: none;
   }
 }
+
+.main-pane[hidden] {
+  display: none;
+}
+
+:root[data-web-remote="true"] {
+  --ds-window-controls-width: 0px;
+}
+
+.app-shell[data-compact-layout="true"] {
+  --compact-chrome-inset: max(12px, var(--ds-window-lead-inset));
+  --ds-main-pane-min-width: 0px;
+  width: 100%;
+  overflow: hidden;
+}
+
+.app-shell[data-compact-layout="true"] > .app-chat-shell > :is(.sidebar, .main-pane, .work-panel) {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0;
+  height: 100%;
+  animation: none;
+  transform: none;
+}
+
+.app-shell[data-compact-layout="true"] > .app-chat-shell > .sidebar {
+  z-index: 1;
+}
+
+.app-shell[data-compact-layout="true"] > .app-chat-shell > .main-pane {
+  z-index: 2;
+}
+
+.app-shell[data-compact-layer="projects"] > .app-chat-shell > :is(.main-pane, .work-panel),
+.app-shell[data-compact-layer="chat"] > .app-chat-shell > :is(.sidebar, .work-panel),
+.app-shell[data-compact-layer="workpanel"] > .app-chat-shell > :is(.sidebar, .main-pane) {
+  display: none;
+}
+
+.app-shell[data-compact-layout="true"] :is(.sidebar-header, .sidebar-body, .chat-surface, .route-page) {
+  min-width: 0;
+}
+
+.app-shell[data-compact-layout="true"] :is(.sidebar-resize-handle, .work-panel-resize),
+.app-shell[data-compact-layout="true"]:not([data-compact-layer="chat"]) .app-work-panel-toggle {
+  display: none;
+}
+
+.app-shell[data-compact-layout="true"] .sidebar-header {
+  padding-left: var(--compact-chrome-inset);
+}
+
+.app-shell[data-compact-layout="true"] .sidebar-header > .brand {
+  max-width: calc(100% - 72px);
+}
+
+.app-shell[data-compact-layout="true"] .sidebar-header > .brand > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root:not([data-web-remote="true"]) .app-shell[data-compact-layout="true"] .sidebar-header-actions {
+  margin-left: 0;
+}
+
+:root:not([data-web-remote="true"]) .app-shell[data-compact-layout="true"] :is(.sidebar-header, .work-panel-header)::after {
+  content: "";
+  flex: 1 0 32px;
+  align-self: stretch;
+  --window-drag-region: drag;
+  -webkit-app-region: drag;
+}
+
+:root:not([data-web-remote="true"]) .app-shell[data-compact-layout="true"] .work-panel-header::after {
+  flex: 0 0 32px;
+}
+
+:root:not([data-web-remote="true"]) .app-shell[data-compact-layout="true"] .conversation-topbar .ct-drag-space {
+  min-width: 32px;
+}
+
+.app-shell[data-compact-layout="true"] .conversation-topbar .ct-project,
+.app-shell[data-compact-layout="true"] .conversation-topbar .ct-sep {
+  display: none;
+}
+
+.app-shell[data-compact-layout="true"] :is(.work-panel-header, .main-titlebar) {
+  padding-right: 12px;
+}
+
+.app-shell[data-compact-layout="true"] .work-panel-header {
+  margin-left: calc(var(--compact-chrome-inset) + 36px);
+  padding-left: 0;
+}
+
+.app-shell[data-compact-layer="workpanel"] :is(.work-panel-main, .work-panel-body) {
+  width: 100%;
+  min-width: 0;
+}
+
+:root[data-web-remote="true"] .app-shell[data-compact-layout="true"] .work-panel-main {
+  background: linear-gradient(
+    var(--ds-bg-dock-raised) 0 var(--ds-toolbar-height),
+    var(--ds-bg-dock) var(--ds-toolbar-height)
+  );
+}
+
+.compact-panel-back {
+  position: absolute;
+  top: calc((var(--ds-toolbar-height) - 28px) / 2);
+  left: var(--compact-chrome-inset);
+  z-index: 30;
+  pointer-events: auto;
+}
+
+.app-shell[data-compact-layout="true"] .remote-workspace {
+  padding-top: var(--ds-toolbar-height);
+}
+
+:root:not([data-web-remote="true"]) .app-shell[data-compact-layout="true"] .remote-workspace::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: calc(var(--compact-chrome-inset) + 36px);
+  right: 0;
+  height: var(--ds-toolbar-height);
+  --window-drag-region: drag;
+  -webkit-app-region: drag;
+}
+
+.app-shell[data-compact-layout="true"] > .window-controls {
+  background: var(--ds-bg-primary);
+}
+
+.app-shell[data-compact-layer="projects"]:not(.settings-mode) > .window-controls {
+  background: var(--ds-bg-sidebar, var(--ds-bg-primary));
+}
+
+.app-shell[data-compact-layer="workpanel"]:not(.settings-mode) > .window-controls {
+  background: var(--ds-bg-dock-raised);
+}
+
+:root:is([data-platform="win32"], [data-platform="linux"]) .app-shell[data-compact-layout="true"] .sidebar-header {
+  margin-right: var(--ds-window-controls-width);
+}
+
+:root:is([data-platform="win32"], [data-platform="linux"]) .app-shell[data-compact-layout="true"] :is(.main-titlebar, .remote-workspace::before) {
+  right: var(--ds-window-controls-width);
+}
+
+.app-shell[data-compact-layout="true"] .work-panel.is-exiting {
+  animation: work-panel-out var(--motion-duration-fast) var(--motion-ease-in) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell[data-compact-layout="true"] .work-panel.is-exiting {
+    animation-duration: 0.01ms;
+  }
+}

@@ -26,6 +26,10 @@ test("bounds recovery waits for a stable native resize snapshot", () => {
     /if \(!windowBoundsEqual\(window\.getBounds\(\), scheduledBounds\)\)/,
   );
   assert.match(mainSource, /scheduleBoundsCheck\(\)/);
+  assert.match(mainSource, /const minimumRecoveryWidth = Math\.min\(\s*windowMinWidth,\s*screen\.getDisplayMatching\(electronBounds\)\.workArea\.width/);
+  assert.match(mainSource, /cg\.width < minimumRecoveryWidth/);
+  assert.match(mainSource, /electronBounds\.width < minimumRecoveryWidth/);
+  assert.doesNotMatch(mainSource, /(?:electronBounds|cg)\.width < 500/);
 });
 
 test("work-panel reservation is an inert compatibility seam", () => {

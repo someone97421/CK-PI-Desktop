@@ -81,6 +81,7 @@
 - **即开即用调整（2026-11-16，插件 2.0.15，源码提交见本项 Git 历史）**：此前插件 2.0.14（桌面源码 `6028bf8f8`）依赖 PATH 中的 Browse 且仅在 `autoStart` 时监听；现由[固定源码构建](../scripts/prepare-builtin-browse.mjs)与[宿主路径解析](../apps/desktop/electron/main/bundled-browse.ts)交付 CLI，既有插件托管 MCP 声明接替用户手写配置。裸 `browse` 优先使用内置路径，显式可执行路径沿原行为；非内置宿主的 bridge 仍可查找 PATH，待不再支持独立插件宿主后评估移除。插件启用时常驻回环通道，`autoStart` 只控制私网远控意图，既有端口、密码及设备文件保持兼容，用户明确禁用插件的状态不被覆盖。
 - **入口隔离**：普通网页（含 localhost）继续密码登录；真实允许的扩展 Origin 经回环连接申请独立内存会话，不写原设备文件或页面存储。WebSocket、IPC、附件、文件和资源统一检查令牌作用域，非回环请求不能使用扩展令牌。修改远控密码、移除远控设备不影响扩展会话。
 - **验证依据**：[网络/IPC/资源测试](../plugins/lan-remote-control/scripts/ipc.test.mjs)、[生命周期测试](../plugins/lan-remote-control/scripts/lifecycle.test.mjs)及插件投影/文件/准星回归共 62 项通过，扩展会话与侧栏 20 项、桌面内置插件配置 12 项通过，扩展类型检查与插件 2.0.15 pack 通过。桌面 typecheck 仍有原有 21 项诊断，归一行号后与修改前日志一致。新版桌面由预发布 Actions 构建，真实安装升级、手机与 Chrome 全流程验收尚未进行。最近复核 2026-11-16。
+- **浏览器历史兼容（2026-11-17）**：[历史桥接](../plugins/lan-remote-control/adapter/projection.js)继续读取 `a1704ec47` 引入的 `history.state.__piLanProjection` 与 `projects`、`chat`、`workpanel` 三层深度。新增设置目录和设置详情，记录设置入口层和可选分类意图，统一由 [Renderer 事件桥接](../apps/desktop/src/lib/web-projection.ts)恢复界面。旧记录会随浏览器历史自然淘汰，既有三层仍使用相同格式，无需单独迁移或移除读取。旧布局样式路由随布局迁入 Renderer 而移除。[投影回归用例](../plugins/lan-remote-control/scripts/projection.test.mjs)覆盖旧记录、前进后退与设置分类恢复，本轮仅静态检查。
 
 ### COMPAT-012：模式运行 schema 29→33 与旧阶段调用
 

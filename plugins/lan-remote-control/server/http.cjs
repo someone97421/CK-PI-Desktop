@@ -459,7 +459,7 @@ async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, conne
       /\bhttp-equiv\s*=\s*(["'])Content-Security-Policy\1/i.test(tag) ? "" : tag,
     ).replace(/\b(src|href)=(['"])\.\/assets\//g, "$1=$2/assets/");
     if (projection) {
-      const adapter = '<link rel="stylesheet" href="/__lan-remote/projection.css"><link rel="stylesheet" href="/__lan-remote/file-actions.css"><script src="/__lan-remote/file-actions.js"></script><script src="/__lan-remote/browser-grip.js"></script><script src="/__lan-remote/projection.js"></script>';
+      const adapter = '<link rel="stylesheet" href="/__lan-remote/file-actions.css"><script src="/__lan-remote/file-actions.js"></script><script src="/__lan-remote/browser-grip.js"></script><script src="/__lan-remote/projection.js"></script>';
       content = /<\/head>/i.test(content) ? content.replace(/<\/head>/i, `${adapter}</head>`) : `${adapter}${content}`;
     }
     const body = Buffer.from(content, "utf8");

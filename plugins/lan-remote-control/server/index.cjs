@@ -914,7 +914,7 @@ function createRemoteServer(options = {}) {
       if (pathname.startsWith("/__lan-remote/")) {
         if (!isGet) { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
         const asset = pathname.slice("/__lan-remote/".length);
-        if (!state.projectionRootReal || !["projection.css", "projection.js", "file-actions.css", "file-actions.js", "browser-grip.js"].includes(asset)) {
+        if (!state.projectionRootReal || !["projection.js", "file-actions.css", "file-actions.js", "browser-grip.js"].includes(asset)) {
           httpHelpers.sendError(res, 404, "NOT_FOUND", "not found"); return;
         }
         const served = await httpHelpers.serveStaticFile(req, res, {
@@ -1060,7 +1060,7 @@ function createRemoteServer(options = {}) {
       }
       if (projectionDir) {
         state.projectionRootReal = await fsp.realpath(projectionDir);
-        for (const name of ["projection.css", "projection.js", "file-actions.css", "file-actions.js", "browser-grip.js"]) {
+        for (const name of ["projection.js", "file-actions.css", "file-actions.js", "browser-grip.js"]) {
           await fsp.access(path.join(state.projectionRootReal, name), fs.constants.R_OK);
         }
       }

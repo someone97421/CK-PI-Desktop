@@ -47,12 +47,14 @@ export function ConversationTopbar({
   onToggleSidebar,
   onNewTask,
   onOpenSearch,
+  compact = false,
 }: {
   sidebarCollapsed: boolean;
   workPanelOpen: boolean;
   onToggleSidebar: () => void;
   onNewTask: () => void;
   onOpenSearch: () => void;
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -244,12 +246,12 @@ export function ConversationTopbar({
           <TooltipButton
             type="button"
             className="ct-icon-btn"
-            tooltip={t("nav.toggleSidebar")}
-            ariaLabel={t("nav.toggleSidebar")}
+            tooltip={compact ? t("nav.projects") : t("nav.toggleSidebar")}
+            ariaLabel={compact ? t("nav.projects") : t("nav.toggleSidebar")}
             tabIndex={sidebarCollapsed ? undefined : -1}
             onClick={onToggleSidebar}
           >
-            <IconSidebar size={15} />
+            {compact ? <IconChevronLeft size={15} /> : <IconSidebar size={15} />}
           </TooltipButton>
         </div>
         {scheduledSession || scheduledReturn ? (

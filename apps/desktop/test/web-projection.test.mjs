@@ -42,8 +42,9 @@ test("导航只接受三个已知层级，忽略缺失或未知值", () => {
 });
 
 test("先注册导航再发布初态，首次同步 history 恢复不会丢失", () => {
-  const runtimeSource = source("features/app/useAppShellRuntime.tsx");
-  assert.ok(runtimeSource.indexOf("listenProjectionNavigation(window") < runtimeSource.indexOf("publishProjectionState(window"));
+  const historySource = source("features/app/useCompactHistory.ts");
+  const listen = historySource.indexOf("listenProjectionNavigation(window");
+  assert.ok(listen >= 0 && listen < historySource.indexOf("publishProjectionState(window"));
   const target = new EventTarget();
   const requests = [];
   const cleanup = listenProjectionNavigation(target, { ready: true, layer: "projects", page: "chat" }, layer => { requests.push(layer); return true; });
@@ -109,11 +110,10 @@ vm.runInContext(shellBundle.outputFiles[0].text, context);
 function render(overrides = {}, { retain = false } = {}) {
   if (!retain) context.refs = [];
   context.refIndex = 0;
-  const openProjectionConversation = () => {};
   context.runtime = {
-    ready: true, page: "chat", projection: true, projectionLayer: "projects",
+    ready: true, page: "chat", compact: true, compactLayer: "projects",
     sidebarCollapsed: false, sidebarWidth: 275, workPanelMaximized: false,
-    t: key => key, openProjectionConversation, ...overrides,
+    t: key => key, ...overrides,
   };
   return context.Shell.AppShell();
 }
@@ -129,13 +129,15 @@ const byType = (tree, type) => nodes(tree, node => node.type === type);
 const mainPane = (tree) => nodes(tree, node => node.props?.className === "main-pane")[0];
 const visibility = (entry) => entry.parents.filter(node => node.type === "PortalVisibilityProvider").every(node => node.props.visible);
 
-test("三级覆盖和路由切换始终保留同一位置的原 ChatSurface 与 Sidebar", () => {
+test("共用紧凑层切换和路由切换始终保留同一位置的 ChatSurface 与 Sidebar", () => {
   let chatPath;
   let sidebarPath;
   for (const layer of ["projects", "chat", "workpanel"]) {
     for (const page of ["chat", "plugins", "scheduled", "settings"]) {
-      const tree = render({ projectionLayer: layer, page, sidebarCollapsed: layer !== "projects", workPanelMaximized: true, presentedWorkPanelOpen: layer === "workpanel" });
-      assert.equal(tree.props["data-projection-layer"], layer);
+      const tree = render({ compactLayer: layer, page, sidebarCollapsed: layer !== "projects", workPanelMaximized: true, presentedWorkPanelOpen: layer === "workpanel" });
+      assert.equal(tree.props["data-compact-layout"], "true");
+      assert.equal(tree.props["data-compact-layer"], layer);
+      assert.ok(!("data-projection-layer" in tree.props));
       const chats = byType(tree, "ChatSurface");
       const sidebars = byType(tree, "Sidebar");
       assert.equal(chats.length, 1);
@@ -150,49 +152,91 @@ test("三级覆盖和路由切换始终保留同一位置的原 ChatSurface 与 
       assert.equal(visibility(chats[0]), page !== "settings" && layer === "chat");
       assert.equal(visibility(sidebars[0]), page !== "settings" && layer === "projects");
       assert.equal(sidebars[0].node.props.inactive, layer !== "projects");
+      assert.equal(sidebars[0].node.props.compact, true);
+      if (page === "settings") assert.equal(byType(tree, "LazyPage")[0].node.props.compact, true);
     }
   }
 });
 
-test("投影右栏使用原 WorkPanel 的全宽预算并禁用自动侧栏回弹", () => {
-  const tree = render({ projectionLayer: "workpanel", sidebarCollapsed: true, presentedWorkPanelOpen: true });
+test("紧凑右栏使用原 WorkPanel 的全宽预算并禁用自动侧栏回弹", () => {
+  const tree = render({ compactLayer: "workpanel", sidebarCollapsed: true, presentedWorkPanelOpen: true });
   const panel = byType(tree, "WorkPanel")[0];
   assert.equal(panel.node.props.maximized, true);
   assert.equal(panel.node.props.onAutoCollapseSidebar, undefined);
-  assert.equal(panel.node.props.projection, true);
+  assert.equal(panel.node.props.compact, true);
   assert.equal(visibility(panel), true);
 });
 
 test("三级返回二级与一级保留同一原 WorkPanel，并阻断隐藏面板及 Portal", () => {
   const unopened = render();
   assert.equal(byType(unopened, "WorkPanel").length, 0);
-  const opened = render({ projectionLayer: "workpanel", sidebarCollapsed: true, presentedWorkPanelOpen: true }, { retain: true });
+  const opened = render({ compactLayer: "workpanel", sidebarCollapsed: true, presentedWorkPanelOpen: true }, { retain: true });
   const original = byType(opened, "WorkPanel")[0];
   assert.equal(original.node.props.inactive, false);
   for (const layer of ["chat", "projects", "workpanel"]) {
-    const tree = render({ projectionLayer: layer, sidebarCollapsed: layer !== "projects", presentedWorkPanelOpen: layer === "workpanel" }, { retain: true });
+    const tree = render({ compactLayer: layer, sidebarCollapsed: layer !== "projects", presentedWorkPanelOpen: layer === "workpanel" }, { retain: true });
     const retained = byType(tree, "WorkPanel")[0];
     assert.equal(retained.path, original.path);
     assert.equal(retained.node.props.inactive, layer !== "workpanel");
     assert.equal(retained.node.props.panelBlocked, layer !== "workpanel");
     assert.equal(visibility(retained), layer === "workpanel");
   }
-  render({ projection: false, presentedWorkPanelOpen: true });
-  assert.equal(byType(render({ projection: false }, { retain: true }), "WorkPanel").length, 0);
+  render({ compact: false, presentedWorkPanelOpen: true });
+  assert.equal(byType(render({ compact: false }, { retain: true }), "WorkPanel").length, 0);
 });
 
 test("桌面保留原挂载、最大化和宽度回调路径", () => {
   const autoCollapseSidebar = () => {};
-  const desktop = render({ projection: false, sidebarCollapsed: true, autoCollapseSidebar, presentedWorkPanelOpen: true });
-  assert.equal(desktop.props["data-projection-layer"], undefined);
+  const desktop = render({ compact: false, sidebarCollapsed: true, autoCollapseSidebar, presentedWorkPanelOpen: true });
+  assert.equal(desktop.props["data-compact-layer"], undefined);
   assert.equal(byType(desktop, "Sidebar").length, 0);
   assert.equal(byType(desktop, "ChatSurface").length, 1);
   const panel = byType(desktop, "WorkPanel")[0].node;
   assert.equal(panel.props.maximized, false);
   assert.equal(panel.props.onAutoCollapseSidebar, autoCollapseSidebar);
-  const maximized = render({ projection: false, workPanelMaximized: true });
+  const maximized = render({ compact: false, workPanelMaximized: true });
   assert.equal(mainPane(maximized), undefined);
   assert.equal(byType(maximized, "ChatSurface").length, 0);
+});
+
+test("桌面窄窗切层保留普通聊天与已打开面板，隐藏层阻断交互和 Portal", () => {
+  const showCompactChat = () => {};
+  const toggleSidebar = () => {};
+  const wide = render({ compact: false, sidebarCollapsed: true, presentedWorkPanelOpen: true });
+  const chatPath = byType(wide, "ChatSurface")[0].path;
+  const panelPath = byType(wide, "WorkPanel")[0].path;
+  for (const layer of ["workpanel", "chat", "projects", "chat"]) {
+    const tree = render({ compactLayer: layer, sidebarCollapsed: true, showCompactChat, toggleSidebar }, { retain: true });
+    const chat = byType(tree, "ChatSurface")[0];
+    const panel = byType(tree, "WorkPanel")[0];
+    const sidebar = byType(tree, "Sidebar")[0];
+    assert.equal(tree.props["data-compact-layout"], "true");
+    assert.equal(tree.props["data-compact-layer"], layer);
+    assert.equal(chat.path, chatPath);
+    assert.equal(panel.path, panelPath);
+    assert.equal(chat.node.props.visible, layer === "chat");
+    assert.equal(mainPane(tree).node.props.inert, layer !== "chat" ? true : undefined);
+    assert.equal(visibility(chat), layer === "chat");
+    assert.equal(panel.node.props.inactive, layer !== "workpanel");
+    assert.equal(panel.node.props.panelBlocked, layer !== "workpanel");
+    assert.equal(visibility(panel), layer === "workpanel");
+    assert.equal(sidebar.node.props.inactive, layer !== "projects");
+    assert.equal(visibility(sidebar), layer === "projects");
+    assert.equal(sidebar.node.props.onOpenConversation, showCompactChat);
+    assert.equal(sidebar.node.props.onToggleSidebar, showCompactChat);
+    assert.equal(byType(tree, "ConversationTopbar")[0].node.props.compact, true);
+    assert.equal(byType(tree, "ConversationTopbar")[0].node.props.onToggleSidebar, toggleSidebar);
+    if (layer === "workpanel") {
+      const back = nodes(tree, node => node.props?.className === "compact-panel-back title-nav-btn no-drag")[0];
+      assert.equal(back.node.props.onClick, showCompactChat);
+    }
+  }
+  const settings = render({ compactLayer: "chat", page: "settings" }, { retain: true });
+  assert.equal(mainPane(settings).node.props["aria-hidden"], undefined);
+  assert.equal(visibility(byType(settings, "ChatSurface")[0]), false);
+  const restored = render({ compact: false, sidebarCollapsed: true, presentedWorkPanelOpen: true }, { retain: true });
+  assert.equal(byType(restored, "ChatSurface")[0].path, chatPath);
+  assert.equal(byType(restored, "WorkPanel")[0].path, panelPath);
 });
 
 test("接缝涉及的 TSX 文件可独立解析", () => {
@@ -201,9 +245,9 @@ test("接缝涉及的 TSX 文件可独立解析", () => {
   }
 });
 
-test("投影打开其他页面时整块隐藏保留的聊天区，返回聊天恢复原布局", () => {
+test("紧凑布局打开其他页面时整块隐藏保留的聊天区，返回聊天恢复原布局", () => {
   for (const page of ["chat", "plugins", "scheduled", "pulls", "settings"]) {
-    const tree = render({ page, projectionLayer: "chat", sidebarCollapsed: true });
+    const tree = render({ page, compactLayer: "chat", sidebarCollapsed: true });
     const chat = byType(tree, "ChatSurface")[0];
     const container = chat.parents.at(-1);
     assert.equal(container.props.hidden, page !== "chat");

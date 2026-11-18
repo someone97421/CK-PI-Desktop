@@ -13,10 +13,11 @@ import { TooltipButton } from "./ui";
 export function WindowControls() {
   const { t } = useTranslation();
   const platform = window.piDesktop?.platform ?? "darwin";
+  const showControls = platform !== "darwin" && document.documentElement.dataset.webRemote !== "true";
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
-    if (platform === "darwin") return;
+    if (!showControls) return;
     let mounted = true;
     void api.windowControl("getState").then((state) => {
       if (mounted) setMaximized(state.maximized);
@@ -28,9 +29,9 @@ export function WindowControls() {
       mounted = false;
       unsubscribe();
     };
-  }, [platform]);
+  }, [showControls]);
 
-  if (platform === "darwin") return null;
+  if (!showControls) return null;
 
   return (
     <div

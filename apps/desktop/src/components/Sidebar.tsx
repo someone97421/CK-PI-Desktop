@@ -101,6 +101,7 @@ import {
   IconBranch,
   IconCheck,
   IconChevronDown,
+  IconChevronRight,
   IconCopy,
   IconCircleAlert,
   IconNewSession,
@@ -208,6 +209,7 @@ export function Sidebar({
   className,
   onAnimationEnd,
   inactive = false,
+  compact = false,
   onOpenConversation,
 }: {
   onToggleSidebar: () => void;
@@ -218,6 +220,7 @@ export function Sidebar({
   className?: string;
   onAnimationEnd?: ReactAnimationEventHandler<HTMLElement>;
   inactive?: boolean;
+  compact?: boolean;
   onOpenConversation?: () => void;
 }) {
   const { t, i18n } = useTranslation();
@@ -2559,17 +2562,17 @@ export function Sidebar({
           <TooltipButton
             type="button"
             className="icon-btn icon-btn-square"
-            tooltip={
+            tooltip={compact ? t("nav.conversation") :
               sidebarToggleShortcut
                 ? `${t("nav.collapseSidebar")} (${sidebarToggleShortcut})`
                 : t("nav.collapseSidebar")
             }
-            ariaLabel={t("nav.collapseSidebar")}
+            ariaLabel={compact ? t("nav.conversation") : t("nav.collapseSidebar")}
             aria-expanded={true}
             data-nav="toggle-sidebar"
             onClick={onToggleSidebar}
           >
-            <IconSidebar size={15} />
+            {compact ? <IconChevronRight size={15} /> : <IconSidebar size={15} />}
           </TooltipButton>
         </div>
       </div>

@@ -4,7 +4,6 @@ import { test } from "node:test";
 import vm from "node:vm";
 
 const source = await readFile(new URL("../adapter/projection.js", import.meta.url), "utf8");
-const cssSource = await readFile(new URL("../adapter/projection.css", import.meta.url), "utf8");
 
 const key = "__piLanProjection";
 function fixture({ saved, denyHistory = false } = {}) {
@@ -16,8 +15,7 @@ function fixture({ saved, denyHistory = false } = {}) {
   let index = 0;
   const navigations = [];
   const pending = [];
-  const frames = new Map();
-  let frameId = 0;
+  const targets = [];
   const window = {
     addEventListener(type, fn) { const group = listeners.get(type) || []; group.push(fn); listeners.set(type, group); },
     dispatchEvent(event) { emit(event.type, event); },
@@ -29,27 +27,20 @@ function fixture({ saved, denyHistory = false } = {}) {
     go(delta) { pending.push(() => { const next = index + delta; if (next < 0 || next >= entries.length) return; index = next; emit("popstate", { state: entries[index] }); }); },
     back() { this.go(-1); },
   };
-  window.addEventListener("pi-desktop:projection-navigate", (event) => navigations.push(event.detail.layer));
-  const document = {
-    documentElement: { dataset: {} },
-    addEventListener() {},
-    querySelector() { return null; },
-    querySelectorAll() { return []; },
-  };
+  window.addEventListener("pi-desktop:projection-navigate", (event) => {
+    navigations.push(event.detail.layer);
+    targets.push(event.detail.settingsTarget);
+  });
+  const document = { documentElement: { dataset: {} } };
   vm.runInNewContext(source, {
     window, document, history, CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
-    requestAnimationFrame(fn) { frames.set(++frameId, fn); return frameId; },
-    cancelAnimationFrame(id) { frames.delete(id); },
   });
   return {
-    entries, navigations, history,
-    state(layer, ready = true, navigationRejected = false) { emit("pi-desktop:projection-state", { detail: { ready, layer, page: "chat", navigationRejected } }); },
-    flush() { while (pending.length) pending.shift()(); },
-    escape(editable = false) {
-      const event = { key: "Escape", target: { closest: () => editable }, preventDefault() { this.defaultPrevented = true; } };
-      emit("keydown", event);
-      return event;
+    entries, navigations, targets, history,
+    state(layer, ready = true, navigationRejected = false, settingsTarget) {
+      emit("pi-desktop:projection-state", { detail: { ready, layer, navigationRejected, settingsTarget } });
     },
+    flush() { while (pending.length) pending.shift()(); },
   };
 }
 
@@ -80,17 +71,13 @@ test("从项目直接打开三级时补齐二级返回路径", () => {
   const app = fixture();
   app.state("projects"); app.state("workpanel");
   assert.deepEqual(app.entries.map(state => state[key].layer), ["projects", "chat", "workpanel"]);
-  app.escape(); app.flush();
-  assert.deepEqual(app.navigations, ["chat"]);
 });
 
-test("初始聊天也有一级返回入口，输入时 Escape 留给输入框", () => {
+test("初始聊天保留一级返回入口", () => {
   const app = fixture();
   app.state("chat");
   assert.deepEqual(app.entries.map(state => state[key].layer), ["projects", "chat"]);
-  assert.equal(app.escape(true).defaultPrevented, undefined);
-  assert.equal(app.escape().defaultPrevented, true);
-  app.flush();
+  app.history.back(); app.flush();
   assert.deepEqual(app.navigations, ["projects"]);
 });
 
@@ -107,11 +94,11 @@ test("刷新恢复历史后接收实际层反馈，无法恢复三级时仍可�
   assert.equal(app.history.state[key].layer, "chat");
 });
 
-test("浏览器禁用历史写入时仍可用 Escape 返回", () => {
+test("拒绝历史写入时界面仍可继续切层", () => {
   const app = fixture({ denyHistory: true });
-  app.state("projects"); app.state("chat"); app.state("workpanel");
-  app.escape();
-  assert.deepEqual(app.navigations, ["chat"]);
+  app.state("projects"); app.state("chat"); app.state("workpanel"); app.state("chat");
+  assert.equal(app.history.state[key], undefined);
+  assert.deepEqual(app.navigations, []);
 });
 
 test("恢复三级时忽略中间二级，避免重复追加返回历史", () => {
@@ -146,8 +133,37 @@ test("后退尚未完成又重新打开三级时保留原历史", () => {
   assert.deepEqual(app.navigations, []);
 });
 
-test("投影适配层隐藏远控页面无效的三大窗口控制键", () => {
-  assert.match(cssSource, /\.app-shell\[data-projection-layer\] > \.window-controls/);
-  assert.match(cssSource, /display:\s*none/);
-  assert.match(cssSource, /--ds-window-controls-width:\s*0px/);
+test("设置目录和详情来回时保留详情分类，以及打开设置之前的界面", () => {
+  const app = fixture();
+  app.state("projects"); app.state("settings-directory");
+  app.state("settings-detail", true, false, "models");
+  app.state("settings-detail", true, false, "appearance");
+  assert.deepEqual(app.entries.map(state => state[key].layer), ["projects", "settings-directory", "settings-detail"]);
+  app.history.back(); app.flush(); app.state("settings-directory");
+  app.history.back(); app.flush(); app.state("projects");
+  app.history.go(2); app.flush();
+  assert.deepEqual(app.navigations, ["settings-directory", "projects", "settings-detail"]);
+  assert.deepEqual(app.targets, [undefined, undefined, "appearance"]);
+  app.state("settings-directory");
+  app.state("settings-detail", true, false, "models");
+  assert.equal(app.history.state[key].settingsTarget, "appearance");
+  app.state("settings-detail", true, false, "appearance");
+  assert.equal(app.entries.length, 3);
+});
+
+test("应用离开设置回到不同的主界面时从共同入口续接历史", () => {
+  const app = fixture();
+  app.state("projects"); app.state("settings-detail", true, false, "models");
+  app.state("chat"); app.flush();
+  assert.deepEqual(app.entries.map(state => state[key].layer), ["projects", "chat"]);
+  assert.deepEqual(app.navigations, []);
+});
+
+test("刷新保存了分类的设置详情时请求恢复该分类", () => {
+  const app = fixture({ saved: { [key]: { layer: "settings-detail", depth: 4, settingsFrom: "workpanel", settingsTarget: "ai" } } });
+  app.state("chat");
+  assert.deepEqual(app.navigations, ["settings-detail"]);
+  assert.deepEqual(app.targets, ["ai"]);
+  app.state("settings-detail", true, false, "ai");
+  assert.equal(app.history.state[key].settingsFrom, "workpanel");
 });

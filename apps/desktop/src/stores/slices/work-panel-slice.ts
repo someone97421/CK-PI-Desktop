@@ -181,6 +181,7 @@ export function createWorkPanelSlice({
     const context = currentWorkPanelContext(state);
     set({
       workPanelOpen: true,
+      workPanelRevealNonce: state.workPanelRevealNonce + 1,
       workPanelContexts: {
         ...state.workPanelContexts,
         [sessionId]: { ...context, open: true },
@@ -234,6 +235,7 @@ export function createWorkPanelSlice({
         ...(affectsVisibleSession
           ? {
               workPanelOpen: true,
+              workPanelRevealNonce: state.workPanelRevealNonce + 1,
               workPanelTabs: next.tabs,
               activeWorkPanelTabId: next.activeTabId,
               workPanelFileRequest: fileRequest,
@@ -275,6 +277,7 @@ export function createWorkPanelSlice({
       };
       return {
         workPanelOpen: true,
+        workPanelRevealNonce: state.workPanelRevealNonce + 1,
         workPanelTabs: next.tabs,
         activeWorkPanelTabId: next.activeTabId,
         workPanelFileRequest: fileRequest,

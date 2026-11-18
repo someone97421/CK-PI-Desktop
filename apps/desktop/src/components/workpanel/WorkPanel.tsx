@@ -177,7 +177,7 @@ export function WorkPanel(props: Parameters<typeof LocalWorkPanel>[0]) {
   const sessionId = useAppStore((state) => state.activeSessionId);
   const width = useAppStore((state) => state.workPanelWidth);
   if (session && isRemoteSession(session)) {
-    return <RemoteWorkspace key={session.id} session={session} width={props.projection
+    return <RemoteWorkspace key={session.id} session={session} width={props.compact
       ? props.containerWidth || 900
       : Math.min(width, Math.max(280, (props.containerWidth || 900) - 320))}
       inactive={props.inactive} exiting={props.exiting} onExitAnimationEnd={props.onExitAnimationEnd} />;
@@ -199,7 +199,7 @@ function LocalWorkPanel({
   onAutoCollapseSidebar,
   maximized = false,
   onToggleMaximize,
-  projection = false,
+  compact = false,
   inactive = false,
 }: {
   /**
@@ -227,13 +227,11 @@ function LocalWorkPanel({
   maximized?: boolean;
   /** Toggles the preview mode from the panel header. */
   onToggleMaximize?: () => void;
-  projection?: boolean;
+  compact?: boolean;
   inactive?: boolean;
 }) {
-  const { t, i18n } = useTranslation();
-  const maximizeLabel = projection
-    ? t("panel.backToChat", { defaultValue: i18n.language.startsWith("zh") ? "返回对话" : "Back to chat" })
-    : t(maximized ? "panel.restore" : "panel.maximize");
+  const { t } = useTranslation();
+  const maximizeLabel = t(maximized ? "panel.restore" : "panel.maximize");
   const blockingOverlayActive = useBlockingOverlayActive();
   const {
     contextMenu: tabContextMenu,
@@ -1114,20 +1112,18 @@ function LocalWorkPanel({
                 <IconPlus size={16} />
               </TooltipButton>
             )}
-            <TooltipButton
-              type="button"
-              className="work-panel-maximize"
-              tooltip={maximizeLabel}
-              ariaLabel={maximizeLabel}
-              aria-pressed={projection ? undefined : maximized}
-              onClick={() => onToggleMaximize?.()}
-            >
-              {projection ? <IconChevronLeft size={15} /> : maximized ? (
-                <IconPanelRestore size={15} />
-              ) : (
-                <IconPanelMaximize size={15} />
-              )}
-            </TooltipButton>
+            {!compact && (
+              <TooltipButton
+                type="button"
+                className="work-panel-maximize"
+                tooltip={maximizeLabel}
+                ariaLabel={maximizeLabel}
+                aria-pressed={maximized}
+                onClick={() => onToggleMaximize?.()}
+              >
+                {maximized ? <IconPanelRestore size={15} /> : <IconPanelMaximize size={15} />}
+              </TooltipButton>
+            )}
           </div>
         </header>
         <div className="work-panel-body">

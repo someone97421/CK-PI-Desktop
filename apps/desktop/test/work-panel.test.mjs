@@ -487,7 +487,7 @@ test("work panel separator exposes internal panel width resizing", () => {
 });
 
 test("Electron enforces the responsive shell minimum", () => {
-  assert.match(mainSource, /export const WINDOW_MIN_WIDTH = 800/);
+  assert.match(mainSource, /export const WINDOW_MIN_WIDTH = 480/);
   assert.match(mainSource, /export const WINDOW_MIN_HEIGHT = 560/);
   // The window creation clamps the minimum to fit the current work area
   // (issues #544 / #1175), so the props are the clamped `initialMin*` values.
