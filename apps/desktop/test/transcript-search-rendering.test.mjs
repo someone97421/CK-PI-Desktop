@@ -184,8 +184,10 @@ test("rendered Markdown and file chips map source-only hits to their visible own
     });
     const panel = render(SubagentTranscriptTab, {
       delegationId: "task",
+      selection: { sessionId: "s", delegationId: "task", searchRequestId: focus.requestId },
     });
     assert.match(panel, /data-message-id="child"/);
+    assert.match(panel, /data-testid="subagent-transcript-tab"/);
     const groupProps = { items: [{ kind: "tool", message: parent }], isActive: false };
     const group = (target, items = groupProps.items) =>
       renderToStaticMarkup(

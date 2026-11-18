@@ -1,126 +1,85 @@
-import { readAppSource, readStoreSource, readTranscriptSource } from "./helpers/source-contracts.mjs";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
+import { readStoreModule } from "./helpers/source-contracts.mjs";
 
-const workPanelSource = await readFile(
-  new URL("../src/components/workpanel/WorkPanel.tsx", import.meta.url),
-  "utf8",
-);
-const appSource = await readAppSource();
-const transcriptSource = await readTranscriptSource();
-const storeSource = await readStoreSource();
+const readSource = (path) => readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
+const [
+  workPanelSource, tabSource, detailSource, composerSource, stripSource, tabsSource, workPanelCss,
+  stopSource, messagesCss, workPanelStore, readingRuntime,
+] = await Promise.all([
+  readSource("components/workpanel/WorkPanel.tsx"),
+  readSource("components/workpanel/SubagentTranscriptTab.tsx"),
+  readSource("features/chat/transcript/SubagentDetail.tsx"),
+  readSource("components/workpanel/SubagentGuideComposer.tsx"),
+  readSource("features/chat/composer/SubagentStrip.tsx"),
+  readSource("lib/work-panel-tabs.ts"),
+  readSource("styles/work-panel.css"),
+  readSource("features/chat/transcript/SubagentStopButton.tsx"),
+  readSource("styles/messages.css"),
+  readStoreModule("slices/work-panel-slice.ts"),
+  readStoreModule("runtime/transcript-reading-runtime.ts"),
+]);
 
-
-test("a topology node toggles a session-scoped side-panel selection", () => {
-  assert.match(transcriptSource, /const openSubagentTab = useAppStore\(\(s\) => s\.openSubagentTab\)/);
-  assert.match(transcriptSource, /const panelSelectionId =/);
-  assert.match(transcriptSource, /openSubagentTab\(panelSelectionId, agentName \|\| undefined\)/);
-  assert.match(transcriptSource, /work-panel-surface-subagent:/);
-  assert.match(transcriptSource, /variant !== "topology" && open/);
-  assert.match(transcriptSource, /variant !== "topology" && open && hasDetails/);
-  assert.match(storeSource, /subagentPanel: SubagentPanelSelection \| null/);
-  assert.match(storeSource, /toggleSubagentPanel:\s*\(delegationId\) => \{/);
-  assert.match(
-    storeSource,
-    /state\.subagentPanel\?\.sessionId === sessionId[\s\S]*?state\.subagentPanel\.delegationId === id[\s\S]*?set\(\{ subagentPanel: null \}\)/,
-  );
-  assert.match(storeSource, /set\(\{ subagentPanel: \{ sessionId, delegationId: id \} \}\)/);
-  assert.match(storeSource, /closeSubagentPanel: \(\) => set\(\{ subagentPanel: null \}\)/);
-  assert.match(storeSource, /if \(state\.subagentPanel\) \{/);
-  assert.match(storeSource, /state\.closeSubagentPanel\(\)/);
-  assert.match(storeSource, /if \(get\(\)\.workPanelOpen\) get\(\)\.collapseWorkPanel\(\)/);
+test("普通子代理标签与搜索定位共用会话页", async () => {
+  await assert.rejects(access(new URL("../src/components/workpanel/SubagentPanel.tsx", import.meta.url)), { code: "ENOENT" });
+  assert.doesNotMatch(workPanelSource, /from ["']\.\/SubagentPanel["']/);
+  assert.match(workPanelSource, /<SubagentTranscriptTab\s+delegationId=\{activeTab\.resource \?\? ""\}\s*\/>/);
+  assert.match(workPanelSource, /<SubagentTranscriptTab\s+delegationId=\{subagentPanel\.delegationId\}\s+selection=\{subagentPanel\}\s*\/>/);
+  assert.match(tabSource, /function SubagentTranscriptTab\(\{\s*delegationId,\s*selection\s*\}/);
+  assert.match(tabSource, /selection\?\.sessionId\s*\?\?\s*(?:activeSessionId|sessionId)/);
 });
 
-test("the work-panel dock hosts subagent details without creating a resource tab", () => {
-  assert.match(workPanelSource, /subagentPanel\?: SubagentPanelSelection \| null/);
-  assert.match(workPanelSource, /onCloseSubagentPanel\?: \(\) => void/);
-  assert.match(workPanelSource, /\{subagentPanel \? \(/);
-  assert.match(workPanelSource, /<SubagentPanel selection=\{subagentPanel\} \/>/);
-  assert.match(workPanelSource, /!subagentPanel && activeTab\?\.kind === "review"/);
-  assert.match(workPanelSource, /subagentPanel && onCloseSubagentPanel/);
-  assert.match(appSource, /const subagentPanelOpen = Boolean\(/);
-  assert.match(appSource, /page === "chat"/);
-  assert.match(appSource, /page !== "chat" \|\| subagentPanel\.sessionId !== activeSessionId/);
-  assert.match(appSource, /workPanelOpen \|\| subagentPanelOpen/);
-  assert.match(appSource, /subagentPanel=\{subagentPanelOpen \? subagentPanel : null\}/);
-  assert.doesNotMatch(workPanelSource, /setContextOpen/);
+test("输入区胶囊打开同一委派标签，重复打开只激活已有资源", () => {
+  assert.match(stripSource, /if \(state\.activeSessionId === sessionId\)\s*state\.openSubagentTab\(delegationIdForMessage\(message\), message\.agentName\)/);
+  assert.match(stripSource, /data-subagent-trigger=\{id\}\s+onClick=\{onOpen\}/);
+  assert.doesNotMatch(stripSource, /toggleSubagentPanel/);
+  assert.match(workPanelStore, /openSubagentTab: \(delegationId, agentName\) => \{[\s\S]*?const id = delegationId\.trim\(\);[\s\S]*?openWorkPanelTab\(subagentWorkPanelTab\(id, agentName/);
+  assert.match(tabsSource, /id: `subagent:\$\{delegationId\}`,\s*kind: "subagent",\s*resource: delegationId/);
+  assert.match(workPanelStore, /openWorkPanelTabForSession: \(sessionId, tab\) => \{[\s\S]*?openWorkPanelTabState\(/);
+  const openTab = tabsSource.slice(tabsSource.indexOf("export function openWorkPanelTabState"), tabsSource.indexOf("export function replaceWorkPanelTabState"));
+  assert.match(openTab, /state\.tabs\.findIndex\(\(item\) => item\.id === tab\.id\)/);
+  assert.match(openTab, /if \(index === -1\) \{\s*return \{ tabs: \[\.\.\.state\.tabs, tab\], activeTabId: tab\.id \}/);
+  assert.match(openTab, /tabs\[index\] = tab;\s*return \{ tabs, activeTabId: tab\.id \}/);
 });
 
-const tabSource = await readFile(
-  new URL("../src/components/workpanel/SubagentTranscriptTab.tsx", import.meta.url), "utf8",
-);
-const panelSource = await readFile(
-  new URL("../src/components/workpanel/SubagentPanel.tsx", import.meta.url), "utf8",
-);
-const detailSource = await readFile(
-  new URL("../src/features/chat/transcript/SubagentDetail.tsx", import.meta.url), "utf8",
-);
-const workPanelCss = await readFile(
-  new URL("../src/styles/work-panel.css", import.meta.url), "utf8",
-);
-const stopSource = await readFile(
-  new URL("../src/features/chat/transcript/SubagentStopButton.tsx", import.meta.url), "utf8",
-);
-const messagesCss = await readFile(
-  new URL("../src/styles/messages.css", import.meta.url), "utf8",
-);
+test("嵌套搜索按所属会话、请求和子代理消息定位", () => {
+  assert.match(readingRuntime, /subagentPanel: \{\s*sessionId,\s*delegationId: delegationIdForMessage\(parent\),\s*searchRequestId: focus\.requestId/);
+  assert.match(tabSource, /const searchTarget = focus && \(!selection \|\| focus\.requestId === selection\.searchRequestId\)\s*&& result\?\.turns\.some\(\(\{ rows \}\) => rows\.some\(\(\{ message \}\) => message\.id === focus\.messageId\)\)\s*\? focus : null;/);
+  assert.match(tabSource, /useTranscriptSearchFocus\(\{\s*target: searchTarget,\s*source: searchTarget \? messages\.find\(\(\{ id \}\) => id === searchTarget\.messageId\)\?\.content[\s\S]*?onNavigate: releaseFollow/);
+  assert.match(tabSource, /<TranscriptSearchContext\.Provider value=\{searchTarget\}>/);
+  assert.match(tabSource, /if \(searchTarget\) \{\s*initialPositionSet\.current = true;\s*return;/);
+});
 
-test("子代理停止入口沿用轻量圆形控件", () => {
+test("统一会话页保留任务、消息、滚动及历史读取反馈", () => {
+  assert.match(tabSource, /data-testid="subagent-transcript-tab"/);
+  assert.match(tabSource, /buildSubagentTranscript\(messages, delegationId\)/);
+  assert.match(tabSource, /className="message-row user"/);
+  assert.match(tabSource, /className="message-row assistant"/);
+  assert.match(tabSource, /data-message-id=\{message\.id\}/);
+  assert.match(tabSource, /<AssistantErrorMessage message=\{message\}/);
+  assert.match(tabSource, /<SubagentFailureCard outcome=\{turnOutcome\} failure=\{failure\}/);
+  assert.match(tabSource, /<SubagentSupervision message=\{selected\.call\}/);
+  assert.match(tabSource, /onClick=\{transcript\.retryHistory\}/);
+  assert.match(tabSource, /useFollowScroll\(\)/);
+  assert.match(tabSource, /onClick=\{jumpToLatest\}/);
+  assert.equal(tabSource.match(/data-scroll-owner="follow"/g)?.length, 1);
+  assert.match(tabSource, /role="log"/);
+  assert.match(workPanelCss, /\.subagent-transcript-scroll\s*\{[^}]*overflow(?:-y:\s*auto|:\s*hidden auto)/);
+});
+
+test("统一会话页按当前执行提供引导、模型展示和停止入口", () => {
+  assert.match(tabSource, /<SubagentDetail\s+message=\{selected\.call\}/);
+  assert.match(detailSource, /\[delegateModelId\(message\), delegateThinkingLevel\(message\)\]/);
+  assert.match(tabSource, /<SubagentGuideComposer[\s\S]*?sessionId=\{execution\.sessionId\}[\s\S]*?delegationId=\{execution\.delegationId\}[\s\S]*?execution=\{execution\.execution\}/);
+  assert.match(composerSource, /localToolsAllowed && running && !stopping && sessionId && delegationId && execution/);
+  assert.match(composerSource, /<Textarea[\s\S]*?disabled=\{!canGuide\}/);
+  assert.match(composerSource, /api\.guideSubagent\(request\)/);
+  assert.match(composerSource, /<SubagentStopButton sessionId=\{sessionId\} delegationId=\{delegationId\} execution=\{execution\}/);
   assert.match(stopSource, /className=\{`stop-btn subagent-stop-button/);
   assert.match(stopSource, /tooltip=\{label\}/);
   assert.match(stopSource, /ariaLabel=\{label\}/);
   assert.doesNotMatch(stopSource, /<Button/);
   assert.match(messagesCss, /\.subagent-topology-node-actions > \.subagent-stop-button[\s\S]*?top:\s*8px/);
   assert.match(messagesCss, /padding-right:\s*42px/);
-});
-
-test("宿主子代理窗口展示实时过程、任务卡片和失败原因", () => {
-  assert.match(panelSource, /<SubagentDetail/);
-  assert.doesNotMatch(panelSource, /PluginViewTab|local\.subagent-observer/);
-  assert.match(panelSource, /buildTranscriptEntries\(messages\)/);
-  assert.match(panelSource, /useSubagentTranscriptView\(selection\.sessionId\)/);
-  assert.match(panelSource, /collectDelegationFailures\(selected\.turnActivityItems\)/);
-  assert.match(panelSource, /delegationFailures=\{delegationFailures\}/);
-  assert.match(detailSource, /className="subagent-detail-hero"/);
-  assert.match(detailSource, /className="subagent-detail-task-card"/);
-  assert.match(detailSource, /aria-controls=\{taskBodyId\}/);
-  assert.match(detailSource, /<SubagentSupervision/);
-  assert.match(detailSource, /<SubagentRunRows/);
-  assert.match(detailSource, /scrollable=\{false\}/);
-  assert.match(detailSource, /variant="dock"/);
-  assert.match(detailSource, /failure && outcome !== "completed" && outcome !== "running"/);
-  assert.match(detailSource, /data-testid="subagent-failure"/);
-  assert.match(workPanelCss, /-webkit-line-clamp: 4/);
-});
-test("the delegation tab renders a message list with a read-only composer", () => {
-  assert.match(tabSource, /data-testid="subagent-transcript-tab"/);
-  assert.match(tabSource, /buildSubagentTranscript\(messages, delegationId\)/);
-  assert.match(tabSource, /className="message-row user"/);
-  assert.match(tabSource, /className="message-user-text selectable"/);
-  assert.match(tabSource, /className="message-row assistant"/);
-  assert.match(tabSource, /data-message-id=\{row\.message\.id\}/);
-  assert.match(tabSource, /<Textarea/);
-  assert.match(tabSource, /disabled/);
-  assert.match(tabSource, /rows=\{2\}/);
-  assert.match(tabSource, /placeholder=\{t\("panel\.subagentReadOnly"\)\}/);
-  assert.match(tabSource, /className="subagent-transcript-composer-controls"/);
-  assert.match(tabSource, /subagent-transcript-model-picker/);
-  assert.match(tabSource, /delegateModelId\(delegateMessage\)/);
-  assert.match(tabSource, /delegateThinkingLevel\(delegateMessage\)/);
-  assert.match(tabSource, /<SubagentStopButton sessionId=\{delegateExecution\.sessionId\} delegationId=\{delegateExecution\.delegationId\} execution=\{delegateExecution\.execution\}/);
-  assert.doesNotMatch(tabSource, /subagent-transcript-actions/);
-  assert.match(workPanelCss, /\.subagent-transcript-composer-controls \{/);
-  assert.match(workPanelCss, /\.subagent-transcript-model-picker \{/);
-  // Display-only: no send path may exist in the composer.
-  assert.doesNotMatch(tabSource, /onSubmit|onSend|api\.send/);
-});
-
-test("宿主子代理窗口保持单一滚动区、固定身份栏和过程时间线", () => {
-  assert.match(panelSource, /useFollowScroll\(\)/);
-  assert.match(panelSource, /onClick=\{jumpToLatest\}/);
-  assert.match(panelSource, /role="log"/);
-  assert.match(workPanelCss, /\.subagent-panel-scroll \{[^}]*overflow-y: auto/);
-  assert.match(workPanelCss, /\.subagent-detail-hero\s*\{[\s\S]*?position:\s*sticky;/);
-  assert.match(workPanelCss, /\.subagent-detail > \.subagent-run \.subagent-run-rows\s*\{[\s\S]*?border-left:\s*1px solid var\(--ds-border-subtle\);/);
 });

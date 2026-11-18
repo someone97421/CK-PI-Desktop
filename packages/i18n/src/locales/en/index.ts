@@ -2792,8 +2792,6 @@ sklm: {
     subagentLoading: "Loading subagent history…",
     subagentLoadError: "Could not load subagent history.",
     subagentRetry: "Retry",
-    subagentConversation: "Conversation",
-    subagentDetail: "Process",
     collapse: "Hide work panel",
     resize: "Resize work panel",
     maximize: "Expand work panel",

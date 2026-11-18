@@ -17,7 +17,7 @@ const code = ts.transpileModule(`let bootstrapGeneration = 0; return (${bootstra
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-test("bootstrap recovers registered project tabs when Chromium state is missing", async t => {
+test("startup waits for saved models on retry and restores registered project tabs", async t => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   const values = new Map();
   Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
@@ -27,7 +27,7 @@ test("bootstrap recovers registered project tabs when Chromium state is missing"
     if (previous) Object.defineProperty(globalThis, "localStorage", previous);
     else delete globalThis.localStorage;
   });
-  let state = { ...sidebar.loadSidebarPreferences(), navStack: [], navIndex: -1 };
+  let state = { ready: false, ...sidebar.loadSidebarPreferences(), navStack: [], navIndex: -1 };
   const bindings = {
     get: () => ({ ...state, refreshPluginViews: async () => {} }),
     set: update => { state = { ...state, ...(typeof update === "function" ? update(state) : update) }; },
@@ -40,7 +40,7 @@ test("bootstrap recovers registered project tabs when Chromium state is missing"
       getSidebarPreferences: async () => null, setSidebarPreferences: async () => {},
       listProjects: async () => ({ projects: [{ path: "/synthetic/alpha" }, { path: "/synthetic/beta" }] }),
     },
-    normalizeMode: mode => mode, migrateKeybindingOverrides: value => value,
+    window: {}, normalizeBuiltinMode: mode => mode, migrateKeybindingOverrides: value => value,
     restoreSidebarPreferences: sidebar.restoreSidebarPreferences, sidebarPreferencesState: sidebar.sidebarPreferencesState,
     settleBootstrapRequests, PROTOCOL_VERSION: 11,
     withProjectDisplayName: value => value, projectWorkspaceFromPath: path => ({ path }),
@@ -52,7 +52,25 @@ test("bootstrap recovers registered project tabs when Chromium state is missing"
     switchWorkPanelSession: () => ({}), clearSessionPanes: () => ({}),
   };
   const run = new Function(...Object.keys(bindings), code)(...Object.values(bindings));
+  bindings.api.listProviders = async () => ({ providers: [{ id: "saved" }] });
+  bindings.api.listProviderModels = async () => { throw new Error("cache unavailable"); };
   await run();
-  assert.equal(state.error, undefined);
+  assert.equal(state.ready, false);
+  assert.equal(state.startupReadFailed, true);
+  assert.equal(state.error, "cache unavailable");
+  const reading = Promise.withResolvers();
+  const pendingModels = Promise.withResolvers();
+  bindings.api.listProviderModels = () => {
+    reading.resolve();
+    return pendingModels.promise;
+  };
+  const retry = run();
+  await reading.promise;
+  assert.equal(state.ready, false);
+  pendingModels.resolve({ models: [{ modelId: "saved-model" }] });
+  await retry;
+  assert.equal(state.ready, true);
+  assert.equal(state.error, null);
+  assert.equal(state.providerModels.saved[0].modelId, "saved-model");
   assert.deepEqual(state.openProjectPaths, ["/synthetic/alpha", "/synthetic/beta", "/active"]);
 });

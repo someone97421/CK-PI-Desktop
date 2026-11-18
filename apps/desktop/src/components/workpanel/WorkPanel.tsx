@@ -54,7 +54,6 @@ import { ReviewTab } from "./ReviewTab";
 import { FilesTab } from "./FilesTab";
 import { PluginViewTab } from "./PluginViewTab";
 import { SubagentTranscriptTab } from "./SubagentTranscriptTab";
-import { SubagentPanel } from "./SubagentPanel";
 import { SideChatTab } from "./SideChatTab";
 import { sideChatTabSessionId } from "../../lib/side-chat";
 import type { SubagentPanelSelection } from "../../lib/subagent-panel";
@@ -262,7 +261,6 @@ function LocalWorkPanel({
   const tabSignature = JSON.stringify(
     tabs.map(({ id, kind, resource, location }) => [id, kind, resource, location]),
   );
-  const [subagentView, setSubagentView] = useState<"conversation" | "detail">("conversation");
 
   const [panelDragWidth, setPanelDragWidth] = useState<number | null>(null);
   const panelResizeState = useRef<WorkPanelResizeState | null>(null);
@@ -1129,14 +1127,12 @@ function LocalWorkPanel({
         <div className="work-panel-body">
           {!subagentPanel && activeTab?.kind === "subagent" && (
             <div key={activeTab.id} id={`work-panel-surface-${activeTab.id}`} className="work-panel-tabpane subagent-tabpane" role="tabpanel" aria-labelledby={`work-panel-tab-${activeTab.id}`}>
-              <div className="subagent-tab-mode" role="group" aria-label={t("panel.subagent")}>
-                <button type="button" aria-pressed={subagentView === "conversation"} onClick={() => setSubagentView("conversation")}>{t("panel.subagentConversation")}</button>
-                <button type="button" aria-pressed={subagentView === "detail"} onClick={() => setSubagentView("detail")}>{t("panel.subagentDetail")}</button>
-              </div>
-              {subagentView === "conversation" ? <SubagentTranscriptTab delegationId={activeTab.resource ?? ""} /> : <SubagentPanel selection={{ sessionId: activeSessionId ?? "", delegationId: activeTab.resource ?? "" }} />}
+              <SubagentTranscriptTab delegationId={activeTab.resource ?? ""} />
             </div>
           )}
-          {subagentPanel ? <SubagentPanel selection={subagentPanel} /> : null}
+          {subagentPanel ? (
+            <SubagentTranscriptTab delegationId={subagentPanel.delegationId} selection={subagentPanel} />
+          ) : null}
           {!subagentPanel && activeTab?.kind === "review" && (
             <div
               id={`work-panel-surface-${activeTab.id}`}

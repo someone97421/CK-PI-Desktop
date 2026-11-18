@@ -235,7 +235,6 @@ test("every Task row renders as one accessible delegation topology", () => {
   assert.match(transcriptSource, /role="list"/);
   assert.match(transcriptSource, /variant="topology"/);
   assert.match(transcriptSource, /className="subagent-topology-node-header"/);
-  assert.match(transcriptSource, /data-subagent-trigger=\{panelSelectionId\}/);
   assert.match(transcriptSource, /aria-controls=\{panelOpen \? `work-panel-surface-subagent:\$\{panelSelectionId\}` : undefined\}/);
   assert.match(transcriptSource, /aria-expanded=\{panelOpen\}/);
   const topologyNode = transcriptSource.slice(
@@ -252,6 +251,7 @@ test("every Task row renders as one accessible delegation topology", () => {
   );
   assert.match(transcriptSource, /const openSubagentTab = useAppStore\(\(s\) => s\.openSubagentTab\)/);
   assert.match(storeSource, /openSubagentTab:/);
+  assert.doesNotMatch(topologyNode, /toggleSubagentPanel/);
   assert.match(transcriptSource, /const inlineOpen = variant !== "topology" && open;/);
 });
 

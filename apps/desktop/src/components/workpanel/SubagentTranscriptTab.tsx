@@ -1,221 +1,203 @@
-import { toolResultPayload } from "../../lib/tool-presentation";
-import { SubagentGuideComposer } from "./SubagentGuideComposer";
-import { useSubagentExecution } from "../../features/chat/transcript/SubagentSupervision";
-import { delegationExecutionKey, isDelegationStartTool } from "../../lib/tool-display";
-import { collectDelegationStatuses, subagentOutcome } from "../../lib/subagent-topology";
-import { Fragment, useLayoutEffect, useMemo } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { useAppStore } from "../../stores/app-store";
+import { TranscriptDisclosureProvider } from "../../features/chat/transcript/disclosure";
+import { delegateAgentName } from "../../features/chat/transcript/model";
+import { AssistantErrorMessage, ThinkingRow } from "../../features/chat/transcript/shared";
+import { SubagentDetail, SubagentFailureCard } from "../../features/chat/transcript/SubagentDetail";
+import { SubagentGuidanceMessage } from "../../features/chat/transcript/SubagentGuidanceMessage";
+import { SubagentSupervision, useSubagentExecution } from "../../features/chat/transcript/SubagentSupervision";
+import { ToolRow } from "../../features/chat/transcript/ToolRow";
 import { useFollowScroll } from "../../hooks/use-follow-scroll";
 import { useSubagentTranscriptView } from "../../hooks/use-subagent-transcript-view";
 import { useTranscriptSearchFocus } from "../../hooks/use-transcript-search-focus";
-import { IconArrowDown } from "../icons";
-import { TooltipButton } from "../ui";
+import type { AssistantActivityItem, SubagentRunItem } from "../../lib/assistant-turns";
 import { DisclosureAnchorContext } from "../../lib/disclosure-anchor-context";
-import { TranscriptDisclosureProvider } from "../../features/chat/transcript/disclosure";
+import { subagentGuidance } from "../../lib/subagent-guidance";
+import { delegationIdForMessage, type SubagentPanelSelection } from "../../lib/subagent-panel";
+import { collectDelegationFailures, collectDelegationStatuses, collectDelegationTimings, subagentOutcome } from "../../lib/subagent-topology";
 import { buildSubagentTranscript } from "../../lib/subagent-transcript";
+import { TranscriptSearchContext } from "../../lib/transcript-search-context";
 import { reviewChangeFromMessage } from "../../lib/workspace-review";
-import {
-  AssistantErrorMessage,
-  ThinkingRow,
-} from "../../features/chat/transcript/shared";
-import {
-  ReviewChangeCard,
-} from "../ReviewChangeCard";
-import { ToolRow } from "../../features/chat/transcript/ToolRow";
+import { SlotSessionProvider } from "../../plugins/renderer-slots/use-slots";
+import { useAppStore } from "../../stores/app-store";
+import { IconArrowDown } from "../icons";
 import { Markdown } from "../Markdown";
-import { delegateModelId, delegateThinkingLevel } from "../../features/chat/transcript/model";
+import { ReviewChangeCard } from "../ReviewChangeCard";
+import { TooltipButton } from "../ui";
+import { SubagentGuideComposer } from "./SubagentGuideComposer";
 
-/**
- * The work-panel tab showing one delegation as a conversation (issue #917).
- *
- * Every `Task` call of the delegation chain opens a turn: the prompt the
- * parent sent renders as a user row, and the rows the delegate produced under
- * that call render with the main transcript's own message-list language —
- * tool rows, thinking rows, and answer bubbles alike. Follow-up `Task` calls
- * on the same delegation append further turns, so a resumed delegate reads as
- * one continuing user/assistant exchange.
- *
- * 底部提供当前执行的文字引导、模型展示和停止操作。
- */
-export function SubagentTranscriptTab({ delegationId }: { delegationId: string }) {
-  const sessionId = useAppStore((state) => state.activeSessionId);
+type Props = { delegationId: string; selection?: SubagentPanelSelection };
+
+export function SubagentTranscriptTab({ delegationId, selection }: Props) {
+  const activeSessionId = useAppStore((state) => state.activeSessionId);
+  const sessionId = selection?.sessionId ?? activeSessionId ?? "";
   return (
-    <TranscriptDisclosureProvider key={`${sessionId}:${delegationId}`}>
-      <SubagentTranscriptSurface delegationId={delegationId} />
-    </TranscriptDisclosureProvider>
+    <SlotSessionProvider sessionId={sessionId}>
+      <TranscriptDisclosureProvider key={JSON.stringify([sessionId, delegationId])}>
+        <SubagentTranscriptSurface sessionId={sessionId} delegationId={delegationId} selection={selection} />
+      </TranscriptDisclosureProvider>
+    </SlotSessionProvider>
   );
 }
 
-function SubagentTranscriptSurface({ delegationId }: { delegationId: string }) {
+function SubagentTranscriptSurface({ sessionId, delegationId, selection }: Props & { sessionId: string }) {
   const { t } = useTranslation();
-  const activeSessionId = useAppStore((state) => state.activeSessionId);
-  // A tab only renders inside a presented panel, which always has a session;
-  // the empty key keeps the hook's contract while nothing is active.
-  const transcript = useSubagentTranscriptView(activeSessionId ?? "", delegationId);
+  const transcript = useSubagentTranscriptView(sessionId, delegationId);
   const { messages } = transcript;
-  const delegateMessage = useMemo(() => [...messages].reverse().find(message => {
-    if (message.role !== "tool" || !isDelegationStartTool(message.toolName)) return false;
-    return delegationExecutionKey(toolResultPayload(message)) === delegationId;
-  }), [messages, delegationId]);
-  const delegateExecution = useSubagentExecution(delegateMessage);
-  const delegateRunning = useMemo(() => {
-    if (!delegateMessage) return false;
-    const items = messages.filter(message => message.role === "tool")
-      .map(message => ({ kind: "tool" as const, message }));
-    return subagentOutcome(delegateMessage, collectDelegationStatuses(items)) === "running";
-  }, [messages, delegateMessage]);
-  const delegateSettings = {
-    modelId: delegateMessage ? delegateModelId(delegateMessage) : "",
-    thinkingLevel: delegateMessage ? delegateThinkingLevel(delegateMessage) : undefined,
-  };
-  const transcriptResult = useMemo(
-    () => buildSubagentTranscript(messages, delegationId),
-    [messages, delegationId],
-  );
-  const {
-    scrollRef,
-    contentRef,
-    showJump,
-    handleScroll,
-    jumpToLatest,
-    scheduleFollowScroll,
-    releaseFollow,
-    disclosureAnchorNotifier,
-  } = useFollowScroll();
-
-  // Several delegation tabs can be open at once, so an explicit search hit
-  // is claimed only by the tab whose own conversation contains the message;
-  // the other tabs stay where the reader left them.
-  const searchTarget = useMemo(() => {
-    const focus = transcript.focus;
-    if (!focus) return null;
-    const claimed = transcriptResult?.turns.some((turn) =>
-      turn.rows.some((row) => row.message.id === focus.messageId),
-    );
-    return claimed ? focus : null;
-  }, [transcript.focus, transcriptResult]);
-
+  const result = useMemo(() => buildSubagentTranscript(messages, delegationId), [messages, delegationId]);
+  const selected = result?.selectedTurn;
+  const execution = useSubagentExecution(selected?.call);
+  const agentName = selected ? result?.agentName || delegateAgentName(selected.call) : "";
+  const { statuses, failures, timings } = useMemo(() => {
+    const turns = new Map(result?.turns.map((turn) => [turn.call.id, turn]));
+    const items: AssistantActivityItem[] = [];
+    for (const message of messages) {
+      if (message.role !== "tool" || message.parentToolCallId) continue;
+      const turn = turns.get(message.id);
+      items.push(turn
+        ? { kind: "tool", message, delegate: { items: turn.rows } }
+        : { kind: "tool", message });
+    }
+    return {
+      statuses: collectDelegationStatuses(items),
+      failures: collectDelegationFailures(items),
+      timings: collectDelegationTimings(items),
+    };
+  }, [messages, result]);
+  const outcome = selected ? subagentOutcome(selected.call, statuses) : undefined;
+  const running = outcome === "running" && execution.live;
+  const { scrollRef, contentRef, showJump, handleScroll, jumpToLatest, scheduleFollowScroll, releaseFollow, disclosureAnchorNotifier } = useFollowScroll();
+  const initialPositionSet = useRef(false);
+  const selectedPromptRef = useRef<HTMLDivElement>(null);
+  const focus = transcript.focus;
+  const searchTarget = focus && (!selection || focus.requestId === selection.searchRequestId)
+    && result?.turns.some(({ rows }) => rows.some(({ message }) => message.id === focus.messageId))
+    ? focus : null;
   useTranscriptSearchFocus({
     target: searchTarget,
-    source:
-      messages.find((message) => message.id === searchTarget?.messageId)?.content ?? "",
+    source: searchTarget ? messages.find(({ id }) => id === searchTarget.messageId)?.content ?? "" : "",
     scrollRef,
     contentRef,
     contentVersion: messages,
     onNavigate: releaseFollow,
   });
 
+  const locateExecution = Boolean(selected && (selected !== result?.turns.at(-1) || (selection && !running)));
   useLayoutEffect(() => {
-    if (!searchTarget) jumpToLatest();
-  }, [jumpToLatest, searchTarget]);
+    if (searchTarget) {
+      initialPositionSet.current = true;
+      return;
+    }
+    if (initialPositionSet.current || !selected || transcript.historyLoading) return;
+    initialPositionSet.current = true;
+    if (!locateExecution) return;
+    const prompt = selectedPromptRef.current;
+    const scroller = scrollRef.current;
+    if (!prompt || !scroller) return;
+    releaseFollow();
+    scroller.scrollTop += prompt.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  }, [locateExecution, releaseFollow, scrollRef, searchTarget, selected, transcript.historyLoading]);
 
-  useLayoutEffect(() => {
-    scheduleFollowScroll();
-  }, [messages, scheduleFollowScroll]);
+  useLayoutEffect(() => { scheduleFollowScroll(); }, [messages, scheduleFollowScroll]);
 
   return (
     <DisclosureAnchorContext.Provider value={disclosureAnchorNotifier}>
-      <div className="subagent-transcript-tab" data-testid="subagent-transcript-tab">
-        <div
-          ref={scrollRef}
-          data-scroll-owner="follow"
-          className="subagent-transcript-scroll"
-          onScroll={handleScroll}
-          role="log"
-          aria-live="polite"
-          aria-label={t("panel.subagent")}
-          tabIndex={0}
-        >
-          <div ref={contentRef} className="subagent-transcript-list">
-            {transcript.historyLoading || transcript.historyError ? (
-              <div className="subagent-transcript-empty" role="status">
-                {t(transcript.historyLoading ? "panel.subagentLoading" : "panel.subagentLoadError")}
-                {transcript.historyError ? <button type="button" onClick={transcript.retryHistory}>{t("panel.subagentRetry")}</button> : null}
-              </div>
-            ) : null}
-            {transcriptResult ? (
-              transcriptResult.turns.map((turn, turnIndex) => (
-                <Fragment key={`turn-${turnIndex}`}>
-                  <div className="message-row user">
-                    <div className="message-col">
-                      <div className="message-bubble">
-                        <div className="message-user-text selectable">
-                          {turn.task || t("panel.subagentTaskEmpty")}
-                        </div>
-                      </div>
-                    </div>
+      <TranscriptSearchContext.Provider value={searchTarget}>
+        <section className="subagent-transcript-tab" aria-label={t("panel.subagent")} data-testid="subagent-transcript-tab">
+          {selected && outcome ? <SubagentDetail
+            message={selected.call}
+            agentName={agentName}
+            outcome={outcome}
+            live={execution.live}
+            phase={execution.phase}
+            timing={timings.get(delegationIdForMessage(selected.call))}
+          /> : null}
+          <div className="subagent-transcript-viewport">
+            <div
+              ref={scrollRef}
+              data-scroll-owner="follow"
+              className="subagent-transcript-scroll"
+              onScroll={handleScroll}
+              role="log"
+              aria-live="polite"
+              aria-label={t("panel.subagent")}
+              tabIndex={0}
+            >
+              <div ref={contentRef} className="subagent-transcript-list">
+                {transcript.historyLoading || transcript.historyError ? (
+                  <div className="subagent-transcript-empty" role="status">
+                    {t(transcript.historyLoading ? "panel.subagentLoading" : "panel.subagentLoadError")}
+                    {transcript.historyError ? <button type="button" onClick={transcript.retryHistory}>{t("panel.subagentRetry")}</button> : null}
                   </div>
-                  {turn.rows.map((row) =>
-                    row.kind === "tool" ? (
-                      reviewChangeFromMessage(row.message) ? (
-                        <ReviewChangeCard
-                          key={row.message.id}
-                          message={row.message}
-                          asToolRow
-                        />
-                      ) : (
-                        <ToolRow key={row.message.id} message={row.message} />
-                      )
-                    ) : row.kind === "thinking" ? (
-                      <ThinkingRow
-                        key={`thinking-${row.message.id}`}
-                        message={row.message}
-                        streaming={delegateRunning && delegateExecution.live && row.message.status === "streaming"}
-                      />
-                    ) : (
-                      <div
-                        className="message-row assistant"
-                        data-message-id={row.message.id}
-                        key={`answer-${row.message.id}`}
-                      >
+                ) : null}
+                {selected ? <SubagentSupervision message={selected.call} running={outcome === "running"} /> : null}
+                {result ? result.turns.map((turn) => {
+                  const turnOutcome = subagentOutcome(turn.call, statuses);
+                  const failure = failures.get(delegationIdForMessage(turn.call));
+                  const showFailure = failure && turnOutcome !== "completed" && turnOutcome !== "running"
+                    && !turn.rows.some(({ kind, message }) => kind === "answer" && message.error?.code === failure.code
+                      && (!failure.message || message.error.message.trim() === failure.message));
+                  return (
+                    <Fragment key={turn.call.id}>
+                      <div className="message-row user" ref={turn === selected ? selectedPromptRef : undefined}>
                         <div className="message-col">
                           <div className="message-bubble">
-                            {row.message.content ? (
-                              <div className="prose-chat selectable">
-                                <Markdown source={row.message.content} />
-                              </div>
-                            ) : null}
-                            {row.message.error ? (
-                              <AssistantErrorMessage message={row.message} />
-                            ) : null}
+                            <div className="message-user-text selectable">{turn.task || t("panel.subagentTaskEmpty")}</div>
                           </div>
                         </div>
                       </div>
-                    ),
-                  )}
-                </Fragment>
-              ))
-            ) : !transcript.historyLoading && !transcript.historyError ? (
-              <div className="subagent-transcript-empty" role="status">
-                {t("panel.subagentEmpty")}
+                      {turn.rows.map((row) => (
+                        <SubagentTranscriptRow key={`${row.kind}:${row.message.id}`} row={row}
+                          streaming={turnOutcome === "running" && row.message.status === "streaming"} />
+                      ))}
+                      {showFailure ? <SubagentFailureCard outcome={turnOutcome} failure={failure} /> : null}
+                    </Fragment>
+                  );
+                }) : !transcript.historyLoading && !transcript.historyError ? (
+                  <div className="subagent-transcript-empty" role="status">{t("panel.subagentEmpty")}</div>
+                ) : null}
               </div>
+            </div>
+            {showJump ? (
+              <TooltipButton type="button" className="jump-latest-btn subagent-transcript-jump"
+                tooltip={t("chat.scrollToBottom")} ariaLabel={t("chat.scrollToBottom")} onClick={jumpToLatest}>
+                <IconArrowDown size={14} />
+              </TooltipButton>
             ) : null}
           </div>
-        </div>
-        {showJump ? (
-          <TooltipButton
-            type="button"
-            className="jump-latest-btn subagent-transcript-jump"
-            tooltip={t("chat.scrollToBottom")}
-            ariaLabel={t("chat.scrollToBottom")}
-            onClick={jumpToLatest}
-          >
-            <IconArrowDown size={14} />
-          </TooltipButton>
-        ) : null}
-        <SubagentGuideComposer
-          key={`${delegateExecution.sessionId}:${delegateExecution.delegationId}:${delegateExecution.execution}`}
-          sessionId={delegateExecution.sessionId}
-          delegationId={delegateExecution.delegationId}
-          execution={delegateExecution.execution}
-          running={delegateRunning && delegateExecution.live}
-          stopping={delegateExecution.phase === "stopping"}
-          modelId={delegateSettings.modelId}
-          thinkingLevel={delegateSettings.thinkingLevel}
-          messages={messages}
-        />
-      </div>
+          {selected ? <SubagentGuideComposer
+            key={JSON.stringify([execution.sessionId, execution.delegationId, execution.execution])}
+            sessionId={execution.sessionId}
+            delegationId={execution.delegationId}
+            execution={execution.execution}
+            running={running}
+            stopping={execution.phase === "stopping"}
+            agentName={agentName}
+            messages={messages}
+          /> : null}
+        </section>
+      </TranscriptSearchContext.Provider>
     </DisclosureAnchorContext.Provider>
+  );
+}
+
+function SubagentTranscriptRow({ row, streaming }: { row: SubagentRunItem; streaming: boolean }) {
+  const { kind, message } = row;
+  if (kind === "tool") {
+    const guide = subagentGuidance(message);
+    return guide ? <SubagentGuidanceMessage guide={guide} messageId={message.id} />
+      : reviewChangeFromMessage(message) ? <ReviewChangeCard message={message} asToolRow />
+      : <ToolRow message={message} />;
+  }
+  if (kind === "thinking") return <ThinkingRow message={message} streaming={streaming} />;
+  return (
+    <div className="message-row assistant" data-message-id={message.id}>
+      <div className="message-col">
+        <div className="message-bubble">
+          {message.content ? <div className="prose-chat selectable"><Markdown source={message.content} /></div> : null}
+          {message.error ? <AssistantErrorMessage message={message} /> : null}
+        </div>
+      </div>
+    </div>
   );
 }

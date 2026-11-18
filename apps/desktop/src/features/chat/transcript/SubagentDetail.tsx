@@ -1,59 +1,14 @@
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
 import { formatToolDuration } from "../../../lib/tool-display";
-import { toolResultPayload } from "../../../lib/tool-presentation";
-import {
-  delegationIsCreating,
-  subagentOutcome,
-  type DelegationFailure,
-  type SubagentOutcome,
-  type SubagentTiming,
-} from "../../../lib/subagent-topology";
-import type { SubagentRun } from "../../../lib/assistant-turns";
-import {
-  IconBot,
-  IconChevronDown,
-  IconChevronRight,
-  IconCircleAlert,
-} from "../../../components/icons";
-import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
+import { delegationIsCreating, type DelegationFailure, type SubagentOutcome, type SubagentTiming } from "../../../lib/subagent-topology";
+import { IconBot, IconChevronRight, IconCircleAlert } from "../../../components/icons";
 import { CopyButton } from "./shared";
-import { SubagentSupervision, useSubagentExecution } from "./SubagentSupervision";
-import { SubagentStopButton } from "./SubagentStopButton";
-import { delegationExecutionKey } from "../../../lib/tool-display";
-import {
-  delegateAgentName,
-  delegateModelId,
-  delegateThinkingLevel,
-} from "./model";
-import { SubagentRunRows } from "./ToolRow";
+import type { useSubagentExecution } from "./SubagentSupervision";
+import { delegateModelId, delegateThinkingLevel } from "./model";
 
-function delegateTaskDescription(message: UiMessage): string {
-  const args = message.toolArgs;
-  if (!args || typeof args !== "object" || Array.isArray(args)) return "";
-  const task = (args as { task?: unknown; instruction?: unknown }).task ?? (args as { instruction?: unknown }).instruction;
-  return typeof task === "string" ? task.trim() : "";
-}
-
-/**
- * Why a settled delegate failed, at the foot of its detail panel (issue #161).
- *
- * The step stream ends on `Failed` / `Timed out` / `Aborted` without saying
- * why: a delegate that dies before emitting a message row has no other carrier
- * for its reason, and the badge plus a duration is all a reader gets. The
- * runtime already reports `error: { code, message }` on the delegation roster
- * entry, so it is rendered here with the same visual language as the parent
- * reply's error card instead of being reachable only by reading the raw tool
- * result.
- */
-function SubagentFailureCard({
+export function SubagentFailureCard({
   outcome,
   failure,
 }: {
@@ -123,200 +78,57 @@ function SubagentFailureCard({
   );
 }
 
-/**
- * The side-sheet view for a selected delegate. It shows a sticky identity
- * header, the task as an inset grouped card, and the live process timeline.
- * Includes supervision counters, recent reports, guidance and scoped stop.
- */
 export function SubagentDetail({
-  message,
-  delegate,
-  delegationStatuses,
-  delegationFailures,
-  delegationTimings,
+  message, agentName, outcome, live, phase, timing,
 }: {
   message: UiMessage;
-  delegate?: SubagentRun;
-  delegationStatuses?: ReadonlyMap<string, SubagentOutcome>;
-  delegationFailures?: ReadonlyMap<string, DelegationFailure>;
-  delegationTimings?: ReadonlyMap<string, SubagentTiming>;
+  agentName: string;
+  outcome: SubagentOutcome;
+  live: boolean;
+  phase?: ReturnType<typeof useSubagentExecution>["phase"];
+  timing?: SubagentTiming;
 }) {
   const { t } = useTranslation();
-  const agentName = delegateAgentName(message, delegate);
-  const modelId = delegateModelId(message);
-  const thinkingLevel = delegateThinkingLevel(message);
-  const thinkingLabel = thinkingLevel ?? "";
-  const modelLabel = [modelId, thinkingLabel].filter(Boolean).join(" ");
-  const outcome = subagentOutcome(message, delegationStatuses);
-  // A bare `running` Task row (no delegation handle yet) is still being
-  // created: the delegate runtime is spawning. Name that phase explicitly
-  // instead of a generic running state, and keep the badge class distinct.
+  const modelLabel = [delegateModelId(message), delegateThinkingLevel(message)].filter(Boolean).join(" ");
   const creating = outcome === "running" && delegationIsCreating(message);
-  const childExecution = useSubagentExecution(message);
-  const { live, phase } = childExecution;
-  const statusKey = outcome === "running" && !live ? "chat.subagentHistorical"
+  const historical = outcome === "running" && !creating && !live;
+  const statusKey = creating ? "chat.subagentCreating"
+    : historical ? "chat.subagentHistorical"
     : outcome === "running" && phase === "stopping" ? "chat.subagentStoppingNow"
-    : outcome === "running" && phase === "guiding" ? "chat.subagentGuidingNow" : creating
-    ? "chat.subagentCreating"
+    : outcome === "running" && phase === "guiding" ? "chat.subagentGuidingNow"
     : `chat.subagentStatus.${outcome}`;
-  const payload = toolResultPayload(message);
-  const payloadRecord =
-    payload && typeof payload === "object" && !Array.isArray(payload)
-      ? (payload as { delegationId?: unknown; startedAt?: unknown; completedAt?: unknown })
-      : undefined;
-  const delegationId = delegationExecutionKey(payloadRecord) ?? (message.toolCallId || message.id);
-  const timing = delegationTimings?.get(delegationId);
-  const failure = delegationFailures?.get(delegationId);
-  const startedAt =
-    timing?.startedAt ??
-    (typeof payloadRecord?.startedAt === "number"
-      ? payloadRecord.startedAt
-      : creating && message.createdAt
-        ? Date.parse(message.createdAt) || undefined
-        : undefined);
-  const completedAt =
-    timing?.completedAt ??
-    (typeof payloadRecord?.completedAt === "number" ? payloadRecord.completedAt : undefined);
+  const ticking = outcome === "running" && (creating || live);
   const [now, setNow] = useState(Date.now);
-  const durationMs =
-    startedAt !== undefined
-      ? Math.max(0, (completedAt ?? (outcome === "running" ? now : startedAt)) - startedAt)
-      : message.toolDurationMs;
-  const duration =
-    typeof durationMs === "number" && durationMs > 0
-      ? formatToolDuration(durationMs / 1000)
-      : "";
-  const statusClass = creating
-    ? "outcome-creating"
-    : outcome.replaceAll("_", "-");
-  const taskDescription = delegateTaskDescription(message);
-  const taskBodyId = useId();
-  const taskLabelId = useId();
-  const taskBodyRef = useRef<HTMLDivElement>(null);
-  const [taskExpanded, setTaskExpanded] = useState(false);
-  const taskToggleRef = useRef<HTMLButtonElement | null>(null);
-  const notifyDisclosureAnchor = useDisclosureAnchorNotifier();
-  const [taskOverflow, setTaskOverflow] = useState(false);
-
-  useLayoutEffect(() => {
-    setTaskExpanded(false);
-  }, [taskDescription]);
-
-  useLayoutEffect(() => {
-    const element = taskBodyRef.current;
-    if (!element) return;
-    const measure = () => {
-      const overflowing = element.scrollHeight > element.clientHeight + 1;
-      setTaskOverflow((current) => (taskExpanded ? current : overflowing));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [taskDescription, taskExpanded]);
-
   useEffect(() => {
-    if (outcome !== "running") return;
+    if (!ticking) return;
     setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [outcome]);
+  }, [ticking]);
+
+  const startedAt = timing?.startedAt ?? (creating && message.createdAt ? Date.parse(message.createdAt) : undefined);
+  const completedAt = timing?.completedAt ?? (ticking ? now : undefined);
+  const durationMs = startedAt !== undefined && completedAt !== undefined
+    ? completedAt - startedAt : historical ? undefined : message.toolDurationMs;
+  const duration = typeof durationMs === "number" && durationMs > 0 ? formatToolDuration(durationMs / 1000) : "";
+  const status = creating ? "creating" : historical ? "historical" : outcome.replaceAll("_", "-");
 
   return (
-    <div className="subagent-detail" data-testid="subagent-detail">
-      <header className="subagent-detail-hero">
-        <div className="subagent-detail-heading">
-          <span className="subagent-detail-avatar" aria-hidden>
-            <IconBot size={18} />
-            <span className={`subagent-detail-status outcome-${statusClass}`} />
-          </span>
-          <div className="subagent-detail-heading-copy">
-            <strong className="subagent-detail-name">
-              {agentName || t("chat.subagentUnnamed")}
-            </strong>
-            {modelLabel ? (
-              <span
-                className="subagent-detail-model"
-                title={modelLabel}
-                aria-label={modelLabel}
-              >
-                {modelLabel}
-              </span>
-            ) : null}
-          </div>
+    <header className="subagent-detail-hero" data-testid="subagent-detail">
+      <div className="subagent-detail-heading">
+        <span className="subagent-detail-avatar" aria-hidden>
+          <IconBot size={18} />
+          <span className={`subagent-detail-status outcome-${status}`} />
+        </span>
+        <div className="subagent-detail-heading-copy">
+          <strong className="subagent-detail-name">{agentName || t("chat.subagentUnnamed")}</strong>
+          {modelLabel ? <span className="subagent-detail-model" title={modelLabel}>{modelLabel}</span> : null}
         </div>
-        <div
-          className="subagent-detail-summary"
-          role="list"
-          aria-label={t("panel.subagent")}
-        >
-          <span
-            className={`subagent-detail-badge outcome-${statusClass}`}
-            role="listitem"
-          >
-            {t(statusKey)}
-          </span>
-          {duration ? (
-            <span className="subagent-detail-meta" role="listitem">
-              {duration}
-            </span>
-          ) : null}
-          <SubagentStopButton sessionId={childExecution.sessionId} delegationId={childExecution.delegationId} execution={childExecution.execution} running={outcome === "running" && live && !creating} name={agentName} />
-        </div>
-      </header>
-      <SubagentSupervision message={message} running={outcome === "running"} />
-      <section className="subagent-detail-task" aria-labelledby={taskLabelId}>
-        <div className="subagent-detail-section-label" id={taskLabelId}>
-          {t("panel.subagentTask")}
-        </div>
-        <div className="subagent-detail-task-card">
-          <div
-            id={taskBodyId}
-            ref={taskBodyRef}
-            className={`subagent-task-message-body selectable${
-              taskExpanded ? " is-expanded" : " is-collapsed"
-            }`}
-          >
-            {taskDescription || t("panel.subagentTaskEmpty")}
-          </div>
-          {taskOverflow ? (
-            <button
-              type="button"
-              ref={taskToggleRef}
-              className="subagent-task-toggle"
-              aria-expanded={taskExpanded}
-              aria-controls={taskBodyId}
-              onClick={() => {
-                // Expanding the brief changes the height of whichever scroller
-                // this card sits in (#324), so it holds the same reading
-                // position the tool and activity titles do.
-                notifyDisclosureAnchor?.(taskToggleRef.current);
-                setTaskExpanded((expanded) => !expanded);
-              }}
-            >
-              <span>
-                {taskExpanded
-                  ? t("chat.subagentTaskCollapse")
-                  : t("chat.subagentTaskExpand")}
-              </span>
-              <IconChevronDown size={12} aria-hidden />
-            </button>
-          ) : null}
-        </div>
-      </section>
-      {delegate ? (
-        <SubagentRunRows
-          run={delegate}
-          agentName={agentName}
-          scrollable={false}
-          variant="dock"
-        />
-      ) : null}
-      {/* A completed delegate has nothing to explain, so the card is tied to a
-        * non-success terminal outcome rather than to the error field alone. */}
-      {failure && outcome !== "completed" && outcome !== "running" ? (
-        <SubagentFailureCard outcome={outcome} failure={failure} />
-      ) : null}
-    </div>
+      </div>
+      <div className="subagent-detail-summary">
+        <span className={`subagent-detail-badge outcome-${status}`}>{t(statusKey)}</span>
+        {duration ? <span className="subagent-detail-meta">{duration}</span> : null}
+      </div>
+    </header>
   );
 }

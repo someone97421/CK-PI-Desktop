@@ -2764,8 +2764,6 @@ sklm: {
     subagentLoading: "正在读取子智能体历史…",
     subagentLoadError: "子智能体历史读取失败。",
     subagentRetry: "重新读取",
-    subagentConversation: "对话",
-    subagentDetail: "过程",
     collapse: "收起工作面板",
     resize: "调整工作面板宽度",
     maximize: "放大",

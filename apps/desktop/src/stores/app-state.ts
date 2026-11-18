@@ -124,6 +124,7 @@ import type { ResponseAnnotationEditor, ResponseAnnotationMap } from "../lib/res
 
 export type AppState = {
   ready: boolean;
+  startupReadFailed?: boolean;
   version?: AppVersionInfo;
   healthOk: boolean;
   settings?: AppSettings;

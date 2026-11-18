@@ -40,6 +40,7 @@ export type StartupWatchdogState = {
  * for.
  */
 export function useStartupWatchdog(ready: boolean): StartupWatchdogState {
+  const readFailed = useAppStore((state) => state.startupReadFailed);
   const [phase, setPhase] = useState<StartupPhase>("starting");
   const [attempt, setAttempt] = useState(0);
   const [retrying, setRetrying] = useState(false);
@@ -52,6 +53,12 @@ export function useStartupWatchdog(ready: boolean): StartupWatchdogState {
       retryingRef.current = false;
       setRetrying(false);
       setPhase("starting");
+      return;
+    }
+    if (readFailed) {
+      setPhase("stalled");
+      retryingRef.current = false;
+      setRetrying(false);
       return;
     }
     startedAtRef.current = clockNow();
@@ -82,7 +89,7 @@ export function useStartupWatchdog(ready: boolean): StartupWatchdogState {
     // restarted it, or the surface unmounted. Leaving either timer armed past
     // that would publish a phase for an app that already has data.
     return () => watchdog.stop();
-  }, [ready, attempt]);
+  }, [ready, readFailed, attempt]);
 
   const retry = useCallback(() => {
     // Every click would otherwise start another full startup (about ten reads

@@ -5,18 +5,17 @@ import { api } from "../../lib/api";
 import { subagentGuidance } from "../../lib/subagent-guidance";
 import { useChatSessionCapability } from "../../hooks/use-chat-session-capability";
 import { SubagentStopButton } from "../../features/chat/transcript/SubagentStopButton";
-import { IconArrowUp, IconBot } from "../icons";
+import { IconArrowUp } from "../icons";
 import { Textarea, TooltipButton } from "../ui";
 
-/** 仅提供当前执行的文字引导与模型展示，不承载主会话的输入选项。 */
-export function SubagentGuideComposer({ sessionId, delegationId, execution, running, stopping, modelId, thinkingLevel, messages }: {
+/** 提供当前执行的文字引导和停止操作。 */
+export function SubagentGuideComposer({ sessionId, delegationId, execution, running, stopping, agentName, messages }: {
   sessionId?: string | null;
   delegationId?: string;
   execution?: number;
   running: boolean;
   stopping: boolean;
-  modelId: string;
-  thinkingLevel?: string;
+  agentName: string;
   messages: readonly UiMessage[];
 }) {
   const { t } = useTranslation();
@@ -29,8 +28,9 @@ export function SubagentGuideComposer({ sessionId, delegationId, execution, runn
   const composing = useRef(false);
   const retryRequest = useRef<SubagentGuideRequest | undefined>(undefined);
   const canGuide = Boolean(localToolsAllowed && running && !stopping && sessionId && delegationId && execution);
-  const persistedMessage = receipt ? messages.find(message => message.id === `subagent-guide:${receipt.commandId}`) : undefined;
-  const currentReceipt = (persistedMessage ? subagentGuidance(persistedMessage) : undefined) ?? receipt;
+  const persisted = receipt && messages.some(message =>
+    message.id === `subagent-guide:${receipt.commandId}` && subagentGuidance(message));
+  const currentReceipt = persisted ? undefined : receipt;
 
   async function sendGuidance() {
     const instruction = draft.trim();
@@ -61,7 +61,6 @@ export function SubagentGuideComposer({ sessionId, delegationId, execution, runn
 
   const placeholder = !localToolsAllowed ? t("panel.subagentGuideUnavailable")
     : canGuide ? t("panel.subagentGuidePlaceholder") : t("panel.subagentGuideInactive");
-  const modelLabel = `${t("chat.model")}: ${modelId || "—"}${thinkingLevel ? ` · ${thinkingLevel}` : ""}`;
 
   return <footer className="subagent-transcript-composer">
     <Textarea
@@ -83,12 +82,7 @@ export function SubagentGuideComposer({ sessionId, delegationId, execution, runn
       }}
     />
     <div className="subagent-transcript-composer-controls">
-      <div className="subagent-transcript-model" title={modelLabel} aria-label={modelLabel}>
-        <IconBot size={14} aria-hidden />
-        <span className="subagent-transcript-model-name">{modelId || "—"}</span>
-        {thinkingLevel ? <span className="subagent-transcript-thinking">{thinkingLevel}</span> : null}
-      </div>
-      <SubagentStopButton sessionId={sessionId} delegationId={delegationId} execution={execution} running={running} compact />
+      <SubagentStopButton sessionId={sessionId} delegationId={delegationId} execution={execution} running={running} name={agentName} compact />
       <TooltipButton
         type="button"
         className="send-btn subagent-transcript-send"

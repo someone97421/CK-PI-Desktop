@@ -245,6 +245,7 @@ export const useAppStore = create<AppState>((set, get) => {
     // Only the newest attempt may publish; an older in-flight one returns
     // without touching the store.
     const generation = ++bootstrapGeneration;
+    if (get().startupReadFailed) set({ startupReadFailed: false, error: null });
     let recoveredSettings: AppSettings | undefined;
     try {
       const sidebar = await restoreSidebarPreferences({
@@ -319,17 +320,13 @@ export const useAppStore = create<AppState>((set, get) => {
         (
           await Promise.all(
             providers.providers.map(async (provider) => {
-              try {
-                const cached = await api.listProviderModels({
-                  providerId: provider.id,
-                  source: "cache",
-                });
-                return cached.models.length > 0
-                  ? ([provider.id, cached.models] as const)
-                  : null;
-              } catch {
-                return null;
-              }
+              const cached = await api.listProviderModels({
+                providerId: provider.id,
+                source: "cache",
+              });
+              return cached.models.length > 0
+                ? ([provider.id, cached.models] as const)
+                : null;
             }),
           )
         ).filter((entry): entry is readonly [string, ModelInfo[]] => entry !== null),
@@ -462,7 +459,7 @@ export const useAppStore = create<AppState>((set, get) => {
       // user already left behind.
       if (generation !== bootstrapGeneration) return;
       set({
-        ready: true,
+        startupReadFailed: !get().ready,
         healthOk: false,
         ...(recoveredSettings ? { settings: recoveredSettings } : {}),
         error: e instanceof Error ? e.message : String(e),
