@@ -4312,6 +4312,9 @@
 }
 
 .app-shell[data-compact-layout="true"] .settings-titlebar {
+  pointer-events: auto;
+  --window-drag-region: no-drag;
+  -webkit-app-region: no-drag;
   left: 0;
   display: flex;
   align-items: center;
@@ -4335,6 +4338,12 @@
 }
 
 .app-shell[data-compact-layout="true"] .settings-titlebar-label {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  align-self: stretch;
+  --window-drag-region: drag;
+  -webkit-app-region: drag;
   min-width: 0;
   color: var(--ds-text-secondary);
   font-size: var(--text-md);
@@ -4347,6 +4356,8 @@
 }
 
 .app-shell[data-compact-layout="true"] .settings-nav-top {
+  --window-drag-region: no-drag;
+  -webkit-app-region: no-drag;
   padding: calc(var(--ds-toolbar-height) + 8px) 16px 6px;
 }
 

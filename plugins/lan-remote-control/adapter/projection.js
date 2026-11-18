@@ -115,7 +115,7 @@
   });
 
   window.addEventListener("pi-desktop:projection-settings-back", (event) => {
-    if (current?.layer !== "settings-directory") return;
+    if (!current?.settingsFrom) return;
     event.preventDefault();
     navigate({ layer: current.settingsFrom });
   });

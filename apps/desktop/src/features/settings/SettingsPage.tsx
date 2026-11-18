@@ -148,7 +148,7 @@ export function SettingsPage({ compact = false }: { compact?: boolean }) {
   const requestedTab = builtinTarget?.tab ?? storeTab;
   const tabHidden = isSettingsDestinationHidden(requestedTab, developerMode, includeDevelopmentOnly);
   const tab = compact && tabHidden ? "general" : requestedTab;
-  const settingsAnchor = compact ? (!tabHidden ? builtinTarget?.anchor : undefined) : storeAnchor;
+  const settingsAnchor = !tabHidden && compactDetail ? builtinTarget?.anchor ?? storeAnchor : undefined;
 
   const [query, setQuery] = useState("");
   const saveError = useSyncExternalStore(subscribeSettingsSaveError, getSettingsSaveError);
@@ -233,7 +233,7 @@ export function SettingsPage({ compact = false }: { compact?: boolean }) {
   // (providers, import) needs no per-row wiring; a short retry window covers
   // late mounts.
   useLayoutEffect(() => {
-    if (!settingsAnchor || (compact && !compactDetail)) return;
+    if (!settingsAnchor) return;
     const clearStoreAnchor = () => {
       if (useAppStore.getState().settingsAnchor === settingsAnchor) setSettingsAnchor(null);
     };
@@ -270,7 +270,7 @@ export function SettingsPage({ compact = false }: { compact?: boolean }) {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [settingsAnchor, tab, t, setSettingsAnchor, compact, compactDetail, settingsTabNonce]);
+  }, [settingsAnchor, tab, t, setSettingsAnchor, settingsTabNonce]);
 
   const saveSettings = async (patch: Partial<AppSettings>) => {
     await saveSettingsPatch(patch);
@@ -360,7 +360,7 @@ export function SettingsPage({ compact = false }: { compact?: boolean }) {
               onClick={() => {
                 if (compactDetail) {
                   setSettingsAnchor(null);
-                  requestCompactSettingsNavigation("settings-directory");
+                  requestCompactSettingsNavigation("settings-directory", navigation.settingsTarget);
                 } else {
                   if (!backFromProjectionSettings()) setPage("chat");
                 }
@@ -463,7 +463,7 @@ export function SettingsPage({ compact = false }: { compact?: boolean }) {
             type="button"
             className="settings-back no-drag"
             data-nav="back-to-app"
-            onClick={() => setPage("chat")}
+            onClick={() => { if (!backFromProjectionSettings()) setPage("chat"); }}
           >
             <IconChevronLeft size={15} />
             <span>{t("settings.backToApp")}</span>

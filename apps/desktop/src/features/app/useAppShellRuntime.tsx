@@ -125,8 +125,8 @@ export function useAppShellRuntime() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarWidth] = useState(() => loadSidebarWidth());
   const [shellWidth, setShellWidth] = useState(() => window.innerWidth);
-  const compact = projection || (shellWidth > 0 && shellWidth < 800);
-  const { layer: compactLayer, setLayer: setCompactLayer, showChat: showCompactChat } = useCompactNavigation(compact, sidebarCollapsed);
+  const compact = shellWidth > 0 && shellWidth < 800;
+  const { layer: compactLayer, setLayer: setCompactLayer, showChat: showCompactChat } = useCompactNavigation(compact, sidebarCollapsed, projection);
   const compactNav = useRef({ compact, layer: compactLayer });
   compactNav.current = { compact, layer: compactLayer };
   const { sidebarEntering, sidebarExiting, handleSidebarAnimationEnd } = useSidebarTransition(
@@ -153,7 +153,7 @@ export function useAppShellRuntime() {
   useLayoutEffect(() => {
     const shell = appShellRef.current;
     if (!shell) return;
-    const update = () => setShellWidth(Math.round(shell.clientWidth));
+    const update = () => setShellWidth(shell.getBoundingClientRect().width);
     update();
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", update);
@@ -233,7 +233,7 @@ export function useAppShellRuntime() {
   const workPanelExitClosing = useRef(false);
   const presentedWorkPanelRef = useRef(false);
   const workPanelExitingRef = useRef(false);
-  useCompactHistory({ compact, projection, ready, page, layer: compactLayer, setLayer: setCompactLayer });
+  useCompactHistory({ compact, projection, ready, page, layer: compactLayer, setLayer: setCompactLayer, reopenSidebar });
   const [backendDown, setBackendDown] = useState<
     {
       fatal: boolean;
@@ -1191,7 +1191,6 @@ export function useAppShellRuntime() {
     compact,
     compactLayer,
     showCompactChat,
-    projection,
     t,
     ready,
     page,

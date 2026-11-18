@@ -1110,19 +1110,8 @@ export async function createWindow({
       if (boundsWatchdog) clearInterval(boundsWatchdog);
       return;
     }
-    const cg = readCgBounds();
-    const electronBounds = window.getBounds();
-    if (!cg && cgHelperAvailable) missingCgStreak += 1;
-    else missingCgStreak = 0;
-    const shelved =
-      (!!cg && (cg.width < 500 || cg.height < 400 || cg.x < -40)) ||
-      (!cg && cgHelperAvailable && missingCgStreak >= 3);
-    const electronTiny =
-      electronBounds.width < 500 || electronBounds.height < 400;
-    if (shelved || electronTiny) {
-      ensureStableBounds(true);
-      return;
-    }
+    if (window.isMinimized() || !window.isVisible()) return;
+    ensureStableBounds(false);
     if (Date.now() > pinUntil) {
       try {
         window.setAlwaysOnTop(false);

@@ -41,6 +41,11 @@ function fixture({ saved, denyHistory = false } = {}) {
       emit("pi-desktop:projection-state", { detail: { ready, layer, navigationRejected, settingsTarget } });
     },
     flush() { while (pending.length) pending.shift()(); },
+    backFromSettings() {
+      let prevented = false;
+      emit("pi-desktop:projection-settings-back", { preventDefault: () => { prevented = true; } });
+      return prevented;
+    },
   };
 }
 
@@ -166,4 +171,18 @@ test("刷新保存了分类的设置详情时请求恢复该分类", () => {
   assert.deepEqual(app.targets, ["ai"]);
   app.state("settings-detail", true, false, "ai");
   assert.equal(app.history.state[key].settingsFrom, "workpanel");
+});
+
+test("宽屏设置详情可从底栏直接返回，重复发布同一详情不会追加历史", () => {
+  const app = fixture();
+  app.state("chat");
+  app.state("settings-detail", true, false, "builtin:ai");
+  app.state("settings-detail", true, false, "builtin:ai");
+  assert.equal(app.entries.length, 4);
+  assert.equal(app.backFromSettings(), true);
+  assert.deepEqual(app.navigations, ["chat"]);
+  app.state("chat"); app.flush();
+  assert.equal(app.history.state[key].layer, "chat");
+  app.history.go(2); app.flush();
+  assert.equal(app.targets.at(-1), "builtin:ai");
 });

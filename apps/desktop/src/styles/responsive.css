@@ -197,6 +197,7 @@
 
 .app-shell[data-compact-layout="true"] {
   --compact-chrome-inset: max(12px, var(--ds-window-lead-inset));
+  --compact-back-width: 108px;
   --ds-main-pane-min-width: 0px;
   width: 100%;
   overflow: hidden;
@@ -280,7 +281,7 @@
 }
 
 .app-shell[data-compact-layout="true"] .work-panel-header {
-  margin-left: calc(var(--compact-chrome-inset) + 36px);
+  margin-left: calc(var(--compact-chrome-inset) + var(--compact-back-width) + 6px);
   padding-left: 0;
 }
 
@@ -296,9 +297,22 @@
   );
 }
 
-.compact-panel-back {
+.app-shell[data-compact-layout="true"]:lang(zh) {
+  --compact-back-width: 64px;
+}
+
+.app-shell .compact-panel-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: var(--compact-back-width);
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--ds-text-secondary);
+  font-size: var(--text-md);
   position: absolute;
-  top: calc((var(--ds-toolbar-height) - 28px) / 2);
+  top: calc((var(--ds-toolbar-height) - 32px) / 2);
   left: var(--compact-chrome-inset);
   z-index: 30;
   pointer-events: auto;
@@ -312,7 +326,7 @@
   content: "";
   position: absolute;
   top: 0;
-  left: calc(var(--compact-chrome-inset) + 36px);
+  left: calc(var(--compact-chrome-inset) + var(--compact-back-width) + 6px);
   right: 0;
   height: var(--ds-toolbar-height);
   --window-drag-region: drag;

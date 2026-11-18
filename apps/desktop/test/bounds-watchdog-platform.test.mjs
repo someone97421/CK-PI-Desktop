@@ -41,7 +41,7 @@ test("the bounds watchdog turns itself off outside macOS", () => {
   const guard = body.indexOf('if (process.platform !== "darwin")');
   assert.notEqual(guard, -1, "the watchdog must be gated on darwin");
   // The guard has to clear the interval, or it keeps ticking forever.
-  const guardBlock = body.slice(guard, body.indexOf("const cg = readCgBounds();", guard));
+  const guardBlock = body.slice(guard, body.indexOf("ensureStableBounds(false);", guard));
   assert.match(guardBlock, /clearInterval\(boundsWatchdog\);/);
   assert.match(guardBlock, /return;/);
   // And it has to run before the watchdog can touch the window layer, which is
@@ -51,12 +51,10 @@ test("the bounds watchdog turns itself off outside macOS", () => {
     "the platform guard must precede the always-on-top reset",
   );
   assert.ok(
-    guard < body.indexOf("ensureStableBounds(true)"),
+    guard < body.indexOf("ensureStableBounds(false)"),
     "the platform guard must precede shelf recovery",
   );
-  // macOS keeps the Stage Manager path intact (D039, D053, D083).
-  assert.match(body, /readCgBounds\(\)/);
-  assert.match(body, /ensureStableBounds\(true\)/);
+  assert.doesNotMatch(body, /ensureStableBounds\(true\)|readCgBounds\(\)/);
 });
 
 test("no other platform path re-layers the window on a timer", () => {

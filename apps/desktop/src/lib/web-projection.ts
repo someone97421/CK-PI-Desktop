@@ -53,7 +53,8 @@ export function listenProjectionNavigation(
     const destination = projectionDestination(event);
     if (!destination) return;
     const { layer, settingsTarget } = destination;
-    if (layer === state.layer && (settingsTarget === undefined || settingsTarget === state.settingsTarget)) {
+    const page = layer.startsWith("settings-") ? "settings" : "chat";
+    if (page === state.page && layer === state.layer && (settingsTarget === undefined || settingsTarget === state.settingsTarget)) {
       publishProjectionState(target, state);
     } else if (!navigate(layer, settingsTarget)) {
       publishProjectionState(target, { ...state, navigationRejected: true });

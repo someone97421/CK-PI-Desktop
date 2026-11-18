@@ -35,8 +35,7 @@ export function subscribeCompactSettingsNavigation(listener: () => void) {
 }
 
 export function requestCompactSettingsNavigation(layer: CompactSettingsLayer, settingsTarget?: string) {
-  const target = layer === "settings-detail" ? settingsTarget : undefined;
-  if (layer === navigation.layer && target === navigation.settingsTarget) return;
-  navigation = { layer, settingsTarget: target };
+  if (layer === navigation.layer && settingsTarget === navigation.settingsTarget) return;
+  navigation = { layer, settingsTarget };
   for (const listener of listeners) listener();
 }

@@ -7,6 +7,7 @@ import {
   clampMinimumSizeToWorkArea,
   emptyWorkPanelReservationState,
   windowBoundsEqual,
+  WINDOW_MIN_WIDTH,
 } from "../electron/main/work-panel-window.ts";
 import { readMainModule } from "./helpers/source-contracts.mjs";
 
@@ -50,7 +51,7 @@ function createRecoveryWindow(platform, { tiny = false, visible = true, minimize
   vm.runInNewContext(stripTypeScriptTypes(`${recovery}\n${watchdog}`), {
     window,
     windowState: {},
-    windowMinWidth: 800,
+    windowMinWidth: WINDOW_MIN_WIDTH,
     windowMinHeight: 560,
     windowBoundsSettleMs: 300,
     isLiveWindow: () => true,
@@ -89,6 +90,15 @@ function createRecoveryWindow(platform, { tiny = false, visible = true, minimize
     },
   };
 }
+
+test("macOS 定时检查保留用户收窄后的窗口", () => {
+  const app = createRecoveryWindow("darwin");
+  for (const width of [499, 480]) {
+    app.window.setSize(width, 700);
+    app.advance(3000);
+    assert.equal(app.window.getBounds().width, width);
+  }
+});
 
 for (const platform of ["win32", "linux", "darwin"]) {
   for (const event of ["show", "focus", "restore"]) {

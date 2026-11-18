@@ -326,6 +326,7 @@ export function AppShell() {
                 onClick={showCompactChat}
               >
                 <IconChevronLeft size={15} />
+                <span>{t("nav.conversation")}</span>
               </TooltipButton>
             )}
 

@@ -18,12 +18,16 @@ vm.runInNewContext(transformSync(source("lib/web-projection.ts"), { loader: "ts"
 });
 const { webProjectionEnabled, projectionLayerFor, projectionNavigationLayer, listenProjectionNavigation, publishProjectionState } = projectionModule.exports;
 
-test("只有远控桥和插件投影同时启用才改变展示", () => {
+test("远控投影需要 Web 桥与插件同时启用，布局仅取决于实际宽度", () => {
   for (const webRemote of [undefined, "false", "true"]) {
     for (const lanProjection of [undefined, "false", "true"]) {
       assert.equal(webProjectionEnabled({ webRemote, lanProjection }), webRemote === "true" && lanProjection === "true");
     }
   }
+  const runtimeSource = source("features/app/useAppShellRuntime.tsx");
+  assert.match(runtimeSource, /const compact = shellWidth > 0 && shellWidth < 800;/);
+  assert.match(runtimeSource, /setShellWidth\(shell\.getBoundingClientRect\(\)\.width\)/);
+  assert.match(source("lib/web-preload-bridge.ts"), /windowSetWorkPanelReservation\) return \{ ok: true, data: \{ requested: 0, reserved: 0 \}/);
 });
 
 test("层级由原生侧栏与右栏呈现状态决定，左栏优先", () => {
@@ -197,6 +201,18 @@ test("桌面保留原挂载、最大化和宽度回调路径", () => {
   const maximized = render({ compact: false, workPanelMaximized: true });
   assert.equal(mainPane(maximized), undefined);
   assert.equal(byType(maximized, "ChatSurface").length, 0);
+});
+
+test("宽屏远控沿用桌面三列与设置双栏，同一壳仅在紧凑宽度分层", () => {
+  const wide = render({ projection: true, compact: false, presentedWorkPanelOpen: true });
+  assert.equal(wide.props["data-compact-layout"], undefined);
+  assert.equal(visibility(byType(wide, "Sidebar")[0]), true);
+  assert.equal(visibility(byType(wide, "ChatSurface")[0]), true);
+  assert.equal(visibility(byType(wide, "WorkPanel")[0]), true);
+  for (const compact of [true, false, true]) {
+    const settings = render({ projection: true, page: "settings", compact }, { retain: true });
+    assert.equal(byType(settings, "LazyPage")[0].node.props.compact, compact);
+  }
 });
 
 test("桌面窄窗切层保留普通聊天与已打开面板，隐藏层阻断交互和 Portal", () => {

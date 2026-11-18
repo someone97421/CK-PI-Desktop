@@ -2,13 +2,13 @@ import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { useAppStore } from "../../stores/app-store";
 import type { ProjectionLayer } from "../../lib/web-projection";
 
-export function useCompactNavigation(compact: boolean, sidebarCollapsed: boolean) {
+export function useCompactNavigation(compact: boolean, sidebarCollapsed: boolean, projection: boolean) {
   const [layer, setLayer] = useState<ProjectionLayer>("chat");
   const lastPane = useRef<ProjectionLayer>("chat");
   const showChat = useCallback(() => setLayer("chat"), []);
 
   useLayoutEffect(() => {
-    if (compact) {
+    if (compact && !projection) {
       const state = useAppStore.getState();
       const panelVisible = state.page === "chat" && (state.workPanelOpen || state.subagentPanel);
       let destination = lastPane.current;
@@ -24,7 +24,7 @@ export function useCompactNavigation(compact: boolean, sidebarCollapsed: boolean
       else if (pane?.matches(".work-panel")) lastPane.current = "workpanel";
       else if (pane) lastPane.current = "chat";
     };
-    if (!compact) {
+    if (!compact && !projection) {
       document.addEventListener("pointerdown", remember, true);
       document.addEventListener("focusin", remember, true);
     }
@@ -45,17 +45,17 @@ export function useCompactNavigation(compact: boolean, sidebarCollapsed: boolean
         return;
       }
       lastPane.current = destination;
-      if (compact) setLayer(destination);
+      if (compact || projection) setLayer(destination);
     });
     return () => {
       unsubscribe();
       document.removeEventListener("pointerdown", remember, true);
       document.removeEventListener("focusin", remember, true);
     };
-  }, [compact, sidebarCollapsed]);
+  }, [compact, sidebarCollapsed, projection]);
 
   useLayoutEffect(() => {
-    if (compact) lastPane.current = layer;
-  }, [compact, layer]);
+    if (compact || projection) lastPane.current = layer;
+  }, [compact, layer, projection]);
   return { layer, setLayer, showChat };
 }

@@ -16,8 +16,9 @@ function overlayOpen() {
   return Array.from(document.querySelectorAll<HTMLElement>('dialog[open], [role="dialog"][aria-modal="true"], [role="menu"], [role="listbox"]')).some(visible);
 }
 
-export function useCompactHistory({ compact, projection, ready, page, layer, setLayer }: {
-  compact: boolean; projection: boolean; ready: boolean; page: string; layer: ProjectionLayer; setLayer: (layer: ProjectionLayer) => void;
+export function useCompactHistory({ compact, projection, ready, page, layer, setLayer, reopenSidebar }: {
+  compact: boolean; projection: boolean; ready: boolean; page: string; layer: ProjectionLayer;
+  setLayer: (layer: ProjectionLayer) => void; reopenSidebar: () => void;
 }) {
   const settings = useSyncExternalStore(subscribeCompactSettingsNavigation, getCompactSettingsNavigation);
   const current = page === "settings" ? settings.layer : layer;
@@ -36,23 +37,28 @@ export function useCompactHistory({ compact, projection, ready, page, layer, set
   useLayoutEffect(() => {
     if (!projection || !ready || initialized) return;
     useAppStore.getState().setPage("chat", { record: false });
-    setLayer(window.__piDesktopBrowseAction ? "chat" : "projects");
+    setLayer(compact && !window.__piDesktopBrowseAction ? "projects" : "chat");
     setInitialized(true);
-  }, [projection, ready, initialized, setLayer]);
+  }, [compact, projection, ready, initialized, setLayer]);
 
   const navigate = useCallback((destination: Destination, target?: string) => {
     const store = useAppStore.getState();
     if (destination === "settings-directory" || destination === "settings-detail") {
-      requestCompactSettingsNavigation(destination, target);
+      requestCompactSettingsNavigation(destination, destination === "settings-directory"
+        ? getCompactSettingsNavigation().settingsTarget : target);
       if (store.page !== "settings") store.setPage("settings");
     } else {
       if (destination === "workpanel" && !store.activeSessionId) return false;
       if (store.page !== "chat") store.setPage("chat");
       if (destination === "workpanel" && !store.workPanelOpen && !store.subagentPanel) store.openWorkPanel();
+      if (projection && !compact) {
+        if (destination !== "workpanel" && (store.workPanelOpen || store.subagentPanel)) store.toggleWorkPanel();
+        if (destination === "projects") reopenSidebar();
+      }
       setLayer(destination);
     }
     return true;
-  }, [setLayer]);
+  }, [compact, projection, reopenSidebar, setLayer]);
 
   useEffect(() => {
     if (!projection || !ready || !initialized) return;
