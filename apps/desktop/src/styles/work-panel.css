@@ -1090,10 +1090,6 @@
 .subagent-transcript-scroll { min-width: 0; min-height: 0; flex: 1; overflow: hidden auto; padding: 0 16px 32px; }
 .subagent-transcript-list { display: flex; min-width: 0; flex-direction: column; }
 .subagent-transcript-list .message-row.user .message-col { max-width: min(100%, 520px); }
-.subagent-transcript-list > .tool-row .tool-row-summary {
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
 .subagent-transcript-list > .subagent-failure { margin-block: 8px; }
 .subagent-transcript-empty { display: grid; min-height: 160px; place-items: center; color: var(--ds-text-muted); }
 .subagent-transcript-jump { bottom: 12px; z-index: 6; }
