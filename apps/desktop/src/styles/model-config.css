@@ -1061,17 +1061,49 @@
   color: var(--ds-text-primary);
 }
 
-/*
-  Compact property sheet in a half-pane: 2xs labels, dense fields, no helper
-  paragraphs. Native number spinners are hidden so the two limit fields match.
-  Author `display: flex` would otherwise override the HTML hidden attribute.
-*/
+/* The three sections share compact fields; the disclosure stays folded until opened. */
 .provider-chosen-row-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   padding: 2px 8px 8px;
   font-size: var(--text-sm);
+}
+
+.provider-advanced-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 0;
+}
+
+.provider-advanced-section:first-child {
+  padding-top: 4px;
+}
+
+.provider-advanced-section:last-child {
+  padding-bottom: 2px;
+}
+
+.provider-advanced-section + .provider-advanced-section {
+  border-top: 1px solid var(--ds-border-subtle);
+}
+
+.provider-advanced-heading {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ds-text-primary);
+  font-size: var(--text-2xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--leading-normal);
+}
+
+.provider-advanced-heading .ui-help-icon,
+.provider-chosen-field-label .ui-help-icon,
+.provider-chosen-thinking-label .ui-help-icon {
+  flex: none;
+  margin-inline-start: 4px;
 }
 
 .provider-chosen-row-body[hidden] {
@@ -1106,6 +1138,9 @@
 }
 
 .provider-chosen-field-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
   color: var(--ds-text-secondary);
   font-size: var(--text-2xs);
   font-weight: var(--font-weight-medium);
@@ -1114,12 +1149,25 @@
 
 .provider-chosen-limits {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px 12px;
 }
 
-/* Preset ladders above the two numeric limit inputs (#202): the same
-   segmented-track language as the thinking chips, five stops per ladder. */
+.provider-limit-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.provider-chosen-row-body .provider-limit-input {
+  flex: 0 1 112px;
+  width: 112px;
+  min-width: 72px;
+  text-align: right;
+}
+
 .provider-limit-presets {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1132,22 +1180,24 @@
   background: var(--ds-bg-chip);
 }
 
-.provider-chosen-thinking {
+.provider-advanced-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr));
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.provider-advanced-option {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.provider-chosen-thinking-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 4px 12px;
+  gap: 4px;
   min-width: 0;
 }
 
-.provider-chosen-thinking-head > .provider-chosen-thinking-label {
+.provider-advanced-option .settings-menu-select-anchor {
+  width: 100%;
   min-width: 0;
+  margin-block-start: auto;
 }
 
 .provider-chosen-thinking-label {
@@ -1157,45 +1207,11 @@
   line-height: var(--leading-normal);
 }
 
-.provider-chosen-thinking-hint {
-  color: var(--ds-text-faint);
-  font-size: var(--text-3xs);
-  line-height: var(--leading-normal);
-}
-
-/* The context-window field says when its number still follows models.dev. */
-.provider-chosen-limit-hint {
-  color: var(--ds-text-faint);
-  font-size: var(--text-3xs);
-  line-height: var(--leading-normal);
-}
-
-.provider-chosen-thinking-controls {
-  display: flex;
-  align-items: center;
-  justify-self: end;
-  gap: 12px;
-}
-
-.provider-chosen-reasoning-effort {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.provider-chosen-thinking-default,
-.provider-chosen-thinking-protocol {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 /* The row body keeps its own compact field metric (28px inputs and selects), so
    the default-thinking dropdown takes that height instead of a chip-sized box
    that would read as a different control than the fields around it. */
 .provider-chosen-thinking-select .settings-menu-select-trigger {
+  width: 100%;
   height: 28px;
   padding: 0 8px;
   border-radius: var(--radius-sm);
@@ -1208,28 +1224,37 @@
   outline-offset: 1px;
 }
 
-.provider-chosen-capabilities {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.provider-chosen-capability-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr));
+  align-items: center;
+  gap: 2px 12px;
 }
 
-.provider-chosen-capability-rows {
+.provider-chosen-capability-item {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  min-width: 0;
+}
+
+.provider-chosen-capability-item .ui-help-icon {
+  flex: none;
+  margin-inline-start: 4px;
 }
 
 .provider-chosen-capability {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
+  min-height: 26px;
   color: var(--ds-text-primary);
   font-size: var(--text-2xs);
   line-height: var(--leading-normal);
-  cursor: pointer;
+}
+
+.provider-chosen-capability > .ds-checkbox {
+  flex: none;
+  width: 15px;
+  height: 15px;
 }
 
 .provider-chosen-thinking-chips {
@@ -1279,26 +1304,6 @@
   outline: 2px solid var(--ds-accent-soft);
   outline-offset: 1px;
 }
-
-.provider-chosen-delegation {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
-.provider-chosen-delegation-help {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  color: var(--ds-text-faint);
-  cursor: help;
-  transition: color var(--motion-duration-fast) var(--motion-ease-out);
-}
-
-.provider-chosen-delegation-help:hover {
-  color: var(--ds-text-secondary);
-}
-
 
 .provider-custom-model {
   flex: none;
@@ -1878,20 +1883,6 @@
   .provider-chosen-thinking-chips {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
-
-  .provider-chosen-thinking-head {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .provider-chosen-thinking-head > .provider-chosen-thinking-label {
-    grid-column: 1 / -1;
-  }
-
-  .provider-chosen-thinking-controls {
-    grid-column: 1 / -1;
-    justify-self: end;
-  }
-
 }
 
 @media (prefers-reduced-motion: reduce) {

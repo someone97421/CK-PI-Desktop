@@ -47,24 +47,18 @@ test("matchPresetIndex highlights only an exact token count", () => {
   assert.equal(matchPresetIndex(CONTEXT_WINDOW_PRESETS, undefined), -1);
 });
 
-test("both limit fields wire a preset ladder above their numeric input", async () => {
-  const pane = await read("../src/components/settings/ModelSelectionPanes.tsx");
-  // One ladder group per field, each chip applying its preset to the binding.
-  assert.equal(pane.split("provider-limit-presets").length - 1, 2);
-  assert.match(pane, /CONTEXT_WINDOW_PRESETS\.map\(\(preset, index\) =>/);
-  assert.match(pane, /MAX_OUTPUT_PRESETS\.map\(\(preset, index\) =>/);
-  assert.match(pane, /contextWindow: preset\.tokens/);
-  assert.match(pane, /maxTokens: preset\.tokens/);
-  // The current value highlights (aria-pressed) via the shared match helper.
-  assert.match(
-    pane,
-    /matchPresetIndex\(\s*CONTEXT_WINDOW_PRESETS,\s*binding\.contextWindow,\s*\)/,
-  );
-  assert.match(
-    pane,
-    /matchPresetIndex\(\s*MAX_OUTPUT_PRESETS,\s*binding\.maxTokens,\s*\)/,
-  );
-  // Chips reuse the thinking controls' segmented-track style.
+test("both limit fields keep exact hand entry with a preset ladder below", async () => {
+  const pane = await read("../src/components/settings/ModelAdvancedSettings.tsx");
+  assert.equal(pane.split("<TokenLimitField").length - 1, 2);
+  assert.match(pane, /presets=\{CONTEXT_WINDOW_PRESETS\}\s*value=\{binding\.contextWindow\}/);
+  assert.match(pane, /presets=\{MAX_OUTPUT_PRESETS\}\s*value=\{binding\.maxTokens\}/);
+  assert.match(pane, /contextWindow: tokens,\s*contextWindowSource: "user"/);
+  assert.match(pane, /maxTokens: tokens,\s*maxTokensSource: "user"/);
+  assert.match(pane, /className="provider-limit-field-head"[\s\S]*?type="number"[\s\S]*?className="provider-limit-presets"/);
+  assert.match(pane, /onChange\(Number\(event\.target\.value\) \|\| 0\)/);
+  assert.match(pane, /onClick=\{\(\) => onChange\(preset\.tokens\)\}/);
+  assert.match(pane, /matchPresetIndex\(presets, value\)/);
+  assert.match(pane, /aria-pressed=\{on\}/);
   assert.match(pane, /"provider-thinking-chip",\s*on && "selected"/);
 });
 

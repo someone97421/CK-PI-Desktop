@@ -27,6 +27,7 @@ const hookSource = await read("../src/components/settings/useProviderModels.ts")
 const pageSource = await read("../src/components/settings/ModelConfigPage.tsx");
 const vendorDialogSource = await read("../src/components/settings/VendorAccountDialog.tsx");
 const pickerSource = await read("../src/components/settings/ModelSelectionPanes.tsx");
+const advancedSource = await read("../src/components/settings/ModelAdvancedSettings.tsx");
 const fieldsSource = await read("../src/components/settings/ProviderConnectionFields.tsx");
 const filterSource = await read("../src/components/settings/model-chosen-filter.ts");
 const vendorAccountsSource = await read("../src/components/settings/useVendorAccounts.ts");
@@ -219,9 +220,10 @@ test("the shared picker can select or clear every visible model at once", () => 
 
 test("the shared picker owns the advanced per-model controls for both kinds", () => {
   assert.match(pickerSource, /provider-chosen-advanced-toggle/);
-  assert.match(pickerSource, /settings\.contextWindow/);
-  assert.match(pickerSource, /settings\.maxOutput/);
-  assert.match(pickerSource, /provider-chosen-thinking-chips/);
+  assert.match(pickerSource, /<ModelAdvancedSettings\s+id=\{advancedId\}\s+hidden=\{!expanded\}/);
+  assert.match(advancedSource, /settings\.contextWindow/);
+  assert.match(advancedSource, /settings\.maxOutput/);
+  assert.match(advancedSource, /provider-chosen-thinking-chips/);
   assert.match(pickerSource, /publishedThinkingLevels/);
   assert.match(pickerSource, /bindingsToPersist/);
 });
@@ -286,10 +288,10 @@ test("model ids are copyable and a configured model can carry an alias", () => {
   assert.match(pickerSource, /event\.preventDefault\(\)/);
   assert.doesNotMatch(pickerSource, /window\.getSelection\(\)\?\.toString\(\)/);
   // The alias is edited in the Advanced body and shown beside the id.
-  assert.match(pickerSource, /settings\.modelAlias/);
-  assert.match(pickerSource, /updateBinding\(binding\.id, \{/);
+  assert.match(advancedSource, /settings\.modelAlias/);
+  assert.match(advancedSource, /updateBinding\(binding\.id, \{/);
   // The 60-character cap counts Unicode scalars, matching host-core.
-  assert.match(pickerSource, /\[\.\.\.event\.target\.value\]\.slice\(0, 60\)/);
+  assert.match(advancedSource, /\[\.\.\.event\.target\.value\]\.slice\(0, 60\)/);
   assert.match(pickerSource, /provider-chosen-row-alias/);
   assert.match(styles, /\.provider-chosen-row-alias\s*\{/);
 });

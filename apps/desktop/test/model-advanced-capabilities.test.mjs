@@ -12,6 +12,10 @@ const pickerSource = await readFile(
   new URL("../src/components/settings/ModelSelectionPanes.tsx", import.meta.url),
   "utf8",
 );
+const advancedSource = await readFile(
+  new URL("../src/components/settings/ModelAdvancedSettings.tsx", import.meta.url),
+  "utf8",
+);
 const imageModelRowSource = await readFile(
   new URL("../src/components/settings/ImageGenerationModelRow.tsx", import.meta.url),
   "utf8",
@@ -40,63 +44,55 @@ test("advanced settings choose the default thinking level among omit and the ena
   // Offering the published ladder instead of the enabled subset would store a
   // default the runtime clamps away on the next request. omit is a client
   // selector, so it sits on the default picker rather than the capability chips.
-  assert.match(pickerSource, /settings\.defaultThinkingLevel/);
-  assert.match(pickerSource, /const enabledLevels = sortThinkingLevels\(/);
-  assert.match(pickerSource, /bindingDefaultThinkingMenuLevels\(enabledLevels\)\.map/);
-  assert.match(pickerSource, /defaultThinkingLevel: id as SessionThinkingLevel/);
-  assert.match(pickerSource, /bindingDefaultThinkingMenuLevels\(enabledLevels\)\.length > 1 \?/);
+  assert.match(advancedSource, /settings\.defaultThinkingLevel/);
+  assert.match(advancedSource, /const enabledLevels = sortThinkingLevels\(/);
+  assert.match(advancedSource, /bindingDefaultThinkingMenuLevels\(enabledLevels\)\.map/);
+  assert.match(advancedSource, /defaultThinkingLevel: id as SessionThinkingLevel/);
+  assert.match(advancedSource, /bindingDefaultThinkingMenuLevels\(enabledLevels\)\.length > 1 \?/);
 });
 
 test("advanced settings expose the model thinking protocol", () => {
-  assert.match(pickerSource, /settings\.thinkingProtocol/);
-  assert.match(pickerSource, /settings\.thinkingProtocolLegacy/);
-  assert.match(pickerSource, /settings\.thinkingProtocolAdaptive/);
+  assert.match(advancedSource, /settings\.thinkingProtocol/);
+  assert.match(advancedSource, /settings\.thinkingProtocolLegacy/);
+  assert.match(advancedSource, /settings\.thinkingProtocolAdaptive/);
   assert.match(
-    pickerSource,
+    advancedSource,
     /binding\.thinkingProtocol\s*\?\?\s*info\?\.thinkingProtocol\s*\?\?\s*"legacy"/,
   );
-  assert.match(pickerSource, /thinkingProtocol: id as ThinkingProtocol/);
+  assert.match(advancedSource, /thinkingProtocol: id as ThinkingProtocol/);
 });
 
 test("the capability checkboxes show and follow the published value", () => {
-  assert.match(pickerSource, /settings\.imageInput/);
-  assert.match(pickerSource, /settings\.documentInput/);
-  assert.match(pickerSource, /supportsImages: next/);
-  assert.match(pickerSource, /supportsDocuments: next/);
-  // A deliberate checkbox change pins the selected value even when it equals
-  // today's catalog value; later catalog corrections must not undo that choice.
-  assert.match(pickerSource, /onChange\(event\.target\.checked\)/);
-  assert.match(
-    pickerSource,
-    /const effective = typeof value === "boolean" \? value : published/,
-  );
-  // The published baseline is models.dev, never the stored override.
-  assert.match(pickerSource, /modelMatchesFilter\(info, "vision"\) : false/);
-  assert.match(pickerSource, /modelMatchesFilter\(info, "pdf"\) : false/);
+  assert.match(advancedSource, /settings\.imageInput/);
+  assert.match(advancedSource, /settings\.documentInput/);
+  assert.match(advancedSource, /supportsImages: next/);
+  assert.match(advancedSource, /supportsDocuments: next/);
+  assert.match(advancedSource, /onChange\(event\.target\.checked\)/);
+  assert.match(advancedSource, /const effective = typeof value === "boolean" \? value : published/);
+  assert.match(advancedSource, /modelMatchesFilter\(info, "vision"\) : false/);
+  assert.match(advancedSource, /modelMatchesFilter\(info, "pdf"\) : false/);
 });
 
 test("the capability row carries no explanatory copy or extra controls", () => {
   // The panel is a dense list of per-model rows; a hint paragraph and a reset
   // link per capability crowded it without telling the user anything the
   // checkbox state does not already say.
-  assert.doesNotMatch(pickerSource, /documentInputHint/);
-  assert.doesNotMatch(pickerSource, /followPublished/);
-  assert.doesNotMatch(pickerSource, /capabilityPublished|capabilityUnknown/);
+  assert.doesNotMatch(advancedSource, /documentInputHint/);
+  assert.doesNotMatch(advancedSource, /followPublished/);
+  assert.doesNotMatch(advancedSource, /capabilityPublished|capabilityUnknown/);
   assert.doesNotMatch(styles, /provider-chosen-capability-(reset|state|hint)/);
 });
 
 
 test("image generation selection hides the summary when nothing can be chosen", () => {
-  assert.match(
-    pickerSource,
-    /className="provider-chosen-capability-rows">[\s\S]*?settings\.setImageModel/,
-  );
+  assert.match(advancedSource, /className="provider-chosen-capability-rows">[\s\S]*?<ImageModelToggle/);
+  assert.match(advancedSource, /settings\.setImageModel/);
   assert.doesNotMatch(
     pickerSource,
     /className="provider-chosen-advanced-toggle"[^\n]*settings\.setImageModel/,
   );
   assert.match(pickerSource, /imageModelIds\?\.some\([\s\S]*?modelId\.toLowerCase\(\) === binding\.id\.toLowerCase\(\)/);
-  assert.match(pickerSource, /onImageModelChange\(binding\.id, event\.target\.checked\)/);
+  assert.match(advancedSource, /onChange=\{\(next\) => onImageModelChange\(binding\.id, next\)\}/);
   // The row's own rule — the stored candidate list, the legacy single binding
   // only while no list was ever saved, plus a signed-in vendor account's image
   // model — now lives in the shared helper, pinned by image-generation-default.test.mjs.
@@ -140,12 +136,10 @@ test("selected thinking chips keep high contrast in both themes", () => {
 
 test("thinking levels use a compact accessible grouped control", () => {
   assert.match(
-    pickerSource,
-    /className="provider-chosen-thinking-head">[\s\S]*?thinkingManualOverrideHint[\s\S]*?<\/div>\s*<div[\s\S]*?className="provider-chosen-thinking-chips"/,
+    advancedSource,
+    /className="provider-advanced-heading">[\s\S]*?thinkingManualOverrideHint[\s\S]*?<\/span>\s*<div\s+className="provider-chosen-thinking-chips"\s+role="group"/,
   );
-  assert.match(pickerSource, /role="group"/);
-  assert.match(styles, /\.provider-chosen-thinking-head \{/);
-  assert.match(styles, /\.provider-chosen-thinking-hint \{/);
+  assert.match(styles, /\.provider-advanced-heading \{/);
   assert.match(
     styles,
     /\.provider-chosen-thinking-chips \{[\s\S]*?width: 100%;[\s\S]*?max-width: 100%;/,
@@ -236,26 +230,21 @@ test("a model the catalog does not describe still reports its binding overrides"
 
 test("the advanced body is a compact sheet without helper paragraphs", () => {
   // The generic Field + hint paragraph made the disclosure a stacked form dump
-  // inside a half-pane. Labels stay 2xs, the alias hint is the help mark beside
-  // the label, and the default selector sits on the thinking label row.
-  assert.match(pickerSource, /className="provider-chosen-field"/);
-  assert.match(
-    pickerSource,
-    /<HelpIcon label=\{t\("settings\.modelAliasHint"\)\} \/>/,
-  );
-  assert.doesNotMatch(pickerSource, /hint=\{t\("settings\.modelAliasHint"\)\}/);
+  // The alias hint stays beside its compact label.
+  assert.match(advancedSource, /className="provider-chosen-field"/);
+  assert.match(advancedSource, /<HelpIcon label=\{t\("settings\.modelAliasHint"\)\} \/>/);
+  assert.doesNotMatch(advancedSource, /hint=\{t\("settings\.modelAliasHint"\)\}/);
   assert.match(pickerSource, /aria-controls=\{advancedId\}/);
   // Every row starts folded so chosen models stay scannable (D625).
   assert.match(pickerSource, /useState<string \| null>\(null\)/);
   assert.doesNotMatch(pickerSource, /models\[0\]\?\.id \?\? null/);
   assert.match(
-    pickerSource,
-    /className="provider-chosen-thinking-head">[\s\S]*?provider-chosen-thinking-default[\s\S]*?provider-chosen-thinking-chips/,
+    advancedSource,
+    /className="provider-chosen-limits"[\s\S]*?className="provider-chosen-thinking-chips"[\s\S]*?className="provider-advanced-options"[\s\S]*?settings\.defaultThinkingLevel[\s\S]*?settings\.thinkingProtocol[\s\S]*?<ReasoningEffortSelect[\s\S]*?className="provider-chosen-capability-rows"/,
   );
-  assert.match(
-    pickerSource,
-    /className="provider-chosen-capability-rows">[\s\S]*?provider-chosen-delegation/,
-  );
+  assert.doesNotMatch(advancedSource, /<input\s+type="checkbox"/);
+  assert.match(styles, /\.provider-advanced-options \{\s*display: grid;/);
+  assert.match(styles, /\.provider-chosen-capability-rows \{\s*display: grid;/);
   assert.match(styles, /\.provider-chosen-field \{/);
   assert.match(styles, /\.provider-chosen-row-body\[hidden\] \{/);
   assert.match(
@@ -282,7 +271,7 @@ test("the offered default and the saved default use one order", () => {
     /resolveBindingDefaultThinkingLevel\(\s*binding\.defaultThinkingLevel,\s*enabled,/,
   );
   assert.match(
-    pickerSource,
+    advancedSource,
     /resolveBindingDefaultThinkingLevel\(\s*binding\.defaultThinkingLevel,\s*sortThinkingLevels\(next\),/,
   );
 });
@@ -290,11 +279,24 @@ test("the offered default and the saved default use one order", () => {
 test("model settings let the user allow Fast mode per model on Responses wires", () => {
   // ADR 0334: the opt-in lives on the binding; `/fast` is the per-session switch.
   assert.match(pickerSource, /const fastModeBilling = fastModeBillingOn\(apiStyle\);/);
-  assert.match(pickerSource, /checked=\{binding\.fastModeAllowed === true\}/);
-  assert.match(pickerSource, /disabled=\{!fastModeBilling\}/);
-  assert.match(pickerSource, /fastModeAllowed: event\.target\.checked \|\| undefined/);
+  assert.match(advancedSource, /checked=\{binding\.fastModeAllowed === true\}/);
+  assert.match(advancedSource, /disabled=\{!fastModeBilling\}/);
+  assert.match(advancedSource, /fastModeAllowed: event\.target\.checked \|\| undefined/);
   // Plan limits and per-token billing are different costs, so the hint differs.
   assert.match(pickerSource, /"settings\.fastModeAllowedSubscriptionHint"/);
   assert.match(pickerSource, /"settings\.fastModeAllowedUsageHint"/);
   assert.match(pickerSource, /"settings\.fastModeAllowedUnsupported"/);
+});
+
+test("Google retains its thinking, audio, video and native search controls", () => {
+  assert.match(advancedSource, /const googleGenerativeAi = apiStyle === "google_generative_ai"/);
+  assert.match(advancedSource, /\{googleGenerativeAi \? \([\s\S]*?settings\.googleThinkingHint[\s\S]*?\) : \(\s*<SettingsMenuSelect/);
+  assert.match(advancedSource, /const showVideoInput = !apiStyle \|\| apiStyle === "chat_completions" \|\| googleGenerativeAi/);
+  assert.match(advancedSource, /\{showVideoInput \? \(\s*<CapabilityToggle[\s\S]*?supportsVideo: next/);
+  assert.match(advancedSource, /\{googleGenerativeAi \? \(\s*<CapabilityToggle[\s\S]*?supportsAudio: next/);
+  assert.match(advancedSource, /\{showVideoInput && binding\.supportsVideo === true \? \([\s\S]*?value=\{binding\.videoTransport \?\? "base64"\}\s*disabled=\{busy\}[\s\S]*?videoTransport: value as VideoTransport/);
+  assert.match(advancedSource, /\.\.\.\(googleGenerativeAi \? \[\] : \[\s*\{ id: "provider-file"/);
+  assert.match(pickerSource, /nativeWebSearchSupportedOn\(apiStyle, lookupContext\?\.baseUrl\)/);
+  assert.match(advancedSource, /googleGenerativeAi\s*\? "settings\.nativeWebSearchGoogleHint"/);
+  assert.match(advancedSource, /disabled=\{!nativeWebSearchWireCapable\}/);
 });
