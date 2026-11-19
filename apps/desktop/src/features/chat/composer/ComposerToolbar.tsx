@@ -15,6 +15,7 @@ import { type AppState, useAppStore } from "../../../stores/app-store";
 import { ComposerModePicker } from "./ComposerModePicker";
 import { modeErrorMessage } from "../../modes/mode-run-model";
 import { ComposerPermissionPicker } from "./ComposerPermissionPicker";
+import { ComposerRemoteOptions } from "./ComposerRemoteOptions";
 import { ContextUsageInspector } from "../../../components/ContextUsageInspector";
 import { ComposerControlSlots } from "./ComposerControlSlots";
 import { TooltipButton } from "../../../components/ui";
@@ -165,6 +166,21 @@ export function ComposerToolbar({
 }: ComposerToolbarProps) {
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
   const steeringShortcut = keybindingDisplayParts("Alt+Enter", platform).join("+");
+  const webRemote = document.documentElement.dataset.webRemote === "true";
+  const selectMode = async (next: Mode) => {
+    try {
+      await configureActiveSession({ mode: next, providerId, modelId, thinkingLevel });
+    } catch (error) {
+      showToast(modeErrorMessage(t, error), { variant: "error" });
+    }
+  };
+  const selectPermission = async (candidate: Exclude<PermissionMode, "inherit">) => {
+    try {
+      await configureActiveSession({ mode, providerId, modelId, thinkingLevel, permissionMode: candidate });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    }
+  };
   return (
     <div className="composer-toolbar">
       <div className="composer-left">
@@ -184,56 +200,60 @@ export function ComposerToolbar({
             <IconPlus size={15} aria-hidden="true" />
           </TooltipButton>
         </div>
-        <ComposerModePicker
-          t={t}
-          mode={mode}
-          planningLive={planningLive}
-          open={modeOpen}
-          setOpen={setModeOpen}
-          controlsBlocked={controlsBlocked}
-          onCloseOtherMenus={() => {
-            modelMenu.setOpen(false);
-            setPermissionOpen(false);
-          }}
-          onSelect={async (next) => {
-            try {
-              await configureActiveSession({
-                mode: next,
-                providerId,
-                modelId,
-                thinkingLevel,
-              });
-            } catch (error) {
-              // MODE_RUN_ACTIVE / MODE_NOT_FOUND are named, not shown raw.
-              showToast(modeErrorMessage(t, error), {
-                variant: "error",
-              });
-            }
-          }}
-        />
-        <ComposerPermissionPicker t={t} mode={mode}
-          composerPermissionMode={composerPermissionMode}
-          permissionOpen={permissionOpen} setPermissionOpen={setPermissionOpen}
-          controlsBlocked={controlsBlocked}
-          onCloseOtherMenus={() => {
-            modelMenu.setOpen(false);
-            setModeOpen(false);
-          }}
-          onSelect={async (candidate) => {
-                try {
-                  await configureActiveSession({
-                    mode,
-                    providerId,
-                    modelId,
-                    thinkingLevel,
-                    permissionMode: candidate,
-                  });
-                } catch (error) {
-                  showToast(error instanceof Error ? error.message : String(error), {
-                    variant: "error",
-                  });
-                }
-          }} />
+        {webRemote ? (
+          <ComposerRemoteOptions
+            t={t}
+            open={modeOpen}
+            onToggle={() => {
+              modelMenu.setOpen(false);
+              setModeOpen((open) => !open);
+            }}
+            onClose={() => setModeOpen(false)}
+            blocked={controlsBlocked}
+            mode={mode}
+            permission={composerPermissionMode}
+            thinkingLevel={thinkingLevel}
+            thinkingLevels={modelMenu.thinkingMenuLevels}
+            commitThinkingLevel={modelMenu.commitThinkingLevel}
+            onMode={async (next) => {
+              setModeOpen(false);
+              await selectMode(next);
+            }}
+            onPermission={async (next) => {
+              setModeOpen(false);
+              await selectPermission(next);
+            }}
+          />
+        ) : (
+          <>
+            <ComposerModePicker
+              t={t}
+              mode={mode}
+              planningLive={planningLive}
+              open={modeOpen}
+              setOpen={setModeOpen}
+              controlsBlocked={controlsBlocked}
+              onCloseOtherMenus={() => {
+                modelMenu.setOpen(false);
+                setPermissionOpen(false);
+              }}
+              onSelect={selectMode}
+            />
+            <ComposerPermissionPicker
+              t={t}
+              mode={mode}
+              composerPermissionMode={composerPermissionMode}
+              permissionOpen={permissionOpen}
+              setPermissionOpen={setPermissionOpen}
+              controlsBlocked={controlsBlocked}
+              onCloseOtherMenus={() => {
+                modelMenu.setOpen(false);
+                setModeOpen(false);
+              }}
+              onSelect={selectPermission}
+            />
+          </>
+        )}
         {localToolsAllowed ? <ComposerControlSlots side="left" /> : null}
       </div>
 
@@ -244,6 +264,7 @@ export function ComposerToolbar({
           t={t}
           controller={modelMenu}
           modelLabel={modelLabel}
+          modelOnly={webRemote}
           thinkingLabel={thinkingLabel}
           fastMode={modelFastMode}
           thinkingLevel={thinkingLevel}

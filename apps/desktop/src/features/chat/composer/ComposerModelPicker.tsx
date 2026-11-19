@@ -15,6 +15,7 @@ export type ComposerModelPickerProps = {
   modelLabel: string;
   thinkingLabel: string;
   thinkingLevel: string;
+  modelOnly?: boolean;
   /** The selected model asks for OpenAI's priority tier (ADR 0334). */
   fastMode?: boolean;
   selectedProviderId?: string;
@@ -33,6 +34,7 @@ export function ComposerModelPicker({
   modelLabel,
   thinkingLabel,
   thinkingLevel,
+  modelOnly = false,
   fastMode = false,
   selectedProviderId,
   selectedModelId,
@@ -65,6 +67,8 @@ export function ComposerModelPicker({
     onMenuKeyDown,
   } = controller;
   const fastSuffix = fastMode ? ` · ${t("chat.fastModeBadge")}` : "";
+  const pickerLabel = modelOnly ? t("chat.model") : `${t("chat.model")} ${t("chat.reasoningLevel")}`;
+  const selectionLabel = modelOnly ? modelLabel : `${modelLabel} · ${t("chat.reasoningLevel")}: ${thinkingLabel}`;
 
   return (
     <AnchoredMenu
@@ -72,7 +76,7 @@ export function ComposerModelPicker({
       open={open}
       onClose={() => setOpen(false)}
       menuClassName={`composer-model-menu composer-model-thinking-menu ${showSectionRail ? "has-rail" : ""}`}
-      label={`${t("chat.model")} ${t("chat.reasoningLevel")}`}
+      label={pickerLabel}
       role="menu"
       align="end"
       side="top"
@@ -83,8 +87,8 @@ export function ComposerModelPicker({
           ref={ref}
           type="button"
           className={`icon-btn composer-model-thinking-chip ${open ? "active" : ""}`}
-          tooltip={`${modelLabel} · ${t("chat.reasoningLevel")}: ${thinkingLabel}${fastSuffix}`}
-          ariaLabel={`${t("chat.model")}: ${modelLabel}. ${t("chat.reasoningLevel")}: ${thinkingLabel}${fastSuffix}`}
+          tooltip={`${selectionLabel}${fastSuffix}`}
+          ariaLabel={`${t("chat.model")}: ${selectionLabel}${fastSuffix}`}
           aria-haspopup="menu"
           aria-expanded={open}
           disabled={controlsBlocked}
@@ -101,7 +105,7 @@ export function ComposerModelPicker({
             <IconBot size={14} />
           </span>
           <span className="composer-model-thinking-model">{modelLabel}</span>
-          {thinkingLevel !== "off" ? (
+          {!modelOnly && thinkingLevel !== "off" ? (
             <span className="composer-model-thinking-level">{thinkingLabel}</span>
           ) : null}
           {fastMode ? (
@@ -129,7 +133,7 @@ export function ComposerModelPicker({
             onOpenModelSettings();
           } : undefined}
         />
-        {thinkingMenuLevels.length > 1 ? (
+        {!modelOnly && thinkingMenuLevels.length > 1 ? (
           <div className="composer-model-reasoning">
             <span className="composer-model-reasoning-label" aria-hidden="true">
               {t("chat.reasoningShort")}

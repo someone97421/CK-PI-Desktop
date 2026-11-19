@@ -75,6 +75,19 @@
   visibility: hidden;
 }
 
+.composer-permission-menu.composer-remote-options {
+  width: min(300px, calc(100vw - 24px));
+}
+
+.composer-remote-thinking {
+  padding: 0 4px 6px;
+}
+
+.composer-remote-options [aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .composer-model-menu {
   position: fixed;
   top: 0;

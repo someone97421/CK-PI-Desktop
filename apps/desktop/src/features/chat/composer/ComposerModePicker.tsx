@@ -132,12 +132,14 @@ export function ComposerUserModeItems({
   entries,
   controlsBlocked,
   onPick,
+  inPanel = false,
 }: {
   t: TFunction;
   mode: Mode;
   entries: readonly UserModePickerEntry[];
   controlsBlocked: boolean;
   onPick: (mode: Mode) => void | Promise<void>;
+  inPanel?: boolean;
 }) {
   if (entries.length === 0) return null;
   return (
@@ -157,8 +159,9 @@ export function ComposerUserModeItems({
           <button
             key={entry.id}
             type="button"
-            role="menuitemradio"
-            aria-checked={mode === entry.id}
+            role={inPanel ? undefined : "menuitemradio"}
+            aria-checked={inPanel ? undefined : mode === entry.id}
+            aria-pressed={inPanel ? mode === entry.id : undefined}
             // Not `disabled`: a disabled button shows no tooltip, and the
             // tooltip is where the diagnostic is read.
             aria-disabled={unavailable || undefined}
