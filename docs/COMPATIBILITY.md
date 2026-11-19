@@ -77,10 +77,10 @@
 ### COMPAT-011：局域网远控 V2
 
 - **来源与替代**：V1 最后源码基线为 `5ec6b15fc`（插件 `0.2.41`），源码快照、原始插件包和校验值已存入 [V1 归档](archive/lan-remote-control-v1/README.md)，自 2026-11-16 起停止维护。按用户重新开发 V2 的要求，删除 V1 的 `web/`、`panel/`、独立聊天适配器与操作表；原版 Renderer 和宿主既有 IPC 接替聊天、项目、模型、模式与审批操作。旧聊天 RPC 不再提供兼容入口，`/api/rpc` 只保留声明过的 Browse 转换操作。
-- **保留数据与入口**：[插件入口](../plugins/lan-remote-control/main.cjs)继续使用 `local.lan-remote-control` 的原数据目录与插件设置 API，读取既有 `port`、`bindAddress`、`extensionIds`、`autoStart`；[认证存储](../plugins/lan-remote-control/server/auth.cjs)沿用 `remote-access.json` version 1 的密码哈希与设备记录。无数据库或持久化格式迁移，旧页面比例等残留键不再使用，也不主动清除原数据。
+- **保留数据与入口**：[插件入口](../plugins/lan-remote-control/main.cjs)沿用 `local.lan-remote-control` 的数据目录和 `port`、`bindAddress`、`autoStart` 设置。`bindAddress` 只影响首选直连链接。[认证存储](../plugins/lan-remote-control/server/auth.cjs)沿用 `remote-access.json` version 1 的密码哈希与设备记录，缺少 `password.username` 时读取为 `admin`。保存账号密码时才写入新字段并撤销旧会话，无需批量迁移。
 - **行为与移除条件**：不复制旧界面、不提供页面回退；Renderer 或宿主转换能力缺失时明确失败。认证与开启意图仍有实际数据依赖，需先提供显式迁移方案并核实数据后才能移除读取。旧界面及业务接口的移除结论保留在本项。
 - **即开即用调整（2026-11-16，插件 2.0.15，源码提交见本项 Git 历史）**：此前插件 2.0.14（桌面源码 `6028bf8f8`）依赖 PATH 中的 Browse 且仅在 `autoStart` 时监听；现由[固定源码构建](../scripts/prepare-builtin-browse.mjs)与[宿主路径解析](../apps/desktop/electron/main/bundled-browse.ts)交付 CLI，既有插件托管 MCP 声明接替用户手写配置。裸 `browse` 优先使用内置路径，显式可执行路径沿原行为；非内置宿主的 bridge 仍可查找 PATH，待不再支持独立插件宿主后评估移除。插件启用时常驻回环通道，`autoStart` 只控制私网远控意图，既有端口、密码及设备文件保持兼容，用户明确禁用插件的状态不被覆盖。
-- **入口隔离**：普通网页（含 localhost）继续密码登录；真实允许的扩展 Origin 经回环连接申请独立内存会话，不写原设备文件或页面存储。WebSocket、IPC、附件、文件和资源统一检查令牌作用域，非回环请求不能使用扩展令牌。修改远控密码、移除远控设备不影响扩展会话。
+- **统一登录（2026-11-19）**：替换插件 `2.0.18` 与扩展 `0.0.20` 的专用免密路径。网页和侧栏使用 `/api/login` 提交账号和密码，共用持久化设备会话；删除 `/api/extension-session` 和扩展 ID 设置，旧值不再读取。远控开启监听 `0.0.0.0`，关闭监听 `127.0.0.1`。旧账号兜底需保留至不再支持无用户名的认证文件。回归用例覆盖旧认证文件、同一套账号密码、域名转发和监听切换。
 - **验证依据**：[网络/IPC/资源测试](../plugins/lan-remote-control/scripts/ipc.test.mjs)、[生命周期测试](../plugins/lan-remote-control/scripts/lifecycle.test.mjs)及插件投影/文件/准星回归共 62 项通过，扩展会话与侧栏 20 项、桌面内置插件配置 12 项通过，扩展类型检查与插件 2.0.15 pack 通过。桌面 typecheck 仍有原有 21 项诊断，归一行号后与修改前日志一致。新版桌面由预发布 Actions 构建，真实安装升级、手机与 Chrome 全流程验收尚未进行。最近复核 2026-11-16。
 - **浏览器历史兼容（2026-11-17）**：[历史桥接](../plugins/lan-remote-control/adapter/projection.js)继续读取 `a1704ec47` 引入的 `history.state.__piLanProjection` 与 `projects`、`chat`、`workpanel` 三层深度。新增设置目录和设置详情，记录设置入口层和可选分类意图，统一由 [Renderer 事件桥接](../apps/desktop/src/lib/web-projection.ts)恢复界面。旧记录会随浏览器历史自然淘汰，既有三层仍使用相同格式，无需单独迁移或移除读取。旧布局样式路由随布局迁入 Renderer 而移除。[投影回归用例](../plugins/lan-remote-control/scripts/projection.test.mjs)覆盖旧记录、前进后退与设置分类恢复，本轮仅静态检查。
 

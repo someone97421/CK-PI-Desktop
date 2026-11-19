@@ -11,7 +11,7 @@ function host(saved = {}, options = {}) {
   const timers = new Map();
   const events = new Map();
   const services = new Map();
-  const calls = { starts: 0, stops: 0, subscriptions: 0, releases: 0, ensureRelay: 0, inputs: [] };
+  const calls = { starts: 0, stops: 0, subscriptions: 0, releases: 0, ensureRelay: 0, inputs: [], credentials: [] };
   let running = false;
   let port = null;
   let remoteAccess = false;
@@ -26,7 +26,8 @@ function host(saved = {}, options = {}) {
       running = true; port = input.port; remoteAccess = input.remoteAccess; options.networkChanged = false;
     },
     stop: async () => { calls.stops++; running = false; options.networkChanged = false; },
-    setPassword: async () => {}, revokeDevice: async () => {}, revokeAllDevices: async () => {},
+    setPassword: async (password, username) => { calls.credentials.push({ password, username }); },
+    revokeDevice: async () => {}, revokeAllDevices: async () => {},
     createLink: () => ({ ok: true }), broadcastIpc: () => {},
   };
   const runtime = {
@@ -111,6 +112,18 @@ test("首次加载常驻本机通道；远控开启保存意图，重载恢复�
   assert.equal((await third.status()).localRunning, true);
   assert.equal((await third.status()).running, false);
   await third.plugin.onUnload();
+});
+
+test("面板传递账号和密码，旧连接器设置入口已移除", async () => {
+  const instance = host();
+  await instance.plugin.onLoad();
+  const credentials = { username: "operator", password: "panel-test-password" };
+  assert.equal((await instance.plugin.onPanelInvoke("remote.setPassword", credentials)).ok, true);
+  assert.deepEqual(instance.calls.credentials, [credentials]);
+  const removed = await instance.plugin.onPanelInvoke("remote.setConnectorSettings", {});
+  assert.equal(removed.ok, false);
+  assert.equal(removed.error.code, "UNSUPPORTED");
+  await instance.plugin.onUnload();
 });
 
 test("写盘失败如实返回未保存；关闭远控仍保留本机监听和订阅", async () => {

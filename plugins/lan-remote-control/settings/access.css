@@ -73,7 +73,8 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .device-name { overflow-wrap: anywhere; }
 .row-action { font-size: 12px; min-height: 36px; padding: 7px 12px; }
 button.revoke:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
-.credentials-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+.credentials-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto; gap: 12px; }
+.credentials-form > input { height: 44px; }
 .password-field { min-width: 0; position: relative; }
 .password-field input { padding-right: 64px; height: 44px; }
 button.reveal { position: absolute; top: 4px; right: 4px; min-height: 36px; padding: 6px 10px; border-color: transparent; background: transparent; color: var(--muted); font-size: 12px; }

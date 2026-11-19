@@ -1,11 +1,6 @@
 "use strict";
 
-/**
- * LAN interface selection.
- *
- * 服务逐个绑定本机私网 IPv4，并额外监听回环，不使用 0.0.0.0 或 ::，
- * 避免同时暴露机器上的公网网卡。每个监听建立后再次核对实际绑定地址。
- */
+/** 枚举设置面板可展示的局域网直连地址。 */
 
 const os = require("node:os");
 
@@ -22,12 +17,6 @@ function parseIPv4(value) {
   return parts;
 }
 
-function isLoopbackIPv4(value) {
-  const parts = parseIPv4(value);
-  if (!parts) return false;
-  return parts[0] === 127;
-}
-
 /** RFC1918, link-local (169.254/16) and CGNAT (100.64/10): LAN-reachable at best. */
 function isPrivateIPv4(value) {
   const parts = parseIPv4(value);
@@ -39,11 +28,6 @@ function isPrivateIPv4(value) {
   if (a === 169 && b === 254) return true;
   if (a === 100 && b >= 64 && b <= 127) return true;
   return false;
-}
-
-/** 回环同时用于本机 Chrome 侧边栏，不是手机可访问的地址。 */
-function isAllowedBindAddress(value) {
-  return isPrivateIPv4(value) || isLoopbackIPv4(value);
 }
 
 /**
@@ -88,60 +72,9 @@ function listLanAddresses() {
   }));
 }
 
-function pickDefaultAddress(entries = listLanAddresses()) {
-  return entries.length ? entries[0].address : null;
-}
-
-/**
- * Validate an explicitly requested bind address. An empty value means "choose
- * the best LAN interface", which the caller resolves with `pickDefaultAddress`.
- */
-function normalizeRequestedAddress(value) {
-  if (value === undefined || value === null || value === "") {
-    return { ok: true, address: null };
-  }
-  if (typeof value !== "string") {
-    return { ok: false, code: "INVALID_PARAMS", message: "address must be a string" };
-  }
-  const address = value.trim();
-  if (!address) return { ok: true, address: null };
-  if (!parseIPv4(address)) {
-    return {
-      ok: false,
-      code: "INVALID_PARAMS",
-      message: "address must be an IPv4 literal such as 192.168.1.5",
-    };
-  }
-  if (!isAllowedBindAddress(address)) {
-    return {
-      ok: false,
-      code: "INVALID_PARAMS",
-      message: `address must be a private or loopback IPv4 address: ${address}`,
-    };
-  }
-  const local = listLanAddresses().some((entry) => entry.address === address);
-  if (!local && !isLoopbackIPv4(address)) {
-    return {
-      ok: false,
-      code: "INVALID_PARAMS",
-      message: `address is not assigned to this machine: ${address}`,
-    };
-  }
-  return { ok: true, address };
-}
-
 function listenerAddresses() {
   const addresses = listLanAddresses();
   return [...addresses, { address: "127.0.0.1", label: "本机", recommended: addresses.length === 0 }];
 }
 
-module.exports = {
-  listenerAddresses,
-  parseIPv4,
-  isLoopbackIPv4,
-  isPrivateIPv4,
-  isAllowedBindAddress,
-  listLanAddresses,
-  pickDefaultAddress,
-  normalizeRequestedAddress,
-};
+module.exports = { listenerAddresses };

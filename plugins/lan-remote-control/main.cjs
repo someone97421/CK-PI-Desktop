@@ -11,7 +11,7 @@ const COMMAND_OPEN = "lan-remote-control.open";
 const PANEL_CHANNELS = Object.freeze([
   "remote.status", "remote.refresh", "remote.start", "remote.stop",
   "remote.link", "remote.indicator", "remote.setPassword",
-  "remote.revoke", "remote.revokeAll", "remote.setConnectorSettings",
+  "remote.revoke", "remote.revokeAll",
 ]);
 const browse = createBrowseBridge();
 const localOperations = {
@@ -19,7 +19,7 @@ const localOperations = {
   "browse.ensureRelay": () => browse.ensureRelay(),
   "browse.mintPairingCode": () => browse.mintPairingCode(),
 };
-let settings = { port: 7878, bindAddress: "", extensionIds: [], autoStart: false };
+let settings = { port: 7878, bindAddress: "", autoStart: false };
 let unsaved = {};
 let settingsError = null;
 let initializationError = null;
@@ -53,11 +53,7 @@ function normalize(raw) {
   const port = Number(raw.port ?? 7878);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw fail("INVALID_PARAMS", "端口须为 1～65535 的整数");
   const bindAddress = typeof raw.bindAddress === "string" ? raw.bindAddress.trim() : "";
-  if (bindAddress && !network.isAllowedBindAddress(bindAddress)) throw fail("INVALID_PARAMS", "监听地址须为本机私网或回环 IPv4 地址");
-  return {
-    port, bindAddress, autoStart: raw.autoStart === true,
-    extensionIds: Array.isArray(raw.extensionIds) ? [...new Set(raw.extensionIds.filter((id) => typeof id === "string" && /^[a-p]{32}$/.test(id)))] : [],
-  };
+  return { port, bindAddress, autoStart: raw.autoStart === true };
 }
 
 async function readSettings() {
@@ -96,7 +92,6 @@ async function ensureRemote() {
       projectionDir: path.join(__dirname, "adapter"),
       version: pi.plugin.getManifest().version,
       name: "lan-remote-control",
-      getExtensionIds: () => settings.extensionIds,
       ipcInvoke: (channel, args) => pi.desktop.invokeIpc(channel, args),
       rendererUpload: (input) => pi.desktop.importUploadedFiles(input),
       rendererResource: (url) => pi.desktop.readRendererResource(url),
@@ -241,7 +236,7 @@ async function onPanelInvoke(channel, payload) {
       case "remote.setPassword":
         return await serial(async () => {
           const server = await ensureRemote();
-          await server.setPassword(input.password);
+          await server.setPassword(input.password, input.username);
           if (active && settings.autoStart) scheduleRetry();
           return { ok: true, status: status() };
         });
@@ -254,12 +249,6 @@ async function onPanelInvoke(channel, payload) {
       case "remote.revokeAll":
         return await serial(async () => {
           await (await ensureRemote()).revokeAllDevices();
-          return { ok: true, status: status() };
-        });
-      case "remote.setConnectorSettings":
-        return await serial(async () => {
-          if (!Array.isArray(input.extensionIds) || input.extensionIds.some((id) => typeof id !== "string" || !/^[a-p]{32}$/.test(id))) throw fail("INVALID_PARAMS", "扩展 ID 须为 32 位 a-p 小写字母");
-          await persist({ extensionIds: [...new Set(input.extensionIds)] });
           return { ok: true, status: status() };
         });
       default: throw fail("UNSUPPORTED", `不支持的设置操作：${channel}`);

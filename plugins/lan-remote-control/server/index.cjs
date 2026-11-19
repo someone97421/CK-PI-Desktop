@@ -61,10 +61,6 @@ function clientAddress(req) {
   return address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
 }
 
-function isLoopback(address) {
-  return address === "::1" || /^127\./.test(address);
-}
-
 function mapListenError(error) {
   switch (error?.code) {
     case "EADDRINUSE":
@@ -114,7 +110,6 @@ function createRemoteServer(options = {}) {
     version = "0.0.0",
     name = "lan-remote-control",
     log = () => {},
-    getExtensionIds = () => [],
     ipcInvoke = null,
     localOperations = {},
     rendererUpload = null,
@@ -139,9 +134,8 @@ function createRemoteServer(options = {}) {
     lastError: null,
     restartRequired: false,
     listeners: [],
-    requestedAddresses: [],
+    preferredAddress: null,
     remoteAccess: false,
-    warning: null,
     webRootReal: null,
     projectionRootReal: null,
     sockets: new Set(),
@@ -149,7 +143,6 @@ function createRemoteServer(options = {}) {
     timers: new Set(),
     inFlight: new Set(),
     devices: new DeviceStore({ file: path.join(dataDir, "remote-access.json") }),
-    extensionDevices: new DeviceStore({ maxDevices: Infinity }),
     attachments: new AttachmentStore({
       dir: path.join(dataDir, "tmp", "lan-remote-control"),
       maxBytes: uploadMaxBytes,
@@ -173,16 +166,6 @@ function createRemoteServer(options = {}) {
     ws: httpHelpers.createRateLimiter({ windowMs: 60_000, max: MAX_WS_CONNECTIONS * 4 }),
   };
 
-  const guard = httpHelpers.createRequestGuard({
-    getAllowedHostnames: () => {
-      const names = ["127.0.0.1", "localhost"];
-      names.push(...state.listeners.map((entry) => entry.address));
-      return names;
-    },
-    getPort: () => state.port,
-    getExtensionIds,
-  });
-
 
   // --- status ---------------------------------------------------------------
 
@@ -197,27 +180,28 @@ function createRemoteServer(options = {}) {
 
   function getStatus() {
     const running = state.phase === "running";
-    const url = running && state.address ? `http://${state.address}:${state.port}/` : null;
-    const addresses = listenerAddresses(state.remoteAccess);
-    const networkChanged = running && (addresses.length !== state.requestedAddresses.length ||
-      addresses.some((entry) => !state.requestedAddresses.includes(entry.address)));
+    const addresses = state.remoteAccess ? network.listenerAddresses()
+      : [{ address: "127.0.0.1", label: "本机", recommended: true }];
+    const primary = addresses.find((entry) => entry.address === state.preferredAddress) ?? addresses[0];
+    const links = running ? [primary, ...addresses.filter((entry) => entry !== primary)].map(({ address, label }) => ({
+      address, label, url: `http://${address}:${state.port}/`,
+    })) : [];
     return {
       phase: state.phase,
       running,
       remoteAccess: state.remoteAccess,
-      address: state.address,
+      address: running ? primary.address : null,
       bindAddress: state.address,
       port: state.port,
-      url,
-      links: running ? state.listeners.filter((entry) => entry.server.listening).map(({ address, label }) => ({
-        address, label, url: `http://${address}:${state.port}/`,
-      })) : [],
-      warning: state.warning,
+      url: links[0]?.url ?? null,
+      links,
+      warning: null,
       addresses,
       startedAt: state.startedAt ? new Date(state.startedAt).toISOString() : null,
       error: state.lastError,
-      restartRequired: state.restartRequired === true || networkChanged,
+      restartRequired: state.restartRequired,
       passwordConfigured: state.devices.passwordConfigured,
+      username: state.devices.username,
       devices: state.devices.list().map((device) => ({
         ...device,
         ...deviceConnections(device.deviceId),
@@ -232,17 +216,8 @@ function createRemoteServer(options = {}) {
     };
   }
 
-
-  function listenerAddresses(remoteAccess) {
-    return network.listenerAddresses().filter((entry) => remoteAccess || isLoopback(entry.address));
-  }
-
-  function authorizeToken(token, address) {
-    return state.devices.authorize(token) || (isLoopback(address) ? state.extensionDevices.authorize(token) : null);
-  }
-
   function connectionDevice(conn) {
-    return state.devices.get(conn.deviceId) || (isLoopback(conn.ip) ? state.extensionDevices.get(conn.deviceId) : null);
+    return state.devices.get(conn.deviceId);
   }
 
   // --- websocket plumbing ---------------------------------------------------
@@ -299,7 +274,7 @@ function createRemoteServer(options = {}) {
 
   function handleWsAuth(conn, message) {
     const token = typeof message.token === "string" ? message.token : "";
-    const device = authorizeToken(token, conn.ip);
+    const device = state.devices.authorize(token);
     if (!device) {
       wsError(conn, "UNAUTHORIZED", "device token is not valid");
       closeWs(conn, 4401, "unauthorized");
@@ -388,14 +363,13 @@ function createRemoteServer(options = {}) {
     }
   }
 
-  function attachConnection(ws, req) {
+  function attachConnection(ws) {
     const conn = {
       id: crypto.randomUUID(),
       ws,
       device: null,
       deviceId: null,
       alive: true,
-      ip: clientAddress(req),
       authTimer: null,
     };
     conn.authTimer = setTimeout(() => {
@@ -434,16 +408,6 @@ function createRemoteServer(options = {}) {
       rejectUpgrade(socket, 404, "NOT_FOUND");
       return;
     }
-    const host = guard.checkHost(req);
-    if (!host.ok) {
-      rejectUpgrade(socket, host.status, host.code);
-      return;
-    }
-    const origin = guard.checkOrigin(req, { required: true });
-    if (!origin.ok) {
-      rejectUpgrade(socket, origin.status, origin.code);
-      return;
-    }
     if (state.connections.size >= MAX_WS_CONNECTIONS) {
       rejectUpgrade(socket, 503, "RATE_LIMITED");
       return;
@@ -452,31 +416,18 @@ function createRemoteServer(options = {}) {
       rejectUpgrade(socket, 429, "RATE_LIMITED");
       return;
     }
-    state.wss.handleUpgrade(req, socket, head, (ws) => attachConnection(ws, req));
+    state.wss.handleUpgrade(req, socket, head, attachConnection);
   }
 
   // --- http routes ----------------------------------------------------------
 
-  /** CSP 允许当前服务的 HTTP/WS 地址及已配置的扩展来源。 */
-  function connectOrigins() {
-    const origins = [];
-    for (const { address } of state.listeners.filter((entry) => entry.server.listening)) {
-      const host = address.includes(":") ? `[${address}]` : address;
-      origins.push(`http://${host}:${state.port}`, `ws://${host}:${state.port}`);
-    }
-    for (const id of getExtensionIds() ?? []) {
-      if (typeof id === "string" && /^[a-p]{32}$/.test(id)) origins.push(`chrome-extension://${id}`);
-    }
-    origins.push("chrome-extension://afeafocngkodbmaipcngoamamfmekgfo");
-    return [...new Set(origins)];
-  }
 
   function authenticate(req) {
     const header = req.headers.authorization;
     if (typeof header !== "string" || !header.startsWith("Bearer ")) return null;
     const token = header.slice("Bearer ".length).trim();
     if (!token || token.length > 256) return null;
-    return authorizeToken(token, clientAddress(req));
+    return state.devices.authorize(token);
   }
 
   function healthResult() {
@@ -504,9 +455,9 @@ function createRemoteServer(options = {}) {
     }
     state.loginInFlight++;
     try {
-      const valid = await state.devices.verify(body.value.password);
+      const valid = await state.devices.verify(body.value.username, body.value.password);
       if (!valid || generation !== loginGeneration || state.devices.revision !== authRevision || state.phase !== "running") {
-        httpHelpers.sendError(res, 401, "UNAUTHORIZED", "密码错误或登录已失效");
+        httpHelpers.sendError(res, 401, "UNAUTHORIZED", "账号或密码错误，或登录已失效");
         return;
       }
       const result = state.devices.add({ name: body.value.name, remoteAddress: address, userAgent: req.headers["user-agent"] });
@@ -514,20 +465,6 @@ function createRemoteServer(options = {}) {
       httpHelpers.sendResult(res, { token: result.token, deviceId: result.device.id, deviceName: result.device.name,
         expiresAt: new Date(result.device.expiresAt).toISOString() });
     } finally { state.loginInFlight--; }
-  }
-
-  async function handleExtensionSession(req, res, originCheck) {
-    const address = clientAddress(req);
-    if (originCheck.extension !== true || !isLoopback(address)) {
-      httpHelpers.sendError(res, 403, "FORBIDDEN", "仅本机浏览器扩展可建立此会话");
-      return;
-    }
-    const body = await httpHelpers.readJsonBody(req, { maxBytes: LOGIN_BODY_MAX_BYTES });
-    if (!body.ok) { httpHelpers.sendBodyError(req, res, body); return; }
-    if (state.phase !== "running") { httpHelpers.sendError(res, 503, "NOT_READY", "server is not running"); return; }
-    const result = state.extensionDevices.add({ name: "Chrome 侧边栏", remoteAddress: address, userAgent: req.headers["user-agent"] });
-    httpHelpers.sendResult(res, { token: result.token, deviceId: result.device.id, deviceName: result.device.name,
-      expiresAt: new Date(result.device.expiresAt).toISOString() });
   }
 
   async function handleIpc(req, res) {
@@ -708,14 +645,14 @@ function createRemoteServer(options = {}) {
   async function handleFileView(req, res, url) {
     const requestGeneration = generation;
     const target = parseFileViewUrl(url.pathname);
-    const device = target?.token ? authorizeToken(target.token, clientAddress(req)) : null;
+    const device = target?.token ? state.devices.authorize(target.token) : null;
     if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
     if (typeof rendererFile !== "function") { httpHelpers.sendError(res, 501, "UNSUPPORTED", "请更新主程序以启用文件预览和下载"); return; }
     const task = Promise.resolve().then(() => rendererFile(target.input));
     state.inFlight.add(task);
     try {
       const file = fileResponse(await task);
-      if (generation !== requestGeneration || state.phase !== "running" || authorizeToken(target.token, clientAddress(req))?.id !== device.id) {
+      if (generation !== requestGeneration || state.phase !== "running" || state.devices.authorize(target.token)?.id !== device.id) {
         httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return;
       }
       res.setHeader("Content-Type", file.mimeType);
@@ -737,7 +674,7 @@ function createRemoteServer(options = {}) {
     let token;
     try { token = parts ? decodeURIComponent(parts[1]) : ""; }
     catch { token = ""; }
-    const device = token && token.length <= 256 ? authorizeToken(token, clientAddress(req)) : null;
+    const device = token && token.length <= 256 ? state.devices.authorize(token) : null;
     if (!device) {
       httpHelpers.sendError(res, 401, "UNAUTHORIZED", "device token is missing or invalid");
       return;
@@ -760,7 +697,7 @@ function createRemoteServer(options = {}) {
       httpHelpers.sendError(res, 501, "UNSUPPORTED", "host resource reader is unavailable");
       return;
     }
-    const authorized = () => requestGeneration === generation && state.phase === "running" && authorizeToken(token, clientAddress(req))?.id === device.id;
+    const authorized = () => requestGeneration === generation && state.phase === "running" && state.devices.authorize(token)?.id === device.id;
     const task = Promise.resolve().then(() => rendererResource(resourceUrl.href));
     state.inFlight.add(task);
     try {
@@ -810,46 +747,16 @@ function createRemoteServer(options = {}) {
       const pathname = url.pathname;
       const isGet = req.method === "GET" || req.method === "HEAD";
 
-      const hostCheck = guard.checkHost(req);
-      if (!hostCheck.ok) {
-        httpHelpers.sendError(res, hostCheck.status, hostCheck.code, hostCheck.message);
-        return;
-      }
-      const sandboxResource = isGet && (pathname.startsWith("/api/resource/") || pathname.startsWith("/api/file-view/")) && req.headers.origin === "null";
-      const originCheck = sandboxResource ? { ok: true, origin: "null" } : guard.checkOrigin(req, { required: !isGet });
-      if (!originCheck.ok) {
-        httpHelpers.sendError(res, originCheck.status, originCheck.code, originCheck.message);
-        return;
-      }
-      const cors = guard.applyCors(req, res, originCheck);
-
       if (state.phase !== "running") {
         httpHelpers.sendError(res, 503, "NOT_READY", "server is not running");
         return;
       }
-      if (req.method === "OPTIONS") {
-        const method = req.headers["access-control-request-method"];
-        const headers = String(req.headers["access-control-request-headers"] || "").toLowerCase().split(",").map((value) => value.trim()).filter(Boolean);
-        if (!cors || !["GET", "POST", "HEAD"].includes(method) || headers.some((value) => !["content-type", "authorization", "x-filename", "x-session-id"].includes(value))) {
-          httpHelpers.sendError(res, 403, "FORBIDDEN_ORIGIN", "preflight is not allowed");
-          return;
-        }
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-
       if (pathname === "/api/health") {
         if (!isGet) {
           httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed");
           return;
         }
         httpHelpers.sendResult(res, healthResult());
-        return;
-      }
-      if (pathname === "/api/extension-session") {
-        if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
-        await handleExtensionSession(req, res, originCheck);
         return;
       }
       if (pathname === "/api/login") {
@@ -861,7 +768,7 @@ function createRemoteServer(options = {}) {
         if (req.method !== "POST") { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
         const device = authenticate(req);
         if (!device) { httpHelpers.sendError(res, 401, "UNAUTHORIZED", "登录已失效"); return; }
-        await revokeDevice(device.id, state.extensionDevices.get(device.id) ? state.extensionDevices : state.devices);
+        await revokeDevice(device.id);
         httpHelpers.sendResult(res, { loggedOut: true });
         return;
       }
@@ -919,7 +826,7 @@ function createRemoteServer(options = {}) {
         }
         const served = await httpHelpers.serveStaticFile(req, res, {
           rootDir: state.projectionRootReal, rootRealDir: state.projectionRootReal,
-          pathname: `/${asset}`, connectOrigins: connectOrigins(),
+          pathname: `/${asset}`,
         });
         if (!served.ok) httpHelpers.sendError(res, served.status, served.code, served.message);
         return;
@@ -932,7 +839,6 @@ function createRemoteServer(options = {}) {
         rootDir: state.webRoot,
         rootRealDir: state.webRootReal,
         pathname,
-        connectOrigins: connectOrigins(),
         renderer: true,
         projection: state.projectionRootReal !== null,
       };
@@ -1016,21 +922,17 @@ function createRemoteServer(options = {}) {
 
   async function start({ address, port, remoteAccess = true } = {}, expectedGeneration = generation) {
     if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
-    // 旧 address 仅作为首选链接，不限制监听集合；旧网卡地址失效也能恢复。
-    if (address && (typeof address !== "string" || !network.isAllowedBindAddress(address))) {
-      throw fail("INVALID_PARAMS", "address must be a private or loopback IPv4 address");
-    }
     let listenPort = port === undefined || port === null ? DEFAULT_PORT : Number(port);
     if (!Number.isInteger(listenPort) || listenPort < 0 || listenPort > 65_535) {
       throw fail("INVALID_PARAMS", "port must be an integer between 0 and 65535");
     }
-    if (remoteAccess && !state.devices.passwordConfigured) throw fail("PASSWORD_REQUIRED", "请先在电脑端设置访问密码");
-    const candidates = listenerAddresses(remoteAccess);
-    candidates.sort((a, b) => Number(b.address === address) - Number(a.address === address));
+    if (remoteAccess && !state.devices.passwordConfigured) throw fail("PASSWORD_REQUIRED", "请先在电脑端设置访问账号和密码");
+    const bindAddress = remoteAccess ? "0.0.0.0" : "127.0.0.1";
     if (state.phase === "running") {
-      const sameAddresses = candidates.length === state.listeners.length &&
-        candidates.every((entry) => state.listeners.some((active) => active.address === entry.address && active.server.listening));
-      if (sameAddresses && remoteAccess === state.remoteAccess && (listenPort === 0 || listenPort === state.port)) return getStatus();
+      if (state.address === bindAddress && (listenPort === 0 || listenPort === state.port)) {
+        state.preferredAddress = address;
+        return getStatus();
+      }
       generation += 1;
       expectedGeneration = generation;
       await stop();
@@ -1043,9 +945,7 @@ function createRemoteServer(options = {}) {
     state.remoteAccess = remoteAccess;
     state.lastError = null;
 
-    state.warning = null;
-    state.requestedAddresses = candidates.map((entry) => entry.address);
-    const failures = [];
+    state.preferredAddress = address;
     try {
       const WebSocketServer = loadWebSocketServer();
       await state.attachments.init();
@@ -1065,69 +965,49 @@ function createRemoteServer(options = {}) {
         }
       }
 
-      for (const candidate of candidates) {
-        if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
-        const server = http.createServer((req, res) => {
-          void handleRequest(req, res);
-        });
-        server.requestTimeout = REQUEST_TIMEOUT_MS;
-        server.headersTimeout = HEADERS_TIMEOUT_MS;
-        server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
-        server.maxHeadersCount = 64;
-        server.maxConnections = MAX_HTTP_CONNECTIONS;
-        server.on("connection", (socket) => {
-          if (state.sockets.size >= MAX_HTTP_CONNECTIONS) { socket.destroy(); return; }
-          state.sockets.add(socket);
-          socket.on("close", () => state.sockets.delete(socket));
-        });
-        server.on("clientError", (error, socket) => {
-          log(`client error: ${error?.message ?? error}`);
-          try { socket.destroy(); } catch { /* already gone */ }
-        });
-        server.on("upgrade", (req, socket, head) => handleUpgrade(req, socket, head));
-        // 全生命周期接住错误；过期监听器的回调不能关闭后来开启的服务。
-        server.on("error", (error) => {
-          log(`listener error: ${error?.message ?? error}`);
-          if (state.phase !== "running" || !state.listeners.some((entry) => entry.server === server)) return;
-          state.lastError = { code: "LISTEN_ERROR", message: String(error?.message ?? error) };
-          if (!server.listening) noteUnexpectedStop("LISTENER_CLOSED", "listener closed after an error");
-        });
-        server.once("close", () => {
-          if (state.phase === "running" && state.listeners.some((entry) => entry.server === server)) {
-            noteUnexpectedStop("LISTENER_CLOSED", "listener closed unexpectedly");
-          }
-        });
-
-        try {
-          await listen(server, candidate.address, listenPort);
-          const addressInfo = server.address();
-          if (!addressInfo || typeof addressInfo === "string" ||
-              addressInfo.address !== candidate.address || !network.isAllowedBindAddress(addressInfo.address)) {
-            throw fail("ADDRESS_UNAVAILABLE", "listener did not bind the requested address");
-          }
-          listenPort = addressInfo.port;
-          state.port = listenPort;
-          state.listeners.push({ ...candidate, server });
-        } catch (error) {
-          try { server.close(); } catch {}
-          failures.push({ address: candidate.address, label: candidate.label,
-            code: error?.code ?? "INTERNAL", message: String(error?.message ?? error) });
-          log(`监听 ${candidate.address} 失败：${error?.message ?? error}`);
-        }
-      }
       if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
-      if (!state.listeners.length) throw fail(failures[0]?.code ?? "ADDRESS_UNAVAILABLE",
-        failures.map((entry) => `${entry.address}: ${entry.message}`).join("；"));
-      if (failures.length) state.warning = { code: "PARTIAL_LISTEN_FAILED",
-        message: `部分地址监听失败：${failures.map((entry) => `${entry.address}（${entry.message}）`).join("；")}`,
-        failures };
+      const server = http.createServer((req, res) => { void handleRequest(req, res); });
+      server.requestTimeout = REQUEST_TIMEOUT_MS;
+      server.headersTimeout = HEADERS_TIMEOUT_MS;
+      server.keepAliveTimeout = KEEP_ALIVE_TIMEOUT_MS;
+      server.maxHeadersCount = 64;
+      server.maxConnections = MAX_HTTP_CONNECTIONS;
+      server.on("connection", (socket) => {
+        if (state.sockets.size >= MAX_HTTP_CONNECTIONS) { socket.destroy(); return; }
+        state.sockets.add(socket);
+        socket.on("close", () => state.sockets.delete(socket));
+      });
+      server.on("clientError", (error, socket) => {
+        log(`client error: ${error?.message ?? error}`);
+        socket.destroy();
+      });
+      server.on("upgrade", (req, socket, head) => handleUpgrade(req, socket, head));
+      server.on("error", (error) => {
+        log(`listener error: ${error?.message ?? error}`);
+        if (state.phase !== "running" || !state.listeners.some((entry) => entry.server === server)) return;
+        state.lastError = { code: "LISTEN_ERROR", message: String(error?.message ?? error) };
+        if (!server.listening) noteUnexpectedStop("LISTENER_CLOSED", "listener closed after an error");
+      });
+      server.once("close", () => {
+        if (state.phase === "running" && state.listeners.some((entry) => entry.server === server)) {
+          noteUnexpectedStop("LISTENER_CLOSED", "listener closed unexpectedly");
+        }
+      });
+      state.listeners.push({ address: bindAddress, server });
+      await listen(server, bindAddress, listenPort);
+      if (expectedGeneration !== generation) throw fail("NOT_READY", "start was cancelled");
+      const addressInfo = server.address();
+      if (!addressInfo || addressInfo.address !== bindAddress) {
+        throw fail("ADDRESS_UNAVAILABLE", "listener did not bind the requested address");
+      }
+      state.port = addressInfo.port;
       state.wss = new WebSocketServer({
         noServer: true,
         clientTracking: false,
         perMessageDeflate: false,
         maxPayload: WS_MAX_PAYLOAD_BYTES,
       });
-      state.address = state.listeners[0].address;
+      state.address = bindAddress;
       state.restartRequired = false;
       state.startedAt = Date.now();
       state.phase = "running";
@@ -1259,7 +1139,6 @@ function createRemoteServer(options = {}) {
     state.address = null;
     state.port = null;
     state.startedAt = null;
-    state.warning = null;
     state.restartRequired = false;
     state.phase = "stopped";
     return getStatus();
@@ -1273,14 +1152,14 @@ function createRemoteServer(options = {}) {
     return { ok: true, url, links, warning };
   }
 
-  async function setPassword(password) {
-    const ids = await state.devices.setPassword(password);
+  async function setPassword(password, username) {
+    const ids = await state.devices.setPassword(password, username);
     for (const id of ids) await revokeDevice(id);
     return { ok: true };
   }
 
-  async function revokeDevice(deviceId, store = state.devices) {
-    const existed = store.revoke(deviceId);
+  async function revokeDevice(deviceId) {
+    const existed = state.devices.revoke(deviceId);
     for (const conn of [...state.connections]) {
       if (conn.deviceId !== deviceId) continue;
       wsError(conn, "UNAUTHORIZED", "device was revoked");
@@ -1326,7 +1205,7 @@ function createRemoteServer(options = {}) {
     },
     getStatus,
     createLink,
-    setPassword: (password) => serializeLifecycle(() => setPassword(password)),
+    setPassword: (password, username) => serializeLifecycle(() => setPassword(password, username)),
     revokeDevice,
     revokeAllDevices,
     broadcastIpc,

@@ -5,11 +5,15 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
+import { request as httpRequest } from "node:http";
 import WebSocket from "ws";
 
 const require = createRequire(import.meta.url);
 const { createRemoteServer } = require("../server/index.cjs");
 const extension = "chrome-extension://afeafocngkodbmaipcngoamamfmekgfo";
+const username = "admin";
+const testPassword = "ipc-test-password";
+const publicOrigin = "https://remote.example.test";
 
 async function fixture(context, options = {}, access = {}) {
   assert.ok(process.env.PI_SCRATCH_DIR, "PI_SCRATCH_DIR 必须设置");
@@ -20,20 +24,20 @@ async function fixture(context, options = {}, access = {}) {
   await writeFile(join(rendererDir, "assets/app.js"), "export const renderer = true;");
   const server = createRemoteServer({ dataDir: directory, rendererDir, ...options });
   context.after(async () => { await server.stop(); await rm(directory, { recursive: true, force: true }); });
-  const password = access.password === null ? null : "ipc-test-password";
+  const password = access.password === null ? null : testPassword;
   if (password) await server.setPassword(password);
   const { port } = await server.start({ port: 0, remoteAccess: access.remoteAccess ?? true });
   const endpoint = `http://127.0.0.1:${port}`;
-  const post = (route, body, token) => fetch(`${endpoint}${route}`, { method: "POST", headers: { Origin: extension, "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
+  const post = (route, body, token, origin = extension) => fetch(`${endpoint}${route}`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) });
   let token, deviceId;
   if (password) {
-    const login = await post("/api/login", { password, name: "IPC 测试设备" });
+    const login = await post("/api/login", { username, password, name: "IPC 测试设备" });
     const loginBody = await login.json();
     assert.equal(login.status, 200, JSON.stringify(loginBody));
     ({ token, deviceId } = loginBody.result);
   }
-  const connect = async (authenticate = true, sessionToken = token, target = endpoint) => {
-    const socket = new WebSocket(`${target.replace("http:", "ws:")}/ws`, { origin: extension });
+  const connect = async (authenticate = true, sessionToken = token, options = {}) => {
+    const socket = new WebSocket(`${endpoint.replace("http:", "ws:")}/ws`, { origin: extension, ...options });
     context.after(() => socket.terminate());
     await once(socket, "open");
     if (authenticate) {
@@ -49,64 +53,45 @@ async function fixture(context, options = {}, access = {}) {
   return { server, directory, rendererDir, endpoint, post, token, deviceId, connect };
 }
 
-async function localSession(post) {
-  const response = await post("/api/extension-session", {});
-  const body = await response.json();
-  assert.equal(response.status, 200, JSON.stringify(body));
-  assert.equal(body.ok, true);
-  assert.equal(typeof body.result.token, "string");
-  assert.ok(body.result.token.length > 0);
-  return body.result;
-}
-
-test("无密码仅启动本机通道；扩展会话核验真实 Origin，parentOrigin 不授予权限", async (context) => {
-  const custom = `chrome-extension://${"a".repeat(32)}`;
-  let ids = ["a".repeat(32)];
-  const { server, endpoint, post, directory } = await fixture(context, { getExtensionIds: () => ids }, { password: null, remoteAccess: false });
-  assert.equal(server.getStatus().running, true);
+test("无密码时仅监听回环，网页与扩展均无法取得令牌", async (context) => {
+  const { server, endpoint, post, directory } = await fixture(context, {}, { password: null, remoteAccess: false });
   assert.equal(server.getStatus().remoteAccess, false);
   assert.equal(server.getStatus().passwordConfigured, false);
   assert.ok(server.getStatus().links.length > 0);
   assert.ok(server.getStatus().links.every(link => new URL(link.url).hostname.startsWith("127.")));
   await assert.rejects(server.start({ remoteAccess: true }), { code: "PASSWORD_REQUIRED" });
   assert.equal(server.getStatus().running, true);
-  const session = await localSession(post);
-  assert.equal(typeof session.deviceId, "string");
-  assert.equal(session.deviceName, "Chrome 侧边栏");
-  assert.ok(Number.isFinite(Date.parse(session.expiresAt)));
+  const health = await fetch(`${endpoint}/api/health`);
+  assert.equal(health.status, 200);
+  const { result } = await health.json();
+  assert.equal(result.authMode, "password");
+  assert.equal(result.requiresAuth, true);
+  assert.equal(result.passwordConfigured, false);
+  for (const origin of [publicOrigin, extension]) {
+    const login = await post("/api/login", { username, password: testPassword, name: "未配置密码的设备" }, undefined, origin);
+    assert.equal(login.status, 401);
+    assert.equal((await login.json()).error.code, "UNAUTHORIZED");
+  }
+  for (const removed of [await fetch(`${endpoint}/api/extension-session`), await post("/api/extension-session", {})]) {
+    assert.equal(removed.status, 404);
+    assert.equal((await removed.json()).error.code, "NOT_FOUND");
+  }
   assert.deepEqual(server.getStatus().devices, []);
   await assert.rejects(readFile(join(directory, "remote-access.json")), { code: "ENOENT" });
-  assert.equal((await fetch(`${endpoint}/api/extension-session`)).status, 405);
-  const mint = origin => fetch(`${endpoint}/api/extension-session?parentOrigin=${encodeURIComponent(extension)}`, {
-    method: "POST", headers: { "Content-Type": "application/json", ...(origin === undefined ? {} : { Origin: origin }) },
-    body: JSON.stringify({ parentOrigin: extension }),
-  });
-  for (const origin of [endpoint, endpoint.replace("127.0.0.1", "localhost"), undefined, "null", `chrome-extension://${"b".repeat(32)}`]) {
-    const response = await mint(origin);
-    assert.equal(response.status, 403, String(origin));
-    assert.equal((await response.json()).ok, false);
-  }
-  const allowed = await mint(custom);
-  assert.equal(allowed.status, 200);
-  assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), custom);
-  assert.equal(typeof (await allowed.json()).result.token, "string");
-  ids = [];
-  assert.equal((await mint(custom)).status, 403);
 });
 
-test("本机扩展令牌贯通 WS、IPC、resource 与 file-view，注销按自身授权失效", async (context) => {
+test("扩展用账号密码登录后可使用 WS、IPC、resource 与 file-view，注销立即失效", async (context) => {
   const calls = [];
-  const { server, endpoint, post, connect } = await fixture(context, {
+  const { server, endpoint, post, connect, token } = await fixture(context, {
     ipcInvoke: (channel, args) => ({ channel, args }),
     rendererResource: () => ({ status: 200, headers: { "Content-Type": "text/plain" }, body: Buffer.from("resource").toString("base64") }),
     rendererFile: input => { calls.push(input); return { name: "index.html", body: Buffer.from("<p>preview</p>").toString("base64") }; },
-  }, { password: null, remoteAccess: false });
-  const { token } = await localSession(post);
+  }, { remoteAccess: false });
   assert.equal((await post("/api/ipc", { channel: "settings:get", args: [] })).status, 401);
   const ipc = await post("/api/ipc", { channel: "settings:get", args: ["local"] }, token);
   assert.equal(ipc.status, 200);
   assert.deepEqual(await ipc.json(), { channel: "settings:get", args: ["local"] });
-  const socket = await connect(true, token);
+  const socket = await connect(true, token, { origin: publicOrigin });
   const event = { channel: "session:changed", args: ["local"] };
   const received = once(socket, "message");
   assert.equal(server.broadcastIpc(event), 1);
@@ -130,73 +115,43 @@ test("本机扩展令牌贯通 WS、IPC、resource 与 file-view，注销按自�
   assert.equal(server.broadcastIpc(event), 0);
 });
 
-test("撤销单台远控、撤销全部远控及更换密码均保留本机扩展令牌和 WS", async (context) => {
-  const { server, post, connect, directory, token, deviceId } = await fixture(context, { ipcInvoke: () => "local-alive" });
-  const local = await localSession(post);
-  const socket = await connect(true, local.token);
-  let remote = { token, deviceId };
-  const changes = [id => server.revokeDevice(id), () => server.revokeAllDevices(), () => server.setPassword("changed-ipc-password")];
-  for (const [index, change] of changes.entries()) {
-    if (index) remote = (await (await post("/api/login", { password: "ipc-test-password", name: "待撤销远控" })).json()).result;
-    const remoteSocket = await connect(true, remote.token);
-    const closed = once(remoteSocket, "close");
-    await change(remote.deviceId);
-    assert.equal((await closed)[0], 4403);
-    assert.equal((await post("/api/ipc", { channel: "settings:get", args: [] }, remote.token)).status, 401);
-    const response = await post("/api/ipc", { channel: "settings:get", args: [] }, local.token);
-    assert.equal(response.status, 200); assert.equal(await response.json(), "local-alive");
-    const pong = once(socket, "message");
-    socket.send(JSON.stringify({ type: "ping" }));
-    assert.equal(JSON.parse((await pong)[0]).type, "pong");
-    const event = once(socket, "message");
-    assert.equal(server.broadcastIpc({ channel: "changed", args: [] }), 1);
-    assert.equal(JSON.parse((await event)[0]).type, "ipc-event");
-    assert.ok(server.getStatus().devices.every(device => device.deviceId !== local.deviceId));
-  }
-  const persisted = await readFile(join(directory, "remote-access.json"), "utf8");
-  assert.ok(!persisted.includes(local.token));
-  assert.ok(!persisted.includes(local.deviceId));
-});
+test("网页和扩展设备统一撤销授权，改账号密码关闭旧 WS", async (context) => {
+  const { server, post, connect, token, deviceId } = await fixture(context, { ipcInvoke: () => "authorized" });
+  const credentials = { username, password: testPassword, name: "网页" };
+  const webLogin = await post("/api/login", credentials, undefined, publicOrigin);
+  assert.equal(webLogin.status, 200);
+  const { result: web } = await webLogin.json();
+  const extensionSocket = await connect();
+  const webSocket = await connect(true, web.token);
+  const extensionClosed = once(extensionSocket, "close");
+  await server.revokeDevice(deviceId);
+  assert.equal((await extensionClosed)[0], 4403);
+  const ipc = { channel: "settings:get", args: [] };
+  assert.equal((await post("/api/ipc", ipc, token)).status, 401);
+  assert.equal(await (await post("/api/ipc", ipc, web.token)).json(), "authorized");
 
-test("真实私网 socket 不能签发或使用扩展令牌，远控密码令牌仍可访问相同入口", async (context) => {
-  const { server, endpoint, post, connect, token } = await fixture(context, {
-    ipcInvoke: () => "authorized",
-    rendererResource: () => ({ status: 200, headers: {}, body: Buffer.from("resource").toString("base64") }),
-    rendererFile: () => ({ name: "index.html", body: Buffer.from("preview").toString("base64") }),
-  });
-  const link = server.getStatus().links.find(link => !new URL(link.url).hostname.startsWith("127."));
-  if (!link) { context.skip("当前环境没有成功监听的私网 IPv4 地址，无法建立真实非 loopback socket"); return; }
-  const target = new URL(link.url).origin;
-  const local = await localSession(post);
-  const request = (route, body, sessionToken) => fetch(`${target}${route}`, {
-    method: "POST", headers: { Origin: extension, "Content-Type": "application/json", "X-Forwarded-For": "127.0.0.1", ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}) }, body: JSON.stringify(body),
-  });
-  const mint = await request(`/api/extension-session?parentOrigin=${encodeURIComponent(extension)}`, { parentOrigin: extension });
-  assert.equal(mint.status, 403);
-  assert.equal((await mint.json()).error.code, "FORBIDDEN");
-  assert.equal((await request("/api/ipc", { channel: "settings:get", args: [] }, local.token)).status, 401);
-  const remoteIpc = await request("/api/ipc", { channel: "settings:get", args: [] }, token);
-  assert.equal(remoteIpc.status, 200); assert.equal(await remoteIpc.json(), "authorized");
-  assert.equal((await request("/api/file", { path: "/local/index.html" }, local.token)).status, 401);
-  for (const sessionToken of [local.token, token]) {
-    const expected = sessionToken === token ? 200 : 401;
-    const resource = await fetch(`${target}/api/resource/${encodeURIComponent(sessionToken)}/pi-genui/assets/a.txt`, { headers: { Origin: "null" } });
-    assert.equal(resource.status, expected); await resource.text();
-    const file = await post("/api/file", { path: "/local/index.html", sessionId: "scope-owner" }, sessionToken);
-    assert.equal(file.status, 200); await file.text();
-    assert.ok(file.headers.get("X-File-Preview"));
-    const preview = new URL(file.headers.get("X-File-Preview"), endpoint);
-    const viewed = await fetch(`${target}${preview.pathname}`, { headers: { Origin: "null" } });
-    assert.equal(viewed.status, expected); await viewed.text();
-  }
-  const socket = await connect(false, undefined, target);
-  const denied = once(socket, "message"), closed = once(socket, "close");
-  socket.send(JSON.stringify({ type: "auth", token: local.token }));
-  assert.equal(JSON.parse((await denied)[0]).error.code, "UNAUTHORIZED");
-  assert.equal((await closed)[0], 4401);
-  const authorized = await connect(true, token, target);
-  const conn = [...server._internals.connections].find(conn => conn.id === authorized.referenceConnectionId);
-  assert.ok(conn && !conn.ip.startsWith("127."));
+  const otherLogin = await post("/api/login", { ...credentials, name: "另一扩展" });
+  assert.equal(otherLogin.status, 200);
+  const { result: other } = await otherLogin.json();
+  const otherSocket = await connect(true, other.token);
+  const allClosed = [once(webSocket, "close"), once(otherSocket, "close")];
+  await server.revokeAllDevices();
+  assert.deepEqual((await Promise.all(allClosed)).map(([code]) => code), [4403, 4403]);
+  for (const revoked of [web.token, other.token]) assert.equal((await post("/api/ipc", ipc, revoked)).status, 401);
+
+  const beforeChange = await post("/api/login", credentials);
+  assert.equal(beforeChange.status, 200);
+  const { result: previous } = await beforeChange.json();
+  const previousSocket = await connect(true, previous.token);
+  const previousClosed = once(previousSocket, "close");
+  const nextCredentials = { ...credentials, username: "operator", password: "changed-ipc-password" };
+  await server.setPassword(nextCredentials.password, nextCredentials.username);
+  assert.equal((await previousClosed)[0], 4403);
+  assert.equal((await post("/api/ipc", ipc, previous.token)).status, 401);
+  assert.equal((await post("/api/login", credentials)).status, 401);
+  const next = await post("/api/login", nextCredentials);
+  assert.equal(next.status, 200);
+  assert.equal(server.getStatus().username, nextCredentials.username);
 });
 
 test("IPC 仅允许认证调用，校验参数并原样返回宿主 Result 与普通结果", async (context) => {
@@ -244,9 +199,7 @@ test("WS 原样转发 IPC，仅交付已认证连接并在关闭或撤销后停�
 });
 
 test("renderer 静态根目录、SPA fallback、HEAD 和 CSP 保留 API 路由", async (context) => {
-  const custom = "a".repeat(32);
-  let extensionIds = [custom, "invalid-extension-id"];
-  const { endpoint, rendererDir } = await fixture(context, { getExtensionIds: () => extensionIds });
+  const { endpoint, rendererDir } = await fixture(context);
   for (const route of ["/", "/sessions/session-id", "/settings/models/"]) {
     const response = await fetch(`${endpoint}${route}`);
     assert.equal(response.status, 200);
@@ -257,13 +210,12 @@ test("renderer 静态根目录、SPA fallback、HEAD 和 CSP 保留 API 路由",
     assert.match(html, /src="\/assets\/app.js"/);
     assert.equal(Number(response.headers.get("content-length")), Buffer.byteLength(html));
     const csp = response.headers.get("content-security-policy");
-    for (const origin of ["'self'", endpoint, endpoint.replace("http:", "ws:"), extension, `chrome-extension://${custom}`]) assert.ok(csp.includes(origin), origin);
+    const directives = csp.split(";").map(value => value.trim());
+    assert.equal(directives.find(value => value.startsWith("connect-src ")), "connect-src 'self' ws: wss:");
     assert.match(csp, /worker-src 'self' blob:/);
     assert.match(csp, /img-src 'self' blob: data: https:/);
     assert.match(csp, /frame-src 'self'/);
-    const ancestors = csp.split(";").map(value => value.trim()).find(value => value.startsWith("frame-ancestors "));
-    assert.deepEqual(ancestors.split(/\s+/), ["frame-ancestors", "'self'", `chrome-extension://${custom}`, extension]);
-    assert.doesNotMatch(ancestors, /\*/);
+    assert.equal(directives.find(value => value.startsWith("frame-ancestors ")), "frame-ancestors 'self' chrome-extension:");
     assert.match(csp, /media-src 'self' data: blob: https:/);
     assert.equal(response.headers.get("x-frame-options"), null);
   }
@@ -279,10 +231,6 @@ test("renderer 静态根目录、SPA fallback、HEAD 和 CSP 保留 API 路由",
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("content-type"), mime);
   }
-  extensionIds = [];
-  const updated = await fetch(`${endpoint}/`);
-  const updatedAncestors = updated.headers.get("content-security-policy").split(";").map(value => value.trim()).find(value => value.startsWith("frame-ancestors "));
-  assert.deepEqual(updatedAncestors.split(/\s+/), ["frame-ancestors", "'self'", extension]);
 });
 
 test("Renderer 上传交给宿主复制，保留草稿身份且统一返回宿主响应", async (context) => {
@@ -455,23 +403,73 @@ test("Browse 转换仅执行声明且已提供的操作，V1 业务路由和订�
   assert.equal(JSON.parse((await pong)[0]).type, "pong");
 });
 
-test("Chrome 扩展来源白名单动态生效，拒绝未知来源与公网监听", async (context) => {
-  const custom = "b".repeat(32), forbidden = `chrome-extension://${"c".repeat(32)}`;
-  let ids = [custom];
-  const { endpoint, server, token } = await fixture(context, { getExtensionIds: () => ids, ipcInvoke: () => ({ ok: true }) });
-  const invoke = origin => fetch(`${endpoint}/api/ipc`, { method: "POST", headers: { Origin: origin, Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: "any", args: [] }) });
-  assert.equal((await invoke(forbidden)).status, 403);
-  const allowed = await invoke(`chrome-extension://${custom}`);
-  assert.equal(allowed.status, 200);
-  assert.equal(allowed.headers.get("access-control-allow-origin"), `chrome-extension://${custom}`);
-  const preflight = await fetch(`${endpoint}/api/ipc`, { method: "OPTIONS", headers: { Origin: extension, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization, content-type" } });
-  assert.equal(preflight.status, 204);
-  ids = [];
-  assert.equal((await invoke(`chrome-extension://${custom}`)).status, 403);
-  assert.equal((await invoke(extension)).status, 200);
-  for (const address of ["0.0.0.0", "::", "8.8.8.8"]) await assert.rejects(server.start({ address }), { code: "INVALID_PARAMS" });
-  const network = require("../server/network.cjs");
-  for (const listener of server._internals.listeners) assert.ok(network.isAllowedBindAddress(listener.server.address().address));
+test("公网 Host、HTTPS Origin 和任意扩展 ID 共用登录，WS 仍校验令牌", async (context) => {
+  const customExtension = `chrome-extension://${"b".repeat(32)}`;
+  const host = new URL(publicOrigin).host;
+  const { endpoint, connect } = await fixture(context, { ipcInvoke: () => ({ ok: true }) });
+  const request = (route, origin, body, token) => new Promise((resolve, reject) => {
+    const json = JSON.stringify(body);
+    const headers = { Host: host, Origin: origin, "X-Forwarded-Proto": "https" };
+    if (json !== undefined) Object.assign(headers, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(json) });
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const req = httpRequest(`${endpoint}${route}`, { method: json === undefined ? "GET" : "POST", headers }, async (res) => {
+      try {
+        res.setEncoding("utf8");
+        let content = "";
+        for await (const chunk of res) content += chunk;
+        resolve({ status: res.statusCode, body: JSON.parse(content) });
+      } catch (error) { reject(error); }
+    });
+    req.on("error", reject);
+    req.end(json);
+  });
+  const health = await request("/api/health", publicOrigin);
+  assert.equal(health.status, 200);
+  assert.equal(health.body.result.authMode, "password");
+  assert.equal(health.body.result.passwordConfigured, true);
+
+  for (const [origin, credentials] of [
+    [publicOrigin, { password: testPassword }],
+    [customExtension, { username: "unknown", password: testPassword }],
+  ]) {
+    const rejected = await request("/api/login", origin, { ...credentials, name: "认证失败的设备" });
+    assert.equal(rejected.status, 401);
+    assert.equal(rejected.body.error.code, "UNAUTHORIZED");
+  }
+
+  const ipcBody = { channel: "any", args: [] };
+  assert.equal((await request("/api/ipc", publicOrigin, ipcBody)).status, 401);
+  for (const [loginOrigin, ipcOrigin] of [[publicOrigin, customExtension], [customExtension, publicOrigin]]) {
+    const login = await request("/api/login", loginOrigin, { username, password: testPassword, name: "统一登录设备" });
+    assert.equal(login.status, 200);
+    const { token } = login.body.result;
+    const ipc = await request("/api/ipc", ipcOrigin, ipcBody, token);
+    assert.deepEqual(ipc, { status: 200, body: { ok: true } });
+    await connect(true, token, { origin: ipcOrigin, headers: { Host: host } });
+  }
+
+  for (const auth of [{ type: "auth" }, { type: "auth", token: "invalid-test-token" }]) {
+    const socket = await connect(false, undefined, { origin: publicOrigin, headers: { Host: host } });
+    const denied = once(socket, "message"), closed = once(socket, "close");
+    socket.send(JSON.stringify(auth));
+    assert.equal(JSON.parse((await denied)[0]).error.code, "UNAUTHORIZED");
+    assert.equal((await closed)[0], 4401);
+  }
+});
+
+test("开启远控实际监听 0.0.0.0，关闭远控恢复 127.0.0.1", async (context) => {
+  const { server } = await fixture(context, {}, { remoteAccess: false });
+  const listenerAddresses = () => server._internals.listeners.map(({ server: listener }) => listener.address().address);
+  const remote = await server.start({ port: server.getStatus().port, address: "127.0.0.1", remoteAccess: true });
+  assert.equal(remote.bindAddress, "0.0.0.0");
+  assert.deepEqual(listenerAddresses(), ["0.0.0.0"]);
+  assert.equal(new URL(remote.url).hostname, "127.0.0.1");
+
+  const local = await server.start({ port: remote.port, remoteAccess: false });
+  assert.equal(local.port, remote.port);
+  assert.equal(local.bindAddress, "127.0.0.1");
+  assert.deepEqual(listenerAddresses(), ["127.0.0.1"]);
+  assert.deepEqual(local.links.map(link => new URL(link.url).hostname), ["127.0.0.1"]);
 });
 
 test("设备记录兼容重启，注销与改密立即撤销令牌和 WS", async (context) => {
@@ -481,7 +479,7 @@ test("设备记录兼容重启，注销与改密立即撤销令牌和 WS", async
   assert.equal((await post("/api/logout", {}, token)).status, 200);
   await closed;
   assert.equal((await post("/api/ipc", { channel: "any", args: [] }, token)).status, 401);
-  const login = await (await post("/api/login", { password: "ipc-test-password", name: "持久设备" })).json();
+  const login = await (await post("/api/login", { username, password: testPassword, name: "持久设备" })).json();
   const persistedToken = login.result.token;
   await server.stop();
   const restarted = createRemoteServer({ rendererDir, dataDir: directory, ipcInvoke: () => "persisted" });

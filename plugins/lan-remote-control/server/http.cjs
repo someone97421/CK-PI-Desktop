@@ -1,13 +1,6 @@
 "use strict";
 
-/**
- * HTTP plumbing for the remote-control server: response envelope, request
- * guards (Host / Origin), body limits, rate limiting, static file serving.
- *
- * Everything here is deliberately dependency-free and framework-free; the
- * plugin process is not an OS sandbox, but the network surface is kept as
- * small as a hand-written router can make it.
- */
+/** HTTP 响应、请求体限制、限流与静态资源服务。 */
 
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
@@ -39,30 +32,21 @@ const MIME_TYPES = Object.freeze({
 /** Upper bound for one static file; larger assets must be split or dropped. */
 const MAX_STATIC_BYTES = 8 * 1024 * 1024;
 
-/**
- * Content-Security-Policy for served HTML. `connect-src 'self'` matches the
- * page's own origin (fetch over http); the WebSocket endpoint is added as an
- * explicit `ws://host:port` entry, so no wildcard `ws:` scheme is opened.
- */
-function buildCsp({ connectOrigins = [] } = {}) {
-  const connect = ["'self'", ...connectOrigins.filter((origin) => typeof origin === "string" && origin)];
-  const ancestors = ["'self'", ...new Set(connectOrigins.filter((origin) =>
-    typeof origin === "string" && /^chrome-extension:\/\/[a-p]{32}$/.test(origin),
-  ))];
+function buildCsp() {
   return [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data: https:",
     "font-src 'self' data:",
-    `connect-src ${connect.join(" ")}`,
+    "connect-src 'self' ws: wss:",
     "media-src 'self' data: blob: https:",
     "worker-src 'self' blob:",
     "frame-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
-    `frame-ancestors ${ancestors.join(" ")}`,
+    "frame-ancestors 'self' chrome-extension:",
   ].join("; ");
 }
 
@@ -70,12 +54,12 @@ function mimeForFile(filePath) {
   return MIME_TYPES[path.extname(filePath).toLowerCase()] ?? null;
 }
 
-function applySecurityHeaders(res, { html = false, connectOrigins = [] } = {}) {
+function applySecurityHeaders(res, { html = false } = {}) {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-  if (html) res.setHeader("Content-Security-Policy", buildCsp({ connectOrigins }));
+  if (html) res.setHeader("Content-Security-Policy", buildCsp());
 }
 
 function sendJson(res, status, payload, extraHeaders) {
@@ -256,129 +240,6 @@ function createRateLimiter({ windowMs, max, maxKeys = 1024, now = Date.now }) {
   };
 }
 
-/** `Host` / `Host:port` per RFC 7230, including the bracketed IPv6 form. */
-function parseHostHeader(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return null;
-  const value = raw.trim();
-  if (value.startsWith("[")) {
-    const end = value.indexOf("]");
-    if (end < 0) return null;
-    const hostname = value.slice(1, end);
-    const rest = value.slice(end + 1);
-    if (!rest) return { hostname, port: null };
-    if (!rest.startsWith(":")) return null;
-    const port = Number(rest.slice(1));
-    return Number.isInteger(port) ? { hostname, port } : null;
-  }
-  const separator = value.lastIndexOf(":");
-  if (separator < 0) return { hostname: value, port: null };
-  const hostname = value.slice(0, separator);
-  const portText = value.slice(separator + 1);
-  if (!/^\d+$/.test(portText)) return null;
-  return { hostname, port: Number(portText) };
-}
-
-/**
- * Host and Origin enforcement.
- *
- * The allowed host set is exactly the bound address plus loopback names when
- * the bind itself is loopback: a request whose Host does not name the interface
- * the server listens on is either a proxy mistake or a DNS-rebinding attempt.
- * Origins are compared as full `http://host:port` strings, so no wildcard, no
- * subdomain and no port confusion can slip through.
- */
-const DEFAULT_EXTENSION_ID = "afeafocngkodbmaipcngoamamfmekgfo";
-function extensionOrigins(ids = []) {
-  return new Set([DEFAULT_EXTENSION_ID, ...ids].filter((id) => typeof id === "string" && /^[a-p]{32}$/.test(id)).map((id) => `chrome-extension://${id}`));
-}
-function createRequestGuard({ getAllowedHostnames, getPort, getExtensionIds = () => [] }) {
-  const allowedNames = () => {
-    const names = new Set();
-    for (const name of getAllowedHostnames() ?? []) {
-      if (typeof name === "string" && name) names.add(name.toLowerCase());
-    }
-    return names;
-  };
-
-  const checkHost = (req) => {
-    const parsed = parseHostHeader(req.headers.host);
-    if (!parsed) {
-      return { ok: false, status: 400, code: "INVALID_PARAMS", message: "Host header is required" };
-    }
-    const names = allowedNames();
-    if (!names.has(parsed.hostname.toLowerCase())) {
-      return { ok: false, status: 403, code: "FORBIDDEN_HOST", message: "Host header is not allowed" };
-    }
-    const port = getPort();
-    if (port === null || port === undefined) {
-      return { ok: false, status: 503, code: "NOT_READY", message: "server is not listening" };
-    }
-    if (parsed.port !== null && parsed.port !== port) {
-      return { ok: false, status: 403, code: "FORBIDDEN_HOST", message: "Host header port is not allowed" };
-    }
-    if (parsed.port === null && port !== 80) {
-      return { ok: false, status: 403, code: "FORBIDDEN_HOST", message: "Host header must carry the port" };
-    }
-    return { ok: true, hostname: parsed.hostname };
-  };
-
-  const expectedOrigins = () => {
-    const port = getPort();
-    if (port === null || port === undefined) return new Set();
-    const origins = new Set();
-    for (const name of allowedNames()) {
-      const host = name.includes(":") ? `[${name}]` : name;
-      origins.add(`http://${host}${port === 80 ? "" : `:${port}`}`);
-    }
-    return origins;
-  };
-
-  const checkOrigin = (req, { required }) => {
-    const raw = req.headers.origin;
-    if (Array.isArray(raw)) {
-      return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is malformed" };
-    }
-    if (raw === undefined || raw === "") {
-      if (required) {
-        return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is required" };
-      }
-      return { ok: true, origin: null };
-    }
-    if (raw === "null") {
-      return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is not allowed" };
-    }
-    if (extensionOrigins(getExtensionIds()).has(raw)) return { ok: true, origin: raw, extension: true };
-    let parsed;
-    try {
-      parsed = new URL(raw);
-    } catch {
-      return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is malformed" };
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is not allowed" };
-    }
-    if (parsed.username || parsed.password) {
-      return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is not allowed" };
-    }
-    const origin = `${parsed.protocol}//${parsed.host}`;
-    if (raw !== origin || !expectedOrigins().has(origin)) {
-      return { ok: false, status: 403, code: "FORBIDDEN_ORIGIN", message: "Origin header is not allowed" };
-    }
-    return { ok: true, origin };
-  };
-
-  const applyCors = (req, res, checked) => {
-    if (!checked?.ok || !checked.extension) return false;
-    res.setHeader("Access-Control-Allow-Origin", checked.origin);
-    res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Filename, X-Session-Id");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS");
-    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    return true;
-  };
-  return { checkHost, checkOrigin, applyCors };
-}
-
 function isInsidePath(parent, child) {
   const relative = path.relative(parent, child);
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
@@ -423,7 +284,7 @@ function resolveStaticPath(rootDir, pathname) {
  * `lstat` and the resolved real path must stay inside the real root, so neither
  * a link nor a reparse point can escape into the plugin or the user's disk.
  */
-async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, connectOrigins = [], renderer = false, projection = false }) {
+async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, renderer = false, projection = false }) {
   const resolved = resolveStaticPath(rootDir, pathname);
   if (!resolved.ok) return resolved;
   const mime = mimeForFile(resolved.filePath);
@@ -452,7 +313,7 @@ async function serveStaticFile(req, res, { rootDir, rootRealDir, pathname, conne
     return { ok: false, status: 404, code: "NOT_FOUND", message: "not found" };
   }
   const html = mime.startsWith("text/html");
-  applySecurityHeaders(res, { html, connectOrigins });
+  applySecurityHeaders(res, { html });
   if (html && renderer) {
     const source = await fsp.readFile(resolved.filePath, "utf8");
     let content = source.replace(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi, (tag) =>
@@ -500,10 +361,8 @@ module.exports = {
   buildCsp,
   closeAfterResponse,
   createRateLimiter,
-  createRequestGuard,
   isInsidePath,
   mimeForFile,
-  parseHostHeader,
   readBody,
   readJsonBody,
   resolveStaticPath,

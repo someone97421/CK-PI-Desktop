@@ -7,6 +7,8 @@ const path = require("node:path");
 const { promisify } = require("node:util");
 const derive = promisify(crypto.scrypt);
 const MAX_DEVICES = 16;
+const DEFAULT_USERNAME = "admin";
+const normalizeUsername = (value) => typeof value === "string" ? value.trim() : "";
 const MAX_DEVICE_NAME_LENGTH = 64;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const tokenHash = (token) => crypto.createHash("sha256").update(String(token), "utf8").digest();
@@ -39,6 +41,7 @@ class DeviceStore {
     }
   }
   get passwordConfigured() { return !!this.password; }
+  get username() { return this.password?.username ?? DEFAULT_USERNAME; }
   get size() { return this.devices.size; }
   persist() {
     if (!this.file || !this.password) return;
@@ -50,25 +53,29 @@ class DeviceStore {
       fs.renameSync(temporary, this.file);
     } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
   }
-  async setPassword(password) {
+  async setPassword(password, username = this.username) {
+    username = normalizeUsername(username);
+    if (!username || Buffer.byteLength(username, "utf8") > 128 || /[\u0000-\u001f\u007f]/.test(username)) {
+      throw Object.assign(new Error("账号不能为空，且不得包含控制字符或超过 128 字节"), { code: "INVALID_PARAMS" });
+    }
     if (typeof password !== "string" || password.length < 8 || Buffer.byteLength(password, "utf8") > 256) {
       throw Object.assign(new Error("密码须为 8 个字符以上，且不超过 256 字节"), { code: "INVALID_PARAMS" });
     }
     const salt = crypto.randomBytes(16).toString("hex");
     const hash = (await derive(password, salt, 32)).toString("hex");
     const oldPassword = this.password, oldDevices = this.devices;
-    this.password = { salt, hash };
+    this.password = { salt, hash, username };
     this.devices = new Map();
     try { this.persist(); }
     catch (error) { this.password = oldPassword; this.devices = oldDevices; throw error; }
     this.revision++;
     return [...oldDevices.keys()];
   }
-  async verify(password) {
+  async verify(username, password) {
     const current = this.password;
     if (!current || typeof password !== "string" || Buffer.byteLength(password, "utf8") > 256) return false;
     const result = await derive(password, current.salt, 32);
-    return current === this.password && hashEquals(result, Buffer.from(current.hash, "hex"));
+    return current === this.password && normalizeUsername(username) === this.username && hashEquals(result, Buffer.from(current.hash, "hex"));
   }
   add({ name, userAgent, remoteAddress } = {}) {
     const normalized = normalizeDeviceName(name);
@@ -117,4 +124,4 @@ class DeviceStore {
     return previous.size;
   }
 }
-module.exports = { DeviceStore, MAX_DEVICES, MAX_DEVICE_NAME_LENGTH, SESSION_TTL_MS, normalizeDeviceName, newToken, tokenHash, hashEquals };
+module.exports = { DeviceStore, DEFAULT_USERNAME, MAX_DEVICES, MAX_DEVICE_NAME_LENGTH, SESSION_TTL_MS, normalizeDeviceName, newToken, tokenHash, hashEquals };

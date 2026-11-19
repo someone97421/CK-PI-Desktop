@@ -31,7 +31,7 @@ export function webRemoteId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export function trustedExtensionOrigin(value: string | null): string | null {
+function parseExtensionOrigin(value: string | null): string | null {
   return value && /^chrome-extension:\/\/[a-p]{32}$/.test(value) ? value : null;
 }
 
@@ -50,14 +50,15 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     throw new Error("无效的服务地址");
   }
   const origin = server.origin;
-  const parentOrigin = trustedExtensionOrigin(params.get("parentOrigin"));
-  const extensionSession = parentOrigin !== null && parent !== window &&
-    (server.hostname === "localhost" || server.hostname === "[::1]" || /^127\./.test(server.hostname));
-  const storageKey = origin === location.origin ? TOKEN_KEY : `${TOKEN_KEY}:${origin}`;
-  const readStored = (key: string) => {
-    try { return localStorage.getItem(key) || sessionStorage.getItem(key) || ""; } catch { return ""; }
-  };
-  let token = extensionSession ? "" : readStored(storageKey);
+  const parentOrigin = parent === window ? null : parseExtensionOrigin(params.get("parentOrigin"));
+  const storageKey = parentOrigin ? `${TOKEN_KEY}:sidepanel:${parentOrigin}:${origin}`
+    : origin === location.origin ? TOKEN_KEY : `${TOKEN_KEY}:${origin}`;
+  const tokenStorages = [() => localStorage, () => sessionStorage];
+  let token = "";
+  for (const storage of tokenStorages) {
+    try { token = storage().getItem(storageKey) || ""; } catch { /* 继续尝试其他存储。 */ }
+    if (token) break;
+  }
   const resourceProtocol = /^(pi-genui|plugin-renderer|plugin-asset|appearance-media):\/\//;
   const resourceUrl = (value: string): string => {
     if (!resourceProtocol.test(value)) return value;
@@ -86,8 +87,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   };
   const storeToken = (value: string) => {
     token = value;
-    if (extensionSession) return;
-    for (const storage of [() => localStorage, () => sessionStorage]) {
+    for (const storage of tokenStorages) {
       try { value ? storage().setItem(storageKey, value) : storage().removeItem(storageKey); } catch { /* 当前页仍可使用内存令牌。 */ }
     }
   };
@@ -157,15 +157,14 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   };
   let retry: ReturnType<typeof setTimeout> | undefined;
   let attempts = 0, lastMessage = 0, mounted = false, expired = false;
-  let requestingExtension = false;
   let resolveReady!: () => void;
   const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
   const expire = () => {
     if (expired) return;
-    expired = !extensionSession;
+    expired = true;
     storeToken("");
     status.authenticated = false; status.online = false;
-    if (!extensionSession) status.canCompose = false;
+    status.canCompose = false;
     connectionId = "";
     publishStatus(); publishBrowseStatus();
     buffered.delete(IPC.event.browserReferenceInsertRequested);
@@ -174,8 +173,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     socket = undefined;
     previous?.close();
     if (retry) clearTimeout(retry);
-    if (extensionSession) void connectExtension();
-    else location.reload();
+    location.reload();
   };
   const bridgeError = (code: string, message: string) => Object.assign(new Error(message), { code });
   const request = async (path: string, init: RequestInit, authenticated = true, binary = false): Promise<any> => {
@@ -386,12 +384,12 @@ export async function initializeWebPreloadBridge(): Promise<void> {
       return result.result;
     })().then((result) => reply({ ok: true, result }), (error: unknown) => reply({ ok: false, error: error instanceof Error ? error.message : String(error) }));
   });
-  const gate = createLanPasswordGate(async (password) => {
-    const response = await jsonRequest("/api/login", { password, name: parentOrigin ? "Chrome 侧边栏" : "Web Renderer" }, false);
-    if (!response.ok || typeof response.result?.token !== "string") throw new Error(response.error?.message || "登录响应无效");
+  const gate = createLanPasswordGate(async (username, password) => {
+    const response = await jsonRequest("/api/login", { username, password, name: parentOrigin ? "Chrome 侧边栏" : "Web Renderer" }, false);
+    if (!response.ok || typeof response.result?.token !== "string" || !response.result.token) throw new Error(response.error?.message || "登录响应无效");
     storeToken(response.result.token);
     connect();
-  }, { extension: extensionSession });
+  }, { sidepanel: parentOrigin !== null });
   const connect = () => {
     if (!token || expired) return;
     if (retry) { clearTimeout(retry); retry = undefined; }
@@ -444,34 +442,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     });
     ws.addEventListener("error", () => ws.close());
   };
-  const connectExtension = async () => {
-    if (requestingExtension || expired) return;
-    requestingExtension = true;
-    if (retry) { clearTimeout(retry); retry = undefined; }
-    gate.connecting();
-    try {
-      token = await new Promise<string>((resolve, reject) => {
-        const requestId = webRemoteId();
-        const cleanup = () => { clearTimeout(timeout); window.removeEventListener("message", receive); };
-        const receive = (event: MessageEvent) => {
-          if (event.source !== parent || event.origin !== parentOrigin ||
-              event.data?.type !== "pi-desktop:extension-session-response" || event.data.requestId !== requestId) return;
-          cleanup();
-          if (event.data.ok === true && typeof event.data.token === "string" && event.data.token) resolve(event.data.token);
-          else reject(new Error(typeof event.data.error === "string" ? event.data.error : "无法连接主程序"));
-        };
-        const timeout = setTimeout(() => { cleanup(); reject(new Error("主程序连接超时，正在重试…")); }, 15_000);
-        window.addEventListener("message", receive);
-        post({ type: "pi-desktop:extension-session-request", requestId });
-      });
-      connect();
-    } catch (error) {
-      gate.failed(error instanceof Error ? error.message : "无法连接主程序，正在重试…");
-      retry = setTimeout(() => { void connectExtension(); }, Math.min(15_000, 1000 * 2 ** Math.min(attempts++, 4)));
-    } finally { requestingExtension = false; }
-  };
   publishStatus(); publishBrowseStatus();
-  if (extensionSession) void connectExtension();
-  else if (token) connect();
+  if (token) connect();
   await ready;
 }

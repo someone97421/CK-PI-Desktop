@@ -25,18 +25,20 @@
     </section>
 
     <section class="panel" aria-labelledby="address-title">
-      <div class="section-heading"><h2 id="address-title">访问地址</h2><span class="section-tag">同一局域网</span></div>
+      <div class="section-heading"><h2 id="address-title">访问地址</h2><span class="section-tag">直连地址</span></div>
       <nav id="links" class="rows" aria-label="访问地址"><p class="empty hint">正在读取访问地址…</p></nav>
     </section>
 
     <section class="panel" aria-labelledby="password-title">
-      <div class="section-heading"><h2 id="password-title">访问密码</h2><output id="password-state" class="section-tag">读取中</output></div>
+      <div class="section-heading"><h2 id="password-title">访问账号和密码</h2><output id="password-state" class="section-tag">读取中</output></div>
       <form id="credentials" class="credentials-form">
+        <label class="sr-only" for="username">访问账号</label>
+        <input id="username" name="username" autocomplete="username" maxlength="128" required placeholder="访问账号" value="admin" disabled>
         <label class="sr-only" for="password">访问密码</label>
-        <div class="password-field"><input id="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required placeholder="至少 8 个字符" aria-describedby="password-hint" disabled><button id="show-password" class="reveal" type="button" aria-label="显示密码" aria-pressed="false" disabled>显示</button></div>
-        <button id="save-password" type="submit" title="保存密码后，已登录设备需要重新登录" disabled>保存密码</button>
+        <div class="password-field"><input id="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" required placeholder="访问密码，至少 8 个字符" aria-describedby="password-hint" disabled><button id="show-password" class="reveal" type="button" aria-label="显示密码" aria-pressed="false" disabled>显示</button></div>
+        <button id="save-password" type="submit" title="保存后，已登录设备需要重新登录" disabled>保存</button>
       </form>
-      <p id="password-hint" class="hint">更换密码后，已登录设备需重新登录。</p>
+      <p id="password-hint" class="hint">网页和浏览器侧栏共用这套账号和密码。保存后，已登录设备需重新登录。</p>
     </section>
 
     <section class="panel" aria-labelledby="devices-title">

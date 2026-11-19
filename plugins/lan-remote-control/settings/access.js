@@ -1,10 +1,12 @@
 const find = (id) => document.getElementById(id);
 const port = find("port");
+const username = find("username");
 const password = find("password");
 const feedback = find("feedback");
 const bridge = window.pluginBridge;
 let busy = false;
 let portEdited = false;
+let usernameEdited = false;
 let latestState = null;
 let activeRead = null;
 let disposed = false;
@@ -28,6 +30,7 @@ function syncControls() {
   const unavailable = !bridge || busy;
   for (const button of document.querySelectorAll("button")) button.disabled = unavailable;
   port.disabled = unavailable || !latestState;
+  username.disabled = unavailable || !latestState;
   password.disabled = unavailable;
   find("enable").disabled = unavailable || !latestState?.passwordConfigured;
   find("disable").disabled = unavailable || (!latestState?.running && !latestState?.autoStart?.enabled);
@@ -100,10 +103,11 @@ function render(state) {
   const serviceHint = find("service-hint");
   const stateError = state.settingsError || state.error?.message;
   serviceHint.dataset.tone = stateError ? "error" : "neutral";
-  serviceHint.textContent = stateError || (!state.passwordConfigured ? "请先设置访问密码，再开启服务。"
-    : state.restartRequired ? "网络已变化，请重新应用开启设置。"
-    : state.autoStart?.enabled ? (state.autoStart.persisted ? "已记住开启选择，应用重启后自动恢复。" : "开启选择尚未保存，请查看下方反馈。") : "开启后，可在同一局域网访问主机。");
+  serviceHint.textContent = stateError || (!state.passwordConfigured ? "请先设置访问账号和密码，再开启服务。"
+    : state.running ? "正在监听所有 IPv4 网卡。外网访问可使用 HTTPS 反向代理。"
+    : state.autoStart?.enabled ? "应用会自动恢复远程访问。" : "关闭时仅监听本机回环地址。");
   if (!portEdited) port.value = String(state.settings.port);
+  if (!usernameEdited) username.value = state.username || "admin";
   renderLists(state);
   syncControls();
   showFeedback();
@@ -151,6 +155,7 @@ async function operate(action = null, success = "") {
   }
 }
 port.addEventListener("input", () => { portEdited = true; });
+username.addEventListener("input", () => { usernameEdited = true; });
 find("show-password").addEventListener("click", () => {
   const visible = password.type === "password";
   password.type = visible ? "text" : "password";
@@ -169,13 +174,14 @@ find("disable").addEventListener("click", () => void operate(() => call("remote.
 find("credentials").addEventListener("submit", (event) => {
   event.preventDefault();
   void operate(async () => {
-    await call("remote.setPassword", { password: password.value });
+    await call("remote.setPassword", { username: username.value, password: password.value });
+    usernameEdited = false;
     password.value = "";
     password.type = "password";
     find("show-password").textContent = "显示";
     find("show-password").setAttribute("aria-label", "显示密码");
     find("show-password").setAttribute("aria-pressed", "false");
-  }, "密码已保存。");
+  }, "访问账号和密码已保存。");
 });
 find("refresh").addEventListener("click", () => void operate(null, "状态已刷新。"));
 
