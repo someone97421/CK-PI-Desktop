@@ -3,7 +3,7 @@
   "id": "local.lan-remote-control",
   "name": "局域网远控 V2",
   "description": "直接投射当前安装的原版 Renderer，内置 Browse 连接与 MCP。本机扩展即开即用；远控网页使用密码登录。",
-  "version": "2.0.20",
+  "version": "2.0.21",
   "main": "main.cjs",
   "enabledByDefault": true,
   "engines": {
