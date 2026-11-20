@@ -1,6 +1,5 @@
-import type { ComponentProps } from "react";
 import type { TFunction } from "i18next";
-import type { GlobalPermissionMode, Mode, SessionThinkingLevel } from "@pi-desktop/shared";
+import type { GlobalPermissionMode, Mode } from "@pi-desktop/shared";
 import { AnchoredMenu } from "../../../components/settings/AnchoredMenu";
 import { TooltipButton } from "../../../components/ui";
 import { IconCheck, IconSliders } from "../../../components/icons";
@@ -8,12 +7,11 @@ import { PERMISSION_MODE_I18N_KEYS } from "../../../lib/permission-mode-labels";
 import { modeDisplayLabel, userModePickerEntries } from "../../modes/mode-picker-model";
 import { useModesStore } from "../../modes/modes-store";
 import { ComposerUserModeItems } from "./ComposerModePicker";
-import { ThinkingLevelSlider } from "./ThinkingLevelSlider";
 import { MODE_CYCLE } from "./model";
 
 export function ComposerRemoteOptions({
-  t, open, onToggle, onClose, blocked, mode, permission, thinkingLevel,
-  thinkingLevels, commitThinkingLevel, onMode, onPermission,
+  t, open, onToggle, onClose, blocked, mode, permission,
+  onMode, onPermission,
 }: {
   t: TFunction;
   open: boolean;
@@ -22,9 +20,6 @@ export function ComposerRemoteOptions({
   blocked: boolean;
   mode: Mode;
   permission: GlobalPermissionMode;
-  thinkingLevel: SessionThinkingLevel;
-  thinkingLevels: readonly SessionThinkingLevel[];
-  commitThinkingLevel: ComponentProps<typeof ThinkingLevelSlider>["commit"];
   onMode: (mode: Mode) => Promise<void>;
   onPermission: (permission: GlobalPermissionMode) => Promise<void>;
 }) {
@@ -32,7 +27,6 @@ export function ComposerRemoteOptions({
   const label = t("settings.title");
   const modeLabel = t("settings.mode");
   const permissionLabel = t("chat.permissionMode");
-  const thinkingLabel = t("chat.reasoningLevel");
   const permissionHint = mode === "goal" ? t("goal.autoWarning")
     : mode === "plan" && permission === "auto" ? t("plan.autoWarning") : undefined;
 
@@ -43,7 +37,7 @@ export function ComposerRemoteOptions({
       menuClassName="composer-permission-menu composer-remote-options"
       label={label}
       role="dialog"
-      initialFocus={thinkingLevels.length > 1 ? "input" : "selected"}
+      initialFocus="selected"
       side="top"
       trigger={(ref) => (
         <TooltipButton
@@ -61,18 +55,6 @@ export function ComposerRemoteOptions({
         </TooltipButton>
       )}
     >
-      {thinkingLevels.length > 1 ? (
-        <div className="composer-remote-thinking" role="group" aria-label={thinkingLabel}>
-          <div className="composer-mode-menu-group" aria-hidden="true">{thinkingLabel}</div>
-          <ThinkingLevelSlider
-            key={thinkingLevels.join("|")}
-            levels={thinkingLevels}
-            level={thinkingLevel}
-            label={thinkingLabel}
-            commit={commitThinkingLevel}
-          />
-        </div>
-      ) : null}
       <div role="group" aria-label={modeLabel}>
         <div className="composer-mode-menu-group" aria-hidden="true">{modeLabel}</div>
         {MODE_CYCLE.map((candidate) => (

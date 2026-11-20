@@ -212,9 +212,6 @@ export function ComposerToolbar({
             blocked={controlsBlocked}
             mode={mode}
             permission={composerPermissionMode}
-            thinkingLevel={thinkingLevel}
-            thinkingLevels={modelMenu.thinkingMenuLevels}
-            commitThinkingLevel={modelMenu.commitThinkingLevel}
             onMode={async (next) => {
               setModeOpen(false);
               await selectMode(next);
@@ -264,7 +261,6 @@ export function ComposerToolbar({
           t={t}
           controller={modelMenu}
           modelLabel={modelLabel}
-          modelOnly={webRemote}
           thinkingLabel={thinkingLabel}
           fastMode={modelFastMode}
           thinkingLevel={thinkingLevel}
