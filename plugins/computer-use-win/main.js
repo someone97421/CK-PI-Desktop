@@ -1,14 +1,29 @@
 "use strict";
 
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { ComputerUseRuntime } = require("./runtime");
 const { parseAllowlist } = require("./policy");
 const { OCU_TOOLS, STOP_TOOL, makeExecutors } = require("./tools");
-const { configure, probe } = require("./cua");
+const { configure, probe, stopService } = require("./cua");
 
 const COMMAND_ID = "computer-use.open";
-const runtime = new ComputerUseRuntime();
 const ALL_TOOLS = [...OCU_TOOLS, STOP_TOOL];
+
+class WinRuntime extends ComputerUseRuntime {
+  _killChild() {
+    // 驱动会派生子进程，单独结束父进程会留下占用运行文件的孤儿进程。
+    const pid = this.child?.pid;
+    if (pid) spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore", timeout: 10_000 });
+    super._killChild();
+  }
+}
+
+const runtime = new WinRuntime();
+let alive = false;
+let timer = null;
+let checking = false;
+let failures = 0;
 
 async function loadSettings() {
   try {
@@ -37,6 +52,44 @@ async function panelState() {
     allowlist: String(settings.allowlist || ""),
     allowlistItems: parseAllowlist(settings.allowlist),
   };
+}
+
+async function start() {
+  if ((await loadSettings()).enabled === false) throw new Error("插件已禁用，请先在设置中启用。");
+  if (!alive) throw new Error("插件已卸载。");
+  await runtime.start();
+  failures = 0;
+}
+
+/** 宿主运行期间定期检查驱动连接；意外断开时自动恢复，手动停止和急停保持停止。 */
+function schedule() {
+  if (!alive || process.platform !== "win32") return;
+  timer = setTimeout(async () => {
+    if (checking || !alive) return;
+    checking = true;
+    try {
+      const settings = await loadSettings();
+      if (!alive) return;
+      if (settings.enabled === false) {
+        if (runtime.status !== "stopped") runtime.stop("插件已禁用");
+      } else if (!runtime.stoppedByUser && settings.autoStart !== false) {
+        if (runtime.status !== "running" || !runtime.child) await start();
+        else if (runtime.pending.size === 0) await runtime._rpcUnlocked("ping", {}, 5000);
+        failures = 0;
+      }
+    } catch (error) {
+      failures++;
+      if (!runtime.stoppedByUser) {
+        runtime._killChild();
+        runtime.status = "error";
+        runtime.lastError = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      checking = false;
+      schedule();
+    }
+  }, Math.min(30_000, failures ? 2000 * 2 ** Math.min(failures, 4) : 5000));
+  timer.unref?.();
 }
 
 async function onLoad() {
@@ -74,16 +127,22 @@ async function onLoad() {
     });
   }
 
+  alive = true;
   const settings = await loadSettings();
   if (settings.enabled !== false && settings.autoStart !== false && process.platform === "win32") {
-    runtime.start().catch((error) => {
+    start().catch((error) => {
       runtime.lastError = error instanceof Error ? error.message : String(error);
-    });
+    }).finally(() => schedule());
+  } else {
+    schedule();
   }
 }
 
 async function onUnload() {
+  alive = false;
+  clearTimeout(timer);
   runtime.stop("plugin unload");
+  if (typeof stopService === "function") await stopService();
   await pi.commands.unregister(COMMAND_ID);
   for (const tool of ALL_TOOLS) {
     await pi.agent.unregisterTool(tool.name);
@@ -104,9 +163,10 @@ async function onPanelInvoke(channel, payload) {
     if (settings.enabled === false) return fail(new Error("Plugin is disabled in settings."));
     if (channel === "cu.repair") {
       runtime.stop("正在修复运行环境");
+      await stopService();
       probe({ refresh: true });
     }
-    await runtime.start();
+    await start();
     return panelState();
   }
   if (channel === "cu.stop") {

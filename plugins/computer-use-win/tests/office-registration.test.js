@@ -23,7 +23,7 @@ function fixture(call) {
     agent: { registerTool: async (t) => registered.set(t.name, t), unregisterTool: async (name) => registered.delete(name) },
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../main.js"), "utf8"), {
-    module, pi, process, require: (name) => mocks[name] || require(name),
+    module, pi, process, setTimeout, clearTimeout, require: (name) => mocks[name] || require(name),
   });
   return { api: module.exports, registered, stopped };
 }

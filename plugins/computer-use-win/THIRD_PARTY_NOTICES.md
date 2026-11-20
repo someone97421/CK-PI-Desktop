@@ -1,6 +1,6 @@
 # 第三方声明
 
-本插件内置 **cua-driver 0.28.2 Windows x64** 官方发布包，通过 stdio MCP 使用。首次启动从包内离线解压所需运行文件。
+本插件内置 **cua-driver 0.53.0 Windows x64** 官方发布包，通过 stdio MCP 使用。首次启动从包内离线解压所需运行文件。
 
 - 源码及许可证来源：https://github.com/trycua/cua
 - 发布包、SHA-256 和运行文件校验值见 `vendor.json`。驱动采用 MIT 许可证；插件原作 TheFlareStar，采用 MPL-2.0。

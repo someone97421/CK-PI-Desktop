@@ -18,7 +18,7 @@ try {
   for (const name of ["runtime.js", "tools.js", "policy.js", "overlay.js", "powershell.js", "image-region.js", "value-reader.js", "state-value.js", "driver-compat.js", "LICENSE"]) {
     await cp(join(shared, name), join(staging, name));
   }
-  await cp(join(shared, "scripts"), join(staging, "scripts"), { recursive: true });
+  await cp(join(shared, "scripts"), join(staging, "scripts"), { recursive: true, filter: source => !source.endsWith(".mjs") });
   await mkdir(join(staging, "skills"));
   await cp(join(shared, "skills/office-workflows.md"), join(staging, "skills/office-workflows.md"));
   const manifest = JSON.parse(await readFile(join(shared, "manifest.json"), "utf8"));

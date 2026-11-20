@@ -1,18 +1,25 @@
 "use strict";
 
-const { spawnSync } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const vendor = require("./vendor.json");
 const ARCHIVE = path.join(__dirname, "vendor", "cua-windows-x64.zip");
+// 只结束可执行文件位于本插件 runtime 目录下的进程，不影响系统另装的 Cua Driver。
+const STOP_OWNED = "$root = [IO.Path]::GetFullPath($env:PI_CU_RUNTIME_ROOT).TrimEnd('\\') + '\\'; "
+  + "Get-CimInstance Win32_Process -Filter \"Name LIKE 'cua-%'\" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } | "
+  + "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
+let runtimeRoot = null;
 let runtimeDir = null;
 let driverHome = null;
 let cached = null;
 let verified = false;
 
 function configure(dataPath) {
-  runtimeDir = path.join(dataPath, "runtime", `windows-x64-${vendor.version}`);
+  runtimeRoot = path.join(dataPath, "runtime");
+  // 每个驱动版本解压到独立目录，升级时不覆盖可能仍被占用的旧文件。
+  runtimeDir = path.join(runtimeRoot, vendor.version);
   driverHome = path.join(dataPath, "driver-home");
   fs.mkdirSync(driverHome, { recursive: true });
   cached = null;
@@ -26,13 +33,38 @@ function intact() {
     try { return digest(path.join(runtimeDir, name)) === expected; } catch { return false; }
   });
 }
+function stopArgs() {
+  return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", STOP_OWNED];
+}
+function stopOwnedSync() {
+  if (!runtimeRoot || !fs.existsSync(runtimeRoot)) return;
+  spawnSync("powershell.exe", stopArgs(), { env: { ...childEnv(), PI_CU_RUNTIME_ROOT: runtimeRoot }, windowsHide: true, timeout: 20_000 });
+}
+function stopService() {
+  if (!runtimeRoot || process.platform !== "win32" || !fs.existsSync(runtimeRoot)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const child = spawn("powershell.exe", stopArgs(), { env: { ...childEnv(), PI_CU_RUNTIME_ROOT: runtimeRoot }, windowsHide: true, stdio: "ignore" });
+    const timer = setTimeout(() => { child.kill(); resolve(); }, 20_000);
+    child.on("error", () => { clearTimeout(timer); resolve(); });
+    child.on("close", () => { clearTimeout(timer); resolve(); });
+  });
+}
+function removeStaleVersions() {
+  for (const entry of fs.readdirSync(runtimeRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === vendor.version) continue;
+    try { fs.rmSync(path.join(runtimeRoot, entry.name), { recursive: true, force: true }); } catch { /* 下次升级再清理 */ }
+  }
+}
 function materialize() {
   if (intact()) return;
   if (digest(ARCHIVE) !== vendor.archiveSha256) throw new Error("包内运行文件损坏，请重新导入 Win 版插件包。");
+  stopOwnedSync();
   fs.mkdirSync(runtimeDir, { recursive: true });
-  const result = runCapture("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "scripts", "extract-runtime.ps1"), "-Archive", ARCHIVE, "-Destination", runtimeDir], 60_000);
+  const result = runCapture("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path.join(__dirname, "scripts", "extract-runtime.ps1"),
+    "-Archive", ARCHIVE, "-Destination", runtimeDir, "-Root", vendor.archiveRoot, "-Files", Object.keys(vendor.files).join(",")], 60_000);
   if (result.status !== 0 || result.error) throw new Error(result.error || result.stderr || "运行文件解压失败。");
   if (!intact()) throw new Error("运行文件校验失败，请重新导入 Win 版插件包。");
+  removeStaleVersions();
 }
 
 /** 普通状态读取使用缓存；启动和修复时才准备并验证运行环境。 */
@@ -79,4 +111,4 @@ function doctor() {
   const result = runCapture(info.mcpCommand, ["doctor"], 20_000);
   return { code: result.status ?? 1, text: `${result.stdout}\n${result.stderr}`.trim() || result.error || `doctor exited ${result.status}` };
 }
-module.exports = { configure, probe, doctor, childEnv };
+module.exports = { configure, probe, doctor, childEnv, stopService };

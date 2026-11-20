@@ -1,0 +1,5 @@
+{
+  "name": "computer-use-win",
+  "private": true,
+  "scripts": { "pack": "node scripts/build.mjs" }
+}
