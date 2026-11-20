@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
@@ -46,6 +47,7 @@ import {
   useTranscriptMenu,
 } from "./TranscriptMenu";
 import { getExtraMessageAttachments } from "./extra-attachments";
+import { directionAttr } from "../../../lib/text-direction";
 
 type InvocationPart = { text: string; skillId?: string; agentName?: string };
 
@@ -167,6 +169,7 @@ export const MessageRow = memo(function MessageRow({
       (part) => part.kind === "attachment" && part.attachment === attachment,
     ));
   }, [message.attachments, message.command, message.skillMentions, message.agentMentions, editableUserMessage, visibleUserText, workspaceRoot, userContentParts]);
+  const userTextDirection = directionAttr(editableUserMessage && message.command ? message.command : visibleUserText);
   const renderContentPart = (
     part: (typeof userContentParts)[number],
     index: number,
@@ -256,6 +259,35 @@ export const MessageRow = memo(function MessageRow({
       )}
     </span>
   ) : null;
+
+  const renderUserParagraphs = () => {
+    const paragraphs: ReactNode[] = [];
+    let paragraphStart = 0;
+    for (const paragraph of visibleUserText.match(/[^\n]*(?:\n+|$)/g) ?? []) {
+      if (!paragraph) continue;
+      const start = paragraphStart;
+      const end = start + paragraph.length;
+      paragraphStart = end;
+      paragraphs.push(
+        <span key={start} dir={directionAttr(paragraph)} style={{ display: "block", textAlign: "start" }}>
+          {userContentParts.map((part, index) => {
+            if (part.end <= start || part.start >= end) return null;
+            if (part.kind === "attachment") return renderContentPart(part, index, `paragraph-${start}`);
+            const sliceStart = Math.max(start, part.start);
+            const sliceEnd = Math.min(end, part.end);
+            return renderContentPart({
+              ...part,
+              start: sliceStart,
+              end: sliceEnd,
+              text: part.text.slice(sliceStart - part.start, sliceEnd - part.start),
+            }, index, `paragraph-${start}`);
+          })}
+          {end === visibleUserText.length ? attachmentChips : null}
+        </span>,
+      );
+    }
+    return paragraphs.length ? paragraphs : attachmentChips;
+  };
   const beginEdit = async () => {
     if (!editableUserMessage || isRunning || loadingEdit || transcriptReadOnly) return;
     const request = new AbortController();
@@ -390,7 +422,7 @@ export const MessageRow = memo(function MessageRow({
             ) : isUser ? (
               <>
                 {visibleUserText || message.command ? (
-                  <div className="message-user-text selectable">
+                  <div className="message-user-text selectable" dir={userTextDirection}>
                     {editableUserMessage && message.command ? (
                       <>
                         {message.skillMentions?.length || message.agentMentions?.length ? (
@@ -409,13 +441,9 @@ export const MessageRow = memo(function MessageRow({
                         {userContentParts
                           .filter((part) => part.kind === "attachment")
                           .map((part, index) => renderContentPart(part, index, "inline"))}
+                        {attachmentChips}
                       </>
-                    ) : (
-                      userContentParts.map((part, index) =>
-                        renderContentPart(part, index, "content"),
-                      )
-                    )}
-                    {attachmentChips}
+                    ) : renderUserParagraphs()}
                   </div>
                 ) : attachmentChips}
               </>

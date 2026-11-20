@@ -30,14 +30,17 @@ import { useRemoteProjects } from "../hooks/use-remote-projects";
 import { remoteProjectKey, type RemoteProjectEntry } from "../lib/remote-project-catalog";
 import { isRemoteSession } from "../lib/remote-session-safety";
 
-type ProjectMenuEntry = { key: string; name: string; title: string; localPath?: string; remoteProject?: RemoteProjectEntry };
+const TEMPORARY_PROJECT_KEY = "temporary-session";
+type ProjectMenuEntry = { key: string; name: string; title: string; localPath?: string; remoteProject?: RemoteProjectEntry; temporary?: boolean };
 
 export function HomeProjectSwitcher({
   name,
   path,
+  temporary = false,
 }: {
   name: string;
   path?: string | null;
+  temporary?: boolean;
 }) {
   const { t } = useTranslation();
   const openProjectPaths = useAppStore((state) => state.openProjectPaths);
@@ -74,8 +77,13 @@ export function HomeProjectSwitcher({
       }),
     [openProjectPaths, openProjects, workspace, projectMeta, projectSort],
   );
+  const remoteSession = isRemoteSession(activeSession);
+  const temporaryLabel = t("chat.temporaryScopeOption");
   const visible = useMemo(
     (): ProjectMenuEntry[] => [
+      ...(!remoteSession && temporaryLabel.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+        ? [{ key: TEMPORARY_PROJECT_KEY, name: temporaryLabel, title: temporaryLabel, temporary: true }]
+        : []),
       ...filterSwitcherProjects(projects, query).map((project) => ({ key: project.key, name: project.name,
         title: openProjects.find((item) => item.path === project.path)?.remote?.path
           ?? (workspace?.path === project.path ? workspace.remote?.path : undefined)
@@ -84,11 +92,12 @@ export function HomeProjectSwitcher({
         .map((project) => ({ key: `remote:${project.key}`, name: `${project.label} · ${project.hostLabel}`,
           title: `${project.label} · ${project.hostLabel}`, remoteProject: project })),
     ],
-    [projects, query, remoteCatalog.projects, openProjects, workspace, remoteProjectsVisible],
+    [projects, query, remoteCatalog.projects, openProjects, workspace, remoteProjectsVisible, remoteSession, temporaryLabel],
   );
-  const activeKey = isRemoteSession(activeSession) && activeSession?.remoteHostKey && activeSession.remoteProjectId
-    ? `remote:${remoteProjectKey(activeSession.remoteHostKey, activeSession.remoteProjectId)}`
-    : normalizeProjectPath(activeProjectPath ?? path);
+  const activeKey = temporary ? TEMPORARY_PROJECT_KEY
+    : remoteSession && activeSession?.remoteHostKey && activeSession.remoteProjectId
+      ? `remote:${remoteProjectKey(activeSession.remoteHostKey, activeSession.remoteProjectId)}`
+      : normalizeProjectPath(activeProjectPath ?? path);
   const cloneTarget = parseGitCloneUrl(cloneUrl, {
     allowInsecureHttp: allowInsecureUserEndpoints(settings),
   });
@@ -110,9 +119,9 @@ export function HomeProjectSwitcher({
   );
 
   const selectProject = useCallback(
-    async (nextPath: string) => {
+    async (nextPath: string | null) => {
       if (busy || busyRef.current) return;
-      const nextKey = normalizeProjectPath(nextPath);
+      const nextKey = nextPath === null ? TEMPORARY_PROJECT_KEY : normalizeProjectPath(nextPath);
       close();
       if (!nextKey || nextKey === activeKey) return;
       busyRef.current = true;
@@ -130,6 +139,7 @@ export function HomeProjectSwitcher({
   );
 
   const selectMenuProject = async (project: ProjectMenuEntry) => {
+    if (project.temporary) return selectProject(null);
     if (project.localPath) return selectProject(project.localPath);
     if (!remoteProjectsVisible || busy || busyRef.current || !project.remoteProject?.connected) return;
     busyRef.current = true; setBusy(true);

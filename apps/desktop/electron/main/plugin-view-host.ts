@@ -6,6 +6,7 @@ import {
   type WebContents,
 } from "electron";
 import { join } from "node:path";
+import type { PluginViewSelection } from "@pi-desktop/plugin-sdk";
 import { getModuleDirectory } from "./module-path";
 import { parseAllowedExternalUrl } from "./safe-open-external";
 import { PanelSenders, pageGoneWithin } from "./plugin-panel-senders";
@@ -83,6 +84,7 @@ export type PluginViewOpenRequest = {
    */
   location?: string;
   workspacePath?: string | null;
+  selection?: PluginViewSelection & { isCurrentSession: () => boolean };
 };
 
 export type { PluginViewBounds };
@@ -105,6 +107,7 @@ type LiveView = {
   location: string | null;
   /** False until the first document finished loading. */
   loaded: boolean;
+  selection?: PluginViewOpenRequest["selection"];
 };
 
 export function pluginViewKey(pluginId: string, viewId: string): string {
@@ -260,6 +263,10 @@ export class PluginViewHost {
     if (existing) {
       existing.usedAt = ++this.clock;
       this.deliverLocation(existing, location);
+      if (request.selection) {
+        existing.selection = request.selection;
+        this.deliverSelection(existing);
+      }
       return;
     }
     const view = this.createView(request);
@@ -273,6 +280,7 @@ export class PluginViewHost {
       usedAt: ++this.clock,
       location,
       loaded: false,
+      selection: request.selection,
     };
     this.views.set(key, entry);
     // A docked view can call the bridge from its first script, so its identity is
@@ -287,6 +295,7 @@ export class PluginViewHost {
     });
     view.webContents.once("did-finish-load", () => {
       entry.loaded = true;
+      this.deliverSelection(entry);
     });
     this.load(entry);
     this.evictBeyondLimit();
@@ -315,6 +324,16 @@ export class PluginViewHost {
     wc.send(`pi-plugin-panel-event:${PLUGIN_VIEW_LOCATION_EVENT}`, {
       path: delivery.location,
     });
+  }
+
+  private deliverSelection(entry: LiveView): void {
+    if (!entry.loaded || !entry.selection) return;
+    const { sessionId, text, isCurrentSession } = entry.selection;
+    entry.selection = undefined;
+    const contents = entry.view.webContents;
+    if (!contents.isDestroyed() && isCurrentSession()) {
+      contents.send("pi-plugin-panel-event:view:selection", { sessionId, text });
+    }
   }
 
   private load(entry: LiveView): void {

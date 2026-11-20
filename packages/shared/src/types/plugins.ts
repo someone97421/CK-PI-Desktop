@@ -130,6 +130,7 @@ export type PluginViewMeta = {
   pluginName: string;
   icon?: string;
   order: number;
+  acceptsTranscriptSelection?: boolean;
 };
 
 /** 与 SDK 的声明式内嵌视图协议对应，不传递可执行代码。 */

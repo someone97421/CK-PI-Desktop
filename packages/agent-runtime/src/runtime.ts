@@ -163,6 +163,8 @@ import {
 } from "./assistant-provider-replay.js";
 import {
   assistantContent,
+  sameCommentaryBoundaries,
+  type CommentaryTranscript,
   isRecord,
   nowIso,
   timestampMs,
@@ -185,6 +187,7 @@ import {
   estimateTokens,
 } from "./pi-runtime-estimates.js";
 import { convertToLlm } from "./pi-runtime-messages.js";
+import { withPluginModelContext, type ReadPluginModelContext } from "./plugin-model-context.js";
 import type {
   CompactionEntry,
   CompactionPreparation,
@@ -222,7 +225,13 @@ import {
 import { normalizeLockPath, PathMutex } from "./path-lock.js";
 import { readMediaToolResult, type ToolInputCapabilities } from "./read-media.js";
 import { mediaStore } from "./media-store.js";
-import { clampOutputToContext, effectiveModelContextWindow, estimateOutputCapInputTokens, requestTranscript } from "./output-cap.js";
+import {
+  clampOutputToContext,
+  effectiveModelContextWindow,
+  estimateOutputCapInputTokens,
+  requestTranscript,
+  supportsMidConversationSystemMessages,
+} from "./output-cap.js";
 import {
   contextBudgetFor,
   automaticCompactionThresholdFor,
@@ -1008,6 +1017,7 @@ export type AgentRuntimeOptions = {
   modeDefinition?: ModeDefinition;
   /** Durable host turn ID for the current prompt, used by plan identity. */
   turnId?: string;
+  readPluginModelContext?: ReadPluginModelContext;
   provider: RuntimeProviderConfig;
   thinkingLevel: SessionThinkingLevel;
   /** Persisted opt-in for retrying transient provider failures until success. */
@@ -1147,9 +1157,10 @@ function hasProgressForwardIntent(text: string): boolean {
 export function isProgressOnlyAssistantTurn(message: unknown): boolean {
   if (!isRecord(message) || message.role !== "assistant") return false;
   if (messageRequestsTools(message)) return false;
-  const content = isRecord(message) ? message.content : undefined;
-  const text = assistantContent(content).text.trim();
-  if (!text || !hasProgressForwardIntent(text)) return false;
+  const content = assistantContent(message.content);
+  const text = content.text.trim();
+  if (!text && content.transcript?.text.trim()) return true;
+  if (content.hasFinalAnswer || !text || !hasProgressForwardIntent(text)) return false;
   if (!PROGRESS_TERMINAL_LEAD.test(text)) return true;
 
   // A report can mention a completed step and still announce the next one.
@@ -1787,6 +1798,7 @@ export class DesktopAgentRuntime {
   private planningState: PlanningState;
   private pendingPlanId?: string;
   private currentAssistant?: UiMessage;
+  private liveCommentary?: CommentaryTranscript;
   private pluginTools: PluginToolDef[];
   private pluginSkills: PluginSkillDef[];
   private trustedExtensionSpecs: TrustedExtensionSpec[];
@@ -1795,6 +1807,7 @@ export class DesktopAgentRuntime {
   private extensionTurnIndex = 0;
   /** Headers an extension edited in `before_provider_headers` for the current turn. */
   private extensionProviderHeaders?: Record<string, string>;
+  private extensionProviderRequestId = 0;
   /** Subagent definitions offered through the `Task` tool (ADR 0062). */
   private subagents: SubagentDefinition[];
   private subagentProviders: Record<string, RuntimeProviderConfig>;
@@ -2037,6 +2050,7 @@ export class DesktopAgentRuntime {
   /** Codex's `claim_*` flags: one of each reminder per context window. */
   private contextReminderClaimed = false;
   private contextFallbackReminderClaimed = false;
+  private pendingContextBudgetReminder?: AgentMessage;
   private activeToolProgressCleanups = new Set<(flush: boolean) => void>();
   /**
    * Abort handlers for the tool calls currently awaiting `tools.execute`.
@@ -2292,37 +2306,54 @@ Delegation rules:
           maxTokens: clampOutputToContext(m, requestContext, hookedOptions.maxTokens),
         };
         const usageTurnId = this.turnId;
+        const openAttempt = (retryOptions: SimpleStreamOptions, input = requestContext) => {
+          // Each network attempt owns its idle clock and abort signal.
+          const stallAbort = new AbortController();
+          const timedOptions = {
+            ...retryOptions,
+            signal: AbortSignal.any([
+              ...(retryOptions.signal ? [retryOptions.signal] : []),
+              stallAbort.signal,
+            ]),
+            ...(input !== requestContext && retryOptions.maxTokens !== undefined
+              ? { maxTokens: clampOutputToContext(m, input, retryOptions.maxTokens) } : {}),
+          };
+          const stream = accountModelStream(m, () =>
+            this.thinkingLevel === "omit"
+              ? this.models.stream(omitThinkingModel(m), input, timedOptions)
+              : this.models.streamSimple(m, input, timedOptions), {
+              providerId: this.provider.id,
+              nativeCost: this.provider.modelConfig?.nativeCost,
+              onUsage: (usage) => {
+                // 只统计主代理的请求用量，压缩等内部请求使用独立回调。
+                if (usageTurnId !== undefined && usageTurnId === this.turnId) {
+                  this.runStatusTurnUsage = addUsage(this.runStatusTurnUsage, usage);
+                }
+                this.emit({ type: "usage", usage }, usageTurnId);
+              },
+            });
+          return withStreamIdleTimeout(stream, m, streamIdleTimeoutMs(), () => stallAbort.abort());
+        };
+        const readPluginContext = opts.readPluginModelContext;
         const retryStream = createProviderRetryStream(
           m,
           requestContext,
           attemptOptions,
-          (retryOptions) => {
-            // Each network attempt owns its idle clock and abort signal.
-            // Deliberate backoff must not look like a stalled provider stream.
-            const stallAbort = new AbortController();
-            const timedOptions = {
-              ...retryOptions,
-              signal: AbortSignal.any([
-                ...(retryOptions.signal ? [retryOptions.signal] : []),
-                stallAbort.signal,
-              ]),
-            };
-            const stream = accountModelStream(m, () =>
-              this.thinkingLevel === "omit"
-                ? this.models.stream(omitThinkingModel(m), requestContext, timedOptions)
-                : this.models.streamSimple(m, requestContext, timedOptions), {
-                providerId: this.provider.id,
-                nativeCost: this.provider.modelConfig?.nativeCost,
-                onUsage: (usage) => {
-                  // 只累计主代理模型请求的用量；压缩等内部请求走另一条 onUsage，不进这里。
-                  if (usageTurnId !== undefined && usageTurnId === this.turnId) {
-                    this.runStatusTurnUsage = addUsage(this.runStatusTurnUsage, usage);
-                  }
-                  this.emit({ type: "usage", usage }, usageTurnId);
-                },
-              });
-            return withStreamIdleTimeout(stream, m, streamIdleTimeoutMs(), () => stallAbort.abort());
-          },
+          readPluginContext && usageTurnId && this.activeTurnSettlements.has(usageTurnId)
+            ? async (retryOptions) => {
+                const signal = retryOptions.signal;
+                const contributions = await readPluginContext({
+                  sessionId: this.sessionId, turnId: usageTurnId,
+                  modelKey: `${this.provider.id}/${m.id}`,
+                }, signal).catch(() => undefined);
+                signal?.throwIfAborted();
+                const messages = this.turnId === usageTurnId && !this.runCancelled
+                  ? withPluginModelContext(requestContext.messages, contributions)
+                  : requestContext.messages;
+                return openAttempt(retryOptions, messages === requestContext.messages
+                  ? requestContext : { ...requestContext, messages });
+              }
+            : openAttempt,
           {
             claim: (error, phase) => this.claimProviderRetry(error, phase),
             headers: () => this.providerRetryHeaders,
@@ -2349,13 +2380,16 @@ Delegation rules:
       // the last view before the wire: the request is the only place it can be
       // guaranteed for both a rebuilt context and one that grew in this process.
       convertToLlm: async (messages) => {
+        const reminder = this.pendingContextBudgetReminder;
+        this.pendingContextBudgetReminder = undefined;
         await this.systemJournal.persist(messages, this.fullEntries, async (message) => {
           await this.host.call("session.appendMessage", {
             sessionId: this.sessionId, turnId: this.turnId, message,
           });
         });
         return alignRetainedReasoningIdentity(
-          convertToLlm(this.dropDuplicateToolCalls(messages)), this.reasoningReplayIdentity(),
+          convertToLlm(this.dropDuplicateToolCalls(reminder ? [...messages, reminder] : messages)),
+          this.reasoningReplayIdentity(),
         );
       },
       prepareRequest: async ({ context }) => {
@@ -3106,6 +3140,7 @@ Delegation rules:
           tokens: budget.tokens,
           contextWindow: budget.hardLimit,
           percent: budget.hardLimit > 0 ? Math.round((budget.tokens / budget.hardLimit) * 100) : null,
+          autoCompactAt: runtime.compactionEnabled ? automaticCompactionThresholdFor(budget) : null,
         };
       },
       compact: () => {
@@ -7284,6 +7319,17 @@ Delegation rules:
 
   private emit(event: AgentEventEnvelope["event"], turnId?: string, ts = Date.now()) {
     if (event.type === "agent_end") this.finishRunClock(ts);
+    // Business state is answer-only. Only the transcript transports the original
+    // signed text, so an old or restarted host can replay the same provider input.
+    if (this.liveCommentary &&
+        (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") &&
+        event.message.id === this.currentAssistant?.id) {
+      const replay = event.type === "message_end" ? event.message.providerReplay : this.liveCommentary.replay;
+      // A failed or oversized terminal replay cannot identify raw progress on reload.
+      if (replay?.blocks.length) {
+        event = { ...event, message: { ...event.message, content: this.liveCommentary.text, providerReplay: replay } };
+      }
+    }
     this.onEvent({
       sessionId: this.sessionId,
       turnId: turnId ?? this.turnId,
@@ -7472,6 +7518,7 @@ Delegation rules:
    * following turn ends invisibly even though nothing went wrong in it.
    */
   private resetRunRecoveryState(): void {
+    this.pendingContextBudgetReminder = undefined;
     this.pendingOverflow = false;
     this.overflowRecoveryAttempted = false;
     this.overflowRecoveryInProgress = false;
@@ -7933,7 +7980,8 @@ Delegation rules:
     const modelRequested = this.pendingModelCompaction;
     this.pendingModelCompaction = false;
     if (!automaticThresholdReached && !modelRequested) {
-      return { context: this.withContextBudgetReminder(context, budget) };
+      this.pendingContextBudgetReminder = this.contextBudgetReminderMessage(budget);
+      return { context };
     }
 
     const retentionMode: CompactionRetentionMode =
@@ -7970,21 +8018,16 @@ Delegation rules:
     return { context };
   }
 
-  /** 预算提醒独立分区在压缩后失效，不改变基础指令。 */
-  private withContextBudgetReminder(
-    context: AgentContext,
-    budget: ContextBudget,
-  ): AgentContext {
+  /** 只在模型请求转化时注入，避免进入协调状态和系统转录日志。 */
+  private contextBudgetReminderMessage(budget: ContextBudget): AgentMessage | undefined {
     const remaining = Math.max(0, budget.hardLimit - budget.tokens);
     const reminder = this.claimContextBudgetReminder(remaining, budget);
-    if (!reminder) return context;
-    return {
-      ...context,
-      messages: [
-        ...context.messages,
-        { role: "system", content: "", sections: { [CONTEXT_BUDGET_SECTION]: reminder }, timestamp: Date.now() },
-      ],
-    };
+    if (!reminder) return undefined;
+    // Only adapters that keep mid-conversation system messages can use the
+    // section form without changing the cached prefix.
+    return supportsMidConversationSystemMessages(this.model)
+      ? { role: "system", content: "", sections: { [CONTEXT_BUDGET_SECTION]: reminder }, timestamp: Date.now() }
+      : { role: "user", content: [{ type: "text", text: reminder }], timestamp: Date.now() };
   }
 
   private claimContextBudgetReminder(
@@ -8508,6 +8551,7 @@ Delegation rules:
     // resetting its `claim_*` flags when the context window turns over.
     this.contextReminderClaimed = false;
     this.contextFallbackReminderClaimed = false;
+    this.pendingContextBudgetReminder = undefined;
     this.agent.state.messages = this.liveSessionContext().messages;
     for (const message of this.agent.state.messages) {
       if (message.role === "system") this.systemJournal.remember(message, checkpoint.id);
@@ -9041,7 +9085,7 @@ Delegation rules:
         if (event.message.role === "assistant") {
           this.clearAgentActivity();
           this.streamStartedAt = Date.now();
-          const content = assistantContent((event.message as any).content);
+          const content = assistantContent(event.message.content);
           const retryingAssistant =
             this.providerRetryInProgress ||
             this.overflowRecoveryInProgress ||
@@ -9064,6 +9108,7 @@ Delegation rules:
               : this.progressTurnRerunInProgress || this.overflowRecoveryInProgress
                 ? retryingAssistant?.content ?? ""
                 : content.text;
+          this.liveCommentary = initialText === content.text ? content.transcript : undefined;
           this.currentAssistant = {
             id: retryingAssistant?.id ?? randomUUID(),
             role: "assistant",
@@ -9108,7 +9153,9 @@ Delegation rules:
       case "message_update": {
         if (this.currentAssistant && event.message.role === "assistant") {
           this.applyHostedSearch(event.message);
-          const content = assistantContent((event.message as any).content);
+          const content = assistantContent(event.message.content);
+          const previousCommentary = this.liveCommentary;
+          if (content.hasText) this.liveCommentary = content.transcript;
           const previousText = this.currentAssistant.content;
           const previousThinking = this.currentAssistant.thinking ?? "";
           const nextText = content.hasText ? content.text : previousText;
@@ -9116,7 +9163,7 @@ Delegation rules:
             ? content.thinking
             : previousThinking;
           const textDelta = content.hasText
-            ? cumulativeDelta(previousText, content.text)
+            ? cumulativeDelta(previousCommentary?.text ?? previousText, this.liveCommentary?.text ?? content.text)
             : { delta: "", reset: false };
           const thinkingDelta = content.hasThinking
             ? cumulativeDelta(previousThinking, content.thinking)
@@ -9131,7 +9178,9 @@ Delegation rules:
                 : {}),
             status: "streaming",
           };
-          if (
+          if (!sameCommentaryBoundaries(previousCommentary, this.liveCommentary) || (this.liveCommentary && textDelta.reset)) {
+            this.emit({ type: "message_update", message: this.currentAssistant });
+          } else if (
             textDelta.delta ||
             thinkingDelta.delta ||
             textDelta.reset ||
@@ -9168,6 +9217,7 @@ Delegation rules:
               } });
             }
             this.currentAssistant = undefined;
+            this.liveCommentary = undefined;
             if (steering.toolNames.length) {
               this.activateDeferredTools(steering.toolNames);
               this.setAgentTools(this.activeTools());
@@ -9189,7 +9239,9 @@ Delegation rules:
         }
         if (this.currentAssistant && event.message.role === "assistant") {
           const assistantId = this.currentAssistant.id;
-          const content = assistantContent((event.message as any).content);
+          const content = assistantContent(event.message.content);
+          const visibleTranscript = content.hasText ? content.transcript?.text : this.liveCommentary?.text;
+          this.liveCommentary = content.transcript;
           // pi-agent-core encodes stream failures in the final message
           // (stopReason "error"/"aborted" + errorMessage) and resolves the
           // prompt normally, so this is where provider/model errors surface.
@@ -9297,6 +9349,7 @@ Delegation rules:
             !failed &&
             !aborted &&
             responseText.trim().length === 0 &&
+            !content.transcript?.text.trim() &&
             !messageRequestsTools(event.message);
           // A completion notice needs no acknowledgement, so its own reply may
           // stay silent (D446). The exception covers exactly that reply: the
@@ -9454,7 +9507,7 @@ Delegation rules:
           const responseOutputTokens =
             aborted && (!usage || usage.outputTokens <= 0)
               ? estimateVisibleResponseOutputTokens({
-                  content: nextText,
+                  content: visibleTranscript ?? nextText,
                   thinking: nextThinking,
                 })
               : undefined;
@@ -9499,13 +9552,14 @@ Delegation rules:
             providerReplay: failed || exemptSilence
               ? undefined
               : providerReplayForBubble(
-                  captureAssistantProviderReplay((event.message as any).content),
+                  captureAssistantProviderReplay(event.message.content),
                   nextText === content.text && nextThinking === content.thinking,
                 ),
           };
           if (!this.currentAssistant.providerReplay) delete this.currentAssistant.providerReplay;
           if (!this.currentAssistant.responseModelId) delete this.currentAssistant.responseModelId;
           this.emit({ type: "message_end", message: this.currentAssistant });
+          this.liveCommentary = undefined;
           this.activeProviderRetryAttempt = 0;
           this.streamStartedAt = undefined;
           this.currentAssistant = undefined;
@@ -9721,7 +9775,10 @@ Delegation rules:
         (responseDurationMs ?? 0);
       const responseOutputTokens =
         status === "aborted"
-          ? estimateVisibleResponseOutputTokens(this.currentAssistant)
+          ? estimateVisibleResponseOutputTokens({
+              content: this.liveCommentary?.text ?? this.currentAssistant.content,
+              thinking: this.currentAssistant.thinking,
+            })
           : undefined;
       this.currentAssistant = {
         ...this.currentAssistant,
@@ -9741,6 +9798,7 @@ Delegation rules:
     // burns its retries before giving up shows here as a large providerWaitMs.
     this.streamStartedAt = undefined;
     this.currentAssistant = undefined;
+    this.liveCommentary = undefined;
   }
 
   /** Keep a pre-flight user message in context so a reused runtime and the
@@ -9815,6 +9873,7 @@ Delegation rules:
     this.turnEpoch += 1;
     this.abortDelegationsFromPreviousTurns();
     this.currentAssistant = undefined;
+    this.liveCommentary = undefined;
     this.requestStartedAt = Date.now();
     this.resetRunStatusReminder();
     this.modeState.clearTurn();
@@ -10073,6 +10132,8 @@ Delegation rules:
     const runner = this.extensionRunner;
     if (!runner) return options;
     const next: SimpleStreamOptions = { ...options };
+    // Notification handlers can finish out of order; this local id never leaves the process.
+    const contextRequestId = ++this.extensionProviderRequestId;
     if (this.extensionProviderHeaders) {
       next.headers = mergeProviderHeaders(options.headers, this.extensionProviderHeaders);
     }
@@ -10080,7 +10141,7 @@ Delegation rules:
       next.onPayload = async (payload, payloadModel) => {
         const base = await options.onPayload?.(payload, payloadModel);
         const current = base ?? payload;
-        const replaced = await runner.emitBeforeProviderRequest(current);
+        const replaced = await runner.emitBeforeProviderRequest(current, { contextRequestId });
         return replaced ?? base;
       };
     }
@@ -10089,6 +10150,7 @@ Delegation rules:
         await options.onResponse?.(response, responseModel);
         void runner.emit("after_provider_response", {
           type: "after_provider_response",
+          contextRequestId,
           response,
           model: model as unknown,
         });

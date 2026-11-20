@@ -21,6 +21,8 @@ import type { ComposerCommandService } from "./composer-ipc";
 import type { IpcRegistrar } from "./types";
 import type { SubagentSnapshotStore } from "../runtime/subagent-snapshot-store";
 import type { SubagentGuideRequest } from "@pi-desktop/shared";
+import { isAutomationRequest } from "../runtime/user-message-provenance";
+import type { PluginSessionUserMessagePersisted } from "@pi-desktop/plugin-sdk";
 
 import { getSessionCompactionModel, setSessionCompactionModel, type SessionCompactionModel } from "../runtime/session-compaction-models";
 export type AgentIpcDependencies = {
@@ -39,6 +41,8 @@ export type AgentIpcDependencies = {
   activeTurns: Map<string, string>;
   completionNoticeTurns: Set<string>;
   recordTurnStart: (sessionId: string, turnId: string) => void;
+  observePersistedUserMessage?: (input: PluginSessionUserMessagePersisted) => void;
+  scheduledRunsBySession?: ReadonlyMap<string, string>;
   /** Whether the named turn can still start or steer host work. */
   isTurnDispatchable: (sessionId: string, turnId: string | null | undefined) => boolean;
   activeTurnUsages: Map<string, MessageUsage>;
@@ -107,6 +111,8 @@ export function registerAgentIpc({
   activeTurns,
   completionNoticeTurns,
   recordTurnStart,
+  observePersistedUserMessage,
+  scheduledRunsBySession,
   isTurnDispatchable,
   activeTurnUsages,
   approvedExecutionIdsBySession,
@@ -645,12 +651,14 @@ export function registerAgentIpc({
         : {}),
     };
     // A Host-started mode turn is not user input and is never recorded as one.
+    let insertedUserMessageId: string | null | undefined;
     if (!modeOrigin) try {
-      await host.call("session.appendMessage", {
+      const persisted = await host.call<{ insertedUserMessageId?: string | null }>("session.appendMessage", {
         sessionId: req.sessionId,
         message: userMessage,
         turnId: durableTurnId,
       });
+      insertedUserMessageId = persisted?.insertedUserMessageId;
     } catch (error) {
       if (preparedMode?.modeTurn) await modeRuns.abandonTurn(req.sessionId, durableTurnId).catch(() => undefined);
       await finishTurn(
@@ -664,6 +672,16 @@ export function registerAgentIpc({
       // A turn whose user message could not be appended must not be started:
       // restarting it here would run a prompt the transcript does not contain.
       throw error;
+    }
+    if (insertedUserMessageId && !sessionMessage && !truncateFromMessageId && truncateBefore === undefined &&
+        !scheduledRunsBySession?.has(req.sessionId) && !isAutomationRequest(req)) {
+      try {
+        observePersistedUserMessage?.({ sessionId: req.sessionId, turnId: durableTurnId, messageId: insertedUserMessageId });
+      } catch (error) {
+        logger.app("plugin", "warn", "persisted user message observation failed", {
+          sessionId: req.sessionId, data: String(error),
+        });
+      }
     }
     if (!modeOrigin) {
       emitAgentEvent({

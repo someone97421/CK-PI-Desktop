@@ -9,6 +9,7 @@ import { isStandaloneRunActivity } from "./assistant-turns";
 import { activityItemHasIssue } from "./activity-summary";
 import type { TranscriptDisplayMode } from "./transcript-display-mode";
 import { isDelegationStartTool } from "./tool-display";
+import { getAssistantTurnSummary } from "./transcript-summary";
 
 type ThinkingDisplayMode = NonNullable<AppSettings["thinkingDisplayMode"]>;
 
@@ -29,7 +30,7 @@ export function isTurnThinking(parts: readonly AssistantTurnPart[], active: bool
 export function processContainsMessage(parts: readonly AssistantTurnPart[], messageId: string): boolean {
   return parts.some((part) => {
     if (part.kind === "compaction") return false;
-    if (part.kind === "message") return part.message.id === messageId;
+    if (part.kind === "message") return part.message.id === messageId || part.sourceMessageId === messageId;
     return part.items.some((item) => item.message.id === messageId || (
       item.kind === "tool" && Boolean(item.delegate?.items.some((row) => row.message.id === messageId))
     ));
@@ -196,37 +197,9 @@ export function liveHistoryTurnId(
   return undefined;
 }
 
-/** 工具前的文字属于过程；完成任务保留连续最终正文，思考不截断正文。 */
+/** Share the renderer's answer/process partition, including signed progress. */
 export function projectTurnProcess(entry: AssistantTurnEntry) {
-  if (entry.task) {
-    const finalIndex = entry.task.status === "completed" && entry.finalMessageId
-      ? entry.parts.findIndex((part) => part.kind === "message"
-        && part.message.id === entry.finalMessageId)
-      : -1;
-    const responses: Extract<AssistantTurnPart, { kind: "message" }>[] = [];
-    for (let index = finalIndex; index >= 0; index -= 1) {
-      const part = entry.parts[index];
-      if (part.kind === "activity") {
-        if (part.items.some((item) => item.kind === "tool")) break;
-      } else if (part.kind === "message") {
-        if (part.message.role !== "assistant" || part.message.status !== "complete"
-          || part.message.error) break;
-        if (part.message.content.trim()) responses.push(part);
-      }
-    }
-    responses.reverse();
-    const responseParts = new Set<AssistantTurnPart>(responses);
-    return { process: entry.parts.filter((part) => !responseParts.has(part)), responses };
-  }
-  const last = entry.parts.at(-1);
-  const answer = last?.kind === "message" && last.message.role === "assistant" && last.message.content.trim()
-    ? last : undefined;
-  const process: AssistantTurnPart[] = [];
-  const responses: Extract<AssistantTurnPart, { kind: "message" }>[] = [];
-  for (const part of entry.parts) {
-    if (part.kind === "message" && (part === answer || part.message.error)) responses.push(part);
-    else process.push(part);
-  }
+  const { process, responses } = getAssistantTurnSummary(entry);
   return { process, responses };
 }
 

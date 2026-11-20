@@ -376,7 +376,17 @@ export const AssistantTurn = memo(function AssistantTurn({
     [process, displayMode, isPlainHistory],
   );
   const turnProcessActive = !settledTask && isActive;
-  const activePart = turnProcessActive ? entry.parts.at(-1) : undefined;
+  const sourceTail = turnProcessActive ? entry.parts.at(-1) : undefined;
+  let activePart = sourceTail;
+  if (sourceTail?.kind === "message") {
+    const processTail = process.at(-1);
+    const responseTail = responses.at(-1);
+    if (responseTail?.message.id === sourceTail.message.id) activePart = responseTail;
+    else if (processTail?.kind === "message" &&
+      (processTail.message.id === sourceTail.message.id || processTail.sourceMessageId === sourceTail.message.id)) {
+      activePart = processTail;
+    }
+  }
   const processOwnsActiveTail = activePart !== undefined && process.includes(activePart);
   const visibleSteps = useMemo(
     () => cachedVisibleProcessSteps(process, !showThinking, turnProcessActive && processOwnsActiveTail),
@@ -427,7 +437,7 @@ export const AssistantTurn = memo(function AssistantTurn({
             <AssistantTurnParts parts={responses} {...partContext} />
           </>
         ) : (
-          <AssistantTurnParts parts={entry.parts} {...partContext} />
+          <AssistantTurnParts parts={process} {...partContext} />
         )}
         {generatedImages}
         {/* Mounted with the reply slots, so a streaming turn never grows it;

@@ -79,6 +79,7 @@ import { remarkNormalizeWrappedMarkdownLinkDestinations } from "../lib/markdown-
 import { remarkAssistantCitations } from "../lib/assistant-citations";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
 import { useSlotSessionId } from "../plugins/renderer-slots/use-slots";
+import { directionAttr } from "../lib/text-direction";
 import {
   useChatFileMenuItems,
   type ChatFileMenuTarget,
@@ -876,6 +877,8 @@ const markdownComponents: Components = {
   audio: AudioBlock,
   video: VideoBlock,
   table: Table,
+  p: BidiParagraph,
+  li: BidiListItem,
 };
 
 /** Href scheme the annotation markers travel on through the markdown pipeline. */
@@ -943,6 +946,31 @@ function remarkAnnotationMarkers() {
   return (tree: MdastLike) => {
     annotationMarkerMdastTree(tree);
   };
+}
+
+function textOfChildren(node: unknown): string {
+  if (typeof node === "string") return node;
+  if (typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOfChildren).join("");
+  if (
+    node &&
+    typeof node === "object" &&
+    "props" in node &&
+    node.props &&
+    typeof node.props === "object" &&
+    "children" in node.props
+  ) {
+    return textOfChildren(node.props.children);
+  }
+  return "";
+}
+
+function BidiParagraph({ children, ...rest }: ComponentProps<"p">) {
+  return <p {...rest} dir={directionAttr(textOfChildren(children))}>{children}</p>;
+}
+
+function BidiListItem({ children, ...rest }: ComponentProps<"li">) {
+  return <li {...rest} dir={directionAttr(textOfChildren(children))}>{children}</li>;
 }
 
 // 渲染阶段的链接规范化与批注转换都不改变分块边界。

@@ -828,7 +828,10 @@ function runGit(rootPath, binary, args, { maxBytes, timeoutMs = GIT_TIMEOUT_MS }
 
     const timer = setTimeout(() => {
       timedOut = true;
+      finish(reject, fail("GIT_TIMEOUT", "git command timed out"));
       child.kill("SIGKILL");
+      child.stdout?.destroy?.();
+      child.stderr?.destroy?.();
     }, timeoutMs);
 
     child.stdout?.on("data", (chunk) => {

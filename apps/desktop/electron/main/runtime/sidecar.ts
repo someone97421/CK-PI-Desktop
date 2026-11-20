@@ -42,6 +42,7 @@ export type SidecarRuntimeDependencies = {
   sendToRenderer: (channel: string, payload: unknown) => void;
   persistAgentEvent: (envelope: AgentEventEnvelope) => UiMessage | undefined;
   activeTurns: Map<string, string>;
+  readPluginModelContext?: (params: Record<string, unknown>) => Promise<unknown>;
   approvedExecutionIdsBySession: Map<string, string>;
   claimedExecutionSessions: Map<string, string>;
   inflightCheckpointer: InflightCheckpointer;
@@ -83,6 +84,7 @@ export function createSidecarRuntime({
   sendToRenderer,
   persistAgentEvent,
   activeTurns,
+  readPluginModelContext,
   approvedExecutionIdsBySession,
   claimedExecutionSessions,
   inflightCheckpointer,
@@ -374,6 +376,10 @@ export function createSidecarRuntime({
     }
     return dispatchSubagentPersistence(subagentSnapshots, params);
   });
+  if (readPluginModelContext) {
+    s.setPluginModelContextReader((params) => runtimeState.sidecar === s && !isQuitting()
+      ? readPluginModelContext(params) : Promise.resolve([]));
+  }
   const sessionFileRoot = async (sessionId: string): Promise<string | null> => {
     const host = runtimeState.host;
     return host ? (await resolveSessionWorkspace(host, sessionId)).path : null;

@@ -43,14 +43,12 @@ function isDefaultSessionTitle(title?: string | null) {
 
 export function ConversationTopbar({
   sidebarCollapsed,
-  workPanelOpen,
   onToggleSidebar,
   onNewTask,
   onOpenSearch,
   compact = false,
 }: {
   sidebarCollapsed: boolean;
-  workPanelOpen: boolean;
   onToggleSidebar: () => void;
   onNewTask: () => void;
   onOpenSearch: () => void;
@@ -230,9 +228,7 @@ export function ConversationTopbar({
 
   return (
     <div
-      className={`conversation-topbar${sidebarCollapsed ? " ct-collapsed" : ""}${
-        workPanelOpen ? " ct-work-panel-open" : ""
-      }`}
+      className={`conversation-topbar${sidebarCollapsed ? " ct-collapsed" : ""}`}
       role="toolbar"
       aria-label={t("nav.conversation")}
     >

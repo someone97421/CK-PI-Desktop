@@ -91,6 +91,7 @@ export * from "./tray-sessions.js";
 export * from "./window-chrome.js";
 export * from "./fast-mode.js";
 export * from "./native-web-search.js";
+export * from "./responses-message-phase.js";
 export * from "./native-web-search-transport.js";
 export * from "./appearance-media.js";
 export * from "./header-value.js";

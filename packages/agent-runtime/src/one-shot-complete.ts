@@ -11,9 +11,9 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { addUsage, type MessageUsage, type ThinkingLevel } from "@pi-desktop/shared";
+import { addUsage, type MessageUsage, type SessionThinkingLevel } from "@pi-desktop/shared";
 import { accountModelStream } from "./request-usage.js";
-import { requestThinkingLevel } from "./thinking-level.js";
+import { omitThinkingModel, requestThinkingLevel } from "./thinking-level.js";
 import { classifyAgentError } from "./agent-errors.js";
 import { clampOutputToContext } from "./output-cap.js";
 import { assistantContent, usageFromPi } from "./agent-messages.js";
@@ -81,10 +81,11 @@ function completeError(
 export async function completeOneShot(
   provider: RuntimeProviderConfig,
   context: Context,
-  thinkingLevel: ThinkingLevel,
+  thinkingLevel: SessionThinkingLevel,
   options: OneShotCompleteOptions = {},
 ): Promise<OneShotCompleteResult> {
-  const model = buildProviderModel(provider);
+  const providerModel = buildProviderModel(provider);
+  const model = thinkingLevel === "omit" ? omitThinkingModel(providerModel) : providerModel;
   const models = createProviderModels(provider, model);
   const streamSimple =
     options.stream ??

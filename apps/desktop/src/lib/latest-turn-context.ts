@@ -52,18 +52,21 @@ export function latestTurnContextInspector(
       break;
     }
   }
-  const latestUsage = latestUsageMessage?.usage;
-  if (!latestUsage) return undefined;
+  if (!latestUsageMessage?.usage) return undefined;
+  const latestUsage = latestUsageMessage.usage;
   const snapshot = getSessionMessageSnapshot(messages);
-  const compactionIndex = compaction
-    ? snapshot.positions.get(compaction.throughMessageId) ?? -1
-    : -1;
-  const latestUsageIndex = latestUsageMessage
-    ? snapshot.positions.get(latestUsageMessage.id) ?? -1
-    : -1;
-  const usesCompactedContext = compaction?.contextUsageMessageId !== undefined
-    ? compaction.contextUsageMessageId === latestUsageMessage?.id
-    : compactionIndex >= latestUsageIndex && latestUsageIndex >= 0;
+  const compactionIndex = compaction ? snapshot.positions.get(compaction.throughMessageId) : undefined;
+  const latestUsageIndex = snapshot.positions.get(latestUsageMessage.id);
+  let usesCompactedContext = compaction?.contextUsageMessageId !== undefined
+    ? compaction.contextUsageMessageId === latestUsageMessage.id
+    : compactionIndex !== undefined && latestUsageIndex !== undefined && compactionIndex >= latestUsageIndex;
+  // Failed or stopped replies may follow the checkpoint because they never entered model history.
+  if (!usesCompactedContext && compaction?.contextUsageMessageId === undefined &&
+    compaction?.createdAt && compactionIndex !== undefined && latestUsageMessage.role === "assistant") {
+    const { status, isError, error, createdAt } = latestUsageMessage;
+    usesCompactedContext = Boolean(status === "error" || status === "aborted" || isError || error) &&
+      Date.parse(createdAt) < Date.parse(compaction.createdAt);
+  }
   const compactedContextTokens = usesCompactedContext ? compaction?.contextTokens : undefined;
   const windowModel = compactedContextTokens !== undefined
     ? compaction?.providerId && compaction.modelId

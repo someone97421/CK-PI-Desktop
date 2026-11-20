@@ -9,6 +9,7 @@ import {
   type GatewayAttachmentImporter,
 } from "./gateway-attachments";
 import { SESSION_COLLABORATION_OPERATIONS } from "./session-collaboration-control";
+import { markAutomationRequest } from "./runtime/user-message-provenance";
 
 /** A small JSON Schema subset used by MCP's tools/list response. */
 export type McpJsonSchema = {
@@ -841,6 +842,7 @@ export function createMcpControlController(options: {
         if (args.length !== expected) throw Object.assign(new Error("模式操作参数数量无效"), { code: "INVALID_PARAMS" });
       }
       const sanitized = args.map((value) => stripSecretMaterial(value)) as unknown[];
+      if (operation.id === "agent/prompt") markAutomationRequest(sanitized[0]);
       const result = operation.channel === "internal:session-collaboration"
         ? await options.invokeSessionCollaboration!({ ...input, args: sanitized })
         : operation.channel === "internal:gateway-attachment"

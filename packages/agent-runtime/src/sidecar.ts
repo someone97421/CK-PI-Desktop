@@ -110,6 +110,7 @@ type RuntimeParams = {
   modeDefinition?: unknown;
   /** Durable host turn ID for the prompt currently being executed. */
   turnId?: string;
+  pluginModelContextEnabled?: boolean;
   thinkingLevel?: SessionThinkingLevel;
   infiniteProviderRetry?: boolean;
   /** 运行状态提醒间隔（分钟）；0 或缺省关闭。 */
@@ -351,6 +352,11 @@ async function runtimeFor(
   }
   const runtime = new DesktopAgentRuntime({
     host: hostProxy,
+    ...(params.pluginModelContextEnabled === true ? {
+      readPluginModelContext: (input, signal) => signal?.aborted
+        ? Promise.resolve(undefined)
+        : hostProxy.call("plugins.modelContext.read", input, 600),
+    } : {}),
     sessionId,
     mode,
     modeDefinition,

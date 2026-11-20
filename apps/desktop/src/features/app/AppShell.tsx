@@ -192,7 +192,6 @@ export function AppShell() {
                   <ConversationTopbar
                     compact={compact}
                     sidebarCollapsed={compact || sidebarCollapsed}
-                    workPanelOpen={!compact && presentedWorkPanelOpen}
                     onToggleSidebar={toggleSidebar}
                     onNewTask={() => void runMenuCommand("newTask")}
                     onOpenSearch={() => setSearchOpen(true)}

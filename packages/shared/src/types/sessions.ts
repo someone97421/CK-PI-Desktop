@@ -159,6 +159,8 @@ export type ContextCompactionMark = ContextCompactionStatus & {
   /** Estimated context tokens after this checkpoint was installed. */
   contextTokens?: number;
   id: string;
+  /** Checkpoint creation time. Older live marks may omit it. */
+  createdAt?: string;
   /** Model that rebuilt the compacted context, when recorded by the runtime. */
   providerId?: string;
   modelId?: string;

@@ -394,6 +394,7 @@ const pluginServices = createPluginServices({
    * coordination instance that reads it too.
    */
   getActiveTurn: (sessionId) => activeTurns.get(sessionId) ?? null,
+  isTurnDispatchable: (sessionId, turnId) => isTurnDispatchable(sessionId, turnId),
   /** The same scope lookup every plugin view IPC consults. */
   isPluginActiveInProject: (pluginId) => pluginActiveInProject(pluginId, currentWorkspacePath()),
   vendorOAuth,
@@ -408,6 +409,7 @@ const {
   pluginViews,
   browserHost,
   announceTurnEnded,
+  observePersistedUserMessage,
   speech,
 } = pluginServices;
 
@@ -724,6 +726,7 @@ const sessionCoordination = createSessionCoordination({
     // A new turn owns the composer now, so a suggestion about the previous one
     // stops being shown and stops being showable (ADR 0333).
     pluginServices.composerSuggestion.noteTurnStarted(sessionId, turnId);
+    pluginServices.announceObservedSession("session:turnStarted", { sessionId, turnId });
   },
 });
 const {
@@ -874,6 +877,7 @@ const sidecarRuntime = createSidecarRuntime({
   logger,
   sendToRenderer,
   persistAgentEvent,
+  readPluginModelContext: pluginServices.readPluginModelContext,
   activeTurns,
   approvedExecutionIdsBySession,
   claimedExecutionSessions,
@@ -1020,6 +1024,7 @@ function registerIpc() {
     beginTranscriptRewrite: eventPersistence.beginTranscriptRewrite,
     forgetTranscriptRewriteHistory: sessionCoordination.forgetTranscriptRewriteHistory,
     recordTurnStart,
+    observePersistedUserMessage,
     stripWinLongPrefix,
     normalizeSettings,
     validateSettingsWrite,

@@ -1,7 +1,7 @@
 import type { MessageUsage, UiMessage } from "@pi-desktop/shared";
 import type { AssistantActivityItem, AssistantTurnEntry, AssistantTurnPart } from "./assistant-turns";
 import { assistantTurnResponseDuration } from "./assistant-turns";
-import { projectTurnProcess } from "./turn-process";
+import { projectAssistantCommentary } from "./assistant-commentary";
 
 const contentFacts = new WeakMap<UiMessage, { trimmedContent: string; hasContent: boolean }>();
 
@@ -39,6 +39,21 @@ export type AssistantTurnSummary = {
 
 const summaries = new WeakMap<AssistantTurnEntry, AssistantTurnSummary>();
 
+function taskResponseParts(entry: AssistantTurnEntry): Set<AssistantTurnPart> {
+  const responses = new Set<AssistantTurnPart>();
+  if (entry.task?.status !== "completed" || !entry.finalMessageId) return responses;
+  const finalIndex = entry.parts.findIndex((part) => part.kind === "message" && part.message.id === entry.finalMessageId);
+  for (let index = finalIndex; index >= 0; index -= 1) {
+    const part = entry.parts[index];
+    if (part.kind === "activity" && part.items.some((item) => item.kind === "tool")) break;
+    if (part.kind !== "message") continue;
+    const { role, status, error } = part.message;
+    if (role !== "assistant" || status !== "complete" || error) break;
+    if (messageContentFacts(part.message).hasContent) responses.add(part);
+  }
+  return responses;
+}
+
 /**
  * Share content facts between the transcript and composer without joining the
  * reply on a stream tick. A changed turn still scans references/metadata, not
@@ -53,8 +68,10 @@ export function getAssistantTurnSummary(entry: AssistantTurnEntry): AssistantTur
     responseOutputEstimated: false, hasError: false, streaming: false,
     hasContent: false, process: [], responses: [],
   };
+  const finalTaskParts = entry.task ? taskResponseParts(entry) : undefined;
   const last = entry.parts.at(-1);
-  const answer = last?.kind === "message" && messageContentFacts(last.message).hasContent ? last : undefined;
+  const answer = last?.kind === "message" && last.message.role === "assistant" && messageContentFacts(last.message).hasContent
+    ? last : undefined;
   for (const part of entry.parts) {
     if (part.kind === "compaction") {
       result.process.push(part);
@@ -74,10 +91,17 @@ export function getAssistantTurnSummary(entry: AssistantTurnEntry): AssistantTur
     }
     const message = part.message;
     result.messages.push(message);
-    if (part === answer || message.error) result.responses.push(part);
-    else result.process.push(part);
-    if (message.role === "assistant" && messageContentFacts(message).hasContent) {
-      result.actionMessage = message;
+    const projection = projectAssistantCommentary(message);
+    if (projection) result.process.push(...projection.progress);
+    const reply = projection?.reply ?? part;
+    const hasReply = messageContentFacts(reply.message).hasContent;
+    const isResponse = finalTaskParts ? finalTaskParts.has(part) && hasReply : part === answer || message.error;
+    if (!projection || hasReply || message.error || message.outputTruncated) {
+      if (isResponse) result.responses.push(reply);
+      else result.process.push(reply);
+    }
+    if (message.role === "assistant" && hasReply && (!finalTaskParts || isResponse)) {
+      result.actionMessage = reply.message;
       result.hasContent = true;
     }
     if (message.modelId || message.usage || message.responseDurationMs || message.responseOutputTokens) {
@@ -107,11 +131,6 @@ export function getAssistantTurnSummary(entry: AssistantTurnEntry): AssistantTur
     }
   }
   if (entry.task) {
-    const projection = projectTurnProcess(entry);
-    result.process = projection.process;
-    result.responses = projection.responses;
-    result.actionMessage = result.responses.at(-1)?.message;
-    result.hasContent = result.responses.some((part) => messageContentFacts(part.message).hasContent);
     result.usage = entry.task.usage;
     result.responseDurationMs = assistantTurnResponseDuration(entry);
   }
@@ -124,7 +143,7 @@ export function getAssistantTurnContent(entry: AssistantTurnEntry): string {
   const summary = getAssistantTurnSummary(entry);
   if (entry.task) return summary.responses.map((part) => part.message.content).join("\n\n");
   return summary.messages
-    .map((message) => messageContentFacts(message).trimmedContent)
+    .map((message) => messageContentFacts(projectAssistantCommentary(message)?.reply.message ?? message).trimmedContent)
     .filter(Boolean)
     .join("\n\n");
 }

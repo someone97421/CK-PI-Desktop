@@ -32,6 +32,7 @@ import { SelectionQuoteButton } from "../../../components/SelectionQuoteButton";
 import { ResponseAnnotationOverlay } from "../../../components/ResponseAnnotationOverlay";
 import { collectLiveDelegationEntries } from "../../../lib/live-delegation-entries";
 import { reuseReadonlyMap } from "../../../lib/assistant-turns";
+import { projectAssistantCommentary } from "../../../lib/assistant-commentary";
 import { liveHistoryTurnId } from "../../../lib/turn-process";
 import { useTranscriptScroll } from "./hooks/useTranscriptScroll";
 import { useTranscriptContinuation } from "../../../hooks/use-transcript-continuation";
@@ -95,7 +96,7 @@ export const ChatTranscript = memo(function ChatTranscript(
   props: ChatTranscriptProps,
 ) {
   return (
-    <TranscriptMenuProvider>
+    <TranscriptMenuProvider sessionId={props.paneVisible === false ? undefined : props.sessionId}>
       <TranscriptBody {...props} />
     </TranscriptMenuProvider>
   );
@@ -312,9 +313,11 @@ function TranscriptBody({
   const findLastAnswer = (): string => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
-      if (message?.role === "assistant" && message.content.trim()) {
-        return message.content;
-      }
+      // Copy the answer only; Responses commentary stays in the process (#2461).
+      const answer = message?.role === "assistant"
+        ? projectAssistantCommentary(message)?.reply.message.content ?? message.content
+        : "";
+      if (answer.trim()) return answer;
     }
     return "";
   };

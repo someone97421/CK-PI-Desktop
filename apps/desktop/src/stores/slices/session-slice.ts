@@ -48,6 +48,7 @@ import {
   mergeLiveSessionMessages,
 } from "../../lib/session-transcript";
 import { sessionReadLooksEmpty } from "../../lib/session-transcript-read";
+import { transcriptViewMessages } from "../../lib/transcript-reading";
 import type {
   AppState,
   DraftSessionConfiguration,
@@ -98,6 +99,21 @@ export type SessionSliceDependencies = StoreAccess & {
     temporaryWorkspacePath?: string | null;
   }) => Promise<string | null>;
 };
+
+/** Resolve a visible reply fork anchor without hydrating the live source transcript. */
+function findVisibleAssistantForkAnchor(
+  state: Pick<AppState, "messages" | "transcriptViews">,
+  sessionId: string,
+  messageId: string,
+): UiMessage | undefined {
+  const fromLive = state.messages.find((candidate) => candidate.id === messageId);
+  if (fromLive) return fromLive;
+  // Historical pages are already on screen via transcriptViews. Do not copy
+  // them onto state.messages: that would overwrite a concurrently streaming tail.
+  return transcriptViewMessages(state.messages, state.transcriptViews[sessionId]).find(
+    (candidate) => candidate.id === messageId,
+  );
+}
 
 export function createSessionSlice({
   get,
@@ -740,7 +756,7 @@ export function createSessionSlice({
       const state = get();
       const sessionId = state.activeSessionId;
       if (!sessionId || state.selectingSessionId) return;
-      const message = state.messages.find((candidate) => candidate.id === messageId);
+      const message = findVisibleAssistantForkAnchor(state, sessionId, messageId);
       const source = state.sessions.find((session) => session.id === sessionId);
       if (!message || message.role !== "assistant" || !source) return;
       if (!sessionAllows(source, "canEditMessages")) return;

@@ -895,6 +895,7 @@ export function createSessionLaunchRuntime({
       workspaceRoot,
       sidecarParams: {
         sessionId,
+        pluginModelContextEnabled: true,
         mode,
         ...(modeDefinition ? { modeDefinition } : {}),
         ...(overrides.turnId ? { turnId: overrides.turnId } : {}),
