@@ -82,7 +82,7 @@ describe("subagent continuous collaboration", () => {
     expect(JSON.stringify(contexts[2].messages)).toContain("Review: fix the edge case");
     expect(calls).toEqual(["initial", "revision"]);
     expect(second).toMatchObject({ turns: 4, toolCalls: 2, usage: { totalTokens: 12 }, executionUsage: { totalTokens: 6 } });
-    expect(fixture.run.observation.snapshot()).toMatchObject({ execution: 2, segmentId: 2, completedSteps: 2, segmentCompletedSteps: 1 });
+    expect(fixture.run.observation.snapshot()).toMatchObject({ execution: 2, segmentId: 2, completedSteps: 2, segmentCompletedSteps: 2 });
     expect(fixture.events.filter((event) => event.parentToolCallId === "resume-call").every((event) => event.turnId === "turn-2")).toBe(true);
     expect(fixture.observations.filter((event) => event.kind === "report").map((event) => event.report.execution)).toEqual([1, 2]);
     fixture.run.stop("user");
@@ -90,17 +90,22 @@ describe("subagent continuous collaboration", () => {
     expect(() => fixture.run.resume("must not revive", "turn-2", "r3")).toThrow();
   });
 
-  it("reports across several intervals without pausing or spending model calls on summaries", async () => {
+  it("reports across several model-turn intervals without pausing or splitting a parallel tool batch", async () => {
     const calls: string[] = [];
-    const { run, agent, observations } = child(async (_id, args: any) => { calls.push(args.path); return result; });
-    const contexts = setStream(agent, (_ctx, index) => index === 0 ? reply(["a", "b", "c", "d", "e"]) : reply());
+    const { run, agent, observations } = child(async (_id, args: any) => { calls.push(args.path); return result; }, 2);
+    const contexts = setStream(agent, (_ctx, index) => {
+      if (index === 0) return reply(["a", "b", "c"]);
+      if (index === 1) return reply(["d"]);
+      if (index === 2) return reply(["e"]);
+      return reply();
+    });
     const finished = await run.run();
     expect(finished.status).toBe("completed");
     expect(calls).toEqual(["a", "b", "c", "d", "e"]);
-    expect(contexts).toHaveLength(2);
+    expect(contexts).toHaveLength(4);
     const reports = observations.filter((event) => event.kind === "report").map((event) => event.report);
-    expect(reports.map((report) => [report.fromStep, report.toStep, report.reason])).toEqual([[1, 2, "interval"], [3, 4, "interval"], [5, 5, "completed"]]);
-    expect(run.observation.snapshot()).toMatchObject({ startedSteps: 5, completedSteps: 5, segmentCompletedSteps: 5 });
+    expect(reports.map((report) => [report.fromStep, report.toStep, report.reason])).toEqual([[1, 4, "interval"], [5, 5, "interval"]]);
+    expect(run.observation.snapshot()).toMatchObject({ startedSteps: 5, completedSteps: 5, segmentCompletedSteps: 4 });
     expect(JSON.stringify(contexts)).not.toContain("Runtime subagent supervision");
   });
 
@@ -126,8 +131,8 @@ describe("subagent continuous collaboration", () => {
     expect(calls).toEqual(["a", "d"]);
     expect(contexts).toHaveLength(3);
     expect(fixture.run.observation.snapshot()).toMatchObject({ segmentId: 2, startedSteps: 2, completedSteps: 2,
-      segmentCompletedSteps: 1, reportIntervalSteps: 1, latestGuide: { status: "applied" } });
-    expect(fixture.observations.filter((event) => event.kind === "report").map((event) => event.report.reason)).toEqual(["guide", "interval"]);
+      segmentCompletedSteps: 2, reportIntervalSteps: 1, latestGuide: { status: "applied" } });
+    expect(fixture.observations.filter((event) => event.kind === "report").map((event) => event.report.reason)).toEqual(["guide", "interval", "interval"]);
     expect(fixture.events.filter((event) => event.event.type === "tool_end" && ["b", "c"].includes(event.event.toolCallId)))
       .toHaveLength(2);
   });
@@ -172,7 +177,8 @@ describe("subagent continuous collaboration", () => {
     observer.begin("one", "Bash", {});
     observer.end("one", "Authorization: Bearer abc.def private-provider-secret", true);
     observer.end("one", "duplicate", false);
-    expect(observer.snapshot()).toMatchObject({ startedSteps: 1, completedSteps: 1 });
+    observer.completeTurn();
+    expect(observer.snapshot()).toMatchObject({ startedSteps: 1, completedSteps: 1, segmentCompletedSteps: 1 });
     const text = JSON.stringify([observations, observer.inspect()]);
     for (const secret of ["secret-value", "hidden", "abc.def", "private-provider-secret", "two secret words"]) expect(text).not.toContain(secret);
     expect((observer.inspect() as any).steps[0].status).toBe("error");
@@ -194,8 +200,9 @@ describe("subagent continuous collaboration", () => {
   });
 
   it("bounds records and exposes truncation and continuation references", () => {
-    const observer = new SubagentObserver("child", 300, "dispatch", () => {});
+    const observer = new SubagentObserver("child", 1, "dispatch", () => {});
     for (let i = 0; i < 300; i++) { observer.begin(String(i), "Read", {}); observer.end(String(i), "x".repeat(20_000), false); }
+    observer.completeTurn();
     const snapshot = observer.snapshot();
     expect(snapshot.latestReport).toMatchObject({ fromStep: 1, toStep: 300, truncated: true });
     const inspected = observer.inspect(1, 2) as any;
@@ -211,10 +218,11 @@ describe("subagent continuous collaboration", () => {
 });
 
 describe("parent supervision connectivity", () => {
-  function interceptChildren(paths: string[]) {
+  function interceptChildren(paths: string[] | string[][]) {
+    const turns = Array.isArray(paths[0]) ? paths as string[][] : (paths.length ? [paths as string[]] : []);
     const original = SubagentRun.prototype.run;
     vi.spyOn(SubagentRun.prototype, "run").mockImplementation(function (this: SubagentRun) {
-      setStream((this as any).agent, (_ctx, index) => !index ? reply(paths) : reply());
+      setStream((this as any).agent, (_ctx, index) => index < turns.length ? reply(turns[index]) : reply());
       return original.call(this);
     });
   }
@@ -391,7 +399,7 @@ describe("parent supervision connectivity", () => {
   });
 
   it("wakes TaskWait on incremental reports and never delivers the same report twice", async () => {
-    interceptChildren(["a", "b"]);
+    interceptChildren([["a"], ["b"]]);
     const fixture = parent(1);
     let release!: () => void;
     const block = new Promise<void>((resolve) => { release = resolve; });
@@ -533,7 +541,7 @@ describe("parent supervision connectivity", () => {
   });
 
   it("wakes idle final-report waiting with progress, and refuses foreign or stale controls", async () => {
-    interceptChildren(["a", "b"]);
+    interceptChildren([["a"], ["b"]]);
     const fixture = parent(1);
     let release!: () => void;
     const block = new Promise<void>((resolve) => { release = resolve; });
@@ -575,7 +583,7 @@ describe("parent supervision connectivity", () => {
     const fixture = parent(1);
     const record = { delegationId: "child", agentName: "explorer", parentToolCallId: "task", startedEpoch: fixture.internal.turnEpoch };
     const observer = new SubagentObserver("child", 1, "dispatch", (event) => fixture.internal.onSubagentObservation(record, event));
-    for (let i = 1; i <= 14; i++) { observer.begin(String(i), "Read", { path: `file-${i}` }); observer.end(String(i), "ok", false); }
+    for (let i = 1; i <= 14; i++) { observer.begin(String(i), "Read", { path: `file-${i}` }); observer.end(String(i), "ok", false); observer.completeTurn(); }
     expect(fixture.internal.supervisionInbox.size).toBe(9);
     expect(fixture.internal.takeSupervision()).toContain("reports 1-6");
     fixture.internal.turnEpoch += 1;
@@ -642,6 +650,7 @@ describe("程序生成的子代理协调快照", () => {
     const observer = new SubagentObserver("child", 1, "dispatch", (event) => fixture.internal.onSubagentObservation(record, event));
     observer.begin("read-1", "Read", {});
     observer.end("read-1", "ok", false);
+    observer.completeTurn();
     expect(fixture.internal.coordinationVersion).toBe(1);
     Object.assign(record, { resolveCompletion: () => {}, toolCalls: 1, turns: 1 });
     await fixture.internal.settleDelegation(record, { agentName: "explorer", status: "completed", report: "结果", toolCalls: 1, turns: 1 });

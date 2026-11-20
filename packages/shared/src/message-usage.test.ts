@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addUsage, contextOccupancyTokens, withUsageIdentity, type MessageUsage } from "./types.js";
-
+import { addUsage, contextOccupancyTokens, summarizeUsageByModel, withUsageIdentity, type MessageUsage } from "./types.js";
 const parent: MessageUsage = {
   inputTokens: 200,
   outputTokens: 80,
@@ -129,4 +128,40 @@ it("malformed prices and overflowing cost totals remain unknown", () => {
     expect(result?.costStatus).toBe("unknown");
     expect(result?.cost).toBeUndefined();
   }
+});
+
+describe("summarizeUsageByModel", () => {
+  it("aggregates atomic operations by modelId sorted by totalTokens descending", () => {
+    const mainOp: MessageUsage = {
+      inputTokens: 100, outputTokens: 20, cacheReadTokens: 50, cacheWriteTokens: 10, reasoningTokens: 8, totalTokens: 180,
+      operationId: "main-1", usageOrigin: "pi", aggregation: "operation", modelId: "claude-opus",
+    };
+    const childOp1: MessageUsage = {
+      inputTokens: 40, outputTokens: 15, cacheReadTokens: 20, totalTokens: 75,
+      operationId: "child-1", usageOrigin: "pi", aggregation: "operation", modelId: "claude-haiku",
+    };
+    const childOp2: MessageUsage = {
+      inputTokens: 60, outputTokens: 25, cacheReadTokens: 40, totalTokens: 125,
+      operationId: "child-2", usageOrigin: "pi", aggregation: "operation", modelId: "claude-haiku",
+    };
+    const merged = addUsage(addUsage(mainOp, childOp1), childOp2);
+    expect(summarizeUsageByModel(merged)).toEqual([
+      {
+        modelId: "claude-haiku",
+        inputTokens: 100,
+        outputTokens: 40,
+        cacheReadTokens: 60,
+        totalTokens: 200,
+      },
+      {
+        modelId: "claude-opus",
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheReadTokens: 50,
+        cacheWriteTokens: 10,
+        reasoningTokens: 8,
+        totalTokens: 180,
+      },
+    ]);
+  });
 });

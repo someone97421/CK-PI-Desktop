@@ -1,4 +1,4 @@
-import { addUsage, type AgentEventEnvelope, type MessageTask, type MessageUsage, type TaskStatus, type UiMessage } from "@pi-desktop/shared";
+import { addUsage, summarizeUsageByModel, withUsageIdentity, type AgentEventEnvelope, type MessageTask, type MessageUsage, type TaskStatus, type UiMessage } from "@pi-desktop/shared";
 
 type TaskRecord = {
   sessionId: string;
@@ -7,6 +7,7 @@ type TaskRecord = {
   main: Map<string, MessageUsage | undefined>;
   children: Map<string, MessageUsage | undefined>;
   childReceipts: Map<number, MessageUsage>;
+  operations: Map<string, MessageUsage>;
   delegated: boolean;
   finalCandidate?: string;
   snapshot?: MessageTask;
@@ -53,16 +54,21 @@ export class TaskTranscript {
     // 汇总回执与逐条子代理消息是同一批用量的两种证据，不能相加。
     const children = (receiptChildren?.totalTokens ?? 0) > (rawChildren?.totalTokens ?? 0)
       ? receiptChildren : rawChildren;
-    record.fullUsage = children ? addUsage(main, children) : main;
-    // 展示摘要只携带汇总数值；完整账本通过 usage() 交给回合结算保存。
+    const streamed = sum(record.operations.values());
+    const combined = children ? addUsage(main, children) : main;
+    // 物理请求事件按 operationId 去重合并，补齐压缩、重试与子代理真实模型归属。
+    record.fullUsage = streamed ? addUsage(combined, streamed) : combined;
+    // 展示摘要只携带汇总数值与按模型汇总；完整账本通过 usage() 交给回合结算保存。
     const { operations: _operations, ...usage } = record.fullUsage ?? {};
+    const usageByModel = summarizeUsageByModel(record.fullUsage);
     record.snapshot = {
       ...record.summary,
       usage: record.fullUsage ? usage as MessageUsage : undefined,
+      ...(usageByModel?.length ? { usageByModel } : {}),
       usageIncomplete: record.summary.status === "aborted" || record.summary.status === "failed"
         || !record.fullUsage || [...record.main.values()].some((value) => !value)
         || [...record.children.values()].some((value) => !value)
-        || (record.delegated && !children),
+        || (record.delegated && !children && !streamed),
     };
     return record.snapshot;
   }
@@ -109,7 +115,7 @@ export class TaskTranscript {
       record = {
         sessionId: envelope.sessionId,
         summary: { id: turnId, revision: 0, status: "running", usageIncomplete: true },
-        main: new Map(), children: new Map(), childReceipts: new Map(), delegated: false,
+        main: new Map(), children: new Map(), childReceipts: new Map(), operations: new Map(), delegated: false,
       };
       this.records.set(key, record);
       // 留少量已结束记录接收迟到用量，避免长期保留无限用户内容。
@@ -148,13 +154,31 @@ export class TaskTranscript {
         changed = true;
       }
     }
+    if (event.type === "usage") {
+      const usage = event.usage;
+      if (usage.operationId) {
+        record.operations.set(usage.operationId, usage);
+        changed = true;
+      } else if (usage.operations?.length) {
+        for (const op of usage.operations) record.operations.set(op.operationId, op);
+        changed = true;
+      }
+    }
     if (event.type === "turn_end" && !child && event.subagentUsage) {
       record.childReceipts.set(envelope.ts, event.subagentUsage);
       changed = true;
     }
     if (event.type === "message_end" && message?.role === "assistant") {
       const usageMap = child ? record.children : record.main;
-      if (message.usage || !usageMap.has(message.id)) usageMap.set(message.id, message.usage);
+      const attributed = message.usage
+        ? withUsageIdentity(message.usage, {
+          operationId: `message:${envelope.sessionId}:${message.id}`,
+          usageOrigin: "legacy",
+          providerId: message.providerId,
+          modelId: message.responseModelId ?? message.modelId,
+        })
+        : undefined;
+      if (attributed || !usageMap.has(message.id)) usageMap.set(message.id, attributed);
       if (!child && record.summary.status === "running") {
         record.finalCandidate = message.status === "complete" && !message.error && message.content.trim()
           ? message.id : undefined;

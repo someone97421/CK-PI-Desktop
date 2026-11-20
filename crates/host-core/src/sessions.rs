@@ -228,6 +228,21 @@ pub struct RunTiming {
     pub ended_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskModelUsage {
+    pub model_id: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<i64>,
+    pub total_tokens: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MessageTask {
@@ -243,6 +258,8 @@ pub struct MessageTask {
     pub run_timing: Option<RunTiming>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<MessageUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_by_model: Option<Vec<TaskModelUsage>>,
     #[serde(default)]
     pub usage_incomplete: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1823,6 +1840,99 @@ fn load_task_projection(
         .and_then(|t| t.get("usageIncomplete").and_then(Value::as_bool))
         .unwrap_or(effective_status != "completed" || summary_usage.is_none());
 
+    let usage_by_model_from_ledger = |usage: &MessageUsage| -> Option<Vec<TaskModelUsage>> {
+        let mut buckets: std::collections::BTreeMap<String, TaskModelUsage> =
+            std::collections::BTreeMap::new();
+        let mut push_entry = |model_id: Option<&str>,
+                              input: i64,
+                              output: i64,
+                              cache_read: Option<i64>,
+                              cache_write: Option<i64>,
+                              reasoning: Option<i64>,
+                              total: i64| {
+            let Some(model) = model_id.map(str::trim).filter(|m| !m.is_empty()) else {
+                return;
+            };
+            let entry = buckets
+                .entry(model.to_string())
+                .or_insert_with(|| TaskModelUsage {
+                    model_id: model.to_string(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    reasoning_tokens: None,
+                    total_tokens: 0,
+                });
+            entry.input_tokens = entry.input_tokens.saturating_add(input.max(0));
+            entry.output_tokens = entry.output_tokens.saturating_add(output.max(0));
+            entry.total_tokens = entry.total_tokens.saturating_add(total.max(0));
+            if let Some(v) = cache_read {
+                entry.cache_read_tokens = Some(
+                    entry
+                        .cache_read_tokens
+                        .unwrap_or(0)
+                        .saturating_add(v.max(0)),
+                );
+            }
+            if let Some(v) = cache_write {
+                entry.cache_write_tokens = Some(
+                    entry
+                        .cache_write_tokens
+                        .unwrap_or(0)
+                        .saturating_add(v.max(0)),
+                );
+            }
+            if let Some(v) = reasoning {
+                entry.reasoning_tokens = Some(
+                    entry
+                        .reasoning_tokens
+                        .unwrap_or(0)
+                        .saturating_add(v.max(0)),
+                );
+            }
+        };
+        if let Some(ops) = usage.accounting.get("operations").and_then(Value::as_array) {
+            for op in ops {
+                push_entry(
+                    op.get("modelId").and_then(Value::as_str),
+                    op.get("inputTokens").and_then(Value::as_i64).unwrap_or(0),
+                    op.get("outputTokens").and_then(Value::as_i64).unwrap_or(0),
+                    op.get("cacheReadTokens").and_then(Value::as_i64),
+                    op.get("cacheWriteTokens").and_then(Value::as_i64),
+                    op.get("reasoningTokens").and_then(Value::as_i64),
+                    op.get("totalTokens").and_then(Value::as_i64).unwrap_or(0),
+                );
+            }
+        } else {
+            push_entry(
+                usage.accounting.get("modelId").and_then(Value::as_str),
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                usage.cache_write_tokens,
+                usage.reasoning_tokens,
+                usage.total_tokens,
+            );
+        }
+        if buckets.is_empty() {
+            return None;
+        }
+        let mut rows: Vec<TaskModelUsage> = buckets.into_values().collect();
+        rows.sort_by(|left, right| {
+            right
+                .total_tokens
+                .cmp(&left.total_tokens)
+                .then_with(|| left.model_id.cmp(&right.model_id))
+        });
+        Some(rows)
+    };
+    let summary_by_model: Option<Vec<TaskModelUsage>> = task_summary
+        .and_then(|t| t.get("usageByModel"))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .filter(|rows: &Vec<TaskModelUsage>| !rows.is_empty());
+    let db_by_model = db_usage.as_ref().and_then(usage_by_model_from_ledger);
+
     let mut final_usage = match (summary_usage, db_usage) {
         (Some(sum_u), Some(db_u)) => {
             if db_u.total_tokens > sum_u.total_tokens {
@@ -1839,11 +1949,13 @@ fn load_task_projection(
         }
         (None, None) => None,
     };
+    let usage_by_model = db_by_model
+        .or(summary_by_model)
+        .or_else(|| final_usage.as_ref().and_then(usage_by_model_from_ledger));
     // 此投影会复制到每条消息，账本只在回合和各消息的原始用量中保留。
     if let Some(usage) = final_usage.as_mut() {
         usage.accounting.remove("operations");
     }
-
     if effective_status != "completed" || final_usage.is_none() {
         usage_incomplete = true;
     }
@@ -1895,6 +2007,7 @@ fn load_task_projection(
         ended_at,
         run_timing,
         usage: final_usage,
+        usage_by_model,
         usage_incomplete,
         estimated_duration,
         final_message_id,
@@ -9859,6 +9972,73 @@ mod tests {
         let stored: String = db.conn().query_row("SELECT usage_json FROM turns WHERE id = ?1",
             params![turn_id], |row| row.get(0)).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&stored).unwrap(), db_usage);
+    }
+
+    #[test]
+    fn task_projection_derives_usage_by_model_from_turn_ledger() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let turn_id = begin_turn(&db, &session.id, None, None).unwrap();
+        let db_usage = serde_json::json!({
+            "inputTokens": 300,
+            "outputTokens": 70,
+            "cacheReadTokens": 120,
+            "reasoningTokens": 15,
+            "totalTokens": 490,
+            "aggregation": "aggregate",
+            "costStatus": "unknown",
+            "operations": [
+                {
+                    "operationId": "op-main",
+                    "modelId": "claude-opus-4",
+                    "inputTokens": 200,
+                    "outputTokens": 40,
+                    "cacheReadTokens": 80,
+                    "reasoningTokens": 15,
+                    "totalTokens": 320
+                },
+                {
+                    "operationId": "op-child-1",
+                    "modelId": "claude-haiku-4",
+                    "inputTokens": 60,
+                    "outputTokens": 20,
+                    "cacheReadTokens": 20,
+                    "totalTokens": 100
+                },
+                {
+                    "operationId": "op-child-2",
+                    "modelId": "claude-haiku-4",
+                    "inputTokens": 40,
+                    "outputTokens": 10,
+                    "cacheReadTokens": 20,
+                    "totalTokens": 70
+                }
+            ]
+        });
+        let mut root = user_msg("task-root", "任务", "2026-10-01T00:00:00Z");
+        root.task_id = Some(turn_id.clone());
+        root.task = Some(serde_json::from_value(serde_json::json!({
+            "id": turn_id, "revision": 1, "status": "completed",
+            "usageIncomplete": false,
+            "usage": { "inputTokens": 300, "outputTokens": 70, "cacheReadTokens": 120, "reasoningTokens": 15, "totalTokens": 490 }
+        })).unwrap());
+        append_message(&db, &session.id, &root, Some(&turn_id)).unwrap();
+        db.conn().execute(
+            "UPDATE turns SET status = 'completed', usage_json = ?1 WHERE id = ?2",
+            params![db_usage.to_string(), turn_id],
+        ).unwrap();
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        let task = detail.messages[0].task.as_ref().unwrap();
+        let models = task.usage_by_model.as_ref().unwrap();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].model_id, "claude-opus-4");
+        assert_eq!(models[0].total_tokens, 320);
+        assert_eq!(models[0].reasoning_tokens, Some(15));
+        assert_eq!(models[1].model_id, "claude-haiku-4");
+        assert_eq!(models[1].input_tokens, 100);
+        assert_eq!(models[1].output_tokens, 30);
+        assert_eq!(models[1].cache_read_tokens, Some(40));
+        assert_eq!(models[1].total_tokens, 170);
     }
 
 

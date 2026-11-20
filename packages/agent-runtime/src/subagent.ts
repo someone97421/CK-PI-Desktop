@@ -288,7 +288,7 @@ export function composeSubagentSystemPrompt(options: {
     `You are the \"${definition.name}\" subagent inside PI-Desktop, working on one task delegated by the main agent.`,
     `You cannot see the user, ask questions, or delegate further. Complete the assigned task within its stated scope and constraints using the tools you have: ${toolList}.`,
     "The main agent owns overall direction and scope changes. Use judgment for execution details within the brief; when progress requires a broader scope or a change of direction, report the evidence and blocker for the main agent to decide.",
-    "Use the brief's approximate tool-call range to pace your work toward a concrete result. Return as soon as the task is complete. The range is a flexible estimate, not a quota or hard cutoff; if you expect to substantially exceed it, wrap up with current findings, remaining work and the reason.",
+    "Use the brief's approximate model-turn range to pace your work toward a concrete result. Return as soon as the task is complete. The range is a flexible estimate, not a quota or hard cutoff; if you expect to substantially exceed it, wrap up with current findings, remaining work and the reason.",
     subagentCanMutate(definition, resolved)
       ? "You may change files, but only the ones the task is about; leave everything else untouched."
       : "You have no tools that change files or run commands, so never report an edit you could not have made.",
@@ -296,12 +296,12 @@ export function composeSubagentSystemPrompt(options: {
     "Keep the report tight. Report findings, not narration, and never pad it with a summary of your own process.",
   ].join("\n");
   const interval = definition.reportIntervalSteps ?? options.reportIntervalSteps;
+  const convergenceTurns = interval === undefined ? undefined : String(Math.max(1, Math.floor(interval * 2 / 3)));
   const prompt = interval === undefined
     ? definition.prompt
-    : definition.prompt.replaceAll(
-        "{{convergenceToolCalls}}",
-        String(Math.max(1, Math.floor(interval * 2 / 3))),
-      );
+    : definition.prompt
+        .replaceAll("{{convergenceTurns}}", convergenceTurns!)
+        .replaceAll("{{convergenceToolCalls}}", convergenceTurns!);
   return [framing, prompt, ...(options.guidance ?? [])]
     .filter((block) => block.trim().length > 0)
     .join("\n\n");
@@ -352,6 +352,7 @@ export class SubagentRun {
   private executionUsage?: MessageUsage;
   private executing = false;
   private lastStatus?: SubagentRunStatus;
+  private currentTurnSettledOk = false;
   private streamError?: { code: string; message: string };
   private mutationTermination?: { code: string; message: string };
   private turnAborted = false;
@@ -1426,8 +1427,11 @@ export class SubagentRun {
     switch (event.type) {
       case "turn_start":
         this.turns += 1;
+        this.currentTurnSettledOk = false;
         break;
       case "turn_end":
+        if (this.currentTurnSettledOk) this.observation.completeTurn();
+        this.currentTurnSettledOk = false;
         this.opts.onTurnEnd?.(event.message);
         break;
       case "message_start": {
@@ -1555,6 +1559,7 @@ export class SubagentRun {
           }
         }
         if (!failed && !aborted) {
+          this.currentTurnSettledOk = true;
           this.providerTransientRetryAttempt = 0;
           this.providerRateLimitRetryAttempt = 0;
         }

@@ -1,4 +1,4 @@
-import type { MessageUsage, MessageUsageCost, UsageOperation, UsageProvenance } from "./types/messages.js";
+import type { MessageUsage, MessageUsageCost, TaskModelUsage, UsageOperation, UsageProvenance } from "./types/messages.js";
 
 const tokenKeys = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "reasoningTokens", "totalTokens"] as const;
 const costKeys = ["input", "output", "cacheRead", "cacheWrite", "total"] as const;
@@ -104,4 +104,30 @@ export function addUsage(total: MessageUsage | undefined, next: MessageUsage | u
     ...(hasCostMetadata ? sumCosts(values) : {}),
     ...(operations.size ? { aggregation: "aggregate" as const, operations: [...operations.values()] } : {}),
   };
+}
+
+/** 按模型 ID 聚合账本中的 token 消耗，按总量降序排列。 */
+export function summarizeUsageByModel(usage: MessageUsage | undefined): TaskModelUsage[] | undefined {
+  if (!usage) return undefined;
+  const records = atomicRecords(usage);
+  const buckets = new Map<string, TaskModelUsage>();
+  const push = (modelId: string | undefined, item: Pick<MessageUsage, "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens" | "reasoningTokens" | "totalTokens">) => {
+    const key = modelId?.trim();
+    if (!key) return;
+    const current = buckets.get(key) ?? { modelId: key, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    current.inputTokens += positiveTokenCount(item.inputTokens);
+    current.outputTokens += positiveTokenCount(item.outputTokens);
+    current.totalTokens += positiveTokenCount(item.totalTokens);
+    if (item.cacheReadTokens !== undefined) current.cacheReadTokens = (current.cacheReadTokens ?? 0) + positiveTokenCount(item.cacheReadTokens);
+    if (item.cacheWriteTokens !== undefined) current.cacheWriteTokens = (current.cacheWriteTokens ?? 0) + positiveTokenCount(item.cacheWriteTokens);
+    if (item.reasoningTokens !== undefined) current.reasoningTokens = (current.reasoningTokens ?? 0) + positiveTokenCount(item.reasoningTokens);
+    buckets.set(key, current);
+  };
+  if (records.length > 0) {
+    for (const record of records) push(record.modelId, record);
+  } else if (usage.modelId) {
+    push(usage.modelId, usage);
+  }
+  if (!buckets.size) return undefined;
+  return [...buckets.values()].sort((left, right) => right.totalTokens - left.totalTokens || left.modelId.localeCompare(right.modelId));
 }

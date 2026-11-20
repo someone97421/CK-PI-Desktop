@@ -401,7 +401,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       <div className="message-col">
         {settledTask ? (
           <>
-            <TaskProcessDrawer key={settledTask.id} task={settledTask} processParts={process}>
+            <TaskProcessDrawer key={settledTask.id} task={settledTask} processParts={process} sourceMessages={entry.sourceMessages}>
               <AssistantTurnParts parts={process} {...partContext} />
             </TaskProcessDrawer>
             <AssistantTurnParts parts={responses} {...partContext} />

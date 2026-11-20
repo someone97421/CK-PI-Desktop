@@ -85,7 +85,7 @@ HTTP 配置示例，`url` 替换成实际 MCP 地址：
 name: docs-reviewer
 description: 只读核对文档与代码是否一致
 tools: [Read, Glob, Grep]
-reportIntervalSteps: 24
+reportIntervalSteps: 8
 ---
 负责核对任务指定的文档与代码，报告发现和文件位置。
 ```

@@ -49,6 +49,7 @@ export class SubagentObserver {
   private pendingReport: SubagentStep[] = [];
   private pendingFrom?: number;
   private pendingTo?: number;
+  private pendingToolCount = 0;
   private pendingCount = 0;
   private pendingErrors = 0;
   private reportSeq = 0;
@@ -120,8 +121,7 @@ export class SubagentObserver {
     step.result = clip(safe, MAX_DETAIL_CHARS);
     step.truncated = safe.length > MAX_DETAIL_CHARS || step.args.length > MAX_DETAIL_CHARS;
     this.completed += 1;
-    this.segmentCompleted += 1;
-    this.pendingCount += 1;
+    this.pendingToolCount += 1;
     if (step.status !== "success") this.pendingErrors += 1;
     this.pendingFrom ??= step.seq;
     this.pendingTo = step.seq;
@@ -129,6 +129,12 @@ export class SubagentObserver {
     if (this.pendingReport.length < MAX_REPORT_STEPS) {
       this.pendingReport.push({ ...step, args: clip(step.args, 240), result: clip(step.result, 400) });
     }
+    this.notify({ kind: "snapshot" });
+  }
+
+  completeTurn(): void {
+    this.segmentCompleted += 1;
+    this.pendingCount += 1;
     if (this.pendingCount >= this.interval) this.flush("interval");
     this.notify({ kind: "snapshot" });
   }
@@ -136,20 +142,21 @@ export class SubagentObserver {
   noteStatement(text: string): void { this.statement = this.safe(text, 500); }
 
   flush(reason: SubagentProgressReport["reason"]): void {
-    if (!this.pendingCount) return;
+    if (!this.pendingCount && !this.pendingToolCount) return;
     const now = Date.now();
     const report: SubagentProgressReport = {
       execution: this.execution,
       reportId: `${this.delegationId}:${++this.reportSeq}`, reportSeq: this.reportSeq,
       delegationId: this.delegationId, segmentId: this.segmentId,
-      fromStep: this.pendingFrom!, toStep: this.pendingTo!, capturedAt: now, generatedAt: now,
-      reason, summary: `${this.pendingCount} tool calls completed; ${this.pendingErrors} failed or cancelled.`,
+      fromStep: this.pendingFrom ?? this.completed, toStep: this.pendingTo ?? this.completed, capturedAt: now, generatedAt: now,
+      reason, summary: `${this.pendingCount} model turn(s) completed (${this.pendingToolCount} tool calls; ${this.pendingErrors} failed or cancelled).`,
       steps: this.pendingReport.map((step) => ({ ...step })),
-      truncated: this.pendingCount > this.pendingReport.length || this.pendingReport.some((step) => step.truncated || step.args.includes("[truncated") || step.result?.includes("[truncated")),
+      truncated: this.pendingToolCount > this.pendingReport.length || this.pendingReport.some((step) => step.truncated || step.args.includes("[truncated") || step.result?.includes("[truncated")),
       ...(this.statement ? { statement: this.statement } : {}),
     };
     this.latestReport = report;
     this.pendingReport = [];
+    this.pendingToolCount = 0;
     this.pendingCount = 0;
     this.pendingErrors = 0;
     this.pendingFrom = this.pendingTo = undefined;
@@ -322,6 +329,7 @@ export class SubagentObserver {
       started: this.started,
       completed: this.completed,
       pendingCount: this.pendingCount,
+      pendingToolCount: this.pendingToolCount,
       pendingErrors: this.pendingErrors,
       pendingFrom: this.pendingFrom,
       pendingTo: this.pendingTo,
@@ -356,6 +364,7 @@ export class SubagentObserver {
     observer.started = snapshot.started;
     observer.completed = snapshot.completed;
     observer.pendingCount = snapshot.pendingCount;
+    observer.pendingToolCount = snapshot.pendingToolCount ?? snapshot.pendingCount;
     observer.pendingErrors = snapshot.pendingErrors;
     observer.pendingFrom = snapshot.pendingFrom;
     observer.pendingTo = snapshot.pendingTo;

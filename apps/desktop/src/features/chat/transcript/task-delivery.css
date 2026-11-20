@@ -55,13 +55,54 @@
 
 .task-process-usage,
 .task-steering-label {
-  margin: 8px 0;
+  margin: 6px 0;
   color: var(--ds-text-muted);
   font-size: var(--text-xs-plus);
   line-height: var(--leading-body);
   overflow-wrap: anywhere;
 }
 
+.task-process-usage-total {
+  margin: 0;
+}
+
+.task-process-usage-models {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px 0 0 8px;
+  border-inline-start: 1px solid var(--ds-border-default);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.task-process-usage-model-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-process-usage-model-id {
+  color: var(--ds-text-secondary);
+  font-family: var(--font-mono);
+  font-size: inherit;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.task-process-usage-model-total {
+  color: var(--ds-text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.task-process-usage-model-breakdown {
+  color: var(--ds-text-muted);
+}
 .task-steering-label {
   text-align: right;
 }

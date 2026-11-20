@@ -67,7 +67,7 @@ export type SessionUsageCost = {
   providers: ProviderUsageCost[];
 };
 
-export { addUsage, contextOccupancyTokens, withUsageIdentity } from "../message-usage.js";
+export { addUsage, contextOccupancyTokens, summarizeUsageByModel, withUsageIdentity } from "../message-usage.js";
 
 export type MessageAttachment = {
   localReference?: string;
@@ -113,6 +113,16 @@ export type ToolTokenUsage = {
 
 export type TaskStatus = "running" | "completed" | "aborted" | "failed";
 
+export interface TaskModelUsage {
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  totalTokens: number;
+}
+
 export interface MessageTask {
   id: string;
   /** Monotonic presentation snapshot revision within this task. */
@@ -123,6 +133,8 @@ export interface MessageTask {
   /** 新记录保存实际运行计时，旧记录继续使用起止时间。 */
   runTiming?: import("../run-timing.js").RunTiming;
   usage?: MessageUsage;
+  /** 按模型 ID 汇总的本轮消耗（含主代理与子代理）。 */
+  usageByModel?: TaskModelUsage[];
   usageIncomplete: boolean;
   estimatedDuration?: boolean;
   finalMessageId?: string;

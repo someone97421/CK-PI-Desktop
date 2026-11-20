@@ -71,7 +71,7 @@ export type SubagentDefinition = {
    * rather than per run.
    */
   maxTokens?: number;
-  /** 每完成 N 次工具调用旁路汇报；未设置时由主 Agent 派发时指定。 */
+  /** 每完成 N 轮模型调用旁路汇报；未设置时由主 Agent 派发时指定。 */
   reportIntervalSteps?: number;
   /** Idle watchdog in seconds; parser materializes the default for documents. */
   idleTimeoutSeconds?: number;

@@ -312,6 +312,7 @@ export interface SubagentObserverSnapshot {
   started: number;
   completed: number;
   pendingCount: number;
+  pendingToolCount?: number;
   pendingErrors: number;
   pendingFrom?: number;
   pendingTo?: number;

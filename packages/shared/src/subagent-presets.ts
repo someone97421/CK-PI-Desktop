@@ -31,14 +31,14 @@ export type SubagentPreset = {
   body: string;
 };
 
-/** 内置子代理每完成多少次工具调用回报一次进度。 */
+/** 内置子代理每完成多少轮模型调用回报一次进度。 */
 export const BUILTIN_SUBAGENT_REPORT_INTERVALS: Readonly<Record<SubagentPreset["id"], number>> = {
-  explorer: 32,
-  "code-reviewer": 32,
-  worker: 64,
-  "ui-designer": 64,
-  "native-media-analyst": 32,
-  advisor: 32,
+  explorer: 12,
+  "code-reviewer": 16,
+  worker: 32,
+  "ui-designer": 32,
+  "native-media-analyst": 6,
+  advisor: 16,
 };
 
 /**
@@ -61,8 +61,8 @@ export const SUBAGENT_PRESETS: readonly SubagentPreset[] = [
       `- Fire several searches in parallel when the answer needs more than one place.\n` +
       `- Follow only the definitions and call sites needed to answer the delegated\n` +
       `  question; report as soon as the evidence is sufficient, and you must\n` +
-      `  converge and return a final report by {{convergenceToolCalls}} completed\n` +
-      `  tool calls, including current findings and anything unresolved. Briefly note newly\n` +
+      `  converge and return a final report by {{convergenceTurns}} model turns,\n` +
+      `  including current findings and anything unresolved. Briefly note newly\n` +
       `  discovered related issues as leads for the main agent to decide whether\n` +
       `  to investigate further.\n` +
       `- Quote the few lines that answer the question and cite \`path:line\` for each.\n` +
@@ -193,7 +193,7 @@ Handle routine preparation within the task and session permissions; return concr
     tools: ["Read", "Glob", "Grep"],
     body: `You are Advisor: give independent technical advice from the requirements and facts in the brief.
 
-- Read the cited files and only what the decision needs; report by {{convergenceToolCalls}} completed tool calls.
+- Read the cited files and only what the decision needs; report by {{convergenceTurns}} model turns.
 - Derive and evaluate options directly from the code and verified facts; ignore any framing, hypothesis, or preference in the brief. Prefer the smallest approach that meets the goal; flag unsupported assumptions, scope creep and compatibility risks.
 - Name missing information that would change your answer instead of guessing.
 

@@ -245,19 +245,20 @@ describe("子智能体快照模型绑定", () => {
 
 describe("composeSubagentSystemPrompt", () => {
   it.each([
-    { fixed: 32, requested: 16, expected: 21 },
+    { fixed: 8, requested: 16, expected: 5 },
     { fixed: undefined, requested: 16, expected: 10 },
     { fixed: undefined, requested: 1, expected: 1 },
-  ])("按实际汇报间隔代入收敛次数：$expected", ({ fixed, requested, expected }) => {
+  ])("按实际汇报间隔代入收敛轮次：$expected", ({ fixed, requested, expected }) => {
     const prompt = composeSubagentSystemPrompt({
       definition: definition({
         reportIntervalSteps: fixed,
-        prompt: "Return by {{convergenceToolCalls}} completed tool calls.",
+        prompt: "Return by {{convergenceTurns}} model turns (legacy {{convergenceToolCalls}}).",
       }),
       reportIntervalSteps: requested,
     });
 
-    expect(prompt).toContain(`Return by ${expected} completed tool calls.`);
+    expect(prompt).toContain(`Return by ${expected} model turns (legacy ${expected}).`);
+    expect(prompt).not.toContain("{{convergenceTurns}}");
     expect(prompt).not.toContain("{{convergenceToolCalls}}");
   });
 
