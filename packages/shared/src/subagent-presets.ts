@@ -35,8 +35,8 @@ export type SubagentPreset = {
 export const BUILTIN_SUBAGENT_REPORT_INTERVALS: Readonly<Record<SubagentPreset["id"], number>> = {
   explorer: 12,
   "code-reviewer": 16,
-  worker: 32,
-  "ui-designer": 32,
+  worker: 24,
+  "ui-designer": 24,
   "native-media-analyst": 6,
   advisor: 16,
 };

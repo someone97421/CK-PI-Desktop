@@ -2131,6 +2131,7 @@
 .settings-theme-option:hover,
 .settings-theme-option.is-active,
 .settings-menu-select-option:hover,
+.settings-menu-select-option[role="menuitemcheckbox"]:focus-visible,
 .settings-menu-select-option.is-active {
   background: var(--ds-bg-hover);
 }
