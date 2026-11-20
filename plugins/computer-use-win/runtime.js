@@ -8,7 +8,9 @@ const { probe: probeCua, doctor: cuaDoctor, childEnv: cuaChildEnv } = require(".
 const { filterRecords, gateRecord, namesMatch, normalize } = require("./policy");
 const { resolvePowerShell } = require("./powershell");
 
-const PLUGIN_VERSION = "0.4.0";
+const { version: PLUGIN_VERSION } = require("./manifest.json");
+const { usesTokenContract, driverRequest, driverResponse, validWindow, sameWindow, windowBounds,
+  sameWindowBounds, screenshotFrame, pointsInsideFrame } = require("./driver-compat.js");
 const START_TIMEOUT_MS = 15_000;
 const RPC_TIMEOUT_MS = 90_000;
 const FOCUS_TIMEOUT_MS = 8_000;
@@ -307,6 +309,7 @@ function captureFailed(result) {
 
 function evaluateWait(result, predicate, maxElements, maxDepth) {
   const s = structuredOf(result);
+  if (s._capture_target_match === false) return { matched: false, reason: "foreign_target", evidence: [] };
   if (captureFailed(result) || !Array.isArray(s.elements)) return { matched: false, reason: "capture_failed", evidence: [] };
   const lower = (value) => String(value ?? "").toLowerCase();
   const candidates = s.elements.filter((el) => el
@@ -601,7 +604,7 @@ const WINDOWS_NATIVE_NAV_KEYS = new Set(["right", "left", "up", "down", "home", 
 function completeFreshTree(result, maxElements = 400, maxDepth = 20, allowEmpty = false) {
   const structured = structuredOf(result);
   const elements = structured.elements;
-  if (captureFailed(result) || !Array.isArray(elements) || (!allowEmpty && !elements.length)
+  if (captureFailed(result) || structured._capture_target_match === false || !Array.isArray(elements) || (!allowEmpty && !elements.length)
     || elements.length >= maxElements || structured.query || structured.query_local) return false;
   function incomplete(value, nesting = 0) {
     if (!value || typeof value !== "object") return false;
@@ -780,7 +783,7 @@ function responseFlaggedUnhealthy(result) {
 function nestedTargetMismatch(value, target, nesting = 0) {
   if (!value || typeof value !== "object" || nesting > 64) return false;
   return Object.entries(value).some(([key, item]) => {
-    if (key === "elements" || key === "content" || key === "tree_markdown") return false;
+    if (item == null || key === "elements" || key === "content" || key === "tree_markdown") return false;
     const name = key.replace(/[_-]/g, "").toLowerCase();
     if (/^(pid|targetpid|capturepid)$/.test(name) && Number.isFinite(Number(item)) && Number(item) !== Number(target.pid)) return true;
     if (/^(windowid|targetwindowid|capturewindowid|hwnd|targethwnd)$/.test(name) && Number.isFinite(Number(item)) && Number(item) !== Number(target.window_id)) return true;
@@ -1165,6 +1168,7 @@ class ComputerUseRuntime {
     this._imageVersion = 0;
     this._treeVersion = 0;
     this._observationId = 0;
+    this._coordinateFrame = null;
   }
 
   callTool(name, args, options = {}) {
@@ -1199,13 +1203,16 @@ class ComputerUseRuntime {
         mapped = await this._dispatch(name, nextArgs, observe);
         if (beforeSig) nextArgs._treeBeforeSig = beforeSig;
       } catch (error) {
-        mapped = runtimeError(error.code || "runtime_error", error.message || String(error), error.code === "stale_tree" ? "not_sent" : "unknown");
+        mapped = runtimeError(error.code || "runtime_error", error.message || String(error), ["stale_tree", "invalid_window_id"].includes(error.code) ? "not_sent" : "unknown");
         if (waiting) mapped.structuredContent.wait = {
           status: this.stoppedByUser || error.code === "stopped_by_user" ? "cancelled" : error.code === "wait_timeout" ? "timeout" : "error",
           predicate: { ...nextArgs.wait_for }, attempts: 0, elapsed_ms: Date.now() - waitStartedAt, reason: "startup_failed", evidence: [],
         };
       } finally {
-        if (action) this._invalidateTrees();
+        if (action) {
+          this._invalidateTrees();
+          this._coordinateFrame = null;
+        }
         if (began) this.endControl();
       }
       mapped = normalizeActionResult(mapped, name);
@@ -1306,20 +1313,29 @@ class ComputerUseRuntime {
     return this._cua(name, args);
   }
 
+  _usesTokenContract() {
+    return usesTokenContract(this.info?.version);
+  }
+
   async _cua(name, args, timeout = RPC_TIMEOUT_MS) {
-    let result = await this._rpcUnlocked("tools/call", { name, arguments: args || {} }, timeout);
-    // The driver ends its MCP session after an idle period and refuses every
-    // tool until start_session is called explicitly. The refused call was not
-    // delivered (delivery=not_sent, retry_safe=true), so reopen once and retry;
-    // stale AX tokens from the ended session are invalidated, not reused.
-    if (name !== "start_session" && refusalCode(result) === "session_ended" && !this.stoppedByUser) {
-      this._invalidateTrees();
-      this._nativeMenuContext = null;
-      await this._rpcUnlocked("tools/call", { name: "start_session", arguments: {} }, timeout);
-      result = await this._rpcUnlocked("tools/call", { name, arguments: args || {} }, timeout);
-      if (refusalCode(result) !== "session_ended") {
-        result = { ...result, structuredContent: { ...structuredOf(result), session_recovered: true } };
-      }
+    const modern = this._usesTokenContract();
+    const payload = driverRequest(name, args || {}, modern);
+    const call = async (tool, parameters) => driverResponse(tool,
+      await this._rpcUnlocked("tools/call", { name: tool, arguments: parameters }, timeout), parameters, modern);
+    let result = await call(name, payload);
+    if (name === "start_session" || refusalCode(result) !== "session_ended" || this.stoppedByUser) return result;
+    this._invalidateTrees();
+    this._coordinateFrame = null;
+    this._nativeMenuContext = null;
+    const epoch = this._sessionEpoch || 0;
+    const reopened = await call("start_session", {});
+    if (captureFailed(reopened) || this.stoppedByUser || epoch !== (this._sessionEpoch || 0)) return result;
+    // 会话重启不能重放依赖旧元素令牌或截图坐标的请求。
+    if (payload.element_index != null || payload.element_token || payload.capture_id
+      || (modern && name === "drag")) return result;
+    result = await call(name, payload);
+    if (refusalCode(result) !== "session_ended") {
+      result = { ...result, structuredContent: { ...structuredOf(result), session_recovered: true } };
     }
     return result;
   }
@@ -1332,7 +1348,10 @@ class ComputerUseRuntime {
     const actionEpoch = this._sessionEpoch || 0;
     const foreground = opts.overlay === true || opts.foreground === true;
     const deliveryMode = foreground ? "foreground" : "background";
-    if (foreground) await this._cua("bring_to_front", { pid: args.pid, window_id: args.window_id }).catch(() => {});
+    // 新版 Windows 会先校验截图再激活窗口。
+    if (foreground && !(IS_WIN && this._usesTokenContract())) {
+      await this._cua("bring_to_front", { pid: args.pid, window_id: args.window_id }).catch(() => {});
+    }
     if (this.stoppedByUser) return runtimeError("stopped_by_user", "Computer Use stopped; no action sent", "not_sent");
     if (actionEpoch !== (this._sessionEpoch || 0)) return runtimeError("session_changed", "Control session changed before delivery; no action sent", "not_sent");
     let result;
@@ -1443,14 +1462,20 @@ class ComputerUseRuntime {
 
   async _listWindowsRaw() {
     const result = await this._cua("list_windows", {});
-    const windows = structuredOf(result).windows || [];
+    const windows = structuredOf(result).windows;
+    if (captureFailed(result) || !Array.isArray(windows) || (this._usesTokenContract() && !windows.every(validWindow))) {
+      throw new Error(textFromResult(result) || "Invalid list_windows result");
+    }
     return filterRecords(windows, this.settings);
   }
 
   async _listApps(args) {
     if (args.include_installed === true || args.include_installed === "true") {
       const result = await this._cua("list_apps", {});
-      const apps = filterRecords(structuredOf(result).apps || [], this.settings);
+      const listed = structuredOf(result).apps;
+      if (captureFailed(result)) return result;
+      if (!Array.isArray(listed)) return runtimeError("invalid_app_list", "Invalid list_apps result", "not_sent");
+      const apps = filterRecords(listed, this.settings);
       const lines = [`${apps.length} app(s) (installed+running)`];
       for (const app of apps) {
         lines.push(`- ${app.name} pid=${app.pid || 0} running=${app.running} ${app.launch_path || ""}`.trim());
@@ -1503,13 +1528,12 @@ class ComputerUseRuntime {
     const structured = structuredOf(result);
     const pid = structured.pid;
     const windows = structured.windows || [];
-    if (pid && windows[0]) {
-      this._rememberTarget(args.name || args.path || String(pid), {
-        app: args.name || args.path,
-        ...windowIdentity(windows[0]),
-        pid,
-        window_id: windows[0].window_id,
-      });
+    const first = Array.isArray(windows) ? windows[0] : null;
+    if (!captureFailed(result) && first && validWindow({ pid, window_id: first.window_id })
+      && (first.pid == null || first.pid === pid)) {
+      const alias = args.name || args.path || args.launch_path || String(pid);
+      this._rememberTarget(alias, { app: alias, ...windowIdentity(first), pid,
+        window_id: first.window_id, window_bounds: first.bounds });
     }
     return result;
   }
@@ -1524,6 +1548,11 @@ class ComputerUseRuntime {
       }
     };
     checkResolution();
+    if (this._usesTokenContract() && windowId != null && (!Number.isSafeInteger(Number(windowId)) || Number(windowId) <= 0)) {
+      const error = new Error("window_id must be a positive integer from list_windows");
+      error.code = "invalid_window_id";
+      throw error;
+    }
     const blocked = gateRecord({ name: app, pid: 0 }, this.settings);
     if (blocked && blocked.startsWith("blocked app")) {
       throw new Error(blocked);
@@ -1619,7 +1648,7 @@ class ComputerUseRuntime {
       if (typeof cached.snapshot_id !== "string" || !cached.snapshot_id
         || el.element_token !== `${cached.snapshot_id}:${index}`) fail("element token does not match the current snapshot");
       out.element_token = el.element_token;
-    } else if (cached.tree_actionable !== true) fail("partial snapshot requires an exact element token");
+    } else if (this._usesTokenContract() || cached.tree_actionable !== true) fail("snapshot requires an exact element token");
     if (cached.snapshot_id) out.snapshot_id = cached.snapshot_id;
     return out;
   }
@@ -1791,11 +1820,11 @@ class ComputerUseRuntime {
     this._menuContextFor(target);
     const prev = this.targets.get(normalize(args.app)) || {};
     const query = args.query != null && args.query !== "" ? String(args.query) : "";
-    const localQuery = Boolean(query && !args.refresh && !includeScreenshot && includeTree && prev.snapshot_actionable === true && Array.isArray(prev.elements));
+    const localQuery = Boolean(query && !args.refresh && !includeScreenshot && includeTree && prev.snapshot_actionable === true && Array.isArray(prev._querySource));
     if (localQuery) {
-      const elements = filterElements(prev.elements, query);
+      const elements = filterElements(prev._querySource, query);
       this._observationRevision = (this._observationRevision || 0) + 1;
-      this._rememberTarget(args.app, { ...prev, elements, tree_actionable: false });
+      this._rememberTarget(args.app, { ...prev, elements: localizeElements(elements, originFromBounds(prev.window_bounds)), tree_actionable: false });
       const filtered = this.targets.get(normalize(args.app));
       return { content: [{ type: "text", text: `${observationText(filtered)} snapshot_id=${prev.snapshot_id} query=${query} (local) screenshot omitted\n${trimTreeText(compactElements(elements))}` }],
         structuredContent: { ...observationFields(filtered), snapshot_id: prev.snapshot_id, elements, elements_complete: false, query, query_local: true } };
@@ -1803,6 +1832,14 @@ class ComputerUseRuntime {
     // Every actual query refresh requests a full tree, then filters locally. A
     // new screenshot must never inherit actionable tokens from an older tree.
     this._invalidateTrees(args.app);
+    if (this._usesTokenContract()) {
+      this._coordinateFrame = null;
+      for (const [key, cached] of this.targets) {
+        if (key !== normalize(args.app) && sameWindow(cached, target)) {
+          cached.tree_actionable = false; cached.snapshot_actionable = false; cached._elementState = "stale";
+        }
+      }
+    }
     revision = this._observationRevision || 0;
     const payload = { pid: target.pid, window_id: target.window_id, include_screenshot: includeScreenshot,
       include_accessibility_tree: includeTree, max_depth: Number(args.max_tree_depth) || 20,
@@ -1851,7 +1888,7 @@ class ComputerUseRuntime {
         : runtimeError("capture_failed", "Empty window state");
     }
     let structured = structuredOf(result);
-    if (!treeError && !context && includeScreenshot && structured.screenshot_error) {
+    if (!this._usesTokenContract() && !treeError && !context && includeScreenshot && structured.screenshot_error) {
       await this._cua("bring_to_front", { pid: target.pid, window_id: target.window_id }).catch(() => {});
       await sleep(200);
       checkWait();
@@ -1860,9 +1897,20 @@ class ComputerUseRuntime {
       structured = structuredOf(result);
       if (captureFailed(result)) { this._nativeMenuContext = null; return result ? { ...result, isError: true } : runtimeError("capture_failed", "Empty window state"); }
     }
-    const captureTargetMatch = structured._capture_target_match !== false
-      && (structured.pid == null || Number(structured.pid) === Number(target.pid))
-      && (structured.window_id == null || Number(structured.window_id) === Number(target.window_id));
+    const captureTargetMatch = structured._capture_target_match !== false && !nestedTargetMismatch(result, target)
+      && (!this._usesTokenContract() || sameWindow(structured, target));
+    if (!captureTargetMatch) {
+      this._nativeMenuContext = null;
+      const refused = runtimeError("foreign_target", "Window state did not belong to the resolved PID and window_id", "not_sent");
+      return { ...refused, structuredContent: { ...structuredOf(refused), _capture_target_match: false,
+        tree_actionable: false, snapshot_actionable: false } };
+    }
+    if (Array.isArray(structured.invalidated_snapshot_ids)) {
+      for (const cached of this.targets.values()) {
+        if (!structured.invalidated_snapshot_ids.includes(cached.snapshot_id)) continue;
+        cached.tree_actionable = false; cached.snapshot_actionable = false; cached._elementState = "stale";
+      }
+    }
     const trustedTree = explicitSnapshotTrusted(result, target) && captureTargetMatch;
     const freshTree = includeTree && trustedTree && Array.isArray(structured.elements);
     const complete = freshTree && liveTreeGuard(result, target).usable
@@ -1870,6 +1918,11 @@ class ComputerUseRuntime {
     const actionable = freshTree && (!includeScreenshot || imageFromResult(result)) && !structured.screenshot_error;
     if (includeTree && (!complete || !treeHasMenu(structured.elements || []))) this._nativeMenuContext = null;
     const image = includeScreenshot ? imageFromResult(result) : null;
+    const size = image ? imageSize(image) : { width: 0, height: 0 };
+    if (IS_WIN && this._usesTokenContract() && image && !structured.screenshot_error) {
+      const frame = screenshotFrame(structured, size, target);
+      if (frame) this._coordinateFrame = { ...frame, app: normalize(args.app) };
+    }
     const capturedAt = new Date().toISOString();
     const origin = originFromBounds(structured.window_bounds) || originFromBounds(target.window_bounds) || originFromBounds(prev.window_bounds);
     const elements = includeTree ? (query ? filterElements(structured.elements || [], query) : structured.elements || []) : [];
@@ -1878,6 +1931,8 @@ class ComputerUseRuntime {
       window_bounds: structured.window_bounds || target.window_bounds || prev.window_bounds,
       snapshot_id: freshTree ? structured.snapshot_id : prev.snapshot_id,
       elements: includeTree ? localizeElements(elements, origin) : prev.elements || [],
+      // 搜索复用采集时的原始元素，动作索引仅从本次返回的 elements 校验。
+      _querySource: actionable ? structured.elements : null,
       _ambiguousIndices: indices.filter((index, position) => indices.indexOf(index) !== position),
       observation_id: this._observationId = (this._observationId || 0) + 1,
       image_version: image ? (this._imageVersion = (this._imageVersion || 0) + 1) : prev.image_version ?? 0,
@@ -1904,7 +1959,6 @@ class ComputerUseRuntime {
       ...(query ? { query, query_local: false, elements_complete: false, tree_markdown: compactElements(elements) } : {}) };
     if (includeTree && freshTree) structured.elements = elements;
     if (!includeTree) { delete structured.elements; delete structured.tree_markdown; }
-    const size = image ? imageSize(image) : { width: 0, height: 0 };
     const meta = [`app=${target.app} snapshot_id=${remembered.snapshot_id || ""}`, observationText(remembered),
       treeStale ? "tree_state=stale(earlier capture, not refreshed)" : null,
       imageStale ? "image_state=stale(earlier capture, not refreshed)" : null,
@@ -1919,11 +1973,29 @@ class ComputerUseRuntime {
     return { ...result, content, structuredContent: structured };
   }
 
+  _coordinatesFor(app, target, points) {
+    const frame = this._coordinateFrame;
+    if (!frame || frame.app !== normalize(app) || !sameWindow(frame, target)) {
+      return runtimeError("screenshot_required", "Refresh get_app_state with include_screenshot=true for the exact target window before using screenshot coordinates.", "not_sent");
+    }
+    if (!pointsInsideFrame(frame, points)) {
+      return runtimeError("coordinate_out_of_bounds", `Coordinates must be inside the ${frame.width}x${frame.height} source screenshot.`, "not_sent");
+    }
+    return null;
+  }
+
   async _click(args, observe) {
     const target = await this._resolveTarget(args.app, args.window_id);
     const payload = { pid: target.pid, window_id: target.window_id };
     const cached = this.targets.get(normalize(args.app)) || {};
-    const rightClick = String(args.mouse_button || "left").toLowerCase() === "right";
+    const button = String(args.mouse_button || "left").toLowerCase();
+    const rightClick = button === "right";
+    const captureBound = IS_WIN && this._usesTokenContract();
+    const requested = callerDeliveryOpts(args);
+    if (captureBound && (!["left", "right", "middle"].includes(button)
+      || (args.click_count != null && (!Number.isInteger(args.click_count) || args.click_count < 1 || args.click_count > 3)))) {
+      return runtimeError("invalid_click", "Click requires a supported button and an integer click count from 1 to 3.", "not_sent");
+    }
     let hit = null;
     let via = null;
     if (args.element_index != null && args.element_index !== "") {
@@ -1933,28 +2005,37 @@ class ComputerUseRuntime {
         : null;
       via = "ax";
     } else if (args.x != null && args.y != null) {
-      const x = Number(args.x);
-      const y = Number(args.y);
+      const x = captureBound ? args.x : Number(args.x);
+      const y = captureBound ? args.y : Number(args.y);
+      if (captureBound) {
+        const blocked = this._coordinatesFor(args.app, target, [[x, y]]);
+        if (blocked) return blocked;
+      }
       payload.x = x;
       payload.y = y;
-      hit = cached.tree_actionable === true ? hitTestElement(cached.elements, x, y) : null;
+      const sourceElements = captureBound ? cached.elements?.filter(el => el?.screenshot_frame)
+        .map(el => ({ ...el, frame: el.screenshot_frame })) : cached.elements;
+      hit = cached.tree_actionable === true ? hitTestElement(sourceElements, x, y) : null;
       // A right click is semantically different from a default AX Invoke/Select;
       // preserve its explicit pixel operation instead of upgrading it to AX.
-      if (!rightClick && hit && shouldUpgradePixelToAx(hit)) {
+      const canUpgrade = captureBound
+        ? button === "left" && (args.click_count ?? 1) === 1 && !requested.foreground
+        : !rightClick;
+      if (canUpgrade && hit && shouldUpgradePixelToAx(hit)) {
         Object.assign(payload, this._elementFields(args.app, hit.element_index));
         delete payload.x;
         delete payload.y;
         via = "ax-from-pixel";
       } else {
+        if (captureBound) payload.capture_id = this._coordinateFrame.id;
         via = "pixel";
       }
     } else {
-      return { isError: true, content: [{ type: "text", text: "click needs element_index or x,y" }] };
+      return runtimeError("invalid_click", "click needs element_index or x,y", "not_sent");
     }
     if (args.click_count) payload.count = Number(args.click_count);
-    if (args.mouse_button) payload.button = args.mouse_button;
+    if (args.mouse_button) payload.button = captureBound ? button : args.mouse_button;
     const overlay = clickTargetsOverlay(hit, cached.elements, args.mouse_button);
-    const requested = callerDeliveryOpts(args);
     const result = await this._cuaAction("click", payload, observe, {
       overlay,
       foreground: rightClick || requested.foreground === true,
@@ -1966,12 +2047,17 @@ class ComputerUseRuntime {
 
   async _scroll(args, observe) {
     const target = await this._resolveTarget(args.app, args.window_id);
+    const modern = this._usesTokenContract();
+    const direction = String(args.direction || "down");
+    if (modern && !["up", "down", "left", "right"].includes(direction)) {
+      return runtimeError("invalid_direction", "Scroll direction must be up, down, left, or right.", "not_sent");
+    }
     const payload = {
       pid: target.pid,
       window_id: target.window_id,
-      direction: String(args.direction || "down"),
+      direction,
       by: "page",
-      amount: Math.max(1, Number(args.pages) || 1),
+      amount: modern ? Math.min(50, Math.max(1, Math.round(Number(args.pages) || 1))) : Math.max(1, Number(args.pages) || 1),
     };
     Object.assign(payload, this._elementFields(args.app, args.element_index));
     return this._cuaAction("scroll", payload, observe);
@@ -1979,6 +2065,18 @@ class ComputerUseRuntime {
 
   async _drag(args, observe) {
     const target = await this._resolveTarget(args.app, args.window_id);
+    if (IS_WIN && this._usesTokenContract()) {
+      const blocked = this._coordinatesFor(args.app, target, [[args.from_x, args.from_y], [args.to_x, args.to_y]]);
+      if (blocked) return blocked;
+      const frame = this._coordinateFrame;
+      const listed = await this._cua("list_windows", { pid: target.pid });
+      const windows = structuredOf(listed).windows;
+      const current = !captureFailed(listed) && Array.isArray(windows) && windows.find(win => sameWindow(win, target));
+      if (frame !== this._coordinateFrame || !current || current.minimized === true || current.is_on_screen === false
+        || !sameWindowBounds(frame.bounds, windowBounds(current))) {
+        return runtimeError("screenshot_stale", "Window identity or geometry could not be confirmed. Refresh the target screenshot before dragging.", "not_sent");
+      }
+    }
     return this._cuaAction("drag", {
       pid: target.pid,
       window_id: target.window_id,
@@ -2280,7 +2378,8 @@ class ComputerUseRuntime {
     let extra = this._elementFields(args.app, args.element_index);
     const passedIndex = extra.element_index != null;
     const editableTarget = !passedIndex || this._elementIsEditable(args.app, extra.element_index);
-    if (keyNeedsEditorFocus(parsed) && editableTarget && !overlay && !editing && !menuContext) {
+    if (keyNeedsEditorFocus(parsed) && editableTarget && !overlay && !editing && !menuContext
+      && !(this._usesTokenContract() && passedIndex)) {
       sendUiaFocus(this._childEnv(), target.window_id);
       extra = {};
     }
@@ -2341,7 +2440,7 @@ class ComputerUseRuntime {
   }
 
   _childEnv() {
-    const env = cuaChildEnv();
+    const env = typeof cuaChildEnv === "function" ? cuaChildEnv() : { ...process.env };
     if (this.tempDir) {
       env.TMP = this.tempDir;
       env.TEMP = this.tempDir;
@@ -2351,9 +2450,9 @@ class ComputerUseRuntime {
   }
 
   binaryPath() {
-    const info = probeCua({ verify: true });
+    const info = probeCua({ refresh: true, verify: true });
     if (!info.installed || info.error || !info.mcpCommand) {
-      throw new Error(info.error || "内置运行环境不可用，请重新导入 Windows 版插件包。");
+      throw new Error(info.error || "内置运行环境不可用，请重新导入插件包。");
     }
     this.info.exe = info.mcpCommand;
     this.info.version = info.version;
@@ -2407,7 +2506,14 @@ class ComputerUseRuntime {
 
   async _startChild() {
     this._killChild();
-    const info = this.binaryPath();
+    let info;
+    try {
+      info = this.binaryPath();
+    } catch (error) {
+      this.status = "error";
+      this.lastError = error instanceof Error ? error.message : String(error);
+      throw error;
+    }
     const child = spawn(info.mcpCommand, info.mcpArgs, {
       cwd: path.dirname(info.mcpCommand),
       env: this._childEnv(),
@@ -2428,6 +2534,7 @@ class ComputerUseRuntime {
       if (this.child !== child) return;
       this._sessionEpoch = (this._sessionEpoch || 0) + 1;
       this.targets.clear();
+      this._coordinateFrame = null;
       this._nativeMenuContext = null;
       this._failAll(new Error(why));
       this.child = null;
@@ -2453,9 +2560,10 @@ class ComputerUseRuntime {
       );
       if (this.child !== child || this.stoppedByUser) throw new Error("Driver startup was cancelled or replaced");
       this._write({ jsonrpc: "2.0", method: "notifications/initialized" });
-      this.status = "running";
       if (init?.serverInfo?.version) this.info.version = init.serverInfo.version;
-      await this._cua("set_config", { key: "max_image_dimension", value: MAX_IMAGE_DIMENSION }).catch(() => {});
+      await this._cua("set_config", { key: "max_image_dimension", value: MAX_IMAGE_DIMENSION }, START_TIMEOUT_MS).catch(() => {});
+      if (this.child !== child || this.stoppedByUser) throw new Error("Driver startup was cancelled or replaced");
+      this.status = "running";
     } catch (err) {
       if (this.child === child) {
         this._killChild();
@@ -2514,6 +2622,7 @@ class ComputerUseRuntime {
   _killChild() {
     this._sessionEpoch = (this._sessionEpoch || 0) + 1;
     this.targets.clear();
+    this._coordinateFrame = null;
     this._nativeMenuContext = null;
     const child = this.child;
     this.child = null;

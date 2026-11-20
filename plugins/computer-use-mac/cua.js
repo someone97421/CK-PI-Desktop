@@ -39,6 +39,8 @@ function runCapture(exe, args, timeout = 15_000) {
 function materialize() {
   if (intact()) return;
   if (digest(ARCHIVE) !== vendor.archiveSha256) throw new Error("包内运行环境损坏，请重新导入 Mac 版插件包。");
+  // 升级时旧版私有服务仍占用同一 socket，先用旧驱动停掉它，替换后由新版重新启动。
+  if (fs.existsSync(binary)) runCapture(binary, ["stop", "--socket", socket], 5000);
   fs.mkdirSync(runtimeDir, { recursive: true });
   const extracted = runCapture("/usr/bin/tar", ["-xzf", ARCHIVE, "-C", runtimeDir], 60_000);
   if (extracted.status !== 0 || extracted.error) throw new Error(extracted.error || extracted.stderr || "运行环境解压失败。");

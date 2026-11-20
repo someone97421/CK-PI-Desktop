@@ -9,6 +9,7 @@ $OutputEncoding = [Console]::OutputEncoding
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $bannerReferences = if ($PSVersionTable.PSEdition -eq 'Core') {
+  Add-Type -AssemblyName System.Drawing.Common
   # Add-Type replaces its default reference set when -ReferencedAssemblies is used.
   # PowerShell 7's WinForms facade needs the already loaded WindowsDesktop dependency closure.
   @([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.Location } |

@@ -1,8 +1,8 @@
 # Computer Use（Mac 常驻版）
 
-可导入「这是一个助手」的离线插件包，内置官方签名的 cua-driver 0.28.2 和光标组件，支持 Apple Silicon ARM64 与 Intel x64。无需另装 Python、Node、Homebrew 或下载驱动。
+可导入「这是一个助手」的离线插件包，内置官方签名的 cua-driver 0.53.0 和光标组件，支持 Apple Silicon ARM64 与 Intel x64。无需另装 Python、Node、Homebrew 或下载驱动。
 
-使用方式：在「设置 → 插件」导入 `dist/cn.star.computer-use-0.4.1.piplug`，打开侧栏键盘图标，点击「一键准备并授权」。按 macOS 提示给 **Cua Driver** 开启辅助功能和屏幕录制。系统如要求重启驱动，授权后点击「启动」。
+使用方式：在「设置 → 插件」导入 `dist/cn.star.computer-use-0.5.1.piplug`，打开侧栏键盘图标，点击「一键准备并授权」。按 macOS 提示给 **Cua Driver** 开启辅助功能和屏幕录制。系统如要求重启驱动，授权后点击「启动」。
 
 插件沿用 `cn.star.computer-use` ID，导入时升级替换现有 Computer Use，保留插件设置；不要同时安装 Win 版。同一套工具名称和参数保持兼容，复用平台无关的 Office 工作流知识，不加载 Windows 桌面操作技能。
 

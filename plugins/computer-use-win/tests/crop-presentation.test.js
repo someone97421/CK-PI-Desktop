@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const runtimePath = path.join(__dirname, "..", "runtime.js");
+const runtimeRequire = require("node:module").createRequire(runtimePath);
 function image(width, height) {
   const data = Buffer.alloc(24); data[0] = 0x89; data[1] = 0x50;
   data.writeUInt32BE(width, 16); data.writeUInt32BE(height, 20);
@@ -29,7 +30,7 @@ function fixture(cropResult, fixtureOptions = {}) {
         spawn() { throw new Error("unexpected spawn"); },
         spawnSync() { return { status: 0, stdout: JSON.stringify({ ok: true, jpeg: "YQ==" }), stderr: "" }; },
       };
-      return require(name);
+      return runtimeRequire(name);
     },
   };
   vm.runInNewContext(fs.readFileSync(runtimePath, "utf8"), sandbox, { filename: runtimePath });

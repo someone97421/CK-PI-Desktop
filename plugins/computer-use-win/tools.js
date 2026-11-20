@@ -266,7 +266,7 @@ const OCU_TOOLS = [
   },
   {
     name: "drag",
-    description: "Drag between screenshot coordinates in an app window. Background by default.",
+    description: "Drag between two points from the latest screenshot of the target window. Capture again after switching or moving windows. Background by default.",
     risk: "high",
     needsApp: true,
     schema: {

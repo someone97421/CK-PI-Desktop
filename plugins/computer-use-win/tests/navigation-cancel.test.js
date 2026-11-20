@@ -7,6 +7,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const runtimePath = path.join(__dirname, "..", "runtime.js");
+const runtimeRequire = require("node:module").createRequire(runtimePath);
 const source = fs.readFileSync(runtimePath, "utf8");
 const normal = [{ role: "Document", name: "Sheet", element_index: 1 }];
 const editor = [{ role: "Edit", name: "BITABLE_TEXT_EDITOR_1", element_index: 2 }];
@@ -46,7 +47,7 @@ function fixture({ platform = "win32", captures = [state(normal)], native, after
       if (name === "./overlay") return { ControlBanner: class {} };
       if (name === "./cua") return {};
       if (name === "./policy") return require("../policy");
-      return require(name);
+      return runtimeRequire(name);
     },
   };
   vm.runInNewContext(source, sandbox, { filename: runtimePath });

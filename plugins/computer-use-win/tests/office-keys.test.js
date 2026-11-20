@@ -8,6 +8,7 @@ const vm = require("node:vm");
 const { spawnSync } = require("node:child_process");
 const { windowsPowerShellHosts } = require("./powershell-hosts");
 const runtimePath = path.join(__dirname, "..", "runtime.js");
+const runtimeRequire = require("node:module").createRequire(runtimePath);
 const source = fs.readFileSync(runtimePath, "utf8");
 const script = fs.readFileSync(path.join(__dirname, "..", "scripts", "windows-send-key.ps1"), "utf8");
 const nativeBlock = /Add-Type @"\r?\n([\s\S]*?)\r?\n"@/;
@@ -46,7 +47,7 @@ function fixture({ platform = "win32", identity = { app_name: "WINWORD" }, app =
       if (name === "./overlay") return { ControlBanner: class {} };
       if (name === "./cua") return {};
       if (name === "./policy") return require("../policy");
-      return require(name);
+      return runtimeRequire(name);
     },
   };
   vm.runInNewContext(source, sandbox, { filename: runtimePath });

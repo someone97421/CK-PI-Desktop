@@ -15,7 +15,7 @@ try {
   for (const name of ["main.js", "mac-runtime.js", "cua.js", "vendor.json", "vendor", "renderer", "README.md", "THIRD_PARTY_NOTICES.md"]) {
     await cp(join(root, name), join(staging, name), { recursive: true });
   }
-  for (const name of ["runtime.js", "tools.js", "policy.js", "overlay.js", "powershell.js", "image-region.js", "value-reader.js", "state-value.js", "LICENSE"]) {
+  for (const name of ["runtime.js", "tools.js", "policy.js", "overlay.js", "powershell.js", "image-region.js", "value-reader.js", "state-value.js", "driver-compat.js", "LICENSE"]) {
     await cp(join(shared, name), join(staging, name));
   }
   await cp(join(shared, "scripts"), join(staging, "scripts"), { recursive: true });

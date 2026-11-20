@@ -7,6 +7,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 const runtimePath = path.join(__dirname, "..", "runtime.js");
+const runtimeRequire = require("node:module").createRequire(runtimePath);
 const source = fs.readFileSync(runtimePath, "utf8");
 const button = { role: "Button", label: "Open", element_index: 4, element_token: "snap:4", enabled: true, visible: true,
   frame: { x: 10, y: 10, w: 100, h: 40 }, actions: ["Invoke"] };
@@ -27,7 +28,7 @@ function fixture({ elements = [button], clickResult, stopAfterFront = false, rep
       if (name === "./overlay") return { ControlBanner: class {} };
       if (name === "./cua") return {};
       if (name === "./policy") return require("../policy");
-      return require(name);
+      return runtimeRequire(name);
     },
   };
   vm.runInNewContext(source, sandbox, { filename: runtimePath });

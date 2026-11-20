@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const runtimePath = path.join(__dirname, "..", "runtime.js");
+const runtimeRequire = require("node:module").createRequire(runtimePath);
 const source = fs.readFileSync(runtimePath, "utf8");
 const button = { element_index: 1, element_token: "same-driver-id:1", enabled: true, visible: true, role: "Button", label: "Save", frame: { x: 0, y: 0, w: 100, h: 100 } };
 const image = { type: "image", mimeType: "image/png", data: "YWJj" };
@@ -36,7 +37,7 @@ function fixture({ platform = "win32", actionResult, capture, native, clipboardF
       if (name === "./cua") return {};
       if (name === "./policy") return require("../policy");
       if (name === "electron") return { clipboard: { writeText() { calls.clipboard++; if (clipboardFails) throw new Error("clipboard unavailable"); } } };
-      return require(name);
+      return runtimeRequire(name);
     },
   };
   vm.runInNewContext(source, sandbox, { filename: runtimePath });
@@ -252,6 +253,13 @@ for (const [predicate, elements] of [
     assert.ok(f.calls.cua.every((c) => c.name === "get_window_state" && c.payload.include_screenshot === false && c.payload.include_accessibility_tree === true));
   });
 }
+
+test("wait cannot confirm text found in another window", async () => {
+  const f = fixture({ capture: () => state([button], { window_id: 200 }) });
+  const result = await f.wait({ kind: "text_present", text: "Save" });
+  assert.notEqual(result.structuredContent.wait.status, "matched");
+  assert.notEqual(result.structuredContent.action_result?.goal, "confirmed");
+});
 
 test("wait polls full fresh trees, bypasses query cache, and returns matching final screenshot", async () => {
   const f = fixture({ capture: (n, p) => state([{ label: n < 3 ? "loading" : "Done" }], {}, p.include_screenshot) });

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "cn.star.computer-use",
   "name": "Computer Use（Win 版）",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Windows x64 桌面控制，内置离线运行环境、Office 知识和应用操作技能，支持允许列表和急停。",
   "author": "TheFlareStar",
   "license": "MPL-2.0",
@@ -53,7 +53,9 @@
         "schema": {
           "type": "object",
           "properties": {
-            "include_installed": { "type": "boolean" }
+            "include_installed": {
+              "type": "boolean"
+            }
           }
         }
       },
@@ -64,8 +66,12 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "on_screen_only": { "type": "boolean" }
+            "app": {
+              "type": "string"
+            },
+            "on_screen_only": {
+              "type": "boolean"
+            }
           }
         }
       },
@@ -76,9 +82,15 @@
         "schema": {
           "type": "object",
           "properties": {
-            "name": { "type": "string" },
-            "path": { "type": "string" },
-            "launch_path": { "type": "string" }
+            "name": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "launch_path": {
+              "type": "string"
+            }
           }
         }
       },
@@ -89,45 +101,118 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "include_screenshot": { "type": "boolean" },
-            "include_tree": { "type": "boolean" },
-            "query": { "type": "string" },
-            "refresh": { "type": "boolean" },
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "include_screenshot": {
+              "type": "boolean"
+            },
+            "include_tree": {
+              "type": "boolean"
+            },
+            "query": {
+              "type": "string"
+            },
+            "refresh": {
+              "type": "boolean"
+            },
             "read_value": {
               "type": "object",
               "properties": {
-                "name": { "type": "string" },
-                "automation_id": { "type": "string" },
-                "role": { "type": "string" }
+                "name": {
+                  "type": "string"
+                },
+                "automation_id": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                }
               },
-              "anyOf": [{ "required": ["name"] }, { "required": ["automation_id"] }],
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "automation_id"
+                  ]
+                }
+              ],
               "additionalProperties": false
             },
             "wait_for": {
               "type": "object",
               "properties": {
-                "kind": { "type": "string", "enum": ["text_present", "text_absent", "value_equals", "value_changed"] },
-                "text": { "type": "string" },
-                "name": { "type": "string" },
-                "role": { "type": "string" },
-                "value": { "type": "string" },
-                "baseline": { "type": "string" }
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "text_present",
+                    "text_absent",
+                    "value_equals",
+                    "value_changed"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "baseline": {
+                  "type": "string"
+                }
               },
-              "required": ["kind"],
+              "required": [
+                "kind"
+              ],
               "additionalProperties": false
             },
-            "wait_timeout_ms": { "type": "integer", "minimum": 0, "maximum": 30000 },
-            "poll_interval_ms": { "type": "integer", "minimum": 100, "maximum": 5000 },
-            "max_tree_depth": { "type": "integer", "minimum": 1 },
-            "max_tree_nodes": { "type": "integer", "minimum": 1 },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "wait_timeout_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 30000
+            },
+            "poll_interval_ms": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 5000
+            },
+            "max_tree_depth": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_tree_nodes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app"]
+          "required": [
+            "app"
+          ]
         }
       },
       {
@@ -137,21 +222,58 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "element_index": { "type": "string" },
-            "x": { "type": "number" },
-            "y": { "type": "number" },
-            "click_count": { "type": "integer" },
-            "mouse_button": { "type": "string", "enum": ["left", "right", "middle"] },
-            "observe": { "type": "boolean" },
-            "delivery_mode": { "type": "string", "enum": ["background", "foreground"] },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "element_index": {
+              "type": "string"
+            },
+            "x": {
+              "type": "number"
+            },
+            "y": {
+              "type": "number"
+            },
+            "click_count": {
+              "type": "integer"
+            },
+            "mouse_button": {
+              "type": "string",
+              "enum": [
+                "left",
+                "right",
+                "middle"
+              ]
+            },
+            "observe": {
+              "type": "boolean"
+            },
+            "delivery_mode": {
+              "type": "string",
+              "enum": [
+                "background",
+                "foreground"
+              ]
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app"]
+          "required": [
+            "app"
+          ]
         }
       },
       {
@@ -161,14 +283,30 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "element_index": { "type": "string" },
-            "action": { "type": "string" },
-            "value": { "type": "string" },
-            "observe": { "type": "boolean" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "element_index": {
+              "type": "string"
+            },
+            "action": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "observe": {
+              "type": "boolean"
+            }
           },
-          "required": ["app", "element_index", "action"]
+          "required": [
+            "app",
+            "element_index",
+            "action"
+          ]
         }
       },
       {
@@ -178,40 +316,91 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "element_index": { "type": "string" },
-            "direction": { "type": "string" },
-            "pages": { "type": "number" },
-            "observe": { "type": "boolean" },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "element_index": {
+              "type": "string"
+            },
+            "direction": {
+              "type": "string"
+            },
+            "pages": {
+              "type": "number"
+            },
+            "observe": {
+              "type": "boolean"
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app", "direction"]
+          "required": [
+            "app",
+            "direction"
+          ]
         }
       },
       {
         "name": "drag",
-        "description": "Drag between screenshot coordinates in an app window.",
+        "description": "Drag between two points from the latest screenshot of the target window. Capture again after switching or moving windows.",
         "risk": "high",
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "from_x": { "type": "number" },
-            "from_y": { "type": "number" },
-            "to_x": { "type": "number" },
-            "to_y": { "type": "number" },
-            "observe": { "type": "boolean" },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "from_x": {
+              "type": "number"
+            },
+            "from_y": {
+              "type": "number"
+            },
+            "to_x": {
+              "type": "number"
+            },
+            "to_y": {
+              "type": "number"
+            },
+            "observe": {
+              "type": "boolean"
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app", "from_x", "from_y", "to_x", "to_y"]
+          "required": [
+            "app",
+            "from_x",
+            "from_y",
+            "to_x",
+            "to_y"
+          ]
         }
       },
       {
@@ -221,18 +410,45 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "element_index": { "type": "string" },
-            "text": { "type": "string" },
-            "observe": { "type": "boolean" },
-            "delivery_mode": { "type": "string", "enum": ["background", "foreground"] },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "element_index": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "observe": {
+              "type": "boolean"
+            },
+            "delivery_mode": {
+              "type": "string",
+              "enum": [
+                "background",
+                "foreground"
+              ]
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app", "text"]
+          "required": [
+            "app",
+            "text"
+          ]
         }
       },
       {
@@ -242,18 +458,45 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "element_index": { "type": "string" },
-            "key": { "type": "string" },
-            "observe": { "type": "boolean" },
-            "delivery_mode": { "type": "string", "enum": ["background", "foreground"] },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "element_index": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "observe": {
+              "type": "boolean"
+            },
+            "delivery_mode": {
+              "type": "string",
+              "enum": [
+                "background",
+                "foreground"
+              ]
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app", "key"]
+          "required": [
+            "app",
+            "key"
+          ]
         }
       },
       {
@@ -263,17 +506,39 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "element_index": { "type": "string", "description": "Legacy compatibility only; select the destination before pasting." },
-            "text": { "type": "string" },
-            "observe": { "type": "boolean" },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "element_index": {
+              "type": "string",
+              "description": "Legacy compatibility only; select the destination before pasting."
+            },
+            "text": {
+              "type": "string"
+            },
+            "observe": {
+              "type": "boolean"
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app", "text"]
+          "required": [
+            "app",
+            "text"
+          ]
         }
       },
       {
@@ -283,17 +548,39 @@
         "schema": {
           "type": "object",
           "properties": {
-            "app": { "type": "string" },
-            "window_id": { "type": "number" },
-            "element_index": { "type": "string" },
-            "value": { "type": "string" },
-            "observe": { "type": "boolean" },
-            "region_x": { "type": "number" },
-            "region_y": { "type": "number" },
-            "region_width": { "type": "number" },
-            "region_height": { "type": "number" }
+            "app": {
+              "type": "string"
+            },
+            "window_id": {
+              "type": "number"
+            },
+            "element_index": {
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            },
+            "observe": {
+              "type": "boolean"
+            },
+            "region_x": {
+              "type": "number"
+            },
+            "region_y": {
+              "type": "number"
+            },
+            "region_width": {
+              "type": "number"
+            },
+            "region_height": {
+              "type": "number"
+            }
           },
-          "required": ["app", "element_index", "value"]
+          "required": [
+            "app",
+            "element_index",
+            "value"
+          ]
         }
       },
       {

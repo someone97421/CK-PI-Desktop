@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const runtimePath = path.join(__dirname, "..", "runtime.js");
+const runtimeRequire = require("node:module").createRequire(runtimePath);
 const source = fs.readFileSync(runtimePath, "utf8");
 const overlay = [{ label: "删除记录", element_index: 1 }];
 const editor = [{ label: "BITABLE_TEXT_EDITOR", element_index: 2 }];
@@ -43,7 +44,7 @@ function fixture({ platform = "win32", elements = overlay, live = elements, nati
       if (name === "./overlay") return { ControlBanner: class {} };
       if (name === "./cua") return {};
       if (name === "./policy") return require("../policy");
-      return require(name);
+      return runtimeRequire(name);
     },
   };
   vm.runInNewContext(source, sandbox, { filename: runtimePath });

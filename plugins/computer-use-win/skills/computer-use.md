@@ -19,7 +19,7 @@ Prefer the PI-Desktop `Browser` tool for Chrome/Edge/web pages. Use these tools 
   - Re-index when no actionable snapshot is available: `include_screenshot=false, refresh=true`. A fresh observation returned by `observe=true` can supply the next exact control when it explicitly reports `snapshot_actionable=true`.
   - Vision-only (canvas / custom-drawn): `include_tree=false`. This gets a new image but invalidates the old AX tree for actions.
   - If a UIA provider times out while a screenshot was requested, one read-only screenshot fallback may be returned with the tree error. Its image is usable for observation; old AX indices remain invalid. Main-window captures may omit owned dialogs: after Save/Go To/Show, check `list_windows` and the AX tree before deciding the command failed.
-  - `query` filters a still-valid cached tree without renumbering; `refresh=true` bypasses cache. Use fresh observations for verification.
+  - `query` filters a still-valid cached tree without renumbering. Each query searches the original snapshot. Use indices from the latest result, and `refresh=true` to check live state.
   - `region_*` crops the source screenshot. Electron-unavailable Windows hosts use a bounded System.Drawing fallback. Read `structuredContent.region_crop` for backend/error and detail-to-source mapping. Crop detail coordinates are not window coordinates.
   - `read_value` requests an exact Windows UIA control value by observed `name` or `automation_id`, optionally `role`. It is read-only, cannot combine with `wait_for`, and never uses OCR, clipboard or focus changes.
 - Action tools are already registered. **Use them** — do not substitute `type_text` for keys or clipboard:

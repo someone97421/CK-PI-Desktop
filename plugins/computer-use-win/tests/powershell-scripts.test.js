@@ -74,6 +74,7 @@ Add-Type -ReferencedAssemblies $uiaReference -TypeDefinition ([IO.File]::ReadAll
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $bannerReferences = if ($PSVersionTable.PSEdition -eq 'Core') {
+  Add-Type -AssemblyName System.Drawing.Common
   @([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.Location } |
     ForEach-Object { $_.Location } | Sort-Object -Unique)
 } else {
