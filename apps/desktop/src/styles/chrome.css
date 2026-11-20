@@ -646,6 +646,27 @@
   app-region: drag;
 }
 
+/* The clamp above can end the bar short of the frameless window controls;
+ * paint that strip under the fixed toggle so content cannot show through.
+ * The box collapses to zero width once the pane edge clears the toggle. */
+.conversation-topbar::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: calc(
+    100% - var(--ds-work-panel-toggle-right) - var(--ds-work-panel-toggle-size) -
+      8px + var(--ct-inline-padding)
+  );
+  right: max(anchor(--main-pane right), var(--ct-chrome-edge, 0px));
+  height: var(--ds-toolbar-height);
+  background: inherit;
+}
+
+:root[data-platform="win32"] .conversation-topbar,
+:root[data-platform="linux"] .conversation-topbar {
+  --ct-chrome-edge: var(--ds-window-controls-width);
+}
+
 .conversation-topbar.ct-collapsed {
   /* The out-of-flow .ct-lead reserves no space of its own, so the title's
    * offset is the inset plus the 28px button and .ct-left's 8px gap. */
