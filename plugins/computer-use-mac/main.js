@@ -2,7 +2,7 @@
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { MacRuntime } = require("./mac-runtime");
-const { configure, probe } = require("./cua");
+const { configure, probe, grantPermissions } = require("./cua");
 const { parseAllowlist } = require("./policy");
 const { OCU_TOOLS, STOP_TOOL, makeExecutors } = require("./tools");
 const runtime = new MacRuntime();
@@ -105,7 +105,9 @@ async function onPanelInvoke(channel, payload) {
   }
   if (channel === "cu.setup") {
     await start();
-    await checkPermissions(true);
+    const current = await checkPermissions(false);
+    // 0.53.0 起工具调用不能弹系统授权框，缺权限时交给驱动自带的授权引导。
+    if (!current.accessibility || !current.screen_recording) grantPermissions();
     return panelState();
   }
   if (channel === "cu.permissions") {

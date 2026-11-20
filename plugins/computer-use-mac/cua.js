@@ -125,4 +125,11 @@ function doctor() {
   const result = runCapture(binary, ["status", "--socket", socket], 5000);
   return { code: result.status ?? 1, text: [`驱动 ${vendor.version} · ${process.arch}`, `应用：${path.join(runtimeDir, "CuaDriver.app")}`, `私有服务：${result.stdout || result.stderr || result.error}`].join("\n") };
 }
-module.exports = { configure, probe, doctor, childEnv, prepareService, stopService };
+function grantPermissions() {
+  const info = probe({ verify: true });
+  if (!info.installed || info.error) throw new Error(info.error);
+  const child = spawn(binary, ["permissions", "grant"], { env: childEnv(), stdio: "ignore", detached: true });
+  child.on("error", () => {});
+  child.unref();
+}
+module.exports = { configure, probe, doctor, childEnv, prepareService, stopService, grantPermissions };
