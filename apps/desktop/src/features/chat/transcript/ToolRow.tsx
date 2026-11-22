@@ -327,10 +327,19 @@ function HostToolRow({
                 : t("chat.toolCompleted");
   const delegationPayload =
     variant === "topology" ? toolResultPayload(message) : undefined;
-  const delegationId =
-    delegationPayload && typeof delegationPayload === "object"
-      ? delegationExecutionKey(delegationPayload)
-      : undefined;
+  const delegationDetails = delegationPayload && typeof delegationPayload === "object"
+    ? delegationPayload as { turns?: unknown; toolCalls?: unknown }
+    : undefined;
+  const delegationId = delegationDetails ? delegationExecutionKey(delegationDetails) : undefined;
+  const modelCalls = delegationDetails?.turns;
+  const toolCalls = childExecution.collaboration?.completedSteps ?? delegationDetails?.toolCalls;
+  const callSummary = [
+    typeof modelCalls === "number" ? t("chat.subagentModelCalls", { count: modelCalls }) : "",
+    typeof toolCalls === "number" ? t("chat.subagentToolCalls", { count: toolCalls }) : "",
+  ].filter(Boolean).join(" · ");
+  const activitySummary = callSummary || (delegate?.items.length
+    ? t("chat.subagentProcessRecords", { count: delegate.items.length })
+    : "");
   const panelSelectionId =
     typeof delegationId === "string" && delegationId
       ? delegationId
@@ -468,11 +477,9 @@ function HostToolRow({
                 {summary}
               </span>
             ) : null}
-            {delegate?.items.length ? (
-              <span className="subagent-topology-node-steps">
-                {childExecution.collaboration
-                  ? t("chat.subagentToolCalls", { count: childExecution.collaboration.completedSteps })
-                  : t("chat.subagentProcessRecords", { count: delegate.items.length })}
+            {activitySummary ? (
+              <span className="subagent-topology-node-steps" title={activitySummary}>
+                {activitySummary}
               </span>
             ) : null}
           </span>

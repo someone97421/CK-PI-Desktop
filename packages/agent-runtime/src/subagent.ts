@@ -515,6 +515,10 @@ export class SubagentRun {
   }
 
 
+  get modelTurns(): number {
+    return this.turns;
+  }
+
   get canResume(): boolean {
     if (this.executing || (this.lastStatus !== "completed" && this.lastStatus !== "failed") ||
         this.runSignal().aborted || this.observation.snapshot().stopSource !== undefined || this.observation.hasGuides) return false;
@@ -1428,6 +1432,7 @@ export class SubagentRun {
       case "turn_start":
         this.turns += 1;
         this.currentTurnSettledOk = false;
+        this.opts.onObservation?.({ kind: "snapshot" });
         break;
       case "turn_end":
         if (this.currentTurnSettledOk) this.observation.completeTurn();

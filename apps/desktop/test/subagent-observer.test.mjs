@@ -69,8 +69,10 @@ test("运行中子代理展示进度，停止操作统一由宿主提供，不�
   assert.equal(statusBar.children.find((c) => c.key === "action-stop"), undefined);
 
   const statusCopy = statusBar.children.find((c) => c.key === "status-copy");
-  const reportSummary = statusCopy.children.find((c) => c.key === "report-summary");
-  assert.ok(reportSummary.text.includes("下次汇报进度：2 / 5 次调用 · 累计 7 次工具调用"));
+  const executionStatus = statusCopy.children.find((c) => c.key === "execution-status");
+  const reportSummary = executionStatus.children.find((c) => c.key === "report-summary");
+  assert.equal(reportSummary.text, "下次汇报 2/5 轮");
+  assert.equal(executionStatus.children.find((c) => c.key === "tool-call-summary").text, "累计 7 次工具调用");
 
   const detailBar = node.children.find((c) => c.key === "detail-bar");
   assert.ok(detailBar);
@@ -138,7 +140,8 @@ test("非运行态且具 disk 快照时呈现撤销召回按钮与版本徽标",
   assert.equal(revokeAction.action, "revoke");
 
   const statusCopy = statusBar.children.find((c) => c.key === "status-copy");
-  const persistenceStatus = statusCopy.children.find((c) => c.key === "persistence-status");
+  const executionStatus = statusCopy.children.find((c) => c.key === "execution-status");
+  const persistenceStatus = executionStatus.children.find((c) => c.key === "persistence-status");
   assert.ok(persistenceStatus.text.includes("可召回 · 已保存"));
   assert.ok(persistenceStatus.text.includes("快照 v3"));
 });

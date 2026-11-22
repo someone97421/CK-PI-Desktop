@@ -648,7 +648,7 @@ function delegationSummary(record: DelegationRecord): Record<string, unknown> {
     thinkingLevel: record.thinkingLevel,
     status: record.status,
     startedAt: record.startedAt,
-    turns: record.result?.turns ?? record.turns,
+    turns: record.result?.turns ?? record.run?.modelTurns ?? record.turns,
     toolCalls: record.result?.toolCalls ?? record.run?.observation.snapshot().startedSteps ?? record.toolCalls,
     ...(record.lastToolName ? { lastToolName: record.lastToolName } : {}),
     ...(record.completedAt ? { completedAt: record.completedAt } : {}),
@@ -5466,6 +5466,7 @@ Delegation rules:
     const original = record.taskMessage.toolResult;
     const details = isRecord(original) && isRecord(original.details) ? original.details : undefined;
     if (record.status === "running" && details?.modelId === record.modelId && details?.thinkingLevel === record.thinkingLevel &&
+      details?.turns === (record.run?.modelTurns ?? record.turns) &&
       JSON.stringify(details?.collaboration) === JSON.stringify(record.run?.observation.snapshot())) return;
     record.statusRevision = Math.max(record.statusRevision ?? 0,
       typeof details?.statusRevision === "number" ? details.statusRevision : 0) + 1;
