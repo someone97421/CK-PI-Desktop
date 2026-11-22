@@ -121,6 +121,180 @@ pub(super) fn reconcile_project_paths(conn: &Connection, target: Option<&str>) -
     Ok(())
 }
 
+fn scheduled_task_workspace_paths(conn: &Connection) -> Result<Vec<(String, Option<String>)>> {
+    let mut statement = conn.prepare(
+        "SELECT id,json_extract(config_json,'$.workspacePath') FROM scheduled_tasks
+         WHERE CASE WHEN json_valid(config_json)
+                    THEN json_type(config_json,'$.workspacePath') = 'text' END",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Whether the canonical `path` owns chats, scheduled tasks (by project id or
+/// bound `workspacePath`), or path-scoped memory. Relocation moves such data
+/// only onto a path that owns none of it.
+pub(super) fn project_path_owns_data(conn: &Connection, path: &str) -> Result<bool> {
+    let project = conn
+        .query_row("SELECT id FROM projects WHERE path=?1", [path], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?;
+    let bound_task = scheduled_task_workspace_paths(conn)?
+        .iter()
+        .any(|(_, task)| task.as_deref().and_then(canonical_project_path).as_deref() == Some(path));
+    Ok(bound_task
+        || conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM kv WHERE ns='projectMemory' AND key=?1)
+                OR EXISTS(SELECT 1 FROM sessions WHERE project_id=?2)
+                OR EXISTS(SELECT 1 FROM scheduled_tasks WHERE project_id=?2)",
+            params![path, project],
+            |row| row.get(0),
+        )?)
+}
+
+pub(super) fn project_path_relocation_has_dependencies(
+    conn: &Connection,
+    source: &str,
+    target: &str,
+) -> Result<bool> {
+    let has_conflicting_owner = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions s JOIN projects p ON p.id=s.project_id
+           WHERE p.path=?1 AND (
+             EXISTS(SELECT 1 FROM turns t WHERE t.session_id=s.id AND t.status='running')
+             OR EXISTS(SELECT 1 FROM mode_runs r WHERE r.session_id=s.id
+                       AND (r.state IN ('running','waiting','paused','budget_exhausted')
+                            OR r.active_turn_id IS NOT NULL))))
+         OR EXISTS(SELECT 1 FROM task_runs r JOIN scheduled_tasks t ON t.id=r.task_id
+           JOIN projects p ON p.id=t.project_id WHERE p.path=?1 AND r.status='running')
+         OR EXISTS(SELECT 1 FROM projects a JOIN projects b
+           ON a.path=?1 AND b.path=?2 WHERE a.worktree_setup_command <> b.worktree_setup_command)",
+        [source, target],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if has_conflicting_owner {
+        return Ok(true);
+    }
+
+    // A registry row and its Git backlinks must move together. Keep the
+    // original binding for affected worktrees, including registries of other
+    // projects or orphans whose repository is inside either root.
+    let mut worktrees = conn.prepare(
+        "SELECT w.path,w.common_dir,p.path FROM worktrees w
+         LEFT JOIN sessions s ON s.id=w.session_id LEFT JOIN projects p ON p.id=s.project_id",
+    )?;
+    let mut rows = worktrees.query([])?;
+    while let Some(row) = rows.next()? {
+        let owner: Option<String> = row.get(2)?;
+        let path: String = row.get(0)?;
+        let common_dir: String = row.get(1)?;
+        if [path.as_str(), common_dir.as_str()]
+            .into_iter()
+            .chain(owner.as_deref())
+            .filter_map(normalize_project_path)
+            .any(|path| {
+                Path::new(&path).starts_with(source) || Path::new(&path).starts_with(target)
+            })
+        {
+            return Ok(true);
+        }
+    }
+
+    for (id, path) in scheduled_task_workspace_paths(conn)? {
+        let Some(path) = path.as_deref().and_then(canonical_project_path) else {
+            continue;
+        };
+        if !Path::new(&path).starts_with(source) {
+            continue;
+        }
+        // Only an exact root binding is part of relocation. A task pointed at
+        // a subtree or already admitted must keep its existing workspace.
+        if path != source
+            || conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_runs WHERE task_id=?1 AND status='running')",
+                [id],
+                |row| row.get::<_, bool>(0),
+            )?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Move one explicitly selected project to its replacement directory while
+/// retaining the project id used by sessions and scheduled tasks. The target
+/// may be an empty shadow row created by opening the replacement path first;
+/// a target with its own chats, tasks, or memory is never merged implicitly.
+pub(super) fn relocate_project_path(conn: &Connection, old: &str, new: &str) -> Result<i64> {
+    let source = conn
+        .query_row("SELECT id FROM projects WHERE path=?1", [old], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?
+        .ok_or_else(|| anyhow!("project to relocate was not found: {old}"))?;
+    let target = conn
+        .query_row("SELECT id FROM projects WHERE path=?1", [new], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()?;
+    let task_paths = scheduled_task_workspace_paths(conn)?;
+    if project_path_owns_data(conn, new)? {
+        return Err(anyhow!(
+            "replacement folder belongs to a non-empty project: {new}"
+        ));
+    }
+
+    conn.execute_batch("SAVEPOINT relocate_project_path")?;
+    let result = (|| -> Result<()> {
+        if let Some(target) = target {
+            conn.execute(
+                "UPDATE projects SET pinned=MAX(pinned,(SELECT pinned FROM projects WHERE id=?2)),
+                 created_at=MIN(created_at,(SELECT created_at FROM projects WHERE id=?2)),
+                 last_opened_at=MAX(last_opened_at,(SELECT last_opened_at FROM projects WHERE id=?2)),
+                 worktree_setup_command=COALESCE(worktree_setup_command,(SELECT worktree_setup_command FROM projects WHERE id=?2))
+                 WHERE id=?1",
+                params![source, target],
+            )?;
+            conn.execute(
+                "UPDATE kv SET value_json=?1 WHERE ns='app' AND key='currentProjectId'
+                 AND (value_json=?2 OR value_json=printf('\"%d\"',?2))",
+                params![source.to_string(), target],
+            )?;
+            conn.execute("DELETE FROM projects WHERE id=?1", [target])?;
+        }
+        for (id, path) in &task_paths {
+            if path.as_deref().and_then(canonical_project_path).as_deref() == Some(old) {
+                conn.execute(
+                    "UPDATE scheduled_tasks SET config_json=json_set(config_json,'$.workspacePath',?1)
+                     WHERE id=?2",
+                    params![new, id],
+                )?;
+            }
+        }
+        conn.execute(
+            "UPDATE kv SET key=?1 WHERE ns='projectMemory' AND key=?2",
+            params![new, old],
+        )?;
+        conn.execute(
+            "UPDATE projects SET path=?1 WHERE id=?2",
+            params![new, source],
+        )?;
+        conn.execute_batch("RELEASE relocate_project_path")?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        conn.execute_batch("ROLLBACK TO relocate_project_path; RELEASE relocate_project_path")
+            .context("roll back explicit project relocation")?;
+        return Err(error);
+    }
+    Ok(source)
+}
+
 impl Database {
     /// A destructive operation must prefer the selected stored row. Resolving
     /// symlinks/case first can silently select a different historical row.
@@ -141,5 +315,25 @@ impl Database {
             )
             .optional()?;
         Ok(exact.or_else(|| canonical_project_path(raw)))
+    }
+
+    /// Id of the project row stored at the given spelling or its canonical
+    /// form, without creating one. Lets callers notice an explicit relocation.
+    pub(crate) fn project_id_at_path(&self, raw: &str) -> Result<Option<i64>> {
+        for path in [normalize_project_path(raw), canonical_project_path(raw)]
+            .into_iter()
+            .flatten()
+        {
+            let id = self
+                .conn
+                .query_row("SELECT id FROM projects WHERE path=?1", [&path], |r| {
+                    r.get::<_, i64>(0)
+                })
+                .optional()?;
+            if id.is_some() {
+                return Ok(id);
+            }
+        }
+        Ok(None)
     }
 }

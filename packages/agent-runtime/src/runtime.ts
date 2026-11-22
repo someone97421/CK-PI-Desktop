@@ -316,6 +316,7 @@ import {
   compactionProvidersEqual,
   resolveCompactionProvider,
 } from "./compaction-model.js";
+import { withCodexCacheableInstructions } from "./codex-cacheable-instructions.js";
 import { withFastModeOptions } from "./fast-mode.js";
 import { withSessionAffinityOptions } from "./session-affinity.js";
 import {
@@ -758,6 +759,7 @@ function formatDelegationResults(
 }
 export { COMPACTION_FALLBACK_MARKER } from "./context-compaction.js";
 const COMPACTION_FALLBACK_NOTICE_TOKENS = 512;
+const COMPACTION_FALLBACK_MIN_TAIL_SCALE = 1 / 128;
 
 /**
  * File operations for a summary chunk that must not re-append the checkpoint's
@@ -2043,6 +2045,8 @@ export class DesktopAgentRuntime {
   private readonly activeTurnSettlements = new Map<string, Promise<void>>();
   /** The in-flight checkpoint was cut short by Stop/dispose, not by a failure. */
   private compactionAborted = false;
+  /** Why the latest checkpoint attempt failed, for the turn error it causes. */
+  private lastCompactionFailure?: string;
   /** Set by the `new_context` tool, consumed at the next turn boundary. */
   private pendingModelCompaction = false;
   /** One-shot request to finish the current turn at the next boundary. */
@@ -2282,7 +2286,10 @@ Delegation rules:
         // one-shot requests build their own options and keep the default.
         const hookedOptions = withFastModeOptions(
           withSessionAffinityOptions(
-            this.withExtensionProviderHooks(requestOptions, m),
+            this.withExtensionProviderHooks(
+              withCodexCacheableInstructions(requestOptions, m),
+              m,
+            ),
             {
               provider: this.provider,
               api: m.api,
@@ -5963,7 +5970,7 @@ Delegation rules:
           delegations.length === 0
             ? "No subagents have been started in this session."
             : delegations
-                .map((record) => `- ${formatDelegationHeartbeat(record)}; job=${JSON.stringify({ kind: "delegation", id: record.delegationId })}`)
+                .map((record) => `- ${formatDelegationHeartbeat(record)}; delegationIds=${JSON.stringify([record.delegationId])}`)
                 .join("\n");
         return {
           content: [{ type: "text", text }],
@@ -8003,9 +8010,11 @@ Delegation rules:
       }
       // Continuing would immediately issue the provider request that this
       // guard exists to prevent. The Agent wrapper converts this failure to
-      // the normal error/agent_end event sequence.
+      // the normal error/agent_end event sequence. The checkpoint's own cause
+      // rides along so the turn error says why (#2494).
+      const cause = this.lastCompactionFailure;
       throw new Error(
-        "CONTEXT_COMPACTION_FAILED: unable to create a checkpoint before the next model request",
+        `CONTEXT_COMPACTION_FAILED: unable to create a checkpoint before the next model request${cause ? `: ${cause}` : ""}`,
       );
     }
     context = this.rebuiltAgentContext();
@@ -8132,6 +8141,7 @@ Delegation rules:
     if (this.compactionInProgress) return false;
     this.compactionInProgress = true;
     this.compactionAborted = false;
+    this.lastCompactionFailure = undefined;
     const previous = this.agentActivity;
     this.setAgentActivity({
       phase: "compacting",
@@ -8183,6 +8193,7 @@ Delegation rules:
     // A checkpoint cut short by the user's Stop is not a failed compaction;
     // it reports under the abort code so the turn reads as stopped.
     const aborted = this.compactionAborted;
+    if (!aborted) this.lastCompactionFailure = message;
     this.emit({
       type: "compaction_end",
       reason,
@@ -8312,6 +8323,7 @@ Delegation rules:
     retentionMode: CompactionRetentionMode,
     budget: ContextBudget,
     failureReason: CompactionFailureReason,
+    tailScale = 1,
   ): ContextCompactionRecord {
     const previousSummary = preparation.previousSummary
       ? boundedText(
@@ -8334,6 +8346,7 @@ Delegation rules:
       budget,
       maxSummaryChars,
       retentionMode,
+      tailScale,
     );
     return this.createCheckpoint(
       {
@@ -8371,6 +8384,7 @@ Delegation rules:
     budget: ContextBudget,
     maxSummaryChars: number,
     retentionMode: CompactionRetentionMode,
+    tailScale: number,
   ): AgentMessage[] {
     const summaryTokens = Math.ceil(maxSummaryChars / ESTIMATED_TEXT_CHARS_PER_TOKEN);
     const available = Math.max(
@@ -8386,7 +8400,7 @@ Delegation rules:
     );
     return selectRecentTail(
       preparation.messagesToSummarize,
-      Math.min(target, available),
+      Math.max(1, Math.floor(Math.min(target, available) * tailScale)),
       { latestUserGoal: retentionMode === "active_turn" },
     );
   }
@@ -8646,36 +8660,45 @@ Delegation rules:
       return false;
     }
 
-    const checkpoint = this.createFallbackCheckpoint(
-      fallbackPreparation,
-      throughMessageId,
-      Math.max(
-        256,
-        Math.min(
-          COMPACTION_FALLBACK_MAX_SUMMARY_CHARS,
-          Math.floor(budget.hardLimit * 0.75),
+    // The tail is sized from the local estimate, but the install check below
+    // measures the calibrated one. A provider whose tokenizer counts more than
+    // the estimate (CJK text, for one) makes the first window too large, and
+    // failing here leaves every later turn at the same hard limit (#2494).
+    // Halve the window until it fits; the newest message is always kept.
+    for (let tailScale = 1; ; tailScale /= 2) {
+      const checkpoint = this.createFallbackCheckpoint(
+        fallbackPreparation,
+        throughMessageId,
+        Math.max(
+          256,
+          Math.min(
+            COMPACTION_FALLBACK_MAX_SUMMARY_CHARS,
+            Math.floor(budget.hardLimit * 0.75),
+          ),
         ),
-      ),
-      retentionMode,
-      budget,
-      failureReason,
-    );
-    const persisted = await this.persistCheckpoint(
-      checkpoint,
-      reason,
-      willRetry,
-      true,
-      "retained_tail",
-    );
-    if (persisted === "persisted") return true;
-    if (persisted === "oversized") {
-      this.emitCompactionFailure(
-        reason,
-        checkpoint.tokensBefore,
-        "Automatic context recovery could not reduce the retained context below the safe model budget",
+        retentionMode,
+        budget,
+        failureReason,
+        tailScale,
       );
+      const persisted = await this.persistCheckpoint(
+        checkpoint,
+        reason,
+        willRetry,
+        true,
+        "retained_tail",
+      );
+      if (persisted === "persisted") return true;
+      if (persisted === "failed") return false;
+      if (tailScale <= COMPACTION_FALLBACK_MIN_TAIL_SCALE) {
+        this.emitCompactionFailure(
+          reason,
+          checkpoint.tokensBefore,
+          "Automatic context recovery could not reduce the retained context below the safe model budget",
+        );
+        return false;
+      }
     }
-    return false;
   }
 
   /**

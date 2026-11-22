@@ -493,8 +493,15 @@ export function createTranscriptSlice({
           runningSessions: { ...current.runningSessions, [sessionId]: false },
           ...(current.activeSessionId === sessionId ? { isRunning: false } : {}),
         }));
-        // Bypass in-flight pre-abort detail reads; request settled source state.
+        const transcriptBeforeRead = get().retainedTranscripts[sessionId];
+        // Bypass in-flight pre-abort reads without overwriting a newer turn.
         const detail = await api.getSession(sessionId);
+        const stateAfterRead = get();
+        if (
+          stateAfterRead.runningSessions[sessionId] ||
+          (stateAfterRead.activeSessionId === sessionId && stateAfterRead.isRunning) ||
+          stateAfterRead.retainedTranscripts[sessionId] !== transcriptBeforeRead
+        ) return;
         const messages = detail.session?.messages;
         if (messages) runtime.cacheSessionTranscript(sessionId, messages);
         set((current) => ({

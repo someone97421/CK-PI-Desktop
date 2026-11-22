@@ -273,11 +273,10 @@ test("work panel header exposes a scrollable tab strip and direct new-page actio
   assert.match(panelSource, /role="tabpanel"/);
   assert.match(panelSource, /className="work-panel-subagent-back"/);
   assert.match(panelSource, /IconChevronLeft/);
-  // Reopening an already-open plugin view must reuse its tab so the browser
-  // keeps its location instead of being replaced by a blank singleton.
+  assert.match(panelSource, /const tab = launcherWorkPanelTab\(tabs, item\.tab\)/);
   assert.match(
     panelSource,
-    /const existing = tabs\.find\(\(tab\) => tab\.id === item\.tab\.id\)/,
+    /const existing = tabs\.find\(\(candidate\) => candidate\.id === tab\.id\)/,
   );
   assert.match(panelSource, /if \(existing\) activateTab\(existing\.id\)/);
   assert.doesNotMatch(panelSource, /collapsePanel/);

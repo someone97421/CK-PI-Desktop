@@ -27,9 +27,16 @@ function target(params: unknown): JobReference | undefined {
     throw new Error("job must contain a kind (bash or delegation) and a nonempty id");
   }
   if (job.kind === "delegation") {
-    if (params.delegationIds !== undefined && (!Array.isArray(params.delegationIds) ||
-        params.delegationIds.some(id => id !== job.id))) {
-      throw new Error("A delegation job targets one subagent: omit delegationIds or pass only job.id. To select multiple subagents, omit job and use delegationIds.");
+    if (params.delegationIds !== undefined) {
+      if (!Array.isArray(params.delegationIds) ||
+          params.delegationIds.some(id => typeof id !== "string")) {
+        throw new Error("delegationIds must be an array of delegation ids. To select subagents, drop the job field and retry with delegationIds: [...]; to target this one job, omit delegationIds.");
+      }
+      // Strict Responses-style models send the job returned by Task next to
+      // every id they want to collect. The multi-target path already honors
+      // delegationIds, so treat that conflict as "no job" rather than
+      // rejecting an input the delegate can handle (#2188 residual, #2487).
+      if (params.delegationIds.some(id => id !== job.id)) return undefined;
     }
   } else if (
     (params.delegationIds !== undefined && (!Array.isArray(params.delegationIds) || params.delegationIds.length !== 0)) ||

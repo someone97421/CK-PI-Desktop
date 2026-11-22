@@ -13,7 +13,12 @@ import { open as openFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
-import { pluginNetFetch, parseFetchRedirect, type PluginFetchTransport } from "./plugin-net-fetch";
+import {
+  MAX_PLUGIN_BINARY_RESPONSE_BYTES,
+  pluginNetFetch,
+  parseFetchRedirect,
+  type PluginFetchTransport,
+} from "./plugin-net-fetch";
 import type { LoadedSkillDocument } from "./skill-document";
 import { assertLocalPluginRoot, pluginFsReadOptions, readRemotePluginFiles, type PluginRemoteFilesRead } from "./plugin-remote-files";
 import { getModuleDirectory } from "./module-path";
@@ -146,6 +151,12 @@ import {
   type PluginShortcutRegistry,
 } from "./plugin-shortcut-registry";
 import { repairImportedExtensionWrapper } from "./imported-plugin-wrapper";
+import {
+  type PluginDesktopConsentAnswer,
+  PluginDesktopConsentGrants,
+  canRememberDesktopConsent,
+  normalizeDesktopConsentAnswer,
+} from "./plugin-desktop-consent-grants";
 import {
   migrateLegacyPromptEnhancementSettings,
   PROMPT_ENHANCEMENT_PLUGIN_ID,
@@ -329,7 +340,11 @@ export type PluginDesktopConsentRequest = {
   description: string;
   /** Positional arguments as the plugin supplied them (secret-stripped later). */
   args: unknown[];
+  /** Whether the dialog may offer "Allow until quit" for this operation. */
+  offerSession?: boolean;
 };
+
+export type { PluginDesktopConsentAnswer };
 
 export type PluginHostServices = {
   getWorkspacePath: () => string | null;
@@ -425,7 +440,9 @@ export type PluginHostServices = {
    * local.lan-remote-control 以密码登录作为用户授权，不再弹出桌面确认。
    * 其他插件的 confirm 仅表示调用方知悉风险；缺少此服务时拒绝其危险操作。
    */
-  confirmDesktopControl?: (request: PluginDesktopConsentRequest) => Promise<boolean>;
+  confirmDesktopControl?: (
+    request: PluginDesktopConsentRequest,
+  ) => Promise<boolean | PluginDesktopConsentAnswer>;
   audit?: (entry: Record<string, unknown>) => void;
   /**
    * Blocking, native consent for a file access the manifest did not declare.
@@ -1568,6 +1585,11 @@ export class PluginRuntime {
    * session would be a standing permission nobody reviewed.
    */
   private fsConsent = new Map<string, Set<string>>();
+  /**
+   * Desktop operations the user allowed a plugin until quit. In memory only,
+   * and dropped when the plugin is explicitly stopped.
+   */
+  private desktopConsent = new PluginDesktopConsentGrants();
   /** Cached write ledgers, keyed by plugin id. */
   private writeLedgers = new Map<string, Record<string, number>>();
   private nextBusSubscription = 1;
@@ -2459,7 +2481,10 @@ export class PluginRuntime {
       loaded.disposing = true;
       this.toolInvocations.cancelOwner(loaded, "Plugin unloaded");
       // An explicit stop ends supervision; a supervisor-driven reload keeps it.
-      if (!this.restarting.has(pluginId)) this.cancelRestarts(pluginId);
+      if (!this.restarting.has(pluginId)) {
+        this.cancelRestarts(pluginId);
+        this.desktopConsent.revoke(pluginId);
+      }
       await this.stopServices(loaded);
     }
     if (loaded?.child) {
@@ -2783,6 +2808,8 @@ export class PluginRuntime {
           headers: (payload?.headers as Record<string, string> | undefined) ?? undefined,
           body: payload?.body ? String(payload.body) : undefined,
           timeoutMs: typeof payload?.timeoutMs === "number" ? payload.timeoutMs : undefined,
+          responseType: payload?.responseType,
+          maxResponseBytes: payload?.maxResponseBytes,
           redirect: payload?.redirect,
         });
       case "plugin.getSettings":
@@ -6264,20 +6291,31 @@ export class PluginRuntime {
               );
             }
             const consent = this.services.confirmDesktopControl;
-            const granted = consent
-              ? await consent({
-                  pluginId,
-                  pluginName: resolvePluginLocalizedString(
-                    loaded.manifest.name,
-                    this.services.getLocale?.(),
-                    pluginId,
-                  ),
-                  operation,
-                  description: operationInfo.description,
-                  args,
-                })
-              : false;
-            if (!granted) {
+            const remembered = this.desktopConsent.has(pluginId, operation);
+            const answer: PluginDesktopConsentAnswer = remembered
+              ? "session"
+              : consent
+                ? normalizeDesktopConsentAnswer(
+                    await consent({
+                      pluginId,
+                      pluginName: resolvePluginLocalizedString(
+                        loaded.manifest.name,
+                        this.services.getLocale?.(),
+                        pluginId,
+                      ),
+                      operation,
+                      description: operationInfo.description,
+                      args,
+                      offerSession: canRememberDesktopConsent(operation),
+                    }),
+                    operation,
+                  )
+                : "deny";
+            if (loaded.disposing || this.loaded.get(pluginId) !== loaded) {
+              throw apiError("PLUGIN_UNLOADED", `plugin unloaded: ${pluginId}`);
+            }
+            if (answer === "session" && !remembered) this.desktopConsent.grant(pluginId, operation);
+            if (answer === "deny") {
               this.services.audit?.({
                 pluginId,
                 api: "desktop.invoke",
@@ -6899,15 +6937,12 @@ export class PluginRuntime {
         closeOutput: async () => this.refuseAudio(loaded, "audio.closeOutput"),
       },
       net: {
-        getCapabilities: async () => ({ fetchRedirectModes: ["follow", "error", "manual"] }),
-        fetch: async (input: {
-          url: string;
-          method?: string;
-          headers?: Record<string, string>;
-          body?: string;
-          timeoutMs?: number;
-          redirect?: unknown;
-        }) => {
+        getCapabilities: async () => ({
+          fetchRedirectModes: ["follow", "error", "manual"],
+          binaryResponseBody: true,
+          maxResponseBodyBytes: MAX_PLUGIN_BINARY_RESPONSE_BYTES,
+        }),
+        fetch: async (input: Parameters<typeof pluginNetFetch>[0]) => {
           this.assertPermission(loaded, "net.fetch");
           const redirect = parseFetchRedirect(input.redirect);
           try {

@@ -153,13 +153,20 @@ export function browserPluginTab(location?: string): WorkPanelTab {
   return { ...base, id: `${base.id}:${Date.now().toString(36)}-${++newWorkPanelTabSequence}`, location: target, label: browserTabLabel(target) };
 }
 
+function isBrowserTab(tab: WorkPanelTab): boolean {
+  return tab.kind === "plugin" && tab.resource === `${BROWSER_PLUGIN_TAB.pluginId}/${BROWSER_PLUGIN_TAB.viewId}`;
+}
+
+export function launcherWorkPanelTab(tabs: WorkPanelTab[], tab: WorkPanelTab): WorkPanelTab {
+  if (!isBrowserTab(tab) || !tabs.some(isBrowserTab)) return tab;
+  return { ...tab, id: `${tab.id}:${Date.now().toString(36)}-${++newWorkPanelTabSequence}` };
+}
+
 export function browserPluginTabForReveal(
   tabs: WorkPanelTab[],
   activeTabId: string | null,
   preferredTabId?: string,
 ): WorkPanelTab {
-  const isBrowserTab = (tab: WorkPanelTab) =>
-    tab.kind === "plugin" && tab.resource === `${BROWSER_PLUGIN_TAB.pluginId}/${BROWSER_PLUGIN_TAB.viewId}`;
   const preferred = preferredTabId
     ? tabs.find((tab) => tab.id === preferredTabId && isBrowserTab(tab))
     : undefined;

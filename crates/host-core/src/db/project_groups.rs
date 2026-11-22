@@ -3,10 +3,17 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::model::{ProjectMemoryEntryRecord, ProjectMemoryRecord, ProjectRecord};
+use super::project_path_migration::{
+    project_path_owns_data, project_path_relocation_has_dependencies, relocate_project_path,
+};
 use super::repositories::{
     canonical_project_path, normalize_project_memory_entries, project_display_name,
     render_project_memory_entries, MAX_PROJECT_MEMORY_BYTES,
 };
+
+fn is_missing_root(path: &str) -> bool {
+    std::fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
 
 const GROUP_NAMESPACE: &str = "projectGroups";
 const GROUP_MEMORY_NAMESPACE: &str = "projectGroupMemory";
@@ -330,18 +337,30 @@ impl Database {
         Ok(group)
     }
 
-    /// Edits a stored group's display name and ordered roots.
-    ///
-    /// `primary` selects which selected root becomes the primary root; the
-    /// stored primary is kept when it is `None`, and dropping it from `paths`
-    /// without naming a replacement is refused. The primary root always stays
-    /// first, so naming another root reorders the group around it.
+    #[cfg(test)]
     pub fn update_project_group(
         &self,
         id: &str,
         name: &str,
         paths: &[String],
         primary: Option<&str>,
+    ) -> Result<ProjectGroupRecord> {
+        self.update_project_group_with_relocation(id, name, paths, primary, |_| Ok(false))
+    }
+
+    /// Edits a stored group's display name and ordered roots.
+    ///
+    /// `primary` selects which selected root becomes the primary root; the
+    /// stored primary is kept when it is `None`, and dropping it from `paths`
+    /// without naming a replacement is refused. The primary root always stays
+    /// first, so naming another root reorders the group around it.
+    pub(crate) fn update_project_group_with_relocation(
+        &self,
+        id: &str,
+        name: &str,
+        paths: &[String],
+        primary: Option<&str>,
+        has_live_tools: impl FnOnce(&str) -> Result<bool>,
     ) -> Result<ProjectGroupRecord> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > MAX_PROJECT_GROUP_NAME_CHARS {
@@ -357,6 +376,7 @@ impl Database {
             }
             return self.rename_project_group(&current.id, name);
         }
+        let transaction = self.conn.unchecked_transaction()?;
         let current_primary = canonical_project_path(&current.primary_path)
             .ok_or_else(|| anyhow!("project group primary path is invalid"))?;
         let requested_primary = primary
@@ -394,7 +414,7 @@ impl Database {
                     "the primary folder must be one of the group folders: {requested}"
                 ))
             }
-            None if selected.iter().any(|path| path == &current_primary) => current_primary,
+            None if selected.iter().any(|path| path == &current_primary) => current_primary.clone(),
             None => return Err(anyhow!("the primary folder cannot be removed")),
         };
         let mut ordered = vec![primary.clone()];
@@ -406,8 +426,46 @@ impl Database {
             .map(|root| root.path.as_str())
             .filter(|path| !ordered.iter().any(|candidate| candidate == path))
             .collect::<Vec<_>>();
+        // An edit that leaves one root is an explicit relocation only when the
+        // project being replaced no longer exists on disk; replacing a folder
+        // that still exists keeps the detach semantics below (#2469).
+        let relocation_source = if ordered.len() != 1 || !Path::new(&primary).is_dir() {
+            None
+        } else if current.roots.len() == 1 {
+            // One-save repair: the sole root is swapped for its replacement.
+            (primary != current_primary && is_missing_root(&current_primary))
+                .then(|| current_primary.clone())
+        } else {
+            // Two-step repair (#1869): the replacement was saved next to the
+            // stale root first and the stale root is dropped now. Relocate only
+            // one unambiguous stale project with data onto an empty target;
+            // otherwise the stale root detaches as before.
+            let mut stale = Vec::new();
+            for path in &removed {
+                if is_missing_root(path) && project_path_owns_data(&self.conn, path)? {
+                    stale.push(path.to_string());
+                }
+            }
+            if stale.len() == 1 && !project_path_owns_data(&self.conn, &primary)? {
+                stale.pop()
+            } else {
+                None
+            }
+        };
+        let relocation_source = match relocation_source {
+            Some(source)
+                if !project_path_relocation_has_dependencies(&self.conn, &source, &primary)?
+                    && !has_live_tools(&source)? =>
+            {
+                Some(source)
+            }
+            _ => None,
+        };
         let mut removed_without_sessions = Vec::new();
         for path in &removed {
+            if relocation_source.as_deref() == Some(*path) {
+                continue;
+            }
             let has_sessions: bool = self.conn.query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM sessions s
@@ -421,8 +479,12 @@ impl Database {
                 removed_without_sessions.push(*path);
             }
         }
-        for path in &ordered {
-            self.ensure_project(path, false)?;
+        if let Some(source) = relocation_source.as_deref() {
+            relocate_project_path(&self.conn, source, &primary)?;
+        } else {
+            for path in &ordered {
+                self.ensure_project(path, false)?;
+            }
         }
 
         if current.legacy && ordered.len() == 1 {
@@ -431,6 +493,13 @@ impl Database {
                 .execute(params![name, primary])?;
             let mut legacy = current;
             legacy.name = name.to_string();
+            if relocation_source.is_some() {
+                legacy.id = format!("legacy:{primary}");
+                legacy.primary_path = primary.clone();
+                legacy.roots[0].path = primary.clone();
+                legacy.roots[0].name = project_display_name(&primary);
+            }
+            transaction.commit()?;
             return Ok(legacy);
         }
 
@@ -507,6 +576,7 @@ impl Database {
             }
         }
         self.kv_set(GROUP_NAMESPACE, &group.id, &serde_json::to_value(&group)?)?;
+        transaction.commit()?;
         Ok(group)
     }
 
