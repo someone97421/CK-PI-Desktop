@@ -116,6 +116,7 @@ export type WindowMenuRendererReadyGate = {
 };
 
 export type WindowLifecycleDependencies = {
+  showOnReady?: boolean;
   state: WindowLifecycleState;
   dataDir: string;
   windowMinWidth: number;
@@ -140,6 +141,7 @@ export type WindowLifecycleDependencies = {
 };
 
 export async function createWindow({
+  showOnReady = true,
   state: windowState,
   dataDir,
   windowMinWidth,
@@ -1142,7 +1144,7 @@ export async function createWindow({
   });
 
   window.once("ready-to-show", () => {
-    if (!isLiveWindow()) return;
+    if (!isLiveWindow() || !showOnReady) return;
     // Capture runs need the deterministic Codex footprint; normal launches
     // must respect restored user bounds and only fix real shelf states.
     ensureStableBounds(process.env.PI_DESKTOP_CAPTURE === "1");

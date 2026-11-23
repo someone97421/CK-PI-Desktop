@@ -130,6 +130,8 @@ export type AppSettings = {
   jevEnabled?: boolean;
   /** 应用运行期间阻止系统空闲休眠；缺省开启。 */
   keepAwakeWhileRunning?: boolean;
+  autoLaunch?: boolean;
+  silentStartup?: boolean;
   /** Enable scheduled task UI, tools and new runs. Absent means enabled. */
   scheduledTasksEnabled?: boolean;
   /** Configured command shell for the agent Bash protocol tool. */

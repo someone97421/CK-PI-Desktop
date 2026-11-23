@@ -27,6 +27,7 @@ import {
   installAppearanceMediaProtocol,
 } from "../appearance-media-protocol";
 import { readCloseBehavior } from "../window-preferences";
+import { initialTemporaryWorkspace } from "../installation";
 import { createAgentHostBridge, type AgentHostBridge } from "../agent-host-bridge";
 import { createBackendRouter, type BackendRouter } from "../remote/backend-router";
 import { createRemoteHostsBoot, setActiveRemoteHostsBoot } from "./remote-hosts";
@@ -128,7 +129,7 @@ export type StartupDependencies = {
   applyTemporaryWorkspaceContextMenu: (settings?: { temporaryWorkspaceContextMenu?: unknown } | null) => Promise<void>;
   applyPluginLauncherShortcut: (keybindings?: KeybindingOverrides) => void;
   applyToggleWindowShortcut: (keybindings?: KeybindingOverrides) => void;
-  ensureWindow: () => Promise<boolean>;
+  ensureWindow: (showOnReady?: boolean) => Promise<boolean>;
   bootHostStatus: (bootError: unknown) => unknown;
   flushPendingApplicationMenuCommands: () => void;
   getSidecar?: () => unknown;
@@ -405,6 +406,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
     // unreadable backend leaves this null and discovery falls back to the
     // defaults, so a launch with no host still plays what the user dropped in.
     let storedStartupAnimationSettings: { startupAnimation?: unknown } | null = null;
+    let silentStartup = false;
     if (host) {
       try {
         const stored = (await host.call("settings.get")) as {
@@ -415,6 +417,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
           fontScale?: unknown;
           macosWindowTranslucency?: unknown;
           startupAnimation?: unknown;
+          silentStartup?: unknown;
           preventScreenSleep?: unknown;
           keepAwakeWhileRunning?: unknown;
           temporaryWorkspaceContextMenu?: unknown;
@@ -426,6 +429,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
         applyKeepAwakeWhileRunning(stored);
         await applyTemporaryWorkspaceContextMenu(stored);
         storedStartupAnimationSettings = stored;
+        silentStartup = stored?.silentStartup === true;
         await applyNetworkProxyFromAppSettings(stored);
       } catch {
         await applyTemporaryWorkspaceContextMenu();
@@ -441,13 +445,15 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
       applyPluginLauncherShortcut();
       applyToggleWindowShortcut();
     }
+    const launchHidden = silentStartup && !bootError && !initialTemporaryWorkspace &&
+      process.env.PI_DESKTOP_CAPTURE !== "1" && process.env.PI_DESKTOP_BOOT_PROBE !== "1";
     // Resolve the boot animation before the window exists: the descriptor is a
     // renderer creation argument, so it has to be known by `new BrowserWindow`.
     // The capture rig compares deterministic frames, so a user's animation in
     // front of them would break every scene; it is skipped outright. The E2E
     // harnesses need no guard — each runs against a throwaway
     // `PI_DESKTOP_DATA_DIR`, which has no `startup/` directory to find.
-    if (process.env.PI_DESKTOP_CAPTURE !== "1") {
+    if (!launchHidden && process.env.PI_DESKTOP_CAPTURE !== "1") {
       state.startupAnimation = await resolveStartupAnimation({
         dataDir,
         settings: storedStartupAnimationSettings,
@@ -461,7 +467,7 @@ export function registerApplicationStartup(deps: StartupDependencies): void {
         });
       }
     }
-    await ensureWindow();
+    await ensureWindow(!launchHidden);
     if (process.env.PI_DESKTOP_MCP_CONTROL === "1") {
       try {
         state.mcpControl = new McpControlServer({

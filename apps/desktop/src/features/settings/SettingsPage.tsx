@@ -590,6 +590,26 @@ export function SettingsPage({ compact = false }: { compact?: boolean }) {
 
               <SettingsCard title={t("settings.power")}>
                 <SettingsRow
+                  title={t("settings.autoLaunch")}
+                  description={t("settings.autoLaunchDesc")}
+                >
+                  <SettingsToggle
+                    checked={settings.autoLaunch === true}
+                    label={t("settings.autoLaunch")}
+                    onChange={() => void saveSettings({ autoLaunch: !settings.autoLaunch })}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  title={t("settings.silentStartup")}
+                  description={t("settings.silentStartupDesc")}
+                >
+                  <SettingsToggle
+                    checked={settings.silentStartup === true}
+                    label={t("settings.silentStartup")}
+                    onChange={() => void saveSettings({ silentStartup: !settings.silentStartup })}
+                  />
+                </SettingsRow>
+                <SettingsRow
                   title={t("settings.keepAwakeWhileRunning")}
                   description={t("settings.keepAwakeWhileRunningDesc")}
                 >

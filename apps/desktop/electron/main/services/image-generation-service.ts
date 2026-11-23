@@ -42,7 +42,7 @@ export function createImageGenerationTool(options: {
     if (!binding)
       return failure(
         "IMAGE_NOT_CONFIGURED",
-        "Configure an image generation model in Settings > Models > Image generation model before generating images. Do not substitute another model.",
+        "To use GenerateImages, configure an image generation model in Settings > Models > Image generation model.",
       );
     const { provider } = await host.call<{ provider?: ProviderPublic }>("providers.get", {
       id: binding.providerId,

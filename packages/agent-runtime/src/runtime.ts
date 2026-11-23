@@ -3516,7 +3516,13 @@ Delegation rules:
     const externalPathHint =
       " An explicit path outside the workspace and session scratch roots requires permission unless the effective mode is Auto.";
     const describe = (toolName: string): string => {
-      if (toolName === "GenerateImages") return imageGenerationDescription;
+      if (toolName === "GenerateImages") {
+        const responsesSkillId = "pi.responses-image-generation/responses-image-generation";
+        const hasResponsesSkill = !this.remoteWorkspace && this.pluginSkills.some((skill) => skill.id === responsesSkillId);
+        return hasResponsesSkill
+          ? `For native Responses image generation, load Skill with id ${responsesSkillId}. That route can reuse compatible Responses credentials without a GenerateImages model binding. ${imageGenerationDescription}`
+          : imageGenerationDescription;
+      }
       if (scheduledToolDescriptions[toolName]) return scheduledToolDescriptions[toolName];
       switch (toolName) {
         case "BrowserPreview":

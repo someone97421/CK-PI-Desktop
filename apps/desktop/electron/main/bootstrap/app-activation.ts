@@ -16,7 +16,9 @@ export function registerApplicationActivation({
   hasVisibleWindow,
   onTemporaryWorkspaceLaunch,
 }: ApplicationActivationDependencies): void {
-  app.on("activate", restoreMainWindow);
+  app.on("activate", () => {
+    if (isApplicationBooted() && !isQuitting()) restoreMainWindow();
+  });
 
   // 共用业务目录时，再次启动（包括兼容原版）交给锁持有者恢复窗口。
   app.on("second-instance", (_event, commandLine, _workingDirectory, additionalData) => {

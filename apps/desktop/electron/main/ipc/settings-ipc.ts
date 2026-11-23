@@ -17,6 +17,7 @@ import type { HostProcess } from "../host-process";
 import type { IpcRegistrar } from "./types";
 import type { LiveCallService } from "../live-voice/call-service";
 import { currentSystemProxyRelayUrl } from "../network-proxy";
+import { setAutoLaunch } from "../auto-launch";
 
 export type SettingsIpcDependencies = {
   registrar: IpcRegistrar;
@@ -130,10 +131,19 @@ export function registerSettingsIpc({
     }
     const releaseSettingsWrite = liveCallService?.beginSettingsWrite(prospectiveSettings);
     let result: AppSettings;
+    const autoLaunchChanged = typeof validatedSettings?.autoLaunch === "boolean";
+    let settingsSaved = false;
     try {
+      if (autoLaunchChanged) {
+        setAutoLaunch(validatedSettings.autoLaunch);
+      }
       result = await host.call<AppSettings>("settings.set", validatedSettings);
+      settingsSaved = true;
       await liveCallService?.settingsWritten(result);
     } catch (error) {
+      if (autoLaunchChanged && !settingsSaved) {
+        try { setAutoLaunch(currentSettings.autoLaunch === true); } catch { }
+      }
       if (temporaryWorkspaceSettingChanged) {
         try { await applyTemporaryWorkspaceContextMenu(currentSettings); } catch { }
       }

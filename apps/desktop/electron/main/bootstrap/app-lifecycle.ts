@@ -363,8 +363,9 @@ export function createApplicationLifecycle({
     );
   }
 
-  function createWindowForLifecycle(): Promise<void> {
+  function createWindowForLifecycle(showOnReady: boolean): Promise<void> {
     return createWindow({
+      showOnReady,
       state: state,
       dataDir,
       windowMinWidth,
@@ -389,14 +390,14 @@ export function createApplicationLifecycle({
     });
   }
 
-  async function ensureWindow(): Promise<boolean> {
+  async function ensureWindow(showOnReady = true): Promise<boolean> {
     if (appState.windowCreationPromise) {
       await appState.windowCreationPromise;
       return true;
     }
     if (state.mainWindow && !state.mainWindow.isDestroyed()) return false;
 
-    const creation = createWindowForLifecycle();
+    const creation = createWindowForLifecycle(showOnReady);
     appState.windowCreationPromise = creation;
     try {
       await creation;
