@@ -1,6 +1,7 @@
 import { IconClock } from "./icons";
 import { RemoteProjectGroups } from "./remote/RemoteProjectGroups";
 import { groupRemoteProjectSessions } from "../lib/remote-project-catalog";
+import { compareProjectGroups } from "../lib/project-order";
 import { isRemoteSession, sessionAllows } from "../lib/remote-session-safety";
 import {
   useCallback,
@@ -159,11 +160,6 @@ function projectName(path: string, fallback?: string) {
   return parts[parts.length - 1] || path;
 }
 
-function timestamp(value?: string) {
-  const parsed = value ? Date.parse(value) : 0;
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function optionalTimestamp(value?: string): number | null {
   const parsed = value ? Date.parse(value) : NaN;
   return Number.isFinite(parsed) ? parsed : null;
@@ -186,10 +182,12 @@ function projectDomId(path: string): string {
 }
 
 function lastUserMessageDate(sessions: SessionSummary[]): number | null {
-  const values = sessions
-    .map((session) => timestamp(session.lastUserMessageAt))
-    .filter((value) => value > 0);
-  return values.length ? Math.max(...values) : null;
+  let latest: number | null = null;
+  for (const { lastUserMessageAt } of sessions) {
+    const date = optionalTimestamp(lastUserMessageAt);
+    if (date !== null && date > 0 && (latest === null || date > latest)) latest = date;
+  }
+  return latest;
 }
 
 function compareOptionalDate(
@@ -671,38 +669,26 @@ export function Sidebar({
       const entry = byPath.get(sessionPath);
       if (entry) entry.sessions.push(session);
     }
-    const result = [...byPath.values()].filter(
-      (entry) => showArchived || !entry.meta.archived,
-    );
-    for (const entry of result) entry.sessions.sort(compareSessions);
-    result.sort((a, b) => {
-      const archiveOrder = Number(!!a.meta.archived) - Number(!!b.meta.archived);
-      if (archiveOrder !== 0) return archiveOrder;
-      const pinOrder = Number(!!b.meta.pinned) - Number(!!a.meta.pinned);
-      if (pinOrder !== 0) return pinOrder;
-      if (displayProjectSort === "manual") {
-        const byOrder =
-          (a.meta.order ?? Number.MAX_SAFE_INTEGER) -
-          (b.meta.order ?? Number.MAX_SAFE_INTEGER);
-        if (byOrder !== 0) return byOrder;
-      } else if (displayProjectSort === "created") {
-        const byCreated = compareOptionalDate(
-          projectCreatedAt.get(a.key) ?? null,
-          projectCreatedAt.get(b.key) ?? null,
-          true,
-        );
-        if (byCreated !== 0) return byCreated;
-      } else {
-        const byRecent = compareOptionalDate(
-          lastUserMessageDate(a.sessions),
-          lastUserMessageDate(b.sessions),
-          true,
-        );
-        if (byRecent !== 0) return byRecent;
-      }
-      return a.key.localeCompare(b.key);
-    });
-    return result;
+    return [...byPath.values()]
+      .filter((entry) => showArchived || !entry.meta.archived)
+      .map((entry) => {
+        entry.sessions.sort(compareSessions);
+        return {
+          entry,
+          order: {
+            key: entry.key,
+            name: entry.name,
+            sessions: entry.sessions,
+            archived: entry.meta.archived,
+            pinned: entry.meta.pinned,
+            manualOrder: entry.meta.order,
+            createdAt: projectCreatedAt.get(entry.key) ?? null,
+            recentAt: displayProjectSort === "recent" ? lastUserMessageDate(entry.sessions) : null,
+          },
+        };
+      })
+      .sort((a, b) => compareProjectGroups(a.order, b.order, displayProjectSort))
+      .map(({ entry }) => entry);
   }, [
     filtered,
     openProjectPaths,
@@ -921,9 +907,16 @@ export function Sidebar({
     [temporarySessions, pinnedSessionIds],
   );
   const remoteProjectsVisible = import.meta.env.DEV && settings?.developerMode === true;
-  const remoteProjectGroups = useMemo(() => groupRemoteProjectSessions(
-    remoteProjectsVisible ? filtered.filter((session) => isRemoteSession(session) && !pinnedSessionIds.has(session.id)) : [], compareSessions,
-  ), [remoteProjectsVisible, filtered, pinnedSessionIds, compareSessions]);
+  const remoteProjectGroups = useMemo(
+    () => remoteProjectsVisible
+      ? groupRemoteProjectSessions(
+        filtered.filter((session) => isRemoteSession(session) && !pinnedSessionIds.has(session.id)),
+        compareSessions,
+        displayProjectSort,
+      )
+      : [],
+    [remoteProjectsVisible, filtered, pinnedSessionIds, compareSessions, displayProjectSort],
+  );
 
   /** Handle multi-select click on a session row. Returns true if the click was consumed by multi-select. */
   const handleMultiSelectClick = (event: React.MouseEvent, sessionId: string): boolean => {
@@ -2108,6 +2101,8 @@ export function Sidebar({
       projectPath?: string;
       global?: boolean;
       showLastReplyDate?: boolean;
+      /** The `Remote` section heading already says these rows live on a host. */
+      insideRemoteSection?: boolean;
     },
   ) => items.map((session) => {
     const meta = sessionMeta[session.id] ?? {};
@@ -2207,7 +2202,9 @@ export function Sidebar({
           {session.source === "pi-native" ? (
             <span className="thread-item-source" title="Native Pi session">Pi</span>
           ) : null}
-          {isRemoteSession(session) && <span className="thread-item-source" title={session.remoteHostLabel}>{t("remote:remote")}</span>}
+          {isRemoteSession(session) && !options?.insideRemoteSection ? (
+            <span className="thread-item-source" title={session.remoteHostLabel}>{t("remote:remote")}</span>
+          ) : null}
           <WorktreeBadge worktree={session.worktree} sessionId={session.id} />
           <span className="thread-item-title">{taskTitle(session.title)}</span>
           {options?.global ? (
@@ -2753,11 +2750,21 @@ export function Sidebar({
               </div>
             </section>
           )}
-          <RemoteProjectGroups groups={remoteProjectGroups}
-            renderSessions={(sessions) => renderSessionRows(sessions, {
-              temporary: false,
-              showLastReplyDate: settings?.sidebarSessionTime !== false,
-            })} />
+          {remoteProjectGroups.length > 0 ? (
+            <>
+              <div className="sidebar-list-subheader" data-sidebar-section="remote">
+                <span className="sidebar-list-label">
+                  {t("nav.remoteProjects", { defaultValue: "Remote" })}
+                </span>
+              </div>
+              <RemoteProjectGroups groups={remoteProjectGroups}
+                renderSessions={(sessions) => renderSessionRows(sessions, {
+                  temporary: false,
+                  showLastReplyDate: settings?.sidebarSessionTime !== false,
+                  insideRemoteSection: true,
+                })} />
+            </>
+          ) : null}
         </div>
 
         <div className="sidebar-footer no-drag">

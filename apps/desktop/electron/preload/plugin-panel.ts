@@ -4,6 +4,7 @@ import {
   PLUGIN_PANEL_CHROME_META_NAME,
   PLUGIN_PANEL_CHROME_VERSION,
   PLUGIN_PANEL_CHROME_PAINT_THROUGH_VERSION,
+  PLUGIN_PANEL_COMPOSER_FILE_LINES_ARGUMENT,
   PLUGIN_PANEL_EMBEDDED_ARGUMENT,
   PLUGIN_PANEL_NO_DRAG_ATTRIBUTE,
   PLUGIN_PANEL_WIDGET_ARGUMENT,
@@ -67,6 +68,9 @@ ipcRenderer.on(`pi-plugin-panel-event:${PLUGIN_PANEL_LAUNCH_EVENT}`, (
   };
 });
 const bridge = {
+  ...(process.argv.includes(PLUGIN_PANEL_COMPOSER_FILE_LINES_ARGUMENT)
+    ? { capabilities: { composerFileLines: true } }
+    : {}),
   invoke: async (channel: string, payload?: Record<string, unknown>) => {
     return ipcRenderer.invoke("pi-plugin-panel-invoke", channel, payload ?? {});
   },

@@ -241,10 +241,11 @@ export function registerAgentIpc({
       content: appendPromptFallbackPaths(steerContent, prepared),
       ...(mcpExpansion ? { mcpServerIds: mcpExpansion.mcpServerIds, mcpToolNames: mcpExpansion.mcpToolNames } : {}),
       attachments: [
-        ...prepared.filter((attachment) => attachment.inlineData || attachment.mediaRef).map((attachment) => ({
+        ...prepared.filter((attachment) => attachment.inlineData || attachment.mediaRef || attachment.message.lineRange).map((attachment) => ({
           path: attachment.message.ref, name: attachment.message.name, kind: attachment.message.kind,
           mimeType: attachment.message.mimeType, size: attachment.message.size, data: attachment.inlineData,
           mediaRef: attachment.mediaRef,
+          ...(attachment.message.lineRange ? { lineRange: attachment.message.lineRange } : {}),
           ...(attachment.message.inlinePath ? { inlinePath: attachment.message.inlinePath } : {}),
         })),
         ...sessionReferences.map((attachment) => ({
@@ -726,7 +727,7 @@ export function registerAgentIpc({
           ...(sessionMessage ? { sessionMessage: sessionMessage.origin } : {}),
           attachments: [
             ...preparedAttachments
-              .filter((attachment) => attachment.inlineData || attachment.mediaRef)
+              .filter((attachment) => attachment.inlineData || attachment.mediaRef || attachment.message.lineRange)
               .map((attachment) => ({
                 path: attachment.message.ref,
                 name: attachment.message.name,
@@ -735,6 +736,7 @@ export function registerAgentIpc({
                 size: attachment.message.size,
                 data: attachment.inlineData,
                 mediaRef: attachment.mediaRef,
+                ...(attachment.message.lineRange ? { lineRange: attachment.message.lineRange } : {}),
                 ...(attachment.message.inlinePath
                   ? { inlinePath: attachment.message.inlinePath }
                   : {}),

@@ -7,6 +7,7 @@ import { createPluginWorkspaceReader } from "../remote/plugin-workspace-files";
 import {
   IPC,
   ErrorCodes,
+  FILE_LINES_ADD_CHANNEL,
   type ActivationScope,
   type AppSettings,
   type BrowserState,
@@ -75,6 +76,8 @@ import { createComposerSuggestionRelay } from "./composer-suggestion";
 import { createPluginModelContext } from "../runtime/plugin-model-context";
 import type { Logger } from "../logger";
 import type { PluginAppearance } from "../../shared/plugin-panel-chrome";
+
+import { addFileLinesFromView } from "../file-line-reference";
 
 export type PluginServicesDependencies = {
   dataDir: string;
@@ -160,6 +163,12 @@ export function createPluginServices({
   };
   const pluginPanels = new PluginPanelHost(
     async (pluginId, channel, payload, context) => {
+      if (channel === FILE_LINES_ADD_CHANNEL) {
+        return addFileLinesFromView(pluginId, context?.senderId, payload, {
+          plugins, pluginViews, pluginSession, pluginActiveInProject, getHost, getWorkspacePath,
+          publish: (selection) => sendToRenderer(IPC.event.composerFileLines, selection),
+        });
+      }
       if (pluginId === "pi.file-manager" && context?.senderId !== undefined) {
         const workspacePath = pluginViews.workspacePathForSender(context.senderId);
         const workspace = workspacePath === undefined ? undefined : workspacePath

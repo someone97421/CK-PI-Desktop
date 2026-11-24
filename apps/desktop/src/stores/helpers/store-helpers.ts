@@ -34,8 +34,8 @@ export function promptAttachmentsFromDraft(
       (/\.(avif|bmp|gif|heic|jpe?g|png|tiff?|webp)$/i.test(reference.path)
         ? "image"
         : "file");
-    // 图片、音视频和原文件授权需要结构化附件，普通文件沿用正文路径。
-    if (reference.token && kind !== "image" && !reference.localReference &&
+    // 普通文件沿用正文路径，有行范围的引用需要结构化附件。
+    if (reference.token && kind !== "image" && !reference.localReference && !reference.lineRange &&
       !mediaMimeType(reference.mimeType, reference.name, reference.path)) return [];
     return [
       {
@@ -44,6 +44,7 @@ export function promptAttachmentsFromDraft(
         kind,
         ...(reference.size !== undefined ? { size: reference.size } : {}),
         ...(reference.localReference ? { localReference: reference.localReference } : {}),
+        ...(reference.lineRange ? { lineRange: reference.lineRange } : {}),
         ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
       },
     ];
@@ -61,6 +62,7 @@ export function promptAttachmentsFromMessage(
       path: attachment.ref,
       name: attachment.name,
       kind: attachment.kind,
+      ...(attachment.lineRange ? { lineRange: attachment.lineRange } : {}),
       ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
       ...(attachment.size !== undefined ? { size: attachment.size } : {}),
       ...(attachment.localReference ? { localReference: attachment.localReference } : {}),

@@ -37,6 +37,7 @@ import {
 } from "./delegation-message.js";
 import {
   Agent,
+  runToolCall,
   type AgentContext,
   type AgentEvent,
   type AgentLoopTurnUpdate,
@@ -368,6 +369,8 @@ import {
   type ProviderTransportHealth,
 } from "./provider-transport-recovery.js";
 
+import { fileLineLabel, MAX_FILE_LINE_REFERENCES, parseFileLineRange } from "@pi-desktop/shared";
+
 export type { RuntimeProviderConfig } from "./provider-binding.js";
 
 import { mediaMimeType, supportsMediaMime, type MediaInputCapabilities } from "@pi-desktop/shared";
@@ -379,6 +382,8 @@ export type RuntimePromptAttachment = Omit<AgentPromptAttachment, "kind"> & {
   data?: string;
   mediaRef?: MediaReference;
   text?: string;
+  /** Set by the runtime when an explicit line reference could not be read. */
+  fileReferenceError?: "blocked" | "failed";
 };
 
 export type RuntimePrompt = {
@@ -397,9 +402,21 @@ export type RuntimePrompt = {
 
 /** Append resolved conversation excerpts to the model's text input. */
 function promptText(input: RuntimePrompt): string {
-  const references = (input.attachments ?? [])
+  const attachments = input.attachments ?? [];
+  const sessions = attachments
+    .filter(attachment => attachment.kind === "session")
     .map((attachment) => sessionReferenceBlock(attachment))
     .filter((block): block is string => block !== null);
+  const fileLines = attachments.filter(attachment => attachment.lineRange && attachment.text !== undefined)
+    .slice(0, MAX_FILE_LINE_REFERENCES)
+    .map(attachment => {
+      const source = escapeAttribute(fileLineLabel(attachment.path, attachment.lineRange!));
+      const text = attachment.text!.replaceAll("<", "&lt;");
+      return attachment.fileReferenceError
+        ? `<file_reference_error source="${source}" status="${attachment.fileReferenceError}">\n${text}\n</file_reference_error>`
+        : `<file_lines source="${source}">\n${text}\n</file_lines>`;
+    });
+  const references = [...sessions, ...fileLines];
   const text = references.length
     ? `${input.text}\n\n${references.join("\n\n")}`.trim()
     : input.text;
@@ -451,6 +468,7 @@ function runtimeAttachmentFromMessage(
     // Recorded placement: the message content names this image at that spot, so
     // the restored prompt keeps the block there too.
     ...(attachment.inlinePath ? { inlinePath: attachment.inlinePath } : {}),
+    ...(attachment.lineRange ? { lineRange: attachment.lineRange } : {}),
     ...(data ? { data } : {}),
     ...(attachment.mediaRef ? { mediaRef: attachment.mediaRef } : {}),
   };
@@ -2031,6 +2049,9 @@ export class DesktopAgentRuntime {
   private steeringWaitAbort?: AbortController;
   /** 已接收的引导保留指纹，重试不得重复投递或复用不同输入。 */
   private readonly acceptedSteering = new Map<string, { turnId: string; fingerprint: string }>();
+  private readonly pendingFileLineSteering = new Map<string, {
+    turnId: string; fingerprint: string; result: Promise<{ accepted: boolean; turnId: string }>;
+  }>();
   private pendingSteering = new Map<AgentMessage, { id: string; toolNames: string[] }>();
   private pendingOverflow = false;
   private overflowRecoveryAttempted = false;
@@ -2062,6 +2083,9 @@ export class DesktopAgentRuntime {
    * signal it was handed never fires, or the stop RPC stays pending forever.
    */
   private activeToolAborts = new Set<() => void>();
+  private readonly fileLineReadCalls = new Map<string, {
+    blocked: boolean; abort: AbortController; steering: boolean;
+  }>();
   private hostCloseUnsubscribe?: () => void;
   private hostTimingUnsubscribe?: () => void;
   private readonly runClock = new RunClock();
@@ -2849,7 +2873,8 @@ Delegation rules:
       const blocked = await this.extensionToolCall(context);
       if (blocked?.block) return blocked;
       await this.preparePathToolCall(context, undefined, undefined, undefined, signal);
-      await this.registerBatchCall(context);
+      // Composer prefetches run serially outside the assistant's tool batches.
+      if (!this.fileLineReadCalls.has(context.toolCall.id)) await this.registerBatchCall(context);
       return undefined;
     }
     const submitKind = submitToolKind(context.toolCall.name);
@@ -3846,6 +3871,7 @@ Delegation rules:
               toolCallId,
               toolName,
               args: params,
+              ...(this.fileLineReadCalls.has(toolCallId) ? { workspaceOnly: true } : {}),
               ...(this.batchPlanner.ticket(toolCallId) ? { fileBatchTicket: this.batchPlanner.ticket(toolCallId) } : {}),
               mode: this.mode,
               // A staged mode's `run` exit gate (ADR mode-definitions): the
@@ -3926,6 +3952,10 @@ Delegation rules:
         if (executionFailed) throw executionError;
         if (!result) throw new Error("tool execution returned no result");
         const recordParams = isRecord(params) ? params : undefined;
+        const fileLineRead = this.fileLineReadCalls.get(toolCallId);
+        if (fileLineRead && (result.denied || result.errorCode === "PERMISSION_DENIED")) {
+          fileLineRead.blocked = true;
+        }
         const failedToolExecution = !result.ok && result.denied !== true;
         const failedEditPath =
           toolName === "Edit" &&
@@ -5552,7 +5582,7 @@ Delegation rules:
   private terminateParentTurn(): void {
     this.turnHadError = true;
     for (const wake of this.delegationWaitWakeups) wake("aborted");
-    this.acceptingSteering = false;
+    this.closeSteeringAdmission();
     this.retainPendingSteering();
     this.abortRunningDelegations();
     this.delegationWaitTargets = undefined;
@@ -7247,7 +7277,8 @@ Delegation rules:
     if (signal?.aborted || !PATH_SCOPED_INSTRUCTION_TOOLS.has(name)) return;
     const params = normalizeToolParams(name, context.args);
     requireAliasedParams(name, params);
-    await this.loadPathInstructions(name, params, worktreeKey, apply);
+    await this.loadPathInstructions(name, params, worktreeKey, apply, signal);
+    if (signal?.aborted) return;
     if (typeof context.args === "object" && context.args !== null) {
       this.preparedPathToolArgs.set(context.args, params);
     }
@@ -7258,6 +7289,7 @@ Delegation rules:
     params: unknown,
     delegationId?: string,
     apply?: (instructions: ProjectInstructions | undefined) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     if (this.remoteWorkspace || !PATH_SCOPED_INSTRUCTION_TOOLS.has(toolName)) {
       return undefined;
@@ -7291,6 +7323,7 @@ Delegation rules:
       this.pathInstructionClaims.set(key, resolution);
     }
     const resolved = await resolution;
+    if (signal?.aborted) return;
     // Rules are scoped to the file currently being accessed. Rebuild the
     // complete chain so sibling-directory rules never leak into one another
     // and edits to an existing instruction file take effect immediately.
@@ -9723,7 +9756,7 @@ Delegation rules:
           this.keepTurnOpenForDelegates()
         )
           break;
-        this.acceptingSteering = false;
+        this.closeSteeringAdmission();
         this.retainPendingSteering();
         this.autonomousExecution = false;
         this.clearAgentActivity();
@@ -9996,13 +10029,79 @@ Delegation rules:
     });
   }
 
+  /** Execute the ordinary Host Read for explicit composer references before model input. */
+  async resolveFileLineReferences(input: RuntimePrompt, expectedTurnId?: string): Promise<RuntimePrompt> {
+    if (!input.attachments?.some(attachment => attachment.lineRange !== undefined)) return input;
+    const references = input.attachments.filter(attachment => attachment.lineRange !== undefined);
+    if (references.length > MAX_FILE_LINE_REFERENCES) {
+      throw Object.assign(new Error("Too many file line references"), { errorCode: "INVALID_ARGUMENT" });
+    }
+    if (references.some(attachment => attachment.kind !== "file" || attachment.localReference !== undefined || !parseFileLineRange(attachment.lineRange))) {
+      throw Object.assign(new Error("Invalid file line reference"), { errorCode: "INVALID_ARGUMENT" });
+    }
+    const read = this.activeTools().find(tool => tool.name === "Read" && this.builtinTools.has(tool));
+    const turnId = this.turnId;
+    const ensureCurrent = () => {
+      if (expectedTurnId !== undefined) this.steeringContext(expectedTurnId);
+      else if (this.runCancelled || this.disposed || turnId !== this.turnId) {
+        throw turnAbortedError("Turn ended during file reference reads");
+      }
+    };
+    const attachments: RuntimePromptAttachment[] = [];
+    const seen = new Set<string>();
+    for (const attachment of input.attachments) {
+      if (attachment.lineRange === undefined) {
+        attachments.push(attachment);
+        continue;
+      }
+      const range = parseFileLineRange(attachment.lineRange)!;
+      const key = JSON.stringify([attachment.path, range.start, range.end]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ensureCurrent();
+      const args = {
+        path: attachment.path,
+        offset: range.start - 1,
+        limit: range.end - range.start + 1,
+      };
+      const toolCall = { type: "toolCall" as const, id: randomUUID(), name: "Read", arguments: args };
+      const timestamp = Date.now();
+      const tools = read ? [read] : [];
+      const prefetch = { blocked: !read, abort: new AbortController(), steering: expectedTurnId !== undefined };
+      const signal = prefetch.abort.signal;
+      this.fileLineReadCalls.set(toolCall.id, prefetch);
+      const { result, isError } = await runToolCall(toolCall, {
+        tools,
+        signal,
+        assistantMessage: {
+          role: "assistant", content: [toolCall], api: this.model.api, provider: this.model.provider,
+          model: this.model.id, usage: usageToPi(undefined), stopReason: "toolUse", timestamp,
+        },
+        context: { messages: this.agent.state.messages, tools },
+        beforeToolCall: async context => {
+          const decision = await this.beforeToolCall(context, signal);
+          if (decision?.block) prefetch.blocked = true;
+          return decision;
+        },
+        afterToolCall: context => this.afterToolCall(context),
+      }).finally(() => this.fileLineReadCalls.delete(toolCall.id));
+      const text = result.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
+      ensureCurrent();
+      attachments.push({
+        ...attachment, lineRange: range, text,
+        fileReferenceError: isError ? (prefetch.blocked ? "blocked" : "failed") : undefined,
+      });
+    }
+    return { ...input, attachments };
+  }
+
   private async promptTurn(
     input: string | RuntimePrompt,
     userMessageId: string | undefined,
     durableTurnId: string,
   ): Promise<{ turnId: string }> {
     const selectedTools = this.selectedMcpTools(input);
-    const modelInput = typeof input !== "string" && input.sessionMessage
+    let modelInput = typeof input !== "string" && input.sessionMessage
       ? { ...input, text: formatSessionMessage(input.text, input.sessionMessage), sessionMessage: undefined }
       : input;
     this.retainPendingSteering();
@@ -10046,6 +10145,9 @@ Delegation rules:
       if (selectedTools.length) this.activateDeferredTools(selectedTools);
       this.setAgentTools(this.activeTools());
       if (modePromptChanged) this.setAgentSystemPrompt(this.composeSystemPrompt());
+      if (typeof modelInput !== "string" && modelInput.attachments?.some(attachment => attachment.lineRange !== undefined)) {
+        modelInput = await this.resolveFileLineReferences(modelInput);
+      }
       const content = promptContent(modelInput, mediaCapabilitiesForProvider(this.provider));
       const incomingUserMessage: AgentMessage = {
         role: "user",
@@ -10218,23 +10320,57 @@ Delegation rules:
     return { projectPath: this.projectPath, ...(this.remoteWorkspace ? { remoteWorkspace: this.remoteWorkspace } : {}), supportsVision: this.model.input.includes("image"), ...mediaCapabilitiesForProvider(this.provider) };
   }
 
-  steer(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): { accepted: boolean; turnId: string } {
-    // A retried request with the same identity (double click, or a replay after
-    // Main lost the acknowledgement) is the same input: answer it from the
-    // first acceptance instead of steering the turn twice. Reusing the id with
-    // different input is a client bug and must not silently alter the turn.
-    const fingerprint = createHash("sha256").update(JSON.stringify({
+  private steeringFingerprint(input: RuntimePrompt, message: UiMessage): string {
+    return createHash("sha256").update(JSON.stringify({
       input, content: message.content, attachments: message.attachments,
     })).digest("hex");
+  }
+
+  private checkSteeringIdentity(previous: { turnId: string; fingerprint: string }, turnId: string, fingerprint: string): void {
+    if (previous.turnId !== turnId || previous.fingerprint !== fingerprint) {
+      throw Object.assign(new Error("Steering message identity was reused with different input"), {
+        errorCode: "INVALID_ARGUMENT",
+      });
+    }
+  }
+
+  steer(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): { accepted: boolean; turnId: string } {
+    const fingerprint = this.steeringFingerprint(input, message);
     const previous = this.acceptedSteering.get(message.id);
     if (previous) {
-      if (previous.turnId !== expectedTurnId || previous.fingerprint !== fingerprint) {
-        throw Object.assign(new Error("Steering message identity was reused with different input"), {
-          errorCode: "INVALID_ARGUMENT",
-        });
-      }
+      this.checkSteeringIdentity(previous, expectedTurnId, fingerprint);
       return { accepted: true, turnId: previous.turnId };
     }
+    const pending = this.pendingFileLineSteering.get(message.id);
+    if (pending) this.checkSteeringIdentity(pending, expectedTurnId, fingerprint);
+    return this.acceptSteering(input, expectedTurnId, message, fingerprint);
+  }
+
+  async steerWithFileLineReferences(input: RuntimePrompt, expectedTurnId: string, message: UiMessage): Promise<{ accepted: boolean; turnId: string }> {
+    if (!input.attachments?.some(attachment => attachment.lineRange !== undefined)) {
+      return this.steer(input, expectedTurnId, message);
+    }
+    // A receipt identifies the submitted prompt, independent of mutable file contents.
+    const fingerprint = this.steeringFingerprint(input, message);
+    const previous = this.acceptedSteering.get(message.id);
+    if (previous) {
+      this.checkSteeringIdentity(previous, expectedTurnId, fingerprint);
+      return { accepted: true, turnId: previous.turnId };
+    }
+    const pending = this.pendingFileLineSteering.get(message.id);
+    if (pending) {
+      this.checkSteeringIdentity(pending, expectedTurnId, fingerprint);
+      return pending.result;
+    }
+    this.steeringContext(expectedTurnId);
+    const result = this.resolveFileLineReferences(input, expectedTurnId)
+      .then(resolved => this.acceptSteering(resolved, expectedTurnId, message, fingerprint))
+      .finally(() => this.pendingFileLineSteering.delete(message.id));
+    this.pendingFileLineSteering.set(message.id, { turnId: expectedTurnId, fingerprint, result });
+    return result;
+  }
+
+  private acceptSteering(input: RuntimePrompt, expectedTurnId: string, message: UiMessage, fingerprint: string): { accepted: boolean; turnId: string } {
     this.steeringContext(expectedTurnId);
     const toolNames = this.selectedMcpTools(input);
     const queued: AgentMessage = { role: "user", content: promptContent(input, mediaCapabilitiesForProvider(this.provider)), timestamp: Date.now() };
@@ -10253,6 +10389,13 @@ Delegation rules:
         ? { precedingAssistant: { ...this.currentAssistant } } : {}),
     });
     return { accepted: true, turnId: this.turnId! };
+  }
+
+  private closeSteeringAdmission(): void {
+    this.acceptingSteering = false;
+    for (const prefetch of this.fileLineReadCalls.values()) {
+      if (prefetch.steering) prefetch.abort.abort();
+    }
   }
 
   private retainPendingSteering(): void {
@@ -10305,7 +10448,8 @@ Delegation rules:
       ? this.activeTurnSettlements.get(turnId)
       : undefined;
     const delegates = this.runningDelegations().map((record) => record.completion);
-    this.acceptingSteering = false;
+    this.closeSteeringAdmission();
+    for (const prefetch of this.fileLineReadCalls.values()) prefetch.abort.abort();
     this.gracefulStopRequested = false;
     this.runCancelled = true;
     for (const wake of this.delegationWaitWakeups) wake("aborted");
@@ -10383,7 +10527,7 @@ Delegation rules:
     if (this.disposed || !this.agent.state.isStreaming) {
       return { requested: false };
     }
-    this.acceptingSteering = false;
+    this.closeSteeringAdmission();
     this.gracefulStopRequested = true;
     return { requested: true };
   }
@@ -10422,7 +10566,8 @@ Delegation rules:
     const closingExtensions = runner?.dispose();
     this.streamSink.dispose();
     this.disposed = true;
-    this.acceptingSteering = false;
+    this.closeSteeringAdmission();
+    for (const prefetch of this.fileLineReadCalls.values()) prefetch.abort.abort();
     this.runCancelled = true;
     for (const wake of this.delegationWaitWakeups) wake("aborted");
     this.acceptedSteering.clear();

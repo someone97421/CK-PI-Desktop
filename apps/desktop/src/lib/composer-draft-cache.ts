@@ -28,6 +28,7 @@ export function temporaryDraftKey(id: string): string {
 export type ComposerDraftFileInput = {
   size?: number;
   localReference?: string;
+  lineRange?: import("@pi-desktop/shared").FileLineRange;
   sessionId?: string;
   path: string;
   name: string;
@@ -47,6 +48,7 @@ export function draftFileReference({
   mimeType,
   token,
   plugin,
+  lineRange,
 }: ComposerDraftFileInput): ComposerDraftFileReference {
   return {
     ...(size !== undefined ? { size } : {}),
@@ -57,6 +59,7 @@ export function draftFileReference({
     ...(mimeType ? { mimeType } : {}),
     ...(token ? { token } : {}),
     ...(plugin ? { plugin } : {}),
+    ...(lineRange ? { lineRange } : {}),
   };
 }
 
@@ -86,6 +89,8 @@ export function sameDraftFileReference(
     a.size === b.size &&
     a.localReference === b.localReference &&
     a.token === b.token &&
+    a.lineRange?.start === b.lineRange?.start &&
+    a.lineRange?.end === b.lineRange?.end &&
     samePluginPart(a.plugin, b.plugin)
   );
 }

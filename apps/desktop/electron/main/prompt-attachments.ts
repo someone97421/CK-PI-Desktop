@@ -23,6 +23,9 @@ import { resolveComposerFileReference } from "./composer-file-references.ts";
 import {
   ErrorCodes,
   appendLocalFileReferenceContext,
+  fileLineLabel,
+  MAX_FILE_LINE_REFERENCES,
+  parseFileLineRange,
   formatFileInsert,
   formatPromptPathText,
   imageExceedsInlineDimensions,
@@ -41,6 +44,7 @@ import {
   type MessageAttachment,
   type MediaReference,
 } from "@pi-desktop/shared";
+import { fileLinePathInProject } from "./file-line-reference.ts";
 
 export { MAX_INLINE_IMAGE_BYTES } from "@pi-desktop/shared";
 
@@ -261,11 +265,34 @@ export async function preparePromptAttachments(
 ): Promise<PreparedPromptAttachment[]> {
   const prepared: PreparedPromptAttachment[] = [];
   let inlineBytes = 0;
+  if (attachments.filter(attachment => attachment.lineRange !== undefined).length > MAX_FILE_LINE_REFERENCES) {
+    throw Object.assign(new Error("Too many file line references"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+  }
   const inlineSpans = locateInlinePromptPaths(
     promptContent,
     attachments.map((attachment) => attachment.path),
   );
   for (const [index, attachment] of attachments.entries()) {
+    if (attachment.lineRange !== undefined) {
+      if (attachment.localReference !== undefined) {
+        throw Object.assign(new Error("File references cannot combine a line range and local reference"), {
+          errorCode: ErrorCodes.INVALID_ARGUMENT,
+        });
+      }
+      const lineRange = parseFileLineRange(attachment.lineRange);
+      if (!lineRange || attachment.kind !== "file" || !fileLinePathInProject(attachment.path, projectPath ?? null)) {
+        throw Object.assign(new Error("Invalid file line reference for the session project"), {
+          errorCode: ErrorCodes.INVALID_ARGUMENT,
+        });
+      }
+      const name = attachment.name || attachment.path.split(/[\\/]/).at(-1) || "file";
+      const inlinePath = fileLineLabel(attachment.path, lineRange);
+      prepared.push({
+        message: { kind: "file", name, ref: attachment.path, lineRange, inlinePath },
+        fallbackPath: attachment.path,
+      });
+      continue;
+    }
     if (attachment.localReference !== undefined) {
       const file = await resolveComposerFileReference(dataRoot, projectPath, attachment.path, attachment.localReference, sessionId);
       prepared.push({
@@ -387,7 +414,7 @@ export function appendPromptFallbackPaths(
   attachments: readonly PreparedPromptAttachment[],
 ): string {
   const paths = attachments
-    .filter((attachment) => !attachment.inlineData && !attachment.mediaRef && !attachment.message.localReference)
+    .filter((attachment) => !attachment.inlineData && !attachment.mediaRef && !attachment.message.localReference && !attachment.message.lineRange)
     // 已在正文中的原路径无需追加；历史副本的新路径仍需保留。
     .filter(
       (attachment) =>
