@@ -171,18 +171,6 @@
   transform: none;
 }
 
-/*
-  The glyph belongs to the collapsed form only. At the 450px floor the chip
-  drops its labels and keeps this icon as the trigger; at full width the model
-  name already says what the control is, so the icon only added noise.
-*/
-.composer-model-thinking-icon {
-  display: none;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  color: var(--ds-text-muted);
-}
 .composer-model-thinking-model,
 .composer-model-thinking-level {
   min-width: 0;

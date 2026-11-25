@@ -14,49 +14,11 @@
   }
 }
 
-/*
-  Composer controls share one row, but the model chip is the first surface to
-  give up descriptive text as the chat column gets narrower. Keep the action
-  buttons at their normal hit target and let the combined model/reasoning
-  trigger carry the full selection in its menu and accessible name.
-*/
-.composer-left,
-.composer-right {
-  min-width: 0;
-}
-
-.composer-left,
-.composer-right,
-.composer-model-thinking {
-  flex: 0 1 auto;
-}
-
-.composer-right {
-  justify-content: flex-end;
-}
-
-.composer-model-thinking {
-  min-width: 0;
-}
-
-@container composer-stack (max-width: 560px) {
-  .composer-model-thinking-level {
-    display: none;
-  }
-
-  .composer-model-thinking-model {
-    max-width: 136px;
-  }
-}
-
-@container composer-stack (max-width: 480px) {
-  .composer-model-thinking-model {
-    max-width: 96px;
-  }
-}
-
 @container composer-stack (max-width: 450px) {
-  .composer-right .composer-model-thinking-chip,
+  .composer-left {
+    flex-shrink: 0;
+  }
+
   .composer-mode-chip,
   .composer-permission > .mode-chip {
     width: 28px !important;
@@ -74,26 +36,13 @@
 
   .composer-mode-chip-label,
   .composer-permission > .mode-chip > .text-sm,
-  .composer-model-thinking-model,
-  .composer-model-thinking-level,
   .composer-mode-chip-caret,
-  .composer-permission-chevron,
-  .composer-model-thinking-chevron {
+  .composer-permission-chevron {
     display: none;
   }
 
-  .composer-permission-icon,
-  .composer-model-thinking-icon {
+  .composer-permission-icon {
     display: inline-flex;
-  }
-
-  .composer-right .context-inspector-trigger {
-    gap: 0;
-    padding-inline: 3px;
-  }
-
-  .composer-right .context-inspector-ring-value {
-    display: none;
   }
 }
 
