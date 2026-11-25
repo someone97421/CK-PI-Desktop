@@ -325,6 +325,7 @@ export function registerWorkspaceIpc({
       name?: unknown;
       folders?: unknown;
       primary?: unknown;
+      instructions?: unknown;
     } = {}) => {
       if (!host) throw new Error("host unavailable");
       const groupId = typeof input.groupId === "string" ? input.groupId.trim() : "";
@@ -333,6 +334,12 @@ export function registerWorkspaceIpc({
         ? input.folders.filter((path): path is string => typeof path === "string")
         : [];
       const primary = typeof input.primary === "string" ? input.primary.trim() : "";
+      if (input.instructions !== undefined && typeof input.instructions !== "string") {
+        throw Object.assign(new Error("project instructions must be text"), {
+          errorCode: ErrorCodes.INVALID_ARGUMENT,
+        });
+      }
+      const instructionUpdate = input.instructions === undefined ? {} : { instructions: input.instructions };
       if (!groupId || !name || folders.length === 0) {
         throw Object.assign(new Error("project group id, name and folders required"), {
           errorCode: ErrorCodes.INVALID_ARGUMENT,
@@ -344,6 +351,7 @@ export function registerWorkspaceIpc({
           name,
           folders,
           ...(primary ? { primary } : {}),
+          ...instructionUpdate,
         });
         void refreshProjectGroups(host);
         return result;
@@ -372,6 +380,7 @@ export function registerWorkspaceIpc({
         name,
         folders: safeFolders,
         ...(safePrimary ? { primary: safePrimary } : {}),
+        ...instructionUpdate,
       });
       void refreshProjectGroups(host);
       return updated;

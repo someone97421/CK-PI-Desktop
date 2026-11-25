@@ -41,8 +41,10 @@ test("project edit dialog updates names and adjusts folder roots", () => {
   assert.match(dialogSource, /listProjectGroups\(\)/);
   assert.match(
     dialogSource,
-    /api\.updateProjectGroup\(group\.id, trimmedName, folders, primaryPath\)/,
+    /api\.updateProjectGroup\(\s*group\.id, trimmedName, folders, primaryPath,/,
   );
+  assert.match(dialogSource, /getProjectGroupInstructions\(resolved\.id\)/);
+  assert.match(dialogSource, /id="project-edit-name"[\s\S]*?id="project-edit-instructions"[\s\S]*?id="project-edit-folders-heading"/);
   assert.match(dialogSource, /api\.pickProjectFolders\(\)/);
   assert.match(dialogSource, /setFolders\(\(current\) =>[\s\S]*?current\.filter/);
   assert.match(dialogSource, /busy \|\| primary/);
@@ -76,7 +78,7 @@ test("project group update is available through the host RPC and preload API", (
   );
   assert.match(apiSource, /\.\.\.\(primary \? \{ primary \} : \{\}\)/);
   assert.match(hostSource, /"project\.group\.update"/);
-  assert.match(hostSource, /update_project_group\(group_id, name, &folders, primary\)/);
+  assert.match(hostSource, /update_project_group_with_relocation\(\s*group_id,\s*name,\s*&folders,\s*primary,\s*instructions,/);
   assert.match(hostSource, /params\.get\("primary"\)/);
   assert.match(ipcSource, /primary\?: unknown;/);
   assert.match(ipcSource, /\.\.\.\(safePrimary \? \{ primary: safePrimary \} : \{\}\)/);
@@ -110,6 +112,8 @@ for (const [locale, source] of [["en", enSource], ["zh-CN", zhSource]]) {
       "editCancel",
       "editPrimaryLocked",
       "editSetPrimary",
+      "additionalInstructions",
+      "additionalInstructionsHint",
     ]) {
       assert.match(source, new RegExp(`(?:\\b${key}|"${key}"):`));
     }

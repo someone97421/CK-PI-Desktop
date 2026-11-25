@@ -401,7 +401,7 @@ export function createSidecarRuntime({
           roots?: Array<{ path?: string }>;
           instructions?: string;
         } | null;
-      }>("project.group.context", { path: project });
+      }>("project.group.context", { sessionId });
       const roots = result.context?.roots ?? [];
       const rootGuide = !isolated && roots.length > 1
         ? [

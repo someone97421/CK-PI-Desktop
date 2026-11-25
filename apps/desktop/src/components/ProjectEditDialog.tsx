@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { ProjectGroupRecord, ProjectGroupRoot } from "@pi-desktop/shared";
 import { api } from "../lib/api";
 import { MAX_PROJECT_NAME_CHARS } from "../lib/sidebar-preferences";
-import { OverlayBackdrop, Button, Input, TooltipButton } from "./ui";
+import { OverlayBackdrop, Button, Input, Textarea, TooltipButton } from "./ui";
 import {
   IconClose,
   IconFolder,
@@ -56,6 +56,8 @@ export function ProjectEditDialog({
   const { t } = useTranslation();
   const [group, setGroup] = useState<ProjectGroupRecord | null>(null);
   const [name, setName] = useState(project.name);
+  const [instructions, setInstructions] = useState("");
+  const [savedInstructions, setSavedInstructions] = useState("");
   const [folders, setFolders] = useState<string[]>(
     project.roots?.slice().sort((a, b) => a.position - b.position).map((root) => root.path) ??
       [project.path],
@@ -74,7 +76,7 @@ export function ProjectEditDialog({
     let cancelled = false;
     void api
       .listProjectGroups()
-      .then(({ groups }) => {
+      .then(async ({ groups }) => {
         if (cancelled) return;
         const requestedPath = project.path;
         const resolved = groups.find(
@@ -86,6 +88,10 @@ export function ProjectEditDialog({
         if (!resolved) {
           throw new Error(t("project.notFound", { defaultValue: "Project not found" }));
         }
+        const content = resolved.legacy ? "" : (await api.getProjectGroupInstructions(resolved.id)).content;
+        if (cancelled) return;
+        setInstructions(content);
+        setSavedInstructions(content);
         setGroup(resolved);
         setName(resolved.name);
         setPrimaryPath(resolved.primaryPath);
@@ -122,7 +128,7 @@ export function ProjectEditDialog({
       }
       if (event.key !== "Tab") return;
       const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'input:not([disabled]), button:not([disabled])',
+        'input:not([disabled]), textarea:not([disabled]), button:not([disabled])',
       );
       if (!focusable?.length) return;
       const first = focusable[0];
@@ -180,9 +186,11 @@ export function ProjectEditDialog({
     busyRef.current = true;
     setBusy(true);
     try {
-      const result = group.remote
-        ? await api.renameProjectGroup(group.id, trimmedName)
-        : await api.updateProjectGroup(group.id, trimmedName, folders, primaryPath);
+      const content = instructions.trim();
+      const result = await api.updateProjectGroup(
+        group.id, trimmedName, folders, primaryPath,
+        content === savedInstructions.trim() ? undefined : content,
+      );
       onSaved(result.group);
       onClose();
     } catch (error) {
@@ -269,6 +277,25 @@ export function ProjectEditDialog({
                 spellCheck={false}
                 autoCorrect="off"
                 autoCapitalize="off"
+              />
+            </section>
+
+            <section className="project-create-dialog-section" aria-labelledby="project-edit-instructions-heading">
+              <label
+                id="project-edit-instructions-heading"
+                className="project-create-dialog-section-title project-create-dialog-field-label"
+                htmlFor="project-edit-instructions"
+              >
+                {t("project.additionalInstructions")}
+              </label>
+              <Textarea
+                id="project-edit-instructions"
+                className="field-input project-edit-instructions-field"
+                rows={3}
+                value={instructions}
+                placeholder={t("project.additionalInstructionsHint")}
+                onChange={(event) => setInstructions(event.target.value)}
+                disabled={loading || busy || !group}
               />
             </section>
 

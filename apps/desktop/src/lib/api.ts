@@ -1189,12 +1189,14 @@ export const api = {
     name: string,
     folders: string[],
     primary?: string,
+    instructions?: string,
   ) =>
     invoke<{ group: ProjectGroupRecord }>(IPC.invoke.projectGroupUpdate, {
       groupId,
       name,
       folders,
       ...(primary ? { primary } : {}),
+      ...(instructions !== undefined ? { instructions } : {}),
     }),
   getProjectGroupMemory: (groupId: string) =>
     invoke<{ memory: ProjectMemory }>(IPC.invoke.projectGroupMemoryGet, { groupId }),

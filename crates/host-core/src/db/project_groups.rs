@@ -345,7 +345,7 @@ impl Database {
         paths: &[String],
         primary: Option<&str>,
     ) -> Result<ProjectGroupRecord> {
-        self.update_project_group_with_relocation(id, name, paths, primary, |_| Ok(false))
+        self.update_project_group_with_relocation(id, name, paths, primary, None, |_| Ok(false))
     }
 
     /// Edits a stored group's display name and ordered roots.
@@ -360,11 +360,16 @@ impl Database {
         name: &str,
         paths: &[String],
         primary: Option<&str>,
+        instructions: Option<&str>,
         has_live_tools: impl FnOnce(&str) -> Result<bool>,
     ) -> Result<ProjectGroupRecord> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > MAX_PROJECT_GROUP_NAME_CHARS {
             return Err(anyhow!("project group name is invalid"));
+        }
+        let instructions = instructions.map(str::trim);
+        if let Some(content) = instructions {
+            validate_project_group_instructions(content)?;
         }
         let Some(current) = self.group_by_id(id.trim())? else {
             return Err(anyhow!("project group not found"));
@@ -374,7 +379,13 @@ impl Database {
             if paths != [current.primary_path.clone()] || !keeps_current_primary {
                 return Err(anyhow!("remote project folder binding cannot be changed"));
             }
-            return self.rename_project_group(&current.id, name);
+            let transaction = self.conn.unchecked_transaction()?;
+            let group = self.rename_project_group(&current.id, name)?;
+            if let Some(content) = instructions {
+                self.write_project_group_instructions(&group.id, content)?;
+            }
+            transaction.commit()?;
+            return Ok(group);
         }
         let transaction = self.conn.unchecked_transaction()?;
         let current_primary = canonical_project_path(&current.primary_path)
@@ -487,7 +498,7 @@ impl Database {
             }
         }
 
-        if current.legacy && ordered.len() == 1 {
+        if current.legacy && ordered.len() == 1 && !instructions.is_some_and(|content| !content.is_empty()) {
             self.conn
                 .prepare_cached("UPDATE projects SET name = ?1 WHERE path = ?2")?
                 .execute(params![name, primary])?;
@@ -576,6 +587,9 @@ impl Database {
             }
         }
         self.kv_set(GROUP_NAMESPACE, &group.id, &serde_json::to_value(&group)?)?;
+        if let Some(content) = instructions {
+            self.write_project_group_instructions(&group.id, content)?;
+        }
         transaction.commit()?;
         Ok(group)
     }
@@ -774,17 +788,17 @@ impl Database {
         if group.legacy {
             return Err(anyhow!("legacy project groups use folder instructions"));
         }
-        if content.len() > MAX_PROJECT_GROUP_INSTRUCTIONS_BYTES {
-            return Err(anyhow!(
-                "project instructions exceed {MAX_PROJECT_GROUP_INSTRUCTIONS_BYTES} bytes"
-            ));
-        }
+        self.write_project_group_instructions(&group.id, content)?;
+        Ok(content.to_string())
+    }
+
+    fn write_project_group_instructions(&self, id: &str, content: &str) -> Result<()> {
+        validate_project_group_instructions(content)?;
         self.kv_set(
             GROUP_INSTRUCTIONS_NAMESPACE,
-            &group.id,
+            id,
             &serde_json::json!({ "content": content, "updatedAt": now_ms() }),
-        )?;
-        Ok(content.to_string())
+        )
     }
 
     pub fn project_group_context_for_path(
@@ -805,4 +819,13 @@ impl Database {
             remote: group.remote,
         }))
     }
+}
+
+fn validate_project_group_instructions(content: &str) -> Result<()> {
+    if content.len() > MAX_PROJECT_GROUP_INSTRUCTIONS_BYTES {
+        return Err(anyhow!(
+            "project instructions exceed {MAX_PROJECT_GROUP_INSTRUCTIONS_BYTES} bytes"
+        ));
+    }
+    Ok(())
 }

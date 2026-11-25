@@ -52,7 +52,8 @@ window.piDesktop = { platform: "darwin", channels: IPC, on() { return () => {}; 
     if (input.path === "old.txt") return new Promise((resolve) => { releaseOldFile = () => resolve({ kind: "text", content: "old bytes", size: 9 }); });
     return { kind: "text", content: "remote file", size: 11 };
    case IPC.invoke.projectGroupList: return { groups: [group] };
-   case IPC.invoke.projectGroupRename: return { group: { ...group, name: input.name } };
+   case IPC.invoke.projectGroupInstructionsGet: return { content: "Use the project conventions." };
+   case IPC.invoke.projectGroupUpdate: return { group: { ...group, name: input.name } };
    default: unexpectedCalls.push(channel); throw new Error("Unexpected IPC: " + channel);
   } })();
   return { ok: true, data };
@@ -65,7 +66,7 @@ function check(condition, message) { if (!condition) throw new Error(message); }
 async function until(predicate, message) { for (let n=0;n<120;n++) { if (predicate()) return; await frame(); } throw new Error(message + " body=" + document.body.textContent + " calls=" + JSON.stringify(calls)); }
 const button = (label, scope = document) => [...scope.querySelectorAll("button")].find((node) => node.textContent.trim() === label);
 function choose(node, value) { flushSync(() => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(node, value); node.dispatchEvent(new Event("change", { bubbles: true })); }); }
-function input(node, value) { flushSync(() => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(node, value); node.dispatchEvent(new Event("input", { bubbles: true })); }); }
+function input(node, value) { flushSync(() => { Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), "value").set.call(node, value); node.dispatchEvent(new Event("input", { bubbles: true })); }); }
 const picker = () => document.querySelector(".remote-folder-dialog");
 window.remoteProjectProbe = async () => {
  useAppStore.setState({ workspace: { path: "/local/app", name: "app" }, activeProjectPath: "/local/app", openProjectPaths: ["/local/app"], openProjects: [{ path: "/local/app", name: "app" }], sessions: [], page: "settings" });
@@ -155,10 +156,12 @@ window.remoteProjectProbe = async () => {
  check(!document.querySelector('.project-create-add-folder'), "remote project offered native folder picker");
  check(!document.querySelector('.project-edit-dialog').textContent.includes(group.primaryPath), "synthetic identity leaked in project editor");
  input(document.querySelector('#project-edit-name'), "Renamed server app");
+ const instructions = document.querySelector('#project-edit-instructions');
+ check(instructions.value === "Use the project conventions.", "saved instructions did not load");
+ input(instructions, "  ");
  document.querySelector('form').dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
  await until(() => savedGroup?.name === "Renamed server app", "remote-bound project rename failed");
- check(calls.some((entry) => entry.channel === IPC.invoke.projectGroupRename && entry.input.name === "Renamed server app"), "rename did not use local project storage");
- check(!calls.some((entry) => entry.channel === IPC.invoke.projectGroupUpdate), "rename sent synthetic folder to local fs validation");
+ check(calls.some((entry) => entry.channel === IPC.invoke.projectGroupUpdate && entry.input.name === "Renamed server app" && entry.input.primary === group.primaryPath && entry.input.instructions === ""), "rename and clear did not use the same project update");
  useAppStore.setState({ activeSessionId: "local-persisted-session" });
  flushSync(() => view.render(React.createElement(FilesTab)));
  await until(() => document.querySelector('.file-tree-name')?.textContent === "README.md", "normal Files list did not load remote workspace");

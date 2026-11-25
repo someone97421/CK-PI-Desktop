@@ -2624,6 +2624,8 @@ sklm: {
     editPrimaryLocked: "The Primary folder cannot be removed",
     editSetPrimary: "Set as Primary folder",
     editInstructions: "Project instructions",
+    additionalInstructions: "Additional instructions",
+    additionalInstructionsHint: "Optional. Appended after global instructions in this project's chats.",
     instructionsSaved: "Project instructions saved",
     editMemory: "Project memory",
     memorySaved: "Project memory saved",

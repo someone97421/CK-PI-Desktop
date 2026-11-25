@@ -2276,6 +2276,14 @@ async fn handle_request(
                 .map(str::to_string)
                 .collect::<Vec<_>>();
             let primary = params.get("primary").and_then(Value::as_str);
+            let instructions = params
+                .get("instructions")
+                .map(|value| {
+                    value.as_str().ok_or_else(|| {
+                        rpc_err(1002, "instructions must be text", "INVALID_PARAMS")
+                    })
+                })
+                .transpose()?;
             let mut st = state.lock().await;
             // The active project's id survives an explicit relocation while its
             // stored path changes; detect that to follow it with the workspace.
@@ -2293,7 +2301,7 @@ async fn handle_request(
             let mut relocated_sessions = Vec::new();
             let group = st
                 .db
-                .update_project_group_with_relocation(group_id, name, &folders, primary, |source| {
+                .update_project_group_with_relocation(group_id, name, &folders, primary, instructions, |source| {
                     let ids = st.db.project_session_ids(source)?;
                     let busy = ids.iter().any(|id| {
                         st.background_tasks.running_count_for(id) > 0
@@ -2408,15 +2416,20 @@ async fn handle_request(
             Ok(json!({ "content": content }))
         }
         "project.group.context" => {
-            let path = params
-                .get("path")
-                .and_then(Value::as_str)
-                .ok_or_else(|| rpc_err(1002, "path required", "INVALID_PARAMS"))?;
             let st = state.lock().await;
-            let context = st
-                .db
-                .project_group_context_for_path(path)
-                .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?;
+            let path = if let Some(session_id) = params.get("sessionId").and_then(Value::as_str) {
+                sessions::session_summary(&st.db, session_id)
+                    .map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))?
+                    .and_then(|session| session.project_path)
+            } else {
+                Some(params.get("path").and_then(Value::as_str)
+                    .ok_or_else(|| rpc_err(1002, "path required", "INVALID_PARAMS"))?
+                    .to_string())
+            };
+            let context = path.as_deref().map(|path| st.db.project_group_context_for_path(path))
+                .transpose()
+                .map_err(|e| rpc_err(1002, e.to_string(), "INVALID_PARAMS"))?
+                .flatten();
             Ok(json!({ "context": context }))
         }
         "projects.create" => {

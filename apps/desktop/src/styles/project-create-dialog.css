@@ -132,6 +132,14 @@
   color: var(--ds-text-muted);
 }
 
+.project-edit-instructions-field {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  margin-top: 6px;
+  resize: vertical;
+}
+
 .project-create-dialog-source {
   display: inline-flex;
   align-items: center;

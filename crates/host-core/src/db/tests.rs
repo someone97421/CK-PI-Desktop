@@ -1657,6 +1657,34 @@ fn project_group_roundtrips_roots_and_shared_context() {
 }
 
 #[test]
+fn project_edit_promotes_legacy_only_for_nonempty_instructions() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("app");
+    std::fs::create_dir(&root).unwrap();
+    let path = crate::db::canonical_project_path(&root.to_string_lossy()).unwrap();
+    let db = Database::open(&dir.path().join("pi.sqlite")).unwrap();
+    let project_id = db.ensure_project(&path, false).unwrap();
+    let legacy = db.project_group_for_path(&path).unwrap().unwrap();
+    let folders = std::slice::from_ref(&path);
+    let save = |id, instructions| {
+        db.update_project_group_with_relocation(id, "App", folders, None, instructions, |_| {
+            Ok(false)
+        })
+        .unwrap()
+    };
+
+    assert!(save(&legacy.id, Some("  ")).legacy);
+    let group = save(&legacy.id, Some("  Use the project conventions.\n"));
+    assert!(!group.legacy);
+    assert_eq!(db.project_id_at_path(&path).unwrap(), Some(project_id));
+    save(&group.id, None);
+    let context = db.project_group_context_for_path(&path).unwrap().unwrap();
+    assert_eq!(context.instructions, "Use the project conventions.");
+    save(&group.id, Some("\n "));
+    assert_eq!(db.get_project_group_instructions(&group.id).unwrap(), "");
+}
+
+#[test]
 fn project_group_update_detaches_roots_with_chats_without_orphaning_them() {
     let dir = tempfile::tempdir().unwrap();
     let primary = dir.path().join("primary");
