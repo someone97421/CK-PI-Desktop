@@ -252,21 +252,21 @@ export function ComposerToolbar({
               }}
               onSelect={selectPermission}
             />
-            {subagentToggle ? (
-              <TooltipButton
-                type="button"
-                className="icon-btn icon-btn-square composer-subagent-toggle"
-                tooltip={t(subagentToggle.enabled ? "chat.subagentsEnabledHint" : "chat.subagentsDisabledHint")}
-                ariaLabel={t("chat.sessionSubagents")}
-                aria-pressed={subagentToggle.enabled}
-                disabled={controlsBlocked || subagentToggle.saving}
-                onClick={() => void subagentToggle.toggle()}
-              >
-                <IconNetwork size={15} aria-hidden="true" />
-              </TooltipButton>
-            ) : null}
           </>
         )}
+        {subagentToggle ? (
+          <TooltipButton
+            type="button"
+            className="icon-btn icon-btn-square composer-subagent-toggle"
+            tooltip={t(subagentToggle.enabled ? "chat.subagentsEnabledHint" : "chat.subagentsDisabledHint")}
+            ariaLabel={t("chat.sessionSubagents")}
+            aria-pressed={subagentToggle.enabled}
+            disabled={controlsBlocked || subagentToggle.saving}
+            onClick={() => void subagentToggle.toggle()}
+          >
+            <IconNetwork size={15} aria-hidden="true" />
+          </TooltipButton>
+        ) : null}
         {localToolsAllowed ? <ComposerControlSlots side="left" /> : null}
       </div>
 

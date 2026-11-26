@@ -571,6 +571,10 @@
   background: color-mix(in oklab, var(--ds-accent) 18%, transparent);
 }
 
+.composer-subagent-toggle > svg {
+  translate: -0.5px -1px;
+}
+
 .send-btn {
   display: inline-flex;
   height: 28px;
