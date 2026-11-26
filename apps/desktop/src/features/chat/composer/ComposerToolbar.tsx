@@ -21,6 +21,7 @@ import { ComposerControlSlots } from "./ComposerControlSlots";
 import { TooltipButton } from "../../../components/ui";
 import {
   IconArrowUp,
+  IconNetwork,
   IconPlus,
   IconSparkles,
   IconStop,
@@ -46,6 +47,7 @@ export type ComposerToolbarProps = {
   setPermissionOpen: Dispatch<SetStateAction<boolean>>;
   controlsBlocked: boolean;
   localToolsAllowed?: boolean;
+  subagentToggle?: { enabled: boolean; saving: boolean; toggle: () => Promise<void> };
   attachmentsAllowed?: boolean;
   stopAllowed?: boolean;
   pasting: boolean;
@@ -138,6 +140,7 @@ export function ComposerToolbar({
   setPermissionOpen,
   controlsBlocked,
   localToolsAllowed = true,
+  subagentToggle,
   attachmentsAllowed = true,
   stopAllowed = true,
   pasting,
@@ -249,6 +252,19 @@ export function ComposerToolbar({
               }}
               onSelect={selectPermission}
             />
+            {subagentToggle ? (
+              <TooltipButton
+                type="button"
+                className="icon-btn icon-btn-square composer-subagent-toggle"
+                tooltip={t(subagentToggle.enabled ? "chat.subagentsEnabledHint" : "chat.subagentsDisabledHint")}
+                ariaLabel={t("chat.sessionSubagents")}
+                aria-pressed={subagentToggle.enabled}
+                disabled={controlsBlocked || subagentToggle.saving}
+                onClick={() => void subagentToggle.toggle()}
+              >
+                <IconNetwork size={15} aria-hidden="true" />
+              </TooltipButton>
+            ) : null}
           </>
         )}
         {localToolsAllowed ? <ComposerControlSlots side="left" /> : null}

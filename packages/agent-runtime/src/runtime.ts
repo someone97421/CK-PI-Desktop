@@ -956,7 +956,11 @@ function turnAbortedError(message: string): Error {
 
 const CONTEXT_COMPACTION_TOOL_NAME = "new_context";
 /** Tools the read-only contract level may execute, besides plan-safe plugins. */
-const CONTRACT_ALLOWED_TOOL_NAMES = new Set([...CONTRACT_CORE_TOOL_NAMES, CONTEXT_COMPACTION_TOOL_NAME]);
+const CONTRACT_ALLOWED_TOOL_NAMES = new Set([
+  ...CONTRACT_CORE_TOOL_NAMES,
+  CONTEXT_COMPACTION_TOOL_NAME,
+  SUBAGENT_INSPECT_TOOL_NAME,
+]);
 const CONTEXT_COMPACTION_TOOL_DESCRIPTION =
   "Start a new context window. Does not clear, reset, or otherwise affect environment state.";
 /** Codex's `NEW_CONTEXT_WINDOW_MESSAGE`, one per family. */
@@ -1050,6 +1054,7 @@ export type AgentRuntimeOptions = {
    * session `/fast` switch and the model binding's opt-in (ADR 0334).
    */
   fastMode?: boolean;
+  subagentsEnabled?: boolean;
   /** TypeSafe Jev credential, resolved by Electron main only when enabled. */
   jevApiKey?: string;
   systemPrompt?: string;
@@ -1963,6 +1968,7 @@ export class DesktopAgentRuntime {
   /** Opt-in mode removes only the retry-count ceiling; abort and backoff stay intact. */
   private infiniteProviderRetry = false;
   private fastMode = false;
+  private subagentsEnabled = true;
   private jevApiKey?: string;
   private activeProviderRetryAttempt = 0;
   private providerRetryInProgress = false;
@@ -2114,6 +2120,7 @@ export class DesktopAgentRuntime {
     this.runStatusReminderIntervalMs = runStatusReminderIntervalMs(opts.runStatusReminderMinutes);
     this.askToolTimeoutMs = normalizeAskToolTimeoutMinutes(opts.askToolTimeoutMinutes) * 60_000;
     this.fastMode = opts.fastMode === true;
+    this.subagentsEnabled = opts.subagentsEnabled !== false;
     this.jevApiKey = opts.jevApiKey;
     this.host = opts.host;
     this.persistenceClient = new SubagentPersistenceClient(opts.host, opts.sessionId);
@@ -2157,6 +2164,7 @@ export class DesktopAgentRuntime {
     this.compactionEnabled = compactionEnabled(opts.compactionSettings);
     this.compactionStrategy = resolveCompactionStrategy(opts.compactionStrategy);
 
+    this.savedDelegationResults = subagentResultsFromHistory(opts.history ?? []);
     this.rebuildToolCatalog();
     const model = buildProviderModel(this.provider);
     this.model = model;
@@ -2168,7 +2176,6 @@ export class DesktopAgentRuntime {
     this.applyCompactionBinding();
 
     this.fullEntries = this.historyToEntries(opts.history ?? [], opts.compaction?.throughMessageId);
-    this.savedDelegationResults = subagentResultsFromHistory(opts.history ?? []);
     this.uniqueToolCalls = createToolCallIdentity(this.fullEntries.map((entry) => entry.message));
     this.activeCompaction = opts.compaction;
     const defaultSystemPromptParts = [
@@ -2579,6 +2586,14 @@ Delegation rules:
   setFastMode(enabled: boolean): void {
     if (this.disposed) throw new Error("runtime disposed");
     this.fastMode = enabled;
+  }
+
+  setSubagentsEnabled(enabled: boolean): void {
+    if (this.disposed) throw new Error("runtime disposed");
+    if (this.subagentsEnabled === enabled) return;
+    this.subagentsEnabled = enabled;
+    this.rebuildToolCatalog();
+    this.setAgentTools(this.activeTools());
   }
 
   /** 技能目录更新只追加变更，不替换会话或丢失 fork 的协调状态。 */
@@ -4376,16 +4391,15 @@ Delegation rules:
           wait: (run, signal) => this.runSteerableJobWait(run, signal),
         })
       : [];
+    const canDelegate = this.subagentsEnabled && this.subagents.length > 0;
+    const canInspect = this.subagents.length > 0 || !this.subagentsEnabled ||
+      this.savedDelegationResults.size > 0 || this.delegations.size > 0;
     const subagentTools = [
-      ...(this.subagents.length ? [this.buildSubagentTool()] : []),
+      ...(canDelegate ? [this.buildSubagentTool()] : []),
       ...jobTools,
-      ...(this.subagents.length
-        ? [
-            this.buildSubagentGuideTool(),
-            this.buildSubagentInspectTool(),
-            this.buildSubagentResumeTool(),
-          ]
-        : []),
+      ...(canDelegate ? [this.buildSubagentGuideTool()] : []),
+      ...(canInspect ? [this.buildSubagentInspectTool()] : []),
+      ...(canDelegate ? [this.buildSubagentResumeTool()] : []),
     ];
     for (const tool of subagentTools) this.builtinTools.add(tool);
     const contextTools = this.compactionEnabled
@@ -4949,6 +4963,7 @@ Delegation rules:
       // here so the intent survives a tool built outside that path.
       executionMode: "parallel",
       execute: async (toolCallId, params) => {
+        if (!this.subagentsEnabled) return this.subagentToolError(toolCallId, "Subagents are disabled for this turn.");
         const dispatchEpoch = this.turnEpoch;
         const requested = isRecord(params) ? String(params.agent ?? "") : "";
         const definition = this.subagents.find(
@@ -6188,6 +6203,7 @@ Delegation rules:
     } else {
       canResume = isResumableStatus && !record.contextReleased && record.run?.canResume === true;
     }
+    if (!this.subagentsEnabled) canResume = false;
 
     let reason: string | undefined;
     if (!canResume) {
@@ -6274,7 +6290,7 @@ Delegation rules:
         expectedExecution: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
       execute: async (toolCallId, params) => {
         const fail = (text: string) => ({ ...this.subagentToolError(toolCallId, text), isError: true });
-        if (this.disposed || this.runCancelled || this.turnHadError || !this.modeState.isAgentLevel()) return fail("This parent turn cannot resume subagents.");
+        if (!this.subagentsEnabled || this.disposed || this.runCancelled || this.turnHadError || !this.modeState.isAgentLevel()) return fail("This parent turn cannot resume subagents.");
         if (!isRecord(params) || typeof params.delegationId !== "string" || typeof params.instruction !== "string" ||
           !params.instruction.trim() || params.instruction.length > 12_000 || !Number.isSafeInteger(params.expectedExecution) || Number(params.expectedExecution) < 1) return fail("Provide delegationId, instruction (1–12000 characters) and a positive expectedExecution from TaskList.");
         let found = this.delegations.get(params.delegationId);
@@ -6562,6 +6578,7 @@ Delegation rules:
         reportIntervalSteps: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
       }),
       execute: async (toolCallId, params) => {
+        if (!this.subagentsEnabled) return this.subagentToolError(toolCallId, "Subagents are disabled for this turn.");
         if (!isRecord(params)) return this.subagentToolError(toolCallId, "Invalid guidance parameters.");
         const receipt = this.acceptSubagentGuide(String(params.delegationId), String(params.instruction ?? ""), toolCallId, {
           reportIntervalSteps: params.reportIntervalSteps as number | undefined,

@@ -567,6 +567,10 @@
   color: var(--ds-text-primary);
 }
 
+.composer-subagent-toggle[aria-pressed="true"] {
+  background: color-mix(in oklab, var(--ds-accent) 18%, transparent);
+}
+
 .send-btn {
   display: inline-flex;
   height: 28px;

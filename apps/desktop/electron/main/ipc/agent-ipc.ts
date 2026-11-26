@@ -1,3 +1,4 @@
+import { sessionSubagentsEnabled, setSessionSubagentsEnabled } from "../runtime/session-subagents";
 import { expandMcpInvocation } from "../composer-mcp";
 import { IPC, ErrorCodes, compactionRecordId, composeMentionPrompt, findSkillMentions, isRpcTimeoutError, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentQueueSteerRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AgentStopSubagentsRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type VoiceOrigin } from "@pi-desktop/shared";
 import type { SessionConfigurationQueue } from "../runtime/session-configuration";
@@ -153,6 +154,16 @@ export function registerAgentIpc({
       return fn(...args);
     });
   };
+  handle(IPC.invoke.sessionSubagents, async (req: { sessionId: string; enabled?: boolean }) => {
+    if (typeof req?.sessionId !== "string" || !req.sessionId.trim()) throw new Error("sessionId is required");
+    rejectNativeAgentOperation(req.sessionId);
+    if (req.enabled !== undefined) {
+      if (typeof req.enabled !== "boolean") throw new Error("enabled must be a boolean");
+      setSessionSubagentsEnabled(req.sessionId, req.enabled);
+    }
+    return { enabled: sessionSubagentsEnabled(req.sessionId) };
+  });
+
   handle(IPC.invoke.agentSteer, async (req: AgentSteerRequest, durability?: unknown, queuedTurnId?: unknown) => {
     let dispatched = false;
     const transferId = durability === QUEUED_STEERING_DURABILITY && typeof queuedTurnId === "string" ? queuedTurnId : "";
@@ -512,7 +523,7 @@ export function registerAgentIpc({
         const foundAgents = await resolvePromptAgentMentions({
           content: req.content,
           mode: launch.sidecarParams?.mode,
-          subagentNames: Array.isArray(launch.sidecarParams?.subagents)
+          subagentNames: launch.sidecarParams?.subagentsEnabled !== false && Array.isArray(launch.sidecarParams?.subagents)
             ? launch.sidecarParams.subagents.map((definition: { name: string }) => definition.name)
             : [],
           workspaceRoot: session.remoteWorkspace

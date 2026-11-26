@@ -246,6 +246,48 @@ describe("历史任务快照状态查询", () => {
     persistenceState: "pending-validation" as const, durableState: "pending-validation" as const,
     source: "disk" as const, canResume: true, updatedAt: 1 });
 
+  it("disables new subagent execution without losing historical reports", async () => {
+    const runtime = createRuntime({ history: history(), subagents: [
+      { name: "explorer", description: "Read", tools: ["Read"], prompt: "Read", source: "builtin" },
+    ] });
+    const tools = () => (runtime as any).toolCatalog;
+    try {
+      const dispatch = tools().get("Task");
+      const resume = tools().get("TaskResume");
+      const guide = tools().get("TaskGuide");
+      expect(guide).toBeDefined();
+      expect(dispatch).toBeDefined();
+      expect(resume).toBeDefined();
+      runtime.setSubagentsEnabled(false);
+      expect(tools().has("Task")).toBe(false);
+      expect(tools().has("TaskResume")).toBe(false);
+      expect(tools().has("TaskGuide")).toBe(false);
+      const result = await tools().get("TaskInspect").execute("inspect", { delegationId: "saved-task" });
+      expect(result.details).toMatchObject({ lastReportSummary: "已有结果" });
+      expect((await dispatch.execute("dispatch", { agent: "explorer", task: "Read" })).content[0].text).toContain("disabled");
+      expect((await resume.execute("resume", { delegationId: "saved-task", instruction: "Continue", expectedExecution: 1 })).isError).toBe(true);
+      expect((await guide.execute("guide", { delegationId: "saved-task", instruction: "Continue" })).content[0].text).toContain("disabled");
+      runtime.setMode("plan");
+      const planResult = await tools().get("TaskInspect").execute("inspect-plan", { delegationId: "saved-task" });
+      expect(planResult.details).toMatchObject({ lastReportSummary: "已有结果" });
+      runtime.setMode("agent");
+      runtime.setSubagentsEnabled(true);
+      expect(tools().has("TaskResume")).toBe(true);
+    } finally { await runtime.dispose(); }
+  });
+
+  it("keeps history inspectable without any configured subagents", async () => {
+    const runtime = createRuntime({ history: history() });
+    try {
+      for (const enabled of [true, false]) {
+        runtime.setSubagentsEnabled(enabled);
+        const inspect = (runtime as any).toolCatalog.get("TaskInspect");
+        const result = await inspect.execute("inspect", { delegationId: "saved-task" });
+        expect(result.details).toMatchObject({ lastReportSummary: "已有结果" });
+      }
+    } finally { await runtime.dispose(); }
+  });
+
   it("历史完成记录等待磁盘查询；并发卡片复用查询并读取已保存版本", async () => {
     const runtime = createRuntime({ history: history() });
     let finish!: (page: any) => void;

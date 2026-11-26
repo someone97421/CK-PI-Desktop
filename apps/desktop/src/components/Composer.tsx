@@ -1,3 +1,4 @@
+import { api } from "../lib/api";
 import { isRemoteSession, sessionAllows } from "../lib/remote-session-safety";
 import { inheritedSessionModelBinding } from "../lib/session-model";
 import {
@@ -156,6 +157,35 @@ export function Composer({
   const activeRunStartedAt = Number.isFinite(taskStartedAt) ? taskStartedAt : undefined;
   const configureActiveSession = useAppStore((s) => s.configureActiveSession);
   const showToast = useAppStore((s) => s.showToast);
+  const subagentSessionId = localToolsAllowed && !nativeSession && !remoteSession ? activeSessionId : null;
+  const [subagentSetting, setSubagentSetting] = useState<{ sessionId: string; enabled: boolean }>();
+  const subagentWrite = useRef(false);
+  const [subagentSaving, setSubagentSaving] = useState(false);
+  const subagentsEnabled = subagentSetting?.sessionId === subagentSessionId ? subagentSetting?.enabled : undefined;
+  useEffect(() => {
+    if (!subagentSessionId) return;
+    let cancelled = false;
+    void api.sessionSubagents(subagentSessionId).then(({ enabled }) => {
+      if (!cancelled) setSubagentSetting({ sessionId: subagentSessionId, enabled });
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [subagentSessionId]);
+  const toggleSubagents = async () => {
+    if (!subagentSessionId || subagentsEnabled === undefined || subagentWrite.current) return;
+    subagentWrite.current = true;
+    setSubagentSaving(true);
+    try {
+      const { enabled } = await api.sessionSubagents(subagentSessionId, !subagentsEnabled);
+      if (useAppStore.getState().activeSessionId === subagentSessionId) {
+        setSubagentSetting({ sessionId: subagentSessionId, enabled });
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+    } finally {
+      subagentWrite.current = false;
+      setSubagentSaving(false);
+    }
+  };
   const composerPrefill = useAppStore((s) => s.composerPrefill);
   const clearComposerPrefill = useAppStore((s) => s.clearComposerPrefill);
   const planCheckpoint = useAppStore((s) =>
@@ -452,7 +482,7 @@ export function Composer({
     cursor,
     composing,
     enabled: !inputBlocked && localToolsAllowed,
-    agentsEnabled: mode === "agent",
+    agentsEnabled: mode === "agent" && (!subagentSessionId || subagentsEnabled === true),
     referenceSessionId,
     fileReferencesRef,
     applyEditorDraft,
@@ -593,6 +623,11 @@ export function Composer({
             setPermissionOpen={setPermissionOpen}
             controlsBlocked={controlsBlocked}
             localToolsAllowed={localToolsAllowed}
+            subagentToggle={subagentsEnabled === undefined ? undefined : {
+              enabled: subagentsEnabled,
+              saving: subagentSaving,
+              toggle: toggleSubagents,
+            }}
             attachmentsAllowed={attachmentsAllowed}
             stopAllowed={sessionAllows(capabilitySession, "canStop")}
             pasting={pasting}

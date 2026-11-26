@@ -1363,6 +1363,8 @@ export const api = {
     invoke<SubagentGuideReceipt>(IPC.invoke.subagentGuide, req),
   subagentRecallStatus: (sessionId: string, delegationId: string) =>
     invoke<SubagentRecallStatus>(IPC.invoke.subagentRecallStatus, { sessionId, delegationId }),
+  sessionSubagents: (sessionId: string, enabled?: boolean) =>
+    invoke<{ enabled: boolean }>(IPC.invoke.sessionSubagents, { sessionId, enabled }),
   getSubagentPersistenceSettings: () =>
     invoke<SubagentPersistenceSettings>(IPC.invoke.subagentPersistenceGet),
   setSubagentPersistenceEnabled: (enabled: boolean) =>

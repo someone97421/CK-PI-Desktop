@@ -118,6 +118,7 @@ type RuntimeParams = {
   askToolTimeoutMinutes?: number;
   /** Session `/fast` switch AND the model's opt-in, resolved by main (ADR 0334). */
   fastMode?: boolean;
+  subagentsEnabled?: boolean;
   /** Opt-in TypeSafe classifier credential resolved by Electron main. */
   jevApiKey?: string;
   provider: RuntimeProviderConfig;
@@ -301,6 +302,7 @@ async function runtimeFor(
     reusable.setRunStatusReminderMinutes(params.runStatusReminderMinutes ?? 0);
     reusable.setAskToolTimeoutMinutes(params.askToolTimeoutMinutes ?? 0);
     reusable.setFastMode(params.fastMode === true);
+    reusable.setSubagentsEnabled(params.subagentsEnabled !== false);
     reusable.setMode(mode, modeDefinition);
     return reusable;
   }
@@ -368,6 +370,7 @@ async function runtimeFor(
     runStatusReminderMinutes: params.runStatusReminderMinutes ?? 0,
     askToolTimeoutMinutes: params.askToolTimeoutMinutes ?? 0,
     fastMode: params.fastMode === true,
+    subagentsEnabled: params.subagentsEnabled !== false,
     jevApiKey: params.jevApiKey,
     history,
     compaction,

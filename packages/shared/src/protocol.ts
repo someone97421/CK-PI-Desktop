@@ -128,6 +128,7 @@ export const IPC = {
     subagentStop: "pi-desktop/agent/subagent/stop",
     subagentGuide: "pi-desktop/agent/subagent/guide",
     subagentRecallStatus: "pi-desktop/agent/subagent/recall-status",
+    sessionSubagents: "pi-desktop/agent/session-subagents",
     subagentPersistenceGet: "agent:subagent-persistence:get",
     subagentPersistenceSet: "agent:subagent-persistence:set",
     subagentPersistenceClear: "agent:subagent-persistence:clear",

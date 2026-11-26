@@ -60,6 +60,7 @@ import {
   Moon,
   MoreHorizontal,
   Music,
+  Network,
   Palette,
   PanelLeft,
   PanelRight,
@@ -240,6 +241,7 @@ export const IconTarget = icon(Target);
 export const IconBrowser = icon(AppWindow);
 export const IconHook = icon(Webhook);
 export const IconWorkflow = icon(Workflow);
+export const IconNetwork = icon(Network);
 export const IconLink = icon(Link);
 export const IconPalette = icon(Palette);
 export const IconPerson = icon(Smile);

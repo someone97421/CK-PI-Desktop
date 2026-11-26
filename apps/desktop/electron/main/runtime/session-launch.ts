@@ -1,3 +1,4 @@
+import { sessionSubagentsEnabled } from "./session-subagents";
 import { join } from "node:path";
 import {
   GEN_UI_DIRECTORY_NAME,
@@ -966,6 +967,7 @@ export function createSessionLaunchRuntime({
             root: extension.root,
           })),
         subagents: subagentCatalog.definitions,
+        subagentsEnabled: sessionSubagentsEnabled(sessionId),
         subagentProviders: subagentBindings.providers,
         subagentModelKeys,
       },
