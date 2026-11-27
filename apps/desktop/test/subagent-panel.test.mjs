@@ -6,7 +6,7 @@ import { readStoreModule } from "./helpers/source-contracts.mjs";
 const readSource = (path) => readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
 const [
   workPanelSource, tabSource, detailSource, composerSource, stripSource, tabsSource, workPanelCss,
-  stopSource, messagesCss, workPanelStore, readingRuntime,
+  stopSource, messagesCss, workPanelStore, readingRuntime, turnPartsSource,
 ] = await Promise.all([
   readSource("components/workpanel/WorkPanel.tsx"),
   readSource("components/workpanel/SubagentTranscriptTab.tsx"),
@@ -19,6 +19,7 @@ const [
   readSource("styles/messages.css"),
   readStoreModule("slices/work-panel-slice.ts"),
   readStoreModule("runtime/transcript-reading-runtime.ts"),
+  readSource("features/chat/transcript/AssistantTurnParts.tsx"),
 ]);
 
 test("普通子代理标签与搜索定位共用会话页", async () => {
@@ -45,7 +46,7 @@ test("输入区胶囊打开同一委派标签，重复打开只激活已有资�
 
 test("嵌套搜索按所属会话、请求和子代理消息定位", () => {
   assert.match(readingRuntime, /subagentPanel: \{\s*sessionId,\s*delegationId: delegationIdForMessage\(parent\),\s*searchRequestId: focus\.requestId/);
-  assert.match(tabSource, /const searchTarget = focus && \(!selection \|\| focus\.requestId === selection\.searchRequestId\)\s*&& result\?\.turns\.some\(\(\{ rows \}\) => rows\.some\(\(\{ message \}\) => message\.id === focus\.messageId\)\)\s*\? focus : null;/);
+  assert.match(tabSource, /const searchTarget = focus && \(!selection \|\| focus\.requestId === selection\.searchRequestId\)\s*&& result\?\.turns\.some\(\(turn\) => turn\.messages\.some\(\(\{ id \}\) => id === focus\.messageId\)\)\s*\? focus : null;/);
   assert.match(tabSource, /useTranscriptSearchFocus\(\{\s*target: searchTarget,\s*source: searchTarget \? messages\.find\(\(\{ id \}\) => id === searchTarget\.messageId\)\?\.content[\s\S]*?onNavigate: releaseFollow/);
   assert.match(tabSource, /<TranscriptSearchContext\.Provider value=\{searchTarget\}>/);
   assert.match(tabSource, /if \(searchTarget\) \{\s*initialPositionSet\.current = true;\s*return;/);
@@ -55,9 +56,10 @@ test("统一会话页保留任务、消息、滚动及历史读取反馈", () =>
   assert.match(tabSource, /data-testid="subagent-transcript-tab"/);
   assert.match(tabSource, /buildSubagentTranscript\(messages, delegationId\)/);
   assert.match(tabSource, /className="message-row user"/);
-  assert.match(tabSource, /className="message-row assistant"/);
-  assert.match(tabSource, /data-message-id=\{message\.id\}/);
-  assert.match(tabSource, /<AssistantErrorMessage message=\{message\}/);
+  assert.match(tabSource, /className="message-row assistant assistant-turn"/);
+  assert.match(tabSource, /<AssistantTurnBody entry=\{turn.reply\}/);
+  assert.match(turnPartsSource, /data-message-id=\{message\.id\}/);
+  assert.match(turnPartsSource, /<AssistantErrorMessage message=\{message\}/);
   assert.match(tabSource, /<SubagentFailureCard outcome=\{turnOutcome\} failure=\{failure\}/);
   assert.match(tabSource, /<SubagentSupervision message=\{selected\.call\}/);
   assert.match(tabSource, /onClick=\{transcript\.retryHistory\}/);

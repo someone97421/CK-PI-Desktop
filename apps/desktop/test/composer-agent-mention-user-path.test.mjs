@@ -1,7 +1,6 @@
 /**
- * ADR 0346: `@agent` in the composer. Drives the real draft, completions,
- * input and menu against a stubbed delegation catalog and file index, then
- * checks the accepted chip serializes to a token the send-time resolver reads.
+ * Drives the real composer against stubbed delegation, Skill and file catalogs
+ * and checks that accepted mentions reach the send path as canonical text.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -24,12 +23,19 @@ import { catalogs, flattenCatalog } from "@pi-desktop/i18n";
 import { findAgentMentions, serializeComposerFileReferences } from "@pi-desktop/shared";
 import { useComposerDraft } from "../../apps/desktop/src/features/chat/composer/hooks/useComposerDraft";
 import { useComposerCompletions } from "../../apps/desktop/src/features/chat/composer/hooks/useComposerCompletions";
+import { useComposerSubmit } from "../../apps/desktop/src/features/chat/composer/hooks/useComposerSubmit";
+import { loadComposerInputHistory, rememberComposerInput } from "../../apps/desktop/src/lib/composer-input-history";
+import { promptAttachmentsFromDraft } from "../../apps/desktop/src/stores/helpers/store-helpers";
 import { ComposerInput } from "../../apps/desktop/src/features/chat/composer/ComposerInput";
 import { ComposerAutocomplete } from "../../apps/desktop/src/components/ComposerAutocomplete";
 import { setEditorCaret } from "../../apps/desktop/src/features/chat/composer/editor";
 import { api } from "../../apps/desktop/src/lib/api";
 import { useAppStore } from "../../apps/desktop/src/stores/app-store";
 
+api.composerCommands = async () => ({ commands: [
+  { name: "skill:plugin/review", title: "Review", skillId: "plugin/review", kind: "skill" },
+  { name: "compact", title: "Compact", kind: "builtin" },
+] });
 let catalogReads = 0;
 api.fsIndex = async () => ({ entries: [{ path: "README.md", kind: "file" }, { path: "fixer", kind: "file" }], truncated: false });
 api.subagentCatalog = async () => {
@@ -50,6 +56,7 @@ useAppStore.setState({ activeSessionId: "s1", workspace: { path: "/repo", name: 
 
 const noop = () => {};
 let draft;
+let sent;
 function Fixture({ agentsEnabled }) {
   draft = useComposerDraft({
     variant: "docked", activeSessionId: "s1", workspacePath: "/repo",
@@ -63,11 +70,19 @@ function Fixture({ agentsEnabled }) {
     applyEditorDraft: draft.applyEditorDraft, handleInput: draft.handleInput,
     invalidateComposerTransforms: noop,
   });
+  const submission = useComposerSubmit({
+    draft, value: draft.value, draftKey: draft.draftKey, activeSessionId: "s1",
+    modelReady: true, sendBlocked: false, pasting: false, activeFileReferences: draft.activeFileReferences,
+    t: key => key, invalidateComposerTransforms: noop, queuedPrompts: [], showToast: noop,
+    steerPrompt: noop, sendQueuedNow: noop,
+    sendPrompt: async (content, snapshot) => { sent = { content, snapshot }; return true; },
+    recordHistory: (snapshot, id) => rememberComposerInput(id, snapshot),
+  });
   return <>
     <ComposerInput inputRef={draft.ref} value={draft.value} placeholderText="" placeholderKey="fixture"
       inputBlocked={false} pasting={false} enterToSend={false} runActive={false}
       composerAc={completions.ac} onPaste={noop} onAcceptCompletion={completions.acceptCompletion}
-      onSubmit={noop} onInsertNewline={noop} onHistoryNavigate={() => false}
+      onSubmit={submission.submit} onInsertNewline={draft.insertNewlineInEditor} onHistoryNavigate={() => false}
       onInput={(source, caret, composing) => completions.handleInput(source, caret, composing)}
       onCompositionStart={() => draft.setComposing(true)}
       onCompositionEnd={() => draft.setComposing(false)}
@@ -138,12 +153,46 @@ window.agentMentionProbe = async () => {
   const serialized = serializeComposerFileReferences(text, references);
   check(findAgentMentions(serialized, new Set(["explorer"])).length === 1, "the serialized prompt lost the mention");
 
+  const acceptSlash = async (query, name) => {
+    await type(query);
+    await until(() => document.querySelector('.composer-ac-name')?.textContent === name, "missing " + name);
+    editor().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await settle();
+  };
+  await acceptSlash("/compact", "/compact");
+  check(draft.value === "/compact " && !editor().querySelector(".composer-chip"), "ordinary command became a chip");
+  await acceptSlash("please /review", "/skill:plugin/review");
+  const skill = () => editor().querySelector('[data-skill="plugin/review"]');
+  check(skill()?.contentEditable === "false" && skill().textContent.includes("Review"), "missing atomic Skill chip");
+  document.execCommand("insertText", false, "changes");
+  await settle();
+  const prompt = () => serializeComposerFileReferences(draft.value, draft.fileReferencesRef.current);
+  check(prompt() === "please /skill:plugin/review changes", "arguments or canonical Skill token lost");
+  const range = document.createRange();
+  range.selectNode(skill());
+  getSelection().removeAllRanges();
+  getSelection().addRange(range);
+  document.execCommand("delete");
+  await settle();
+  check(!skill() && !prompt().includes("/skill:"), "native delete left part of the Skill");
+  document.execCommand("undo");
+  await settle();
+  check(skill() && prompt() === "please /skill:plugin/review changes", "undo lost the Skill identity");
+  editor().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+  await until(() => sent && !draft.value, "submission did not leave the editor");
+  check(sent.content === "please /skill:plugin/review changes", "incorrect send payload");
+  check(!promptAttachmentsFromDraft(sent.snapshot.fileReferences).length, "Skill traveled as an attachment");
+  const [entry] = loadComposerInputHistory("s1");
+  draft.restoreDraftForKey("s1", entry);
+  await settle();
+  check(skill()?.title === "/skill:plugin/review" && prompt() === sent.content, "history lost the Skill node");
+
   flushSync(() => rootNode.unmount());
   return { passed: true, serialized };
 };
 `;
 
-test("the @ menu offers subagents in Agent mode and accepts one as an atomic chip", {
+test("the composer accepts agent and Skill mentions as atomic chips and sends the canonical prompt", {
   skip: process.platform === "linux" && !process.env.DISPLAY ? "Electron requires a display" : false,
 }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pi-agent-mention-ui-"));

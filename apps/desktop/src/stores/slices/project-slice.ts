@@ -198,6 +198,7 @@ function clearLocalSessionState(
       sessionOutcomes,
       queuedPrompts,
       workPanelContexts,
+      fileManagerTabReceipts: withoutRecordKey(state.fileManagerTabReceipts, id),
       activeSessionId:
         state.activeSessionId === id ? undefined : state.activeSessionId,
       selectingSessionId:

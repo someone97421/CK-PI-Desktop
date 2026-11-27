@@ -798,6 +798,7 @@ export type PluginProviderModelContrib = {
    * one of them. Omit to let the runtime pick the first available level.
    */
   defaultThinkingLevel?: string;
+  allowEmptyThinkingSignature?: boolean;
 };
 
 /**
@@ -2589,6 +2590,9 @@ export function validateContributions(
       }
       if (model.defaultThinkingLevel !== undefined && typeof model.defaultThinkingLevel !== "string") {
         return `provider "${provider.id}" model ${modelId} defaultThinkingLevel must be a string`;
+      }
+      if (model.allowEmptyThinkingSignature !== undefined && typeof model.allowEmptyThinkingSignature !== "boolean") {
+        return `provider "${provider.id}" model ${modelId} allowEmptyThinkingSignature must be a boolean`;
       }
     }
   }

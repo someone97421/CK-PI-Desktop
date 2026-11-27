@@ -53,6 +53,7 @@ import { AppearancePanels } from "../../components/settings/AppearancePanels";
 import { AppearanceMediaSection } from "../../components/settings/AppearanceMediaSection";
 import { ShowThinkingRow } from "../../components/settings/ShowThinkingRow";
 import { TranscriptDisplayModeRow } from "../../components/settings/TranscriptDisplayModeRow";
+import { ChatSettingsSubagentStyle } from "./pages/ChatSettingsSubagentStyle";
 import {
   AutoCollapseSettledGroupsRow,
   AutoCollapseThinkingRow,
@@ -719,6 +720,7 @@ export function SettingsPage({ compact = false }: { compact?: boolean }) {
                 <ShowThinkingRow settings={settings} saveSettings={saveSettings} />
                 <AutoCollapseThinkingRow settings={settings} saveSettings={saveSettings} />
                 <TranscriptDisplayModeRow settings={settings} saveSettings={saveSettings} />
+                <ChatSettingsSubagentStyle settings={settings} saveSettings={saveSettings} />
                 <AutoCollapseSettledGroupsRow settings={settings} saveSettings={saveSettings} />
                 <ContextUsageDisplayRow
                   settings={settings}

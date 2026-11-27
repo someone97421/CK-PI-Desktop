@@ -2089,6 +2089,8 @@ export class DesktopAgentRuntime {
    * signal it was handed never fires, or the stop RPC stays pending forever.
    */
   private activeToolAborts = new Set<() => void>();
+  private bashYieldCalls = new Set<string>();
+  private yieldedBash = new Map<string, { turnId: string; jobId: string }>();
   private readonly fileLineReadCalls = new Map<string, {
     blocked: boolean; abort: AbortController; steering: boolean;
   }>();
@@ -2868,13 +2870,9 @@ Delegation rules:
     if (this.deferredToolNames.has(context.toolCall.name) && !this.activeDeferredToolNames.has(context.toolCall.name)) {
       return { block: true, reason: `Call ${TOOL_SEARCH_NAME} to activate ${context.toolCall.name} before using it.` };
     }
-    const toolCalls = (context.assistantMessage.content as Array<{ type?: string }>).filter(
-      (block) => block.type === "toolCall",
-    );
+    const toolCalls = context.assistantMessage.content.filter((block) => block.type === "toolCall");
     const transition = MODE_TRANSITION_TOOL_NAMES.has(context.toolCall.name);
-    const transitionInBatch = toolCalls.some((block) =>
-      MODE_TRANSITION_TOOL_NAMES.has((block as { name?: string }).name ?? ""),
-    );
+    const transitionInBatch = toolCalls.some((block) => MODE_TRANSITION_TOOL_NAMES.has(block.name));
     if (transitionInBatch && toolCalls.length !== 1) {
       return {
         block: true,
@@ -2890,6 +2888,11 @@ Delegation rules:
       await this.preparePathToolCall(context, undefined, undefined, undefined, signal);
       // Composer prefetches run serially outside the assistant's tool batches.
       if (!this.fileLineReadCalls.has(context.toolCall.id)) await this.registerBatchCall(context);
+      // A later tool in this response may need the command's completed result.
+      if (context.toolCall.name === "Bash" && this.mode === "agent" && !this.remoteWorkspace
+          && toolCalls.at(-1)?.id === context.toolCall.id) {
+        this.bashYieldCalls.add(context.toolCall.id);
+      }
       return undefined;
     }
     const submitKind = submitToolKind(context.toolCall.name);
@@ -3752,6 +3755,15 @@ Delegation rules:
         if (runInBackground && isRecord(params) && params.visible === true) {
           throw Object.assign(new Error("runInBackground cannot be combined with visible. Choose one: visible opens a console window; runInBackground keeps a managed job."), { errorCode: "INVALID_ARGUMENT" });
         }
+        const turnId = this.turnId;
+        const mayYield = isBash && this.bashYieldCalls.delete(toolCallId)
+          && turnId !== undefined && this.mode === "agent" && !this.remoteWorkspace
+          && !this.mutationOwners.has(toolCallId) && !this.delegatePermissionScopes.has(toolCallId)
+          && !worktreeKey && !this.modeGateCalls.has(toolCallId)
+          && !runInBackground && isRecord(params) && params.visible !== true && !isPatchCommand(params.command);
+        const yieldAfterInitialWait = mayYield && await this.host.call<{ version: number; supported: boolean }>(
+          "backgroundJobs.capabilities", { sessionId: this.sessionId }, 1000,
+        ).then((capability) => capability?.version === 1 && capability.supported === true, () => false);
         const timeoutMs = isBash ? commandTimeoutMs(params) : undefined;
         let progress = "";
         let progressDirty = false;
@@ -3901,6 +3913,7 @@ Delegation rules:
                     expectedCommandShellDialect: this.commandShell.dialect,
                     timeoutMs,
                     ...(runInBackground ? { runInBackground: true } : {}),
+                    ...(yieldAfterInitialWait ? { yieldAfterInitialWait } : {}),
                   }
                 : {}),
               ...(toolName.startsWith("plugin_")
@@ -3966,6 +3979,15 @@ Delegation rules:
         }
         if (executionFailed) throw executionError;
         if (!result) throw new Error("tool execution returned no result");
+        if (yieldAfterInitialWait && turnId && result.ok && isRecord(result.content)
+            && result.content.state === "running" && typeof result.content.backgroundTaskId === "string") {
+          const jobId = result.content.backgroundTaskId;
+          if (abortRequested || signal?.aborted || this.runCancelled || this.disposed) {
+            await this.abortYieldedBash(toolCallId, jobId);
+            throw Object.assign(new Error("tool execution aborted while Bash was running"), { errorCode: "TOOL_ABORTED" });
+          }
+          this.yieldedBash.set(toolCallId, { turnId, jobId });
+        }
         const recordParams = isRecord(params) ? params : undefined;
         const fileLineRead = this.fileLineReadCalls.get(toolCallId);
         if (fileLineRead && (result.denied || result.errorCode === "PERMISSION_DENIED")) {
@@ -9691,6 +9713,7 @@ Delegation rules:
         });
         break;
       case "tool_execution_end":
+        this.bashYieldCalls.delete(event.toolCallId);
         // The agent issues the follow-up provider request as soon as the tool
         // results are in, so this is the anchor for the next providerWaitMs.
         {
@@ -10458,6 +10481,27 @@ Delegation rules:
     return this.aborting ??= this.abortTurn().finally(() => { this.aborting = undefined; });
   }
 
+  private async abortYieldedBash(toolCallId: string, jobId: string): Promise<void> {
+    const { found } = await this.host.call<{ found?: boolean }>("tools.abort", {
+      sessionId: this.sessionId, toolCallId, toolName: "Bash",
+    }, TOOL_ABORT_GRACE_MS).catch(() => ({ found: false }));
+    if (found) {
+      await this.host.call("backgroundJobs.wait", {
+        sessionId: this.sessionId, id: jobId, timeoutMs: 1000,
+      }, TOOL_ABORT_GRACE_MS).catch(() => undefined);
+    }
+  }
+
+  private abortYieldedBashForTurn(turnId: string | undefined): Array<Promise<void>> {
+    const pending = [];
+    for (const [callId, job] of this.yieldedBash) {
+      if (job.turnId !== turnId) continue;
+      this.yieldedBash.delete(callId);
+      pending.push(this.abortYieldedBash(callId, job.jobId));
+    }
+    return pending;
+  }
+
   private async abortTurn(): Promise<void> {
     this.finishRunClock();
     const turnId = this.turnId;
@@ -10486,7 +10530,8 @@ Delegation rules:
     // the whole session until it finished on its own (#1767). Drive the tools
     // from here as well, so a stop always releases them.
     for (const abortTool of [...this.activeToolAborts]) abortTool();
-    await Promise.allSettled([...(settlement ? [settlement] : []), ...delegates]);
+    const yielded = this.abortYieldedBashForTurn(turnId);
+    await Promise.allSettled([...(settlement ? [settlement] : []), ...delegates, ...yielded]);
   }
 
   private trackTurnOperation<T>(
@@ -10511,6 +10556,9 @@ Delegation rules:
     return result.finally(() => {
       if (this.activeTurnSettlements.get(turnId) === settlement) {
         this.activeTurnSettlements.delete(turnId);
+        for (const [callId, job] of this.yieldedBash) {
+          if (job.turnId === turnId) this.yieldedBash.delete(callId);
+        }
       }
       settle();
     });
@@ -10619,6 +10667,7 @@ Delegation rules:
     this.delegateMutationTerminations.clear();
     this.pendingMutationTermination = undefined;
     this.terminatingToolCalls.clear();
+    this.bashYieldCalls.clear();
     this.gracefulStopRequested = false;
     this.hostCloseUnsubscribe?.();
     this.hostCloseUnsubscribe = undefined;
@@ -10627,10 +10676,12 @@ Delegation rules:
     this.agent.abort();
     this.providerRetryAbort?.abort();
     this.cleanupActiveToolProgress();
+    const yielded = this.abortYieldedBashForTurn(this.turnId);
     if (this.compactionInProgress) this.compactionAborted = true;
     this.compactionAbort?.abort();
     try {
       await closingExtensions;
+      await Promise.allSettled(yielded);
     } finally {
       cleanupSessionResources(this.sessionId);
     }

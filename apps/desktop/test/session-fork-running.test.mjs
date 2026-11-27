@@ -19,6 +19,7 @@ function harness(t, options = {}) {
     retainedSessionIds: ["parent"], retainedTranscripts: options.retainedTranscripts ?? { parent: messages },
     transcriptViews: options.transcriptViews ?? {},
     workPanelContexts: {}, workPanelTabs: [], workPanelOpen: false,
+    fileManagerProjects: new Set(), fileManagerTabReceipts: {},
     navStack: [{ page: "chat", sessionId: "parent" }], navIndex: 0,
     restorePendingPlan: async () => {},
     restorePendingInteractive: async () => {},

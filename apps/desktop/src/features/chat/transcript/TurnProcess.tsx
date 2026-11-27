@@ -60,6 +60,7 @@ export function TurnProcess({
   visibleSteps,
   isActive,
   failed,
+  stopped,
   activity,
   children,
 }: {
@@ -71,6 +72,7 @@ export function TurnProcess({
   isActive: boolean;
   /** The turn recorded a failure of its own, so the header must not claim success. */
   failed: boolean;
+  stopped?: boolean;
   /** Live runtime stage, when the runtime reports one. */
   activity?: AgentActivity;
   children: ReactNode;
@@ -116,7 +118,7 @@ export function TurnProcess({
   // `startedAt` is absent for history that recorded no timing, and "0s" would be
   // a lie there, so the duration is dropped instead.
   const hasTiming = startedAt !== undefined && seconds > 0;
-  const phase = turnProcessPhase({ parts: turnParts, isActive, failed, activity });
+  const phase = turnProcessPhase({ parts: turnParts, isActive, failed, stopped, activity });
   // The header's label is the status alone. Duration and tool count are separate
   // values so each can be omitted independently, and the caret can follow the
   // last one instead of being pushed to the far edge of the band.

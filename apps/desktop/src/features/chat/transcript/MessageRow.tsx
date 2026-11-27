@@ -48,6 +48,7 @@ import {
 } from "./TranscriptMenu";
 import { getExtraMessageAttachments } from "./extra-attachments";
 import { directionAttr } from "../../../lib/text-direction";
+import { CollapsibleUserText } from "./CollapsibleUserText";
 
 type InvocationPart = { text: string; skillId?: string; agentName?: string };
 
@@ -422,7 +423,7 @@ export const MessageRow = memo(function MessageRow({
             ) : isUser ? (
               <>
                 {visibleUserText || message.command ? (
-                  <div className="message-user-text selectable" dir={userTextDirection}>
+                  <CollapsibleUserText messageId={message.id} dir={userTextDirection}>
                     {editableUserMessage && message.command ? (
                       <>
                         {message.skillMentions?.length || message.agentMentions?.length ? (
@@ -444,7 +445,7 @@ export const MessageRow = memo(function MessageRow({
                         {attachmentChips}
                       </>
                     ) : renderUserParagraphs()}
-                  </div>
+                  </CollapsibleUserText>
                 ) : attachmentChips}
               </>
             ) : (

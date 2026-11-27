@@ -2,15 +2,34 @@ import { editorIndexAt, editorSelectionRange, readEditorValue, setEditorCaret } 
 
 type DeletionSnapshot = { expected: string; breaks: Set<HTMLBRElement> };
 
-/** Preserve native deletion/undo; remove only a proven extra Chromium placeholder. */
-export function installComposerDeletionGuard(editor: HTMLElement): () => void {
+/** Preserve native undo for line breaks and remove only proven extra breaks after deletion. */
+export function installComposerDeletionGuard(
+  editor: HTMLElement,
+  onInsertLineBreak?: () => void,
+): () => void {
   // Chromium reuses its original BR node on redo. Remember only nodes proven
   // spurious, never a string pattern that could also be an intentional newline.
   const placeholders = new WeakSet<HTMLBRElement>();
   let snapshot: DeletionSnapshot | null = null;
+  const atDraftEnd = () => editorSelectionRange(editor).end === readEditorValue(editor).length;
   const beforeInput = (event: InputEvent) => {
     snapshot = null;
-    if (event.isComposing || !event.inputType.startsWith("delete")) return;
+    if (event.isComposing) return;
+    if (onInsertLineBreak && event.cancelable) {
+      const paragraph = event.inputType === "insertParagraph";
+      if ((paragraph || event.inputType === "insertLineBreak") && atDraftEnd()) {
+        event.preventDefault();
+        onInsertLineBreak();
+        return;
+      }
+      // Chromium's paragraph command introduces block boundaries that have no draft offsets.
+      if (paragraph) {
+        event.preventDefault();
+        editor.ownerDocument.execCommand("insertLineBreak");
+        return;
+      }
+    }
+    if (!event.inputType.startsWith("delete")) return;
     const range = event.getTargetRanges()[0];
     if (!range || !editor.contains(range.startContainer) || !editor.contains(range.endContainer)) return;
     const before = readEditorValue(editor);

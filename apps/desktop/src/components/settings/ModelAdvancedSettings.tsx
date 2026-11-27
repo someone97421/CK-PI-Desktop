@@ -312,6 +312,16 @@ export function ModelAdvancedSettings({
             />
             <HelpIcon label={t(fastModeHint)} />
           </span>
+          <span className="provider-chosen-capability-item">
+            <Checkbox
+              className="provider-chosen-capability"
+              checked={binding.allowEmptyThinkingSignature === true}
+              disabled={busy || apiStyle !== "anthropic_messages"}
+              onChange={(event) => updateBinding(binding.id, { allowEmptyThinkingSignature: event.target.checked })}
+              label={t("settings.allowEmptyThinkingSignature")}
+            />
+            <HelpIcon label={t("settings.allowEmptyThinkingSignatureHint")} />
+          </span>
         </div>
         {showVideoInput && binding.supportsVideo === true ? (
           <div className="provider-advanced-option">

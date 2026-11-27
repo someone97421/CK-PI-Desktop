@@ -1,3 +1,5 @@
+import { receiveFileManagerEntry } from "../../lib/project-file-manager-tab";
+import { currentWorkPanelContext } from "./work-panel-slice";
 import { rememberModelInList, saveRecentModels } from "../../lib/recent-models";
 import type {
   AppNotification,
@@ -208,7 +210,17 @@ export function createCatalogSlice({
       try {
         const pluginViews = await api.listPluginViews();
         if (pluginViewRefresh !== request || get().activeProjectPath !== projectPath) return;
-        set({ pluginViews });
+        const state = get();
+        const id = state.activeSessionId;
+        const received = id && (!state.selectingSessionId || state.selectingSessionId === id)
+          ? receiveFileManagerEntry({ ...state, pluginViews }, state.sessions.find((session) => session.id === id), currentWorkPanelContext(state))
+          : null;
+        set({ pluginViews, ...(received && id ? {
+          fileManagerTabReceipts: received.receipts,
+          workPanelContexts: { ...state.workPanelContexts, [id]: received.context },
+          workPanelTabs: received.context.tabs,
+          activeWorkPanelTabId: received.context.activeTabId,
+        } : {}) });
       } catch {
         if (pluginViewRefresh === request && get().activeProjectPath === projectPath) {
           set({ pluginViews: [] });

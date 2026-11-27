@@ -282,7 +282,7 @@ test("末条工具自动展开，思考行遵循自己的折叠开关", () => {
   assert.match(transcriptActivityGroupSource, /useAutomaticDisclosure\(\s*automaticallyOpen/);
   assert.match(
     transcriptSource,
-    /const automaticallyOpen = activityGroupStartsOpen\(\{\s*subagentTopology: hasSubagentTopology,\s*turnActive,\s*groupActive: live,\s*collapseSettled: collapseSettledGroups,\s*\}\);/,
+    /const automaticallyOpen = activityGroupStartsOpen\(\{\s*subagentTopology: hasSubagentTopology,\s*groupActive: live \|\| runningOperation,\s*collapseSettled: collapseSettledGroups,\s*\}\)/,
   );
   assert.match(transcriptSource, /const autoOpenLatest =\s*isLast && item === lastItem/);
   assert.match(

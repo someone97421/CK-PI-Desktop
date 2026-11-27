@@ -1095,7 +1095,7 @@
   flex-direction: column;
 }
 .subagent-transcript-list .message-row.user .message-col {
-  width: max-content;
+  width: fit-content;
   max-width: 82%;
 }
 .subagent-transcript-list > .subagent-failure { margin-block: 8px; }

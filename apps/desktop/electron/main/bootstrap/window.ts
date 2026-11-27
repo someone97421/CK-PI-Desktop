@@ -666,6 +666,19 @@ export async function createWindow({
       maximized: window.isMaximized(),
     });
   };
+  let maximizeResync: ReturnType<typeof setTimeout> | undefined;
+  const scheduleMaximizeResync = () => {
+    if (maximizeResync) clearTimeout(maximizeResync);
+    maximizeResync = setTimeout(() => {
+      maximizeResync = undefined;
+      sendMaximized();
+    }, windowBoundsSettleMs);
+  };
+  window.on("enter-full-screen", scheduleMaximizeResync);
+  window.on("leave-full-screen", scheduleMaximizeResync);
+  window.once("closed", () => {
+    if (maximizeResync) clearTimeout(maximizeResync);
+  });
 
   // After a restore/unmaximize (or leaving fullscreen) the OS puts the window
   // back to its normal bounds. Those bounds can sit outside the current work

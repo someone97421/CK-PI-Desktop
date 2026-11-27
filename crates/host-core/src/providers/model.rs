@@ -179,6 +179,8 @@ pub struct ModelBinding {
     /// service tier for this model (ADR 0334). None/false keeps the default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_mode_allowed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_empty_thinking_signature: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

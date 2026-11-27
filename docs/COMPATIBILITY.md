@@ -32,6 +32,7 @@
 | COMPAT-016 | 保留 | 项目目录替换时保留数据绑定 | 2026-11-22 |
 | COMPAT-017 | 保留 | 旧附件记录与源码行引用 | 2026-11-24 |
 | COMPAT-018 | 保留 | 旧单文件夹项目与附加指令 | 2026-11-25 |
+| COMPAT-019 | 保留 | 旧聊天设置、技能文本与 Anthropic 模型绑定 | 2026-11-27 |
 
 ## 仍需跟踪
 
@@ -158,3 +159,9 @@
 - **来源与替代**：上游 `cd6dbc00b` 引入的 `pi.desktop.planApprovalMode` 本地存储偏好在 `7a7827727` 中由所属会话的实际权限／全局默认权限替代，本轮同步采用。旧键不迁移、不再读取，也不主动删除。
 - **入口与断言**：[审批默认值](../apps/desktop/src/lib/plan-approval-preferences.ts)、[审批卡接线](../apps/desktop/src/components/PlanApprovalBar.tsx)、[权限断言](../apps/desktop/test/plan-approval-permission.test.mjs)。
 - **行为与结论**：会话明确权限优先，继承权限采用当前全局设置，缺省回退 ask；用户仍可在审批时选择权限。避免另一会话记住的审批偏好覆盖用户当前权限。属于现行路径替换，旧读取逻辑已移除并保留本结论；源码静态核对及语法检查通过，未执行审批测试或界面验证。最近复核 2026-11-17。
+
+### COMPAT-019：旧聊天设置、技能文本与 Anthropic 模型绑定
+
+- **来源**：上游 `2857aee13`、#2593、`59216f5f2`。此前的设置、草稿与模型配置可以缺少相应可选字段。
+- **读取入口与替代路径**：[子代理显示设置](../apps/desktop/src/features/settings/pages/ChatSettingsSubagentStyle.tsx)遇到缺省值显示原有对话拓扑。[输入序列化](../packages/shared/src/composer-trigger.ts)兼容已有的纯文本技能命令，并将新技能节点展开为同一 `/skill:<id>` 命令。[模型绑定](../crates/host-core/src/providers/model.rs)读取缺省回放选项时保留现有请求行为，显式布尔值随模型配置读写及导入导出。
+- **移除条件与验证**：继续支持这些缺省值和旧文本。源码核对确认旧入口仍可读取，相关行为尚待运行验证。

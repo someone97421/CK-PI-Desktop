@@ -5,12 +5,14 @@ import ts from "typescript";
 import * as workPanelResize from "../src/lib/work-panel-resize.ts";
 import * as workPanelTabs from "../src/lib/work-panel-tabs.ts";
 import * as sideChat from "../src/lib/side-chat.ts";
+import * as projectFileManagerTab from "../src/lib/project-file-manager-tab.ts";
 
 const { outputText } = ts.transpileModule(readFileSync(new URL("../src/stores/slices/work-panel-slice.ts", import.meta.url), "utf8"), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 });
 const closedBrowserTabs = [];
 const imports = {
+  "../../lib/project-file-manager-tab": projectFileManagerTab,
   "../../lib/side-chat": sideChat,
   "../../lib/api": {
     api: {
@@ -34,6 +36,7 @@ function store() {
     activeSessionId: "A", sessions: [], workPanelOpen: false,
     workPanelTabs: [], activeWorkPanelTabId: null, workPanelFileRequest: null,
     workPanelContexts: {},
+    fileManagerProjects: new Set(), fileManagerTabReceipts: {},
     sideChats: {}, sideChatTranscripts: {},
   };
   const get = () => state;

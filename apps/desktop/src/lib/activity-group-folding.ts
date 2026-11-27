@@ -16,8 +16,6 @@
 export function activityGroupStartsOpen(state: {
   /** Task fan-out is its own topology and keeps its released open default. */
   subagentTopology: boolean;
-  /** The assistant turn this group belongs to is still running. */
-  turnActive: boolean;
   /** This group still owns live work, including running delegations. */
   groupActive: boolean;
   /** `resolveAutoCollapseSettledGroups` for the current settings. */
@@ -25,7 +23,6 @@ export function activityGroupStartsOpen(state: {
 }): boolean {
   return (
     state.subagentTopology ||
-    state.turnActive ||
     state.groupActive ||
     !state.collapseSettled
   );

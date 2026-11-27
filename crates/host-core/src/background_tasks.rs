@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(crate) mod jobs;
+pub(crate) mod yielded;
 
 use crate::tools;
 use serde::Serialize;
@@ -59,6 +60,27 @@ pub(crate) struct TaskShared {
 }
 
 impl TaskShared {
+    pub(crate) fn running() -> Self {
+        Self {
+            state: BackgroundTaskState::Running,
+            exit_code: None,
+            stdout: VecDeque::new(),
+            stderr: VecDeque::new(),
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            truncated: false,
+        }
+    }
+
+    pub(crate) fn append_output(&mut self, is_stdout: bool, text: &str) {
+        let dropped = if is_stdout {
+            self.push_stdout(text)
+        } else {
+            self.push_stderr(text)
+        };
+        self.truncated |= dropped;
+    }
+
     fn push_text(ring: &mut VecDeque<String>, total: &mut usize, text: &str) -> bool {
         if text.is_empty() {
             return false;
@@ -360,6 +382,27 @@ fn register_spawned_task(
     runner: tools::SpawnedToolRunner,
     on_changed: Arc<dyn Fn() + Send + Sync>,
 ) -> BackgroundTask {
+    let (task, stop_rx) = new_task(
+        session_id,
+        command,
+        command_shell_id,
+        workspace,
+        Instant::now(),
+        TaskShared::running(),
+    );
+    register_task(registry, &task);
+    tokio::spawn(supervise(task.clone(), runner, stop_rx, on_changed));
+    task
+}
+
+fn new_task(
+    session_id: &str,
+    command: &str,
+    command_shell_id: &str,
+    workspace: &std::path::Path,
+    started_at: Instant,
+    shared: TaskShared,
+) -> (BackgroundTask, watch::Receiver<bool>) {
     let (stop, stop_rx) = watch::channel(false);
     let task = BackgroundTask {
         id: uuid::Uuid::new_v4().to_string(),
@@ -367,24 +410,18 @@ fn register_spawned_task(
         command: command.to_string(),
         command_shell_id: command_shell_id.to_string(),
         workspace: workspace.canonicalize().unwrap_or_else(|_| workspace.to_path_buf()),
-        started_at: Instant::now(),
-        shared: Arc::new(Mutex::new(TaskShared {
-            state: BackgroundTaskState::Running,
-            exit_code: None,
-            stdout: VecDeque::new(),
-            stderr: VecDeque::new(),
-            stdout_bytes: 0,
-            stderr_bytes: 0,
-            truncated: false,
-        })),
+        started_at,
+        shared: Arc::new(Mutex::new(shared)),
         stop,
         settled: watch::channel(None).0,
     };
+    (task, stop_rx)
+}
+
+fn register_task(registry: &mut BackgroundTaskRegistry, task: &BackgroundTask) {
     registry.order.push(task.id.clone());
     registry.tasks.insert(task.id.clone(), task.clone());
     registry.prune_finished();
-    tokio::spawn(supervise(task.clone(), runner, stop_rx, on_changed));
-    task
 }
 
 /// Drain pipes into the shared rings, honour the stop signal, and record the

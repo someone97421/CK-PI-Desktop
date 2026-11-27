@@ -64,20 +64,18 @@ test("the file manager search panel remains readable in both themes", () => {
   );
 });
 
-test("the vendored copy stays traceable to its upstream release", () => {
+test("the vendored copy stays traceable to the pinned source and Desktop asset", () => {
   assert.match(upstream, /github\.com\/Tioit-Wang\/pi-desktop-plugin-file-manager/);
-  assert.match(upstream, /90cfc010a3f9d02ac612055eea065d3c822d4977/);
-  assert.match(upstream, /2d56488db565d451c21bb83e2a8ea5197a4f11fd1687d4290493e487ad3457f1/);
-  // The bundled hotfix is intentionally newer than its upstream base while
-  // remaining below the next stable upstream release.
-  const tag = upstream.match(/`v(\d+\.\d+\.\d+)`/);
-  assert.ok(tag, "UPSTREAM.md must name the vendored base tag");
-  assert.equal(tag[1], "0.9.1");
-  assert.equal(manifest.version, "0.9.2-pi.1");
+  assert.match(upstream, /6466e52bfd329ba961e81d2537753522ce664fb7/);
+  assert.match(upstream, /8d686c28a/);
+  assert.equal(manifest.version, "0.13.0");
   // Every upstream or locally rebuilt file hashes to a recorded value, so a
   // silent edit cannot pass as the released artifact or documented patch.
   for (const file of [
     "main.js",
+    "git-batch.js",
+    "git-history.js",
+    "git-sync.js",
     "remote-workspace.js",
     "README.md",
     "CHANGELOG.md",

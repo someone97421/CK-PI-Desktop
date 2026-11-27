@@ -51,6 +51,8 @@ export function createInitialState(): AppStateData {
     workPanelTabs: [],
     activeWorkPanelTabId: null,
     workPanelContexts: {},
+    fileManagerProjects: new Set(),
+    fileManagerTabReceipts: {},
     workPanelWidth: initialWorkPanelWidth,
     workPanelYieldedWidth: null,
     workPanelFileRequest: null,

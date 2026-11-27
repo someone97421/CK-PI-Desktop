@@ -18,6 +18,7 @@ function fixture(t) {
     runningSessions: {}, agentStatuses: {}, latestTurnResults: {}, sessionOutcomes: {},
     sessionCompactions: {}, sessionHistory: {}, retainedSessionIds: [], retainedTranscripts: {},
     workPanelContexts: {}, workPanelTabs: [], activeWorkPanelTabId: null,
+    fileManagerProjects: new Set(), fileManagerTabReceipts: {},
     workPanelOpen: false, workPanelFileRequest: null, navStack: [], navIndex: -1,
     settings: {}, providers: [], providerModels: {}, recentModels: [], draftConfiguration: null,
     workspace: { path: "/synthetic/project" }, activeProjectPath: "/synthetic/project",

@@ -61,15 +61,23 @@ test("the editor model places, reads and paints around the tail placeholder", as
   assert.match(editor, /} else if \(isTailPlaceholder\(child\)\) \{/);
 
   // A caret placed by draft index lands before it, never on it.
-  assert.match(editor, /if \(isTailPlaceholder\(child\)\) \{\n\s+\/\/ Not a draft position/);
-  assert.match(editor, /const placeholder = Array\.from\(el\.childNodes\)\.findIndex\(isTailPlaceholder\);/);
+  assert.match(editor, /if \(isTailPlaceholder\(child\)\) \{\s*if \(remaining <= 0\) \{\s*point = \{ node: parent, offset: index \};/);
 
   // Painting gives an empty last line its box, and every commit keeps it.
   assert.match(editor, /paintTailPlaceholder\(el, value\);/);
   assert.match(editor, /if \(value\.endsWith\("\\n"\)\) el\.appendChild\(buildTailPlaceholder\(\)\);/);
-  assert.match(draft, /useLayoutEffect\(\(\) => \{\n\s+const element = ref\.current;\n\s+if \(element\) syncTailPlaceholder\(element\);/);
+  assert.match(draft, /if \(element && !composing && !compositionRef\.current\) syncTailPlaceholder\(element\);/);
+  assert.match(editor, /if \(el\.lastChild !== placeholder\) el\.appendChild\(placeholder\);/);
+  assert.match(editor, /if \(placeholder !== el\.lastChild\) placeholder\.remove\(\);/);
 
   // The invariant is restored after the event, never inside it: mutating the
   // editor while Chromium runs an editing command makes it insert twice.
   assert.doesNotMatch(deletion, /syncTailPlaceholder/);
+});
+
+test("the final break and its layout sibling enter the same native undo step", async () => {
+  const editor = await readComposerModule("editor.ts");
+  const draft = await readComposerModule("hooks/useComposerDraft.ts");
+  assert.match(editor, /return `<br><br \$\{TAIL_PLACEHOLDER_ATTRIBUTE\} aria-hidden="true">`;/);
+  assert.match(draft, /execCommand\("insertHTML", false, tailBreakFragment\(\)\)/);
 });

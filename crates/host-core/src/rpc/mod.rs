@@ -4491,6 +4491,7 @@ async fn handle_request(
                 }
             };
 
+            let mut bash_yielded = false;
             let outcome: Result<Value, JsonRpcError> = async {
                 let (
                     auto_decision,
@@ -5050,6 +5051,14 @@ async fn handle_request(
                         output_tx: Some(tx.clone()),
                         extra_env: worktree_env.clone(),
                         run_in_background: p.run_in_background,
+                        yield_after_initial_wait: p.yield_after_initial_wait
+                            && !p.run_in_background
+                            && p.turn_id.is_some()
+                            && p.delegation_id.is_none()
+                            && p.permission_scope.is_none()
+                            && p.mode_gate.is_none()
+                            && durable_mode == "agent"
+                            && authorization.policy == sessions::ToolPolicy::Agent,
                         app_state: Some(state.clone()),
                     });
                 }
@@ -5115,6 +5124,11 @@ async fn handle_request(
                     }
                 };
                 result.tool_call_id = p.tool_call_id.clone();
+                bash_yielded = p.tool_name == "Bash"
+                    && p.yield_after_initial_wait
+                    && !p.run_in_background
+                    && result.content.get("state").and_then(Value::as_str) == Some("running")
+                    && result.content.get("backgroundTaskId").and_then(Value::as_str).is_some();
 
                 if let Some(pending) = pending_review {
                     if result.ok {
@@ -5147,7 +5161,7 @@ async fn handle_request(
                 // ADR 0329: a session that resolved its merge conflict (or
                 // aborted the merge) drops its conflict badge before the turn
                 // ends and the sidebar refreshes.
-                if p.delegation_id.is_none()
+                if !bash_yielded && p.delegation_id.is_none()
                     && matches!(p.tool_name.as_str(), "Write" | "Edit" | "Bash")
                 {
                     crate::session_worktrees::lifecycle::refresh_conflict_status(
@@ -5216,7 +5230,9 @@ async fn handle_request(
                 serde_json::to_value(result).map_err(|e| rpc_err(1000, e.to_string(), "INTERNAL"))
             }
             .await;
-            clear_bash_cancellation(&state, &p).await;
+            if !bash_yielded {
+                clear_bash_cancellation(&state, &p).await;
+            }
             clear_tool_cancellation(&state, &p).await;
             modes_rpc::record_gate_call(&state, &p, &outcome).await;
             outcome
@@ -10272,6 +10288,51 @@ mod tests {
             !late_marker.exists(),
             "aborted descendants must not write later"
         );
+        assert_bash_registry_empty(&state).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn yielded_bash_still_accepts_the_original_abort() {
+        let Some(shell_id) = available_test_shell_id() else { return };
+        let data_dir = tempfile::tempdir().unwrap();
+        let project = data_dir.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let mut app = AppState::open(data_dir.path()).unwrap();
+        app.handshook = true;
+        let session = sessions::create_session(
+            &app.db, None, Some("agent".into()), None, None,
+            Some(project.to_string_lossy().into_owned()),
+        ).unwrap();
+        sessions::configure_session_with_thinking(
+            &app.db, &session.id, "agent", None, None, None, Some("auto"),
+        ).unwrap();
+        let state = Arc::new(Mutex::new(app));
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let early = tokio::time::timeout(Duration::from_secs(18), handle_request(
+            state.clone(), "tools.execute", json!({
+                "sessionId": session.id, "turnId": "yielding-turn", "toolCallId": "yielding-bash",
+                "toolName": "Bash", "mode": "agent", "yieldAfterInitialWait": true, "timeoutMs": 30_000,
+                "expectedCommandShellId": shell_id,
+                "expectedCommandShellDialect": tools::shell::dialect_for_id(&shell_id),
+                "args": { "command": "printf before; sleep 25; printf after > late.txt" },
+            }), tx.clone(),
+        )).await.unwrap().unwrap();
+        assert_eq!(early["content"]["state"], "running");
+        assert_eq!(early["content"]["stdout"], "before");
+        assert!(early["content"].get("exitCode").is_none());
+        let job_id = early["content"]["job"]["id"].as_str().unwrap();
+        assert!(state.lock().await.background_tasks.has_running_in_workspace(&project));
+        let aborted = handle_request(state.clone(), "tools.abort", json!({
+            "sessionId": session.id, "toolCallId": "yielding-bash", "toolName": "Bash",
+        }), tx.clone()).await.unwrap();
+        assert_eq!(aborted["found"], true);
+        let stopped = handle_request(state.clone(), "backgroundJobs.wait", json!({
+            "sessionId": session.id, "id": job_id, "timeoutMs": 1000,
+        }), tx).await.unwrap();
+        assert_eq!(stopped["state"], "stopped");
+        assert_eq!(stopped["stdout"], "before");
+        assert!(!project.join("late.txt").exists());
         assert_bash_registry_empty(&state).await;
     }
 

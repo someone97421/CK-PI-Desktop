@@ -264,6 +264,8 @@ export type ModelBinding = {
    * tier; only Responses wires carry it (`fastModeSupportedOn`).
    */
   fastModeAllowed?: boolean;
+  /** Allow replay of unsigned Anthropic thinking blocks for this binding. */
+  allowEmptyThinkingSignature?: boolean;
 };
 
 export const MODEL_MODALITIES = ["text", "image", "audio", "video", "pdf"] as const;

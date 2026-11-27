@@ -260,7 +260,7 @@ export function serializeComposerFileReferences(
 ): string {
   const content = serializeInlineComposerFileReferences(draft, references);
   const paths = references
-    .filter((reference) => !reference.token && reference.kind !== "session" && reference.kind !== "directory" && reference.kind !== "agent")
+    .filter((reference) => !reference.token && reference.kind !== "session" && reference.kind !== "directory" && !composerMentionText(reference))
     .map((reference) => formatFileInsert(reference.path, "file"))
     .join("")
     .trim();
@@ -314,14 +314,20 @@ function directoryPromptReference(path: string): string {
   return `<dir>${escaped}</dir>`;
 }
 
+/** Canonical text for a catalog mention. */
+export function composerMentionText(reference: { kind?: string; path: string }): string | null {
+  if (reference.kind === "skill") return `/skill:${reference.path}`;
+  if (reference.kind === "agent") return `@${reference.path}`;
+  return null;
+}
+
 /**
  * Resolve only inline generated tokens (legacy @name strings or single
  * sentinel characters backing atomic chips). Each resolved token keeps one
  * separating space so adjacent chips never fuse their @paths together. A
  * plugin mark's token resolves to the text it sends (`plugin.send`) instead
  * of a path, and a session reference resolves to its `pi-desktop://` link.
- * An agent chip resolves to `@name` and also keeps a space before it, because
- * the send-time resolver reads an `@token` only after whitespace (ADR 0346).
+ * Agent and Skill chips keep whitespace boundaries for the send-time resolver.
  */
 export function serializeInlineComposerFileReferences(
   draft: string,
@@ -332,24 +338,22 @@ export function serializeInlineComposerFileReferences(
     const token = reference.token?.trim();
     if (!token || !content.includes(token)) continue;
     const send = reference.plugin?.send;
-    const agent = reference.kind === "agent";
+    const mention = composerMentionText(reference);
     const insert = reference.lineRange
       ? fileLineLabel(reference.path, reference.lineRange)
       : typeof send === "string"
       ? send
-      : agent
-        ? `@${reference.path}`
-        : reference.kind === "session"
-          ? formatSessionLink(reference.path)
-          : reference.kind === "directory"
-            ? directoryPromptReference(reference.path)
-            : formatFileInsert(reference.path, "file").trim();
+      : mention ?? (reference.kind === "session"
+        ? formatSessionLink(reference.path)
+        : reference.kind === "directory"
+          ? directoryPromptReference(reference.path)
+          : formatFileInsert(reference.path, "file").trim());
     let index = content.indexOf(token);
     while (index !== -1) {
       const nextChar = content[index + token.length];
       const separator = nextChar && !/\s/.test(nextChar) ? " " : "";
       const previousChar = content[index - 1];
-      const lead = agent && previousChar && !/\s/.test(previousChar) ? " " : "";
+      const lead = mention && previousChar && !/\s/.test(previousChar) ? " " : "";
       content =
         content.slice(0, index) +
         lead +

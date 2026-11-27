@@ -1,28 +1,23 @@
 import { Fragment, useLayoutEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { AssistantTurnBody } from "../../features/chat/transcript/AssistantTurnBody";
+import { CollapsibleUserText } from "../../features/chat/transcript/CollapsibleUserText";
 import { TranscriptDisclosureProvider } from "../../features/chat/transcript/disclosure";
 import { delegateAgentName } from "../../features/chat/transcript/model";
-import { AssistantErrorMessage, ThinkingRow } from "../../features/chat/transcript/shared";
 import { SubagentDetail, SubagentFailureCard } from "../../features/chat/transcript/SubagentDetail";
-import { SubagentGuidanceMessage } from "../../features/chat/transcript/SubagentGuidanceMessage";
 import { SubagentSupervision, useSubagentExecution } from "../../features/chat/transcript/SubagentSupervision";
-import { ToolRow } from "../../features/chat/transcript/ToolRow";
 import { useFollowScroll } from "../../hooks/use-follow-scroll";
 import { useSubagentTranscriptView } from "../../hooks/use-subagent-transcript-view";
 import { useTranscriptSearchFocus } from "../../hooks/use-transcript-search-focus";
-import type { AssistantActivityItem, SubagentRunItem } from "../../lib/assistant-turns";
+import type { AssistantActivityItem } from "../../lib/assistant-turns";
 import { DisclosureAnchorContext } from "../../lib/disclosure-anchor-context";
-import { subagentGuidance } from "../../lib/subagent-guidance";
 import { delegationIdForMessage, type SubagentPanelSelection } from "../../lib/subagent-panel";
 import { collectDelegationFailures, collectDelegationStatuses, collectDelegationTimings, subagentOutcome } from "../../lib/subagent-topology";
 import { buildSubagentTranscript } from "../../lib/subagent-transcript";
 import { TranscriptSearchContext } from "../../lib/transcript-search-context";
-import { reviewChangeFromMessage } from "../../lib/workspace-review";
 import { SlotSessionProvider } from "../../plugins/renderer-slots/use-slots";
 import { useAppStore } from "../../stores/app-store";
 import { IconArrowDown } from "../icons";
-import { Markdown } from "../Markdown";
-import { ReviewChangeCard } from "../ReviewChangeCard";
 import { TooltipButton } from "../ui";
 import { SubagentGuideComposer } from "./SubagentGuideComposer";
 
@@ -33,7 +28,7 @@ export function SubagentTranscriptTab({ delegationId, selection }: Props) {
   const sessionId = selection?.sessionId ?? activeSessionId ?? "";
   return (
     <SlotSessionProvider sessionId={sessionId}>
-      <TranscriptDisclosureProvider key={JSON.stringify([sessionId, delegationId])}>
+      <TranscriptDisclosureProvider key={JSON.stringify([sessionId, delegationId])} sessionId={sessionId} delegationId={delegationId}>
         <SubagentTranscriptSurface sessionId={sessionId} delegationId={delegationId} selection={selection} />
       </TranscriptDisclosureProvider>
     </SlotSessionProvider>
@@ -52,7 +47,7 @@ function SubagentTranscriptSurface({ sessionId, delegationId, selection }: Props
     const turns = new Map(result?.turns.map((turn) => [turn.call.id, turn]));
     const items: AssistantActivityItem[] = [];
     for (const message of messages) {
-      if (message.role !== "tool" || message.parentToolCallId) continue;
+      if (message.role !== "tool" || (message.parentToolCallId && message.toolName !== "TaskExecution")) continue;
       const turn = turns.get(message.id);
       items.push(turn
         ? { kind: "tool", message, delegate: { items: turn.rows } }
@@ -71,7 +66,7 @@ function SubagentTranscriptSurface({ sessionId, delegationId, selection }: Props
   const selectedPromptRef = useRef<HTMLDivElement>(null);
   const focus = transcript.focus;
   const searchTarget = focus && (!selection || focus.requestId === selection.searchRequestId)
-    && result?.turns.some(({ rows }) => rows.some(({ message }) => message.id === focus.messageId))
+    && result?.turns.some((turn) => turn.messages.some(({ id }) => id === focus.messageId))
     ? focus : null;
   useTranscriptSearchFocus({
     target: searchTarget,
@@ -82,7 +77,7 @@ function SubagentTranscriptSurface({ sessionId, delegationId, selection }: Props
     onNavigate: releaseFollow,
   });
 
-  const locateExecution = Boolean(selected && (selected !== result?.turns.at(-1) || (selection && !running)));
+  const locateExecution = Boolean(selected && (selected.call !== result?.turns.at(-1)?.call || (selection && !running)));
   useLayoutEffect(() => {
     if (searchTarget) {
       initialPositionSet.current = true;
@@ -139,17 +134,21 @@ function SubagentTranscriptSurface({ sessionId, delegationId, selection }: Props
                       && (!failure.message || message.error.message.trim() === failure.message));
                   return (
                     <Fragment key={turn.call.id}>
-                      <div className="message-row user" ref={turn === selected ? selectedPromptRef : undefined}>
+                      <div className="message-row user" ref={turn.call === selected?.call ? selectedPromptRef : undefined}>
                         <div className="message-col">
                           <div className="message-bubble">
-                            <div className="message-user-text selectable">{turn.task || t("panel.subagentTaskEmpty")}</div>
+                            <CollapsibleUserText messageId={turn.call.id} dir="auto">
+                              {turn.task || t("panel.subagentTaskEmpty")}
+                            </CollapsibleUserText>
                           </div>
                         </div>
                       </div>
-                      {turn.rows.map((row) => (
-                        <SubagentTranscriptRow key={`${row.kind}:${row.message.id}`} row={row}
-                          streaming={turnOutcome === "running" && row.message.status === "streaming"} />
-                      ))}
+                      <div className="message-row assistant assistant-turn">
+                        <div className="message-col">
+                          <AssistantTurnBody entry={turn.reply} outcome={turnOutcome}
+                            isActive={turnOutcome === "running" && (turn.call === selected?.call ? running : turn.messages.some((message) => message.status === "streaming"))} />
+                        </div>
+                      </div>
                       {showFailure ? <SubagentFailureCard outcome={turnOutcome} failure={failure} /> : null}
                     </Fragment>
                   );
@@ -178,26 +177,5 @@ function SubagentTranscriptSurface({ sessionId, delegationId, selection }: Props
         </section>
       </TranscriptSearchContext.Provider>
     </DisclosureAnchorContext.Provider>
-  );
-}
-
-function SubagentTranscriptRow({ row, streaming }: { row: SubagentRunItem; streaming: boolean }) {
-  const { kind, message } = row;
-  if (kind === "tool") {
-    const guide = subagentGuidance(message);
-    return guide ? <SubagentGuidanceMessage guide={guide} messageId={message.id} />
-      : reviewChangeFromMessage(message) ? <ReviewChangeCard message={message} asToolRow />
-      : <ToolRow message={message} />;
-  }
-  if (kind === "thinking") return <ThinkingRow message={message} streaming={streaming} />;
-  return (
-    <div className="message-row assistant" data-message-id={message.id}>
-      <div className="message-col">
-        <div className="message-bubble">
-          {message.content ? <div className="prose-chat selectable"><Markdown source={message.content} /></div> : null}
-          {message.error ? <AssistantErrorMessage message={message} /> : null}
-        </div>
-      </div>
-    </div>
   );
 }

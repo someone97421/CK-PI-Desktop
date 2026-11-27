@@ -45,6 +45,7 @@ import {
   readEditorValue,
   setEditorCaret,
   syncTailPlaceholder,
+  tailBreakFragment,
   type ComposerFileReference,
 } from "../editor";
 import type { ComposerPrefill } from "../model";
@@ -298,7 +299,7 @@ export function useComposerDraft({
       nextValue,
       referenceByTokenRef.current,
       (reference) =>
-        t(isPluginMark(reference) ? "chat.removePluginMark" : "chat.removeFileReference", {
+        t(isPluginMark(reference) || reference.kind === "skill" ? "chat.removePluginMark" : "chat.removeFileReference", {
           name: reference.name,
         }),
       (token) => removeChipByTokenRef.current(token),
@@ -421,7 +422,7 @@ export function useComposerDraft({
     updateCursor(start);
   };
 
-  /** Enter inserts a bare newline text node so the draft round-trips. */
+  /** Insert the real break and its layout placeholder in one native undo step. */
   const insertNewlineInEditor = () => {
     const element = ref.current;
     if (!element) return;
@@ -430,6 +431,11 @@ export function useComposerDraft({
     const range = selection.getRangeAt(0);
     if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) return;
     const { start } = editorSelectionRange(element);
+    if (element.ownerDocument.execCommand("insertHTML", false, tailBreakFragment())) {
+      setEditorCaret(element, start + 1);
+      commitEditorDom();
+      return;
+    }
     range.deleteContents();
     const node = document.createTextNode("\n");
     range.insertNode(node);
@@ -532,6 +538,7 @@ export function useComposerDraft({
       Boolean(fileReference.plugin) ||
       fileReference.kind === "session" ||
       fileReference.kind === "agent" ||
+      fileReference.kind === "skill" ||
       isPersistedScratchReference(fileReference.path);
     const kept = current.filter(survives);
     if (kept.length === current.length) return;

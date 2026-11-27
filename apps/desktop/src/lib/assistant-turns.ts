@@ -174,6 +174,55 @@ export function delegationChainMaps(messages: readonly UiMessage[]): {
   return { callByDelegationId, childOf };
 }
 
+function appendAssistantTurnMessage(current: AssistantTurnEntry, message: UiMessage, delegate?: SubagentRun) {
+  const pushActivity = (item: AssistantActivityItem) => {
+    const last = current.parts.at(-1);
+    if (last?.kind === "activity" && last.items.length > 0 &&
+        isDelegationStartActivity(last.items[0]) === isDelegationStartActivity(item)) {
+      last.items.push(item);
+    } else {
+      current.parts.push({ kind: "activity", items: [item] });
+    }
+  };
+  if (message.role === "tool") {
+    pushActivity({ kind: "tool", message, ...(delegate ? { delegate } : {}) });
+    return;
+  }
+  const thinking = messageThinking(message);
+  if (thinking) pushActivity({ kind: "thinking", message });
+  for (const round of hostedSearchRounds(message.hostedSearch)) {
+    pushActivity({ kind: "hostedSearch", message, round });
+  }
+  const hasContent = messageContentFacts(message).hasContent;
+  if (hasContent || !thinking || message.error) {
+    current.parts.push({ kind: "message", message });
+    if (!current.anchorId && hasContent) current.anchorId = message.id;
+  }
+}
+
+function finishAssistantTurn(entry: AssistantTurnEntry) {
+  for (let index = 0; index < entry.parts.length; index += 1) {
+    const part = entry.parts[index];
+    const next = entry.parts[index + 1];
+    if (part.kind === "activity" && next?.kind === "message" &&
+        !part.items.some((item) => item.message.id === next.message.id)) {
+      part.endedAt = next.message.createdAt;
+    }
+  }
+}
+
+/** Group only the scoped child messages of a single execution. */
+export function buildDelegationReply(callId: string, messages: readonly UiMessage[]): AssistantTurnEntry {
+  const entry: AssistantTurnEntry = { kind: "assistant-turn", id: callId, parts: [] };
+  for (const message of messages) {
+    if ((message.role === "assistant" || message.role === "tool") && isVisibleMessage(message)) {
+      appendAssistantTurnMessage(entry, message);
+    }
+  }
+  finishAssistantTurn(entry);
+  return entry;
+}
+
 /**
  * Group provider-level assistant fragments and tool rows into user-level turns.
  * Providers end an assistant message before each tool call, but that transport
@@ -252,22 +301,6 @@ export function buildTranscriptEntries(
     return turn;
   };
 
-  const pushActivity = (item: AssistantActivityItem) => {
-    const current = ensureTurn(item.message);
-    const last = current.parts[current.parts.length - 1];
-    // A delegation card is only the Task fan-out. Mixing the parent's later
-    // Read/Grep/thinking into that group painted them as subagent work (D319).
-    if (
-      last?.kind === "activity" &&
-      last.items.length > 0 &&
-      isDelegationStartActivity(last.items[0]) === isDelegationStartActivity(item)
-    ) {
-      last.items.push(item);
-      return;
-    }
-    current.parts.push({ kind: "activity", items: [item] });
-  };
-
   const appendMessage = (message: UiMessage) => {
     if (message.role === "user" && message.steering && message.taskId && taskRoots.has(message.taskId)) {
       ensureTurn(message).parts.push({ kind: "message", message });
@@ -280,31 +313,8 @@ export function buildTranscriptEntries(
       return;
     }
 
-    if (message.role === "tool") {
-      const delegate = message.toolCallId
-        ? runs.get(message.toolCallId)
-        : undefined;
-      pushActivity({
-        kind: "tool",
-        message,
-        ...(delegate ? { delegate } : {}),
-      });
-      return;
-    }
-
-    const current = ensureTurn(message);
-    const thinking = messageThinking(message);
-    if (thinking) pushActivity({ kind: "thinking", message });
-    for (const round of hostedSearchRounds(message.hostedSearch)) {
-      pushActivity({ kind: "hostedSearch", message, round });
-    }
-    const hasContent = messageContentFacts(message).hasContent;
-    if (hasContent || !thinking || message.error) {
-      current.parts.push({ kind: "message", message });
-      if (!current.anchorId && hasContent) {
-        current.anchorId = message.id;
-      }
-    }
+    const delegate = message.role === "tool" && message.toolCallId ? runs.get(message.toolCallId) : undefined;
+    appendAssistantTurnMessage(ensureTurn(message), message, delegate);
   };
 
   let previousRootTurnId: string | undefined;
@@ -343,17 +353,7 @@ export function buildTranscriptEntries(
         entry.anchorId = last.id;
       }
     }
-    for (let index = 0; index < entry.parts.length; index += 1) {
-      const part = entry.parts[index];
-      const next = entry.parts[index + 1];
-      if (
-        part.kind === "activity" &&
-        next?.kind === "message" &&
-        !part.items.some((item) => item.message.id === next.message.id)
-      ) {
-        part.endedAt = next.message.createdAt;
-      }
-    }
+    finishAssistantTurn(entry);
   }
 
   return { entries, visible };

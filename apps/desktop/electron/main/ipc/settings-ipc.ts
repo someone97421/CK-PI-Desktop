@@ -139,6 +139,10 @@ export function registerSettingsIpc({
       }
       result = await host.call<{ ok: true }>("settings.set", validatedSettings);
       settingsSaved = true;
+      const style = validatedSettings?.subagentStyle;
+      if (style === "bar" || style === "transcript") {
+        sendToRenderer(IPC.event.settingsChanged, { subagentStyle: style });
+      }
       await liveCallService?.settingsWritten(prospectiveSettings);
     } catch (error) {
       if (autoLaunchChanged && !settingsSaved) {

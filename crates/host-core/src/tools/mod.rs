@@ -4,18 +4,23 @@ use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::File;
-use std::future::pending;
+use std::future::{pending, poll_fn, Future};
 use std::io::{self, BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(not(test))]
 use tokio::io::AsyncWriteExt;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
+
+use crate::background_tasks::{
+    yielded::register_yielded_task, BackgroundTask, BackgroundTaskState, TaskShared,
+};
 
 use crate::workspace::{
     resolve_tool_path_with_external, simple_canonicalize, ContainedRoots, ToolRoot,
@@ -52,6 +57,7 @@ pub const MAX_TIMEOUT_MS: u64 = 2_147_483_647;
 pub const MIN_BASH_TIMEOUT_MS: u64 = 1_000;
 pub const MAX_BASH_TIMEOUT_MS: u64 = 21_600_000;
 pub const DEFAULT_BASH_TIMEOUT_MS: u64 = 60_000;
+const BASH_INITIAL_WAIT_MS: u64 = 10_000;
 pub const INTERNAL_TOOL_RUNNER_FLAG: &str = "--internal-tool-runner";
 // 工具 runner 使用独立 Job；仅在宿主所在 Job 允许时脱离外层，避免创建被拒。
 #[cfg(any(windows, test))]
@@ -678,6 +684,8 @@ pub struct ToolsExecuteParams {
     pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub run_in_background: bool,
+    #[serde(default)]
+    pub yield_after_initial_wait: bool,
     /// Action names that may run in Plan or Goal mode (ADR 0211). When
     /// set and non-empty, host-core admits this `plugin_*` tool in
     /// contract modes even though plugins are otherwise Plan-denied; the
@@ -884,6 +892,7 @@ pub struct BashExecutionOptions {
     /// Extra environment for the command, e.g. `PI_PORT` (ADR 0329).
     pub extra_env: Vec<(String, String)>,
     pub run_in_background: bool,
+    pub yield_after_initial_wait: bool,
     pub app_state: Option<Arc<tokio::sync::Mutex<crate::state::AppState>>>,
 }
 
@@ -910,6 +919,7 @@ impl BashExecutionOptions {
             output_tx: None,
             extra_env: Vec::new(),
             run_in_background: false,
+            yield_after_initial_wait: false,
             app_state: None,
         }
     }
@@ -2805,17 +2815,27 @@ where
     }
 }
 
-fn process_output_chunk(
+async fn process_output_chunk(
     chunk: OutputChunk,
     stdout: &mut CapturedOutput,
     stderr: &mut CapturedOutput,
     notifier: &mut OutputNotifier,
+    job: Option<&BackgroundTask>,
+    initial_output: Option<&mut TaskShared>,
 ) {
     let decoded = match chunk.stream {
         OutputStream::Stdout => stdout.push(&chunk.bytes),
         OutputStream::Stderr => stderr.push(&chunk.bytes),
     };
-    notifier.push(chunk.stream, decoded);
+    let is_stdout = matches!(chunk.stream, OutputStream::Stdout);
+    if let Some(job) = job {
+        job.append_yielded_output(is_stdout, &decoded).await;
+    } else {
+        if let Some(initial_output) = initial_output {
+            initial_output.append_output(is_stdout, &decoded);
+        }
+        notifier.push(chunk.stream, decoded);
+    }
 }
 
 async fn wait_for_cancellation(receiver: &mut Option<watch::Receiver<bool>>) -> bool {
@@ -3001,6 +3021,7 @@ async fn drain_output(
     stdout: &mut CapturedOutput,
     stderr: &mut CapturedOutput,
     notifier: &mut OutputNotifier,
+    job: Option<&BackgroundTask>,
     stdout_task: &mut tokio::task::JoinHandle<()>,
     stderr_task: &mut tokio::task::JoinHandle<()>,
     pid: u32,
@@ -3009,7 +3030,7 @@ async fn drain_output(
 ) -> Result<(), String> {
     let drain = async {
         while let Some(chunk) = output_rx.recv().await {
-            process_output_chunk(chunk, stdout, stderr, notifier);
+            process_output_chunk(chunk, stdout, stderr, notifier, job, None).await;
         }
         *output_closed = true;
     };
@@ -3122,6 +3143,47 @@ async fn tool_bash(
         env_path: shell::user_login_path().map(str::to_string),
         extra_env: options.extra_env.clone(),
     };
+    let (early, mut early_result) = oneshot::channel();
+    let may_yield = options.yield_after_initial_wait && timeout_ms > BASH_INITIAL_WAIT_MS;
+    let mut execution = Box::pin(run_foreground_bash(
+        config,
+        scratch.map(Path::to_path_buf),
+        command.to_owned(),
+        options,
+        timeout_ms,
+        may_yield.then_some(early),
+    ));
+    if !may_yield {
+        return execution.await;
+    }
+    let yielded = poll_fn(|cx| {
+        // Take ownership of the registered job in the same poll that publishes it.
+        if let Poll::Ready(result) = execution.as_mut().poll(cx) {
+            return Poll::Ready(Err(result));
+        }
+        match std::pin::Pin::new(&mut early_result).poll(cx) {
+            Poll::Ready(Ok(result)) => Poll::Ready(Ok(result)),
+            Poll::Ready(Err(_)) | Poll::Pending => Poll::Pending,
+        }
+    })
+    .await;
+    match yielded {
+        Ok(result) => {
+            tokio::spawn(execution);
+            Ok(result)
+        }
+        Err(finished) => finished,
+    }
+}
+
+async fn run_foreground_bash(
+    config: ToolRunnerStartConfig,
+    scratch: Option<PathBuf>,
+    command: String,
+    options: BashExecutionOptions,
+    timeout_ms: u64,
+    mut early: Option<oneshot::Sender<Value>>,
+) -> Result<Value, (String, String)> {
     let SpawnedToolRunner {
         pid,
         mut ownership,
@@ -3138,8 +3200,19 @@ async fn tool_bash(
     let stderr_task = tokio::spawn(read_pipe(stderr, OutputStream::Stderr, chunk_tx.clone()));
     drop(chunk_tx);
 
+    let started_at = Instant::now();
     let timeout_future = tokio::time::sleep(Duration::from_millis(timeout_ms));
     tokio::pin!(timeout_future);
+    let app_state = options.app_state.as_ref();
+    let initial_wait = async {
+        let Some(state) = app_state else { return pending().await };
+        tokio::time::sleep(Duration::from_millis(BASH_INITIAL_WAIT_MS)).await;
+        state.lock().await
+    };
+    tokio::pin!(initial_wait);
+    let mut initial_output = early.as_ref().map(|_| TaskShared::running());
+    let mut job: Option<BackgroundTask> = None;
+    let mut background_stop = None;
     let mut cancellation = options.cancellation.clone();
     let mut stdout = CapturedOutput::default();
     let mut stderr = CapturedOutput::default();
@@ -3149,30 +3222,56 @@ async fn tool_bash(
 
     let stop = loop {
         tokio::select! {
-            waited = &mut wait_task => {
-                break BashStop::Exited(waited);
-            }
-            chunk = output_rx.recv(), if !output_closed => {
-                match chunk {
-                    Some(chunk) => process_output_chunk(chunk, &mut stdout, &mut stderr, &mut notifier),
-                    None => output_closed = true,
-                }
-            }
-            _ = output_tick.tick() => {
-                notifier.flush_due();
-            }
+            biased;
+            waited = &mut wait_task => break BashStop::Exited(waited),
             _ = &mut timeout_future => {
                 match kill_and_reap(pid, &mut ownership, &mut control, &mut wait_task).await {
                     Ok(()) => break BashStop::TimedOut,
                     Err(error) => break BashStop::LifecycleFailed(error),
                 }
             }
-            cancelled = wait_for_cancellation(&mut cancellation) => {
-                if cancelled {
-                    match kill_and_reap(pid, &mut ownership, &mut control, &mut wait_task).await {
-                        Ok(()) => break BashStop::Aborted,
-                        Err(error) => break BashStop::LifecycleFailed(error),
+            _ = wait_for_cancellation(&mut cancellation) => {
+                match kill_and_reap(pid, &mut ownership, &mut control, &mut wait_task).await {
+                    Ok(()) => break BashStop::Aborted,
+                    Err(error) => break BashStop::LifecycleFailed(error),
+                }
+            }
+            _ = wait_for_cancellation(&mut background_stop), if job.is_some() => {
+                match kill_and_reap(pid, &mut ownership, &mut control, &mut wait_task).await {
+                    Ok(()) => break BashStop::Aborted,
+                    Err(error) => break BashStop::LifecycleFailed(error),
+                }
+            }
+            mut st = &mut initial_wait, if early.is_some() => {
+                let early = early.take().expect("initial wait is armed");
+                let registered = register_yielded_task(
+                    &mut st, &options.session_id, &command, &options.command_shell_id,
+                    &config.workspace, started_at, cancellation.as_ref(),
+                    initial_output.take().expect("initial output is armed"),
+                ).await;
+                drop(st);
+                match registered {
+                    Ok(Some((task, stop_rx, mut result))) => {
+                        result.as_object_mut().expect("job snapshot is an object").remove("exitCode");
+                        result["backgroundTaskId"] = json!(task.id);
+                        result["commandShellId"] = json!(options.command_shell_id);
+                        result["message"] = json!("Bash is still running. Use TaskWait with its job reference before relying on the result.");
+                        background_stop = Some(stop_rx);
+                        job = Some(task);
+                        notifier.finish();
+                        notifier.tx = None;
+                        let _ = early.send(result);
+                        tokio::task::yield_now().await;
                     }
+                    Ok(None) => {}
+                    Err(error) => tracing::warn!(%error, "Bash could not publish a job; continuing to wait"),
+                }
+            }
+            _ = output_tick.tick(), if job.is_none() => notifier.flush_due(),
+            chunk = output_rx.recv(), if !output_closed => {
+                match chunk {
+                    Some(chunk) => process_output_chunk(chunk, &mut stdout, &mut stderr, &mut notifier, job.as_ref(), initial_output.as_mut()).await,
+                    None => output_closed = true,
                 }
             }
         }
@@ -3186,6 +3285,7 @@ async fn tool_bash(
         &mut stdout,
         &mut stderr,
         &mut notifier,
+        job.as_ref(),
         &mut stdout_task,
         &mut stderr_task,
         pid,
@@ -3197,9 +3297,50 @@ async fn tool_bash(
         Ok(()) => stop,
         Err(error) => BashStop::LifecycleFailed(error),
     };
-    notifier.push(OutputStream::Stdout, stdout.finish());
-    notifier.push(OutputStream::Stderr, stderr.finish());
-    notifier.finish();
+    let stdout_tail = stdout.finish();
+    let stderr_tail = stderr.finish();
+    if let Some(job) = &job {
+        job.append_yielded_output(true, &stdout_tail).await;
+        job.append_yielded_output(false, &stderr_tail).await;
+    } else {
+        notifier.push(OutputStream::Stdout, stdout_tail);
+        notifier.push(OutputStream::Stderr, stderr_tail);
+        notifier.finish();
+    }
+    drop(control);
+    drop(ownership);
+
+    let was_stopped = matches!(stop, BashStop::Aborted);
+    let result = finish_foreground_bash(stop, timeout_ms, stdout, stderr, scratch.as_deref(), &options.command_shell_id);
+    if let Some(job) = job {
+        let (state, exit_code, error) = match &result {
+            Ok(value) => {
+                let code = value["exitCode"].as_i64().and_then(|code| i32::try_from(code).ok());
+                let state = if code == Some(0) { BackgroundTaskState::Exited } else { BackgroundTaskState::Failed };
+                (state, code, None)
+            }
+            Err((_, error)) if was_stopped => (BackgroundTaskState::Stopped, None, Some(error.as_str())),
+            Err((_, error)) => (BackgroundTaskState::Failed, None, Some(error.as_str())),
+        };
+        if let Some(app_state) = app_state {
+            crate::session_worktrees::lifecycle::refresh_conflict_status(
+                app_state, &crate::session_worktrees::git::GitRunner::default(), &options.session_id,
+            ).await;
+            app_state.lock().await.clear_bash_cancellation(&options.session_id, &options.tool_call_id);
+        }
+        job.finish_yielded(state, exit_code, error).await;
+    }
+    result
+}
+
+fn finish_foreground_bash(
+    stop: BashStop,
+    timeout_ms: u64,
+    stdout: CapturedOutput,
+    stderr: CapturedOutput,
+    scratch: Option<&Path>,
+    command_shell_id: &str,
+) -> Result<Value, (String, String)> {
 
     match stop {
         BashStop::TimedOut => Err((
@@ -3247,7 +3388,7 @@ async fn tool_bash(
                 "stdout": stdout,
                 "stderr": stderr,
                 "truncated": trunc_out || trunc_err,
-                "commandShellId": options.command_shell_id,
+                "commandShellId": command_shell_id,
             }))
         }
     }
@@ -5180,6 +5321,7 @@ mod tests {
                 output_tx: None,
                 extra_env: Vec::new(),
                 run_in_background: false,
+                yield_after_initial_wait: false,
                 app_state: None,
             }),
         )
@@ -5224,6 +5366,7 @@ mod tests {
                 output_tx: None,
                 extra_env: Vec::new(),
                 run_in_background: false,
+                yield_after_initial_wait: false,
                 app_state: None,
             }),
         )
@@ -5263,6 +5406,7 @@ mod tests {
                 output_tx: None,
                 extra_env: Vec::new(),
                 run_in_background: false,
+                yield_after_initial_wait: false,
                 app_state: None,
             }),
         )
@@ -5335,6 +5479,7 @@ mod tests {
             output_tx: Some(tx),
             extra_env: Vec::new(),
             run_in_background: false,
+            yield_after_initial_wait: false,
             app_state: None,
         };
         let mut notifier = OutputNotifier::new(&options);
@@ -5363,6 +5508,7 @@ mod tests {
             output_tx: None,
             extra_env: Vec::new(),
             run_in_background: false,
+            yield_after_initial_wait: false,
             app_state: None,
         };
 
@@ -5453,6 +5599,7 @@ mod tests {
             output_tx: None,
             extra_env: Vec::new(),
             run_in_background: false,
+            yield_after_initial_wait: false,
             app_state: None,
         };
         execute_tool_with_options(

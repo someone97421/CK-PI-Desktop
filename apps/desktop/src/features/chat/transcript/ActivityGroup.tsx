@@ -235,6 +235,7 @@ export const ActivityGroup = memo(function ActivityGroup({
   const hideThinking = !showThinking;
   const displayMode = useAppStore((state) => resolveTranscriptDisplayMode(state.settings));
   const collapseSettledGroups = useAppStore((state) => resolveAutoCollapseSettledGroups(state.settings));
+  const preferPresenceBar = useAppStore((state) => state.settings?.subagentStyle === "bar");
   const collapseThinking = useAppStore((state) => resolveAutoCollapseThinking(state.settings));
   const { t } = useTranslation();
   const detailsId = useId();
@@ -281,7 +282,13 @@ export const ActivityGroup = memo(function ActivityGroup({
     }
     return { sessionId, expectedExecutions };
   }, [delegateItems, delegationStatuses, activeSessionId]);
+  const presenceOwnsLiveTopology = preferPresenceBar && topologyLive &&
+    Boolean(stopTargets.sessionId && stopTargets.sessionId === activeSessionId);
   const live = hasSubagentTopology ? topologyLive : isActive;
+  const runningOperation = turnActive && items.some((item) =>
+    (item.kind === "tool" && item.message.toolStatus === "running") ||
+    (item.kind === "hostedSearch" && item.round.status === "searching"),
+  );
   const searchTarget = useContext(TranscriptSearchContext);
   const revealRequest = useMemo(() => searchTarget && items.some((item) => item.message.id === searchTarget.messageId)
     ? searchTarget.requestId : undefined, [items, searchTarget]);
@@ -291,10 +298,9 @@ export const ActivityGroup = memo(function ActivityGroup({
   // 其余已完成的活动组遵循 `autoCollapseSettledGroups`。
   const automaticallyOpen = activityGroupStartsOpen({
     subagentTopology: hasSubagentTopology,
-    turnActive,
-    groupActive: live,
+    groupActive: live || runningOperation,
     collapseSettled: collapseSettledGroups,
-  });
+  }) && !presenceOwnsLiveTopology;
   const disclosure = useAutomaticDisclosure(
     automaticallyOpen,
     revealRequest,

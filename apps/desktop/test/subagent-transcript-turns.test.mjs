@@ -9,6 +9,7 @@ register(pathToFileURL(join(here, "helpers/ts-import-hooks.mjs")));
 const { buildSubagentTranscript } = await import(
   "../src/lib/subagent-transcript.ts"
 );
+const { projectSubagentPresence } = await import("../src/lib/subagent-presence.ts");
 
 function message(id, content, extra = {}) {
   return { id, content, ...extra };
@@ -50,6 +51,8 @@ test("one Task call becomes one user turn followed by the delegate's rows", () =
     transcript.turns[0].rows.map((row) => row.kind),
     ["tool", "thinking", "answer"],
   );
+  assert.equal(transcript.selectedTurn, transcript.turns[0]);
+  assert.deepEqual(transcript.turns[0].reply.parts.map((part) => part.kind), ["activity", "message"]);
 });
 
 test("a resumed delegation renders follow-up prompts as further user turns", () => {
@@ -177,4 +180,26 @@ test("a call with no task argument degrades to an empty prompt", () => {
   ];
   const transcript = buildSubagentTranscript(messages, "del-1");
   assert.equal(transcript.turns[0].task, "");
+});
+
+test("状态栏按执行版本区分召回，并排除执行与引导回执的工具计数", () => {
+  const messages = [
+    taskCall("call-1", "First prompt", {
+      toolResult: { delegationId: "del", executionId: "exec-1", execution: 1, status: "running", statusRevision: 0 },
+    }),
+    message("user-2", "Resume", { role: "user" }),
+    taskCall("call-2", "Follow-up prompt", {
+      toolName: "TaskResume",
+      toolResult: { delegationId: "del", executionId: "exec-2", execution: 2, status: "running", statusRevision: 0 },
+    }),
+    message("reply-2", "Working", {
+      role: "assistant", parentToolCallId: "call-2", modelId: "requested", responseModelId: "actual",
+    }),
+    message("guide-2", "Guide receipt", { role: "tool", parentToolCallId: "call-2", toolName: "TaskGuidance" }),
+    message("read-2", "Read output", { role: "tool", parentToolCallId: "call-2", toolName: "Read" }),
+  ];
+  const items = projectSubagentPresence(messages, false);
+  assert.deepEqual(items.map(({ id, status, model, toolCalls }) => ({ id, status, model, toolCalls })), [
+    { id: "exec-2", status: "running", model: "actual", toolCalls: 1 },
+  ]);
 });

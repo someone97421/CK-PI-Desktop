@@ -463,7 +463,7 @@ export function useComposerAutocomplete({
           value: string;
           cursor: number;
           fileReference?: { path: string; name: string };
-          agentReference?: { name: string };
+          mention?: { kind: "agent" | "skill"; id: string; label: string };
         }
       | null => {
       if (!trigger) return null;
@@ -472,7 +472,7 @@ export function useComposerAutocomplete({
       if (item.kind === "agent") {
         return {
           ...applyCompletion(value, trigger, ""),
-          agentReference: { name: item.agent.name },
+          mention: { kind: "agent", id: item.agent.name, label: item.agent.name },
         };
       }
       if (item.kind === "path" && item.entry.kind === "file") {
@@ -493,6 +493,13 @@ export function useComposerAutocomplete({
         let tokenEnd = trigger.tokenEnd;
         while (tokenEnd < value.length && !/\s/.test(value[tokenEnd])) tokenEnd += 1;
         replacement = { ...trigger, tokenEnd };
+      }
+      if (item.kind === "command" && item.command.kind === "skill" && item.command.skillId) {
+        const { skillId, title } = item.command;
+        return {
+          ...applyCompletion(value, replacement, ""),
+          mention: { kind: "skill", id: skillId, label: title || skillId },
+        };
       }
       return applyCompletion(value, replacement, insert);
     },

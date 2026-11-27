@@ -35,7 +35,7 @@ function translator(catalog) {
 
 const buckets = (...pairs) => pairs.map(([id, count]) => ({ id, count }));
 
-const settled = { subagentTopology: false, turnActive: false, groupActive: false };
+const settled = { subagentTopology: false, groupActive: false };
 
 test("a settled group folds by default and follows the switch", () => {
   // The old size tier is gone: a two-row group and a twenty-row group answer the
@@ -51,11 +51,6 @@ test("a settled group folds by default and follows the switch", () => {
 
 test("live work and Task topology never fold", () => {
   for (const collapseSettled of [true, false]) {
-    assert.equal(
-      activityGroupStartsOpen({ ...settled, turnActive: true, collapseSettled }),
-      true,
-      "a running turn keeps every group visible",
-    );
     assert.equal(
       activityGroupStartsOpen({ ...settled, groupActive: true, collapseSettled }),
       true,
@@ -171,7 +166,7 @@ test("the group header states composition and count and drops the issue badge", 
   // Both nested levels read their own switch; neither inherits the other.
   assert.match(
     activityGroup,
-    /activityGroupStartsOpen\(\{\s*subagentTopology: hasSubagentTopology,\s*turnActive,\s*groupActive: live,\s*collapseSettled: collapseSettledGroups,\s*\}\)/,
+    /activityGroupStartsOpen\(\{\s*subagentTopology: hasSubagentTopology,\s*groupActive: live \|\| runningOperation,\s*collapseSettled: collapseSettledGroups,\s*\}\)/,
   );
   assert.match(items, /autoOpen=\{thinkingRowStartsOpen\(\{ streaming, collapseSettled: collapseThinking \}\)\}/);
 });

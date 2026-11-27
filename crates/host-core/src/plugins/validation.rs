@@ -274,6 +274,11 @@ pub(crate) fn validate_contributions(root: &Path, manifest: &PluginManifest) -> 
                         );
                     }
                 }
+                if let Some(value) = model.get("allowEmptyThinkingSignature") {
+                    if !value.is_boolean() {
+                        bail!("PLUGIN_INVALID: provider {id} model {model_id} allowEmptyThinkingSignature must be a boolean");
+                    }
+                }
                 if seen_models.contains(&model_id) {
                     bail!("PLUGIN_INVALID: provider {id} declares model {model_id} twice");
                 }

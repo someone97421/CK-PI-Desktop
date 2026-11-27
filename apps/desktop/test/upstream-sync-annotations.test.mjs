@@ -9,6 +9,7 @@ import * as sideChats from "../src/lib/side-chat.ts";
 import * as tabs from "../src/lib/work-panel-tabs.ts";
 import * as resize from "../src/lib/work-panel-resize.ts";
 import * as panes from "../src/lib/session-panes.ts";
+import * as projectFileManagerTab from "../src/lib/project-file-manager-tab.ts";
 
 // Execute the real domain factories with a fake host; no app, database, or model.
 function load(path, imports) {
@@ -129,6 +130,8 @@ for (const withOtherTab of [false, true]) {
     };
     const { createWorkPanelSlice } = load("../src/stores/slices/work-panel-slice.ts", {
       "../../lib/api": { api: {} }, "../../lib/side-chat": sideChats,
+      "../../lib/project-file-manager-tab": projectFileManagerTab,
+      "../../lib/remote-session-safety": { isRemoteSession: () => false },
       "../../lib/work-panel-tabs": tabs, "../../lib/work-panel-resize": resize,
     });
     const actions = createWorkPanelSlice({ get: () => state, set: (update) => Object.assign(state, typeof update === "function" ? update(state) : update), isSessionSelectionPending: () => false });

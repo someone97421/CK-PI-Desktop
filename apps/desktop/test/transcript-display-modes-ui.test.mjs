@@ -7,6 +7,7 @@ import { loadStyles } from "./helpers/styles.mjs";
 const activityGroupSource = await readTranscriptModule("ActivityGroup.tsx");
 const activityItemsSource = await readTranscriptModule("ActivityItems.tsx");
 const assistantTurnSource = await readTranscriptModule("AssistantTurn.tsx");
+const assistantTurnBodySource = await readTranscriptModule("AssistantTurnBody.tsx");
 const thinkingRowSource = await readTranscriptModule("shared.tsx");
 const shimmerSource = await readFile(
   new URL("../src/features/chat/transcript/TextShimmer.tsx", import.meta.url),
@@ -19,8 +20,9 @@ const turnProcessSource = await readFile(
 const stylesSource = await loadStyles();
 
 test("flat mode renders one outer process and no activity-group wrapper", () => {
-  assert.match(assistantTurnSource, /resolveTranscriptDisplayMode/);
-  assert.match(assistantTurnSource, /segmentTurnProcess\(process, displayMode\)/);
+  assert.match(assistantTurnSource, /<AssistantTurnBody entry=\{entry\}/);
+  assert.match(assistantTurnBodySource, /resolveTranscriptDisplayMode/);
+  assert.match(assistantTurnBodySource, /segmentTurnProcess\(process, displayMode\)/);
   assert.match(activityGroupSource, /displayMode === "flat" && !hasSubagentTopology/);
   assert.match(activityGroupSource, /return <>\{renderedItems\}<\/>/);
   assert.match(turnProcessSource, /mode === "flat"/);
@@ -31,8 +33,8 @@ test("command-first and fully-folded use distinct process segmentation", () => {
   assert.match(turnProcessSource, /mode === "fully-folded"/);
   assert.match(turnProcessSource, /coalesceProcessActivityParts\(parts\)/);
   assert.match(turnProcessSource, /isStandaloneRunActivity\(item\)/);
-  assert.match(assistantTurnSource, /isPlainHistory \? segmentTurnProcess\(process, displayMode\) : \[\]/);
-  assert.match(assistantTurnSource, /<TaskProcessDrawer[\s\S]*?<AssistantTurnParts parts=\{process\}/);
+  assert.match(assistantTurnBodySource, /task \? \[\] : segmentTurnProcess\(process, displayMode\)/);
+  assert.match(assistantTurnBodySource, /<TaskProcessDrawer[\s\S]*?<AssistantTurnParts parts=\{process\}/);
 });
 
 test("reasoning rows start open only while they are still streaming", () => {

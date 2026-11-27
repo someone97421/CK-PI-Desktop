@@ -982,6 +982,9 @@ function bindingFromGenericModel(
     ...(record?.fastModeAllowed === true || record?.fast_mode_allowed === true
       ? { fastModeAllowed: true }
       : {}),
+    ...(typeof record?.allowEmptyThinkingSignature === "boolean"
+      ? { allowEmptyThinkingSignature: record.allowEmptyThinkingSignature }
+      : {}),
   };
 }
 

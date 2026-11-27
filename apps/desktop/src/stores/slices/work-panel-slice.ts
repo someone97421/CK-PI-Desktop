@@ -1,3 +1,5 @@
+import type { SessionSummary } from "@pi-desktop/shared";
+import { receiveFileManagerEntry, recordFileManagerOpen } from "../../lib/project-file-manager-tab";
 import { removeSideChat, sideChatTabSessionId } from "../../lib/side-chat";
 import { api } from "../../lib/api";
 import { isRemoteSession } from "../../lib/remote-session-safety";
@@ -71,8 +73,10 @@ export function currentWorkPanelContext(state: AppState): WorkPanelContext {
 export function switchWorkPanelSession(
   state: AppState,
   nextSessionId?: string,
+  createdSession?: SessionSummary,
 ): Pick<
   AppState,
+  | "fileManagerTabReceipts"
   | "workPanelContexts"
   | "workPanelOpen"
   | "workPanelTabs"
@@ -85,12 +89,16 @@ export function switchWorkPanelSession(
     currentWorkPanelContext(state),
     nextSessionId,
   );
+  const session = createdSession ?? state.sessions.find((item) => item.id === nextSessionId);
+  const received = receiveFileManagerEntry(state, session, switched.visible);
+  const visible = received?.context ?? switched.visible;
   return {
-    workPanelContexts: switched.contexts,
-    workPanelOpen: switched.visible.open,
-    workPanelTabs: switched.visible.tabs,
-    activeWorkPanelTabId: switched.visible.activeTabId,
-    workPanelFileRequest: switched.visible.fileRequest,
+    fileManagerTabReceipts: received?.receipts ?? state.fileManagerTabReceipts,
+    workPanelContexts: received && nextSessionId ? { ...switched.contexts, [nextSessionId]: visible } : switched.contexts,
+    workPanelOpen: visible.open,
+    workPanelTabs: visible.tabs,
+    activeWorkPanelTabId: visible.activeTabId,
+    workPanelFileRequest: visible.fileRequest,
   };
 }
 
@@ -228,6 +236,7 @@ export function createWorkPanelSlice({
         fileRequest,
       };
       return {
+        ...recordFileManagerOpen(state, sessionId, tab),
         workPanelContexts: {
           ...state.workPanelContexts,
           [sessionId]: nextContext,
@@ -276,6 +285,7 @@ export function createWorkPanelSlice({
         fileRequest,
       };
       return {
+        ...recordFileManagerOpen(state, sessionId, tab),
         workPanelOpen: true,
         workPanelRevealNonce: state.workPanelRevealNonce + 1,
         workPanelTabs: next.tabs,

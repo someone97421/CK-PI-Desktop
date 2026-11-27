@@ -173,6 +173,7 @@ test("selecting a retained background pane still hydrates the fresh detail", asy
     workPanelTabs: [],
     activeWorkPanelTabId: null,
     workPanelContexts: {},
+    fileManagerProjects: new Set(), fileManagerTabReceipts: {},
   });
   t.mock.method(api, "getSession", async () => ({
     session: { id: "session", messages: fresh, messageStart: 0, hasMoreBefore: false },

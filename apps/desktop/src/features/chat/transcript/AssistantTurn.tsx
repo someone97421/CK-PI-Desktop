@@ -12,21 +12,11 @@ import type {
 } from "@pi-desktop/shared";
 import { formatCompactTokenCount } from "@pi-desktop/shared";
 import {
-  reuseReadonlyMap,
   transcriptEntryReadingId,
   type AssistantTurnEntry,
   type TranscriptEntry,
 } from "../../../lib/assistant-turns";
-import {
-  collectDelegationStatuses,
-  collectDelegationTimings,
-} from "../../../lib/subagent-topology";
-import { segmentTurnProcess } from "../../../lib/turn-process";
 import { sessionAllows } from "../../../lib/remote-session-safety";
-import { resolveShowThinking } from "../../../lib/thinking-visibility";
-import { resolveTranscriptDisplayMode } from "../../../lib/transcript-display-mode";
-import { reviewChangeFromMessage } from "../../../lib/workspace-review";
-import { cachedVisibleProcessSteps } from "../../../lib/transcript-activity-summary";
 import { useSlotSessionId } from "../../../plugins/renderer-slots/use-slots";
 import { useAppStore } from "../../../stores/app-store";
 import { TranscriptReadOnlyContext } from "./context";
@@ -41,9 +31,7 @@ import {
   MessageTimestamp,
 } from "./shared";
 import { activityItemsEqual } from "./ActivityGroup";
-import { GeneratedImages } from "./GeneratedImages";
 import { MessageRow } from "./MessageRow";
-import { TaskProcessDrawer } from "./TaskProcessDrawer";
 import { assistantTurnMenuItems } from "./menu-items";
 import {
   useChatTextActions,
@@ -54,10 +42,7 @@ import {
   getAssistantTurnContent,
   reuseReferences,
 } from "../../../lib/transcript-summary";
-import { AssistantTurnParts } from "./AssistantTurnParts";
-import { TurnProcess } from "./TurnProcess";
-import { ToolRow } from "./ToolRow";
-import { ReviewChangeCard } from "../../../components/ReviewChangeCard";
+import { AssistantTurnBody } from "./AssistantTurnBody";
 import { ActionSlotSide } from "./ActionBarSlots";
 import { EntryExtraStack } from "./EntryExtraStack";
 import { TurnChangesCard } from "./TurnChangesCard";
@@ -304,7 +289,6 @@ export const AssistantTurn = memo(function AssistantTurn({
     ? slotMessage("assistant", { ...actionMessage, content }) : undefined,
   [complete, actionMessage, content]);
   const streaming = !settledTask && isActive && summary.streaming;
-  const showThinking = useAppStore((state) => resolveShowThinking(state.settings));
   /*
     The turn owns the menu for its whole subtree, the answer rows it renders
     included: Regenerate and Branch act on the turn's answer message, so a menu
@@ -334,69 +318,9 @@ export const AssistantTurn = memo(function AssistantTurn({
     });
   };
 
-  // Collect delegation statuses across ALL activity parts of this turn so that
-  // a TaskWait in one part can inform the Task cards in a different part.
   const toolsRef = useRef(summary.tools);
   const tools = reuseReferences(toolsRef.current, summary.tools);
   toolsRef.current = tools;
-  const generatedImages = useMemo(() => tools
-    .filter((message) => message.toolName === "GenerateImages")
-    .map((message) => <GeneratedImages key={message.id} message={message} />), [tools]);
-  // 保留子记录，TaskExecution 回执可能先于父 Task 行刷新到达。
-  const delegationItemsRef = useRef(summary.toolItems);
-  const delegationItems = reuseReferences(delegationItemsRef.current, summary.toolItems);
-  delegationItemsRef.current = delegationItems;
-  const rawDelegationStatuses = useMemo(
-    () => collectDelegationStatuses(delegationItems, { turnLive: !settledTask && (isActive || delegationsLive === true) }),
-    [delegationItems, isActive, delegationsLive, settledTask],
-  );
-  const rawDelegationTimings = useMemo(
-    () => collectDelegationTimings(delegationItems),
-    [delegationItems],
-  );
-  const statusesRef = useRef(rawDelegationStatuses);
-  const timingsRef = useRef(rawDelegationTimings);
-  const turnDelegationStatuses = reuseReadonlyMap(
-    statusesRef.current,
-    rawDelegationStatuses,
-  );
-  const turnDelegationTimings = reuseReadonlyMap(
-    timingsRef.current,
-    rawDelegationTimings,
-    (left, right) =>
-      left.startedAt === right.startedAt && left.completedAt === right.completedAt,
-  );
-  statusesRef.current = turnDelegationStatuses;
-  timingsRef.current = turnDelegationTimings;
-  const isPlainHistory = !task;
-  const { process, responses, lastActivityPart } = summary;
-  const displayMode = useAppStore((state) => resolveTranscriptDisplayMode(state.settings));
-  const segments = useMemo(
-    () => isPlainHistory ? segmentTurnProcess(process, displayMode) : [],
-    [process, displayMode, isPlainHistory],
-  );
-  const turnProcessActive = !settledTask && isActive;
-  const sourceTail = turnProcessActive ? entry.parts.at(-1) : undefined;
-  let activePart = sourceTail;
-  if (sourceTail?.kind === "message") {
-    const processTail = process.at(-1);
-    const responseTail = responses.at(-1);
-    if (responseTail?.message.id === sourceTail.message.id) activePart = responseTail;
-    else if (processTail?.kind === "message" &&
-      (processTail.message.id === sourceTail.message.id || processTail.sourceMessageId === sourceTail.message.id)) {
-      activePart = processTail;
-    }
-  }
-  const processOwnsActiveTail = activePart !== undefined && process.includes(activePart);
-  const visibleSteps = useMemo(
-    () => cachedVisibleProcessSteps(process, !showThinking, turnProcessActive && processOwnsActiveTail),
-    [process, showThinking, turnProcessActive, processOwnsActiveTail],
-  );
-  const partContext = {
-    isActive: turnProcessActive, activePart, lastActivityPart, runtimeActivity,
-    turnDelegationStatuses, turnDelegationTimings,
-    embedded: Boolean(settledTask) || isPlainHistory,
-  };
 
   return (
     <div
@@ -409,37 +333,7 @@ export const AssistantTurn = memo(function AssistantTurn({
       aria-label={t("chat.assistantMessage")}
     >
       <div className="message-col">
-        {settledTask ? (
-          <>
-            <TaskProcessDrawer key={settledTask.id} task={settledTask} processParts={process} sourceMessages={entry.sourceMessages}>
-              <AssistantTurnParts parts={process} {...partContext} />
-            </TaskProcessDrawer>
-            <AssistantTurnParts parts={responses} {...partContext} />
-          </>
-        ) : isPlainHistory ? (
-          <>
-            <TurnProcess
-              turnId={entry.id} processParts={process} turnParts={entry.parts}
-              visibleSteps={visibleSteps} isActive={turnProcessActive}
-              failed={summary.hasError} activity={runtimeActivity}
-            >
-              {segments.map((segment) => segment.kind === "run" ? (
-                <div className="turn-run-row" key={`run-${segment.key}`}>
-                  <ToolRow imagesInTurn message={segment.item.message}
-                    autoOpen={lastActivityPart?.kind === "activity" && lastActivityPart.items.at(-1) === segment.item}
-                    {...(segment.item.delegate ? { delegate: segment.item.delegate } : {})} />
-                  <ReviewChangeCard message={segment.item.message} />
-                </div>
-              ) : (
-                <AssistantTurnParts key={`process-${segment.key}`} parts={segment.parts} {...partContext} />
-              ))}
-            </TurnProcess>
-            <AssistantTurnParts parts={responses} {...partContext} />
-          </>
-        ) : (
-          <AssistantTurnParts parts={process} {...partContext} />
-        )}
-        {generatedImages}
+        <AssistantTurnBody entry={entry} isActive={isActive} delegationsLive={delegationsLive} runtimeActivity={runtimeActivity} />
         {/* Mounted with the reply slots, so a streaming turn never grows it;
             plugin entry extras stay beneath it. */}
         {slotReply ? <TurnChangesCard tools={tools} /> : null}

@@ -258,6 +258,7 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     available_for_subagents: Some(true),
                     native_web_search: None,
                     fast_mode_allowed: Some(true),
+                    allow_empty_thinking_signature: Some(true),
                 },
                 ModelBinding {
                     id: "plain-model".into(),
@@ -278,6 +279,7 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
                     available_for_subagents: None,
                     native_web_search: None,
                     fast_mode_allowed: None,
+                    allow_empty_thinking_signature: None,
                 },
             ]),
             default_model_id: None,
@@ -332,6 +334,10 @@ fn model_bindings_roundtrip_and_legacy_model_migrates_on_read() {
     assert!(config["models"][1].get("supportsImages").is_none());
     assert_eq!(config["models"][0]["fastModeAllowed"], true);
     assert!(config["models"][1].get("fastModeAllowed").is_none());
+    assert_eq!(config["models"][0]["allowEmptyThinkingSignature"], true);
+    assert!(config["models"][1].get("allowEmptyThinkingSignature").is_none());
+    assert_eq!(provider.models[0].allow_empty_thinking_signature, Some(true));
+    assert_eq!(provider.models[1].allow_empty_thinking_signature, None);
     assert_eq!(provider.models[0].supports_images, Some(true));
     assert_eq!(provider.models[1].supports_documents, Some(false));
     assert_eq!(config["models"][0]["supportsAudio"], true);
@@ -402,6 +408,7 @@ fn binding_with_alias(id: &str, alias: Option<&str>) -> ModelBinding {
         available_for_subagents: None,
         native_web_search: None,
         fast_mode_allowed: None,
+        allow_empty_thinking_signature: None,
     }
 }
 
@@ -1689,6 +1696,7 @@ fn binding_with_limits(id: &str, context_window: u32, max_tokens: u32) -> ModelB
         available_for_subagents: None,
         native_web_search: None,
         fast_mode_allowed: None,
+        allow_empty_thinking_signature: None,
     }
 }
 

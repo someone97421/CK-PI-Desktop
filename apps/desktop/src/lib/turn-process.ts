@@ -149,17 +149,18 @@ export type TurnProcessPhase =
   | { kind: "completed" };
 
 /** 失败和主动停止优先于运行状态；子代理结果不等于主轮次结果。 */
-export function turnProcessPhase({ parts, isActive, failed, activity }: {
+export function turnProcessPhase({ parts, isActive, failed, stopped, activity }: {
   parts: readonly AssistantTurnPart[];
   isActive: boolean;
   failed: boolean;
+  stopped?: boolean;
   activity?: AgentActivity;
 }): TurnProcessPhase {
   if (failed) return { kind: "failed" };
-  const stopped = parts.some((part) => part.kind === "compaction" ? false
+  const stoppedRow = parts.some((part) => part.kind === "compaction" ? false
     : part.kind === "message" ? part.message.status === "aborted"
       : part.items.some((item) => item.message.status === "aborted"));
-  if (stopped) return { kind: "stopped" };
+  if (stopped || stoppedRow) return { kind: "stopped" };
   if (isActive) return { kind: "running", phase: activity?.phase };
   if (turnHasStreamingRows(parts)) return { kind: "unsettled" };
   return { kind: "completed" };

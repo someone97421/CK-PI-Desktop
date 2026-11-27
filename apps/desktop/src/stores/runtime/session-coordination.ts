@@ -205,7 +205,7 @@ export function createSessionCoordination({
       };
       if (!commit.activated) return shared;
       return {
-        ...switchWorkPanelSession(current, summary.id),
+        ...switchWorkPanelSession(current, summary.id, summary),
         ...shared,
         ...retainSessionPane(current, summary.id, messages),
         activeSessionId: summary.id,
@@ -277,7 +277,7 @@ export function createSessionCoordination({
       };
       if (!commit.activated) return shared;
       return {
-        ...switchWorkPanelSession(current, summary.id),
+        ...switchWorkPanelSession(current, summary.id, summary),
         ...shared,
         ...retainSessionPane(current, summary.id, messages),
         activeSessionId: summary.id,

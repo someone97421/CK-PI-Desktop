@@ -192,6 +192,7 @@ export type AppSettings = {
   transcriptDisplayMode?: TranscriptDisplayMode;
   /** 已完成的普通过程分组自动折叠；缺省开启，任务拓扑与展示模式保持独立。 */
   autoCollapseSettledGroups?: boolean;
+  subagentStyle?: "transcript" | "bar";
   /** 已停止生成的思考自动折叠；缺省开启，仅影响展示。 */
   autoCollapseThinking?: boolean;
   /** @deprecated 保留旧客户端设置兼容；当前展示使用 transcriptDisplayMode。 */

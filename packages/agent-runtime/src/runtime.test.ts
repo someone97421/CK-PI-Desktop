@@ -14687,3 +14687,37 @@ describe("background Bash job waits in the production runtime", () => {
     }
   });
 });
+
+describe("automatic Bash job handoff", () => {
+  it.each([
+    ["eligible", true, false, { command: "printf hello" }, true],
+    ["non-final tool", true, true, { command: "printf hello" }, false],
+    ["pi-host", false, false, { command: "printf hello" }, false],
+    ["visible console", true, false, { command: "printf hello", visible: true }, false],
+    ["explicit background", true, false, { command: "printf hello", runInBackground: true }, false],
+    ["patch passthrough", true, false, { command: "git apply change.patch" }, false],
+  ] as const)("opts in only for an eligible Bash: %s", async (_label, supported, followed, args, expected) => {
+    const host = { call: vi.fn(async (method: string, _params?: unknown) => {
+      if (method === "backgroundJobs.capabilities") return { version: 1, supported };
+      if (method === "tools.execute") return { ok: true, content: { stdout: "ok" } };
+      return {};
+    }) };
+    const runtime = createRuntime({ host, turnId: "turn", subagents: [] });
+    const internal = runtime as any;
+    const toolCall = { type: "toolCall", id: "bash", name: "Bash", arguments: args };
+    const following = { type: "toolCall", id: "next", name: "Read", arguments: { path: "file" } };
+    try {
+      await internal.agent.beforeToolCall({
+        toolCall, args, assistantMessage: { content: followed ? [toolCall, following] : [toolCall] },
+      });
+      await internal.toolCatalog.get("Bash").execute(toolCall.id, args);
+      const request = host.call.mock.calls.find(([method]) => method === "tools.execute")?.[1];
+      expect(request).toBeDefined();
+      if (expected) expect(request).toHaveProperty("yieldAfterInitialWait", true);
+      else expect(request).not.toHaveProperty("yieldAfterInitialWait");
+      if ("runInBackground" in args) expect(request).toHaveProperty("runInBackground", true);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+});

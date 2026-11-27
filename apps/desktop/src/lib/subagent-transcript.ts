@@ -1,5 +1,5 @@
 import type { UiMessage } from "@pi-desktop/shared";
-import { messageThinking, type SubagentRunItem } from "./assistant-turns";
+import { buildDelegationReply, messageThinking, type SubagentRunItem } from "./assistant-turns";
 import { delegationIdForMessage } from "./subagent-panel";
 import { isDelegationStartTool } from "./tool-display";
 import { toolResultPayload } from "./tool-presentation";
@@ -8,9 +8,10 @@ type SubagentTranscriptTurn = {
   call: UiMessage;
   task: string;
   rows: SubagentRunItem[];
+  messages: UiMessage[];
 };
 
-function delegateTaskDescription(call: UiMessage): string {
+export function delegateTaskDescription(call: UiMessage): string {
   const args = call.toolArgs;
   if (!args || typeof args !== "object" || Array.isArray(args)) return "";
   const input = args as { task?: unknown; instruction?: unknown };
@@ -61,7 +62,7 @@ export function buildSubagentTranscript(messages: readonly UiMessage[], delegati
   if (!selected) return null;
 
   const turns: SubagentTranscriptTurn[] = calls.map((call) => ({
-    call, task: delegateTaskDescription(call), rows: [],
+    call, task: delegateTaskDescription(call), rows: [], messages: [],
   }));
   const turnsByCallId = new Map(turns.map((turn) => [turn.call.toolCallId || turn.call.id, turn]));
   let agentName: string | undefined;
@@ -70,6 +71,7 @@ export function buildSubagentTranscript(messages: readonly UiMessage[], delegati
     const turn = turnsByCallId.get(message.parentToolCallId);
     if (!turn) continue;
     agentName ||= message.agentName;
+    turn.messages.push(message);
     if (message.role === "tool") {
       turn.rows.push({ kind: "tool", message });
       continue;
@@ -86,5 +88,6 @@ export function buildSubagentTranscript(messages: readonly UiMessage[], delegati
       }
     }
   }
-  return { agentName, turns, selectedTurn: turns.find(({ call }) => call === selected) };
+  const projected = turns.map((turn) => ({ ...turn, reply: buildDelegationReply(turn.call.id, turn.messages) }));
+  return { agentName, turns: projected, selectedTurn: projected.find(({ call }) => call === selected) };
 }

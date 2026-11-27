@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { installComposerDeletionGuard } from "./native-deletion";
 import type {
   ClipboardEvent,
@@ -85,9 +85,11 @@ export function ComposerInput({
   onBlur,
 }: ComposerInputProps) {
   const inputMenu = useComposerContextMenu({ inputRef, inputBlocked, onInsert: onInsertFromMenu });
+  const insertNewlineRef = useRef(onInsertNewline);
+  insertNewlineRef.current = onInsertNewline;
   useLayoutEffect(() => {
     const editor = inputRef.current;
-    return editor ? installComposerDeletionGuard(editor) : undefined;
+    return editor ? installComposerDeletionGuard(editor, () => insertNewlineRef.current()) : undefined;
   }, [inputRef]);
   const navigation = suggestion?.navigation;
   return (
@@ -113,16 +115,6 @@ export function ComposerInput({
           translate="no"
           onPaste={onPaste}
           onContextMenu={inputMenu.onContextMenu}
-          onBeforeInput={(event) => {
-            const native = event.nativeEvent as InputEvent;
-            if (
-              native.inputType === "insertParagraph" ||
-              native.inputType === "insertLineBreak"
-            ) {
-              event.preventDefault();
-              onInsertNewline();
-            }
-          }}
           onInput={(event) => {
             const element = event.currentTarget;
             const source = readEditorValue(element);

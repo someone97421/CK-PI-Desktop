@@ -57,6 +57,7 @@ import { useComposerModelMenu } from "../features/chat/composer/hooks/useCompose
 import { ComposerToolbar } from "../features/chat/composer/ComposerToolbar";
 import { ComposerStatus } from "../features/chat/composer/ComposerStatus";
 import { SubagentStrip } from "../features/chat/composer/SubagentStrip";
+import { ComposerSubagents } from "../features/chat/composer/ComposerSubagents";
 
 const EMPTY_QUEUED_PROMPTS: QueuedPrompt[] = [];
 
@@ -553,7 +554,11 @@ export function Composer({
           insertDroppedDirectoryPaths={insertDroppedDirectoryPaths}
           dismissDroppedDirectories={dismissDroppedDirectories}
         />
-        {variant === "docked" && activeSessionId ? <SubagentStrip key={activeSessionId} sessionId={activeSessionId} /> : null}
+        {variant === "docked" && activeSessionId ? (
+          settings?.subagentStyle === "bar" && subagentSessionId
+            ? <ComposerSubagents key={subagentSessionId} sessionId={subagentSessionId} />
+            : <SubagentStrip key={activeSessionId} sessionId={activeSessionId} />
+        ) : null}
         <div
           ref={composerShellRef}
           className={`composer-shell${inputBlocked ? " is-gated" : ""}${

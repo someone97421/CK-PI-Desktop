@@ -5,6 +5,7 @@ import ts from "typescript";
 import * as workPanelResize from "../src/lib/work-panel-resize.ts";
 import * as workPanelTabs from "../src/lib/work-panel-tabs.ts";
 import * as sideChat from "../src/lib/side-chat.ts";
+import * as projectFileManagerTab from "../src/lib/project-file-manager-tab.ts";
 
 const STORAGE_KEY = "pi.desktop.workPanel";
 
@@ -20,6 +21,7 @@ function loadSlice() {
     fileName: file.pathname,
   });
   const imports = {
+    "../../lib/project-file-manager-tab": projectFileManagerTab,
     "../../lib/api": { api: {} },
     "../../lib/remote-session-safety": { isRemoteSession: () => false },
     "../../lib/side-chat": sideChat,
@@ -57,6 +59,7 @@ function createStore(overrides = {}) {
     workPanelTabs: [],
     activeWorkPanelTabId: null,
     workPanelContexts: {},
+    fileManagerProjects: new Set(), fileManagerTabReceipts: {},
     workPanelFileRequest: null,
     workPanelWidth: 360,
     workPanelYieldedWidth: null,

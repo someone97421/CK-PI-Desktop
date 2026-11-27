@@ -184,6 +184,8 @@ export const SETTINGS_NAV: SettingsNavEntry[] = [
       "settings.showThinkingDesc",
       "settings.transcriptDisplayMode",
       "settings.transcriptDisplayModeDesc",
+      "settings.subagentStyle",
+      "settings.subagentStyleDesc",
       "settings.autoCollapseThinking",
       "settings.autoCollapseThinkingDesc",
       "settings.autoCollapseSettledGroups",
