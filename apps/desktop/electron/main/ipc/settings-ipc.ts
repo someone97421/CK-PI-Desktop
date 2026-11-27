@@ -130,16 +130,16 @@ export function registerSettingsIpc({
       await applyTemporaryWorkspaceContextMenu(prospectiveSettings);
     }
     const releaseSettingsWrite = liveCallService?.beginSettingsWrite(prospectiveSettings);
-    let result: AppSettings;
+    let result: { ok: true };
     const autoLaunchChanged = typeof validatedSettings?.autoLaunch === "boolean";
     let settingsSaved = false;
     try {
       if (autoLaunchChanged) {
         setAutoLaunch(validatedSettings.autoLaunch);
       }
-      result = await host.call<AppSettings>("settings.set", validatedSettings);
+      result = await host.call<{ ok: true }>("settings.set", validatedSettings);
       settingsSaved = true;
-      await liveCallService?.settingsWritten(result);
+      await liveCallService?.settingsWritten(prospectiveSettings);
     } catch (error) {
       if (autoLaunchChanged && !settingsSaved) {
         try { setAutoLaunch(currentSettings.autoLaunch === true); } catch { }
