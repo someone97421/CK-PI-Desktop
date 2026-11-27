@@ -615,6 +615,7 @@ export type DelegationRecord = {
    * `stopped` rather than `aborted`. */
   stopRequested: boolean;
   turns: number;
+  executionStartTurns?: number;
   toolCalls: number;
   lastToolName?: string;
   lastPhase?: AgentActivityAgentPhase;
@@ -647,6 +648,8 @@ export function delegationExecutionId(delegationId: string, execution = 1): stri
 }
 
 function delegationSummary(record: DelegationRecord): Record<string, unknown> {
+  const turns = record.result?.turns ?? record.run?.modelTurns ?? record.turns;
+  const startTurns = (record.execution ?? 1) === 1 ? 0 : record.executionStartTurns;
   return {
     execution: record.execution ?? 1,
     statusRevision: record.statusRevision ?? 0,
@@ -666,7 +669,8 @@ function delegationSummary(record: DelegationRecord): Record<string, unknown> {
     thinkingLevel: record.thinkingLevel,
     status: record.status,
     startedAt: record.startedAt,
-    turns: record.result?.turns ?? record.run?.modelTurns ?? record.turns,
+    turns,
+    ...(startTurns !== undefined ? { executionTurns: Math.max(0, turns - startTurns) } : {}),
     toolCalls: record.result?.toolCalls ?? record.run?.observation.snapshot().startedSteps ?? record.toolCalls,
     ...(record.lastToolName ? { lastToolName: record.lastToolName } : {}),
     ...(record.completedAt ? { completedAt: record.completedAt } : {}),
@@ -6516,6 +6520,7 @@ Delegation rules:
           (record.parentToolCallIds ??= []).push(toolCallId);
           record.taskMessage = undefined;
           record.turns = record.result?.turns ?? record.turns;
+          record.executionStartTurns = record.run.modelTurns;
           record.toolCalls = record.result?.toolCalls ?? record.toolCalls;
           record.result = undefined;
           record.startedAt = Date.now();

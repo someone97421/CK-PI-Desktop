@@ -349,20 +349,31 @@ export function useComposerAttachments({
         const referenceSessionId = targetSessionId ?? "";
 
         let result;
+        let skippedCount = 0;
         if (native) {
           const owner = useAppStore.getState().sessions.find(session => session.id === targetSessionId);
           const reference = !owner?.remoteWorkspace && (!owner?.source || owner.source === "desktop") && !targetSessionId?.startsWith("remote:");
           const imported = native.token
             ? await api.importFiles(targetSessionId, native.token, draftId, reference)
-            : { files: [] };
-          let index = 0;
-          result = { files: native.items.map(item => item.kind === "directory"
-            ? { path: item.path, name: item.name, kind: "directory" as const, mimeType: undefined, size: undefined, localReference: undefined }
-            : imported.files[index++]) };
+            : { files: [], skippedFileIndices: [] };
+          const skipped = new Set(imported.skippedFileIndices);
+          skippedCount = skipped.size;
+          let fileIndex = 0;
+          let importedIndex = 0;
+          result = { files: native.items.map(item => {
+            if (item.kind === "directory") {
+              return { path: item.path, name: item.name, kind: "directory" as const, mimeType: undefined, size: undefined, localReference: undefined };
+            }
+            return skipped.has(fileIndex++) ? null : imported.files[importedIndex++];
+          }).filter(file => file != null) };
         } else {
           result = await api.pasteFiles(targetSessionId, payload, draftId);
         }
         if (draftId && useAppStore.getState().draftSessionId !== draftId) return;
+        if (skippedCount) {
+          showErrorToast(new Error(t("chat.pastedFilesSkipped", { count: skippedCount })));
+          if (!result.files.length) return;
+        }
         if (native && readComposerDraftRevision(sourceDraftKey) !== sourceRevision) {
           if (useAppStore.getState().activeSessionId === sourceSessionId) {
             sourceValue = readEditorValue(editor);

@@ -197,6 +197,7 @@ export async function importComposerFiles(
   dataDir: string,
   sessionId: string,
   paths: string[],
+  maxTotalBytes = MAX_TOTAL_BYTES,
 ): Promise<ComposerPastedFile[]> {
   if (!SAFE_SESSION_ID.test(sessionId)) {
     throw new Error("invalid session id");
@@ -242,8 +243,8 @@ export async function importComposerFiles(
       throw new Error(`imported file is too large (maximum ${MAX_FILE_BYTES} bytes)`);
     }
     totalBytes += size;
-    if (totalBytes > MAX_TOTAL_BYTES) {
-      throw new Error(`imported files are too large (maximum ${MAX_TOTAL_BYTES} bytes)`);
+    if (totalBytes > maxTotalBytes) {
+      throw new Error(`imported files are too large (maximum ${maxTotalBytes} bytes)`);
     }
     const mimeType = mimeTypeForPath(source);
     prepared.push({

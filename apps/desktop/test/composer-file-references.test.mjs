@@ -151,7 +151,7 @@ test("a native clipboard paste without a project copies images and retains sessi
   assert.equal(preparedImage.mediaRef?.ref, preparedImage.message.ref);
   assert.equal(preparedNotes.message.localReference, files[1].localReference);
   await assert.rejects(preparePromptAttachments(data, "other", undefined, [files[1]], true), /does not belong/);
-  await assert.rejects(pasteComposerClipboardFiles(data, "source", undefined, [join(root, "missing.png")]));
+  assert.deepEqual(await pasteComposerClipboardFiles(data, "source", undefined, [join(root, "missing.png")]), [null]);
 });
 
 test("native selection IPC binds its sender and preserves file references and images in the draft", async t => {
@@ -201,6 +201,15 @@ test("native selection IPC binds its sender and preserves file references and im
   assert.equal(reference.mediaRef, undefined);
   assert.equal(importedImage.message.kind, "image");
   assert.equal(importedImage.mediaRef?.ref, importedImage.message.ref);
+
+  const blocked = join(data, "scratch", "source", "pasted");
+  await mkdir(join(blocked, ".."), { recursive: true });
+  await writeFile(blocked, "blocks image copying");
+  const partial = await handler({ sender: { id: 1 } }, {
+    sessionId: "source", token: rememberComposerPickerSelection([image, path], 1), reference: true,
+  });
+  assert.deepEqual(Array.from(partial.skippedFileIndices), [0]);
+  assert.deepEqual(Array.from(partial.files, file => file.path), [path]);
 });
 
 test("temporary draft references keep their owner through the first send without a project", async t => {

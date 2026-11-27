@@ -48,7 +48,7 @@ export async function referenceComposerFiles(
  * like picker imports so vision models receive their bytes even after the
  * source (often a screenshot tool's temp file) disappears. Everything else,
  * and images beyond the import bounds, stays a metadata-only live reference.
- * Results keep the paste order because the renderer pairs them by index.
+ * Keep a slot for each path so the renderer can preserve mixed file/folder order.
  * Called only with paths consumed from a sender-bound native selection.
  */
 export async function pasteComposerClipboardFiles(
@@ -56,30 +56,33 @@ export async function pasteComposerClipboardFiles(
   sessionId: string,
   projectPath: string | undefined,
   paths: string[],
-): Promise<ComposerPastedFile[]> {
+): Promise<Array<ComposerPastedFile | null>> {
   if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) throw new Error("invalid session id");
   if (paths.length > 20) throw new Error("too many referenced files (maximum 20)");
+  if (paths.some(path => !isAbsolute(path))) throw new Error("file reference path must be absolute");
   const sources = await Promise.all(paths.map(async path => {
-    if (!isAbsolute(path)) throw new Error("file reference path must be absolute");
-    const canonical = await realpath(path);
-    const info = await stat(canonical);
-    if (!info.isFile()) throw new Error("selected path is not a file");
-    return { path: canonical, size: info.size };
+    try {
+      const canonical = await realpath(path);
+      const info = await stat(canonical);
+      return info.isFile() ? { path: canonical, size: info.size } : null;
+    } catch {
+      return null;
+    }
   }));
-  const importable = selectImportableComposerImages(sources);
-  const referencePaths = sources.filter((_, index) => !importable[index]).map(source => source.path);
-  const imagePaths = sources.filter((_, index) => importable[index]).map(source => source.path);
-  const referenced = referencePaths.length > 0
-    ? await referenceComposerFiles(dataDir, sessionId, projectPath, referencePaths)
-    : [];
-  const imported = await importComposerFiles(dataDir, sessionId, imagePaths);
-  let nextImage = 0;
-  let nextReference = 0;
-  return importable.map(isImage => {
-    const file = isImage ? imported[nextImage++] : referenced[nextReference++];
-    if (!file) throw new Error("pasted file result is missing");
-    return file;
-  });
+  const importable = selectImportableComposerImages(sources.filter(source => source !== null));
+  let sourceIndex = 0;
+  return Promise.all(sources.map(async source => {
+    if (!source) return null;
+    const copyImage = importable[sourceIndex++];
+    try {
+      const files = copyImage
+        ? await importComposerFiles(dataDir, sessionId, [source.path], source.size)
+        : await referenceComposerFiles(dataDir, sessionId, projectPath, [source.path]);
+      return files[0] ?? null;
+    } catch {
+      return null;
+    }
+  }));
 }
 
 /** Refresh metadata only; reading contents still belongs to normal tool admission. */

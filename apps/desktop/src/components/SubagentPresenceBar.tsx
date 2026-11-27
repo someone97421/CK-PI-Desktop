@@ -98,6 +98,7 @@ export function SubagentPresenceBar({ sessionId, items, onOpen }: {
       time: elapsed === null ? "—" : formatToolDuration(elapsed / 1000),
       usage: `↑${tokens(item.inputTokens)} ↓${tokens(item.outputTokens)}`,
       speed: speed === null ? "—" : t("chat.usageThroughput", { count: Math.round(speed) }),
+      modelCalls: item.modelCalls === null ? "—" : t("chat.subagentModelCalls", { count: item.modelCalls }),
       tools: item.toolCalls === null ? "—" : t("chat.subagentToolCalls", { count: item.toolCalls }),
     };
   };
@@ -137,7 +138,8 @@ export function SubagentPresenceBar({ sessionId, items, onOpen }: {
         <p className="presence-model">{selected.model || "—"}</p>
         <dl><dt>{t("chat.usageTotal")}</dt><dd>{details.usage}</dd>
           <dt>{t("chat.usageThroughputLabel")}</dt><dd>{details.speed}</dd></dl>
-        <div className="presence-pair"><span>{t("modes.run.elapsed", { duration: details.time })}</span><span>{details.tools}</span></div>
+        <div className="presence-pair"><span>{details.modelCalls}</span><span>{details.tools}</span></div>
+        <div className="presence-pair"><span>{t("modes.run.elapsed", { duration: details.time })}</span></div>
         <footer>
           <Button size="sm" variant="ghost" onClick={() => openRecord(selected)}>{t("chat.presenceRecord")}</Button>
           <SubagentStopButton sessionId={sessionId} name={name(selected)} delegationId={selectedIdentity?.delegationId}
@@ -148,7 +150,8 @@ export function SubagentPresenceBar({ sessionId, items, onOpen }: {
         {items.map((item) => {
           const metric = metricText(item);
           return <button type="button" className="presence-row" key={item.id} onClick={() => openRecord(item)}>
-            <span><strong>{name(item)}</strong> · {status(item)}</span><span>{metric.time} · {metric.tools}</span>
+            <span><strong>{name(item)}</strong> · {status(item)}</span><span>{metric.time}</span>
+            <span>{metric.modelCalls}</span><span>{metric.tools}</span>
             <span className="presence-model">{item.model || "—"}</span><span>{metric.usage} · {metric.speed}</span>
           </button>;
         })}

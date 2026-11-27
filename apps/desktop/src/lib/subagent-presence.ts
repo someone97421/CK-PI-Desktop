@@ -17,6 +17,7 @@ export type SubagentPresenceItem = {
   model: string;
   startedAt: number | null;
   completedAt: number | null;
+  modelCalls: number | null;
   toolCalls: number | null;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -86,6 +87,12 @@ export function projectSubagentPresence(messages: readonly UiMessage[], turnLive
     const assistants = rows.filter((row) => row.role === "assistant");
     const latestAssistant = assistants.at(-1);
     const realTools = rows.filter(isDelegateToolCall);
+    const receiptTurns = rows.findLast((row) => row.role === "tool" && row.toolName === "TaskExecution" &&
+      count(record(toolResultPayload(row)).executionTurns) !== null);
+    const receiptModelCalls = count(record(receiptTurns && toolResultPayload(receiptTurns)).executionTurns);
+    const reportedModelCalls = count(payload.executionTurns) ?? (execution <= 1 ? count(payload.turns) : null);
+    const modelCalls = receiptModelCalls !== null || reportedModelCalls !== null
+      ? Math.max(receiptModelCalls ?? 0, reportedModelCalls ?? 0) : null;
     const observedTools = new Set(realTools.map((row) => row.toolCallId || row.id)).size;
     const reportedTools = execution <= 1 ? count(payload.toolCalls) ?? count(collaboration.completedSteps) : null;
     const latest = rows.findLast((row) => row.role === "assistant" || isDelegateToolCall(row));
@@ -103,6 +110,7 @@ export function projectSubagentPresence(messages: readonly UiMessage[], turnLive
       model: text(latestAssistant?.responseModelId) || text(payload.modelId) || text(latestAssistant?.modelId),
       startedAt: timings.get(id)?.startedAt ?? count(Date.parse(message.createdAt)),
       completedAt: timings.get(id)?.completedAt ?? null,
+      modelCalls,
       toolCalls: observedTools || reportedTools !== null ? Math.max(observedTools, reportedTools ?? 0) : null,
       inputTokens: count(usage.inputTokens) ?? (usageRows.length ? usageRows.reduce((sum, row) => sum + row.inputTokens, 0) : null),
       outputTokens: count(usage.outputTokens) ?? (usageRows.length ? usageRows.reduce((sum, row) => sum + row.outputTokens, 0) : null),

@@ -1240,7 +1240,7 @@ export const api = {
   pickPhotos: () =>
     invoke<{ token: string | null; canceled?: boolean }>(IPC.invoke.composerPickPhotos),
   importFiles: (sessionId: string | null | undefined, token: string, draftId?: string, reference = false) =>
-    invoke<{ files: ComposerPastedFile[] }>(IPC.invoke.composerImportFiles, {
+    invoke<{ files: ComposerPastedFile[]; skippedFileIndices?: number[] }>(IPC.invoke.composerImportFiles, {
       ...(sessionId ? { sessionId } : {}),
       ...(draftId ? { draftId } : {}),
       token,

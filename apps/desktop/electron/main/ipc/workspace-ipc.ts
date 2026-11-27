@@ -649,7 +649,12 @@ export function registerWorkspaceIpc({
       }
       const paths = consumeComposerPickerSelection(input.token, event.sender.id);
       if (input.reference === true) {
-        return { files: await pasteComposerClipboardFiles(dataDir, sessionId, projectPath, paths) };
+        const slots = await pasteComposerClipboardFiles(dataDir, sessionId, projectPath, paths);
+        const skippedFileIndices = slots.flatMap((file, index) => file ? [] : [index]);
+        return {
+          files: slots.filter(file => file !== null),
+          ...(skippedFileIndices.length ? { skippedFileIndices } : {}),
+        };
       }
       return {
         files: await importComposerFiles(
