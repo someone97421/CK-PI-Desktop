@@ -14,6 +14,7 @@ const { createModeRunCoordinator, modeContinuationOrigin, modeContinuationReques
 const { createModeCatalogService } = await import("../electron/main/runtime/mode-catalog.ts");
 const { registerModesIpc } = await import("../electron/main/ipc/modes-ipc.ts");
 const { IPC } = await import("@pi-desktop/shared");
+const { parseModeTurnNotice } = await import("../../../packages/agent-runtime/src/modes/mode-params.ts");
 
 const staged = {
   version: 1,
@@ -50,7 +51,7 @@ function run(overrides = {}) {
   };
 }
 
-function fixture({ open = null, claim, settle = { run: null, continue: false }, pendingReturn = null, catalogModes = null, featureReturnTo = "agent" } = {}) {
+function fixture({ open = null, claim, settle = { run: null, continue: false }, pendingReturn = null, catalogModes = null, featureReturnTo = "agent", reviewDefinition } = {}) {
   const calls = [];
   const continuations = [];
   const aborts = [];
@@ -82,7 +83,7 @@ function fixture({ open = null, claim, settle = { run: null, continue: false }, 
       if (catalogModes && !catalogModes.includes(id)) return undefined;
       if (id === "feature") return { ...staged, returnTo: featureReturnTo };
       if (id === "goal") return { ...staged, id: "goal", source: "builtin" };
-      if (id === "review") return { ...staged, id: "review", stages: [] };
+      if (id === "review") return reviewDefinition ?? { ...staged, id: "review", stages: [] };
       return undefined;
     },
   };
@@ -399,6 +400,22 @@ test("remove uses the Host return mode when the mode definition changed during t
   assert.equal(notices.length, 1);
   assert.equal(notices[0].mode, "review");
   assert.equal(notices[0].modeDefinition.id, "review");
+});
+
+test("remove projects bundle metadata out of the sidecar notice and keeps it in the Host snapshot", async () => {
+  const bundle = { subagents: [], includeGlobalSubagents: false, disabledSkills: [] };
+  const expected = { ...staged, id: "review", permission: "contract", prompt: "Review only.", stages: [] };
+  const reviewDefinition = { ...expected, bundle };
+  const stopped = run({ state: "stopped", revision: 4, finishedAt: "t" });
+  const { coordinator, calls, notices } = fixture({
+    settle: { run: stopped, continue: false }, pendingReturn: "review", reviewDefinition,
+  });
+  await coordinator.prepareTurn({ sessionId: "s1", turnId: "t1", sessionMode: "feature", content: "x", origin: "user" });
+  await coordinator.control({ sessionId: "s1", runId: "run1", expectedRevision: 3, action: "remove" });
+  assert.deepEqual(parseModeTurnNotice(notices[0]), {
+    turnId: "t1", runId: "run1", action: "release", mode: "review", modeDefinition: expected,
+  });
+  assert.deepEqual(calls.findLast((call) => call.method === "modes.settleReturn").params.modeSnapshot, { ...expected, bundle });
 });
 
 test("a user mode whose name differs from its directory is read, saved and deleted in place (#2202)", async () => {

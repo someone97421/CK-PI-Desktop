@@ -1045,18 +1045,16 @@ export function ModelConfigPage() {
         statusRevision={jevStatusRevision}
       />
 
-      {imageGenerationCandidates.length > 0 ? (
-        <section className="settings-card-block">
-          <div className="settings-panel model-default-panel">
-            <ImageGenerationModelRow
-              settings={settings}
-              providers={providers}
-              busy={changingImageModel}
-              onChange={setImageGenerationDefault}
-            />
-          </div>
-        </section>
-      ) : null}
+      <section className="settings-card-block">
+        <div className="settings-panel model-default-panel">
+          <ImageGenerationModelRow
+            settings={settings}
+            providers={providers}
+            busy={changingImageModel}
+            onChange={setImageGenerationDefault}
+          />
+        </div>
+      </section>
 
       {setupFor !== null ? (
         <ProviderSetupDialog

@@ -25,7 +25,7 @@ test("sidebar renders global pins once, outside project folding and history limi
     const old = "2020-01-01T00:00:00Z";
     const session = (id, projectPath, updatedAt = old) => ({
       id,
-      title: id,
+      title: id === "closed-pin" ? "A deliberately long pinned session title that must leave room for its project label" : id,
       projectPath,
       createdAt: old,
       updatedAt,
@@ -72,8 +72,8 @@ test("sidebar renders global pins once, outside project folding and history limi
           I18nextProvider,
           { i18n },
           createElement(Sidebar, {
-            collapsed: false,
-            onToggle() {},
+            onToggleSidebar() {},
+            sidebarToggleShortcut: "",
             sidebarWidth: 275,
             onWidthChange() {},
             onWidthCommit() {},
@@ -95,20 +95,21 @@ test("sidebar renders global pins once, outside project folding and history limi
       "temporary-pin",
     ];
     assert.deepEqual(rows(pinnedSection(html)), expectedPins);
-    assert.match(pinnedSection(html), />Closed project<\/span>/);
+    assert.match(pinnedSection(html), /<span class="thread-item-title">A deliberately long pinned session title that must leave room for its project label<\/span><span class="thread-item-project is-project" title="Closed project">Closed project<\/span>/);
     assert.ok(pinnedSection(html).includes(catalogs.en.nav.hoverCardTemporarySpace));
     const pinnedHtml = pinnedSection(html);
     const blankPathStart = pinnedHtml.indexOf('data-sidebar-session-row="blank-path-pin"');
     const nextRow = pinnedHtml.indexOf("data-sidebar-session-row=", blankPathStart + 1);
     const blankPathRow = pinnedHtml.slice(blankPathStart, nextRow === -1 ? undefined : nextRow);
     assert.ok(blankPathRow.includes(catalogs.en.nav.hoverCardTemporarySpace));
+    assert.match(blankPathRow, /<span class="thread-item-project">/);
     assert.doesNotMatch(pinnedSection(html), /sidebar-time-group/);
     assert.ok(
       html.indexOf('data-sidebar-session-section="pinned"') <
         html.indexOf('data-sidebar-session-section="temporary"'),
     );
     assert.equal(rows(html).length, new Set(rows(html)).size, "pins have no duplicate rows");
-    assert.equal(rows(html).filter((id) => id.startsWith("normal-")).length, 10);
+    assert.equal(rows(html).filter((id) => id.startsWith("normal-")).length, 3);
     assert.ok(rows(html).includes("temporary-normal"));
     assert.ok(!rows(html).includes("archived-pin"));
     assert.ok(!rows(html).includes("archived-project-pin"));

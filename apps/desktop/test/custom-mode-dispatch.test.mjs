@@ -6,17 +6,30 @@ register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 const { registerAgentIpc } = await import("../electron/main/ipc/agent-ipc.ts");
 const { modeAfterPlanningUpdate } = await import("../src/stores/helpers/planning-projection.ts");
 const { IPC } = await import("@pi-desktop/shared");
+const { parseModeLaunchParams, parseModePromptTurn } = await import("../../../packages/agent-runtime/src/modes/mode-params.ts");
 
-async function promptFixture({ unavailable = false, prepared } = {}) {
+function modeWithBundle(staged = false) {
+  return {
+    ...reviewMode,
+    stages: staged ? [{
+      id: "work", prompt: "Inspect the changes.", permission: "contract", loop: false,
+      onEnter: [], onCompaction: [], exit: [],
+    }] : [],
+    bundle: { subagents: [], includeGlobalSubagents: false, disabledSkills: [] },
+  };
+}
+
+const reviewMode = {
+  version: 1, id: "review", label: "Review", description: "", source: "user",
+  permission: "contract", prompt: "Review without changing files.",
+  returnTo: "agent", artifacts: [], stages: [],
+  budget: { maxTurns: 20, maxTokens: null },
+};
+
+async function promptFixture({ unavailable = false, prepared, definition = reviewMode, validateMode = false } = {}) {
   const handlers = new Map();
   const prompts = [];
   const finished = [];
-  const definition = {
-    version: 1, id: "review", label: "Review", description: "", source: "user",
-    permission: "contract", prompt: "Review without changing files.",
-    returnTo: "agent", artifacts: [], stages: [],
-    budget: { maxTurns: 20, maxTokens: null },
-  };
   const hostCalls = [];
   const host = { async call(method) {
     hostCalls.push(method);
@@ -30,6 +43,7 @@ async function promptFixture({ unavailable = false, prepared } = {}) {
     setProjectInstructionRoot() {},
     async call(method, params) {
       assert.equal(method, "agent.prompt");
+      if (validateMode) parseModePromptTurn(params.modeTurn, parseModeLaunchParams(params));
       prompts.push(params);
       return { accepted: true, turnId: "turn" };
     },
@@ -43,10 +57,11 @@ async function promptFixture({ unavailable = false, prepared } = {}) {
         return definition;
       },
       prepareTurn: async () => prepared,
+      abandonTurn: async () => {},
     },
     getHost: () => host, getSidecar: () => sidecar, getAgentHostBridge: () => null,
     logger: { app() {} }, persistenceOutbox: {}, dataDir: "/unused-no-attachments",
-    activeTurns: new Map(), activeTurnUsages: new Map(),
+    activeTurns: new Map(), activeTurnUsages: new Map(), completionNoticeTurns: new Set(),
     approvedExecutionIdsBySession: new Map(), claimedExecutionSessions: new Map(),
     recordTurnStart() {}, acquireSessionOperation: async () => () => {},
     resolveAgentRuntimeLaunch: async () => ({
@@ -68,6 +83,30 @@ test("a simple custom mode reaches the sidecar with its instructions and policy"
   assert.equal(prompts.length, 1);
   assert.deepEqual(prompts[0].modeDefinition, definition);
   assert.equal(prompts[0].modeTurn, undefined);
+});
+
+test("sending a mode with bundle metadata keeps its instructions and policy at the sidecar boundary", async () => {
+  const snapshot = modeWithBundle();
+  const { bundle, ...expected } = snapshot;
+  const { prompt, prompts } = await promptFixture({ definition: snapshot, validateMode: true });
+  assert.deepEqual(await prompt(), { accepted: true, turnId: "turn" });
+  assert.deepEqual(prompts[0].modeDefinition, expected);
+  assert.equal(snapshot.bundle, bundle);
+});
+
+test("sending a staged mode with bundle metadata keeps the saved stage and its turn", async () => {
+  const definition = modeWithBundle(true);
+  const { bundle, ...expected } = definition;
+  const modeTurn = {
+    runId: "run", stageId: "work", origin: "user", enteredStage: true, input: "Inspect the changes.", artifactPaths: {},
+  };
+  const { prompt, prompts } = await promptFixture({
+    definition: modeWithBundle(), prepared: { definition, modeTurn }, validateMode: true,
+  });
+  assert.deepEqual(await prompt(), { accepted: true, turnId: "turn" });
+  assert.deepEqual(prompts[0].modeDefinition, expected);
+  assert.deepEqual(prompts[0].modeTurn, modeTurn);
+  assert.equal(definition.bundle, bundle);
 });
 
 test("an unavailable mode closes admission without persisting a message or calling the sidecar", async () => {

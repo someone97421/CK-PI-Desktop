@@ -136,6 +136,19 @@ test("sidebar shows a bounded standalone session list before retained projects",
   assert.doesNotMatch(sidebarSource, /data-sidebar-project-group="temporary"/);
 });
 
+test("sidebar lets short viewports scroll without collapsing the projects list", () => {
+  assert.match(sidebarSource, /className="sidebar-body no-drag" onScroll=\{\(\) => closeMenus\(false\)\}/);
+  assert.doesNotMatch(sidebarSource, /sidebar-session-groups[^\n]*\bmin-h-0\b/);
+  assert.match(globalStyles, /\.sidebar-body\s*\{[^}]*overflow:\s*hidden auto;/);
+  assert.match(globalStyles, /\.sidebar-session-groups\s*\{[^}]*min-height:\s*60px;[^}]*overflow-y:\s*auto;/);
+  assert.match(globalStyles, /\.sidebar-standalone-sessions,\s*\.sidebar-pinned-sessions\s*\{[^}]*grid-template-rows:\s*auto minmax\(30px, 1fr\);/);
+});
+
+test("sidebar reserves capped width for project labels", () => {
+  assert.match(globalStyles, /\.thread-item-project\s*\{[^}]*max-width:\s*40%;[^}]*text-overflow:\s*ellipsis;/);
+  assert.match(globalStyles, /\.thread-item-project\.is-project\s*\{[^}]*flex:\s*0 0 auto;/);
+});
+
 test("sidebar project and session lists stay coordinated with the global type scale", () => {
   assert.match(
     globalStyles,

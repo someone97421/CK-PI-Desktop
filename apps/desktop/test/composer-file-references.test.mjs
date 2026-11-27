@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { referenceComposerFiles, resolveComposerFileReference } from "../electron/main/composer-file-references.ts";
+import { pasteComposerClipboardFiles, referenceComposerFiles, resolveComposerFileReference } from "../electron/main/composer-file-references.ts";
 import { preparePromptAttachments, appendPromptFallbackPaths } from "../electron/main/prompt-attachments.ts";
 import { appendLocalFileReferenceContext } from "@pi-desktop/shared";
 import { consumeComposerPickerSelection, rememberComposerPickerSelection } from "../electron/main/composer-picker.ts";
@@ -48,7 +48,7 @@ test("disk metadata and project line ranges remain distinct in a mixed prompt", 
   const source = join(project, "gpt.py");
   await writeFile(source, "first\nsecond\n");
   const line = { kind: "file", path: source, name: "gpt.py", lineRange: { start: 1, end: 2 } };
-  const prepared = await preparePromptAttachments(data, "source", project, [reference, line], false, "Compare");
+  const prepared = await preparePromptAttachments(data, "source", project, [reference, line], false, {}, "Compare");
   assert.equal(prepared.length, 2);
   assert.equal(prepared[0].message.localReference, reference.localReference);
   assert.equal(prepared[0].message.size, 67108865);
@@ -58,7 +58,7 @@ test("disk metadata and project line ranges remain distinct in a mixed prompt", 
   assert.ok(!prompt.includes(source), "line ranges are resolved by the scoped runtime Read");
   assert.deepEqual(await readdir(data), ["composer-file-references"]);
   for (const attachment of [{ ...reference, lineRange: line.lineRange }, { ...line, localReference: reference.localReference }]) {
-    await assert.rejects(preparePromptAttachments(data, "source", project, [attachment], false, "Inspect"), { errorCode: "INVALID_ARGUMENT" });
+    await assert.rejects(preparePromptAttachments(data, "source", project, [attachment], false, {}, "Inspect"), { errorCode: "INVALID_ARGUMENT" });
   }
 });
 
@@ -88,8 +88,74 @@ test("a reference to an image remains metadata and never hydrates outside-projec
   await assert.rejects(preparePromptAttachments(data, "source", project, [{ ...reference, localReference: undefined }], true, {}, "Inspect"), /outside the session roots/);
 });
 
-test("native selection IPC binds sender and session before registering and dispatching a large reference", async t => {
-  const { data, project, path } = await fixture(t);
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNo2PDgPwAG1AMQ/5r/oAAAAABJRU5ErkJggg==", "base64");
+
+test("native clipboard images are copied like picker imports while other files stay live references (#2529)", async t => {
+  const { root, data, project, path } = await fixture(t);
+  const image = join(root, "PixPin_2026-11-23_14-37-54.png");
+  const notes = join(root, "notes.txt");
+  await writeFile(image, PNG);
+  await writeFile(notes, "notes");
+  const files = await pasteComposerClipboardFiles(data, "source", project, [notes, image, path]);
+  assert.deepEqual(files.map(file => file.name), ["notes.txt", "PixPin_2026-11-23_14-37-54.png", "outside project & 中文.bin"], "paste order is preserved");
+  assert.equal(files[0].localReference !== undefined, true);
+  assert.equal(files[2].localReference !== undefined, true);
+  const [, pasted] = files;
+  assert.equal(pasted.kind, "image");
+  assert.equal(pasted.localReference, undefined);
+  assert.equal(pasted.size, PNG.length);
+  assert.ok(pasted.path.startsWith(join(data, "scratch", "source", "pasted")), "image is materialized in session scratch");
+  assert.deepEqual(readFileSync(pasted.path), PNG);
+  // The screenshot tool may clear its temp file before the user sends.
+  await rm(image);
+  const prepared = await preparePromptAttachments(data, "source", project, files, true, {}, "What is in this screenshot?");
+  assert.equal(prepared[1].message.kind, "image");
+  assert.match(prepared[1].message.ref, /^attachments\/[0-9a-f]{64}$/);
+  assert.equal(prepared[1].mediaRef?.ref, prepared[1].message.ref, "vision models receive the stored image reference");
+  assert.deepEqual(await readFile(join(data, prepared[1].message.ref)), PNG);
+  assert.equal(prepared[0].mediaRef, undefined);
+  assert.equal(prepared[2].mediaRef, undefined);
+});
+
+test("native clipboard images beyond the import bounds, SVGs, and non-images keep the reference flow", async t => {
+  const { root, data, project } = await fixture(t);
+  const large = join(root, "huge.png");
+  const handle = await open(large, "w");
+  await handle.truncate(100_000_001);
+  await handle.close();
+  const svg = join(root, "icon.svg");
+  await writeFile(svg, "<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+  const batch = [];
+  for (let index = 0; index < 3; index++) {
+    const part = join(root, `part-${index}.png`);
+    const file = await open(part, "w");
+    await file.truncate(60 * 1024 * 1024);
+    await file.close();
+    batch.push(part);
+  }
+  const files = await pasteComposerClipboardFiles(data, "source", project, [large, svg, ...batch]);
+  assert.deepEqual(files.map(file => file.localReference !== undefined), [true, true, false, false, true], "the batch byte budget overflows to references");
+  assert.deepEqual(files.map(file => file.kind), ["file", "file", "image", "image", "file"]);
+});
+
+test("a native clipboard paste without a project copies images and retains session-bound file references", async t => {
+  const { root, data } = await fixture(t);
+  const image = join(root, "draft.png");
+  const notes = join(root, "notes.txt");
+  await writeFile(image, PNG);
+  await writeFile(notes, "notes");
+  const files = await pasteComposerClipboardFiles(data, "source", undefined, [image, notes]);
+  assert.equal(files[0].kind, "image");
+  assert.ok(files[1].localReference);
+  const [preparedImage, preparedNotes] = await preparePromptAttachments(data, "source", undefined, files, true);
+  assert.equal(preparedImage.mediaRef?.ref, preparedImage.message.ref);
+  assert.equal(preparedNotes.message.localReference, files[1].localReference);
+  await assert.rejects(preparePromptAttachments(data, "other", undefined, [files[1]], true), /does not belong/);
+  await assert.rejects(pasteComposerClipboardFiles(data, "source", undefined, [join(root, "missing.png")]));
+});
+
+test("native selection IPC binds its sender and preserves file references and images in the draft", async t => {
+  const { root, data, project, path } = await fixture(t);
   const source = readFileSync(new URL("../electron/main/ipc/workspace-ipc.ts", import.meta.url), "utf8");
   const tree = ts.createSourceFile("workspace.ts", source, ts.ScriptTarget.Latest, true);
   let callback, storageOwner;
@@ -104,10 +170,10 @@ test("native selection IPC binds sender and session before registering and dispa
   const code = ts.transpileModule(`const composerStorageOwner = ${storageOwner.getText(tree)};\n(${callback.getText(tree)})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const host = { call: async (_method, input) => ({ session: input.id === "source" ? { projectPath: project } : input.id === "remote-session" ? { remoteWorkspace: {} } : null }) };
   const handler = vm.runInNewContext(code, {
-    host, getHost: () => host, dataDir: data,
+    host, dataDir: data,
     assertMainWindowSender: event => assert.equal(event.sender.id, 1, "main sender required"),
-    consumeComposerPickerSelection, referenceComposerFiles,
-    importComposerFiles: () => assert.fail("reference must not invoke the byte importer"),
+    consumeComposerPickerSelection, pasteComposerClipboardFiles,
+    importComposerFiles: () => assert.fail("native clipboard files must not use the picker importer directly"),
     ErrorCodes: { NOT_FOUND: "NOT_FOUND", INVALID_ARGUMENT: "INVALID_ARGUMENT" },
   });
   const input = { sessionId: "source", token: rememberComposerPickerSelection([path], 1), reference: true };
@@ -125,12 +191,16 @@ test("native selection IPC binds sender and session before registering and dispa
     sessionId: "remote-session", token: rememberComposerPickerSelection([path], 1), reference: true,
   }), /local desktop session/);
   const draftId = "11111111-2222-4333-8444-555555555555";
+  const image = join(root, "draft.png");
+  await writeFile(image, PNG);
   const draft = await handler({ sender: { id: 1 } }, {
-    draftId, token: rememberComposerPickerSelection([path], 1), reference: true,
+    draftId, token: rememberComposerPickerSelection([path, image], 1), reference: true,
   });
-  const [firstSend] = await preparePromptAttachments(data, draftId, undefined, draft.files, true);
-  assert.equal(firstSend.message.ref, path);
-  assert.equal(firstSend.mediaRef, undefined);
+  const [reference, importedImage] = await preparePromptAttachments(data, draftId, undefined, draft.files, true);
+  assert.equal(reference.message.ref, path);
+  assert.equal(reference.mediaRef, undefined);
+  assert.equal(importedImage.message.kind, "image");
+  assert.equal(importedImage.mediaRef?.ref, importedImage.message.ref);
 });
 
 test("temporary draft references keep their owner through the first send without a project", async t => {

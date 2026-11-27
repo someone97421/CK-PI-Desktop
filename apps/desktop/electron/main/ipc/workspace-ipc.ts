@@ -1,7 +1,7 @@
 import { clipboard } from "electron";
 import { registerSidebarPreferencesIpc } from "./sidebar-preferences-ipc";
 import { readComposerClipboardDirectories } from "../composer-clipboard-directories";
-import { referenceComposerFiles } from "../composer-file-references";
+import { pasteComposerClipboardFiles } from "../composer-file-references";
 import { BrowserWindow, dialog, shell, type OpenDialogOptions } from "electron";
 import { basename, dirname } from "node:path";
 import { homedir } from "node:os";
@@ -649,7 +649,7 @@ export function registerWorkspaceIpc({
       }
       const paths = consumeComposerPickerSelection(input.token, event.sender.id);
       if (input.reference === true) {
-        return { files: await referenceComposerFiles(dataDir, sessionId, projectPath, paths) };
+        return { files: await pasteComposerClipboardFiles(dataDir, sessionId, projectPath, paths) };
       }
       return {
         files: await importComposerFiles(

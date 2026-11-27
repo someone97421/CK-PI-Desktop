@@ -22,6 +22,7 @@ import type {
   ModeUpdateRequest,
 } from "@pi-desktop/shared";
 import type { ModeCatalogService } from "./mode-catalog";
+import { toSidecarModeDefinition, type SidecarModeDefinition } from "./mode-sidecar-definition";
 
 type HostCaller = { call<T = unknown>(method: string, params?: unknown): Promise<T> };
 
@@ -61,7 +62,7 @@ function totalTokens(usage: MessageUsage | undefined): number {
 /** Sidecar `agent.modeTurnNotice` payload (without session and turn ids). */
 export type ModeTurnNotice =
   | { runId: string; action: "closeout" }
-  | { runId: string; action: "release"; mode: string; modeDefinition?: ModeDefinition };
+  | { runId: string; action: "release"; mode: string; modeDefinition?: SidecarModeDefinition };
 
 export type ModeRunCoordinator = ReturnType<typeof createModeRunCoordinator>;
 
@@ -259,7 +260,7 @@ export function createModeRunCoordinator(deps: {
               runId: request.runId,
               action: "release",
               mode: session.mode,
-              ...(modeDefinition ? { modeDefinition } : {}),
+              ...(modeDefinition ? { modeDefinition: toSidecarModeDefinition(modeDefinition) } : {}),
             });
           })().catch(warn("mode run remove could not release the turn"));
         }

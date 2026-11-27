@@ -4,6 +4,7 @@ import { IPC, ErrorCodes, compactionRecordId, composeMentionPrompt, findSkillMen
 import type { SessionConfigurationQueue } from "../runtime/session-configuration";
 import type { FinishTurn } from "../runtime/plans";
 import { modeContinuationOrigin, type ModeRunCoordinator, type PreparedModeTurn } from "../runtime/mode-runs";
+import { toSidecarModeDefinition } from "../runtime/mode-sidecar-definition";
 import { expandSlashInvocation, visionFromModelConfig, type ComposerTemplate } from "@pi-desktop/agent-runtime";
 import { mediaCapabilitiesForProvider } from "@pi-desktop/agent-runtime";
 import type { MediaInputCapabilities } from "@pi-desktop/shared";
@@ -726,9 +727,9 @@ export function registerAgentIpc({
         "agent.prompt",
         {
           ...launch.sidecarParams,
-          ...(modeDefinition ? { modeDefinition } : {}),
+          ...(modeDefinition ? { modeDefinition: toSidecarModeDefinition(modeDefinition) } : {}),
           ...(preparedMode?.modeTurn
-            ? { mode: preparedMode.definition.id, modeDefinition: preparedMode.definition, modeTurn: preparedMode.modeTurn }
+            ? { mode: preparedMode.definition.id, modeTurn: preparedMode.modeTurn }
             : {}),
           // The host-created durable turn is the approval identity used by
           // Rust. The runtime must not replace it with a provider-local UUID.

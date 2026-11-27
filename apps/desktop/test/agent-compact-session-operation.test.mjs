@@ -69,6 +69,8 @@ function buildHarness({ hostCall, sidecarCall, resolveSessionMessageInput }) {
     },
     "../composer-mcp": { expandMcpInvocation: () => null },
     "../runtime/mode-runs": { modeContinuationOrigin: () => undefined },
+    "../runtime/mode-sidecar-definition": load("../electron/main/runtime/mode-sidecar-definition.ts", {}),
+    "../runtime/session-subagents": { sessionSubagentsEnabled: () => true, setSessionSubagentsEnabled() {} },
     "@pi-desktop/agent-runtime": { expandSlashInvocation: () => null, visionFromModelConfig: () => null },
     "../prompt-attachments": {
       appendPromptFallbackPaths: () => [],

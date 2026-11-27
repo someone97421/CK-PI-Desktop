@@ -2208,7 +2208,10 @@ export function Sidebar({
           <WorktreeBadge worktree={session.worktree} sessionId={session.id} />
           <span className="thread-item-title">{taskTitle(session.title)}</span>
           {options?.global ? (
-            <span className="thread-item-project">
+            <span
+              className={cx("thread-item-project", normalizedProjectPath && "is-project")}
+              title={normalizedProjectPath ? owningProject : undefined}
+            >
               {owningProject}
             </span>
           ) : null}
@@ -2574,7 +2577,7 @@ export function Sidebar({
         </div>
       </div>
 
-      <div className="sidebar-body no-drag">
+      <div className="sidebar-body no-drag" onScroll={() => closeMenus(false)}>
 
         {pinnedSessions.length > 0 ? (
           <section
@@ -2717,7 +2720,7 @@ export function Sidebar({
         </div>
 
         <div
-          className={`sidebar-session-groups min-h-0 flex-1 overflow-auto px-0.5 ${projectsDropActive ? "is-drop-target" : ""}`}
+          className={`sidebar-session-groups px-0.5 ${projectsDropActive ? "is-drop-target" : ""}`}
           onScroll={() => {
             if (sessionMenu || projectMenu || sectionMenu || sortOpen) closeMenus(false);
           }}

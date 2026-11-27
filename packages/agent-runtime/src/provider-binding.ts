@@ -38,6 +38,7 @@ import {
   resolveNativeWebSearch,
   nativeWebSearchTransport,
   deepseekRequestCompat,
+  mistralRequestCompat,
   zhipuRequestCompat,
   type ThinkingLevel,
   type MediaInputCapabilities,
@@ -431,6 +432,10 @@ export function buildProviderModel(
     modelId: provider.modelId,
     family: catalogModel.family,
   });
+  const mistralCompat = mistralRequestCompat({
+    vendorKey: provider.vendorKey,
+    baseUrl,
+  });
   const copilotDefaults =
     provider.vendorKey?.trim().toLowerCase() === "github-copilot"
       ? nativeCopilotHeaders(provider.modelId)
@@ -460,6 +465,7 @@ export function buildProviderModel(
           ...(thinkingProtocolCompat ?? {}),
           ...(zhipuCompat ?? {}),
           ...(deepseekCompat ?? {}),
+          ...(mistralCompat ?? {}),
           ...(typeof catalog?.supportsReasoningEffort === "boolean"
             ? { supportsReasoningEffort: catalog.supportsReasoningEffort }
             : {}),
