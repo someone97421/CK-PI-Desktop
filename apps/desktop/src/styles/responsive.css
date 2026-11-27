@@ -14,7 +14,7 @@
   }
 }
 
-@container composer-stack (max-width: 450px) {
+@container composer-stack (max-width: 520px) {
   .composer-left {
     flex-shrink: 0;
   }
