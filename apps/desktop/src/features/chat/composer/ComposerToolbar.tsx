@@ -62,6 +62,7 @@ export type ComposerToolbarProps = {
   contextUsage: ContextUsage | null;
   value: string;
   modelReady: boolean;
+  revisingPlan?: boolean;
   sendBlocked: boolean;
   composerTransforms: PluginComposerTransformMeta[];
   activeTransformKey: string | null;
@@ -154,6 +155,7 @@ export function ComposerToolbar({
   contextUsage,
   value,
   modelReady,
+  revisingPlan,
   sendBlocked,
   composerTransforms,
   activeTransformKey,
@@ -193,7 +195,7 @@ export function ComposerToolbar({
             className="icon-btn icon-btn-square"
             tooltip={t("chat.addFiles")}
             ariaLabel={t("chat.addFiles")}
-            disabled={controlsBlocked || pasting || !attachmentsAllowed}
+            disabled={(controlsBlocked && !revisingPlan) || pasting || !attachmentsAllowed}
             onClick={() => {
               setPermissionOpen(false);
               setModeOpen(false);
@@ -332,6 +334,19 @@ export function ComposerToolbar({
               showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
             });
           }} startedAt={runStartedAt} timing={runTiming} />
+        ) : revisingPlan ? (
+          <TooltipButton
+            type="button"
+            className="btn btn-primary composer-plan-revision"
+            tooltip={t("plan.sendRevision")}
+            ariaLabel={t("plan.sendRevision")}
+            data-testid="send-plan-revision"
+            disabled={!hasDraftContent || sendBlocked || !modelReady}
+            onClick={() => void submit()}
+          >
+            <span>{t("plan.sendRevision")}</span>
+            <IconArrowUp size={16} aria-hidden="true" />
+          </TooltipButton>
         ) : (
           <TooltipButton
             type="button"

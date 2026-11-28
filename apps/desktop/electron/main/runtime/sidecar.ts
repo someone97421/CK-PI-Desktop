@@ -173,6 +173,12 @@ export function createSidecarRuntime({
     // plan-approval code (issue #1077).
     errorCode: string,
   ): Promise<void> => {
+    if (activeTurns.get(sessionId) !== crashedTurnId) {
+      await releaseCrashedTurn(sessionId, crashedTurnId, errorCode);
+      return;
+    }
+    agentExtensions.cancelPrompts(sessionId);
+    plugins.cancelSessionTools(sessionId, "Agent sidecar exited unexpectedly");
     const executionId = approvedExecutionIdsBySession.get(sessionId);
     if (runtimeState.host) {
       await runtimeState.host.call("plans.abort", { sessionId }).catch(() => undefined);
@@ -198,6 +204,7 @@ export function createSidecarRuntime({
     await finishTurn(sessionId, "aborted", errorCode, {
       recoverInflight: true,
       turnId: crashedTurnId,
+      interruptionError: { code: errorCode, message: "Agent sidecar exited unexpectedly" },
     });
     if (executionId) {
       await finishApprovedExecution(

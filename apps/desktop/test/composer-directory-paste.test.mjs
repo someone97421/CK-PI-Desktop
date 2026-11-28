@@ -18,7 +18,10 @@ function extract(source, name) {
   return result;
 }
 
-function harness(native, { files = [], text = "", items = [], paused, sourceSessionId = "source", temporaryDraftId = null } = {}) {
+function harness(native, {
+  files = [], text = "", items = [], paused, sourceSessionId = "source", temporaryDraftId = null,
+  attachmentsAllowed = true, insertSucceeds = true, references = [], selection = { start: 7, end: 7 },
+} = {}) {
   const read = path => readFileSync(new URL(path, import.meta.url), "utf8");
   const editor = read("../src/features/chat/composer/editor.ts");
   const hook = read("../src/features/chat/composer/hooks/useComposerAttachments.ts");
@@ -30,7 +33,7 @@ function harness(native, { files = [], text = "", items = [], paused, sourceSess
   let draftSessionId = temporaryDraftId;
   const element = { textContent: "before after" };
   const context = {
-    inputBlocked: false, attachmentsAllowed: true, activeSessionId,
+    inputBlocked: false, attachmentsAllowed, activeSessionId, fileReferencesRef: { current: references },
     draftKey: sourceSessionId ?? "home", largePasteThreshold: 1000,
     ref: { current: element }, valueRef: { current: element.textContent },
     previousWorkspacePathRef: { current: "/synthetic/project" },
@@ -44,7 +47,7 @@ function harness(native, { files = [], text = "", items = [], paused, sourceSess
     module: { exports: {} }, Array, TextEncoder, crypto, FILE_LINES_CLIPBOARD_TYPE,
     context: () => context, ...context, draft: context, isInputBlocked: false,
     setPasting() {}, readEditorValue: editor => editor.textContent,
-    editorSelectionRange: () => ({ start: 7, end: 7 }),
+    editorSelectionRange: () => selection,
     pasteSessionLinks: () => false, parseSessionLinks: () => [],
     showErrorToast: error => errors.push(error.message),
     api: {
@@ -68,7 +71,7 @@ function harness(native, { files = [], text = "", items = [], paused, sourceSess
     readComposerDraftRevision: () => revision,
     readComposerDraft: () => undefined,
     document: { execCommand: (_command, _showUi, text) => { textInsertions.push(text); return true; } },
-    insertClipboardText: (_editor, text) => { textInsertions.push(text); return true; },
+    insertClipboardText: (_editor, text) => { textInsertions.push(text); return insertSucceeds; },
     deleteComposerDraft() {}, HOME_DRAFT_KEY: "home",
     useAppStore: { getState: () => ({ activeSessionId, draftSessionId, workspace: { path: workspacePath }, sessions: [{ id: "source" }, { id: "created" }] }) },
     resolveAttachmentOwner: async (owner) => {
@@ -77,10 +80,11 @@ function harness(native, { files = [], text = "", items = [], paused, sourceSess
       created.push(workspacePath); activeSessionId = "created"; return { sessionId: "created", draftId: undefined };
     },
   };
-  const code = [extract(editor, "clipboardFiles"), extract(editor, "preferClipboardText"),
-    "const pasteClipboardText = " + extract(hook, "pasteClipboardText") + ";",
-    "module.exports = " + extract(hook, "pasteClipboardFiles"),
-  ].join("\n");
+  const code = ["clipboardFiles", "preferClipboardText", "normalizeClipboardLineEndings"]
+    .map(name => extract(editor, name)).concat([
+      "const pasteClipboardText = " + extract(hook, "pasteClipboardText") + ";",
+      "module.exports = " + extract(hook, "pasteClipboardFiles"),
+    ]).join("\n");
   vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, environment);
   return {
     drafts, errors, writes, imported, transfers, created, nativeReads, textInsertions,
@@ -97,6 +101,21 @@ function harness(native, { files = [], text = "", items = [], paused, sourceSess
 }
 
 const folder = { kind: "directory", path: "/synthetic/copied folder", name: "copied folder" };
+test("plain-text paste fallback keeps existing references except a chip replaced by the selection", async () => {
+  const kept = { token: "\ue001", sessionId: "source" };
+  const replaced = { token: "\ue002", sessionId: "source" };
+  const directory = { ...folder, sessionId: "source" };
+  const run = harness(null, {
+    attachmentsAllowed: false, insertSucceeds: false, text: "two\r\nlines",
+    references: [kept, replaced, directory], selection: { start: 2, end: 3 },
+  });
+  run.edit("\ue001 \ue002");
+  await run.paste();
+  assert.equal(run.drafts[0].text, "\ue001 two\nlines");
+  assert.deepEqual(Array.from(run.drafts[0].references), [kept, directory]);
+  assert.deepEqual(run.nativeReads, []);
+});
+
 test("paste uses native directory paths even when Chromium exposes no File", async () => {
   const run = harness({ items: [folder], token: null });
   await run.paste();

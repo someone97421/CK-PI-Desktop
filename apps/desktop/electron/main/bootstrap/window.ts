@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getModuleDirectory } from "../module-path";
+import { createWindowRendererCrashLoopFallback } from "./renderer-crash-loop-window";
 import {
   APP_NAME,
   builtinWindowBackground,
@@ -48,7 +49,7 @@ import {
   macosWindowSurfaceOptions,
   mainWindowBackgroundOptions,
 } from "../window-background";
-import { recoverRendererAfterGone } from "../renderer-recovery";
+import { createRendererRecovery } from "../renderer-recovery";
 
 function windowsIconPath(dataDir: string): string | undefined {
   if (process.platform !== "win32") return undefined;
@@ -565,36 +566,68 @@ export async function createWindow({
     return { action: "deny" };
   });
   let windowCloseAccepted = false;
+  let rendererExitedDuringInitialLoad = false;
+  let rendererLoaded = false;
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+  const rendererFile = join(getModuleDirectory(import.meta.url), "../renderer/index.html");
+  const loadMainRenderer = () => rendererUrl ? window.loadURL(rendererUrl) : window.loadFile(rendererFile);
   window.webContents.on("did-start-loading", () => {
     browserHost.detachPresentation();
     windowState.notificationViewingSessionId = null;
     if (windowState.mainWindow === window) resetMenuRendererReady(window);
   });
-  window.webContents.on("render-process-gone", (_event, details) => {
-    windowState.notificationViewingSessionId = null;
-    recoverRendererAfterGone(details, {
-      isCurrentWindow: windowState.mainWindow === window,
-      quitting: windowState.quitting,
-      windowCloseAccepted,
-      windowDestroyed: window.isDestroyed(),
-      webContentsDestroyed: window.webContents.isDestroyed(),
-      reload: () => window.webContents.reload(),
-      log: (rendererDetails, reloaded) => {
-        logger.app(
-          "diagnostics",
-          rendererDetails.reason === "clean-exit" ? "info" : "warn",
-          "renderer process exited",
-          {
-            event: "rendererProcessGone",
-            data: {
-              reason: rendererDetails.reason,
-              exitCode: rendererDetails.exitCode,
-              reloaded,
-            },
+  const canRecoverRenderer = () =>
+    !windowState.quitting && !windowCloseAccepted && isLiveWindow();
+  const crashLoopFallback = createWindowRendererCrashLoopFallback({
+    state: windowState,
+    dataDir,
+    logger,
+    isRendererStable: () => canRecoverRenderer() && !window.webContents.isCrashed(),
+  });
+  const rendererRecovery = createRendererRecovery({
+    canReload: canRecoverRenderer,
+    reload: () => {
+      if (rendererLoaded) {
+        window.webContents.reload();
+        return;
+      }
+      // A startup crash can leave no committed page to reload.
+      void loadMainRenderer().catch((error: unknown) => {
+        if (!canRecoverRenderer() || window.webContents.isCrashed()) return;
+        logger.app("diagnostics", "warn", "main renderer retry failed to load", { data: String(error) });
+      });
+    },
+    onCrashLoopDetected: crashLoopFallback.crashLoopDetected,
+    log: (rendererDetails, reloaded) => {
+      logger.app(
+        "diagnostics",
+        rendererDetails.reason === "clean-exit" ? "info" : "warn",
+        "renderer process exited",
+        {
+          event: "rendererProcessGone",
+          data: {
+            reason: rendererDetails.reason,
+            exitCode: rendererDetails.exitCode,
+            reloaded,
           },
-        );
-      },
-    });
+        },
+      );
+    },
+  });
+  window.once("closed", () => {
+    rendererRecovery.dispose();
+    crashLoopFallback.dispose();
+  });
+  window.webContents.on("did-start-navigation", ({ isMainFrame, isSameDocument }) => {
+    if (isMainFrame && !isSameDocument) crashLoopFallback.rendererInterrupted();
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    if (windowState.mainWindow === window) windowState.notificationViewingSessionId = null;
+    crashLoopFallback.rendererInterrupted();
+    if (!rendererLoaded && details.reason !== "clean-exit" && canRecoverRenderer()) {
+      rendererExitedDuringInitialLoad = true;
+    }
+    rendererRecovery.rendererGone(details);
   });
 
   // Devtools shortcut, gated on developer mode. Frameless windows get no
@@ -659,6 +692,12 @@ export async function createWindow({
     scheduleWorkPanelReservation();
   });
   window.webContents.on("did-finish-load", sendFullScreen);
+  window.webContents.on("did-finish-load", () => {
+    if (!canRecoverRenderer()) return;
+    rendererRecovery.rendererLoaded();
+    rendererLoaded = true;
+    crashLoopFallback.rendererLoaded();
+  });
 
   const sendMaximized = () => {
     if (window.isDestroyed() || window.webContents.isDestroyed()) return;
@@ -2243,14 +2282,14 @@ export async function createWindow({
     }
   });
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    await window.loadURL(process.env.ELECTRON_RENDERER_URL);
-    if (process.env.PI_DESKTOP_DEVTOOLS === "1") {
-      window.webContents.openDevTools({ mode: "detach" });
-    }
-  } else {
-    await window.loadFile(
-      join(getModuleDirectory(import.meta.url), "../renderer/index.html"),
-    );
+  try {
+    await loadMainRenderer();
+  } catch (error) {
+    // Recovery already owns this window if its initial load was interrupted by a renderer exit.
+    if (!rendererExitedDuringInitialLoad) throw error;
+    return;
+  }
+  if (rendererUrl && process.env.PI_DESKTOP_DEVTOOLS === "1" && isLiveWindow()) {
+    window.webContents.openDevTools({ mode: "detach" });
   }
 }

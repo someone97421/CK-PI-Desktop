@@ -9,11 +9,11 @@ import { createNavigationIntentController } from "../../lib/navigation-intent";
 import { trackAskSnapshot } from "../../lib/pending-asks";
 import {
   dedupeSessionMessages,
-  durableCoversLiveSessionMessages,
   mergeLiveSessionMessages,
   projectMessageEnd,
   projectMessageUpdate,
   removeLiveSessionMessage,
+  settleTranscriptAfterError,
   upsertLiveSessionMessage,
 } from "../../lib/session-transcript";
 import { getSessionToolMessagePositions } from "../../lib/session-transcript-updates";
@@ -408,6 +408,8 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
           : upsertLiveSessionMessage(current, completed);
         break;
       }
+      case "error":
+        return settleTranscriptAfterError(current, event.error.code === "TURN_ABORTED");
       default:
         return current;
     }
@@ -453,6 +455,9 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
       next,
       sessionHistoryCache.get(sessionId) ?? state.sessionHistory[sessionId],
     );
+    if (envelope.event.type === "error" && state.retainedTranscripts[sessionId]) {
+      set((current) => recordPaneTranscript(current, sessionId, next));
+    }
   }
 
   function queueWorkspaceAlignment<T>(task: () => Promise<T>): Promise<T> {
@@ -547,11 +552,4 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
     },
     planSyncGeneration: (sessionId) => planSyncGenerations.get(sessionId) ?? 0,
   };
-}
-
-export function sessionMessagesCoverLiveTail(
-  durable: UiMessage[],
-  live: UiMessage[] | undefined,
-): boolean {
-  return durableCoversLiveSessionMessages(durable, live);
 }

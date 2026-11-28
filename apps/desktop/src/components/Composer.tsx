@@ -22,7 +22,7 @@ import {
 import { useAppStore } from "../stores/app-store";
 import { sessionWorkspacePath } from "../lib/session-workspace";
 import { latestTurnContextInspector } from "../lib/latest-turn-context";
-import { isActivePlanExecution } from "../lib/plan-mode-state";
+import { isActivePlanExecution, pendingRevisionPlan } from "../lib/plan-mode-state";
 import { headAsk, queuedAskCount } from "../lib/pending-asks";
 import type { QueuedPrompt } from "../lib/queued-prompts";
 import { composerModelDisplayName, sameComposerModelId } from "../lib/composer-models";
@@ -77,6 +77,7 @@ export function Composer({
 }) {
   const { t } = useTranslation();
   const sendPrompt = useAppStore((s) => s.sendPrompt);
+  const sendPlanRevision = useAppStore((s) => s.sendPlanRevision);
   const steerPrompt = useAppStore((s) => s.steerPrompt);
   const removeQueuedPrompt = useAppStore((s) => s.removeQueuedPrompt);
   const moveQueuedPrompt = useAppStore((s) => s.moveQueuedPrompt);
@@ -192,6 +193,12 @@ export function Composer({
   const planCheckpoint = useAppStore((s) =>
     s.activeSessionId ? s.planCheckpoints[s.activeSessionId] : undefined,
   );
+  const pendingPlan = useAppStore((s) =>
+    s.activeSessionId ? s.pendingPlans[s.activeSessionId] : undefined,
+  );
+  const approvalPending = planCheckpoint?.status === "pending";
+  const revisionPlan = pendingRevisionPlan(activeSessionSummary, planCheckpoint, pendingPlan);
+  const approvalBlocksInput = approvalPending && !revisionPlan;
   const pendingAsk = useAppStore((s) =>
     headAsk(s.pendingAsks, s.activeSessionId),
   );
@@ -209,6 +216,7 @@ export function Composer({
   const composerTransformInvalidateRef = useRef<() => void>(() => {});
   const composerShellRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
+  const submittingRevisionDrafts = useRef(new Set<string>());
   const publishedDockHeightRef = useRef(-1);
 
   const invalidateComposerTransforms = () => {
@@ -225,7 +233,7 @@ export function Composer({
     prefill,
     t,
     invalidateComposerTransforms,
-    inputBlocked: planCheckpoint?.status === "pending" || nativeInputBlocked,
+    inputBlocked: approvalBlocksInput || nativeInputBlocked,
   });
   const {
     ref,
@@ -261,12 +269,11 @@ export function Composer({
     draft,
   });
 
-  const approvalPending = planCheckpoint?.status === "pending";
   const largePasteThreshold = normalizeLargePasteThreshold(
     settings?.largePasteThreshold,
   );
   const attachments = useComposerAttachments({
-    inputBlocked: approvalPending || nativeSession,
+    inputBlocked: approvalBlocksInput || nativeSession,
     attachmentsAllowed,
     activeSessionId,
     draftKey,
@@ -297,9 +304,10 @@ export function Composer({
   } = attachments;
   const executionActive = isActivePlanExecution(planCheckpoint);
   const runActive = isRunning || executionActive;
-  const inputBlocked = approvalPending || pasting || nativeInputBlocked;
+  const inputBlocked = approvalBlocksInput || pasting || nativeInputBlocked;
   const controlsBlocked = approvalPending || nativeSession || !sessionAllows(capabilitySession, "canConfigureModel");
-  const sendBlocked = approvalPending || pasting || nativeInputBlocked;
+  // SubmitPlan terminates its turn. Wait for its terminal event before starting the revision.
+  const sendBlocked = inputBlocked || (Boolean(revisionPlan) && isRunning);
   // Edit returns one queued row to the composer. The row is removed and its
   // captured draft becomes the input, so the input must be empty first: the
   // live read is the only current source (the draft cache is not per keystroke).
@@ -313,7 +321,7 @@ export function Composer({
   const placeholderKeys = PLACEHOLDER_KEYS[variant];
   const placeholderKey =
     placeholderKeys[placeholderIndex % placeholderKeys.length] ?? placeholderKeys[0];
-  const placeholderText = t(placeholderKey);
+  const placeholderText = t(revisionPlan ? "plan.revisionPrompt" : placeholderKey);
 
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const draftConfiguration = useAppStore((s) => s.draftConfiguration);
@@ -421,7 +429,7 @@ export function Composer({
   // Chips occupy sentinel characters, which `trim()` preserves. Keep the
   // explicit reference check for migrated drafts and annotations as content.
   const hasDraftContent =
-    Boolean(value.trim() || activeFileReferences.length) || hasAnnotations;
+    Boolean(value.trim() || activeFileReferences.length) || (!revisionPlan && hasAnnotations);
 
   useEffect(() => {
     if (!controlsBlocked) return;
@@ -450,12 +458,12 @@ export function Composer({
     modelReady,
     invalidateComposerTransforms,
     sendBlocked,
-    localCommandsAllowed: localToolsAllowed,
+    localCommandsAllowed: localToolsAllowed && !approvalPending,
     steeringAllowed: sessionAllows(capabilitySession, "canSteer"),
     pasting,
     activeFileReferences,
     t,
-    sendPrompt,
+    sendPrompt: revisionPlan ? (content, draft) => sendPlanRevision(revisionPlan, content, draft) : sendPrompt,
     steerPrompt,
     sendQueuedNow,
     queuedPrompts,
@@ -473,16 +481,24 @@ export function Composer({
 
   // Both submit entry points (the composer's Enter and the toolbar's Send)
   // leave history browsing before the draft is cleared.
-  const submitFromComposer = (steering?: boolean) => {
+  const submitFromComposer = async (steering?: boolean) => {
+    // A second submit must not take over draft restoration while rejection is in flight.
+    if (submittingRevisionDrafts.current.has(draftKey)) return;
     inputHistory.exitBrowsing();
-    return submit(steering);
+    if (!revisionPlan) return submit(steering);
+    submittingRevisionDrafts.current.add(draftKey);
+    try {
+      await submit(false);
+    } finally {
+      submittingRevisionDrafts.current.delete(draftKey);
+    }
   };
 
   const completions = useComposerCompletions({
     value,
     cursor,
     composing,
-    enabled: !inputBlocked && localToolsAllowed,
+    enabled: !inputBlocked && !approvalPending && localToolsAllowed,
     agentsEnabled: mode === "agent" && (!subagentSessionId || subagentsEnabled === true),
     referenceSessionId,
     fileReferencesRef,
@@ -492,7 +508,7 @@ export function Composer({
   });
 
   // Plugin draft and attachment actions reach this composer while it takes input.
-  usePluginComposerBridge({ ...draft, inputBlocked, enabled: localToolsAllowed });
+  usePluginComposerBridge({ ...draft, inputBlocked: inputBlocked || approvalPending, enabled: localToolsAllowed });
   // A plugin may have offered one line for this empty draft; it shows in the
   // placeholder layer and `Tab` takes it (ADR 0333).
   const suggestion = useComposerSuggestion();
@@ -587,10 +603,10 @@ export function Composer({
             enterToSend={enterToSend}
             runActive={runActive}
             composerAc={completions.ac}
-            suggestion={suggestion}
+            suggestion={approvalPending ? null : suggestion}
             onPaste={pasteClipboardFiles}
             onAcceptCompletion={completions.acceptCompletion}
-            onInsertFromMenu={localToolsAllowed ? (kind, selection) => {
+            onInsertFromMenu={localToolsAllowed && !approvalPending ? (kind, selection) => {
               inputHistory.exitBrowsing();
               completions.openCommandPicker(kind, selection);
             } : undefined}
@@ -646,6 +662,7 @@ export function Composer({
             contextUsage={composerContextUsage ?? null}
             value={value}
             modelReady={modelReady}
+            revisingPlan={Boolean(revisionPlan)}
             sendBlocked={sendBlocked}
             composerTransforms={composerTransforms}
             activeTransformKey={composerTransformController.activeTransformKey}

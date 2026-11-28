@@ -352,7 +352,7 @@ test("the composer wires recall, its exits, and the record point (AC3)", async (
   // leave browsing before the draft is cleared.
   assert.match(
     composer,
-    /const submitFromComposer = \(steering\?: boolean\) => \{\s*inputHistory\.exitBrowsing\(\);\s*return submit\(steering\);\s*\};/,
+    /const submitFromComposer = async \(steering\?: boolean\) => \{[\s\S]*?inputHistory\.exitBrowsing\(\);\s*if \(!revisionPlan\) return submit\(steering\);[\s\S]*?await submit\(false\);/,
   );
   assert.match(composer, /onSubmit=\{\(steering\) => void submitFromComposer\(steering\)\}/);
   assert.match(composer, /submit=\{submitFromComposer\}/);

@@ -114,6 +114,28 @@ export function projectMessageEnd(
     ? removeLiveSessionMessage(next, event.message.id)
     : upsertLiveSessionMessage(next, event.message);
 }
+export function settleTranscriptAfterError(
+  messages: UiMessage[],
+  aborted: boolean,
+): UiMessage[] {
+  return messages
+    .filter((message) => !(
+      message.role === "assistant" &&
+      message.status === "aborted" &&
+      !message.content.trim() &&
+      !(message.thinking || "").trim()
+    ))
+    .map((message) => {
+      if (message.role === "tool" && message.toolStatus === "running") {
+        return { ...message, toolStatus: "error", status: "error", isError: true };
+      }
+      if (message.role === "assistant" && message.status === "streaming") {
+        return { ...message, status: aborted ? "aborted" : "error" };
+      }
+      return message;
+    });
+}
+
 
 /** 回执可以更新正文，但缺省字段不能抹掉已确认的当前轮引导归属。 */
 function preserveSteeringAttribution(message: UiMessage, previous?: UiMessage): UiMessage {

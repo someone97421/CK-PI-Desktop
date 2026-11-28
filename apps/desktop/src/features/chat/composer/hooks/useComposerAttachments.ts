@@ -21,7 +21,6 @@ import {
   hasComposerFileDrag,
   type ComposerDropItem,
 } from "../../../../lib/composer-drop";
-import type { ComposerDraftSnapshot } from "../../../../lib/composer-smart-stop";
 import {
   clipboardFiles,
   createFileReference,
@@ -289,7 +288,12 @@ export function useComposerAttachments({
       if (!insertClipboardText(event.currentTarget, text)) {
         const current = draft.ref.current ? readEditorValue(draft.ref.current) : draft.valueRef.current;
         const { start, end } = editorSelectionRange(event.currentTarget);
-        draft.applyEditorDraft(current.slice(0, start) + text + current.slice(end), [], start + text.length);
+        const inserted = normalizeClipboardLineEndings(text);
+        const next = current.slice(0, start) + inserted + current.slice(end);
+        const references = draft.fileReferencesRef.current.filter((reference) =>
+          reference.sessionId !== (activeSessionId ?? "") || !reference.token || next.includes(reference.token),
+        );
+        draft.applyEditorDraft(next, references, start + inserted.length);
       }
       return;
     }

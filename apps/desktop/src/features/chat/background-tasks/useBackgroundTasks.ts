@@ -1,35 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type BackgroundTaskOutput, type BackgroundTaskSummary } from "../../../lib/api";
-import { type BarVisibility, EMPTY_VISIBILITY, dismissTask, nextExpiryAt, observeTasks, selectVisibleTasks } from "./bar-visibility";
-import { type DockSides, EMPTY_DOCK_VIEW, type DockTab, type DockViewState, badgeLabel, clearBadge, observeSessionTasks, pruneDockView, resolveDockTabFor, selectTab, sessionDockState, tasksPanelVisible, toggleCollapsed } from "./dock-state";
 import type { SessionTodo } from "@pi-desktop/shared";
+import { api, type BackgroundTaskOutput, type BackgroundTaskSummary } from "../../../lib/api";
+import { selectVisibleTasks } from "./bar-visibility";
+import {
+  EMPTY_DOCK_VIEW,
+  badgeLabel,
+  isReading,
+  pruneDockView,
+  selectTab,
+  sessionDockState,
+  sidesFor,
+  toggleCollapsed,
+  visibleDockTab,
+} from "./dock-state";
 
 const REFRESH_MS = 1_000;
 type Failure = "load" | "output" | "stop" | "remove";
-function sidesFor(rows: readonly BackgroundTaskSummary[], todos: readonly SessionTodo[]): DockSides {
-  return {
-    hasTodo: todos.length > 0,
-    hasTasks: rows.length > 0,
-    runningTasks: rows.filter((task) => task.state === "running").length,
-    inProgressTodos: todos.filter((todo) => todo.status === "in_progress").length,
-  };
-}
+type Preview = { sessionId: string; id: string };
 
 export function useBackgroundTasks(sessionId: string | null | undefined, todos: readonly SessionTodo[] = []) {
   const [allTasks, setAllTasks] = useState<BackgroundTaskSummary[]>([]);
-  const [visibility, setVisibility] = useState<BarVisibility>(EMPTY_VISIBILITY);
-  const [dockView, setDockView] = useState<DockViewState>(EMPTY_DOCK_VIEW);
-  const [clock, setClock] = useState(() => Date.now());
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [dockView, setDockView] = useState(EMPTY_DOCK_VIEW);
+  const [preview, setPreview] = useState<Preview | null>(null);
   const [output, setOutput] = useState<BackgroundTaskOutput | null>(null);
   const [stoppingIds, setStoppingIds] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<Failure | null>(null);
   const mounted = useRef(false);
   const pendingStops = useRef(new Set<string>());
   const refreshList = useRef<(() => void) | null>(null);
-  const knownIds = useRef(new Map<string, Set<string>>());
-  const sessionIdRef = useRef(sessionId);
-  sessionIdRef.current = sessionId;
 
   useEffect(() => {
     mounted.current = true;
@@ -48,22 +46,7 @@ export function useBackgroundTasks(sessionId: string | null | undefined, todos: 
       try {
         const result = await api.backgroundTasksList();
         if (disposed) return;
-        const observedAt = Date.now();
         setAllTasks(result.tasks);
-        setVisibility((current) => observeTasks(current, result.tasks, observedAt));
-        setClock(observedAt);
-        const currentSession = sessionIdRef.current;
-        if (currentSession) {
-          const sessionTasks = result.tasks.filter((task) => task.sessionId === currentSession);
-          const seen = knownIds.current.get(currentSession) ?? new Set<string>();
-          setDockView((current) => {
-            const state = sessionDockState(current, currentSession);
-            const tasksVisible = tasksPanelVisible(state, sidesRef.current);
-            const folded = observeSessionTasks(current, currentSession, sessionTasks, { knownIds: seen, tasksVisible });
-            knownIds.current.set(currentSession, folded.knownIds);
-            return folded.view;
-          });
-        }
         setError((current) => current === "load" ? null : current);
         pollAgain = result.tasks.some((task) => task.state === "running");
       } catch (failure) {
@@ -93,30 +76,41 @@ export function useBackgroundTasks(sessionId: string | null | undefined, todos: 
     };
   }, []);
 
-  const sessionTasks = useMemo(() => sessionId ? allTasks.filter((task) => task.sessionId === sessionId) : [], [allTasks, sessionId]);
+  const sessionTasks = useMemo(
+    () => sessionId ? allTasks.filter((task) => task.sessionId === sessionId) : [],
+    [allTasks, sessionId],
+  );
   useEffect(() => {
     const live = new Set(allTasks.map((task) => task.sessionId));
     if (sessionId) live.add(sessionId);
     setDockView((current) => pruneDockView(current, live));
-    for (const id of knownIds.current.keys()) {
-      if (!live.has(id)) knownIds.current.delete(id);
-    }
   }, [allTasks, sessionId]);
-  const visibleTasks = selectVisibleTasks(visibility, sessionTasks, clock, expandedId);
-  useEffect(() => {
-    const expiry = nextExpiryAt(visibility, sessionTasks, clock, expandedId);
-    if (expiry === null) return;
-    const timer = setTimeout(() => setClock(Date.now()), Math.max(0, expiry - clock));
-    return () => clearTimeout(timer);
-  }, [visibility, sessionTasks, clock, expandedId]);
 
-  const selectedState = sessionTasks.find((task) => task.id === expandedId)?.state;
+  const dock = sessionDockState(dockView, sessionId);
+  const selectedTask = preview && preview.sessionId === sessionId
+    ? sessionTasks.find((task) => task.id === preview.id)
+    : undefined;
+  const selectedState = selectedTask?.state;
+  const reading = isReading(dock, todos.length > 0, selectedTask?.id ?? null);
+  const expandedId = reading ? selectedTask?.id ?? null : null;
+  const tasks = selectVisibleTasks(sessionTasks, expandedId);
+  const sides = sidesFor(tasks, todos);
+  const activeTab = visibleDockTab(dock, sides, reading);
+  const badge = sides.runningTasks;
+
+  // 隐藏时保留运行中任务的选择，便于回来继续读。任务结束或切换会话后释放选择。
   useEffect(() => {
-    setOutput(null);
+    if (preview && !reading && selectedState !== "running") {
+      setPreview((current) => current === preview ? null : current);
+      setOutput(null);
+      setError((current) => current === "output" ? null : current);
+    }
+  }, [preview, reading, selectedState]);
+
+  useEffect(() => {
     if (!expandedId || !sessionId) return;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const sessionAtRequest = sessionId;
     const refresh = async () => {
       try {
         const result = await api.backgroundTasksOutput(expandedId);
@@ -128,7 +122,7 @@ export function useBackgroundTasks(sessionId: string | null | undefined, todos: 
         console.error("Background task output failed", failure);
         setError("output");
       } finally {
-        if (!disposed && selectedState === "running" && sessionIdRef.current === sessionAtRequest) timer = setTimeout(() => void refresh(), REFRESH_MS);
+        if (!disposed && selectedState === "running") timer = setTimeout(() => void refresh(), REFRESH_MS);
       }
     };
     void refresh();
@@ -139,12 +133,15 @@ export function useBackgroundTasks(sessionId: string | null | undefined, todos: 
   }, [expandedId, selectedState, sessionId]);
 
   const toggleOutput = useCallback((id: string) => {
-    setExpandedId((current) => current === id ? null : id);
+    if (!sessionId) return;
+    setPreview((current) => current?.sessionId === sessionId && current.id === id ? null : { sessionId, id });
+    setOutput(null);
     setError((current) => current === "output" ? null : current);
-  }, []);
+  }, [sessionId]);
+
   const openTasksTab = useCallback(() => {
     if (!sessionId) return;
-    setDockView((current) => clearBadge(selectTab(current, sessionId, "tasks"), sessionId));
+    setDockView((current) => selectTab(current, sessionId, "tasks"));
   }, [sessionId]);
   const openTodoTab = useCallback(() => {
     if (!sessionId) return;
@@ -153,16 +150,19 @@ export function useBackgroundTasks(sessionId: string | null | undefined, todos: 
   const setCollapsed = useCallback((collapsed: boolean) => {
     setDockView((current) => current.collapsed === collapsed ? current : toggleCollapsed(current));
   }, []);
+
   const remove = useCallback((id: string): boolean => {
     const task = sessionTasks.find((candidate) => candidate.id === id);
     if (!task || task.state === "running") {
       setError("remove");
       return false;
     }
-    setVisibility((current) => dismissTask(current, task));
-    setExpandedId((current) => current === id ? null : current);
+    setPreview((current) => current?.id === id ? null : current);
+    setOutput(null);
+    setError((current) => current === "output" ? null : current);
     return true;
   }, [sessionTasks]);
+
   const stop = useCallback(async (id: string) => {
     if (pendingStops.current.has(id)) return;
     pendingStops.current.add(id);
@@ -182,14 +182,9 @@ export function useBackgroundTasks(sessionId: string | null | undefined, todos: 
     }
   }, []);
 
-  const dock = sessionDockState(dockView, sessionId);
-  const sides = sidesFor(visibleTasks, todos);
-  const activeTab: DockTab = resolveDockTabFor(dock, sides);
-  const sidesRef = useRef(sides);
-  sidesRef.current = sides;
   return {
-    tasks: visibleTasks, activeTab, openTasksTab, openTodoTab,
-    collapsed: dock.collapsed, setCollapsed, badge: dock.newCount, badgeText: badgeLabel(dock.newCount),
+    tasks, activeTab, openTasksTab, openTodoTab,
+    collapsed: dock.collapsed, setCollapsed, badge, badgeText: badgeLabel(badge),
     expandedId, output, stoppingIds, error, toggleOutput, stop, remove,
   };
 }

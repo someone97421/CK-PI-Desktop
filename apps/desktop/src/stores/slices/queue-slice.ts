@@ -9,6 +9,7 @@ import type {
   QueuedTurnSummary,
 } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
+import { isLocalPlanRevisionSession, pendingRevisionPlan, samePlanProposalIdentity } from "../../lib/plan-mode-state";
 import { isRemoteSession, sessionAllows } from "../../lib/remote-session-safety";
 import {
   enqueueQueuedPrompt,
@@ -75,6 +76,7 @@ export function createQueueSlice({
   | "refreshQueuedPrompts"
   | "applyQueueChanged"
   | "sendPrompt"
+  | "sendPlanRevision"
   | "steerPrompt"
 > {
   const queuedDrafts = new Map<string, ComposerDraftSnapshot>();
@@ -417,6 +419,38 @@ export function createQueueSlice({
       }
     },
 
+    sendPlanRevision: async (proposal, content, draft) => {
+      const { id, sessionId, turnId, toolCallId, version } = proposal;
+      const before = get();
+      const session = before.sessions.find((row) => row.id === sessionId);
+      const key = `revision:${sessionId}`;
+      const current = pendingRevisionPlan(session, before.planCheckpoints[sessionId], before.pendingPlans[sessionId]);
+      if (!samePlanProposalIdentity(current, proposal)) return false;
+      if (draft?.fileReferences.length && !sessionAllows(session, "canAttach")) return false;
+      if (!content.trim() && (!draft || !promptAttachmentsFromDraft(draft.fileReferences).length)) return false;
+      if (before.runningSessions[sessionId] || pendingSubmissions.has(key) ||
+          pendingSubmissions.has(`session:${sessionId}`)) return false;
+      pendingSubmissions.add(key);
+      try {
+        const result = await before.resolvePlan({ proposalId: id, sessionId, turnId, toolCallId, version, action: "reject" });
+        // The shared resolution can return the result of a concurrent approval.
+        // Resolving the pending row advances its version once.
+        if (!result.ok || result.proposal.status !== "rejected" || result.state !== "planning" ||
+            !samePlanProposalIdentity(result.proposal, { ...proposal, version: version + 1 })) return false;
+        const after = get();
+        const checkpoint = after.planCheckpoints[sessionId];
+        if (after.runningSessions[sessionId] || after.pendingPlans[sessionId]?.status === "pending" ||
+            checkpoint?.status !== "rejected" || !samePlanProposalIdentity(checkpoint, result.proposal) ||
+            !isLocalPlanRevisionSession(after.sessions.find((row) => row.id === sessionId))) return false;
+      } catch (error) {
+        get().showToast(error instanceof Error ? error.message : String(error), { variant: "error" });
+        return false;
+      } finally {
+        pendingSubmissions.delete(key);
+      }
+      return get().sendPrompt(content, draft, sessionId);
+    },
+
     sendPrompt: async (content, draft, requestedSessionId, onAccepted) => {
       let sessionId = requestedSessionId ?? get().activeSessionId;
       const target = get().sessions.find((session) => session.id === sessionId) ?? (sessionId ? { id: sessionId } : undefined);
@@ -424,7 +458,7 @@ export function createQueueSlice({
       if (draft?.fileReferences.length && !sessionAllows(target, "canAttach")) return false;
       if (isRemoteSession(target) && sessionId && get().runningSessions[sessionId]) return false;
       const submissionKey = sessionId ? `session:${sessionId}` : "draft";
-      if (pendingSubmissions.has(submissionKey)) return false;
+      if (pendingSubmissions.has(submissionKey) || (sessionId && pendingSubmissions.has(`revision:${sessionId}`))) return false;
       pendingSubmissions.add(submissionKey);
       let materializedKey: string | undefined;
       try {

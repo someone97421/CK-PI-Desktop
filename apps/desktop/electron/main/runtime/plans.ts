@@ -1,4 +1,5 @@
-import { ErrorCodes, IPC, type AgentEventEnvelope, type AppNotification, type MessageUsage, type PlanExecution, type PlanExecutionFinishStatus, type UiMessage } from "@pi-desktop/shared";
+import { randomUUID } from "node:crypto";
+import { ErrorCodes, IPC, type AgentEventEnvelope, type AppError, type AppNotification, type MessageUsage, type PlanExecution, type PlanExecutionFinishStatus, type UiMessage } from "@pi-desktop/shared";
 import { executionFromResponse, executionListFromResponse, planExecutionFromUnknown } from "@pi-desktop/host-runtime";
 import type { SessionConfigurationQueue } from "./session-configuration";
 import type { RuntimeState } from "./context";
@@ -18,6 +19,7 @@ export type FinishTurnOptions = {
   turnId: string;
   createNotification?: boolean;
   recoverInflight?: boolean;
+  interruptionError?: AppError;
 };
 
 /**
@@ -63,6 +65,7 @@ export type PlanRuntimeDependencies = {
    */
   announceTurnEnded: (payload: TurnEndedPayload) => void;
   emitAgentEvent: (envelope: AgentEventEnvelope) => void;
+  persistInterruptionMessage: (sessionId: string, turnId: string, message: UiMessage) => Promise<void>;
   acquireSessionOperation: (sessionId: string) => Promise<() => void>;
   resolveAgentRuntimeLaunch: (...args: any[]) => Promise<any>;
   isQuitting: () => boolean;
@@ -94,6 +97,7 @@ export function createPlanRuntime({
   pendingExecutionFinishes,
   announceTurnEnded,
   emitAgentEvent,
+  persistInterruptionMessage,
   acquireSessionOperation,
   resolveAgentRuntimeLaunch,
   isQuitting,
@@ -132,14 +136,22 @@ function hostTurnStatus(
 }
 
 /**
- * The error a settled failing turn carries into Agent Host. The terminal event
- * owns the real message; this path only runs when that event never landed, so the
- * code the settlement recorded is the best available description.
+ * The error carried by Agent Host settlement when a runtime terminal event
+ * could not deliver it.
  */
 function hostTurnError(
   reason: TurnEndReason,
   errorCode: string | undefined,
+  interruptionError: AppError | undefined,
 ): { code: string; message: string; retriable: boolean; traceId: string } | undefined {
+  if (interruptionError) {
+    return {
+      code: interruptionError.code,
+      message: interruptionError.message,
+      retriable: interruptionError.retriable ?? false,
+      traceId: interruptionError.traceId ?? "",
+    };
+  }
   if (reason !== "error") return undefined;
   const code = errorCode ?? "TURN_ERROR";
   return { code, message: code, retriable: false, traceId: "" };
@@ -193,7 +205,9 @@ function finishTurn(
   // Nothing below may read or delete state by session id again: a newer turn can
   // start while this one unwinds, and everything keyed by the session alone is
   // then its data.
-  const reason = peekAbortReason(id, turnId) ?? status;
+  const lockedAbort = peekAbortReason(id, turnId);
+  const reason = lockedAbort ?? status;
+  const settledErrorCode = lockedAbort && options.interruptionError ? undefined : errorCode;
   const taskStatus = reason === "aborted" ? "aborted" : reason === "error" ? "failed" : "completed";
   const taskPersistence = taskTranscript.finish(id, turnId, taskStatus)
     .then(() => null, (error: unknown) => error instanceof Error ? error : new Error(String(error)));
@@ -206,6 +220,8 @@ function finishTurn(
     options.createNotification ??
     (!wasPlanSubmission && shouldCreateTaskNotification(id));
   const recoverInflight = options.recoverInflight === true;
+  const interruptionError = lockedAbort ? undefined : options.interruptionError;
+  const ownsLiveTurn = () => !isQuitting() && isActiveTurn(id, turnId);
 
   const runFinalization = async (): Promise<void> => {
     const taskPersistenceError = await taskPersistence;
@@ -224,7 +240,7 @@ function finishTurn(
           }>("session.endTurn", {
             turnId,
             status: reason,
-            errorCode,
+            errorCode: settledErrorCode,
             createNotification,
             ...(turnUsage ? { usage: turnUsage } : {}),
             // The reply can no longer finish on its own: promote its last
@@ -237,7 +253,7 @@ function finishTurn(
               notification: result.notification,
             });
           }
-          if (result.recovered) {
+          if (result.recovered && (!interruptionError || ownsLiveTurn())) {
             // Settle the renderer's streaming row the same way a final
             // message_end would have, so it does not stay "streaming" forever.
             emitAgentEvent({
@@ -255,9 +271,37 @@ function finishTurn(
         }
       }
 
+      if (interruptionError && ownsLiveTurn()) {
+        const ts = Date.now();
+        const identity = { sessionId: id, turnId, ts };
+        const message: UiMessage = {
+          id: randomUUID(),
+          role: "assistant",
+          turnId,
+          content: "",
+          createdAt: new Date(ts).toISOString(),
+          status: "error",
+          isError: true,
+          error: interruptionError,
+        };
+        await persistInterruptionMessage(id, turnId, message).catch((error: unknown) => {
+          logger.app("persistence", "warn", "interruption message enqueue failed", {
+            sessionId: id, data: String(error),
+          });
+        });
+        if (ownsLiveTurn()) {
+          emitAgentEvent({ ...identity, event: { type: "message_end", message } });
+          // Agent Host gets the interrupted outcome when finalization releases.
+          sendToRenderer(IPC.event.agentMessage, {
+            ...identity,
+            event: { type: "error", error: interruptionError },
+          } satisfies AgentEventEnvelope);
+        }
+      }
+
       if (runId && runtimeState.host) {
         await runtimeState.host
-          .call("scheduled.finishRun", { runId, status: reason, errorCode })
+          .call("scheduled.finishRun", { runId, status: reason, errorCode: settledErrorCode })
           .catch((e) =>
             logger.app("persistence", "warn", "finishRun failed", {
               sessionId: id,
@@ -290,7 +334,7 @@ function finishTurn(
         await onTurnEnded(id, turnId, {
           reason,
           ...(turnUsage ? { usage: turnUsage } : {}),
-          ...(errorCode ? { errorCode } : {}),
+          ...(settledErrorCode ? { errorCode: settledErrorCode } : {}),
         });
       } catch (error) {
         logger.app("session", "warn", "mode run settlement failed", { sessionId: id, data: String(error) });
@@ -332,7 +376,7 @@ function finishTurn(
         id,
         turnId,
         hostTurnStatus(reason),
-        hostTurnError(reason, errorCode),
+        hostTurnError(reason, settledErrorCode, interruptionError),
       );
       runtimeState.agentHostBridge?.agentHost.kick(id);
     }

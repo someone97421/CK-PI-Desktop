@@ -7,6 +7,7 @@ import { configureApplicationIdentity } from "./application-identity";
 import { readConfiguredDataDirectory } from "./storage/legacy";
 import { runBackupLockProcess } from "./storage/backup-lock";
 import { ignoreBrokenStdio } from "./logger";
+import { hasGpuFallbackMarker } from "./renderer-crash-loop";
 import { installMainProcessErrorHandlers } from "./main-process-errors";
 import { readStoragePreferences, STORAGE_PREFERENCE_FILE } from "./storage/preferences";
 import { sameStorageRoots } from "./storage/startup-recovery";
@@ -65,6 +66,10 @@ if (!isBackupLockProcess) {
     dataDir: effectiveDataDirectory, temporaryWorkspacePath: initialTemporaryWorkspace,
   }));
   if (!hasSingleInstanceLock) app.exit(0);
+  // 锁成功后 userData 已切回 fork 的独立 profile，GPU 设置须在 ready 前应用。
+  if (hasSingleInstanceLock && hasGpuFallbackMarker(app.getPath("userData"))) {
+    app.disableHardwareAcceleration();
+  }
   if (hasSingleInstanceLock && process.platform === "darwin") {
     // 冷启动的文件打开事件可能早于存储准备及业务入口加载。
     app.on("open-file", (event, path) => {

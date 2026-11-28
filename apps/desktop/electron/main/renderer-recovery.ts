@@ -3,61 +3,66 @@ export type RendererGoneDetails = Readonly<{
   exitCode: number;
 }>;
 
-export type RendererRecoveryDependencies = Readonly<{
-  isCurrentWindow: boolean;
-  quitting: boolean;
-  windowCloseAccepted: boolean;
-  windowDestroyed: boolean;
-  webContentsDestroyed: boolean;
+type RendererRecoveryDependencies = Readonly<{
+  canReload: () => boolean;
   reload: () => void;
   log: (details: RendererGoneDetails, reloaded: boolean) => void;
+  onCrashLoopDetected: () => void;
 }>;
 
-/**
- * Minimum milliseconds between automatic reloads. A renderer that crashes
- * again within this window is still reloaded, but the reload is delayed so
- * the process is not spinning in a tight crash loop.
- */
 const CRASH_COOLDOWN_MS = 2_000;
+const CRASH_LOOP_THRESHOLD = 5;
 
-/** Tracks the last reload timestamp per recovery call site. */
-let lastReloadTimestamp = 0;
+/** Each main window owns its startup crash streak and any scheduled reload. */
+export function createRendererRecovery({
+  canReload,
+  reload,
+  log,
+  onCrashLoopDetected,
+}: RendererRecoveryDependencies) {
+  let lastReloadTimestamp = Number.NEGATIVE_INFINITY;
+  let consecutiveCrashesWithoutLoad = 0;
+  let stopped = false;
+  let reloadTimer: ReturnType<typeof setTimeout> | undefined;
 
-/**
- * Reset internal cooldown state. Exposed exclusively for deterministic tests;
- * production code must never call this.
- */
-export function _resetCooldownForTest(): void {
-  lastReloadTimestamp = 0;
-}
+  const cancelReload = () => {
+    if (reloadTimer === undefined) return;
+    clearTimeout(reloadTimer);
+    reloadTimer = undefined;
+  };
+  const reloadIfLive = () => {
+    reloadTimer = undefined;
+    if (stopped || !canReload()) return;
+    lastReloadTimestamp = Date.now();
+    reload();
+  };
 
-/** Reload an unexpectedly exited renderer while its owning app window is live. */
-export function recoverRendererAfterGone(
-  details: RendererGoneDetails,
-  dependencies: RendererRecoveryDependencies,
-): boolean {
-  const shouldReload =
-    details.reason !== "clean-exit" &&
-    dependencies.isCurrentWindow &&
-    !dependencies.quitting &&
-    !dependencies.windowCloseAccepted &&
-    !dependencies.windowDestroyed &&
-    !dependencies.webContentsDestroyed;
-
-  dependencies.log(details, shouldReload);
-  if (!shouldReload) return false;
-
-  const now = Date.now();
-  const elapsed = now - lastReloadTimestamp;
-  lastReloadTimestamp = now;
-
-  if (elapsed < CRASH_COOLDOWN_MS) {
-    // Delay the reload to avoid a tight crash loop. The timer is short
-    // enough that the user sees a brief blank rather than a frozen app.
-    setTimeout(() => dependencies.reload(), CRASH_COOLDOWN_MS - elapsed);
-  } else {
-    dependencies.reload();
-  }
-
-  return true;
+  return {
+    rendererGone(details: RendererGoneDetails): void {
+      if (details.reason === "clean-exit" || stopped || !canReload()) {
+        log(details, false);
+        return;
+      }
+      if (++consecutiveCrashesWithoutLoad >= CRASH_LOOP_THRESHOLD) {
+        stopped = true;
+        cancelReload();
+        log(details, false);
+        onCrashLoopDetected();
+        return;
+      }
+      log(details, true);
+      if (reloadTimer !== undefined) return;
+      const delay = CRASH_COOLDOWN_MS - (Date.now() - lastReloadTimestamp);
+      if (delay > 0) reloadTimer = setTimeout(reloadIfLive, delay);
+      else reloadIfLive();
+    },
+    rendererLoaded(): void {
+      cancelReload();
+      consecutiveCrashesWithoutLoad = 0;
+    },
+    dispose(): void {
+      stopped = true;
+      cancelReload();
+    },
+  };
 }
