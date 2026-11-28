@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain, Menu, screen, session, systemPreferences } from "electron";
 import { pathToFileURL } from "node:url";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { catalogs, resolveLocale } from "@pi-desktop/i18n";
 import {
   isNetUrlAllowedWithGrant,
@@ -11,6 +11,7 @@ import { suppressLinuxFramelessSystemMenu } from "./frameless-system-menu";
 import { getModuleDirectory } from "./module-path";
 import { PanelSenders, panelReadyWithin, pageGoneWithin, resolvePanelInvocation } from "./plugin-panel-senders";
 import { PanelOperationSerializer } from "./plugin-panel-senders";
+import type { PluginPanelBridgeContext } from "./plugin-runtime";
 import { installWidgetTopmost, setWidgetAlwaysOnTop } from "./plugin-widget-topmost";
 import {
   isPluginPanelWindowControlAction,
@@ -215,7 +216,7 @@ type BridgeHandler = (
   pluginId: string,
   channel: string,
   payload?: Record<string, unknown>,
-  context?: { droppedPath?: string; senderId?: number },
+  context?: PluginPanelBridgeContext,
 ) => Promise<unknown>;
 
 /** Reports an egress attempt a panel was not allowed to make. */
@@ -376,6 +377,21 @@ export class PluginPanelHost {
     this.onBlockedRequest = onBlockedRequest;
     this.onBridgeError = onBridgeError;
     this.ensureHandlers();
+  }
+
+  invokeRemoteView(
+    pluginId: string,
+    channel: string,
+    payload: unknown,
+    scope: { sessionId: string; projectPath: string | null; workspacePath: string },
+  ): Promise<unknown> {
+    const { workspacePath, sessionId, projectPath } = scope;
+    const workspaceScope = { path: workspacePath, name: basename(workspacePath) || workspacePath };
+    const input = payload && typeof payload === "object" ? payload as Record<string, unknown> : undefined;
+    return this.bridge(pluginId, channel, input, {
+      workspaceScope,
+      remoteSession: { sessionId, projectPath, activeTurn: null },
+    });
   }
 
   /** Lets another host serve `pluginBridge` calls from its own web contents. */

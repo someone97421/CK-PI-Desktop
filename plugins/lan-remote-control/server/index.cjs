@@ -15,6 +15,7 @@ const { AttachmentStore, DEFAULT_MAX_BYTES } = require("./uploads.cjs");
 const { OPERATION_META: BROWSE_OPERATIONS } = require("../browse-bridge.cjs");
 const { RESOURCE_SCHEMES, rewriteResourceCsp, rewriteResourceText } = require("./resources.cjs");
 const { fileResponse, fileViewUrl, parseFileViewUrl } = require("./files.cjs");
+const { createPluginViews, PREFIX: PLUGIN_VIEW_PREFIX, HOST_CHANNEL: PLUGIN_VIEW_CHANNEL, HOST_EVENT: PLUGIN_VIEW_EVENT } = require("./plugin-views.cjs");
 
 const WS_PATH = "/ws";
 const AUTH_TIMEOUT_MS = 10_000;
@@ -152,6 +153,11 @@ function createRemoteServer(options = {}) {
 
   let lifecycle = Promise.resolve();
   let generation = 0;
+  const pluginViews = createPluginViews({
+    ipcInvoke, authenticate, deviceActive: (id) => state.devices.get(id) !== null,
+    currentGeneration: () => state.phase === "running" ? generation : null,
+    inFlight: state.inFlight, statusForCode, maxBodyBytes: RPC_BODY_MAX_BYTES,
+  });
   function serializeLifecycle(operation) {
     const task = lifecycle.then(operation);
     lifecycle = task.catch(() => undefined);
@@ -484,6 +490,10 @@ function createRemoteServer(options = {}) {
       httpHelpers.sendError(res, 400, "INVALID_PARAMS", "channel must be a string and args must be an array");
       return;
     }
+    if (channel === PLUGIN_VIEW_CHANNEL) {
+      httpHelpers.sendError(res, 403, "OPERATION_NOT_ALLOWED", "use the plugin view endpoint");
+      return;
+    }
     if (typeof ipcInvoke !== "function") {
       httpHelpers.sendError(res, 501, "UNSUPPORTED", "host IPC invoke is unavailable");
       return;
@@ -772,6 +782,10 @@ function createRemoteServer(options = {}) {
         httpHelpers.sendResult(res, { loggedOut: true });
         return;
       }
+      if (pathname.startsWith(PLUGIN_VIEW_PREFIX)) {
+        await pluginViews.handle(req, res, pathname);
+        return;
+      }
       if (pathname.startsWith("/api/file-view/")) {
         if (!isGet) { httpHelpers.sendError(res, 405, "METHOD_NOT_ALLOWED", "method not allowed"); return; }
         await handleFileView(req, res, url);
@@ -896,6 +910,7 @@ function createRemoteServer(options = {}) {
   }
 
   async function sweepNow() {
+    pluginViews.sweep();
     for (const conn of [...state.connections]) {
       if (conn.deviceId && !connectionDevice(conn)) closeWs(conn, 4403, "session expired");
     }
@@ -1073,6 +1088,7 @@ function createRemoteServer(options = {}) {
     state.phase = "stopped";
     state.lastError = { code: String(code), message: String(message || code) };
     generation += 1;
+    pluginViews.clear();
     clearTimers();
     const listeners = state.listeners.splice(0);
     const wss = state.wss;
@@ -1111,6 +1127,7 @@ function createRemoteServer(options = {}) {
   async function stop() {
     if (state.phase === "stopped") return getStatus();
     state.phase = "stopping";
+    pluginViews.clear();
     clearTimers();
 
     // 宿主已接收的操作继续执行，停止服务只等待有限的收尾时间。
@@ -1160,6 +1177,7 @@ function createRemoteServer(options = {}) {
 
   async function revokeDevice(deviceId) {
     const existed = state.devices.revoke(deviceId);
+    pluginViews.revoke(deviceId);
     for (const conn of [...state.connections]) {
       if (conn.deviceId !== deviceId) continue;
       wsError(conn, "UNAUTHORIZED", "device was revoked");
@@ -1183,6 +1201,7 @@ function createRemoteServer(options = {}) {
     for (const conn of state.connections) {
       if (!conn.deviceId || !connectionDevice(conn) || !wsOpen(conn)) continue;
       if (event.channel === "pi-desktop/browserReferences/event/insertRequested" && event.args[0]?.connectionId !== conn.id) continue;
+      if (event.channel === PLUGIN_VIEW_EVENT && !pluginViews.acceptsEvent(conn.deviceId, event.args[0])) continue;
       sendWs(conn, { type: "ipc-event", channel: event.channel, args: event.args });
       delivered += 1;
     }

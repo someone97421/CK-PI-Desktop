@@ -118,13 +118,17 @@ let pluginModule = null;
 const pending = new Map();
 const invocations = new Map();
 const invocationContext = new AsyncLocalStorage();
-const panelWorkspaceContext = new AsyncLocalStorage();
+const panelContext = new AsyncLocalStorage();
 let nextCallId = 1;
 
 /** Proxy a host API call to the broker and await its verdict. */
 function call(api, args = []) {
-  const workspace = panelWorkspaceContext.getStore();
-  if (api === "workspace.get" && workspace !== undefined) return Promise.resolve(workspace);
+  const panel = panelContext.getStore();
+  if (api === "workspace.get" && panel?.workspaceScope !== undefined) return Promise.resolve(panel.workspaceScope);
+  if (api === "session.getActive" && panel?.remoteSession) return Promise.resolve(panel.remoteSession);
+  if (panel?.remoteSession && ["ui.openPanel", "ui.closePanel", "ui.showMainWindow", "ui.revealView", "fs.openInBrowser", "fs.requestDirectory"].includes(api)) {
+    return Promise.reject(Object.assign(new Error("This panel operation requires the desktop"), { code: "UNSUPPORTED" }));
+  }
   const invocation = invocationContext.getStore();
   if (invocation && (invocation.controller.signal.aborted || invocations.get(invocation.id) !== invocation)) {
     return Promise.reject(invocation.controller.signal.reason ?? toolAbortedError("Plugin tool invocation finished"));
@@ -134,7 +138,8 @@ function call(api, args = []) {
     pending.set(id, { resolve, reject, invocationId: invocation?.id });
     try {
       send(
-        { t: "call", id, api, args, ...(invocation ? { invocationId: invocation.id } : {}) },
+        { t: "call", id, api, args, ...(invocation ? { invocationId: invocation.id } : {}),
+          ...(panel?.remoteSession ? { panelCallId: panel.callId } : {}) },
         // An async delivery failure means the channel to the broker is gone:
         // fail the pending call and take the same terminal break as every
         // other transport error. A null argument is a successful flush, not
@@ -658,7 +663,7 @@ async function handleParentCall(method, payload, invocationId, callId) {
         error.code = "UNSUPPORTED";
         throw error;
       }
-      return panelWorkspaceContext.run(payload?.workspaceScope, () =>
+      return panelContext.run({ ...payload, callId }, () =>
         invoke(String(payload?.channel ?? ""), payload?.payload ?? {}),
       );
     }

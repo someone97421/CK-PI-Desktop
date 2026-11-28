@@ -387,6 +387,7 @@ export const IPC = {
     pluginInlineViews: "pi-desktop/plugin/inline-views",
     pluginInlineView: "pi-desktop/plugin/inline-view",
     pluginViewOpen: "pi-desktop/plugin/view/open",
+    remotePluginView: "pi-desktop/remotePluginView",
     pluginViewClose: "pi-desktop/plugin/view/close",
     pluginViewSetBounds: "pi-desktop/plugin/view/setBounds",
     pluginViewSetVisible: "pi-desktop/plugin/view/setVisible",
@@ -550,6 +551,7 @@ export const IPC = {
      * which session's panel takes the view.
      */
     pluginViewReveal: "pi-desktop/plugin/view/event/reveal",
+    remotePluginViewEvent: "pi-desktop/remotePluginViewEvent",
     /**
      * Ask the renderer to probe an empty composer, show a suggestion group,
      * or clear what it shows. The renderer answers probes and offers over

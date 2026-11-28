@@ -20,6 +20,8 @@ import {
 } from "@pi-desktop/plugin-sdk";
 import type { ComposerSuggestionAnswer } from "../services/composer-suggestion";
 import { canUseFileLineView, FILE_LINES_VIEW_KEY } from "../file-line-reference";
+import type { HostProcess } from "../host-process";
+import { remotePluginViewSession } from "../remote-plugin-view";
 
 export type PluginUiIpcDependencies = {
   registrar: IpcRegistrar;
@@ -29,6 +31,7 @@ export type PluginUiIpcDependencies = {
   pluginPanels: PluginPanelHost;
   pluginActiveInProject: (pluginId: string, projectPath: string | null | undefined) => boolean;
   currentWorkspacePath: () => string | null;
+  getHost?: () => HostProcess | null;
   getUpdaterLocale: () => string;
   getPluginPanelTheme: () => PluginPanelTheme;
   /** The shell's selected session, reported on to the plugin surfaces. */
@@ -52,6 +55,7 @@ export function registerPluginUiIpc({
   pluginPanels,
   pluginActiveInProject,
   currentWorkspacePath,
+  getHost,
   getUpdaterLocale,
   getPluginPanelTheme,
   setActivePluginSession,
@@ -251,12 +255,17 @@ export function registerPluginUiIpc({
    * is one global app setting, but a view is something the plugin does inside a
    * project, so a project-scoped plugin must not offer its view elsewhere.
    */
-  handle(IPC.invoke.pluginViews, async () => {
-    const workspacePath = currentWorkspacePath();
+  handle(IPC.invoke.pluginViews, async (input?: { sessionId?: string }) => {
+    let workspacePath = currentWorkspacePath();
+    if (input?.sessionId) {
+      const host = getHost?.();
+      if (!host) return [];
+      workspacePath = (await remotePluginViewSession(host, input.sessionId)).projectPath ?? null;
+    }
     const views: PluginViewMeta[] = [];
     for (const loaded of plugins.listLoaded()) {
       const pluginId = loaded.manifest.id;
-      if (!loaded.permissions.has("ui.view")) continue;
+      if (loaded.disposing || !loaded.permissions.has("ui.view")) continue;
       if (!pluginActiveInProject(pluginId, workspacePath)) continue;
       const contributed = loaded.manifest.contributes?.views ?? [];
       contributed.forEach((view, index) => {

@@ -89,6 +89,7 @@ export function useAppShellRuntime() {
   const refreshPluginThemes = useAppStore((s) => s.refreshPluginThemes);
   const plugins = useAppStore((s) => s.plugins);
   const projectPath = useAppStore((s) => s.workspace?.path ?? null);
+  const remotePanelSession = document.documentElement.dataset.webRemote === "true" && page === "chat" ? activeSessionId : undefined;
   const workPanelVisible = workPanelOpen || subagentPanelOpen;
   /** Monotonic counter for the plugin active-session push. */
   const activeSessionSeq = useRef(0);
@@ -593,7 +594,7 @@ export function useAppShellRuntime() {
     const refresh = () => void useAppStore.getState().refreshPluginViews();
     refresh();
     return api.onPluginChanged(refresh);
-  }, [ready, projectPath]);
+  }, [ready, projectPath, remotePanelSession]);
 
   useLayoutEffect(() => {
     const preference = settings?.theme ?? "dark";

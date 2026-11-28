@@ -8,6 +8,7 @@ import type { HostProcess } from "../host-process";
 import { ROUTE_LOCAL, type BackendRouter } from "../remote/backend-router";
 import { createRendererFileReader } from "../renderer-file-reader";
 import { remoteWorkspaceForFiles } from "../remote/workspace-file-scope";
+import { createRemotePluginViewHandler } from "../remote-plugin-view";
 import { registerAgentExtensionIpc } from "../agent-extensions-ipc";
 import { readNpmPath, writeNpmPath } from "../npm-preferences";
 import { registerAgentIpc } from "./agent-ipc";
@@ -592,6 +593,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
   registerPluginUiIpc({
     registrar,
     plugins,
+    getHost,
     browserHost,
     pluginViews,
     pluginPanels,
@@ -602,6 +604,8 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     setActivePluginSession,
     settleComposerSuggestion,
   });
+  const remotePluginView = createRemotePluginViewHandler({ plugins, pluginPanels, getHost, pluginActiveInProject });
+  registeredIpcHandlers.set(IPC.invoke.remotePluginView, (request) => wrap(() => remotePluginView(request)));
   registerPluginLauncherIpc({
     registrar,
     getHost,

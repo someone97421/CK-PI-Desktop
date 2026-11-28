@@ -79,6 +79,7 @@ import { createSessionCoordination } from "./runtime/session-coordination";
 import { createScheduledRuntime } from "./runtime/scheduled";
 import { createDesktopServices } from "./services/desktop-services";
 import { createPluginServices } from "./services/plugin-services";
+import { publishRemotePluginViewEvent } from "./remote-plugin-view";
 import type { ComposerSuggestionAnswer } from "./services/composer-suggestion";
 import { wirePluginThemeRuntimeServices } from "./plugin-theme-services";
 import { createSessionCollaborationService } from "./services/session-collaboration";
@@ -501,6 +502,13 @@ function currentWorkspacePath(): string | null {
 function broadcastPluginPanelEvent(event: string, payload: unknown): void {
   pluginPanels.broadcast(event, payload);
   pluginViews.broadcast(event, payload);
+  if (event === "appearance:changed") {
+    for (const loaded of plugins.listLoaded()) {
+      if (!loaded.disposing && loaded.permissions.has("ui.view") && loaded.manifest.contributes?.views?.length) {
+        publishRemotePluginViewEvent(plugins, loaded.manifest.id, event, payload);
+      }
+    }
+  }
 }
 
 function setCurrentWorkspacePath(path: string | null): void {

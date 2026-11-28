@@ -36,6 +36,14 @@ Chrome 侧栏嵌入时，`adapter/browser-grip.js` 在原输入工具栏“添�
 
 “使用默认程序打开”“在文件夹中显示”和电脑原生选择／配置操作，经 `/api/ipc` 交给主程序现有处理器执行并返回结果。窗口尺寸、可见性及原生视图几何仍由远端页面本地处理，避免改变主程序窗口。
 
+## 工作面板插件视图
+
+远控工作面板可在隔离的 iframe 中加载宿主允许的插件视图。父页面携带设备凭据调用 `POST /api/plugin-view/open`，提交 `pluginId`、`viewId` 与 `sessionId`，收到 `{ ok: true, result: { id, url } }`。视图资源保留完整的相对路径，资源 URL 与 iframe 内的桥只携带该实例的随机凭证。宿主应支持 `pi-desktop/remotePluginView` 的 `open`、`asset` 和 `invoke` 操作。
+
+桥在插件脚本执行前提供 `invoke`、同步接收回执 `send`、`on`／`off` 以及宿主声明的能力。页面加载完成后向父页面发送 ready 消息。父页面通过 `postMessage` 转发匹配视图的宿主事件。浏览器无法取得主机的原生拖入路径，也不提供原生小组件窗口操作。
+
+父页面卸载视图时携带设备凭据调用 `POST /api/plugin-view/close`，提交 `{ id }`。设备撤销、登录过期、服务停止或视图闲置六小时后，实例凭证失效。一个已登录设备最多可同时持有 32 个视图实例。
+
 ## 边界
 
 - V1 的 `web/`、`panel/`、独立聊天适配器、消息/模型/模式操作表及旧页面测试已删除。没有 V1 页面回退路径。
@@ -45,6 +53,8 @@ Chrome 侧栏嵌入时，`adapter/browser-grip.js` 在原输入工具栏“添�
 - V1 自定义聊天 RPC 已退出；项目、会话、审批、模型及模式操作统一走主程序现有 IPC。保留的 `/api/rpc` 仅用于已声明的 Browse 转换操作。
 
 ## 开发检查
+
+只检查源码语法和相对导入时运行 `node plugins/lan-remote-control/scripts/check-source.mjs`。
 
 ```sh
 npm --prefix plugins/lan-remote-control test

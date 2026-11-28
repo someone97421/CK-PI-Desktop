@@ -6,7 +6,7 @@ import { useNativeViewOcclusion } from "../../lib/native-view-occlusion";
 import { useAppStore } from "../../stores/app-store";
 import { IconPlug } from "../icons";
 import { WorkTabEmpty } from "./WorkTabEmpty";
-import { FilesTab } from "./FilesTab";
+import { RemotePluginViewTab } from "./RemotePluginViewTab";
 
 /**
  * A plugin-contributed work panel view (ADR 0104).
@@ -17,7 +17,9 @@ import { FilesTab } from "./FilesTab";
  * to blocking dialogs and global floating surfaces that overlap its bounds.
  */
 export function PluginViewTab(props: Parameters<typeof NativePluginViewTab>[0]) {
-  if (document.documentElement.dataset.webRemote === "true" && props.pluginId === "pi.file-manager") return <FilesTab />;
+  if (document.documentElement.dataset.webRemote === "true") {
+    return <RemotePluginViewTab key={JSON.stringify([props.pluginId, props.viewId, props.sessionId, props.tabId])} {...props} />;
+  }
   return <NativePluginViewTab {...props} />;
 }
 

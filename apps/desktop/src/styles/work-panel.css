@@ -913,6 +913,13 @@
   flex-direction: column;
 }
 
+.work-plugin-view-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+}
+
 .work-plugin-view-surface {
   position: relative;
   min-height: 0;

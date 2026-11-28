@@ -732,3 +732,90 @@ test("HTML 预览目录链支持相对资源、Windows 路径和 sandbox 来源�
   await server.revokeAllDevices();
   assert.equal((await fetch(preview)).status, 401);
 });
+
+test("远控插件视图保留相对资源、注入同步桥并隔离设备凭据", async (context) => {
+  const input = { pluginId: "fixture.plugin", viewId: "work", sessionId: "session-1" };
+  const hostChannel = "pi-desktop/remotePluginView";
+  const calls = [];
+  const { server, endpoint, post, token, connect } = await fixture(context, { ipcInvoke: (channel, [request]) => {
+    assert.equal(channel, hostChannel);
+    calls.push(request);
+    if (request.op === "open") return { ok: true, data: { entry: "panel/文件 面板/index.html", capabilities: { composerFileLines: true } } };
+    if (request.op === "asset") {
+      const html = request.path.endsWith(".html");
+      const asset = html ? '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="connect-src none"><script type="module" src="./app.js"></script><link rel="stylesheet" href="../style.css"></head></html>' : "asset";
+      return { ok: true, data: { contentType: html ? "text/html" : request.path.endsWith(".css") ? "text/css" : "text/javascript", body: Buffer.from(asset).toString("base64") } };
+    }
+    return { ok: true, data: { ok: false, error: { code: "PLUGIN_RESULT" } } };
+  } });
+  const otherLogin = await post("/api/login", { username, password: testPassword, name: "另一台设备" });
+  const otherToken = (await otherLogin.json()).result.token;
+  assert.equal((await post("/api/plugin-view/open", input)).status, 401);
+  assert.equal((await post("/api/ipc", { channel: hostChannel, args: [] }, token)).status, 403);
+  const socket = await connect();
+  await connect(true, otherToken);
+  const opened = await post("/api/plugin-view/open", input, token);
+  assert.equal(opened.status, 200);
+  const { ok, result: { id, url } } = await opened.json();
+  assert.equal(ok, true);
+  assert.match(id, /^[\w-]{43}$/);
+  assert.equal(url, `/api/plugin-view/${id}/asset/panel/${encodeURIComponent("文件 面板")}/index.html`);
+  assert.deepEqual(calls, [{ op: "open", ...input }]);
+  assert.equal(url.includes(token), false);
+  const entry = new URL(url, endpoint);
+  assert.equal((await fetch(entry, { headers: { Authorization: `Bearer ${otherToken}` } })).status, 401);
+  const document = await fetch(entry);
+  const csp = document.headers.get("Content-Security-Policy");
+  assert.match(csp, /sandbox allow-scripts/);
+  assert.doesNotMatch(csp, /allow-same-origin/);
+  assert.equal(document.headers.get("Referrer-Policy"), "no-referrer");
+  const html = await document.text();
+  assert.match(html, /<head><script>\(function installBridge/);
+  assert.ok(html.indexOf('"pluginBridge"') < html.indexOf('<script type="module"'));
+  assert.match(html, /"composerFileLines":true/);
+  assert.doesNotMatch(html, /http-equiv=/);
+  assert.equal(html.includes(token), false);
+  assert.deepEqual(calls.at(-1), { op: "asset", ...input, path: "panel/文件 面板/index.html" });
+  for (const [relative, path, mime] of [["./app.js", "panel/文件 面板/app.js", "text/javascript"], ["../style.css", "panel/style.css", "text/css"]]) {
+    const asset = await fetch(new URL(relative, entry), { headers: { Origin: "null" } });
+    assert.equal(asset.status, 200);
+    assert.equal(asset.headers.get("Content-Type"), mime);
+    assert.equal(asset.headers.get("Access-Control-Allow-Origin"), "null");
+    assert.equal(await asset.text(), "asset");
+    assert.deepEqual(calls.at(-1), { op: "asset", ...input, path });
+  }
+  const invoke = `/api/plugin-view/${id}/invoke`;
+  const preflight = await fetch(`${endpoint}${invoke}`, { method: "OPTIONS", headers: { Origin: "null", "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type" } });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("Access-Control-Allow-Headers"), "Content-Type");
+  const invoked = await post(invoke, { channel: "test.action", payload: { x: 1 }, sessionId: "wrong" }, undefined, "null");
+  assert.deepEqual(await invoked.json(), { ok: true, result: { ok: false, error: { code: "PLUGIN_RESULT" } } });
+  assert.deepEqual(calls.at(-1), { op: "invoke", ...input, channel: "test.action", payload: { x: 1 } });
+  const event = { channel: "pi-desktop/remotePluginViewEvent", args: [{ ...input, event: "changed", payload: 1 }] };
+  const message = once(socket, "message");
+  assert.equal(server.broadcastIpc(event), 1);
+  assert.deepEqual(JSON.parse((await message)[0]), { type: "ipc-event", ...event });
+  assert.deepEqual((await (await post("/api/plugin-view/close", { id }, otherToken)).json()).result, { closed: false });
+  assert.equal((await fetch(entry, { method: "HEAD" })).status, 200);
+  assert.deepEqual((await (await post("/api/plugin-view/close", { id }, token)).json()).result, { closed: true });
+  assert.equal((await fetch(entry)).status, 401);
+  assert.equal((await post(invoke, { channel: "test.action" }, undefined, "null")).status, 401);
+  assert.equal(server.broadcastIpc(event), 0);
+});
+
+test("撤销设备阻止在途插件视图资产交付", async (context) => {
+  let resolveAsset, assetStarted;
+  const started = new Promise((resolve) => { assetStarted = resolve; });
+  const { server, endpoint, post, token, deviceId } = await fixture(context, { ipcInvoke: (_channel, [request]) => {
+    if (request.op === "open") return { ok: true, data: { entry: "panel/index.html" } };
+    return new Promise((resolve) => { resolveAsset = resolve; assetStarted(); });
+  } });
+  const open = await post("/api/plugin-view/open", { pluginId: "plugin", viewId: "view", sessionId: "session" }, token);
+  const entry = new URL((await open.json()).result.url, endpoint);
+  const pending = fetch(entry);
+  await started;
+  await server.revokeDevice(deviceId);
+  resolveAsset({ ok: true, data: { contentType: "text/html", body: Buffer.from("<title>asset</title>").toString("base64") } });
+  assert.equal((await pending).status, 401);
+  assert.equal((await fetch(entry)).status, 401);
+});

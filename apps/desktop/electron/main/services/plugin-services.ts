@@ -4,6 +4,7 @@ import { realpath, stat } from "node:fs/promises";
 import { resolveRealOpenablePath } from "@pi-desktop/host-runtime";
 import { getActiveRemoteHostsBoot } from "../bootstrap/remote-hosts";
 import { createPluginWorkspaceReader } from "../remote/plugin-workspace-files";
+import { publishRemotePluginViewEvent } from "../remote-plugin-view";
 import {
   IPC,
   ErrorCodes,
@@ -169,8 +170,10 @@ export function createPluginServices({
           publish: (selection) => sendToRenderer(IPC.event.composerFileLines, selection),
         });
       }
-      if (pluginId === "pi.file-manager" && context?.senderId !== undefined) {
-        const workspacePath = pluginViews.workspacePathForSender(context.senderId);
+      if (pluginId === "pi.file-manager" && (context?.senderId !== undefined || context?.remoteSession)) {
+        const workspacePath = context.remoteSession
+          ? context.workspaceScope?.path ?? null
+          : pluginViews.workspacePathForSender(context.senderId!);
         const workspace = workspacePath === undefined ? undefined : workspacePath
           ? { path: workspacePath, name: basename(workspacePath) || workspacePath } : null;
         if (channel === "workspace.get" && workspace !== undefined) return workspace;
@@ -187,6 +190,7 @@ export function createPluginServices({
           }
           if (channel === "fs.reveal") shell.showItemInFolder(target);
           else if (channel === "fs.openInBrowser") {
+            if (context.remoteSession) throw new Error("Opening a native browser view requires the desktop");
             if (![".html", ".htm", ".xhtml"].includes(extname(target).toLowerCase())) {
               throw new Error("only HTML files can be opened in the Browser");
             }
@@ -198,6 +202,9 @@ export function createPluginServices({
           return { ok: true };
         }
         if (channel.startsWith("fm.")) {
+          if (context.remoteSession && payload?.external === true) {
+            throw new Error("External files require a host-selected file reference");
+          }
           payload = { ...payload, __workspaceScope: workspace };
           return plugins.invokePanelBridge(pluginId, channel, payload, { ...context, workspaceScope: workspace });
         }
@@ -684,6 +691,9 @@ export function createPluginServices({
   const emitBrowserPresentationState = (state: BrowserState) => {
     pluginPanels.broadcast("browser:state", state);
     pluginViews.broadcast("browser:state", state);
+    if (state.sessionId && pluginActiveInProject(BROWSER_PLUGIN_ID, sessionProjects.get(state.sessionId))) {
+      publishRemotePluginViewEvent(plugins, BROWSER_PLUGIN_ID, "browser:state", state, state.sessionId);
+    }
   };
   /**
    * One fan-out for every session-lifecycle event, so a rule added here cannot
@@ -729,6 +739,16 @@ export function createPluginServices({
     }
     try {
       pluginViews.broadcast(event, payload, scopeFilter);
+      if (sessionId) {
+        const projectPath = sessionProjects.get(sessionId);
+        for (const loaded of plugins.listLoaded()) {
+          const pluginId = loaded.manifest.id;
+          if (!loaded.disposing && loaded.permissions.has("ui.view") && loaded.manifest.contributes?.views?.length &&
+            pluginActiveInProject(pluginId, projectPath)) {
+            publishRemotePluginViewEvent(plugins, pluginId, event, payload, sessionId);
+          }
+        }
+      }
     } catch (error) {
       logger.app("plugin", "warn", `${event} view broadcast failed`, {
         sessionId,
@@ -910,6 +930,7 @@ export function createPluginServices({
         sessionId,
         ...(location ? { location } : {}),
       });
+      if (location) publishRemotePluginViewEvent(plugins, pluginId, "view:open", { path: location }, sessionId, viewId);
     },
     /**
      * `pi.composer.suggest`: the runtime already checked the permission and

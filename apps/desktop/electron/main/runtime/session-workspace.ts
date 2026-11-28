@@ -1,12 +1,15 @@
 import type { HostProcess } from "../host-process";
 
+type SessionWorkspace = { projectPath?: string | null; temporaryWorkspacePath?: string | null; worktree?: unknown };
+
 export async function resolveSessionWorkspace(
   host: HostProcess,
   sessionId: string,
+  session?: SessionWorkspace,
 ): Promise<{ path: string; project: boolean; isolated?: boolean; parent?: string }> {
-  const { session } = await host.call<{
-    session?: { projectPath?: string | null; temporaryWorkspacePath?: string | null; worktree?: unknown };
-  }>("session.get", { id: sessionId, messageLimit: 1, contentLimit: 1 });
+  session ??= (await host.call<{ session?: SessionWorkspace }>(
+    "session.get", { id: sessionId, messageLimit: 1, contentLimit: 1 },
+  )).session;
   if (!session) throw new Error("session not found");
   if (session.worktree) {
     const location = await host.call<{ path?: string }>("worktree.location", { sessionId });

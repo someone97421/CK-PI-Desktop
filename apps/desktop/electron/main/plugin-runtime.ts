@@ -11,6 +11,7 @@ import {
 import type { Stats } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import {
@@ -294,7 +295,10 @@ export type PluginPanelBridgeContext = {
   droppedPath?: string;
   senderId?: number;
   workspaceScope?: { path: string; name: string } | null;
+  remoteSession?: PluginActiveSession;
 };
+
+const remotePanelWorkspace = new AsyncLocalStorage<string>();
 
 /** Transport to one plugin host process (ADR 0008). */
 export type PluginProcessHandle = {
@@ -890,6 +894,7 @@ type PendingCall = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  panelWorkspace?: string;
 };
 
 type LoadedPlugin = {
@@ -2692,7 +2697,10 @@ export class PluginRuntime {
     payload?: Record<string, unknown>,
     context?: PluginPanelBridgeContext,
   ): Promise<unknown> {
-    return this.toolInvocations.withoutContext(() => this.invokePanelWithoutToolContext(pluginId, channel, payload, context));
+    const invoke = () => this.toolInvocations.withoutContext(() => this.invokePanelWithoutToolContext(pluginId, channel, payload, context));
+    return context?.remoteSession && context.workspaceScope
+      ? remotePanelWorkspace.run(context.workspaceScope.path, invoke)
+      : invoke();
   }
 
   private async invokePanelWithoutToolContext(
@@ -2703,13 +2711,17 @@ export class PluginRuntime {
   ): Promise<unknown> {
     const loaded = this.loaded.get(pluginId);
     if (!loaded) throw apiError("NOT_FOUND", `plugin not loaded: ${pluginId}`);
+    if (context?.remoteSession && (channel.startsWith("browser.") ||
+      ["ui.openPanel", "ui.showMainWindow", "ui.revealView", "ui.closePanel", "fs.openInBrowser", "fs.requestDirectory", "fs.registerDropped"].includes(channel))) {
+      throw apiError("UNSUPPORTED", "this panel operation requires a desktop view");
+    }
     if (PANEL_SKILL_CHANNELS.has(channel)) {
       return this.sendToChild(
         loaded,
         {
           t: "call",
           method: "panel.invoke",
-          payload: { channel, payload: payload ?? {} },
+          payload: { channel, payload: payload ?? {}, workspaceScope: context?.workspaceScope, remoteSession: context?.remoteSession },
         },
         PLUGIN_PANEL_TIMEOUT_MS,
       );
@@ -2746,7 +2758,7 @@ export class PluginRuntime {
       case "session.getActive":
         // A docked view follows the user's selection the same way a plugin
         // process does, and reads the same snapshot.
-        return this.readActiveSession(loaded);
+        return context?.remoteSession ?? this.readActiveSession(loaded);
       case "fs.readText":
         return api.fs.readText(String(payload?.path ?? ""));
       case "fs.stat":
@@ -2839,7 +2851,7 @@ export class PluginRuntime {
         );
         return { ok: true };
       case "workspace.get":
-        return api.workspace.get();
+        return context?.workspaceScope !== undefined ? context.workspaceScope : api.workspace.get();
       case "projects.list":
         return api.projects.list();
       case "models.list":
@@ -2881,7 +2893,7 @@ export class PluginRuntime {
           {
             t: "call",
             method: "panel.invoke",
-            payload: { channel, payload: payload ?? {}, workspaceScope: context?.workspaceScope },
+            payload: { channel, payload: payload ?? {}, workspaceScope: context?.workspaceScope, remoteSession: context?.remoteSession },
           },
           PLUGIN_PANEL_TIMEOUT_MS,
         );
@@ -2934,6 +2946,7 @@ export class PluginRuntime {
         resolve: (value) => { cleanup(); resolvePromise(value); },
         reject: (error) => { cleanup(); rejectPromise(error); },
         timer,
+        panelWorkspace: message.method === "panel.invoke" ? remotePanelWorkspace.getStore() : undefined,
       });
       signal?.addEventListener("abort", abort, { once: true });
       try {
@@ -2974,7 +2987,11 @@ export class PluginRuntime {
         if (this.loaded.get(loaded.manifest.id) !== loaded) {
           throw apiError("PLUGIN_UNLOADED", "Plugin host process is no longer active");
         }
-        return this.dispatchHostCall(loaded, String(message.api ?? ""), message.args ?? []);
+        const dispatch = () => this.dispatchHostCall(loaded, String(message.api ?? ""), message.args ?? []);
+        if (typeof message.panelCallId !== "string") return dispatch();
+        const workspace = loaded.pending.get(message.panelCallId)?.panelWorkspace;
+        if (workspace === undefined) throw apiError("NOT_FOUND", "remote panel invocation has ended");
+        return remotePanelWorkspace.run(workspace, dispatch);
       })
         .then((value) =>
           loaded.child?.postMessage({ t: "res", id: message.id, ok: true, value: value ?? null }),
@@ -5502,6 +5519,8 @@ export class PluginRuntime {
   /** 工具使用所属会话目录；没有会话的面板沿用当前可见工作区。 */
   private async fsRoot(loaded: LoadedPlugin, rule: PluginFsRule): Promise<string | null> {
     if (rule.root === "userSelected") return loaded.userRoot ?? null;
+    const panelWorkspace = remotePanelWorkspace.getStore();
+    if (panelWorkspace !== undefined) return panelWorkspace;
     const sessionId = this.inFlightTool(loaded.manifest.id)?.sessionId.trim() || undefined;
     return pluginWorkspacePath(this.services, sessionId);
   }
@@ -5670,6 +5689,7 @@ export class PluginRuntime {
     if (!isAbsolute(String(requestPath ?? ""))) return null;
     const rule: PluginFsRule = loaded.fsPolicy.read ?? { root: "workspace", scope: [] };
     if (rule.root !== "workspace") return null;
+    if (remotePanelWorkspace.getStore() !== undefined) return null;
     const roots = ((await pluginWorkspaceForCall(this.services, this.inFlightTool(loaded.manifest.id)?.sessionId.trim() || undefined))?.roots ?? [])
       .map((entry) => entry?.path)
       .filter((path): path is string => Boolean(path));

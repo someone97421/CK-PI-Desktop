@@ -1,4 +1,4 @@
-import { IPC, parseBrowserReference, type BrowserReference, type Result } from "@pi-desktop/shared";
+import { IPC, parseBrowserReference, parseFileLineReference, type BrowserReference, type Result } from "@pi-desktop/shared";
 import { createLanPasswordGate } from "./lan-password-gate";
 import type { FileMenuContext } from "./file-menu-extension";
 
@@ -8,6 +8,11 @@ declare global {
     __piDesktopResourceUrl?: (url: string) => string;
     __piDesktopBrowseAction?: (method: BrowseMethod) => Promise<unknown>;
     __piDesktopBrowseStatus?: BrowseStatus;
+    __piDesktopPluginViews?: {
+      open: (input: { pluginId: string; viewId: string; sessionId?: string }) => Promise<{ id: string; url: string }>;
+      close: (id: string) => Promise<void>;
+      addFileLines: (sessionId: string, value: unknown) => void;
+    };
   }
 }
 
@@ -138,10 +143,10 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   const buffered = new Map<string, unknown[][]>();
   const emit = (channel: string, args: unknown[]) => {
     if (desktopPresentationEvents.has(channel)) return;
-    args = resourceData(args);
+    if (channel !== IPC.event.remotePluginViewEvent) args = resourceData(args);
     const entries = listeners.get(channel);
     if (entries?.size) for (const listener of entries) listener(...args);
-    else {
+    else if (channel !== IPC.event.remotePluginViewEvent) {
       const events = buffered.get(channel) ?? [];
       events.push(args);
       buffered.set(channel, events.slice(-100));
@@ -207,6 +212,23 @@ export async function initializeWebPreloadBridge(): Promise<void> {
   const jsonRequest = (path: string, body: unknown, authenticated = true) => request(path, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   }, authenticated);
+  window.__piDesktopPluginViews = {
+    async open(input) {
+      const response = await jsonRequest("/api/plugin-view/open", input);
+      const { id, url } = response.result ?? {};
+      if (typeof id !== "string" || !id || typeof url !== "string" || !url.startsWith("/")) {
+        throw bridgeError("INVALID_RESPONSE", response.error?.message || "插件面板地址无效");
+      }
+      const entry = new URL(url, origin);
+      if (entry.origin !== origin) throw bridgeError("INVALID_RESPONSE", "插件面板地址无效");
+      return { id, url: entry.href };
+    },
+    async close(id) { await jsonRequest("/api/plugin-view/close", { id }); },
+    addFileLines(sessionId, value) {
+      const reference = parseFileLineReference(value);
+      if (reference && sessionId === panelSessionId) emit(IPC.event.composerFileLines, [{ sessionId, reference }]);
+    },
+  };
   window.__piDesktopReadRemoteFile = async (context: FileMenuContext) => {
     const response: Response = await request("/api/file", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context),
@@ -236,6 +258,7 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     input.addEventListener("cancel", finish, { once: true });
     input.click();
   });
+  let panelSessionId: string | null = null;
   const localPresentationChannels = new Set<string>([
     IPC.invoke.lifecycleDialogRespond, IPC.invoke.closePromptRespond,
     IPC.invoke.traySetSessionPreferences, IPC.invoke.pluginSessionActive,
@@ -256,6 +279,14 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     },
     async invoke<T>(channel: string, ...args: unknown[]): Promise<Result<T>> {
       try {
+        if (channel === IPC.invoke.pluginSessionActive) {
+          const id = (args[0] as { sessionId?: string } | undefined)?.sessionId;
+          panelSessionId = typeof id === "string" ? id : null;
+        }
+        if (channel === IPC.invoke.pluginViews) {
+          if (!panelSessionId) return { ok: true, data: [] as T };
+          args = [{ sessionId: panelSessionId }];
+        }
         if (localPresentationChannels.has(channel)) return { ok: true, data: { ok: true, accepted: false } as T };
         if (channel === IPC.invoke.windowSetWorkPanelReservation) return { ok: true, data: { requested: 0, reserved: 0 } as T };
         if (channel === IPC.invoke.windowSetWorkPanelChatWidth) return { ok: true, data: { requested: 0, applied: 0 } as T };
