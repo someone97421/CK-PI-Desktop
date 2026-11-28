@@ -205,7 +205,7 @@ pnpm build:pi-host
 
 ## 内置与可选插件
 
-桌面应用随包提供浏览器、文件管理器、终端、子代理观测和 Responses 原生生图插件。仓库 [`plugins/`](plugins/) 下提供可选的桌面控制、局域网远程控制、Codex 宠物和任务文件审查插件，安装包通过应用插件页面导入。
+桌面应用随包提供浏览器、文件管理器、终端和子代理观测插件。聊天生图和改图使用「设置 → 模型」中配置的生图模型。仓库 [`plugins/`](plugins/) 下提供可选的桌面控制、局域网远程控制、Codex 宠物和任务文件审查插件，安装包通过应用插件页面导入。
 
 - [Computer Use（Win）](plugins/computer-use-win/README.md)
 - [Computer Use（Mac）](plugins/computer-use-mac/README.md)

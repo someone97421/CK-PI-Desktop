@@ -11,6 +11,7 @@ import {
   draftMatchesExisting,
   providerCreateInputFromDraft,
   isModelConfigImportSource,
+  type AskToolRequest,
   type ModelConfigImportDraft,
   type Mode,
   type SessionThinkingLevel,
@@ -95,6 +96,7 @@ export type SessionIpcDependencies = {
   registrar: IpcRegistrar;
   getHost: () => HostProcess | null;
   getSidecar: () => AgentSidecar | null;
+  getPendingAsks?: (sessionId: string) => AskToolRequest[] | undefined;
   dataDir: string;
   activeTurns: ReadonlyMap<string, string>;
   isSessionBusy?: (sessionId: string) => boolean;
@@ -122,6 +124,7 @@ export function registerSessionIpc({
   registrar,
   getHost,
   getSidecar,
+  getPendingAsks,
   dataDir,
   activeTurns,
   isSessionBusy = (id) => activeTurns.has(id),
@@ -425,9 +428,16 @@ export function registerSessionIpc({
         }),
         sessionCapabilityContext(),
       ]);
-      return result.session
-        ? { ...result, session: enriched(result.session, providers, defaults) }
-        : result;
+      if (!result.session) return result;
+      const sessionId = result.session.id;
+      const pendingAsks = typeof sessionId === "string" && sessionId.trim()
+        ? getPendingAsks?.(sessionId)
+        : undefined;
+      return {
+        ...result,
+        session: enriched(result.session, providers, defaults),
+        ...(pendingAsks !== undefined ? { pendingAsks } : {}),
+      };
     },
   );
   handle(IPC.invoke.sessionCollaboration, async (input?: { sessionId?: unknown }) => {

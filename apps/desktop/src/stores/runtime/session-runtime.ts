@@ -6,6 +6,7 @@ import type {
 import { toolResultText } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { createNavigationIntentController } from "../../lib/navigation-intent";
+import { trackAskSnapshot } from "../../lib/pending-asks";
 import {
   dedupeSessionMessages,
   durableCoversLiveSessionMessages,
@@ -183,8 +184,15 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
     const active = sessionDetailLoads.get(id);
     if (active && options?.messageBefore === undefined) return active;
     const previous = sessionTranscriptCache.get(id);
+    const askSnapshot = options?.messageBefore === undefined && globalThis.document?.documentElement.dataset.webRemote === "true"
+      ? trackAskSnapshot(id) : undefined;
+    const stopTrackingAsks = askSnapshot && api.onAgentEvent(askSnapshot.observe);
     const request = api.getSession(id, options).then((detail) => {
       if (detail.session && options?.messageBefore === undefined) {
+        if (askSnapshot && detail.pendingAsks) {
+          const asks = detail.pendingAsks;
+          set((state) => askSnapshot.reconcile(asks, state.pendingAsks, state.askDrafts));
+        }
         const state = get();
         const liveMessages =
           sessionTranscriptCache.get(id) ?? state.retainedTranscripts[id];
@@ -210,6 +218,7 @@ export function createSessionRuntime({ get, set }: StoreAccess): SessionRuntime 
     });
     if (options?.messageBefore === undefined) sessionDetailLoads.set(id, request);
     const clear = () => {
+      stopTrackingAsks?.();
       if (
         options?.messageBefore === undefined &&
         sessionDetailLoads.get(id) === request

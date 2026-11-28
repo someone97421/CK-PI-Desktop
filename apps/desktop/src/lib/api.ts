@@ -21,6 +21,7 @@ import type {
   AgentCapabilityMove,
   AgentCapabilityQuery,
   AgentEventEnvelope,
+  AskToolRequest,
   AgentCompactRequest,
   AgentCompactResponse,
   AgentPromptRequest,
@@ -897,7 +898,7 @@ export const api = {
   getSearchContext: (request: SessionSearchContextRequest) =>
     invoke<SessionSearchContext>(IPC.invoke.sessionSearchContext, request),
   getSession: (id: string, options?: SessionHistoryReadOptions) =>
-    invoke<{ session: SessionDetail | null }>(IPC.invoke.sessionGet, {
+    invoke<{ session: SessionDetail | null; pendingAsks?: AskToolRequest[] }>(IPC.invoke.sessionGet, {
       id,
       ...(options ?? {}),
     }).then((result) => ({

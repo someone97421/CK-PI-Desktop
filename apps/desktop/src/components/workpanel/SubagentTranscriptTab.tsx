@@ -145,7 +145,7 @@ function SubagentTranscriptSurface({ sessionId, delegationId, selection }: Props
                       </div>
                       <div className="message-row assistant assistant-turn">
                         <div className="message-col">
-                          <AssistantTurnBody entry={turn.reply} outcome={turnOutcome}
+                          <AssistantTurnBody entry={turn.reply} outcome={turnOutcome} defaultProcessOpen
                             isActive={turnOutcome === "running" && (turn.call === selected?.call ? running : turn.messages.some((message) => message.status === "streaming"))} />
                         </div>
                       </div>

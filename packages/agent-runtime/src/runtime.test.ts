@@ -10237,27 +10237,6 @@ describe("DesktopAgentRuntime plugin skills (D174)", () => {
     await runtime.dispose();
   });
 
-  it("lists native Responses image generation beside GenerateImages only while its skill is available", async () => {
-    const id = "pi.responses-image-generation/responses-image-generation";
-    const runtime = createRuntime();
-    const imageToolEntry = () => ((runtime as any).agent.state.systemPrompt as string)
-      .split("\n")
-      .find((line) => line.startsWith("- GenerateImages:"));
-
-    try {
-      expect(imageToolEntry()).toContain("Generate raster images");
-
-      runtime.setPluginSkills([{ id, name: "Responses image generation" }]);
-      expect(imageToolEntry()).toContain(`load Skill with id ${id}`);
-
-      runtime.setPluginSkills([]);
-      expect(imageToolEntry()).toContain("Generate raster images");
-      expect(imageToolEntry()).not.toContain(id);
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
   it("keeps the catalog through a nested instruction reload", async () => {
     const host = {
       call: vi.fn().mockResolvedValue({

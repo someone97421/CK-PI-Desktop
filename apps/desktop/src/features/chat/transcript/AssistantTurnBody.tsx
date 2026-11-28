@@ -16,13 +16,14 @@ import { ToolRow } from "./ToolRow";
 import { TurnProcess } from "./TurnProcess";
 
 export const AssistantTurnBody = memo(function AssistantTurnBody({
-  entry, isActive, delegationsLive, runtimeActivity, outcome,
+  entry, isActive, delegationsLive, runtimeActivity, outcome, defaultProcessOpen,
 }: {
   entry: AssistantTurnEntry;
   isActive: boolean;
   delegationsLive?: boolean;
   runtimeActivity?: AgentActivity;
   outcome?: SubagentOutcome;
+  defaultProcessOpen?: boolean;
 }) {
   const task = entry.task;
   const settledTask = task && task.status !== "running" ? task : undefined;
@@ -85,6 +86,7 @@ export const AssistantTurnBody = memo(function AssistantTurnBody({
         <TurnProcess
           turnId={entry.id} processParts={process} turnParts={entry.parts}
           visibleSteps={visibleSteps} isActive={turnProcessActive}
+          defaultOpen={defaultProcessOpen}
           failed={summary.hasError || outcome === "failed" || outcome === "timed_out" || outcome === "denied"}
           stopped={outcome === "stopped" || outcome === "aborted"} activity={runtimeActivity}
         >

@@ -1,4 +1,4 @@
-import type { AskToolQuestion, AskToolRequest } from "@pi-desktop/shared";
+import type { AgentEventEnvelope, AskToolQuestion, AskToolRequest } from "@pi-desktop/shared";
 
 export type PendingAsk = AskToolRequest;
 export type AskQueues = Record<string, PendingAsk[]>;
@@ -128,4 +128,34 @@ export function dropToolCallAskDrafts(
     if (ask.toolCallId === toolCallId) next = dropAskDraft(next, ask.requestId);
   }
   return next;
+}
+
+/** Reconcile a session read with ask events delivered while the read was in flight. */
+export function trackAskSnapshot(sessionId: string) {
+  const opened = new Map<string, PendingAsk>();
+  const endedTools = new Set<string>();
+  let turnEnded = false;
+  return {
+    observe(envelope: AgentEventEnvelope) {
+      if (envelope.sessionId !== sessionId) return;
+      const { event } = envelope;
+      if (event.type === "asktool_request") opened.set(event.request.requestId, event.request);
+      else if (event.type === "tool_end") endedTools.add(event.toolCallId);
+      else if (event.type === "agent_end" || event.type === "error") {
+        turnEnded = true;
+        opened.clear();
+      }
+    },
+    reconcile(snapshot: PendingAsk[], queues: AskQueues, drafts: AskDrafts) {
+      const pending = new Map<string, PendingAsk>();
+      for (const ask of [...(turnEnded ? [] : snapshot), ...opened.values()]) {
+        if (ask.sessionId === sessionId && !endedTools.has(ask.toolCallId)) pending.set(ask.requestId, ask);
+      }
+      let askDrafts = drafts;
+      for (const ask of queues[sessionId] ?? []) {
+        if (!pending.has(ask.requestId)) askDrafts = dropAskDraft(askDrafts, ask.requestId);
+      }
+      return { pendingAsks: withQueue(queues, sessionId, [...pending.values()]), askDrafts };
+    },
+  };
 }

@@ -89,7 +89,7 @@ function renderer(f, t) {
     catch (error) { return { ok: false, error: { message: error.message, code: error.errorCode } }; }
   } } };
   t.after(() => { if (previous === undefined) delete globalThis.window; else globalThis.window = previous; });
-  let state = { pendingAsks: { s1: [f.ask] } };
+  let state = { pendingAsks: { s1: [f.ask] }, askDrafts: {} };
   const runtime = createInteractionRuntime();
   const actions = createInteractionSlice({
     get: () => state,

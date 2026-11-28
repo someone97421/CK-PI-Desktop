@@ -59,6 +59,7 @@ export function TurnProcess({
   turnParts,
   visibleSteps,
   isActive,
+  defaultOpen = false,
   failed,
   stopped,
   activity,
@@ -70,6 +71,7 @@ export function TurnProcess({
   /** Visible steps the process reveals; `0` draws no disclosure. */
   visibleSteps: number;
   isActive: boolean;
+  defaultOpen?: boolean;
   /** The turn recorded a failure of its own, so the header must not claim success. */
   failed: boolean;
   stopped?: boolean;
@@ -87,7 +89,7 @@ export function TurnProcess({
   const thinkingNow = useMemo(() => isTurnThinking(turnParts, isActive), [turnParts, isActive]);
   // 显示模式和思考可见性不改变用户已选择的展开状态。
   const disclosure = useAutomaticDisclosure(
-    isActive,
+    isActive || defaultOpen,
     revealRequest,
     disclosureKey("turn", turnId),
   );

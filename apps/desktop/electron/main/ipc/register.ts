@@ -337,6 +337,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     registrar,
     getHost,
     getSidecar,
+    getPendingAsks: (sessionId) => getAgentHostBridge()?.agentHost.getPendingAsks(sessionId),
     dataDir,
     activeTurns,
     isSessionBusy: dependencies.isSessionBusy,

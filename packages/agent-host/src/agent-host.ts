@@ -997,6 +997,14 @@ export class AgentHost {
     this.emit(state, "input.resolved", { inputId, status: "resolved", by }, { turnId: entry.request.turnId });
   }
 
+  getPendingAsks(sessionId: string): AskToolRequest[] {
+    const state = this.states.get(sessionId);
+    if (!state) return [];
+    return [...state.pendingInputs.values()]
+      .map(({ original }) => original)
+      .filter((request) => request.sessionId === sessionId);
+  }
+
   async history(
     principal: Principal,
     params: { sessionId: string; beforeItemId?: string; limit?: number },
