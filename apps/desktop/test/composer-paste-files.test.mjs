@@ -229,7 +229,7 @@ test("picker selections are one-shot, sender-bound capabilities", async () => {
   } = await import("../electron/main/composer-picker.ts");
   const token = rememberComposerPickerSelection(["/etc/passwd"], 17, 1000);
 
-  assert.deepEqual(consumeComposerPickerSelection(token, 17, 1001), ["/etc/passwd"]);
+  assert.deepEqual(consumeComposerPickerSelection(token, 17, 1001).paths, ["/etc/passwd"]);
   assert.throws(
     () => consumeComposerPickerSelection(token, 17, 1002),
     /picker selection is unavailable/,
@@ -245,11 +245,13 @@ test("picker selections are one-shot, sender-bound capabilities", async () => {
     /picker selection is unavailable/,
   );
 
-  const expiredToken = rememberComposerPickerSelection(["/tmp/expired.txt"], 17, 3000);
+  let disposed = 0;
+  const expiredToken = rememberComposerPickerSelection(["/tmp/expired.txt"], 17, 3000, () => disposed++);
   assert.throws(
     () => consumeComposerPickerSelection(expiredToken, 17, 63001),
     /picker selection is unavailable/,
   );
+  assert.equal(disposed, 1);
 });
 
 test("file picker exposes files only", () => {
@@ -335,7 +337,7 @@ test("large pasted text is preserved byte-for-byte in session scratch", async ()
 test("a pasted session link becomes an inline chip with the link as its text", () => {
   // The paste path turns each link into a token-backed chip, and the draft
   // keeps the conversation link as the text the model receives.
-  assert.match(composer, /const sessionIds = parseSessionLinks\(text\);/);
+  assert.match(composer, /if \(parseSessionLinks\(text\)\.length\)/);
   assert.match(composer, /pasteSessionLinks\(text\);/);
   assert.match(composer, /for \(const span of \[\.\.\.sessionLinkSpans\(text\)\]\.reverse\(\)\)/);
   assert.match(

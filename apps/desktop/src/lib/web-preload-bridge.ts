@@ -238,6 +238,31 @@ export async function initializeWebPreloadBridge(): Promise<void> {
     const previewPath = response.headers.get("X-File-Preview");
     return { blob: await response.blob(), name, mimeType, ...(previewPath?.startsWith("/api/file-view/") ? { previewUrl: `${origin}${previewPath}` } : {}) };
   };
+  type AttachmentOwner = { sessionId?: string; draftId?: string };
+  const uploadFiles = async <T,>(owner: AttachmentOwner, files: File[]): Promise<Result<T>> => {
+    if (!owner.sessionId && !owner.draftId) throw bridgeError("INVALID_ARGUMENT", "缺少附件所属会话或草稿");
+    const oversized = files.find(file => file.size > 10 * 1024 * 1024);
+    if (oversized) throw bridgeError("PAYLOAD_TOO_LARGE", `「${oversized.name}」超过远控单个附件的 10 MiB 上限`);
+    const query = new URLSearchParams({ target: "renderer" });
+    if (owner.draftId) query.set("draftId", owner.draftId);
+    const uploaded = [];
+    for (const file of files) {
+      const result = await request(`/api/upload?${query}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type || "application/octet-stream",
+          "X-Filename": encodeURIComponent(file.name),
+          ...(owner.sessionId ? { "X-Session-Id": owner.sessionId } : {}),
+        },
+        body: file,
+      });
+      if (result?.ok === false) return result as Result<T>;
+      const imported = result?.files ?? result?.result?.files ?? result?.data?.files;
+      if (!Array.isArray(imported) || !imported.length) throw bridgeError("INVALID_RESPONSE", "附件导入响应无效");
+      uploaded.push(...imported);
+    }
+    return { ok: true, data: { files: uploaded } as T };
+  };
   const picked = new Map<string, File[]>();
   const pick = (photos: boolean): Promise<Result<unknown>> => new Promise((resolve) => {
     const input = document.createElement("input");
@@ -304,28 +329,22 @@ export async function initializeWebPreloadBridge(): Promise<void> {
         if (channel === IPC.invoke.composerImportFiles) {
           const input = args[0] as { token?: string; sessionId?: string; draftId?: string } | undefined;
           if (!input || typeof input.token !== "string") throw bridgeError("INVALID_ARGUMENT", "缺少文件选择 token");
-          if (!input.sessionId && !input.draftId) throw bridgeError("INVALID_ARGUMENT", "缺少附件所属会话或草稿");
           const files = picked.get(input.token);
           if (!files) throw bridgeError("NOT_FOUND", "文件选择已失效，请重新选择");
-          const uploaded = [];
           try {
-            for (const file of files) {
-              const query = new URLSearchParams({ target: "renderer" });
-              if (input.draftId) query.set("draftId", input.draftId);
-              const result = await request(`/api/upload?${query}`, {
-                method: "POST", headers: { "Content-Type": file.type || "application/octet-stream", "X-Filename": encodeURIComponent(file.name), ...(input.sessionId ? { "X-Session-Id": input.sessionId } : {}) }, body: file,
-              });
-              if (result?.ok === false) return result as Result<T>;
-              const imported = result?.files ?? result?.result?.files ?? result?.data?.files;
-              if (!Array.isArray(imported) || !imported.length) throw bridgeError("INVALID_RESPONSE", "附件导入响应无效");
-              uploaded.push(...imported);
-            }
-            return { ok: true, data: { files: uploaded } as T };
+            return await uploadFiles<T>(input, files);
           } finally { picked.delete(input.token); }
         }
         if (channel === IPC.invoke.composerPasteFiles) {
-          const input = args[0] as { files?: Array<{ data: ArrayBuffer | string; [key: string]: unknown }> } | undefined;
+          const input = args[0] as (AttachmentOwner & { files?: Array<{ name?: string; mimeType?: string; recordHistory?: boolean; data: ArrayBuffer | string }> }) | undefined;
           if (!input || !Array.isArray(input.files)) throw bridgeError("INVALID_ARGUMENT", "缺少粘贴文件");
+          if (input.files.every(file => !file.recordHistory)) {
+            const files = input.files.map((file, index) => {
+              const data = typeof file.data === "string" ? Uint8Array.from(atob(file.data), char => char.charCodeAt(0)) : file.data;
+              return new File([data], file.name || `pasted-file-${index + 1}`, { type: file.mimeType });
+            });
+            return await uploadFiles<T>(input, files);
+          }
           args = [{ ...input, files: input.files.map((file) => {
             if (typeof file.data === "string") return file;
             const bytes = new Uint8Array(file.data);

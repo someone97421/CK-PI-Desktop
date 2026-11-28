@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { ErrorCodes, type ComposerPastedFile } from "@pi-desktop/shared";
 import { importComposerFiles, mimeTypeForPath, selectImportableComposerImages } from "./composer-paste.ts";
 
@@ -44,10 +44,8 @@ export async function referenceComposerFiles(
 }
 
 /**
- * Native clipboard disk files: image files are copied into session scratch
- * like picker imports so vision models receive their bytes even after the
- * source (often a screenshot tool's temp file) disappears. Everything else,
- * and images beyond the import bounds, stays a metadata-only live reference.
+ * Copy images and ephemeral clipboard files while their bytes are available.
+ * Ordinary disk files can keep a live reference to the original path.
  * Keep a slot for each path so the renderer can preserve mixed file/folder order.
  * Called only with paths consumed from a sender-bound native selection.
  */
@@ -56,15 +54,21 @@ export async function pasteComposerClipboardFiles(
   sessionId: string,
   projectPath: string | undefined,
   paths: string[],
+  temporaryRoots: readonly string[] = [],
 ): Promise<Array<ComposerPastedFile | null>> {
   if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) throw new Error("invalid session id");
   if (paths.length > 20) throw new Error("too many referenced files (maximum 20)");
   if (paths.some(path => !isAbsolute(path))) throw new Error("file reference path must be absolute");
+  const roots = await Promise.all(temporaryRoots.map(root => realpath(root).catch(() => root)));
   const sources = await Promise.all(paths.map(async path => {
     try {
       const canonical = await realpath(path);
       const info = await stat(canonical);
-      return info.isFile() ? { path: canonical, size: info.size } : null;
+      const temporary = roots.some(root => {
+        const rel = relative(root, canonical);
+        return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+      });
+      return info.isFile() ? { path: canonical, size: info.size, temporary } : null;
     } catch {
       return null;
     }
@@ -73,9 +77,10 @@ export async function pasteComposerClipboardFiles(
   let sourceIndex = 0;
   return Promise.all(sources.map(async source => {
     if (!source) return null;
-    const copyImage = importable[sourceIndex++];
+    const copy = importable[sourceIndex++];
+    if (source.temporary && !copy) return null;
     try {
-      const files = copyImage
+      const files = copy
         ? await importComposerFiles(dataDir, sessionId, [source.path], source.size)
         : await referenceComposerFiles(dataDir, sessionId, projectPath, [source.path]);
       return files[0] ?? null;

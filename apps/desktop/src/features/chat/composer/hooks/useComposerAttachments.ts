@@ -260,6 +260,26 @@ export function useComposerAttachments({
     draft.applyEditorDraft(nextText, nextReferences, selectionStart + pasted.length);
   };
 
+  const pasteClipboardText = (editor: HTMLDivElement, text: string) => {
+    if (!text) return;
+    void api.recordClipboardPaste(text).catch(() => undefined);
+    if (parseSessionLinks(text).length) {
+      pasteSessionLinks(text);
+      return;
+    }
+    if (!insertClipboardText(editor, text)) {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) return;
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(normalizeClipboardLineEndings(text)));
+      range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      draft.commitEditorDom?.();
+    }
+  };
+
   const pasteClipboardFiles = async (event: ClipboardEvent<HTMLDivElement>) => {
     if (!attachmentsAllowed) {
       event.preventDefault();
@@ -290,13 +310,15 @@ export function useComposerAttachments({
       ? []
       : pastedFiles;
     const hasNativeFileTypes = event.clipboardData.types?.includes("Files");
+    const hasFileUri = /^file:\/\//im.test(event.clipboardData.getData("text/uri-list"));
+    const mixedText = Boolean(text) && (preferText || (!pastedFiles.length && (hasNativeFileTypes || hasFileUri)));
     const nativeFilePaste = !preferText && (hasNativeFileTypes || !text);
     const screenshotPaste = files.length > 0 && files.every(file =>
       file.type.toLowerCase().startsWith("image/") && !api.getDroppedFilePath(file),
     );
     const textLength = Array.from(text).length;
     const isLargeTextPaste = !files.length && textLength > largePasteThreshold;
-    if (isLargeTextPaste || files.length || nativeFilePaste) {
+    if (isLargeTextPaste || files.length || nativeFilePaste || mixedText) {
       event.preventDefault();
       const editor = event.currentTarget;
       let { start: selectionStart, end: selectionEnd } = editorSelectionRange(editor);
@@ -309,8 +331,12 @@ export function useComposerAttachments({
       const sourceRevision = readComposerDraftRevision(sourceDraftKey);
       setPasting(true);
       try {
-        // 合成截图已有字节，无需启动系统目录探测进程；磁盘文件仍走原路径。
-        const native = !isLargeTextPaste && !screenshotPaste ? await api.readClipboardDirectories() : null;
+        const probeNative = mixedText || !isLargeTextPaste;
+        const native = probeNative ? await api.readClipboardDirectories(!hasFileUri && (preferText || screenshotPaste)) : null;
+        if (!native && mixedText && !isLargeTextPaste) {
+          if (draft.ref.current === editor && useAppStore.getState().activeSessionId === sourceSessionId) pasteClipboardText(editor, text);
+          return;
+        }
         if (!native && !files.length && !isLargeTextPaste) {
           if (hasNativeFileTypes) throw new Error(t("chat.directoryPasteUnavailable"));
           return;
@@ -439,31 +465,8 @@ export function useComposerAttachments({
       return;
     }
 
-    const sessionIds = parseSessionLinks(text);
-    if (sessionIds.length) {
-      event.preventDefault();
-      void api.recordClipboardPaste(text).catch(() => undefined);
-      pasteSessionLinks(text);
-      return;
-    }
-
-    // Small text paste is kept plain so rich HTML never enters the draft.
     event.preventDefault();
-    if (!text) return;
-    void api.recordClipboardPaste(text).catch(() => undefined);
-    if (!insertClipboardText(event.currentTarget, text)) {
-      const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      range.insertNode(
-        document.createTextNode(normalizeClipboardLineEndings(text)),
-      );
-      range.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      draft.commitEditorDom?.();
-    }
+    pasteClipboardText(event.currentTarget, text);
   };
 
   const attachDroppedItems = async (items: ComposerDropItem[]) => {

@@ -1,6 +1,6 @@
 import { clipboard } from "electron";
 import { registerSidebarPreferencesIpc } from "./sidebar-preferences-ipc";
-import { readComposerClipboardDirectories } from "../composer-clipboard-directories";
+import { clipboardTemporaryRoots, readDesktopClipboardSelection } from "../composer-clipboard-selection";
 import { pasteComposerClipboardFiles } from "../composer-file-references";
 import { BrowserWindow, dialog, shell, type OpenDialogOptions } from "electron";
 import { basename, dirname } from "node:path";
@@ -647,22 +647,20 @@ export function registerWorkspaceIpc({
         }
         projectPath = session.projectPath?.trim() || undefined;
       }
-      const paths = consumeComposerPickerSelection(input.token, event.sender.id);
-      if (input.reference === true) {
-        const slots = await pasteComposerClipboardFiles(dataDir, sessionId, projectPath, paths);
-        const skippedFileIndices = slots.flatMap((file, index) => file ? [] : [index]);
-        return {
-          files: slots.filter(file => file !== null),
-          ...(skippedFileIndices.length ? { skippedFileIndices } : {}),
-        };
+      const { paths, dispose } = consumeComposerPickerSelection(input.token, event.sender.id);
+      try {
+        if (input.reference === true && !dispose) {
+          const slots = await pasteComposerClipboardFiles(dataDir, sessionId, projectPath, paths, clipboardTemporaryRoots);
+          const skippedFileIndices = slots.flatMap((file, index) => file ? [] : [index]);
+          return {
+            files: slots.filter(file => file !== null),
+            ...(skippedFileIndices.length ? { skippedFileIndices } : {}),
+          };
+        }
+        return { files: await importComposerFiles(dataDir, sessionId, paths) };
+      } finally {
+        dispose?.();
       }
-      return {
-        files: await importComposerFiles(
-          dataDir,
-          sessionId,
-          paths,
-        ),
-      };
     },
   );
 
@@ -680,9 +678,9 @@ export function registerWorkspaceIpc({
     },
   );
 
-  handleWithEvent(IPC.invoke.composerReadClipboardDirectories, async (event) => {
+  handleWithEvent(IPC.invoke.composerReadClipboardDirectories, async (event, input?: { promisesOnly?: boolean }) => {
     assertMainWindowSender(event);
-    return readComposerClipboardDirectories(clipboard, paths => rememberComposerPickerSelection(paths, event.sender.id));
+    return readDesktopClipboardSelection(clipboard, event.sender.id, input?.promisesOnly === true);
   });
 
   handleWithEvent(

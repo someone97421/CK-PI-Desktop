@@ -1235,7 +1235,7 @@ export const api = {
     }),
   pickFiles: () =>
     invoke<{ token: string | null; canceled?: boolean }>(IPC.invoke.composerPickFiles),
-  readClipboardDirectories: () => invoke<ClipboardDirectoryPaste | null>(IPC.invoke.composerReadClipboardDirectories),
+  readClipboardDirectories: (promisesOnly = false) => invoke<ClipboardDirectoryPaste | null>(IPC.invoke.composerReadClipboardDirectories, { promisesOnly }),
   getDroppedFilePath: (file: File) =>
     window.piDesktop?.getDroppedFilePath?.(file) ?? null,
   pickPhotos: () =>

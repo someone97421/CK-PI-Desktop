@@ -171,13 +171,13 @@ export async function saveComposerPasteFiles(
  * caller's metadata-only reference flow instead of failing the whole paste.
  */
 export function selectImportableComposerImages(
-  files: ReadonlyArray<{ path: string; size: number }>,
+  files: ReadonlyArray<{ path: string; size: number; temporary?: boolean }>,
 ): boolean[] {
   let count = 0;
   let totalBytes = 0;
-  return files.map(({ path, size }) => {
+  return files.map(({ path, size, temporary }) => {
     const name = basename(path);
-    if (!isImageFile(name, mimeTypeForPath(path))) return false;
+    if (!temporary && !isImageFile(name, mimeTypeForPath(path))) return false;
     if (count >= MAX_FILES || size > MAX_FILE_BYTES || totalBytes + size > MAX_TOTAL_BYTES) {
       return false;
     }

@@ -8,13 +8,22 @@ type PendingPickerSelection = {
   paths: string[];
   senderId: number;
   expiresAt: number;
+  dispose?: () => void;
+  timer?: NodeJS.Timeout;
 };
 
 const pendingSelections = new Map<string, PendingPickerSelection>();
 
+function discard(token: string) {
+  const selection = pendingSelections.get(token);
+  pendingSelections.delete(token);
+  clearTimeout(selection?.timer);
+  selection?.dispose?.();
+}
+
 function pruneExpired(now: number) {
   for (const [token, selection] of pendingSelections) {
-    if (selection.expiresAt <= now) pendingSelections.delete(token);
+    if (selection.expiresAt <= now) discard(token);
   }
 }
 
@@ -26,6 +35,7 @@ export function rememberComposerPickerSelection(
   paths: string[],
   senderId: number,
   now = Date.now(),
+  dispose?: () => void,
 ): string {
   if (!Array.isArray(paths) || paths.length === 0) {
     throw new Error("picker selection is empty");
@@ -34,7 +44,7 @@ export function rememberComposerPickerSelection(
   while (pendingSelections.size >= MAX_PENDING_PICKER_SELECTIONS) {
     const oldest = pendingSelections.keys().next().value as string | undefined;
     if (!oldest) break;
-    pendingSelections.delete(oldest);
+    discard(oldest);
   }
 
   const token = randomUUID();
@@ -42,6 +52,8 @@ export function rememberComposerPickerSelection(
     paths: [...paths],
     senderId,
     expiresAt: now + PICKER_TOKEN_TTL_MS,
+    dispose,
+    timer: dispose ? setTimeout(() => discard(token), PICKER_TOKEN_TTL_MS).unref() : undefined,
   });
   return token;
 }
@@ -54,19 +66,21 @@ export function consumeComposerPickerSelection(
   token: unknown,
   senderId: number,
   now = Date.now(),
-): string[] {
+): Pick<PendingPickerSelection, "paths" | "dispose"> {
   pruneExpired(now);
   if (typeof token !== "string" || !PICKER_TOKEN_RE.test(token)) {
     throw new Error("picker selection token is invalid");
   }
   const selection = pendingSelections.get(token);
   pendingSelections.delete(token);
+  clearTimeout(selection?.timer);
   if (
     !selection ||
     selection.expiresAt <= now ||
     selection.senderId !== senderId
   ) {
+    selection?.dispose?.();
     throw new Error("picker selection is unavailable");
   }
-  return [...selection.paths];
+  return { paths: selection.paths, dispose: selection.dispose };
 }

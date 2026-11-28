@@ -49,7 +49,7 @@ function harness(native, { files = [], text = "", items = [], paused, sourceSess
     showErrorToast: error => errors.push(error.message),
     api: {
       getDroppedFilePath: () => null,
-      readClipboardDirectories: async () => { nativeReads.push(true); if (paused) await paused; return native; },
+      readClipboardDirectories: async promisesOnly => { nativeReads.push(promisesOnly); if (paused) await paused; return native; },
       recordClipboardPaste: async () => {},
       importFiles: async (session, token, draftId, reference) => {
         imported.push({ session, token, ...(draftId ? { draftId } : {}) });
@@ -77,7 +77,10 @@ function harness(native, { files = [], text = "", items = [], paused, sourceSess
       created.push(workspacePath); activeSessionId = "created"; return { sessionId: "created", draftId: undefined };
     },
   };
-  const code = extract(editor, "clipboardFiles") + "\n" + extract(editor, "preferClipboardText") + "\nmodule.exports = " + extract(hook, "pasteClipboardFiles");
+  const code = [extract(editor, "clipboardFiles"), extract(editor, "preferClipboardText"),
+    "const pasteClipboardText = " + extract(hook, "pasteClipboardText") + ";",
+    "module.exports = " + extract(hook, "pasteClipboardFiles"),
+  ].join("\n");
   vm.runInNewContext(ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, environment);
   return {
     drafts, errors, writes, imported, transfers, created, nativeReads, textInsertions,
@@ -221,11 +224,21 @@ test("pending temporary draft paste is dropped after switching drafts", async ()
   assert.deepEqual(run.drafts, []);
 });
 
-test("Word text plus a generated image keeps text paste without a native file read", async () => {
+test("a promised file wins over its clipboard thumbnail and display name", async () => {
+  const file = new File([], "preview.png", { type: "image/png" });
+  const run = harness({ items: [{ kind: "file", name: "notes.txt" }], token: "selection" }, { files: [file], text: "notes.txt" });
+  await run.paste();
+  assert.deepEqual(run.nativeReads, [true]);
+  assert.deepEqual(run.textInsertions, []);
+  assert.deepEqual(run.transfers, []);
+  assert.equal(run.drafts[0].references[0].name, "notes.txt");
+});
+
+test("Word text plus a generated image keeps text after checking for a file promise", async () => {
   const run = harness(null, { text: "Copied text from Word", files: [new File([], "image.png", { type: "image/png" })] });
   await run.paste();
   assert.deepEqual(run.errors, []);
-  assert.deepEqual(run.nativeReads, []);
+  assert.deepEqual(run.nativeReads, [true]);
   assert.deepEqual(run.textInsertions, ["Copied text from Word"]);
 });
 
@@ -234,7 +247,7 @@ test("screenshot-only paste transfers image bytes without waiting for native dir
   const run = harness(null, { files: [image] });
   await run.paste();
   assert.deepEqual(run.errors, []);
-  assert.deepEqual(run.nativeReads, []);
+  assert.deepEqual(run.nativeReads, [true]);
   assert.equal(run.transfers.length, 1);
   assert.equal(new TextDecoder().decode(run.transfers[0][0].data), "screenshot bytes");
 });
